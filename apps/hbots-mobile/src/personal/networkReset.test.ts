@@ -1,20 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-const native = vi.hoisted(() => ({ reset: vi.fn() }));
+const native = vi.hoisted(() => ({ reset: vi.fn(), evictPool: vi.fn() }));
 
 vi.mock("expo", () => ({
   requireOptionalNativeModule: () => ({
     reset: native.reset,
+    evictPool: native.evictPool,
     isOnline: () => true,
     canReachNetwork: async () => true,
   }),
 }));
 
-import { resetNetworkClient } from "./networkReset";
+import { evictConnectionPool, resetNetworkClient } from "./networkReset";
 
 afterEach(() => {
   vi.useRealTimers();
   native.reset.mockReset();
+  native.evictPool.mockReset();
+});
+
+describe("evictConnectionPool", () => {
+  it("evicts the pool without cancelling calls in flight", async () => {
+    native.evictPool.mockResolvedValue(true);
+    await expect(evictConnectionPool()).resolves.toBeUndefined();
+    expect(native.evictPool).toHaveBeenCalledTimes(1);
+    expect(native.reset).not.toHaveBeenCalled();
+  });
 });
 
 describe("resetNetworkClient", () => {

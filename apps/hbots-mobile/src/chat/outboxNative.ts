@@ -30,7 +30,7 @@ import {
 import type { NativeBlob } from "../platform/nativePorts";
 import { appAtomRegistry } from "../personal/atomRegistry";
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { resetNetworkClient } from "../personal/networkReset";
+import { evictConnectionPool } from "../personal/networkReset";
 import type { ChatEnvironment } from "./chatEnvironment";
 import { useEffect, useRef } from "react";
 
@@ -89,7 +89,8 @@ async function uploadFile(
  * The shared OkHttp pool can still hold a connection bound to it, and the
  * first request after the change waits on that dead socket until its timeout.
  * Evicting the pool before the first upload of a generation opens the upload
- * on a fresh connection.
+ * on a fresh connection. This must not cancel calls in flight, because the
+ * chat socket shares the client.
  */
 let uploadNetworkGeneration: number | null = null;
 
@@ -97,7 +98,7 @@ async function prepareNetworkForUpload(native: NativePersonal): Promise<void> {
   const generation = native.readConnection().generation;
   if (uploadNetworkGeneration === generation) return;
   uploadNetworkGeneration = generation;
-  await resetNetworkClient();
+  await evictConnectionPool();
 }
 
 export interface DraftAttachment {

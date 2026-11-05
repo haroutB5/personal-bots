@@ -31,6 +31,11 @@ class HbotsNetworkModule : Module() {
       true
     }
 
+    AsyncFunction("evictPool") {
+      OkHttpClientProvider.getOkHttpClient().connectionPool.evictAll()
+      true
+    }
+
     AsyncFunction("canReachNetwork") {
       try {
         val client = OkHttpClient.Builder()

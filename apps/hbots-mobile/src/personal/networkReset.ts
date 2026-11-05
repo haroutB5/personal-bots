@@ -2,6 +2,7 @@ import { requireOptionalNativeModule } from "expo";
 
 interface NetworkResetModule {
   readonly reset: () => Promise<boolean>;
+  readonly evictPool?: () => Promise<boolean>;
   readonly isOnline: () => boolean;
   readonly canReachNetwork: () => Promise<boolean>;
 }
@@ -21,17 +22,39 @@ const RESET_TIMEOUT_MS = 2_000;
  * offline, so the loop stops waiting for it after the timeout and tries the
  * connection anyway.
  */
+function settleWithin(work: Promise<unknown>): Promise<unknown> {
+  return Promise.race([
+    work,
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, RESET_TIMEOUT_MS);
+    }),
+  ]);
+}
+
 export async function resetNetworkClient(): Promise<void> {
   if (native === null) return;
   try {
-    await Promise.race([
-      native.reset(),
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, RESET_TIMEOUT_MS);
-      }),
-    ]);
+    await settleWithin(native.reset());
   } catch {
     // A missing or failed reset only means the next attempt keeps the old pool.
+  }
+}
+
+/**
+ * Drops pooled sockets without cancelling calls in flight. The chat socket
+ * shares the client, so the upload path must not use the reset above.
+ */
+export async function evictConnectionPool(): Promise<void> {
+  if (native === null) return;
+  const evict = native.evictPool;
+  if (evict === undefined) {
+    await resetNetworkClient();
+    return;
+  }
+  try {
+    await settleWithin(evict());
+  } catch {
+    // A pool that still holds the old sockets only costs the upload one timeout.
   }
 }
 
