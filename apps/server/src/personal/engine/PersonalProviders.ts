@@ -12,10 +12,15 @@ import type {
   ProviderInstanceId,
   ProviderSession,
   ServerProvider,
+  ServerProviderSmokeCheck,
+  TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
+import type * as Schema from "effect/Schema";
+import type * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import type { PersonalProvidersError } from "./errors.ts";
@@ -28,6 +33,28 @@ export type PersonalPrewarmOutcome =
   | "busy"
   | "unsupported"
   | "failed";
+
+/** The three provider session facts personal code reacts to. */
+export type PersonalSessionEvent =
+  | {
+      readonly _tag: "SessionStarted";
+      readonly threadId: ThreadId;
+      readonly instanceId: ProviderInstanceId | null;
+    }
+  | { readonly _tag: "SessionExited"; readonly threadId: ThreadId }
+  | { readonly _tag: "TurnSettled"; readonly threadId: ThreadId };
+
+/** A prompt answered as JSON matching `outputSchema`, through a provider's tool-less one-shot call. */
+export type PersonalGenerateStructured = <S extends Schema.Top>(input: {
+  readonly prompt: string;
+  readonly outputSchema: S;
+  readonly modelSelection: ModelSelection;
+}) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
+
+/** One minimal isolated turn through the same executable a bot session uses. */
+export type PersonalSmokeTest = (input: {
+  readonly model: string;
+}) => Effect.Effect<void, PersonalProvidersError>;
 
 export interface PersonalProvidersShape {
   readonly getInstance: (
@@ -52,6 +79,22 @@ export interface PersonalProvidersShape {
     readonly threadId: ThreadId;
     readonly terminateProcesses?: boolean;
   }) => Effect.Effect<void, PersonalProvidersError>;
+  /** Every provider snapshot change, as the full current list. */
+  readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+  /** Writes (or clears, with null) the smoke check result a provider card shows. */
+  readonly setSmokeCheck: (
+    instanceId: ProviderInstanceId,
+    state: ServerProviderSmokeCheck | null,
+  ) => Effect.Effect<void, PersonalProvidersError>;
+  readonly sessionEvents: Stream.Stream<PersonalSessionEvent>;
+  /** None when the instance is missing or has no structured generation. */
+  readonly structuredGenerator: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<Option.Option<PersonalGenerateStructured>, PersonalProvidersError>;
+  /** None when the instance is missing or has no smoke test. */
+  readonly smokeTestFor: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<Option.Option<PersonalSmokeTest>, PersonalProvidersError>;
   readonly prewarm: (input: {
     readonly threadId: ThreadId;
     readonly modelSelection: ModelSelection;
