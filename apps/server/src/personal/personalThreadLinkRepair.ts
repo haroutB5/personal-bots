@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
 
 /**
  * A chat create that was interrupted between its two durable writes.
@@ -31,6 +32,7 @@ const THREAD_ID_OFFSET = PERSONAL_THREAD_LINK_INTENT_PREFIX.length + 1;
 
 export const repairPersonalThreadLinks = Effect.fn("repairPersonalThreadLinks")(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const rel = yield* PersonalProjectionRelations;
   return yield* Effect.gen(function* () {
     const intents = yield* sql<{ readonly key: string }>`
         SELECT key AS "key"
@@ -46,7 +48,7 @@ export const repairPersonalThreadLinks = Effect.fn("repairPersonalThreadLinks")(
           m.value AS bot_id,
           t.created_at AS created_at
         FROM personal_meta m
-        JOIN projection_threads t
+        JOIN ${sql.unsafe(rel.threads)} t
           ON t.thread_id = substr(m.key, ${THREAD_ID_OFFSET})
         JOIN personal_bots b
           ON b.bot_id = m.value AND b.deleted_at IS NULL
@@ -69,7 +71,7 @@ export const repairPersonalThreadLinks = Effect.fn("repairPersonalThreadLinks")(
               WHERE l.thread_id = substr(personal_meta.key, ${THREAD_ID_OFFSET})
             )
             OR NOT EXISTS (
-              SELECT 1 FROM projection_threads t
+              SELECT 1 FROM ${sql.unsafe(rel.threads)} t
               WHERE t.thread_id = substr(personal_meta.key, ${THREAD_ID_OFFSET})
                 AND t.deleted_at IS NULL
             )

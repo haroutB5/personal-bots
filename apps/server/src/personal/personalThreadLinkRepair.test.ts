@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { SqlitePersistenceMemoryWorker } from "../persistence/Layers/Sqlite.ts";
+import { PersonalProjectionRelationsV1Live } from "./engine/PersonalProjectionRelationsV1Live.ts";
 import {
   personalThreadLinkIntentKey,
   repairPersonalThreadLinks,
@@ -14,7 +15,7 @@ import {
  * thread and its bot link. Runs on the same worker path as production.
  */
 
-const testLayer = SqlitePersistenceMemoryWorker;
+const testLayer = Layer.merge(SqlitePersistenceMemoryWorker, PersonalProjectionRelationsV1Live);
 
 const at = "2026-10-18T03:00:00.000Z";
 
