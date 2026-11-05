@@ -13,6 +13,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 
 import { BotAvatar } from "../shell/BotAvatar";
@@ -88,6 +89,7 @@ export function NewTeamForm({
 }) {
   const providers = native.useProviders();
   const connection = native.useConnectionState();
+  const { height: windowHeight } = useWindowDimensions();
   const saveProfile = native.client.useAtomCommand(native.bots.personalProfileSet, {
     reportFailure: false,
   });
@@ -184,6 +186,7 @@ export function NewTeamForm({
       style={styles.form}
     >
       <ScrollView
+        style={{ maxHeight: Math.round(windowHeight * 0.5) }}
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
