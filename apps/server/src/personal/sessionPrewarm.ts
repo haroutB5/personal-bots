@@ -6,10 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import {
-  ProviderCommandReactor,
-  type ProviderSessionPrewarmOutcome,
-} from "../orchestration/Services/ProviderCommandReactor.ts";
+import { PersonalProviders, type PersonalPrewarmOutcome } from "./engine/PersonalProviders.ts";
 import { sendModelSelection } from "./botModelSelection.ts";
 import { PersonalGroupService } from "./groups/PersonalGroupService.ts";
 import { PersonalBotRepository } from "./PersonalBotRepository.ts";
@@ -26,7 +23,7 @@ export const SESSION_PREWARM_DEBOUNCE_MS = 60_000;
 export const SESSION_PREWARM_MAX_UNUSED = 3;
 
 export type PersonalSessionPrewarmOutcome =
-  | ProviderSessionPrewarmOutcome
+  | PersonalPrewarmOutcome
   | "disabled"
   | "debounced"
   | "not-a-bot-chat"
@@ -51,7 +48,7 @@ export const makePersonalSessionPrewarmer = (options?: {
   readonly maxUnused?: number;
 }) =>
   Effect.gen(function* () {
-    const reactor = yield* ProviderCommandReactor;
+    const providers = yield* PersonalProviders;
     const bots = yield* PersonalBotRepository;
     const groups = yield* PersonalGroupService;
     const projection = yield* ProjectionSnapshotQuery;
@@ -99,7 +96,7 @@ export const makePersonalSessionPrewarmer = (options?: {
         }
         if ((yield* countUnused) >= maxUnused) return "too-many-unused" as const;
         const startedAt = DateTime.formatIso(yield* DateTime.now);
-        const outcome = yield* reactor.prewarmSession({
+        const outcome = yield* providers.prewarm({
           threadId,
           modelSelection: activeSelection,
         });

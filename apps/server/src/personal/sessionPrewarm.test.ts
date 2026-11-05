@@ -15,10 +15,8 @@ import * as Option from "effect/Option";
 import { describe, expect, it } from "@effect/vitest";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import {
-  ProviderCommandReactor,
-  type ProviderSessionPrewarmOutcome,
-} from "../orchestration/Services/ProviderCommandReactor.ts";
+import { PersonalProviders, type PersonalPrewarmOutcome } from "./engine/PersonalProviders.ts";
+import { PersonalProvidersError } from "./engine/errors.ts";
 import { PersonalGroupService } from "./groups/PersonalGroupService.ts";
 import { PersonalBotRepository } from "./PersonalBotRepository.ts";
 import {
@@ -41,7 +39,7 @@ function setup(input?: {
   readonly fallbackActive?: Partial<PersonalBotFallbackActive>;
   readonly threadModel?: ModelSelection;
   readonly env?: Record<string, string>;
-  readonly reactorOutcome?: Effect.Effect<ProviderSessionPrewarmOutcome>;
+  readonly reactorOutcome?: Effect.Effect<PersonalPrewarmOutcome, PersonalProvidersError>;
   readonly maxUnused?: number;
   readonly debounceMs?: number;
 }) {
@@ -59,8 +57,8 @@ function setup(input?: {
           ...input?.link,
         };
   const layer = Layer.mergeAll(
-    Layer.mock(ProviderCommandReactor)({
-      prewarmSession: (request) =>
+    Layer.mock(PersonalProviders)({
+      prewarm: (request) =>
         Effect.suspend(() => {
           calls.push(request);
           return input?.reactorOutcome ?? Effect.succeed("started" as const);
@@ -251,6 +249,18 @@ describe("personal session prewarm", () => {
   it.effect("reports a failed start instead of failing the caller", () =>
     Effect.gen(function* () {
       const { run } = setup({ reactorOutcome: Effect.die(new Error("spawn failed")) });
+
+      expect(yield* run((prewarm) => prewarm(threadId))).toBe("failed");
+    }),
+  );
+
+  it.effect("reports a port failure as a failed start", () =>
+    Effect.gen(function* () {
+      const { run } = setup({
+        reactorOutcome: Effect.fail(
+          new PersonalProvidersError({ operation: "prewarm", detail: "no reactor" }),
+        ),
+      });
 
       expect(yield* run((prewarm) => prewarm(threadId))).toBe("failed");
     }),

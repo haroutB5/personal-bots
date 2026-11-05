@@ -218,6 +218,7 @@ import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
 import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
+import { PersonalProvidersV1Live } from "./personal/engine/PersonalProvidersV1Live.ts";
 import {
   makePersonalSessionPrewarmer,
   type PersonalSessionPrewarmer,
@@ -5452,7 +5453,10 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const catalogInstaller = yield* CatalogInstaller;
     const sql = yield* SqlClient.SqlClient;
     // Server-lifetime too: its per-chat debounce must outlive one connection.
-    const sessionPrewarmer = yield* makePersonalSessionPrewarmer();
+    // The full port: the command reactor exists here, unlike in the personal chain.
+    const sessionPrewarmer = yield* makePersonalSessionPrewarmer().pipe(
+      Effect.provide(PersonalProvidersV1Live),
+    );
     return HttpRouter.add(
       "GET",
       "/ws",
