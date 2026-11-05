@@ -195,11 +195,12 @@ function nextRunnable(
 
 /**
  * One pass over the queue, oldest message first. A chat whose oldest message
- * is failed or unanswered holds back everything typed after it, so a later
- * message can never overtake an earlier one.
+ * the laptop refused holds back everything typed after it, so a later message
+ * never overtakes it. A message that only went unanswered is revived by the
+ * flusher before the next pass, so a network failure does not hold a chat.
  */
 export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassResult> {
-  // Chats with a failed message ahead of the rest never send past it.
+  // Chats with a refused message ahead of the rest never send past it.
   const blocked = new Set<string>(
     getOutboxSnapshot()
       .entries.filter((entry) => entry.status === "failed")
