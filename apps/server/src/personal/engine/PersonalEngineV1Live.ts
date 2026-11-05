@@ -32,6 +32,7 @@ import {
   ThreadBackgroundLivenessService,
   layer as ThreadBackgroundLivenessLive,
 } from "../../orchestration/ThreadBackgroundLiveness.ts";
+import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import {
   ProjectionThreadMessageRepository,
@@ -45,12 +46,14 @@ import {
   type PersonalActivityView,
   type PersonalAppendNoticeInput,
   type PersonalCompleteNoticeInput,
+  type PersonalContinueTurnInput,
   type PersonalMessageView,
   type PersonalPostNoticeInput,
   type PersonalPostUserMessageInput,
   type PersonalProjectView,
   type PersonalRenameThreadIfUnchangedInput,
   type PersonalSendInput,
+  type PersonalSetProviderRetryInput,
   type PersonalSessionView,
   type PersonalStopInput,
   type PersonalThreadEvent,
@@ -216,6 +219,9 @@ export const toPersonalEvents = (
   }
 };
 
+/** The prompt for adapters that cannot continue a turn without one. */
+const CONTINUATION_PROMPT = "Continue where you left off.";
+
 const engineError = (operation: string) => (failure: unknown) =>
   new PersonalEngineError({ operation, detail: failureDetail(failure) });
 
@@ -243,6 +249,9 @@ const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery;
   const messages = yield* ProjectionThreadMessageRepository;
   const liveness = yield* ThreadBackgroundLivenessService;
+  // Optional so the read and write verbs stay testable alone; only
+  // `continueTurn` needs it, and the server always provides it.
+  const providerService = yield* Effect.serviceOption(ProviderService);
   const sql = yield* SqlClient.SqlClient;
   const statusByThread = new Map<string, PersonalThreadStatus>();
 
@@ -325,6 +334,81 @@ const make = Effect.gen(function* () {
         createdAt: yield* now,
       });
     }).pipe(Effect.mapError(engineError("interrupt")));
+
+  const continueTurn = (
+    input: PersonalContinueTurnInput,
+  ): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const shell = Option.getOrUndefined(yield* snapshots.getThreadShellById(input.threadId));
+      const instanceId = shell?.session?.providerInstanceId;
+      if (Option.isNone(providerService)) {
+        return yield* new PersonalEngineError({
+          operation: "continueTurn",
+          detail: "no provider service is wired into this engine",
+        });
+      }
+      if (instanceId === undefined) {
+        return yield* new PersonalEngineError({
+          operation: "continueTurn",
+          detail: "the session has no provider instance to continue on",
+        });
+      }
+      const capabilities = yield* providerService.value.getCapabilities(instanceId);
+      yield* providerService.value.sendTurn({
+        threadId: input.threadId,
+        ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+        ...(capabilities.promptlessTurnContinuation === true
+          ? { continuation: true }
+          : { input: CONTINUATION_PROMPT }),
+        interactionMode: input.interactionMode,
+        ...(input.systemInstructions !== undefined
+          ? { systemInstructions: input.systemInstructions }
+          : {}),
+      });
+    }).pipe(Effect.mapError(engineError("continueTurn")));
+
+  const setProviderRetry = (
+    input: PersonalSetProviderRetryInput,
+  ): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const shell = Option.getOrUndefined(yield* snapshots.getThreadShellById(input.threadId));
+      const session = shell?.session;
+      if (session == null) return;
+      const at = yield* now;
+      if (input.retry === null) {
+        if (session.providerRetry?.auto === undefined) return;
+        const rest: OrchestrationSession = { ...session };
+        delete (rest as { providerRetry?: unknown }).providerRetry;
+        yield* engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`personal-turn-retry-clear:${NodeCrypto.randomUUID()}`),
+          threadId: input.threadId,
+          session: { ...rest, updatedAt: at },
+          createdAt: at,
+        });
+        return;
+      }
+      const { auto, attempt, maxAttempts, retryAt } = input.retry;
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`personal-turn-retry:${NodeCrypto.randomUUID()}`),
+        threadId: input.threadId,
+        session: {
+          ...session,
+          providerRetry: {
+            kind: "retrying",
+            attempt,
+            maxAttempts,
+            ...(retryAt === null ? {} : { retryAt }),
+            auto,
+            provider: session.providerName ?? "provider",
+            observedAt: at,
+          },
+          updatedAt: at,
+        },
+        createdAt: at,
+      });
+    }).pipe(Effect.mapError(engineError("setProviderRetry")));
 
   const stop = (input: PersonalStopInput): Effect.Effect<void, PersonalEngineError> =>
     Effect.gen(function* () {
@@ -724,6 +808,8 @@ const make = Effect.gen(function* () {
     createProject,
     createThread,
     send,
+    continueTurn,
+    setProviderRetry,
     interrupt,
     stop,
     archive,

@@ -1,4 +1,5 @@
 import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   CommandId,
   CorrelationId,
@@ -24,7 +25,12 @@ import * as TestClock from "effect/testing/TestClock";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
-import { toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV1Live, toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
+import {
+  ThreadBackgroundLivenessService,
+  make as makeThreadBackgroundLiveness,
+} from "../orchestration/ThreadBackgroundLiveness.ts";
+import { ProjectionThreadMessageRepository } from "../persistence/Services/ProjectionThreadMessages.ts";
 import type { PersonalThreadStatus } from "./engine/PersonalEngine.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
@@ -57,6 +63,8 @@ interface Harness {
   botModelSelection: ModelSelection;
   readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
+  /** The adapter can continue a turn without a prompt. */
+  promptless: boolean;
 }
 
 const makeHarness = (): Harness => ({
@@ -69,6 +77,7 @@ const makeHarness = (): Harness => ({
   botModelSelection: { instanceId: INSTANCE, model: "big-pickle" },
   statuses: new Map(),
   sequence: 0,
+  promptless: true,
 });
 
 const makeSession = (input: {
@@ -90,6 +99,7 @@ const makeSession = (input: {
 
 const makeLayer = (harness: Harness) =>
   PersonalTurnRetry.layer.pipe(
+    Layer.provideMerge(PersonalEngineV1Live),
     Layer.provideMerge(
       Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
         dispatch: (command: OrchestrationCommand) =>
@@ -101,6 +111,7 @@ const makeLayer = (harness: Harness) =>
             return { sequence: harness.dispatched.length };
           }),
         subscribeDomainEvents: Effect.succeed(Stream.never),
+        streamDomainEvents: Stream.never,
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
@@ -118,14 +129,14 @@ const makeLayer = (harness: Harness) =>
           ),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
+    Layer.provideMerge(Layer.succeed(ProjectionThreadMessageRepository, {} as never)),
     Layer.provideMerge(
-      Layer.succeed(PersonalEngine.PersonalEngine, {
-        events: Stream.never,
-      } as unknown as PersonalEngine.PersonalEngineShape),
+      Layer.succeed(ThreadBackgroundLivenessService, makeThreadBackgroundLiveness()),
     ),
+    Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
     Layer.provideMerge(
       Layer.succeed(ProviderService, {
-        getCapabilities: () => Effect.succeed({ promptlessTurnContinuation: true }),
+        getCapabilities: () => Effect.succeed({ promptlessTurnContinuation: harness.promptless }),
         sendTurn: (input: ProviderSendTurnInput) =>
           Effect.suspend(() => {
             if (harness.failSend) {
@@ -286,6 +297,28 @@ it.effect("retries a transient reply failure and never re-sends the message", ()
         // Continuation of the turn already on the thread: no message, no id.
         expect(harness.sends[0]).toMatchObject({ threadId: THREAD, continuation: true });
         expect(harness.sends[0]).not.toHaveProperty("input");
+        expect(messageCreatingCommands(harness)).toHaveLength(0);
+      }),
+      makeLayer(harness),
+    );
+  }),
+);
+
+it.effect("sends a short prompt to an adapter that cannot continue without one", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    harness.promptless = false;
+    yield* Effect.provide(
+      Effect.gen(function* () {
+        const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
+        yield* failOwnerTurn(retry, harness);
+        yield* TestClock.adjust(FIRST_DELAY_MS!);
+        expect(harness.sends).toHaveLength(1);
+        expect(harness.sends[0]).toMatchObject({
+          threadId: THREAD,
+          input: "Continue where you left off.",
+        });
+        expect(harness.sends[0]).not.toHaveProperty("continuation");
         expect(messageCreatingCommands(harness)).toHaveLength(0);
       }),
       makeLayer(harness),

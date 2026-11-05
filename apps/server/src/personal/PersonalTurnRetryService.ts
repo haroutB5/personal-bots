@@ -1,5 +1,4 @@
 import {
-  CommandId,
   type ModelSelection,
   type OrchestrationSession,
   type ProviderInteractionMode,
@@ -8,7 +7,6 @@ import {
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "@t3tools/shared/crypto";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -18,10 +16,7 @@ import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
@@ -76,18 +71,9 @@ export class PersonalTurnRetryNotRoutable extends Data.TaggedError("PersonalTurn
   readonly threadId: ThreadId;
 }> {}
 
-const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-
-/** The prompt for adapters that cannot continue a turn without one. */
-const CONTINUATION_PROMPT = "Continue where you left off.";
-
 export const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const personalEngine = yield* PersonalEngine.PersonalEngine;
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const providerService = yield* ProviderService;
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
-  const crypto = yield* Crypto.Crypto;
   // Optional so this reactor stays testable alone; the server always has it.
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
 
@@ -117,63 +103,26 @@ export const make = Effect.gen(function* () {
     attempt: number,
     retryAt: string | null,
   ) =>
-    Effect.gen(function* () {
-      const thread = yield* projections
-        .getThreadShellById(threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isNone(thread)) return;
-      const session = thread.value.session;
-      if (session == null) return;
-      const now = yield* nowIso;
-      yield* engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make(`personal-turn-retry:${yield* crypto.randomUUIDv4}`),
+    personalEngine
+      .setProviderRetry({
         threadId,
-        session: {
-          ...session,
-          providerRetry: {
-            kind: "retrying",
-            attempt,
-            maxAttempts: PERSONAL_TURN_RETRY_MAX_ATTEMPTS,
-            ...(retryAt === null ? {} : { retryAt }),
-            auto,
-            provider: session.providerName ?? "provider",
-            observedAt: now,
-          },
-          updatedAt: now,
-        },
-        createdAt: now,
-      });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("personal turn retry could not mark the session", {
-              threadId,
-              cause: Cause.pretty(cause),
-            }),
-      ),
-      Effect.ignore,
-    );
+        retry: { auto, attempt, maxAttempts: PERSONAL_TURN_RETRY_MAX_ATTEMPTS, retryAt },
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("personal turn retry could not mark the session", {
+                threadId,
+                cause: Cause.pretty(cause),
+              }),
+        ),
+        Effect.ignore,
+      );
 
   /** Drops the marker so the chat stops claiming a retry is coming. */
   const clearMarker = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const thread = yield* projections.getThreadShellById(threadId);
-      if (Option.isNone(thread)) return;
-      const session = thread.value.session;
-      if (session == null || session.providerRetry?.auto === undefined) return;
-      const now = yield* nowIso;
-      const rest: OrchestrationSession = { ...session };
-      delete (rest as { providerRetry?: unknown }).providerRetry;
-      yield* engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make(`personal-turn-retry-clear:${yield* crypto.randomUUIDv4}`),
-        threadId,
-        session: { ...rest, updatedAt: now },
-        createdAt: now,
-      });
-    }).pipe(Effect.ignore);
+    personalEngine.setProviderRetry({ threadId, retry: null }).pipe(Effect.ignore);
 
   /** Stops a sleeping retry. Safe to call for a thread with nothing pending. */
   const cancelPending = (threadId: ThreadId, alsoClearMarker: boolean) =>
@@ -196,7 +145,6 @@ export const make = Effect.gen(function* () {
     if (instanceId === undefined) {
       return yield* new PersonalTurnRetryNotRoutable({ threadId });
     }
-    const capabilities = yield* providerService.getCapabilities(instanceId);
     // Shared with the restart-continuation path so the two cannot drift apart.
     const systemInstructions = yield* continuationSystemInstructions(personalBots, threadId);
     // Without the bot's selection the retried reply runs at the provider's
@@ -206,12 +154,9 @@ export const make = Effect.gen(function* () {
       threadId,
       threadModelSelection,
     );
-    yield* providerService.sendTurn({
+    yield* personalEngine.continueTurn({
       threadId,
       ...(modelSelection !== undefined ? { modelSelection } : {}),
-      ...(capabilities.promptlessTurnContinuation === true
-        ? { continuation: true }
-        : { input: CONTINUATION_PROMPT }),
       interactionMode,
       ...(systemInstructions !== undefined ? { systemInstructions } : {}),
     });
@@ -227,8 +172,8 @@ export const make = Effect.gen(function* () {
       yield* Effect.sleep(delayMs);
       const entry = tracked.get(threadId);
       if (entry === undefined) return;
-      const thread = yield* projections
-        .getThreadShellById(threadId)
+      const thread = yield* personalEngine
+        .getThread(threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
       if (Option.isNone(thread)) return yield* clearMarker(threadId);
       const shell = thread.value;
@@ -286,8 +231,8 @@ export const make = Effect.gen(function* () {
   /** A send that never reached the provider still counts against the cap. */
   const afterFailedSend = (threadId: ThreadId): Effect.Effect<void> =>
     Effect.gen(function* () {
-      const thread = yield* projections
-        .getThreadShellById(threadId)
+      const thread = yield* personalEngine
+        .getThread(threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
       if (Option.isNone(thread)) return;
       const session = thread.value.session;

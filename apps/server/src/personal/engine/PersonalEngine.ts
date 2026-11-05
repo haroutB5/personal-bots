@@ -262,12 +262,45 @@ export interface PersonalPostUserMessageInput {
   readonly context?: OrchestrationMessageContext;
 }
 
+/** Asks the provider to run the thread's turn again, with no new user message. */
+export interface PersonalContinueTurnInput {
+  readonly threadId: ThreadId;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly modelSelection?: ModelSelection;
+  readonly systemInstructions?: string;
+}
+
+/** The automatic-retry state the chat shows next to a failed reply. */
+export interface PersonalProviderRetryMark {
+  readonly auto: "pending" | "exhausted";
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly retryAt: string | null;
+}
+
+export interface PersonalSetProviderRetryInput {
+  readonly threadId: ThreadId;
+  /** `null` drops the marker, and does nothing when none is set. */
+  readonly retry: PersonalProviderRetryMark | null;
+}
+
 export interface PersonalEngineShape {
   readonly createProject: (
     input: CreateProjectInput,
   ) => Effect.Effect<ProjectId, PersonalEngineError>;
   readonly createThread: (input: CreateThreadInput) => Effect.Effect<ThreadId, PersonalEngineError>;
   readonly send: (input: PersonalSendInput) => Effect.Effect<void, PersonalEngineError>;
+  /**
+   * Continues the turn the session already holds. It never posts a message.
+   * Adapters that cannot continue without a prompt are sent a short one.
+   */
+  readonly continueTurn: (
+    input: PersonalContinueTurnInput,
+  ) => Effect.Effect<void, PersonalEngineError>;
+  /** Writes or clears the retry marker on the thread's session. */
+  readonly setProviderRetry: (
+    input: PersonalSetProviderRetryInput,
+  ) => Effect.Effect<void, PersonalEngineError>;
   /** `turnId` pins the interrupt to the turn the caller saw. */
   readonly interrupt: (
     threadId: ThreadId,
