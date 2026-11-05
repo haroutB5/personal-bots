@@ -24,7 +24,7 @@ function ContextBody({
   readonly context: PersonalMemoryTurnContext;
   readonly marks: ReadonlyMap<string, PersonalMemoryFeedbackSignal | null>;
   readonly busyId: string | null;
-  readonly onMark: (memoryId: string, signal: PersonalMemoryFeedbackSignal) => void;
+  readonly onMark: (memoryId: string, signal: PersonalMemoryFeedbackSignal | "clear") => void;
 }) {
   const markOf = (memoryId: string, held: PersonalMemoryFeedbackSignal | null) =>
     marks.has(memoryId) ? (marks.get(memoryId) ?? null) : held;
@@ -115,7 +115,7 @@ function ContextBody({
                       accessibilityRole="button"
                       accessibilityState={{ selected: mark === signal }}
                       disabled={busy}
-                      onPress={() => onMark(note.memoryId, nextFeedback(mark, signal) as never)}
+                      onPress={() => onMark(note.memoryId, nextFeedback(mark, signal))}
                       style={[
                         styles.mark,
                         mark === signal ? styles.markOn : null,
@@ -191,7 +191,7 @@ export function ContextUsedSheet({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const onMark = async (memoryId: string, signal: PersonalMemoryFeedbackSignal) => {
+  const onMark = async (memoryId: string, signal: PersonalMemoryFeedbackSignal | "clear") => {
     if (busyId !== null || native.environmentId === null) return;
     setBusyId(memoryId);
     setError(null);
@@ -204,7 +204,7 @@ export function ContextUsedSheet({
       setError("Could not save that mark.");
       return;
     }
-    setMarks((current) => new Map(current).set(memoryId, signal));
+    setMarks((current) => new Map(current).set(memoryId, signal === "clear" ? null : signal));
   };
 
   const context = turn.data ?? null;
