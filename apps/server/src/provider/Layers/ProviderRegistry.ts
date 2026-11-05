@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderAutoUpdate,
   type ServerProviderSmokeCheck,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -401,6 +402,7 @@ export const ProviderRegistryLive = Layer.effect(
         {
           readonly update?: ServerProviderUpdateState | undefined;
           readonly smokeCheck?: ServerProviderSmokeCheck | undefined;
+          readonly autoUpdate?: ServerProviderAutoUpdate | undefined;
         }
       >
     >(new Map());
@@ -435,10 +437,12 @@ export const ProviderRegistryLive = Layer.effect(
           instanceId: key,
         }).pipe(Effect.provideService(Path.Path, path));
         // The smoke check is re-projected from personal state on boot; a cached
-        // copy would show a stale verdict before that.
+        // copy would show a stale verdict before that. Auto-update state is
+        // likewise live-only.
         const {
           workspaceSnapshots: _workspaceSnapshots,
           smokeCheck: _smokeCheck,
+          autoUpdate: _autoUpdate,
           ...machineProvider
         } = provider;
         yield* writeCache({ filePath, provider: machineProvider }).pipe(
@@ -456,6 +460,7 @@ export const ProviderRegistryLive = Layer.effect(
       const {
         updateState: _updateState,
         smokeCheck: _smokeCheck,
+        autoUpdate: _autoUpdate,
         ...providerWithoutActionState
       } = provider;
       // What the phone's provider page may offer: the one-message test when the
@@ -479,6 +484,7 @@ export const ProviderRegistryLive = Layer.effect(
         ...(setup !== undefined ? { setup } : {}),
         ...(actions?.update ? { updateState: actions.update } : {}),
         ...(actions?.smokeCheck ? { smokeCheck: actions.smokeCheck } : {}),
+        ...(actions?.autoUpdate ? { autoUpdate: actions.autoUpdate } : {}),
       };
     });
 
@@ -572,6 +578,9 @@ export const ProviderRegistryLive = Layer.effect(
           if (input.action === "smokeCheck") {
             if (input.state === null) delete nextActions.smokeCheck;
             else nextActions.smokeCheck = input.state;
+          } else if (input.action === "autoUpdate") {
+            if (input.state === null) delete nextActions.autoUpdate;
+            else nextActions.autoUpdate = input.state;
           } else if (input.state === null || input.state.status === "idle") {
             delete nextActions.update;
           } else {

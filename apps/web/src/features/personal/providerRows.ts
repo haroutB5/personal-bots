@@ -376,10 +376,53 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
   }
   // 14. Update available
   if (advisory?.status === "behind_latest") {
+    const latest = advisory.latestVersion;
+    const automatic = snapshot.autoUpdate;
+    if (automatic?.status === "blocked") {
+      return row(
+        "updateAvailable",
+        "review",
+        latest === null ? "New version" : `New version ${latest}`,
+        {
+          tone: "review",
+          detail: firstLine(automatic.message),
+          action: oneClick ? { kind: "update", label: "Update" } : null,
+        },
+      );
+    }
+    if (automatic?.status === "rolled_back") {
+      return row("updateAvailable", "review", "Update rolled back", {
+        tone: "review",
+        detail: firstLine(automatic.message),
+        action: oneClick ? { kind: "update", label: "Update" } : null,
+      });
+    }
+    if (automatic?.status === "failed") {
+      return row("updateFailed", "review", "Update failed", {
+        tone: "review",
+        detail: firstLine(automatic.message),
+        action: oneClick ? { kind: "tryAgain", label: "Try again" } : null,
+      });
+    }
+    if (automatic?.status === "updating") {
+      return row(
+        "updating",
+        "none",
+        automatic.toVersion === null ? "Updating…" : `Updating to ${automatic.toVersion}…`,
+        { busy: true, progress: { fraction: null }, detail: firstLine(automatic.message) },
+      );
+    }
+    if (automatic !== undefined) {
+      return row("updateAvailable", "live", "Updates automatically", {
+        detail:
+          firstLine(automatic.message) ??
+          (latest === null ? "A new version is ready." : `New version ${latest}.`),
+      });
+    }
     return row(
       "updateAvailable",
       "live",
-      advisory.latestVersion === null ? "New version" : `New version ${advisory.latestVersion}`,
+      latest === null ? "New version" : `New version ${latest}`,
       {
         detail: oneClick ? null : "Update it on your computer.",
         action: oneClick ? { kind: "update", label: "Update" } : null,
@@ -393,6 +436,21 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
   // 16. Ready
   const version =
     snapshot.version === null ? "Version not reported" : `Version ${snapshot.version}`;
+  const automatic = snapshot.autoUpdate;
+  if (
+    automatic?.status === "managed" ||
+    automatic?.status === "updated" ||
+    automatic?.status === "waiting_for_limit"
+  ) {
+    return row(
+      "ready",
+      "live",
+      `${snapshot.version ?? "Version not reported"} · Updates automatically`,
+      {
+        detail: automatic.status === "updated" ? firstLine(automatic.message) : null,
+      },
+    );
+  }
   return row("ready", "live", advisory?.status === "current" ? `${version} · Up to date` : version);
 }
 

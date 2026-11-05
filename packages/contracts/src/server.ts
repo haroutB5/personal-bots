@@ -188,6 +188,40 @@ export const ServerProviderVersionAdvisory = Schema.Struct({
 });
 export type ServerProviderVersionAdvisory = typeof ServerProviderVersionAdvisory.Type;
 
+/**
+ * What the background updater is doing for one provider instance, or why it
+ * cannot act. This is volatile per-instance state, like `updateState` and
+ * `smokeCheck`, not part of the cached provider probe.
+ */
+export const ServerProviderAutoUpdateStatus = Schema.Literals([
+  /** Eligible: the server updates it when one is due. */
+  "managed",
+  /** Cannot update itself; `message` is the reason shown in Settings. */
+  "blocked",
+  "updating",
+  /** The last attempt updated and passed its test. */
+  "updated",
+  /** The last attempt updated, failed its test and went back. */
+  "rolled_back",
+  /** The last attempt could not update or could not go back. */
+  "failed",
+  /** Updated, but the test is waiting out a usage limit. */
+  "waiting_for_limit",
+]);
+export type ServerProviderAutoUpdateStatus = typeof ServerProviderAutoUpdateStatus.Type;
+
+export const ServerProviderAutoUpdate = Schema.Struct({
+  status: ServerProviderAutoUpdateStatus,
+  /** The reason it is blocked, or the last attempt's result. */
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  fromVersion: Schema.NullOr(TrimmedNonEmptyString),
+  toVersion: Schema.NullOr(TrimmedNonEmptyString),
+  finishedAt: Schema.NullOr(IsoDateTime),
+  /** Earliest time the next automatic attempt may start. */
+  nextAttemptAt: Schema.NullOr(IsoDateTime),
+});
+export type ServerProviderAutoUpdate = typeof ServerProviderAutoUpdate.Type;
+
 export const ServerProviderUpdateStatus = Schema.Literals([
   "idle",
   "queued",
@@ -308,6 +342,7 @@ export const ServerProvider = Schema.Struct({
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
   smokeCheck: Schema.optionalKey(ServerProviderSmokeCheck),
+  autoUpdate: Schema.optionalKey(ServerProviderAutoUpdate),
   catalogId: Schema.optionalKey(Schema.NullOr(ProviderCatalogId)),
   source: Schema.optionalKey(Schema.NullOr(ProviderCatalogSource)),
   publisher: Schema.optionalKey(Schema.NullOr(Schema.String)),

@@ -74,6 +74,16 @@ const smoke = (overrides: Record<string, unknown>) => ({
   ...overrides,
 });
 
+const autoUpdate = (overrides: Record<string, unknown> = {}) => ({
+  status: "managed",
+  message: null,
+  fromVersion: null,
+  toVersion: null,
+  finishedAt: null,
+  nextAttemptAt: null,
+  ...overrides,
+});
+
 const NOW = new Date("2026-10-20T10:30:00.000Z");
 
 function rowOf(
@@ -319,6 +329,131 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
       dot: "live",
     });
     expect(rowOf(provider()).statusText).toBe("Version 2.1.303");
+    expect(
+      rowOf(
+        provider({
+          version: "2.1.303",
+          versionAdvisory: advisory({ status: "current", latestVersion: "2.1.303" }),
+          autoUpdate: autoUpdate(),
+        }),
+      ),
+    ).toMatchObject({
+      state: "ready",
+      statusText: "2.1.303 · Updates automatically",
+      detail: null,
+      dot: "live",
+    });
+  });
+
+  it("an automatic update says so, and the manual line only appears when it is blocked", () => {
+    expect(
+      rowOf(provider({ versionAdvisory: advisory(), autoUpdate: autoUpdate() })),
+    ).toMatchObject({
+      state: "updateAvailable",
+      statusText: "Updates automatically",
+      detail: "New version 0.164.0.",
+      action: null,
+    });
+    expect(
+      rowOf(
+        provider({
+          versionAdvisory: advisory({ canUpdate: false, updateCommand: null }),
+          autoUpdate: autoUpdate({
+            status: "blocked",
+            message: "This provider updates outside the app. Update it on your computer.",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      state: "updateAvailable",
+      statusText: "New version 0.164.0",
+      detail: "This provider updates outside the app. Update it on your computer.",
+      action: null,
+    });
+    expect(
+      rowOf(
+        provider({
+          versionAdvisory: advisory({ canInstallVersion: false }),
+          autoUpdate: autoUpdate({
+            status: "blocked",
+            message: "This updater can't go back to an older version, so updates stay manual.",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      state: "updateAvailable",
+      statusText: "New version 0.164.0",
+      detail: "This updater can't go back to an older version, so updates stay manual.",
+      action: { kind: "update", label: "Update" },
+    });
+    expect(
+      rowOf(
+        provider({
+          versionAdvisory: advisory(),
+          autoUpdate: autoUpdate({
+            status: "rolled_back",
+            toVersion: "0.164.0",
+            message: "Went back to 2.1.303. API Error: 500",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      state: "updateAvailable",
+      statusText: "Update rolled back",
+      detail: "Went back to 2.1.303. API Error: 500",
+      action: { kind: "update", label: "Update" },
+    });
+    expect(
+      rowOf(
+        provider({
+          versionAdvisory: advisory(),
+          autoUpdate: autoUpdate({
+            status: "failed",
+            toVersion: "0.164.0",
+            message: "The updater finished but Claude Code still reports 2.1.303.",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      state: "updateFailed",
+      statusText: "Update failed",
+      detail: "The updater finished but Claude Code still reports 2.1.303.",
+      action: { kind: "tryAgain", label: "Try again" },
+    });
+    expect(
+      rowOf(
+        provider({
+          versionAdvisory: advisory(),
+          autoUpdate: autoUpdate({
+            status: "updating",
+            toVersion: "0.164.0",
+            message: "Updating to 0.164.0.",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      state: "updating",
+      statusText: "Updating to 0.164.0…",
+      busy: true,
+      action: null,
+    });
+    expect(
+      rowOf(
+        provider({
+          version: "2.1.303",
+          versionAdvisory: advisory({ status: "current", latestVersion: "2.1.303" }),
+          autoUpdate: autoUpdate({
+            status: "updated",
+            toVersion: "2.1.303",
+            message: "Updated automatically.",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      state: "ready",
+      statusText: "2.1.303 · Updates automatically",
+      detail: "Updated automatically.",
+    });
   });
 
   it("no row ever has more than one action", () => {
