@@ -44,6 +44,11 @@ import { codexRateLimitsToUpdate } from "../provider/Layers/codexUsageLimits.ts"
 import * as ServerSettings from "../serverSettings.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
 import { PersonalEngineV1WiredLive, toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
+import {
+  PersonalProjectionRelations,
+  type PersonalProjectionRelationsShape,
+} from "./engine/PersonalProjectionRelations.ts";
+import { PERSONAL_V1_RELATIONS } from "./engine/PersonalProjectionRelationsV1Live.ts";
 import type { PersonalThreadStatus } from "./engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
@@ -565,8 +570,15 @@ const makeLayer = (
   env: Record<string, string> = {},
   /** DeepSeek peak switch tests: the instance's own "during peak hours" setting. */
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+  /** The relations the service itself reads; the rest of the stack keeps the v1 names. */
+  relations?: PersonalProjectionRelationsShape,
 ) =>
-  PersonalModelFallback.layer.pipe(
+  (relations === undefined
+    ? PersonalModelFallback.layer
+    : PersonalModelFallback.layer.pipe(
+        Layer.provide(Layer.succeed(PersonalProjectionRelations, relations)),
+      )
+  ).pipe(
     Layer.provideMerge(PersonalEngineV1WiredLive),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -2525,5 +2537,64 @@ it.effect(
       yield* service.sweep;
       expect(lines(harness)).toEqual([expect.stringContaining("is back on gpt-6.1-sol")]);
     }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+  },
+);
+
+/**
+ * v2 hands out a sessions row for every thread, an idle one for a thread that
+ * never ran. This view is that shape on the v1 tables, so the switch back is
+ * proved against it before the real v2 relations exist (design F.6).
+ */
+const V2_SHAPED_RELATIONS: PersonalProjectionRelationsShape = {
+  ...PERSONAL_V1_RELATIONS,
+  sessions: "v2_shaped_sessions",
+};
+
+it.effect(
+  "switches back for an idle thread on the fallback instance when every thread has a sessions row",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      yield* sql`DELETE FROM projection_thread_sessions WHERE thread_id = ${CHAT}`;
+      yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${CHAT}, 'project', 'Chat', ${isoAt(NOW)}, ${isoAt(NOW)})
+      `;
+      yield* sql.unsafe(`
+        CREATE VIEW v2_shaped_sessions AS
+          SELECT thread_id, status, active_turn_id, provider_instance_id
+            FROM projection_thread_sessions
+          UNION ALL
+          SELECT thread_id, 'idle', NULL, '${FALLBACK.instanceId}'
+            FROM projection_threads
+            WHERE thread_id NOT IN (SELECT thread_id FROM projection_thread_sessions)
+      `);
+      yield* hit();
+      yield* sql`INSERT INTO personal_tasks (
+        task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+        depth, max_depth, max_children, error_category, available_at, created_at, updated_at, thread_id
+      ) VALUES ('idle-task', 'idle-task', ${BOT}, 't', 'o', 'rate_limited', 'user', 'idle-task',
+        0, 2, 5, 'rate_limited', ${isoAt(RESET + 3_600_000)}, ${isoAt(NOW)}, ${isoAt(NOW)}, ${CHAT})`;
+
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 3 }])),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      const at = RESET + FALLBACK_SWITCH_BACK_GRACE_MS + 1000;
+      yield* TestClock.setTime(at);
+      yield* service.sweep;
+
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeUndefined();
+      expect(
+        yield* sql`SELECT available_at FROM personal_tasks WHERE task_id = 'idle-task'`,
+      ).toEqual([{ available_at: isoAt(at) }]);
+    }).pipe(Effect.provide(makeLayer(harness, {}, {}, V2_SHAPED_RELATIONS)));
   },
 );

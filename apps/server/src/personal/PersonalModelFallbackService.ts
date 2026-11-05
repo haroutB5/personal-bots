@@ -72,6 +72,7 @@ import {
   PERSONAL_NOTICE_MESSAGE_ID_PREFIX,
   providerLabel,
 } from "./personalChatResumePolicy.ts";
+import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
 
 /**
  * Usage-limit model fallback (1.65.0) and the DeepSeek peak-hours switch
@@ -215,6 +216,7 @@ export const make = Effect.gen(function* () {
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const sql = yield* SqlClient.SqlClient;
+  const rel = yield* PersonalProjectionRelations;
   const crypto = yield* Crypto.Crypto;
 
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
@@ -543,7 +545,7 @@ export const make = Effect.gen(function* () {
     sql<{ readonly busy: number }>`
       SELECT 1 AS "busy"
       FROM personal_bot_threads t
-      JOIN projection_thread_sessions s ON s.thread_id = t.thread_id
+      JOIN ${sql.unsafe(rel.sessions)} s ON s.thread_id = t.thread_id
       WHERE t.bot_id = ${botId} AND s.status IN ('running', 'starting')
       UNION ALL
       SELECT 1 AS "busy" FROM personal_tasks WHERE bot_id = ${botId} AND status = 'running'
@@ -554,7 +556,7 @@ export const make = Effect.gen(function* () {
   const threadIsBusy = (threadId: string) =>
     sql<{ readonly busy: number }>`
       SELECT 1 AS "busy"
-      FROM projection_thread_sessions
+      FROM ${sql.unsafe(rel.sessions)}
       WHERE thread_id = ${threadId} AND status IN ('running', 'starting')
       LIMIT 1
     `.pipe(Effect.map((rows) => rows.length > 0));
@@ -563,7 +565,7 @@ export const make = Effect.gen(function* () {
   const sessionInstanceOf = (threadId: string) =>
     sql<{ readonly instanceId: string | null }>`
       SELECT provider_instance_id AS "instanceId"
-      FROM projection_thread_sessions
+      FROM ${sql.unsafe(rel.sessions)}
       WHERE thread_id = ${threadId}
       LIMIT 1
     `.pipe(Effect.map((rows) => rows[0]?.instanceId ?? null));
@@ -623,7 +625,7 @@ export const make = Effect.gen(function* () {
           WHERE bot_id = ${state.botId} AND status = 'rate_limited'
             AND (available_at IS NULL OR available_at > ${iso(now)})
             AND NOT EXISTS (
-              SELECT 1 FROM projection_thread_sessions s WHERE s.thread_id = personal_tasks.thread_id
+              SELECT 1 FROM ${sql.unsafe(rel.sessions)} s WHERE s.thread_id = personal_tasks.thread_id
                 AND s.provider_instance_id IS NOT NULL
                 AND s.provider_instance_id NOT IN (${state.fromInstanceId}, ${state.fallbackModel.instanceId})
             )
@@ -633,7 +635,7 @@ export const make = Effect.gen(function* () {
           WHERE status = 'scheduled' AND resume_at > ${iso(now)}
             AND thread_id IN (SELECT thread_id FROM personal_bot_threads WHERE bot_id = ${state.botId})
             AND NOT EXISTS (
-              SELECT 1 FROM projection_thread_sessions s WHERE s.thread_id = personal_chat_resumes.thread_id
+              SELECT 1 FROM ${sql.unsafe(rel.sessions)} s WHERE s.thread_id = personal_chat_resumes.thread_id
                 AND s.provider_instance_id IS NOT NULL
                 AND s.provider_instance_id NOT IN (${state.fromInstanceId}, ${state.fallbackModel.instanceId})
             )
