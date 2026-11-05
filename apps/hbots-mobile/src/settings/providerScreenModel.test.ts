@@ -65,7 +65,7 @@ describe("providerScreenModel", () => {
       { slug: "b", name: "B" },
       { slug: "c", name: "C" },
       { slug: "d", name: "D" },
-    ] as ServerProvider["models"];
+    ] as unknown as ServerProvider["models"];
     expect(modelsShown(models, false).map((entry) => entry.slug)).toEqual(["a", "b", "c"]);
     expect(modelsShown(models, true)).toHaveLength(4);
   });
@@ -110,7 +110,7 @@ describe("instanceConfigOf", () => {
         providers: { claudeAgent: { enabled: true, approvalMode: "auto" } },
         providerInstances: {},
       } as never,
-      defaultInstanceIdForDriver("claudeAgent"),
+      defaultInstanceIdForDriver("claudeAgent" as never),
       "claudeAgent",
     );
     expect(legacy?.enabled).toBe(true);

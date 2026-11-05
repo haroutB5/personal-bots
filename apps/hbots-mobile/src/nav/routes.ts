@@ -32,6 +32,10 @@ export type Route =
   | { readonly kind: "settingsProvider"; readonly instanceId: string }
   | { readonly kind: "settingsProviderCatalog"; readonly catalogId: string }
   | { readonly kind: "thisPhone" }
+  | { readonly kind: "memory" }
+  | { readonly kind: "passwords" }
+  | { readonly kind: "apiKeys" }
+  | { readonly kind: "connections" }
   | { readonly kind: "stop" };
 
 export interface NavState {
@@ -166,6 +170,10 @@ export function parseDeepLink(raw: string): NavState | null {
       if (first === "notifications") {
         return { stack: [BOTS, settings, { kind: "settingsNotifications" }] };
       }
+      if (first === "memory") return { stack: [BOTS, settings, { kind: "memory" }] };
+      if (first === "passwords") return { stack: [BOTS, settings, { kind: "passwords" }] };
+      if (first === "api-keys") return { stack: [BOTS, settings, { kind: "apiKeys" }] };
+      if (first === "connections") return { stack: [BOTS, settings, { kind: "connections" }] };
       if (first === "providers") {
         if (second === "add") {
           return { stack: [BOTS, settings, { kind: "settingsProvidersAdd" }] };

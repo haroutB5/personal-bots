@@ -164,9 +164,67 @@ const A14_ITEMS = [
   "rpc:personalBotsSetProfile",
 ];
 
+const A15_ITEMS = [
+  "screen:routes/_personal.bots_.settings_.api-keys.tsx#bots-settings-api-keys",
+  "screen:routes/_personal.bots_.settings_.connections.tsx#bots-settings-connections",
+  "screen:routes/_personal.bots_.settings_.memory.tsx#bots-settings-memory",
+  "screen:routes/_personal.bots_.settings_.passwords.tsx#bots-settings-passwords",
+  "action:MemoryScreen.tsx#select-memories",
+  "action:PasswordsScreen.tsx#select-logins",
+  "action:MemoryScreen.tsx#long-press",
+  "action:PasswordsScreen.tsx#long-press",
+  "setting:ApiKeysScreen.tsx#name",
+  "setting:ApiKeysScreen.tsx#label-optional",
+  "setting:ApiKeysScreen.tsx#value",
+  "setting:MemoryScreen.tsx#search-memory",
+  "setting:PasswordsScreen.tsx#label",
+  "setting:PasswordsScreen.tsx#website-origin",
+  "setting:PasswordsScreen.tsx#username",
+  "setting:PasswordsScreen.tsx#password",
+  "setting:PersonalConnectionsScreen.tsx#field-with-a-data-driven-label-in-personalconnec",
+  "setting:PersonalConnectionsScreen.tsx#messages-a-day",
+  "rpc:personalMemoryList",
+  "rpc:personalMemoryRulesUsage",
+  "rpc:personalMemoryTurnContext",
+  "rpc:personalMemoryTidyLog",
+  "rpc:personalMemoryCards",
+  "rpc:personalMemoryDelete",
+  "rpc:personalMemoryFeedback",
+  "rpc:personalMemoryDeleteMany",
+  "rpc:personalMemoryRestore",
+  "rpc:personalMemoryGet",
+  "rpc:personalMemoryUndoNote",
+  "rpc:personalMemoryTidySetMode",
+  "rpc:personalMemoryTidyRun",
+  "rpc:personalMemoryTidyDecide",
+  "rpc:personalMemoryTidyUndo",
+  "rpc:personalConnectionsList",
+  "rpc:personalConnectionsConnect",
+  "rpc:personalConnectionsValidate",
+  "rpc:personalConnectionsDisable",
+  "rpc:personalConnectionsReconnect",
+  "rpc:personalConnectionsDisconnect",
+  "rpc:personalConnectionsRotate",
+  "rpc:personalConnectionsBrowserConnect",
+  "rpc:personalConnectionsSetSettings",
+  "rpc:personalConnectionsImportProbe",
+  "rpc:personalConnectionsImportAdopt",
+  "rpc:personalLoginsList",
+  "rpc:personalLoginsCreate",
+  "rpc:personalLoginsUpdate",
+  "rpc:personalLoginsDelete",
+  "rpc:personalLoginsDeleteMany",
+  "rpc:personalLoginsSetSensitive",
+  "rpc:personalSecretsList",
+  "rpc:personalSecretsCreate",
+  "rpc:personalSecretsSetSharing",
+  "rpc:personalSecretsSetMode",
+  "rpc:personalSecretsDelete",
+];
+
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10", "A11", "A14"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10", "A11", "A14", "A15"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
@@ -187,5 +245,9 @@ describe("Android parity ratchet", () => {
 
   it("claims every A14 item, including the provider screens, sheets and settings RPCs", () => {
     for (const item of A14_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims every A15 item, including the four screens, selection actions and credential RPCs", () => {
+    for (const item of A15_ITEMS) expect(DONE_ITEMS).toContain(item);
   });
 });

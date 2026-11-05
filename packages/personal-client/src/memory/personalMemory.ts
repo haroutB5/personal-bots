@@ -68,6 +68,25 @@ export function createPersonalMemoryClient<R, ER, P>(
     staleTimeMs: 10_000,
   });
 
+  const personalMemoryTurnContext = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-memory:turn-context",
+    tag: WS_METHODS.personalMemoryTurnContext,
+    staleTimeMs: 30_000,
+  });
+
+  const personalMemoryCards = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-memory:cards",
+    tag: WS_METHODS.personalMemoryCards,
+    staleTimeMs: 3_000,
+    refreshIntervalMs: 6_000,
+  });
+
+  const personalMemoryEntry = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-memory:get",
+    tag: WS_METHODS.personalMemoryGet,
+    staleTimeMs: 30_000,
+  });
+
   const refreshTidyLog = (
     target: { readonly environmentId: EnvironmentId },
     registry: { refresh: (atom: ReturnType<typeof personalMemoryTidyLog>) => void },
@@ -93,6 +112,12 @@ export function createPersonalMemoryClient<R, ER, P>(
   const personalMemoryDeleteMany = createEnvironmentRpcCommand(runtime, {
     label: "personal-memory:delete-many",
     tag: WS_METHODS.personalMemoryDeleteMany,
+    onSuccess: refreshMemory,
+  });
+
+  const personalMemoryUndoNote = createEnvironmentRpcCommand(runtime, {
+    label: "personal-memory:undo-note",
+    tag: WS_METHODS.personalMemoryUndoNote,
     onSuccess: refreshMemory,
   });
 
@@ -172,6 +197,44 @@ export function createPersonalMemoryClient<R, ER, P>(
     return client.useEnvironmentQuery(atom);
   }
 
+  function usePersonalMemoryTurnContext(
+    environmentId: EnvironmentId | null,
+    turn: { readonly threadId: string; readonly messageId: string } | null,
+  ) {
+    const threadId = turn?.threadId ?? null;
+    const messageId = turn?.messageId ?? null;
+    const atom = useMemo(
+      () =>
+        environmentId === null || threadId === null || messageId === null
+          ? null
+          : personalMemoryTurnContext({ environmentId, input: { threadId, messageId } }),
+      [environmentId, threadId, messageId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalMemoryCards(environmentId: EnvironmentId | null, threadId: string | null) {
+    const atom = useMemo(
+      () =>
+        environmentId === null || threadId === null
+          ? null
+          : personalMemoryCards({ environmentId, input: { threadId } }),
+      [environmentId, threadId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalMemoryEntry(environmentId: EnvironmentId | null, memoryId: string | null) {
+    const atom = useMemo(
+      () =>
+        environmentId === null || memoryId === null
+          ? null
+          : personalMemoryEntry({ environmentId, input: { memoryId: memoryId as never } }),
+      [environmentId, memoryId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   function usePersonalMemoryTidyLog(
     environmentId: EnvironmentId | null,
   ): EnvironmentQueryView<PersonalMemoryTidyLogResult> {
@@ -193,6 +256,7 @@ export function createPersonalMemoryClient<R, ER, P>(
     personalMemoryDelete,
     personalMemoryFeedback,
     personalMemoryDeleteMany,
+    personalMemoryUndoNote,
     personalMemoryRestore,
     personalMemoryTidySetMode,
     personalMemoryTidyRun,
@@ -201,6 +265,9 @@ export function createPersonalMemoryClient<R, ER, P>(
     usePersonalMemoryList,
     usePersonalMemoryRulesUsage,
     usePersonalMemoryTidyLog,
+    usePersonalMemoryTurnContext,
+    usePersonalMemoryCards,
+    usePersonalMemoryEntry,
   };
 }
 

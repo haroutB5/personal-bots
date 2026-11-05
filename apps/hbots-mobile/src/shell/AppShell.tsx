@@ -37,6 +37,10 @@ import { NotificationsScreen } from "../settings/NotificationsScreen";
 import { AddProviderScreen } from "../settings/AddProviderScreen";
 import { CatalogProviderScreen } from "../settings/CatalogProviderScreen";
 import { ProviderScreen } from "../settings/ProviderScreen";
+import { MemoryScreen } from "../settings/MemoryScreen";
+import { PasswordsScreen } from "../settings/PasswordsScreen";
+import { ApiKeysScreen } from "../settings/ApiKeysScreen";
+import { ConnectionsScreen } from "../settings/ConnectionsScreen";
 
 export interface AppShellProps {
   readonly native: NativePersonal;
@@ -68,6 +72,10 @@ export type RootStackParamList = {
   SettingsProvider: { readonly instanceId: string };
   SettingsProviderCatalog: { readonly catalogId: string };
   ThisPhone: undefined;
+  Memory: undefined;
+  Passwords: undefined;
+  ApiKeys: undefined;
+  Connections: undefined;
   Stop: undefined;
 };
 
@@ -184,6 +192,14 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "SettingsProviderCatalog", params: { catalogId: route.catalogId } };
     case "thisPhone":
       return { name: "ThisPhone" };
+    case "memory":
+      return { name: "Memory" };
+    case "passwords":
+      return { name: "Passwords" };
+    case "apiKeys":
+      return { name: "ApiKeys" };
+    case "connections":
+      return { name: "Connections" };
     case "stop":
       return { name: "Stop" };
   }
@@ -369,10 +385,10 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               onOpenNewBot={() => navigation.navigate("BotNew")}
               onOpenRemovedBots={() => navigation.navigate("TeamRemoved")}
               onOpenNotifications={() => navigation.navigate("SettingsNotifications")}
-              onOpenMemory={() => undefined}
-              onOpenPasswords={() => undefined}
-              onOpenApiKeys={() => undefined}
-              onOpenConnections={() => undefined}
+              onOpenMemory={() => navigation.navigate("Memory")}
+              onOpenPasswords={() => navigation.navigate("Passwords")}
+              onOpenApiKeys={() => navigation.navigate("ApiKeys")}
+              onOpenConnections={() => navigation.navigate("Connections")}
               onOpenRoutines={() => undefined}
               onOpenProvider={(instanceId) =>
                 navigation.navigate("SettingsProvider", { instanceId })
@@ -417,6 +433,26 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               instanceId={route.params.instanceId}
               onBack={() => navigation.goBack()}
             />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Memory">
+          {({ navigation }) => (
+            <MemoryScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Passwords">
+          {({ navigation }) => (
+            <PasswordsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ApiKeys">
+          {({ navigation }) => (
+            <ApiKeysScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Connections">
+          {({ navigation }) => (
+            <ConnectionsScreen native={props.native} onBack={() => navigation.goBack()} />
           )}
         </Stack.Screen>
         <Stack.Screen name="ThisPhone">

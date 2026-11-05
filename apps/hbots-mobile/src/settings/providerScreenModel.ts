@@ -128,14 +128,15 @@ export function providerSourceLine(snapshot: ServerProvider): string {
 export function instanceConfigOf(
   settings: Pick<ServerSettings, "providers" | "providerInstances"> | null | undefined,
   instanceId: string,
-  driver: ServerProvider["driver"],
+  driver: string,
 ): ProviderInstanceConfig | null {
   if (settings === null || settings === undefined) return null;
   const explicit = (
     settings.providerInstances as Record<string, ProviderInstanceConfig> | undefined
   )?.[instanceId];
   if (explicit !== undefined) return explicit;
-  if (instanceId !== String(defaultInstanceIdForDriver(driver))) return null;
+  if (instanceId !== String(defaultInstanceIdForDriver(driver as ServerProvider["driver"])))
+    return null;
   const legacy = (settings.providers as Record<string, unknown>)[driver];
   if (legacy === null || typeof legacy !== "object") return null;
   const { enabled, ...config } = legacy as { enabled?: boolean } & Record<string, unknown>;
