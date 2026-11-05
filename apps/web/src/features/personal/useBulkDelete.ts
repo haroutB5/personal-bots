@@ -16,12 +16,18 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
   bulkDeleteConfirmLabel,
+  bulkDeleteFilesConfirmMessage,
+  bulkDeleteRoutinesConfirmMessage,
   bulkResultNotice,
+  FILE_NOUN,
+  ROUTINE_NOUN,
   type BulkNoun,
   type BulkVerb,
   chunkIds,
   countOf,
   DELETE_VERB,
+  PAUSE_VERB,
+  RESUME_VERB,
 } from "./bulkSelection";
 import { commandFailureMessage } from "./commandFeedback";
 import {
@@ -32,31 +38,15 @@ import {
 import { personalFilesDeleteMany } from "./usePersonalBots";
 import { personalLoginsDeleteMany } from "./usePersonalLogins";
 
-export const FILE_NOUN: BulkNoun = { one: "file", many: "files" };
+export { bulkDeleteFilesConfirmMessage, bulkDeleteRoutinesConfirmMessage, FILE_NOUN, ROUTINE_NOUN };
 export const MEMORY_NOUN: BulkNoun = { one: "memory", many: "memories" };
-export const ROUTINE_NOUN: BulkNoun = { one: "routine", many: "routines" };
 export const LOGIN_NOUN: BulkNoun = { one: "saved login", many: "saved logins" };
-
-const PAUSE_VERB: BulkVerb = { done: "Paused", failed: "paused" };
-const RESUME_VERB: BulkVerb = { done: "Resumed", failed: "resumed" };
-
-/** The one confirm a bulk file delete asks, naming the count. */
-export function bulkDeleteFilesConfirmMessage(count: number): string {
-  return `Delete ${countOf(count, FILE_NOUN)}?\nThey'll disappear from your chats and can't be undone.`;
-}
 
 /** The one confirm a bulk memory delete asks, naming the count. */
 export function bulkDeleteMemoriesConfirmMessage(count: number): string {
   return `Delete ${countOf(count, MEMORY_NOUN)}?\nBots stop receiving ${
     count === 1 ? "it" : "them"
   }. Chats where ${count === 1 ? "it was" : "they were"} mentioned still contain the text.`;
-}
-
-/** The one confirm a bulk routine delete asks, naming the count (as the single delete words it). */
-export function bulkDeleteRoutinesConfirmMessage(count: number): string {
-  return `Delete ${countOf(count, ROUTINE_NOUN)}?\nTasks ${
-    count === 1 ? "it" : "they"
-  } already started stay in Tasks.`;
 }
 
 /** The one confirm a bulk saved-login delete asks, naming the count. */

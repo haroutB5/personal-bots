@@ -1,8 +1,8 @@
 import { PersonalTaskId, type PersonalTask } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeTaskLists } from "./taskPresentation";
-import { RELATED_TASK_IDS_PER_REQUEST, relatedTasksInBatches } from "./relatedTaskBatches";
+import { mergeTaskLists } from "../conversation/taskPresentation.ts";
+import { RELATED_TASK_IDS_PER_REQUEST, relatedTasksInBatches } from "./taskFeed.ts";
 
 const ids = (count: number) =>
   Array.from({ length: count }, (_, index) =>

@@ -23,8 +23,10 @@ import {
   notifyModeAllowed,
   notifyModeFromDraft,
   NOTIFY_MODES,
+  routineDraftIssues,
   routineNotifyMode,
   type RoutineDraft,
+  type RoutineDraftField,
   type RoutineScheduleKind,
   sameSchedule,
   scheduleFromDraft,
@@ -38,7 +40,7 @@ import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots
 const FIELD =
   "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] aria-invalid:border-[var(--personal-error)]";
 
-type RoutineField = "title" | "prompt" | "eventLabel";
+type RoutineField = RoutineDraftField;
 type RoutineFieldErrors = Partial<Record<RoutineField, string>>;
 const ROUTINE_FIELD_ORDER: ReadonlyArray<RoutineField> = ["title", "prompt", "eventLabel"];
 const ROUTINE_FIELD_IDS: Record<RoutineField, string> = {
@@ -133,13 +135,7 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
     // Each missing field says so under itself and the first one takes focus:
     // one generic line at the very bottom left the fields a screen and a half
     // above with nothing marking which was wrong.
-    const missing: RoutineFieldErrors = {
-      ...(draft.title.trim().length === 0 ? { title: "Give the routine a name." } : {}),
-      ...(draft.prompt.trim().length === 0 ? { prompt: "Say what the bot should do." } : {}),
-      ...(isEvent && draft.eventLabel.trim().length === 0
-        ? { eventLabel: "Name the event, for example 'PR merged'." }
-        : {}),
-    };
+    const missing: RoutineFieldErrors = routineDraftIssues(draft);
     setFieldErrors(missing);
     const firstMissing = ROUTINE_FIELD_ORDER.find((field) => missing[field] !== undefined);
     if (firstMissing !== undefined) {

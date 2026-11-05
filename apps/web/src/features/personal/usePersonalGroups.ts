@@ -17,7 +17,7 @@ import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
-import { feedStartsWith } from "./feedStartsWith";
+import { feedStartsWith } from "@hbots/personal-client/automation/taskFeed";
 import { groupRelayThreadIds } from "./groupModel";
 import { personalBotsList, personalBotsListInput } from "./usePersonalBots";
 
