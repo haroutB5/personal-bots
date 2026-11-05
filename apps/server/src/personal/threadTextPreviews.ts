@@ -22,7 +22,6 @@ import type {
   PersonalThreadFullTextResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import { projectActivityPayload } from "../orchestration/ActivityPayloadProjection.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
@@ -160,7 +159,6 @@ export function maybeApplyThreadTextPreviews(
 /** The whole text behind the previews `input` names, from the projection tables. */
 export const readThreadFullText = (input: PersonalThreadFullTextInput) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const engine = yield* PersonalEngine.PersonalEngine;
     const messageIds = input.messageIds ?? [];
     const activityIds = input.activityIds ?? [];
@@ -173,28 +171,14 @@ export const readThreadFullText = (input: PersonalThreadFullTextInput) =>
     const activityRows =
       activityIds.length === 0
         ? []
-        : yield* sql<{
-            readonly activityId: string;
-            readonly kind: string;
-            readonly payloadJson: string;
-          }>`
-            SELECT activity_id AS "activityId", kind, payload_json AS "payloadJson"
-            FROM projection_thread_activities
-            WHERE thread_id = ${input.threadId} AND ${sql.in("activity_id", activityIds)}
-          `;
-    const activities = activityRows.flatMap((row) => {
-      let payload: unknown;
-      try {
-        payload = JSON.parse(row.payloadJson);
-      } catch {
-        return [];
-      }
+        : yield* engine.activitiesByIds({ threadId: input.threadId, ids: activityIds });
+    const activities = activityRows.map((row) => {
       const projected = projectActivityPayload({
-        id: row.activityId,
+        id: row.id,
         kind: row.kind,
-        payload,
+        payload: row.payload,
       } as unknown as OrchestrationThreadActivity);
-      return [{ activityId: row.activityId, payload: projected.payload }];
+      return { activityId: row.id, payload: projected.payload };
     });
     return {
       messages: messages.map((message) => ({ messageId: message.id, text: message.text })),
