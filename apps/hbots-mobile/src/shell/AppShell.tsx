@@ -24,6 +24,7 @@ import { BotsScreen } from "./BotsScreen";
 import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
+import { FilesScreen } from "../files/FilesScreen";
 import { ChatScreen } from "../screens/ChatScreen";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
 import { RoutineDetailScreen } from "../tasks/RoutineDetailScreen";
@@ -411,7 +412,7 @@ function TabsWithBots({
         ) : tab === "computer" ? (
           <Placeholder title="Computer" body="The live computer view will show here." />
         ) : (
-          <Placeholder title="Files" body="Shared files will show here." />
+          <FilesScreen native={native} />
         )}
       </View>
       <BottomBar

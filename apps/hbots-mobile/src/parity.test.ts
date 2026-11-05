@@ -64,9 +64,21 @@ const A12_ITEMS = [
   "rpc:personalRoutinesRegenerateHook",
 ];
 
+const A13_ITEMS = [
+  "screen:routes/_personal.files.tsx#files",
+  "sheet:FilePreviewSheet.tsx#filepreviewsheet",
+  "action:FilesScreen.tsx#select-files",
+  "action:FilePreviewSheet.tsx#drag-a-sheet-down-to-close",
+  "action:FilesScreen.tsx#long-press",
+  "action:FilesScreen.tsx#swipe-to-delete",
+  "rpc:personalBotsListFiles",
+  "rpc:personalFilesDelete",
+  "rpc:personalFilesDeleteMany",
+];
+
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A12"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A12", "A13"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
@@ -75,5 +87,9 @@ describe("Android parity ratchet", () => {
 
   it("claims every A12 item, including the five task and routine screens", () => {
     for (const item of A12_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims every A13 item, including the Files sheet and its three actions", () => {
+    for (const item of A13_ITEMS) expect(DONE_ITEMS).toContain(item);
   });
 });

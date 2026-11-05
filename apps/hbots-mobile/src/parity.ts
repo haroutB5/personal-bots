@@ -1,4 +1,4 @@
-export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A12"];
+export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A12", "A13"];
 export const DONE_ITEMS: readonly string[] = [
   "rpc:personalBotsList",
   "screen:routes/_personal.tsx#personal",
@@ -97,4 +97,15 @@ export const DONE_ITEMS: readonly string[] = [
   "rpc:personalRoutinesSetEnabledMany",
   "rpc:personalRoutinesRunNow",
   "rpc:personalRoutinesRegenerateHook",
+
+  // A13: the Files tab, its sheet and its whole-file actions.
+  "screen:routes/_personal.files.tsx#files",
+  "sheet:FilePreviewSheet.tsx#filepreviewsheet",
+  "action:FilesScreen.tsx#select-files",
+  "action:FilePreviewSheet.tsx#drag-a-sheet-down-to-close",
+  "action:FilesScreen.tsx#long-press",
+  "action:FilesScreen.tsx#swipe-to-delete",
+  "rpc:personalBotsListFiles",
+  "rpc:personalFilesDelete",
+  "rpc:personalFilesDeleteMany",
 ];
