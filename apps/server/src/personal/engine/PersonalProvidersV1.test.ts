@@ -8,7 +8,9 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { ProviderCommandReactor } from "../../orchestration/Services/ProviderCommandReactor.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
@@ -45,20 +47,65 @@ const instance = {
   driverKind: "claudeAgent",
 } as unknown as ProviderInstance;
 
-const makeHarness = (options?: { stopFails?: boolean }) => {
+const runtimeEvent = (type: string, threadId: string, providerInstanceId?: string) =>
+  ({
+    type,
+    threadId,
+    ...(providerInstanceId === undefined ? {} : { providerInstanceId }),
+  }) as never;
+
+const makeHarness = (options?: { stopFails?: boolean; smokeFails?: boolean }) => {
   const calls: {
     refresh: Array<[ProviderInstanceId, { refreshLatestVersion?: boolean } | undefined]>;
     invalidated: Array<ProviderInstanceId>;
     stopped: Array<{ threadId: string; terminateProcesses?: boolean }>;
     prewarmed: Array<{ threadId: string; modelSelection: ModelSelection }>;
-  } = { refresh: [], invalidated: [], stopped: [], prewarmed: [] };
+    smokeStates: Array<{ instanceId: ProviderInstanceId; action: string; state: unknown }>;
+    smokeModels: Array<string>;
+  } = {
+    refresh: [],
+    invalidated: [],
+    stopped: [],
+    prewarmed: [],
+    smokeStates: [],
+    smokeModels: [],
+  };
 
+  const fullInstance = {
+    ...instance,
+    textGeneration: {
+      generateStructured: (input: { prompt: string }) => Effect.succeed(input.prompt),
+    },
+    smokeTest: (input: { model: string }) =>
+      options?.smokeFails === true
+        ? Effect.fail(new FakeStopError({ detail: "smoke refused" }))
+        : Effect.sync(() => {
+            calls.smokeModels.push(input.model);
+          }),
+  } as unknown as ProviderInstance;
+  const bareInstance = { ...instance, textGeneration: {} } as unknown as ProviderInstance;
   const instances = {
     getInstance: (instanceId: ProviderInstanceId) =>
-      Effect.succeed(instanceId === INSTANCE_ID ? instance : undefined),
+      Effect.succeed(
+        instanceId === INSTANCE_ID
+          ? fullInstance
+          : (instanceId as string) === "bare"
+            ? bareInstance
+            : undefined,
+      ),
   };
   const registry = {
     getProviders: Effect.succeed([serverProvider]),
+    streamChanges: Stream.make([serverProvider]),
+    setProviderMaintenanceActionState: (input: {
+      instanceId: ProviderInstanceId;
+      action: string;
+      state: unknown;
+    }) =>
+      Effect.sync(() => {
+        calls.smokeStates.push(input);
+        return [serverProvider];
+      }),
     refreshInstance: (
       instanceId: ProviderInstanceId,
       refreshOptions?: { refreshLatestVersion?: boolean },
@@ -73,6 +120,14 @@ const makeHarness = (options?: { stopFails?: boolean }) => {
       }),
   };
   const providerService = {
+    streamEvents: Stream.fromIterable([
+      runtimeEvent("session.started", "t1", "claudeAgent"),
+      runtimeEvent("session.started", "t2"),
+      runtimeEvent("content.delta", "t1"),
+      runtimeEvent("turn.completed", "t1"),
+      runtimeEvent("turn.aborted", "t2"),
+      runtimeEvent("session.exited", "t1"),
+    ]),
     listSessions: () => Effect.succeed([providerSession]),
     stopSession: (input: { threadId: string; terminateProcesses?: boolean }) =>
       options?.stopFails === true
@@ -115,7 +170,7 @@ describe("PersonalProvidersV1", () => {
       const found = yield* withProviders(harness, (providers) =>
         providers.getInstance(INSTANCE_ID),
       );
-      expect(found).toBe(instance);
+      expect(found).toBeDefined();
 
       const missing = yield* withProviders(harness, (providers) =>
         providers.getInstance("other" as ProviderInstanceId),
@@ -197,6 +252,86 @@ describe("PersonalProvidersV1", () => {
         { threadId: "thread-1", modelSelection: MODEL },
         { threadId: "thread-1", modelSelection: MODEL },
       ]);
+    });
+  });
+
+  it.effect("streamChanges emits the registry snapshots", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const changes = yield* withProviders(harness, (providers) =>
+        Stream.runCollect(providers.streamChanges),
+      );
+      expect(Array.from(changes)).toEqual([[serverProvider]]);
+    });
+  });
+
+  it.effect("setSmokeCheck writes the smokeCheck maintenance state", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* withProviders(harness, (providers) => providers.setSmokeCheck(INSTANCE_ID, null));
+      expect(harness.calls.smokeStates).toEqual([
+        { instanceId: INSTANCE_ID, action: "smokeCheck", state: null },
+      ]);
+    });
+  });
+
+  it.effect("sessionEvents keeps only started, exited and settled facts", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const events = yield* withProviders(harness, (providers) =>
+        Stream.runCollect(providers.sessionEvents),
+      );
+      expect(Array.from(events)).toEqual([
+        { _tag: "SessionStarted", threadId: "t1", instanceId: "claudeAgent" },
+        { _tag: "SessionStarted", threadId: "t2", instanceId: null },
+        { _tag: "TurnSettled", threadId: "t1" },
+        { _tag: "TurnSettled", threadId: "t2" },
+        { _tag: "SessionExited", threadId: "t1" },
+      ]);
+    });
+  });
+
+  it.effect("structuredGenerator is none without the instance or the capability", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const found = yield* withProviders(harness, (providers) =>
+        providers.structuredGenerator(INSTANCE_ID),
+      );
+      expect(Option.isSome(found)).toBe(true);
+      const bare = yield* withProviders(harness, (providers) =>
+        providers.structuredGenerator("bare" as ProviderInstanceId),
+      );
+      expect(Option.isNone(bare)).toBe(true);
+      const missing = yield* withProviders(harness, (providers) =>
+        providers.structuredGenerator("other" as ProviderInstanceId),
+      );
+      expect(Option.isNone(missing)).toBe(true);
+    });
+  });
+
+  it.effect("smokeTestFor runs the instance smoke test and maps its failure", () => {
+    const harness = makeHarness();
+    const failing = makeHarness({ smokeFails: true });
+    return Effect.gen(function* () {
+      const smoke = yield* withProviders(harness, (providers) =>
+        providers.smokeTestFor(INSTANCE_ID),
+      );
+      expect(Option.isSome(smoke)).toBe(true);
+      if (Option.isSome(smoke)) yield* smoke.value({ model: "m1" });
+      expect(harness.calls.smokeModels).toEqual(["m1"]);
+
+      const failingSmoke = yield* withProviders(failing, (providers) =>
+        providers.smokeTestFor(INSTANCE_ID),
+      );
+      const error = Option.isSome(failingSmoke)
+        ? yield* failingSmoke.value({ model: "m1" }).pipe(Effect.flip)
+        : undefined;
+      expect(error).toBeInstanceOf(PersonalProvidersError);
+      expect(error?.detail).toBe("smoke refused");
+      const none = yield* withProviders(harness, (providers) =>
+        providers.smokeTestFor("bare" as ProviderInstanceId),
+      );
+      expect(Option.isNone(none)).toBe(true);
     });
   });
 });

@@ -96,6 +96,7 @@ import { PersonalBrowserArchiveReactorLive } from "./orchestration/Layers/Person
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
+import { PersonalProvidersV1ChainLive } from "./personal/engine/PersonalProvidersV1Live.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
@@ -692,7 +693,10 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalGroupService.layerLive),
   Layer.provideMerge(PersonalBotsSeedLive),
   Layer.provideMerge(PersonalBotService.layer),
-  Layer.provideMerge(PersonalBotRepository.layer),
+  // The provider port rides the repository step: the chain is at its step limit.
+  Layer.provideMerge(
+    PersonalBotRepository.layer.pipe(Layer.provideMerge(PersonalProvidersV1ChainLive)),
+  ),
 );
 
 // The personal group with the voice-call workers provided to it, as ONE step:

@@ -4,7 +4,6 @@
  * @module personal/engine/PersonalProvidersV1Live
  */
 import type {
-  ModelSelection,
   ProviderInstanceId,
   ProviderSession,
   ServerProvider,
@@ -24,7 +23,7 @@ import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import {
   PersonalProviders,
   type PersonalGenerateStructured,
-  type PersonalPrewarmOutcome,
+  type PersonalProvidersShape,
   type PersonalSessionEvent,
   type PersonalSmokeTest,
 } from "./PersonalProviders.ts";
@@ -33,13 +32,13 @@ import { failureDetail, PersonalProvidersError } from "./errors.ts";
 const providersError = (operation: string) => (failure: unknown) =>
   new PersonalProvidersError({ operation, detail: failureDetail(failure) });
 
-export const PersonalProvidersV1Live = Layer.effect(
-  PersonalProviders,
+type Prewarm = PersonalProvidersShape["prewarm"];
+
+const makeProviders = (prewarm: Prewarm) =>
   Effect.gen(function* () {
     const instances = yield* ProviderInstanceRegistry;
     const registry = yield* ProviderRegistry;
     const providerService = yield* ProviderService;
-    const reactor = yield* ProviderCommandReactor;
 
     const getInstance = (
       instanceId: ProviderInstanceId,
@@ -81,12 +80,6 @@ export const PersonalProvidersV1Live = Layer.effect(
             : { terminateProcesses: input.terminateProcesses }),
         })
         .pipe(Effect.mapError(providersError("stopSession")));
-
-    const prewarm = (input: {
-      readonly threadId: ThreadId;
-      readonly modelSelection: ModelSelection;
-    }): Effect.Effect<PersonalPrewarmOutcome, PersonalProvidersError> =>
-      reactor.prewarmSession(input).pipe(Effect.mapError(providersError("prewarm")));
 
     const streamChanges = registry.streamChanges;
 
@@ -171,5 +164,32 @@ export const PersonalProvidersV1Live = Layer.effect(
       smokeTestFor,
       prewarm,
     });
+  });
+
+/** The full port. It needs the command reactor, so it sits at the routes level. */
+export const PersonalProvidersV1Live = Layer.effect(
+  PersonalProviders,
+  Effect.gen(function* () {
+    const reactor = yield* ProviderCommandReactor;
+    return yield* makeProviders((input) =>
+      reactor.prewarmSession(input).pipe(Effect.mapError(providersError("prewarm"))),
+    );
   }),
+);
+
+/**
+ * The port for the personal service chain, which is built before the command
+ * reactor exists. Only the chat prewarm needs the reactor, and the chain's
+ * services never prewarm, so here it fails with a typed error.
+ */
+export const PersonalProvidersV1ChainLive = Layer.effect(
+  PersonalProviders,
+  makeProviders(() =>
+    Effect.fail(
+      new PersonalProvidersError({
+        operation: "prewarm",
+        detail: "the personal service chain has no command reactor",
+      }),
+    ),
+  ),
 );

@@ -53,9 +53,8 @@ import * as NodeOS from "node:os";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import { DSH_PINNED_VERSION } from "../deepseek/dshPinnedVersion.ts";
-import { runClaudeCommand } from "../../provider/Layers/ClaudeProvider.ts";
-import { parseGenericCliVersion } from "../../provider/providerSnapshot.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
+import { claudeCliVersion } from "./claudeCliVersion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -732,7 +731,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const providers = yield* ProviderRegistry;
+  const providers = yield* PersonalProviders;
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const bots = yield* PersonalBotService.PersonalBotService;
   const routines = yield* PersonalRoutineService.PersonalRoutineService;
@@ -759,26 +758,16 @@ export const make = Effect.gen(function* () {
     pinnedDsh: DSH_PINNED_VERSION,
     fetchText,
     installedClaudeCode: installedVersionWithFallback(
-      providers.getProviders.pipe(
+      providers.listProviders().pipe(
         Effect.map(
           (list) => list.find((provider) => provider.driver === "claudeAgent")?.version ?? null,
         ),
         Effect.catchCause(() => Effect.succeed(null)),
       ),
       serverSettings.getSettings.pipe(
-        Effect.flatMap((settings) =>
-          runClaudeCommand(settings.providers.claudeAgent, ["--version"]),
-        ),
+        Effect.flatMap((settings) => claudeCliVersion(settings.providers.claudeAgent)),
         Effect.timeoutOption(CLI_VERSION_TIMEOUT_MS),
-        Effect.map(
-          Option.match({
-            onNone: () => null,
-            onSome: (result) =>
-              result.code === 0
-                ? parseGenericCliVersion(`${result.stdout}\n${result.stderr}`)
-                : null,
-          }),
-        ),
+        Effect.map(Option.getOrNull),
         Effect.provide(cliContext),
         Effect.catchCause(() => Effect.succeed(null)),
       ),
