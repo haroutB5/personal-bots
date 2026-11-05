@@ -621,7 +621,7 @@ describe("the flusher", () => {
 describe("a lost confirmation on a new connection", () => {
   async function settle(): Promise<void> {
     for (let tick = 0; tick < 10; tick += 1) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
     }
   }
 
