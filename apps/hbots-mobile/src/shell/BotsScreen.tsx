@@ -42,6 +42,9 @@ import {
 } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
+import { GroupAvatarCluster } from "../groups/GroupAvatarCluster";
+import { groupChatsSections } from "../groups/groupScreenModel";
 import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
 import { BotActionsSheet } from "../sheets/BotActionsSheet";
 import { NewChatSheet } from "../sheets/NewChatSheet";
@@ -187,6 +190,58 @@ function BotRow({
   );
 }
 
+function GroupChatRow({
+  row,
+  bots,
+  onPress,
+}: {
+  readonly row: ReturnType<typeof groupChatsSections>["groups"][number];
+  readonly bots: ReadonlyArray<PersonalBot>;
+  readonly onPress: () => void;
+}) {
+  const byId = new Map(bots.map((bot) => [bot.botId as string, bot] as const));
+  const members = row.memberIds.flatMap((botId) => {
+    const bot = byId.get(botId);
+    return bot === undefined ? [] : [bot];
+  });
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${row.name}, ${row.subtitle}, ${row.statusLabel}`}
+      style={({ pressed }) => [styles.groupRow, pressed ? styles.groupRowPressed : null]}
+    >
+      <GroupAvatarCluster bots={members} memberCount={row.memberIds.length} size={40} />
+      <View style={styles.groupRowText}>
+        <View style={styles.groupRowTitleLine}>
+          <Text style={styles.groupRowName} numberOfLines={1}>
+            {row.name}
+          </Text>
+          <Text style={styles.groupRowTime}>{row.timeLabel}</Text>
+        </View>
+        <Text style={styles.groupRowPreview} numberOfLines={1}>
+          {row.preview}
+        </Text>
+        <View style={styles.groupRowStatusLine}>
+          <View
+            style={[
+              styles.groupStatusDot,
+              row.live
+                ? styles.groupStatusLive
+                : row.tone === "review"
+                  ? styles.groupStatusReview
+                  : null,
+            ]}
+          />
+          <Text style={styles.groupRowStatus} numberOfLines={1}>
+            {`${row.subtitle} · ${row.statusLabel}`}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 function SnapshotRow({
   row,
   now,
@@ -252,6 +307,8 @@ export function BotsScreen({
   onOpenChat,
   onOpenBot,
   onOpenChats,
+  onOpenGroup,
+  onNewGroup,
   onOpenTeam,
   onOpenSettings,
 }: {
@@ -261,12 +318,16 @@ export function BotsScreen({
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenBot: (botId: string) => void;
   readonly onOpenChats: (botId: string) => void;
+  readonly onOpenGroup: (groupId: string) => void;
+  readonly onNewGroup: () => void;
   readonly onOpenTeam: () => void;
   readonly onOpenSettings: () => void;
 }) {
   const environmentId = native.environmentId;
   const list = native.bots.usePersonalBotsList(environmentId);
   const routines = native.bots.usePersonalRoutinesList(environmentId);
+  const groupsList = native.groups.usePersonalGroupsList(environmentId);
+  const { feed: groupsFeed } = native.groups.usePersonalGroupsFeed(environmentId);
   const providers = native.useProviders();
   const shellState = useAtomValue(native.shell.stateValueAtom(environmentId));
   const connection = native.useConnectionState();
@@ -274,6 +335,16 @@ export function BotsScreen({
     readChatsSnapshot(native.client.ports.kv, environmentId),
   );
   const [now, setNow] = useState(() => Date.now());
+  const groupSections = useMemo(() => {
+    const merged = mergePersonalGroups(groupsList.data, groupsFeed);
+    return groupChatsSections({
+      groups: merged.groups,
+      archivedGroups: merged.archivedGroups,
+      rounds: merged.rounds,
+      bots: list.data?.bots ?? [],
+      nowMs: now,
+    });
+  }, [groupsFeed, groupsList.data, list.data?.bots, now]);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [actionBot, setActionBot] = useState<BotSummary | null>(null);
@@ -669,6 +740,43 @@ export function BotsScreen({
               maxFontSizeMultiplier={1.5}
               style={styles.searchInput}
             />
+          </View>
+        ) : null}
+
+        {groupSections.groups.length > 0 || groupSections.archived.length > 0 ? (
+          <View style={styles.groupsSection}>
+            <View style={styles.groupsHeadingRow}>
+              <Text style={styles.groupsHeading}>Groups</Text>
+              <Pressable
+                onPress={onNewGroup}
+                accessibilityRole="button"
+                accessibilityLabel="New group"
+                style={styles.groupsNewButton}
+              >
+                <Text style={styles.groupsNewText}>New</Text>
+              </Pressable>
+            </View>
+            {groupSections.groups.map((row) => (
+              <GroupChatRow
+                key={row.groupId}
+                row={row}
+                bots={list.data?.bots ?? []}
+                onPress={() => onOpenGroup(row.groupId)}
+              />
+            ))}
+            {groupSections.archived.length > 0 ? (
+              <>
+                <Text style={styles.groupsArchivedLabel}>Archived groups</Text>
+                {groupSections.archived.map((row) => (
+                  <GroupChatRow
+                    key={row.groupId}
+                    row={row}
+                    bots={list.data?.bots ?? []}
+                    onPress={() => onOpenGroup(row.groupId)}
+                  />
+                ))}
+              </>
+            ) : null}
           </View>
         ) : null}
 
@@ -1091,4 +1199,53 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.fillMuted,
     marginVertical: 4,
   },
+  groupsSection: { marginTop: 12, gap: 2 },
+  groupsHeadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
+  groupsHeading: {
+    color: tokens.sectionLabel,
+    fontSize: 13,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  groupsNewButton: {
+    minHeight: 32,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    justifyContent: "center",
+  },
+  groupsNewText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "600" },
+  groupsArchivedLabel: {
+    color: tokens.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
+    paddingHorizontal: 4,
+    paddingTop: 10,
+    paddingBottom: 2,
+  },
+  groupRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  groupRowPressed: { backgroundColor: tokens.fillMuted },
+  groupRowText: { flex: 1, minWidth: 0, gap: 1 },
+  groupRowTitleLine: { flexDirection: "row", alignItems: "baseline", gap: 8 },
+  groupRowName: { flex: 1, color: tokens.text, fontSize: 16, fontWeight: "600" },
+  groupRowTime: { color: tokens.textTertiary, fontSize: 12 },
+  groupRowPreview: { color: tokens.textPreview, fontSize: 14 },
+  groupRowStatusLine: { flexDirection: "row", alignItems: "center", gap: 6 },
+  groupStatusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: tokens.textTertiary },
+  groupStatusLive: { backgroundColor: tokens.working },
+  groupStatusReview: { backgroundColor: tokens.reviewText },
+  groupRowStatus: { color: tokens.textSecondary, fontSize: 13, flexShrink: 1 },
 });

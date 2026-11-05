@@ -12,6 +12,7 @@ import {
 import { replyQuoteForMessage } from "@hbots/personal-client/feed/messageReply";
 import { ownerVisibleText } from "@hbots/personal-client/feed/composerText";
 import { turnStartByAssistantItem } from "@hbots/personal-client/feed/contextUsed";
+import { groupSystemLabel } from "@hbots/personal-client/conversation/groupModel";
 import type { LatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import type { OutboxRow } from "@hbots/personal-client/composer/outbox";
@@ -26,7 +27,10 @@ import {
 import { useMemo, useRef, useState, createElement } from "react";
 import { Animated, FlatList, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 
+import type { BotAvatarShape } from "@t3tools/contracts";
+
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { BotAvatar } from "../shell/BotAvatar";
 import { tokens } from "../shell/tokens";
 import type { ChatEnvironment } from "./chatEnvironment";
 import { AttachmentImage } from "./AttachmentImage";
@@ -457,6 +461,7 @@ export function MessageList({
   onRetryQueued,
   onLoadEarlier,
   loadEarlierBusy,
+  groupSpeaker,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -482,6 +487,14 @@ export function MessageList({
   readonly onRetryQueued: (id: string) => void;
   readonly onLoadEarlier: (() => void) | null;
   readonly loadEarlierBusy: boolean;
+  /** Group transcripts only: who a member message belongs to. */
+  readonly groupSpeaker?: (
+    botId: string,
+  ) => {
+    readonly name: string;
+    readonly avatarShape: BotAvatarShape;
+    readonly avatarColor: string;
+  } | null;
 }) {
   const listRef = useRef<FlatList<Row>>(null);
   const rows = useMemo<ReadonlyArray<Row>>(
@@ -614,6 +627,88 @@ export function MessageList({
             </Text>
           );
         }
+        if (item.kind === "group-system") {
+          return (
+            <Text style={styles.notice} numberOfLines={3}>
+              {groupSystemLabel(item.event, item.message.text)}
+            </Text>
+          );
+        }
+        if (item.kind === "group-message") {
+          const message = item.message;
+          const text = ownerVisibleText(message.text);
+          if (text.length === 0) return null;
+          const sentAt = Number.isNaN(Date.parse(message.createdAt))
+            ? null
+            : new Date(message.createdAt);
+          const speaker = groupSpeaker?.(item.speaker.botId) ?? null;
+          return (
+            <View style={styles.messageRowStart}>
+              <SwipeMessageRow
+                align="start"
+                sentAt={sentAt}
+                onReply={() =>
+                  onReply(replyQuoteForMessage({ message, botName: item.speaker.name }))
+                }
+              >
+                <Pressable
+                  onLongPress={() =>
+                    onMessageMenu({
+                      messageId: String(message.id),
+                      name: item.speaker.name,
+                      text,
+                      sentAt,
+                    })
+                  }
+                  delayLongPress={350}
+                  style={[
+                    styles.assistantPress,
+                    markdownNeedsWidth(text) ? styles.assistantWide : null,
+                  ]}
+                >
+                  {item.showSpeaker ? (
+                    <View style={styles.speakerRow}>
+                      {speaker !== null ? (
+                        <BotAvatar
+                          shape={speaker.avatarShape}
+                          color={speaker.avatarColor}
+                          size={18}
+                          label={speaker.name}
+                        />
+                      ) : null}
+                      <Text style={styles.speakerName} numberOfLines={1}>
+                        {item.speaker.name}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <MarkdownBody
+                    text={text}
+                    tone="assistant"
+                    onOpenFile={onOpenFile}
+                    onOpenLink={onOpenLink}
+                  />
+                  {message.attachments?.map((attachment) =>
+                    isImageAttachment(attachment) ? (
+                      <AttachmentImage
+                        key={attachment.id}
+                        native={native}
+                        chat={chat}
+                        attachment={attachment}
+                      />
+                    ) : (
+                      <View key={attachment.id} style={styles.attachment}>
+                        <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+                        <Text style={styles.attachmentText} numberOfLines={1}>
+                          {attachment.name}
+                        </Text>
+                      </View>
+                    ),
+                  )}
+                </Pressable>
+              </SwipeMessageRow>
+            </View>
+          );
+        }
         if (item.kind !== "message") return null;
         const message = item.message;
         const text = ownerVisibleText(message.text);
@@ -737,6 +832,14 @@ const styles = StyleSheet.create({
   pendingBubble: { opacity: 0.82 },
   userText: { color: tokens.text, fontSize: 15, lineHeight: 21 },
   assistantPress: { alignSelf: "flex-start", maxWidth: "90%", gap: 6 },
+  speakerRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  speakerName: {
+    color: tokens.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
   assistantWide: { width: "90%" },
   assistantText: { color: tokens.text, fontSize: 15, lineHeight: 22 },
   markdown: { gap: 6, maxWidth: "100%" },

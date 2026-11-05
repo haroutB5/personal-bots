@@ -63,9 +63,42 @@ const A9_ITEMS = [
   "rpc:personalBotsDelete",
 ];
 
+const A10_ITEMS = [
+  "screen:routes/_personal.bots_.groups.$groupId.tsx#bots-groups-groupid",
+  "screen:routes/_personal.bots_.groups.new.tsx#bots-groups-new",
+  "sheet:GroupDeleteSheet.tsx#delete",
+  "sheet:GroupSettingsSheet.tsx#groupsettingssheet",
+  "action:GroupConversationScreen.tsx#group-settings",
+  "action:GroupConversationScreen.tsx#stop",
+  "action:GroupConversationScreen.tsx#unpin-group-pin-group",
+  "action:GroupConversationScreen.tsx#snooze",
+  "action:GroupConversationScreen.tsx#unarchive-group",
+  "action:GroupConversationScreen.tsx#archive-group",
+  "action:GroupConversationScreen.tsx#delete-group",
+  "action:GroupSettingsSheet.tsx#message-privately",
+  "action:GroupSettingsSheet.tsx#edit-bot",
+  "action:GroupSettingsSheet.tsx#remove-from-group",
+  "card:GroupRoundCard.tsx#grouproundcard",
+  "card:GroupVoteCard.tsx#groupvotecard",
+  "setting:GroupDeleteSheet.tsx#only-in-this-group",
+  "setting:NewGroupScreen.tsx#name",
+  "setting:NewGroupScreen.tsx#bots-of",
+  "setting:NewGroupScreen.tsx#field-with-a-data-driven-label-in-newgroupscreen",
+  "rpc:personalGroupsList",
+  "rpc:personalGroupsSubscribe",
+  "rpc:personalGroupsCreate",
+  "rpc:personalGroupsUpdate",
+  "rpc:personalGroupsDelete",
+  "rpc:personalGroupsAddMember",
+  "rpc:personalGroupsRemoveMember",
+  "rpc:personalGroupsSendMessage",
+  "rpc:personalGroupsContinueRound",
+  "rpc:personalGroupsStop",
+];
+
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
@@ -74,5 +107,9 @@ describe("Android parity ratchet", () => {
 
   it("claims every A9 item, including the bot editor fields and the thread list actions", () => {
     for (const item of A9_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims every A10 item, including the group sheets, cards and every group RPC", () => {
+    for (const item of A10_ITEMS) expect(DONE_ITEMS).toContain(item);
   });
 });
