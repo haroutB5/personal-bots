@@ -387,4 +387,80 @@ describe("the flusher", () => {
     expect(send).toHaveBeenCalledTimes(1);
     flusher.dispose();
   });
+
+  it("an unanswered head stays failed across triggers and revives on the connection edge", async () => {
+    enqueueOutboxEntry(entry("one"));
+    enqueueOutboxEntry(entry("two"));
+    markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
+    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    let connected = true;
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries.map((item) => [item.id, item.status])).toEqual([
+      ["one", "failed"],
+      ["two", "waiting"],
+    ]);
+
+    connected = false;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    connected = true;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send.mock.calls.map((call) => (call[0] as OutboxEntry).id)).toEqual(["one", "two"]);
+    flusher.dispose();
+  });
+
+  it("an upload refusal stays failed behind a waiting message and never re-uploads", async () => {
+    enqueueOutboxEntry(entry("photo"));
+    enqueueOutboxEntry(entry("text-behind-it"));
+    markOutboxFailed("photo", "Couldn't send: an attachment didn't upload. Try again.", true);
+    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    let connected = true;
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries.map((item) => [item.id, item.status])).toEqual([
+      ["photo", "failed"],
+      ["text-behind-it", "waiting"],
+    ]);
+
+    // The page reconnects. A refusal is terminal until Retry, so nothing moves.
+    connected = false;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    connected = true;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send).not.toHaveBeenCalled();
+
+    retryOutboxEntry("photo");
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send.mock.calls.map((call) => (call[0] as OutboxEntry).id)).toEqual([
+      "photo",
+      "text-behind-it",
+    ]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
 });

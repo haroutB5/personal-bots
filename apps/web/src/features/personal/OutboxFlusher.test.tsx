@@ -6,12 +6,12 @@ import { readPersonalFollowUp } from "@t3tools/contracts";
 import {
   enqueueOutboxEntry,
   getOutboxSnapshot,
+  retryOutboxEntry,
   type NewOutboxEntry,
   type OutboxStorage,
   resetOutboxForTesting,
 } from "./outbox";
 import { setOutboxBlobBackendForTesting } from "./outboxBlobs";
-import { OUTBOX_CONNECTION_CHECK_MS } from "./outboxFlush";
 import { OutboxFlusher } from "./OutboxFlusher";
 
 const mocks = vi.hoisted(() => ({
@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   startTurn: vi.fn(),
   groupSend: vi.fn(),
   startUpload: vi.fn(),
+  retryUpload: vi.fn(),
+  readUpload: vi.fn(),
   waitUploads: vi.fn(),
   uploaded: vi.fn(),
   release: vi.fn(),
@@ -38,6 +40,8 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("~/lib/attachmentUploadQueue", () => ({
   startAttachmentUpload: (input: unknown) => mocks.startUpload(input),
+  retryAttachmentUpload: (input: unknown) => mocks.retryUpload(input),
+  readAttachmentUpload: (id: string) => mocks.readUpload(id),
   awaitAttachmentUploads: () => mocks.waitUploads(),
   getUploadedAttachments: (input: unknown) => mocks.uploaded(input),
   releaseDraftAttachment: (value: unknown) => mocks.release(value),
@@ -94,6 +98,8 @@ beforeEach(() => {
   mocks.startTurn.mockReset().mockResolvedValue({ _tag: "Success" });
   mocks.groupSend.mockReset().mockResolvedValue({ _tag: "Success" });
   mocks.startUpload.mockReset();
+  mocks.retryUpload.mockReset();
+  mocks.readUpload.mockReset().mockReturnValue(undefined);
   mocks.waitUploads.mockReset().mockResolvedValue(undefined);
   mocks.uploaded.mockReset();
   mocks.release.mockReset();
@@ -320,7 +326,7 @@ describe("sending the queue", () => {
     expect(getOutboxSnapshot().entries[0]?.error).toMatch(/^Couldn't send: an attachment/);
   });
 
-  it("an upload that does not finish is unanswered, not lost: it is tried again with the same ids", async () => {
+  it("an upload the server refuses fails once, stays failed behind the next message, and Retry re-uploads", async () => {
     setOutboxBlobBackendForTesting({
       put: async () => {},
       get: async () => new Blob(["x"]),
@@ -328,21 +334,59 @@ describe("sending the queue", () => {
       keys: async () => [],
     });
     enqueueOutboxEntry(
-      entry("p1", {
+      entry("photo", {
+        text: "",
+        sendText: "[attached]",
         attachments: [
           { id: "att-1", kind: "file", name: "notes.txt", mimeType: "text/plain", sizeBytes: 1 },
         ],
       }),
     );
-    mocks.uploaded.mockReturnValueOnce(null).mockReturnValue([{ type: "file", id: "s1" }]);
+    enqueueOutboxEntry(entry("text"));
+    mocks.uploaded.mockReturnValue(null);
     await mount();
     await settle();
-    await act(async () => void (await vi.advanceTimersByTimeAsync(OUTBOX_CONNECTION_CHECK_MS)));
+    expect(getOutboxSnapshot().entries.map((item) => [item.id, item.status])).toEqual([
+      ["photo", "failed"],
+      ["text", "waiting"],
+    ]);
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({ rejected: true });
+    expect(getOutboxSnapshot().entries[0]?.error).toMatch(
+      /^Couldn't send: an attachment didn't upload/,
+    );
+    expect(mocks.startUpload).toHaveBeenCalledOnce();
     expect(mocks.startTurn).not.toHaveBeenCalled();
-    expect(getOutboxSnapshot().entries[0]?.attempts).toBe(1);
-    await act(async () => void (await vi.advanceTimersByTimeAsync(2_000)));
-    expect(mocks.startTurn).toHaveBeenCalledOnce();
-    expect(mocks.startTurn.mock.calls[0]?.[0].input.commandId).toBe("outbox:p1");
+
+    // Triggers from re-renders and a reconnect must leave the refusal alone.
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      await act(async () => renderer.update(<OutboxFlusher />));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(3_000)));
+    }
+    mocks.phase = "reconnecting";
+    await act(async () => renderer.update(<OutboxFlusher />));
+    await settle();
+    mocks.phase = "connected";
+    await act(async () => renderer.update(<OutboxFlusher />));
+    await settle();
+    expect(mocks.startUpload).toHaveBeenCalledOnce();
+    expect(mocks.startTurn).not.toHaveBeenCalled();
+
+    // Retry asks the upload queue to run the failed job again.
+    mocks.readUpload.mockReturnValue({
+      status: "failed",
+      environmentId: "env",
+      attachmentId: "srv-1",
+    });
+    mocks.uploaded.mockReturnValue([{ type: "file", id: "srv-2", name: "notes.txt" }]);
+    await act(async () => {
+      retryOutboxEntry("photo");
+    });
+    await settle();
+    expect(mocks.retryUpload).toHaveBeenCalledOnce();
+    expect(mocks.startTurn.mock.calls.map((call) => call[0].input.message.messageId)).toEqual([
+      "photo",
+      "text",
+    ]);
     expect(ids()).toEqual([]);
   });
 });
