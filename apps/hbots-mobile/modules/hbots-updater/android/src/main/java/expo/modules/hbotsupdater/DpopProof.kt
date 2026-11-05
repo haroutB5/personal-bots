@@ -18,7 +18,7 @@ data class DpopKey(
 )
 
 object DpopKeySource {
-  private const val KEY = "key_v1-hbots.dpop-key.v1"
+  private const val KEY = "hbots.dpop-key.v1"
 
   fun read(context: Context, secureStore: String? = SecureStoreSource.readString(context, KEY)): DpopKey? =
     runCatching {
