@@ -71,6 +71,7 @@ import type {
 import * as VoiceCallGemini from "./voiceCallGemini.ts";
 import { buildVoiceCallSummaryPrompt, parseVoiceCallSummary } from "./voiceCallSummary.ts";
 import { VoiceCallSummaryClaude, claudeLayer } from "./voiceCallSummaryClaude.ts";
+import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
 
 /**
  * An error's own class and nothing else: a decode error carries the row it
@@ -132,6 +133,7 @@ export const make = Effect.gen(function* () {
   const http = yield* VoiceCallGemini.VoiceCallHttp;
   const claude = yield* VoiceCallSummaryClaude;
   const sql = yield* SqlClient.SqlClient;
+  const rel = yield* PersonalProjectionRelations;
 
   // One summary at a time: a sweep and a lazy nudge can overlap, and Google's
   // free tier does not need two of these in flight.
@@ -208,7 +210,7 @@ export const make = Effect.gen(function* () {
   const relayedMessages = (record: VoiceCallRecord) =>
     sql<{ readonly text: string }>`
       SELECT text AS "text"
-      FROM projection_thread_messages
+      FROM ${sql.unsafe(rel.messages)}
       WHERE thread_id = ${record.threadId}
         AND role = 'user'
         AND instr(context_json, '"personal-voice-call"') > 0
