@@ -152,14 +152,22 @@ export const make = Effect.gen(function* () {
 
   /** The newest user-role message in a chat, the server's own continues aside. */
   const latestUserMessage = (threadId: string) =>
-    sql<{ readonly messageId: string; readonly createdAt: string }>`
-      SELECT message_id AS "messageId", created_at AS "createdAt"
-      FROM projection_thread_messages
-      WHERE thread_id = ${threadId} AND role = 'user'
-        AND message_id NOT LIKE ${`${PERSONAL_RESUME_MESSAGE_ID_PREFIX}%`}
-      ORDER BY created_at DESC
-      LIMIT 1
-    `.pipe(Effect.map((rows) => rows[0] ?? null));
+    personalEngine
+      .latestUserMessage({
+        threadId: threadId as ThreadId,
+        excludeIdPrefix: PERSONAL_RESUME_MESSAGE_ID_PREFIX,
+      })
+      .pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: (message) => ({
+              messageId: message.id as string,
+              createdAt: message.createdAt,
+            }),
+          }),
+        ),
+      );
 
   const setStatus = (
     resumeId: string,
