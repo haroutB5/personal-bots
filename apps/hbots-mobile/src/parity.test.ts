@@ -23,12 +23,56 @@ const A1_A2_ITEMS = [
   "rpc:personalBotsThreadShells",
 ];
 
+const A9_ITEMS = [
+  "screen:routes/_personal.bots_.$botId.edit.tsx#bots-botid-edit",
+  "screen:routes/_personal.bots_.$botId.index.tsx#bots-botid",
+  "screen:routes/_personal.bots_.new.tsx#bots-new",
+  "action:BotThreadsScreen.tsx#select-chats",
+  "action:BotThreadsScreen.tsx#select-archived-chats",
+  "action:BotThreadsScreen.tsx#long-press",
+  "action:BotThreadsScreen.tsx#swipe-to-delete",
+  "setting:BotAvatarPicker.tsx#shape",
+  "setting:BotAvatarPicker.tsx#colour",
+  "setting:BotFallbackSection.tsx#switch-model-when-the-usage-limit-is-hit-the-bot",
+  "setting:BotForm.tsx#name",
+  "setting:BotForm.tsx#title-optional",
+  "setting:BotForm.tsx#description",
+  "setting:BotForm.tsx#instructions",
+  "setting:BotForm.tsx#provider",
+  "setting:BotForm.tsx#model",
+  "setting:BotForm.tsx#effort",
+  "setting:BotForm.tsx#context-window",
+  "setting:BotForm.tsx#agent-mode",
+  "setting:BotForm.tsx#team",
+  "setting:BotForm.tsx#team-lead-one-per-team-making-this-bot-the-lead-",
+  "setting:BotForm.tsx#pin-to-top-keeps-this-bot-in-the-pinned-box-at-t",
+  "setting:BotForm.tsx#save-memories-without-asking-keeps-what-you-tell",
+  "setting:BotForm.tsx#hide-message-previews-keeps-this-bot-s-message-t",
+  "setting:BotForm.tsx#notifications",
+  "setting:BotForm.tsx#avatar",
+  "setting:BotModelPickFields.tsx#provider",
+  "setting:BotModelPickFields.tsx#model",
+  "setting:BotModelPickFields.tsx#effort",
+  "setting:BotModelPickFields.tsx#context-window",
+  "setting:BotScheduleSection.tsx#use-a-different-model-at-set-times-every-day-bet",
+  "setting:BotScheduleSection.tsx#from",
+  "setting:BotScheduleSection.tsx#to",
+  "rpc:personalBotsCreate",
+  "rpc:personalBotsUpdate",
+  "rpc:personalBotsRecheckProvider",
+  "rpc:personalBotsDelete",
+];
+
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
     for (const item of A1_A2_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims every A9 item, including the bot editor fields and the thread list actions", () => {
+    for (const item of A9_ITEMS) expect(DONE_ITEMS).toContain(item);
   });
 });
