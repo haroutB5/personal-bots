@@ -29,4 +29,20 @@ Binary only. The previous release is `21b26ec609` (1.66.116). No migration ran.
 
 - Parity `--require-done A6,A7,A8,A9,A10,A12,A13 --android-ref release-candidate/hbots-166117` exit 0.
 - All 18 RC gates exit 0 at the RC head. Logs and the gate table are in `/home/harout/Claude/AI/dev-team/qa/hbots-166117-rc/REPORT.md`.
-- The signed arm64 APK is built from the RC head and measured in the same report.
+- APK `hbots-1.66.117-arm64.apk`, 41,891,161 bytes, sha256 `aaa763aa82bf00b4a6d6cb4bb3d80ff1a6b3c02e85a527a2177468b10251250f`, one signer `bf2aaabe597d0d35538d995c784d31c029cb1adfcf38d3f958593429273af76f` matching `release-cert.sha256`, versionName 1.66.117, versionCode 1066117, arm64 only.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=f61f32559d15b64ddb936b1b7ed9902774bd0d06 release=f61f32559d15 json-sha256=673883ad6c0cf747933caf62629f606e998adad9679ac1a890c5943b33c9fbfb result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
