@@ -409,6 +409,43 @@ describe("the flusher", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  it("a head that failed without a refusal is tried again, so later messages flow", async () => {
+    enqueueOutboxEntry(entry("one"));
+    enqueueOutboxEntry(entry("two"));
+    markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
+    const sent: string[] = [];
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => true,
+      send: async (item) => {
+        sent.push(item.id);
+        return { kind: "sent" };
+      },
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual(["one", "two"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("a head the laptop refused stays failed until Retry", async () => {
+    enqueueOutboxEntry(entry("one"));
+    enqueueOutboxEntry(entry("two"));
+    markOutboxFailed("one", "Couldn't send: that chat is gone.", true);
+    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => true,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({ status: "failed", rejected: true });
+    flusher.dispose();
+  });
+
   it("picks up a message queued while a pass is running", async () => {
     enqueueOutboxEntry(entry("one"));
     const sent: string[] = [];
