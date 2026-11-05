@@ -34,7 +34,7 @@ const advisory = (version: string, latest: string, overrides: Record<string, unk
   ...overrides,
 });
 
-const claude = (version: string, latest: string): ServerProvider => ({
+const claude = (version: string | null, latest: string): ServerProvider => ({
   instanceId: CLAUDE,
   driver: ProviderDriverKind.make("claudeAgent"),
   enabled: true,
@@ -53,7 +53,7 @@ const claude = (version: string, latest: string): ServerProvider => ({
   ],
   slashCommands: [],
   skills: [],
-  versionAdvisory: advisory(version, latest),
+  versionAdvisory: advisory(version ?? latest, latest),
 });
 
 const session = (
@@ -98,8 +98,10 @@ const makeHarness = (meta = new Map<string, string>()) => {
     autoUpdates: [] as Array<unknown>,
     projections: [] as Array<ServerProviderSmokeCheck | null>,
     pushes: [] as Array<{ instanceId: string; label: string; version: string }>,
+    /** What the updater leaves installed; undefined means it honoured the target. */
+    updateLandsAs: undefined as string | null | undefined,
   };
-  const setProvider = (version: string, latest: string) => {
+  const setProvider = (version: string | null, latest: string) => {
     state.providers = [claude(version, latest)];
   };
   const deps: PersonalProviderUpdatesDeps = {
@@ -149,7 +151,8 @@ const makeHarness = (meta = new Map<string, string>()) => {
           input.provider.versionAdvisory?.latestVersion ??
           input.provider.version ??
           "2.1.317";
-        setProvider(target, target === "2.1.310" ? "2.1.317" : target);
+        const landed = state.updateLandsAs === undefined ? target : state.updateLandsAs;
+        setProvider(landed, target === "2.1.310" ? "2.1.317" : target);
         return state.providers;
       }),
     runtimeEvents: Stream.empty,
@@ -235,6 +238,48 @@ it.effect("rolls back to the previous version when the new one fails its test", 
     assert.include(state.providers[0]?.autoUpdate?.message ?? "", "2.1.310");
     assert.include(state.providers[0]?.autoUpdate?.message ?? "", "API Error: 500");
     assert.equal(state.providers[0]?.smokeCheck, undefined);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("tests and rolls back when the updater delivers a different version", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    const service = yield* makeWith(deps);
+    state.updateLandsAs = "2.1.316";
+
+    yield* service.autoUpdatePass;
+
+    assert.deepEqual(state.updates, [
+      { rollback: false },
+      { targetVersion: "2.1.310", rollback: true },
+    ]);
+    assert.deepEqual(state.smokeModels, ["claude-opus-5"]);
+    assert.equal(state.providers[0]?.version, "2.1.310");
+    assert.equal(state.providers[0]?.autoUpdate?.status, "failed");
+    assert.equal(state.providers[0]?.autoUpdate?.toVersion, "2.1.317");
+    assert.include(state.providers[0]?.autoUpdate?.message ?? "", "2.1.316");
+    assert.include(state.providers[0]?.autoUpdate?.message ?? "", "2.1.317");
+    assert.include(state.providers[0]?.autoUpdate?.message ?? "", "Went back to 2.1.310");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("rolls back when the updater leaves no version to test", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    const service = yield* makeWith(deps);
+    state.updateLandsAs = null;
+
+    yield* service.autoUpdatePass;
+
+    assert.deepEqual(state.updates, [
+      { rollback: false },
+      { targetVersion: "2.1.310", rollback: true },
+    ]);
+    assert.deepEqual(state.smokeModels, []);
+    assert.equal(state.providers[0]?.version, "2.1.310");
+    assert.equal(state.providers[0]?.autoUpdate?.status, "failed");
+    assert.include(state.providers[0]?.autoUpdate?.message ?? "", "no version");
+    assert.include(state.providers[0]?.autoUpdate?.message ?? "", "2.1.317");
   }).pipe(Effect.scoped),
 );
 

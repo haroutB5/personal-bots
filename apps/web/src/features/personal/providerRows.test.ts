@@ -350,9 +350,26 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
       rowOf(provider({ versionAdvisory: advisory(), autoUpdate: autoUpdate() })),
     ).toMatchObject({
       state: "updateAvailable",
-      statusText: "Updates automatically",
-      detail: "New version 0.164.0.",
-      action: null,
+      statusText: "New version 0.164.0",
+      detail: "Updates automatically.",
+      action: { kind: "update", label: "Update" },
+    });
+    expect(
+      rowOf(
+        provider({
+          versionAdvisory: advisory(),
+          autoUpdate: autoUpdate({
+            status: "updated",
+            message: "Updated automatically.",
+            nextAttemptAt: "2026-12-01T10:00:00.000Z",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      state: "updateAvailable",
+      statusText: "New version 0.164.0",
+      detail: "Updates automatically · Next attempt Tue 10:00",
+      action: { kind: "update", label: "Update" },
     });
     expect(
       rowOf(

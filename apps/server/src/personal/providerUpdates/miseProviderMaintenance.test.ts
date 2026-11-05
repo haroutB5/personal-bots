@@ -13,6 +13,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   createProviderVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
+  makeProviderMaintenanceCapabilities,
   makeTargetedProviderUpdateAction,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../../provider/providerMaintenance.ts";
@@ -106,5 +107,98 @@ it.layer(NodeServices.layer)("mise provider maintenance", (it) => {
       expect(advisory.canUpdate).toBe(true);
       expect(advisory.canInstallVersion).toBe(true);
     }),
+  );
+
+  it.effect(
+    "a mise rollback removes the failed version so a later install keeps it rolled back",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-rollback");
+        const toolDir = NodePath.join(tempDir, "mise", "installs", "claude");
+        const good = "2.1.317";
+        const bad = "2.1.318";
+        const latestPath = NodePath.join(toolDir, "latest");
+        const writeVersion = (version: string) => {
+          const dir = NodePath.join(toolDir, version);
+          NodeFS.mkdirSync(dir, { recursive: true });
+          writeExecutable(NodePath.join(dir, "claude"));
+        };
+        NodeFS.mkdirSync(toolDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(toolDir, ".mise.backend.toml"),
+          'short = "claude"\nfull = "aqua:anthropics/claude-code"\n',
+        );
+        writeVersion(good);
+        writeVersion(bad);
+        for (const alias of ["latest", "2", "2.1"]) {
+          NodeFS.symlinkSync(`./${bad}`, NodePath.join(toolDir, alias));
+        }
+
+        const binDir = NodePath.join(tempDir, "bin");
+        const misePath = NodePath.join(binDir, "mise");
+        // Like mise 2026.10.19: after any install or uninstall every tool's
+        // latest and major/minor aliases point at its highest installed version.
+        writeExecutable(
+          misePath,
+          [
+            "#!/bin/sh",
+            `root="${tempDir}/mise/installs"`,
+            "rebuild() {",
+            '  for t in "$root"/*/; do',
+            '    t="${t%/}"',
+            `    hi=$(ls "$t" | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -n 1)`,
+            '    [ -z "$hi" ] && continue',
+            '    rm -f "$t/latest"',
+            `    find "$t" -maxdepth 1 -type l -name '[0-9]*' -delete`,
+            '    ln -sfn "./$hi" "$t/latest"',
+            '    ln -sfn "./$hi" "$t/${hi%%.*}"',
+            '    ln -sfn "./$hi" "$t/${hi%.*}"',
+            "  done",
+            "}",
+            'case "$1" in',
+            '  install) spec="$2"; tool="${spec%%@*}"; version="${spec#*@}"',
+            '    mkdir -p "$root/$tool/$version"; : > "$root/$tool/$version/$tool"',
+            "    rebuild ;;",
+            '  uninstall) spec="$2"; tool="${spec%%@*}"; version="${spec#*@}"',
+            '    rm -rf "$root/$tool/$version"',
+            "    rebuild ;;",
+            "esac",
+            "exit 0",
+            "",
+          ].join("\n"),
+        );
+
+        const capabilities = makeProviderMaintenanceCapabilities({
+          provider: driver("claudeAgent"),
+          packageName: "@anthropic-ai/claude-code",
+          updateExecutable: misePath,
+          updateArgs: ["install", "claude@latest"],
+          updateLockKey: "mise",
+          latestPath,
+          platform: "linux",
+        });
+        const rollback = makeTargetedProviderUpdateAction(capabilities, good, {
+          uninstallVersion: bad,
+        });
+        expect(rollback?.args[1]).toContain(`uninstall claude@${bad}`);
+        NodeChildProcess.execFileSync("/bin/sh", rollback!.args, {
+          env: { PATH: `${binDir}:/usr/bin:/bin` },
+        });
+
+        expect(NodeFS.existsSync(NodePath.join(toolDir, bad))).toBe(false);
+        const aliasTarget = (alias: string) =>
+          NodeFS.readlinkSync(NodePath.join(toolDir, alias)).replace(/^\.\//, "");
+        for (const alias of ["latest", "2", "2.1"]) {
+          expect(aliasTarget(alias)).toBe(good);
+        }
+
+        // The next install of any mise tool rebuilds the aliases again.
+        NodeChildProcess.execFileSync(misePath, ["install", "othertool@1.0.0"], {
+          env: { PATH: `${binDir}:/usr/bin:/bin` },
+        });
+        for (const alias of ["latest", "2", "2.1"]) {
+          expect(aliasTarget(alias)).toBe(good);
+        }
+      }),
   );
 });
