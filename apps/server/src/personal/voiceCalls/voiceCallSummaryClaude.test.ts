@@ -12,12 +12,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
 import { CLAUDE_TEXT_GENERATION_DEFAULT_MODEL } from "../claude/claudeBackgroundModels.ts";
-import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import { VOICE_CALL_GREETING_SUMMARY } from "./voiceCallSummary.ts";
 import {
   VOICE_CALL_SUMMARY_CLAUDE_EFFORT,
@@ -70,17 +70,16 @@ const withWriter = <A, E, R>(
       if (options.fail !== undefined) return yield* Effect.fail(options.fail);
       return options.answer;
     });
-  const instance = {
-    id: ProviderInstanceId.make("claudeAgent"),
-    textGeneration: { generateStructured },
-  } as unknown as ProviderInstance;
-  const registry = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-    getInstance: () => Effect.succeed(options.missing === true ? undefined : instance),
+  const providers = Layer.mock(PersonalProviders)({
+    structuredGenerator: () =>
+      Effect.succeed(
+        options.missing === true ? Option.none() : Option.some(generateStructured as never),
+      ),
   });
   return Effect.gen(function* () {
     const service = yield* VoiceCallSummaryClaude;
     return yield* body(service, asked);
-  }).pipe(Effect.provide(claudeLayer.pipe(Layer.provide(registry))));
+  }).pipe(Effect.provide(claudeLayer.pipe(Layer.provide(providers))));
 };
 
 describe("VoiceCallSummaryClaude", () => {

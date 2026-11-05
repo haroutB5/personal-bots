@@ -27,12 +27,13 @@ import { ProviderInstanceId, type VoiceCallSummary } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import {
   CLAUDE_TEXT_GENERATION_DEFAULT_MODEL,
   resolveTextGenerationModel,
 } from "../claude/claudeBackgroundModels.ts";
-import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import { VoiceCallSummaryAnswer, summaryFromAnswerObject } from "./voiceCallSummary.ts";
 
 /** The provider instance every Claude background text job in this app runs through. */
@@ -70,7 +71,7 @@ export class VoiceCallSummaryClaude extends Context.Service<
 export const claudeLayer = Layer.effect(
   VoiceCallSummaryClaude,
   Effect.gen(function* () {
-    const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const providers = yield* PersonalProviders;
     // The same resolution the title path does: the default, or what the kill
     // switch pins. The effort is named on the selection below, so the
     // text-generation path keeps it instead of adding its low default.
@@ -80,26 +81,29 @@ export const claudeLayer = Layer.effect(
       effort: VOICE_CALL_SUMMARY_CLAUDE_EFFORT,
       ask: (prompt) =>
         Effect.gen(function* () {
-          const instance = yield* registry.getInstance(VOICE_CALL_SUMMARY_CLAUDE_INSTANCE);
-          const generate = instance?.textGeneration.generateStructured;
+          const generate = yield* providers
+            .structuredGenerator(VOICE_CALL_SUMMARY_CLAUDE_INSTANCE)
+            .pipe(Effect.mapError((error) => error._tag));
           // No Claude provider instance: not an error the owner should ever see,
           // just "Claude is unavailable" and the caller falls back to Gemini.
-          if (generate === undefined) {
+          if (Option.isNone(generate)) {
             return yield* Effect.fail("the Claude provider instance is not registered");
           }
-          const answer = yield* generate({
-            prompt,
-            outputSchema: VoiceCallSummaryAnswer,
-            modelSelection: {
-              instanceId: VOICE_CALL_SUMMARY_CLAUDE_INSTANCE,
-              model,
-              options: [{ id: "effort", value: VOICE_CALL_SUMMARY_CLAUDE_EFFORT }],
-            },
-          }).pipe(
-            // The class only. A TextGenerationError's detail can carry CLI
-            // stderr, and this file never puts the owner's words in a log.
-            Effect.mapError((error) => error._tag),
-          );
+          const answer = yield* generate
+            .value({
+              prompt,
+              outputSchema: VoiceCallSummaryAnswer,
+              modelSelection: {
+                instanceId: VOICE_CALL_SUMMARY_CLAUDE_INSTANCE,
+                model,
+                options: [{ id: "effort", value: VOICE_CALL_SUMMARY_CLAUDE_EFFORT }],
+              },
+            })
+            .pipe(
+              // The class only. A TextGenerationError's detail can carry CLI
+              // stderr, and this file never puts the owner's words in a log.
+              Effect.mapError((error) => error._tag),
+            );
           return summaryFromAnswerObject(answer);
         }),
     });

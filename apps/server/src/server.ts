@@ -815,6 +815,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     ),
     Layer.provideMerge(GitLayerLive),
     Layer.provideMerge(VcsLayerLive),
+    // The personal services reach providers through this port. It sits above
+    // the provider runtime, which feeds it the provider service, and below the
+    // personal chain, which consumes it.
+    Layer.provideMerge(PersonalProvidersV1ChainLive),
     Layer.provideMerge(ProviderRuntimeLayerLive),
     Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
     Layer.provideMerge(PersistenceLayerLive),
