@@ -4,14 +4,20 @@ import type { ServerProvider } from "@t3tools/contracts";
 
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
 import {
+  descriptorChoices,
+  descriptorValue,
+  modelChoices,
+  providerChoices,
+} from "@hbots/personal-client/bots/botFormFields";
+
+import {
   botContextWindowDescriptor,
   botEffortDescriptor,
   defaultModelFor,
   type ModelDraft,
-  modelOptionLabel,
   usesModelSearch,
 } from "./botFormModel";
-import { providerLine, resolveBotProvider } from "./botSummaries";
+import { resolveBotProvider } from "./botSummaries";
 
 export const MODEL_PICK_HELP_CLASS = "mt-1.5 text-sm text-[var(--personal-text-secondary)]";
 
@@ -53,15 +59,9 @@ export function BotModelPickFields({
     draft.instanceId === "" ? null : resolveBotProvider(draft.instanceId, providers);
   const models = provider?.models ?? [];
   const effortDescriptor = botEffortDescriptor(provider, draft.model);
-  const effortValue =
-    effortDescriptor?.options.some((option) => option.id === draft.effort) === true
-      ? draft.effort
-      : "";
+  const effortValue = descriptorValue(effortDescriptor, draft.effort);
   const contextDescriptor = botContextWindowDescriptor(provider, draft.model);
-  const contextValue =
-    contextDescriptor?.options.some((option) => option.id === draft.contextWindow) === true
-      ? draft.contextWindow
-      : "";
+  const contextValue = descriptorValue(contextDescriptor, draft.contextWindow);
 
   return (
     <>
@@ -84,9 +84,9 @@ export function BotModelPickFields({
           className={`${FIELD_CLASS} h-11`}
         >
           {draft.instanceId === "" ? <option value="">Pick a provider</option> : null}
-          {providerOptions.map((candidate) => (
-            <option key={candidate.instanceId} value={candidate.instanceId}>
-              {providerLine(resolveBotProvider(candidate.instanceId, providers))}
+          {providerChoices(providerOptions, providers).map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
             </option>
           ))}
         </select>
@@ -114,12 +114,9 @@ export function BotModelPickFields({
               onChange={(event) => onChange({ model: event.target.value })}
               className={`${FIELD_CLASS} h-11`}
             >
-              {models.some((model) => model.slug === draft.model) ? null : (
-                <option value={draft.model}>{draft.model}</option>
-              )}
-              {models.map((model) => (
-                <option key={model.slug} value={model.slug}>
-                  {modelOptionLabel(model)}
+              {modelChoices(models, draft.model).map((choice) => (
+                <option key={choice.value} value={choice.value}>
+                  {choice.label}
                 </option>
               ))}
             </select>
@@ -145,16 +142,9 @@ export function BotModelPickFields({
             onChange={(event) => onChange({ effort: event.target.value })}
             className={`${FIELD_CLASS} h-11`}
           >
-            <option value="">
-              Default
-              {(() => {
-                const standard = effortDescriptor.options.find((option) => option.isDefault);
-                return standard === undefined ? "" : ` (${standard.label})`;
-              })()}
-            </option>
-            {effortDescriptor.options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
+            {descriptorChoices(effortDescriptor).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
               </option>
             ))}
           </select>
@@ -172,16 +162,9 @@ export function BotModelPickFields({
             onChange={(event) => onChange({ contextWindow: event.target.value })}
             className={`${FIELD_CLASS} h-11`}
           >
-            <option value="">
-              Default
-              {(() => {
-                const standard = contextDescriptor.options.find((option) => option.isDefault);
-                return standard === undefined ? "" : ` (${standard.label})`;
-              })()}
-            </option>
-            {contextDescriptor.options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
+            {descriptorChoices(contextDescriptor).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
               </option>
             ))}
           </select>

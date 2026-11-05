@@ -4,13 +4,11 @@ import { useRef, useState } from "react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { Check } from "lucide-react";
 
+import type { ModelPlanFilter } from "@hbots/personal-client/bots/modelPlanFilter";
+import { modelSearchView } from "@hbots/personal-client/bots/modelSearchView";
+
 import { ModelPlanFilterChips } from "../../components/chat/ModelPlanFilterChips";
-import {
-  filterModelsByPlan,
-  offersModelPlanFilter,
-  type ModelPlanFilter,
-} from "../../components/chat/modelPlanFilter";
-import { modelOptionLabel, searchModels } from "./botFormModel";
+import { modelOptionLabel } from "./botFormModel";
 
 export const FIELD_CLASS =
   "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] aria-invalid:border-[var(--personal-error)]";
@@ -38,16 +36,9 @@ export function ModelSearchField({
   const [open, setOpen] = useState(false);
   const [planFilter, setPlanFilter] = useState<ModelPlanFilter>("all");
   const containerRef = useRef<HTMLDivElement>(null);
-  const selected = models.find((model) => model.slug === value);
-  const showPlanFilter = offersModelPlanFilter(models);
-  const plannedModels = filterModelsByPlan(models, showPlanFilter ? planFilter : "all");
+  const view = modelSearchView({ models, value, query, open, planFilter });
   const trimmed = query.trim();
-  // Browsing shows every model; typing narrows the same list.
-  const results = !open
-    ? []
-    : trimmed.length === 0
-      ? plannedModels
-      : searchModels(plannedModels, trimmed, 80);
+  const results = view.results;
   const pick = (slug: string) => {
     onChange(slug);
     setQuery("");
@@ -84,7 +75,7 @@ export function ModelSearchField({
           const first = trimmed.length > 0 ? results[0] : undefined;
           if (first !== undefined) pick(first.slug);
         }}
-        placeholder={selected === undefined ? "Search models" : modelOptionLabel(selected)}
+        placeholder={view.placeholder}
         aria-autocomplete="list"
         aria-controls={`${id}-results`}
         aria-expanded={results.length > 0}
@@ -95,18 +86,10 @@ export function ModelSearchField({
         enterKeyHint="search"
         className={`${FIELD_CLASS} h-11`}
       />
-      {showPlanFilter ? (
+      {view.showPlanFilter ? (
         <ModelPlanFilterChips value={planFilter} onChange={setPlanFilter} className="mt-1.5" />
       ) : null}
-      <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-        {trimmed.length > 0
-          ? results.length === 0
-            ? `No models match "${trimmed}".`
-            : `${results.length} matching`
-          : selected === undefined
-            ? `${plannedModels.length} models. Pick one, or type to narrow the list.`
-            : `Selected: ${modelOptionLabel(selected)}`}
-      </p>
+      <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">{view.summary}</p>
       {results.length > 0 ? (
         <ul
           id={`${id}-results`}

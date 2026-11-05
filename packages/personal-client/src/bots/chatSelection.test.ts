@@ -10,7 +10,7 @@ import {
   selectedCountLabel,
   toggleChatSelection,
   visibleSelection,
-} from "./chatSelection";
+} from "./chatSelection.ts";
 
 const ids = (...values: string[]) => values as unknown as ThreadId[];
 

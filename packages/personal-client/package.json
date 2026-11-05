@@ -25,9 +25,53 @@
       "types": "./src/bots/chatActivity.ts",
       "import": "./src/bots/chatActivity.ts"
     },
+    "./bots/chatActionText": {
+      "types": "./src/bots/chatActionText.ts",
+      "import": "./src/bots/chatActionText.ts"
+    },
     "./bots/chatState": {
       "types": "./src/bots/chatState.ts",
       "import": "./src/bots/chatState.ts"
+    },
+    "./bots/chatSelection": {
+      "types": "./src/bots/chatSelection.ts",
+      "import": "./src/bots/chatSelection.ts"
+    },
+    "./bots/botFormModel": {
+      "types": "./src/bots/botFormModel.ts",
+      "import": "./src/bots/botFormModel.ts"
+    },
+    "./bots/botDraft": {
+      "types": "./src/bots/botDraft.ts",
+      "import": "./src/bots/botDraft.ts"
+    },
+    "./bots/botFormFields": {
+      "types": "./src/bots/botFormFields.ts",
+      "import": "./src/bots/botFormFields.ts"
+    },
+    "./bots/modelPlanFilter": {
+      "types": "./src/bots/modelPlanFilter.ts",
+      "import": "./src/bots/modelPlanFilter.ts"
+    },
+    "./bots/modelSearchView": {
+      "types": "./src/bots/modelSearchView.ts",
+      "import": "./src/bots/modelSearchView.ts"
+    },
+    "./bots/commandFeedback": {
+      "types": "./src/bots/commandFeedback.ts",
+      "import": "./src/bots/commandFeedback.ts"
+    },
+    "./bots/chatModelSelection": {
+      "types": "./src/bots/chatModelSelection.ts",
+      "import": "./src/bots/chatModelSelection.ts"
+    },
+    "./bots/bulkChatActions": {
+      "types": "./src/bots/bulkChatActions.ts",
+      "import": "./src/bots/bulkChatActions.ts"
+    },
+    "./bots/wrapupChat": {
+      "types": "./src/bots/wrapupChat.ts",
+      "import": "./src/bots/wrapupChat.ts"
     },
     "./bots/botModelLabel": {
       "types": "./src/bots/botModelLabel.ts",
@@ -140,6 +184,10 @@
     "./conversation/groupModel": {
       "types": "./src/conversation/groupModel.ts",
       "import": "./src/conversation/groupModel.ts"
+    },
+    "./groups/personalGroups": {
+      "types": "./src/groups/personalGroups.ts",
+      "import": "./src/groups/personalGroups.ts"
     },
     "./conversation/greeting": {
       "types": "./src/conversation/greeting.ts",

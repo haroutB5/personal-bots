@@ -3,36 +3,16 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { chatActionFailure } from "./chatSettingsModel";
+import {
+  chatActionFailure,
+  deleteChatConfirmMessage,
+  type DeleteChatOptions,
+} from "@hbots/personal-client/bots/chatActionText";
 import { dropChatFromSnapshot } from "./chatsSnapshot";
 import { commandFailureMessage, type DestructiveOutcome } from "./commandFeedback";
 import { personalBotDeleteThread } from "./usePersonalBots";
 
-export interface DeleteChatOptions {
-  /** Another chat than the open one: the confirm names it. */
-  readonly title?: string | undefined;
-  /** A turn is running in the chat: the confirm says deleting stops it too. */
-  readonly working?: boolean | undefined;
-  /**
-   * The chat's name for the failure line only (the confirm names a chat through
-   * `title`, and says "this chat" for the open one). With a name the failure
-   * reads `Couldn't delete “X”: <reason>` like Archive's.
-   */
-  readonly name?: string | undefined;
-}
-
-/** Confirm copy, kept pure so the permanent-deletion wording is unit-tested. */
-export function deleteChatConfirmMessage(options: DeleteChatOptions = {}): string {
-  const subject = options.title === undefined ? "this chat" : `“${options.title}”`;
-  const lines = [
-    `Delete ${subject} permanently?`,
-    "The whole conversation is removed and can't be undone.",
-  ];
-  if (options.working === true) {
-    lines.push("It is working right now; deleting it stops that too.");
-  }
-  return lines.join("\n");
-}
+export { deleteChatConfirmMessage, type DeleteChatOptions };
 
 /**
  * Asks, then permanently deletes exactly one chat (the thread plus its

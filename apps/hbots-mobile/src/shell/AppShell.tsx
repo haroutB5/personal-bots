@@ -17,6 +17,10 @@ import type { AndroidRelease } from "../compat";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
+import { BotFormScreen } from "../bots/BotFormScreen";
+import { BotThreadsScreen } from "../bots/BotThreadsScreen";
+import { GroupConversationScreen } from "../groups/GroupConversationScreen";
+import { NewGroupScreen } from "../groups/NewGroupScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
 import { UpdateSettings } from "../UpdateSettings";
@@ -49,6 +53,10 @@ export type RootStackParamList = {
   Chat: { readonly botId: string; readonly threadId: string; readonly requestId?: string };
   Chats: { readonly botId: string };
   Bot: { readonly botId: string };
+  BotNew: undefined;
+  BotEdit: { readonly botId: string };
+  Group: { readonly groupId: string };
+  GroupNew: undefined;
   Task: { readonly taskId: string };
   Routine: { readonly routineId: string };
   RoutineForm: { readonly routineId?: string };
@@ -168,6 +176,14 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       };
     case "bot":
       return { name: "Bot", params: { botId: route.botId } };
+    case "botNew":
+      return { name: "BotNew" };
+    case "botEdit":
+      return { name: "BotEdit", params: { botId: route.botId } };
+    case "group":
+      return { name: "Group", params: { groupId: route.groupId } };
+    case "groupNew":
+      return { name: "GroupNew" };
     case "task":
       return { name: "Task", params: { taskId: route.taskId } };
     case "routine":
@@ -267,10 +283,62 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           )}
         </Stack.Screen>
         <Stack.Screen name="Bot">
+          {({ navigation, route }) => (
+            <BotThreadsScreen
+              native={props.native}
+              chat={chat}
+              botId={route.params.botId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(threadId) =>
+                navigation.navigate("Chat", { botId: route.params.botId, threadId })
+              }
+              onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="BotNew">
           {({ navigation }) => (
-            <HeaderScreen title="Bot" onBack={() => navigation.goBack()}>
-              <Placeholder title="Bot" body="Bot settings will show here." />
-            </HeaderScreen>
+            <BotFormScreen
+              native={props.native}
+              target={{ kind: "new" }}
+              onBack={() => navigation.goBack()}
+              onLeave={() => navigation.goBack()}
+              onDeleted={() => navigation.popToTop()}
+              onOpenTeam={() => navigation.navigate("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="BotEdit">
+          {({ navigation, route }) => (
+            <BotFormScreen
+              native={props.native}
+              target={{ kind: "edit", botId: route.params.botId }}
+              onBack={() => navigation.goBack()}
+              onLeave={() => navigation.goBack()}
+              onDeleted={() => navigation.popToTop()}
+              onOpenTeam={() => navigation.navigate("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Group">
+          {({ navigation, route }) => (
+            <GroupConversationScreen
+              native={props.native}
+              chat={chat}
+              groupId={route.params.groupId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+              onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="GroupNew">
+          {({ navigation }) => (
+            <NewGroupScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onCreated={(groupId) => navigation.replace("Group", { groupId })}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Task">
@@ -399,6 +467,8 @@ function TabsWithBots({
             installedVersion={installedVersion}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
             onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+            onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
+            onNewGroup={() => navigation.navigate("GroupNew")}
             onOpenTeam={() => navigation.navigate("Team")}
             onOpenSettings={() => navigation.navigate("Settings")}
           />

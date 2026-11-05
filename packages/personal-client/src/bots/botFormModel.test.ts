@@ -30,8 +30,8 @@ import {
   sameFamilyFallbackHint,
   searchModels,
   usesModelSearch,
-} from "./botFormModel";
-import { resolveBotProvider } from "./botSummaries";
+} from "./botFormModel.ts";
+import { resolveBotProvider } from "./botSummaries.ts";
 
 const select = (id: string, values: ReadonlyArray<string>) => ({
   id,
