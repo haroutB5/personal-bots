@@ -400,6 +400,10 @@
     "./settings/providerSetup": {
       "types": "./src/settings/providerSetup.ts",
       "import": "./src/settings/providerSetup.ts"
+    },
+    "./settings/providerApiKeys": {
+      "types": "./src/settings/providerApiKeys.ts",
+      "import": "./src/settings/providerApiKeys.ts"
     }
   },
   "scripts": {

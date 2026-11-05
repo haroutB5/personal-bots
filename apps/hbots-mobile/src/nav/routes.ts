@@ -27,6 +27,10 @@ export type Route =
   | { readonly kind: "task"; readonly taskId: string }
   | { readonly kind: "routine"; readonly routineId: string }
   | { readonly kind: "settings" }
+  | { readonly kind: "settingsNotifications" }
+  | { readonly kind: "settingsProvidersAdd" }
+  | { readonly kind: "settingsProvider"; readonly instanceId: string }
+  | { readonly kind: "settingsProviderCatalog"; readonly catalogId: string }
   | { readonly kind: "thisPhone" }
   | { readonly kind: "stop" };
 
@@ -151,13 +155,37 @@ export function parseDeepLink(raw: string): NavState | null {
       return { stack: [BOTS, { kind: "teamNew" }] };
     case "task":
       return first === undefined ? null : { stack: [BOTS, { kind: "task", taskId: first }] };
-    case "settings":
+    case "settings": {
+      const settings: Route = { kind: "settings" };
       if (first === "removed") {
-        return { stack: [BOTS, { kind: "settings" }, { kind: "teamRemoved" }] };
+        return { stack: [BOTS, settings, { kind: "teamRemoved" }] };
       }
-      return first === "this-phone"
-        ? { stack: [BOTS, { kind: "settings" }, { kind: "thisPhone" }] }
-        : { stack: [BOTS, { kind: "settings" }] };
+      if (first === "this-phone") {
+        return { stack: [BOTS, settings, { kind: "thisPhone" }] };
+      }
+      if (first === "notifications") {
+        return { stack: [BOTS, settings, { kind: "settingsNotifications" }] };
+      }
+      if (first === "providers") {
+        if (second === "add") {
+          return { stack: [BOTS, settings, { kind: "settingsProvidersAdd" }] };
+        }
+        if (second === "catalog" && parts[3] !== undefined) {
+          return {
+            stack: [
+              BOTS,
+              settings,
+              { kind: "settingsProvidersAdd" },
+              { kind: "settingsProviderCatalog", catalogId: parts[3] },
+            ],
+          };
+        }
+        if (second !== undefined) {
+          return { stack: [BOTS, settings, { kind: "settingsProvider", instanceId: second }] };
+        }
+      }
+      return { stack: [BOTS, settings] };
+    }
     case "stop":
       return { stack: [BOTS, { kind: "stop" }] };
     default:

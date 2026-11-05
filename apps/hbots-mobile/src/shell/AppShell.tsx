@@ -32,6 +32,11 @@ import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
 import { ChatScreen } from "../screens/ChatScreen";
+import { SettingsScreen } from "../settings/SettingsScreen";
+import { NotificationsScreen } from "../settings/NotificationsScreen";
+import { AddProviderScreen } from "../settings/AddProviderScreen";
+import { CatalogProviderScreen } from "../settings/CatalogProviderScreen";
+import { ProviderScreen } from "../settings/ProviderScreen";
 
 export interface AppShellProps {
   readonly native: NativePersonal;
@@ -58,6 +63,10 @@ export type RootStackParamList = {
   TeamNew: undefined;
   TeamRemoved: undefined;
   Settings: undefined;
+  SettingsNotifications: undefined;
+  SettingsProvidersAdd: undefined;
+  SettingsProvider: { readonly instanceId: string };
+  SettingsProviderCatalog: { readonly catalogId: string };
   ThisPhone: undefined;
   Stop: undefined;
 };
@@ -108,60 +117,6 @@ function HeaderScreen({
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ScreenHeader title={title} onBack={onBack} />
       <View style={styles.tabContent}>{children}</View>
-    </View>
-  );
-}
-
-function SettingsScreen({
-  navigation,
-  native,
-}: NativeStackScreenProps<RootStackParamList, "Settings"> & {
-  readonly native: NativePersonal;
-}) {
-  const insets = useSafeAreaInsets();
-  const removed = native.bots.useRemovedBots(native.environmentId).data?.bots.length ?? 0;
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <ScreenHeader title="Settings" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={styles.settingsBody}>
-        <View style={styles.group}>
-          {removed > 0 ? (
-            <Pressable
-              onPress={() => navigation.navigate("TeamRemoved")}
-              accessibilityRole="button"
-              accessibilityLabel={`Removed bots, ${removed}`}
-              style={styles.settingsRow}
-            >
-              <View style={styles.settingsIcon}>
-                <IconChevronRight size={20} color={tokens.text} strokeWidth={2} />
-              </View>
-              <View style={styles.settingsText}>
-                <Text style={styles.settingsTitle}>Removed bots</Text>
-                <Text style={styles.settingsDetail} maxFontSizeMultiplier={1.4}>
-                  Bots a team lead removed, and bringing them back
-                </Text>
-              </View>
-              <View style={styles.settingsBadge}>
-                <Text style={styles.settingsBadgeText} maxFontSizeMultiplier={1.3}>
-                  {removed}
-                </Text>
-              </View>
-            </Pressable>
-          ) : null}
-          <Pressable
-            onPress={() => navigation.navigate("ThisPhone")}
-            accessibilityRole="button"
-            accessibilityLabel="This phone"
-            style={styles.settingsRow}
-          >
-            <View style={styles.settingsIcon}>
-              <IconSettings size={20} color={tokens.text} strokeWidth={2} />
-            </View>
-            <Text style={styles.settingsTitle}>This phone</Text>
-            <IconChevronRight size={20} color={tokens.textTertiary} strokeWidth={2} />
-          </Pressable>
-        </View>
-      </ScrollView>
     </View>
   );
 }
@@ -219,6 +174,14 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Routine", params: { routineId: route.routineId } };
     case "settings":
       return { name: "Settings" };
+    case "settingsNotifications":
+      return { name: "SettingsNotifications" };
+    case "settingsProvidersAdd":
+      return { name: "SettingsProvidersAdd" };
+    case "settingsProvider":
+      return { name: "SettingsProvider", params: { instanceId: route.instanceId } };
+    case "settingsProviderCatalog":
+      return { name: "SettingsProviderCatalog", params: { catalogId: route.catalogId } };
     case "thisPhone":
       return { name: "ThisPhone" };
     case "stop":
@@ -396,7 +359,65 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           )}
         </Stack.Screen>
         <Stack.Screen name="Settings">
-          {(screenProps) => <SettingsScreen {...screenProps} native={props.native} />}
+          {({ navigation }) => (
+            <SettingsScreen
+              native={props.native}
+              installedVersion={props.installedVersion}
+              onBack={() => navigation.goBack()}
+              onOpenThisPhone={() => navigation.navigate("ThisPhone")}
+              onOpenTeam={() => navigation.navigate("Team")}
+              onOpenNewBot={() => navigation.navigate("BotNew")}
+              onOpenRemovedBots={() => navigation.navigate("TeamRemoved")}
+              onOpenNotifications={() => navigation.navigate("SettingsNotifications")}
+              onOpenMemory={() => undefined}
+              onOpenPasswords={() => undefined}
+              onOpenApiKeys={() => undefined}
+              onOpenConnections={() => undefined}
+              onOpenRoutines={() => undefined}
+              onOpenProvider={(instanceId) =>
+                navigation.navigate("SettingsProvider", { instanceId })
+              }
+              onAddProvider={() => navigation.navigate("SettingsProvidersAdd")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsNotifications">
+          {({ navigation }) => (
+            <NotificationsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsProvidersAdd">
+          {({ navigation }) => (
+            <AddProviderScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onOpenProvider={(instanceId) =>
+                navigation.navigate("SettingsProvider", { instanceId })
+              }
+              onOpenCatalog={(catalogId) =>
+                navigation.navigate("SettingsProviderCatalog", { catalogId })
+              }
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsProviderCatalog">
+          {({ navigation, route }) => (
+            <CatalogProviderScreen
+              native={props.native}
+              catalogId={route.params.catalogId}
+              onBack={() => navigation.goBack()}
+              onInstalled={(instanceId) => navigation.replace("SettingsProvider", { instanceId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsProvider">
+          {({ navigation, route }) => (
+            <ProviderScreen
+              native={props.native}
+              instanceId={route.params.instanceId}
+              onBack={() => navigation.goBack()}
+            />
+          )}
         </Stack.Screen>
         <Stack.Screen name="ThisPhone">
           {(screenProps) => <ThisPhoneScreen {...screenProps} props={props} />}

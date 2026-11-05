@@ -116,9 +116,57 @@ const A11_ITEMS = [
   "rpc:personalBotsRestore",
 ];
 
+const A14_ITEMS = [
+  "screen:routes/_personal.bots_.settings.tsx#bots-settings",
+  "screen:routes/_personal.bots_.settings_.notifications.tsx#bots-settings-notifications",
+  "screen:routes/_personal.bots_.settings_.providers.$instanceId.tsx#bots-settings-providers-instanceid",
+  "screen:routes/_personal.bots_.settings_.providers.add.tsx#bots-settings-providers-add",
+  "screen:routes/_personal.bots_.settings_.providers.catalog.$catalogId.tsx#bots-settings-providers-catalog-catalogid",
+  "sheet:providers/ProviderSheets.tsx#providersheet",
+  "sheet:providers/ProviderSheets.tsx#confirmsheet",
+  "sheet:providers/ProviderSheets.tsx#installconfirmsheet",
+  "sheet:providers/ProviderSheets.tsx#remapsheet",
+  "setting:PersonalSettingsScreen.tsx#your-name-section",
+  "setting:PersonalSettingsScreen.tsx#your-name-displaynameform",
+  "setting:PersonalSettingsScreen.tsx#bots-section",
+  "setting:PersonalSettingsScreen.tsx#bots-team",
+  "setting:PersonalSettingsScreen.tsx#bots-new-bot",
+  "setting:PersonalSettingsScreen.tsx#bots-removed-bots",
+  "setting:PersonalSettingsScreen.tsx#chat-section",
+  "setting:PersonalSettingsScreen.tsx#chat-show-tool-steps",
+  "setting:PersonalSettingsScreen.tsx#chat-show-routines-in-chats",
+  "setting:PersonalSettingsScreen.tsx#chat-autoarchivetaskchatsrow",
+  "setting:PersonalSettingsScreen.tsx#plugins-section",
+  "setting:PersonalSettingsScreen.tsx#plugins-connections",
+  "setting:PersonalSettingsScreen.tsx#plugins-passwords",
+  "setting:PersonalSettingsScreen.tsx#plugins-api-keys",
+  "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-section",
+  "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-routines",
+  "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-memory",
+  "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-notifications",
+  "setting:PersonalSettingsScreen.tsx#about-section",
+  "setting:PersonalSettingsScreen.tsx#about-about",
+  "setting:PersonalProvidersSection.tsx#providers-section",
+  "setting:NotificationsScreen.tsx#field-with-a-data-driven-label-in-notificationss",
+  "setting:providers/ProviderKeyEntry.tsx#field-with-a-data-driven-label-in-providerkeyent",
+  "setting:providers/ProviderPage.tsx#server-address",
+  "pref:profile#displayName",
+  "pref:profile#teamChange",
+  "pref:profile#autoArchiveTaskChats",
+  "pref:profile#voiceCalls",
+  "pref:profile#autoArchiveTaskChatsAfterMinutes",
+  "pref:profile#usageVisibility",
+  "pref:profile#showToolSteps",
+  "pref:profile#showRoutinesStrip",
+  "rpc:personalPushGetSettings",
+  "rpc:personalPushTest",
+  "rpc:personalPushSetPreferences",
+  "rpc:personalBotsSetProfile",
+];
+
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10", "A11"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10", "A11", "A14"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
@@ -135,5 +183,9 @@ describe("Android parity ratchet", () => {
 
   it("claims every A11 item, including the team sheets, move action and removed-bot RPCs", () => {
     for (const item of A11_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims every A14 item, including the provider screens, sheets and settings RPCs", () => {
+    for (const item of A14_ITEMS) expect(DONE_ITEMS).toContain(item);
   });
 });
