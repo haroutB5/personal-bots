@@ -1,5 +1,10 @@
 import type { EnvironmentId, PersonalBot } from "@t3tools/contracts";
 
+import {
+  DELETE_BOT_CONFIRM_LABEL,
+  deleteBotConfirmMessage,
+} from "@hbots/personal-client/bots/botDraft";
+
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -20,11 +25,11 @@ export function useDeleteBot(
     if (environmentId === null) {
       return { status: "failed", message: "Not connected to your computer." };
     }
-    const message = `Delete ${bot.name} completely?\nIts chats, routines and memories are removed too. This can't be undone.`;
+    const message = deleteBotConfirmMessage(bot.name);
     const confirmed =
       (await requestConfirmDialog(message, {
         variant: "destructive",
-        confirmLabel: "Delete bot",
+        confirmLabel: DELETE_BOT_CONFIRM_LABEL,
       })) ?? window.confirm(message);
     if (!confirmed) return { status: "cancelled" };
     const result = await deleteBot({ environmentId, input: { botId: bot.botId } });

@@ -1,17 +1,14 @@
 import { MessageId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { Thread } from "~/types";
+import { buildWrapupTurnInput, WRAPUP_CHAT_PROMPT, type WrapupThread } from "./wrapupChat.ts";
 
-import { buildWrapupTurnInput, WRAPUP_CHAT_PROMPT } from "./wrapupChat";
-
-const thread = {
-  id: ThreadId.make("thread-1"),
+const thread: WrapupThread = {
   title: "Trip planning",
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" },
   runtimeMode: "full-access",
   interactionMode: "default",
-} as Thread;
+};
 
 const base = {
   threadId: ThreadId.make("thread-1"),

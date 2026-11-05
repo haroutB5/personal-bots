@@ -8,7 +8,7 @@ import {
   scheduleHelpLine,
   scheduleInput,
   type ScheduleDraft,
-} from "./botFormModel";
+} from "./botFormModel.ts";
 
 const sel = (model: string, effort?: string, context?: string): ModelSelection =>
   ({

@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  PersonalBotThreadsBatchResult,
-  PersonalBotUpdateThreadsInput,
-  ThreadId,
-} from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
+import type { EnvironmentId, PersonalBotThreadsBatchResult, ThreadId } from "@t3tools/contracts";
+import {
+  BULK_NOT_CONNECTED_NOTICE,
+  bulkChatFailureFallback,
+  bulkChatStateInput,
+  type BulkChatOptions,
+  type BulkChatOutcome,
+} from "@hbots/personal-client/bots/bulkChatActions";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -16,7 +17,6 @@ import {
   bulkResultNotice,
   isChatStateAction,
   type BulkChatAction,
-  type ChatStateAction,
 } from "./chatSelection";
 import { commandFailureMessage } from "./commandFeedback";
 import { clearChatSeen } from "./unreadChats";
@@ -26,39 +26,7 @@ import {
   personalBotUpdateThreads,
 } from "./usePersonalBots";
 
-/** What a state action needs besides the chats: when a snooze ends. */
-export interface BulkChatOptions {
-  readonly snoozeUntilMs?: number | undefined;
-}
-
-function stateInput(
-  action: ChatStateAction,
-  threadIds: ReadonlyArray<ThreadId>,
-  options: BulkChatOptions | undefined,
-): PersonalBotUpdateThreadsInput {
-  switch (action) {
-    case "pin":
-      return { threadIds, pinned: true };
-    case "unpin":
-      return { threadIds, pinned: false };
-    case "snooze":
-      return { threadIds, snoozedUntil: DateTime.makeUnsafe(options?.snoozeUntilMs ?? Date.now()) };
-    case "wake":
-      return { threadIds, snoozedUntil: null };
-    case "markUnread":
-      return { threadIds, markUnread: true };
-  }
-}
-
-export type BulkChatOutcome =
-  | { readonly status: "cancelled" }
-  | {
-      readonly status: "settled";
-      readonly notice: string;
-      /** Chats the server refused or could not reach; they stay selected. */
-      readonly failedIds: ReadonlyArray<string>;
-      readonly anyFailed: boolean;
-    };
+export type { BulkChatOptions, BulkChatOutcome };
 
 /**
  * Archive, unarchive, delete, pin, unpin, snooze, wake or mark unread a selection in one request. The server runs
@@ -83,7 +51,7 @@ export function useBulkChatActions(
     if (environmentId === null) {
       return {
         status: "settled",
-        notice: "Not connected to your computer.",
+        notice: BULK_NOT_CONNECTED_NOTICE,
         failedIds: threadIds,
         anyFailed: true,
       };
@@ -99,7 +67,10 @@ export function useBulkChatActions(
     }
     const ids = threadIds as ReadonlyArray<ThreadId>;
     const result = isChatStateAction(action)
-      ? await updateThreads({ environmentId, input: stateInput(action, ids, options) })
+      ? await updateThreads({
+          environmentId,
+          input: bulkChatStateInput(action, ids, options, Date.now()),
+        })
       : action === "delete"
         ? await deleteThreads({ environmentId, input: { threadIds: ids } })
         : await archiveThreads({
@@ -107,12 +78,10 @@ export function useBulkChatActions(
             input: { threadIds: ids, archived: action === "archive" },
           });
     if (result._tag !== "Success") {
-      const verb = failureVerb(action);
+      const fallback = bulkChatFailureFallback(action);
       return {
         status: "settled",
-        notice:
-          commandFailureMessage(result, `Couldn't ${verb} these chats. Try again.`) ??
-          `Couldn't ${verb} these chats. Try again.`,
+        notice: commandFailureMessage(result, fallback) ?? fallback,
         failedIds: threadIds,
         anyFailed: true,
       };
@@ -136,18 +105,4 @@ export function useBulkChatActions(
       anyFailed: notice.failed,
     };
   };
-}
-
-/** The verb in "Couldn't <verb> these chats." */
-function failureVerb(action: BulkChatAction): string {
-  switch (action) {
-    case "delete":
-      return "delete";
-    case "markUnread":
-      return "mark";
-    case "wake":
-      return "wake";
-    default:
-      return action;
-  }
 }

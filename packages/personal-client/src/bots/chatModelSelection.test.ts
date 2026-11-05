@@ -1,7 +1,7 @@
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { chatTurnModelSelection } from "./chatModelSelection";
+import { chatTurnModelSelection } from "./chatModelSelection.ts";
 
 const selection = (instance: string, model: string): ModelSelection => ({
   instanceId: ProviderInstanceId.make(instance),

@@ -1,27 +1,18 @@
 import type { FormEvent, JSX, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
-  type BotAvatarShape,
   botTeam,
-  DEFAULT_PERSONAL_BOT_TEAM,
-  botFallback,
   type EnvironmentId,
-  isBotPinned,
-  isTeamLead,
-  type ModelSelection,
   personalBotTeamLabel,
   personalBotTeams,
   type PersonalBot,
   PersonalBotId,
   type PersonalBotTeam,
   PersonalGroupId,
-  savesMemoryWithoutAsking,
-  hidesBotPreviews,
 } from "@t3tools/contracts";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { Link, useBlocker, useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -29,42 +20,44 @@ import { randomUUID } from "~/lib/utils";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import {
+  assessBotDraft,
+  BOT_NAME_MAX as NAME_MAX,
+  BOT_TITLE_MAX as TITLE_MAX,
+  botDraftsEqual,
+  botNameProblem,
+  type BotDraft,
+  DISCARD_BOT_EDITS_LABEL,
+  DISCARD_BOT_EDITS_MESSAGE,
+  draftFromBot,
+  draftInstructionWarning,
+  fallbackDraftOf,
+  newBotDraft,
+  planBotSave,
+  providerOptionsFor,
+  scheduleDraftOf,
+  selectableProviders as selectableProvidersOf,
+  withStartingProvider,
+} from "@hbots/personal-client/bots/botDraft";
+
 import { BotAvatarPicker } from "./BotAvatarPicker";
-import { botVoiceCallsEnabled } from "./voice/botVoiceCalls";
 import { BotFallbackSection } from "./BotFallbackSection";
 import { BotRoutinesSection } from "./BotRoutinesSection";
 import { BotScheduleSection } from "./BotScheduleSection";
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
 import {
-  agentModeOfSelection,
   botAgentModeDescriptor,
   botContextWindowDescriptor,
   botEffortDescriptor,
-  botInstructionSupportWarning,
-  buildModelSelection,
-  CONTEXT_WINDOW_OPTION_ID,
   defaultModelFor,
-  EFFORT_OPTION_IDS,
-  type FallbackDraft,
-  fallbackDraftFromBot,
-  fallbackInput,
-  isBotProviderSelectable,
-  isFallbackDraftValid,
   modelOptionLabel,
   noBotProviderMessage,
-  type ScheduleDraft,
-  scheduleDraftFromBot,
-  scheduleDraftProblem,
-  scheduleDraftSelection,
-  scheduleInput,
   usesModelSearch,
 } from "./botFormModel";
 import { botModelLabel } from "./botModelLabel";
 import {
   botMuteState,
-  initialNotificationsChoice,
   MUTE_CHOICES,
-  muteForChoice,
   mutedUntilLabel,
   type BotNotificationsChoice,
 } from "./botMuteModel";
@@ -80,148 +73,6 @@ import {
 } from "./usePersonalBots";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { personalGroupAddMember } from "./usePersonalGroups";
-
-const NAME_MAX = 60;
-const TITLE_MAX = 60;
-
-interface BotDraft {
-  name: string;
-  title: string;
-  description: string;
-  instructions: string;
-  avatarShape: BotAvatarShape;
-  avatarColor: string;
-  instanceId: string;
-  model: string;
-  /** Reasoning effort option id; "" keeps the model's default. */
-  effort: string;
-  /** Context window option id (e.g. "1m"); "" keeps the model's default. */
-  contextWindow: string;
-  /** Agent mode option id (DeepSeek Harness only); "standard" is the default. */
-  agentMode: string;
-  /** The usage-limit fallback: on/off and its model, effort and context window. */
-  fallbackEnabled: boolean;
-  fallbackInstanceId: string;
-  fallbackModel: string;
-  fallbackEffort: string;
-  fallbackContextWindow: string;
-  /** The model schedule: on/off, From and To ("HH:MM") and its model, effort and context window. */
-  scheduleEnabled: boolean;
-  scheduleFrom: string;
-  scheduleTo: string;
-  scheduleInstanceId: string;
-  scheduleModel: string;
-  scheduleEffort: string;
-  scheduleContextWindow: string;
-  team: PersonalBotTeam;
-  lead: boolean;
-  pinned: boolean;
-  memoryAutoSave: boolean;
-  hidePreviews: boolean;
-  notifications: BotNotificationsChoice;
-}
-
-function fallbackFields(
-  fallback: FallbackDraft,
-): Pick<
-  BotDraft,
-  | "fallbackEnabled"
-  | "fallbackInstanceId"
-  | "fallbackModel"
-  | "fallbackEffort"
-  | "fallbackContextWindow"
-> {
-  return {
-    fallbackEnabled: fallback.enabled,
-    fallbackInstanceId: fallback.instanceId,
-    fallbackModel: fallback.model,
-    fallbackEffort: fallback.effort,
-    fallbackContextWindow: fallback.contextWindow,
-  };
-}
-
-function scheduleFields(
-  schedule: ScheduleDraft,
-): Pick<
-  BotDraft,
-  | "scheduleEnabled"
-  | "scheduleFrom"
-  | "scheduleTo"
-  | "scheduleInstanceId"
-  | "scheduleModel"
-  | "scheduleEffort"
-  | "scheduleContextWindow"
-> {
-  return {
-    scheduleEnabled: schedule.enabled,
-    scheduleFrom: schedule.from,
-    scheduleTo: schedule.to,
-    scheduleInstanceId: schedule.instanceId,
-    scheduleModel: schedule.model,
-    scheduleEffort: schedule.effort,
-    scheduleContextWindow: schedule.contextWindow,
-  };
-}
-
-function scheduleDraftOf(draft: BotDraft): ScheduleDraft {
-  return {
-    enabled: draft.scheduleEnabled,
-    from: draft.scheduleFrom,
-    to: draft.scheduleTo,
-    instanceId: draft.scheduleInstanceId,
-    model: draft.scheduleModel,
-    effort: draft.scheduleEffort,
-    contextWindow: draft.scheduleContextWindow,
-    // The scheduled model runs on its own provider; the mode belongs to the bot's own model.
-    agentMode: "",
-  };
-}
-
-function fallbackDraftOf(draft: BotDraft): FallbackDraft {
-  return {
-    enabled: draft.fallbackEnabled,
-    instanceId: draft.fallbackInstanceId,
-    model: draft.fallbackModel,
-    effort: draft.fallbackEffort,
-    contextWindow: draft.fallbackContextWindow,
-    // The fallback runs on its own provider; the mode belongs to the bot's own
-    // model, never to the model it falls back to.
-    agentMode: "",
-  };
-}
-
-/** Field-by-field: has the owner changed anything since the form opened? */
-function botDraftsEqual(left: BotDraft, right: BotDraft): boolean {
-  return (Object.keys(left) as Array<keyof BotDraft>).every((key) => left[key] === right[key]);
-}
-
-function draftFromBot(bot: PersonalBot): BotDraft {
-  return {
-    ...fallbackFields(fallbackDraftFromBot(bot)),
-    ...scheduleFields(scheduleDraftFromBot(bot)),
-    name: bot.name,
-    title: bot.title,
-    description: bot.description,
-    instructions: bot.instructions,
-    avatarShape: bot.avatarShape,
-    avatarColor: bot.avatarColor,
-    instanceId: bot.modelSelection.instanceId,
-    model: bot.modelSelection.model,
-    team: botTeam(bot),
-    lead: isTeamLead(bot),
-    pinned: isBotPinned(bot),
-    memoryAutoSave: savesMemoryWithoutAsking(bot),
-    hidePreviews: hidesBotPreviews(bot),
-    notifications: initialNotificationsChoice(bot, Date.now()),
-    effort:
-      EFFORT_OPTION_IDS.map((id) =>
-        getModelSelectionStringOptionValue(bot.modelSelection, id),
-      ).find((value) => value !== undefined) ?? "",
-    contextWindow:
-      getModelSelectionStringOptionValue(bot.modelSelection, CONTEXT_WINDOW_OPTION_ID) ?? "",
-    agentMode: agentModeOfSelection(bot.modelSelection),
-  };
-}
 
 function PersonalPageHeader({
   title,
@@ -317,34 +168,10 @@ function BotForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  const selectableProviders = useMemo(() => providers.filter(isBotProviderSelectable), [providers]);
-  const [rawDraft, setDraft] = useState<BotDraft>(() => {
-    if (bot !== null) return draftFromBot(bot);
-    const first =
-      selectableProviders.find((provider) => provider.driver === "claudeAgent") ??
-      selectableProviders[0];
-    return {
-      name: "",
-      title: "",
-      description: "",
-      instructions: "",
-      avatarShape: "blob",
-      avatarColor: "#1A73E8",
-      instanceId: first?.instanceId ?? "",
-      model: defaultModelFor(first),
-      effort: "",
-      contextWindow: "",
-      agentMode: "",
-      ...fallbackFields(fallbackDraftFromBot(null)),
-      ...scheduleFields(scheduleDraftFromBot(null)),
-      team: DEFAULT_PERSONAL_BOT_TEAM,
-      lead: false,
-      pinned: false,
-      memoryAutoSave: true,
-      hidePreviews: false,
-      notifications: "on",
-    };
-  });
+  const selectableProviders = useMemo(() => selectableProvidersOf(providers), [providers]);
+  const [rawDraft, setDraft] = useState<BotDraft>(() =>
+    bot !== null ? draftFromBot(bot, Date.now()) : newBotDraft(selectableProviders),
+  );
 
   // Unsaved edits. The editor is a long form (instructions run to pages), and
   // Back or a swipe-back used to drop them without a word. The baseline is the
@@ -363,11 +190,11 @@ function BotForm({
   useBlocker({
     shouldBlockFn: async () => {
       if (!dirty || leavingRef.current) return false;
-      const message = "Discard your changes?\nYou haven't saved your edits to this bot.";
+      const message = DISCARD_BOT_EDITS_MESSAGE;
       const discard =
         (await requestConfirmDialog(message, {
           variant: "destructive",
-          confirmLabel: "Discard",
+          confirmLabel: DISCARD_BOT_EDITS_LABEL,
         })) ?? window.confirm(message);
       return !discard;
     },
@@ -376,72 +203,37 @@ function BotForm({
 
   // A cold open of /bots/new renders before providers load; pick the first
   // ready one when it arrives so "Create bot" is not stuck disabled.
-  // The owner runs bots on Claude Code first, so it is the default when ready.
-  const firstSelectable =
-    selectableProviders.find((provider) => provider.driver === "claudeAgent") ??
-    selectableProviders[0];
-  const draft: BotDraft =
-    bot === null && rawDraft.instanceId === "" && firstSelectable !== undefined
-      ? {
-          ...rawDraft,
-          instanceId: firstSelectable.instanceId,
-          model: defaultModelFor(firstSelectable),
-        }
-      : rawDraft;
+  const draft: BotDraft = withStartingProvider(rawDraft, bot === null, selectableProviders);
 
   // The bot's current instance stays listed even when it went unavailable, so
   // the select never silently shows a different provider than the saved one.
-  const providerOptions = useMemo(() => {
-    const options = [...selectableProviders];
-    const current = providers.find((provider) => provider.instanceId === draft.instanceId);
-    if (current !== undefined && !options.includes(current)) options.unshift(current);
-    return options;
-  }, [draft.instanceId, providers, selectableProviders]);
+  const providerOptions = useMemo(
+    () => providerOptionsFor(draft.instanceId, providers, selectableProviders),
+    [draft.instanceId, providers, selectableProviders],
+  );
   const selectedProvider = providers.find((provider) => provider.instanceId === draft.instanceId);
   const providerStatus =
     draft.instanceId === "" ? null : resolveBotProvider(draft.instanceId, providers);
   // Only reachable for a bot already saved on such a provider: the picker
   // above never offers one. Silence here is the actual bug being fixed.
-  const instructionWarning = botInstructionSupportWarning(
-    selectedProvider,
-    providerStatus?.label ?? "This provider",
+  const instructionWarning = draftInstructionWarning(
+    providers,
+    draft.instanceId,
+    providerStatus?.label ?? null,
   );
   const models = selectedProvider?.models ?? [];
   // The fallback's provider: the saved one stays listed even when it went unavailable.
-  const fallbackProviderOptions = useMemo(() => {
-    const options = [...selectableProviders];
-    const current = providers.find((provider) => provider.instanceId === draft.fallbackInstanceId);
-    if (current !== undefined && !options.includes(current)) options.unshift(current);
-    return options;
-  }, [draft.fallbackInstanceId, providers, selectableProviders]);
+  const fallbackProviderOptions = useMemo(
+    () => providerOptionsFor(draft.fallbackInstanceId, providers, selectableProviders),
+    [draft.fallbackInstanceId, providers, selectableProviders],
+  );
   // The schedule's provider: the saved one stays listed even when it went unavailable.
-  const scheduleProviderOptions = useMemo(() => {
-    const options = [...selectableProviders];
-    const current = providers.find((provider) => provider.instanceId === draft.scheduleInstanceId);
-    if (current !== undefined && !options.includes(current)) options.unshift(current);
-    return options;
-  }, [draft.scheduleInstanceId, providers, selectableProviders]);
-  const mainModelSelection = buildModelSelection(
-    draft,
-    selectedProvider,
-    bot?.modelSelection ?? null,
+  const scheduleProviderOptions = useMemo(
+    () => providerOptionsFor(draft.scheduleInstanceId, providers, selectableProviders),
+    [draft.scheduleInstanceId, providers, selectableProviders],
   );
-  const scheduleSelection = scheduleDraftSelection(
-    scheduleDraftOf(draft),
-    providers,
-    bot?.schedule ?? null,
-  );
-  const scheduleProblem = scheduleDraftProblem(
-    scheduleDraftOf(draft),
-    mainModelSelection,
-    scheduleSelection,
-  );
-  const canSave =
-    draft.instanceId !== "" &&
-    draft.model !== "" &&
-    isFallbackDraftValid(fallbackDraftOf(draft)) &&
-    scheduleProblem === null &&
-    !busy;
+  const assessment = assessBotDraft(draft, providers, bot, busy);
+  const { scheduleSelection, scheduleProblem, canSave } = assessment;
 
   const update = (patch: Partial<BotDraft>) => {
     setDraft((previous) => ({ ...previous, ...patch }));
@@ -467,27 +259,13 @@ function BotForm({
       ? draft.contextWindow
       : "";
 
-  const buildMainModelSelection = (): ModelSelection => mainModelSelection;
-
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     const name = draft.name.trim();
-    if (name.length === 0) {
-      setNameError("Give your bot a name.");
+    const nameProblem = botNameProblem(draft.name, botId, botList.data?.bots ?? []);
+    if (nameProblem !== null) {
+      setNameError(nameProblem);
       // The form is taller than a phone screen: bring the field into view.
-      const input = nameInputRef.current;
-      input?.focus();
-      input?.scrollIntoView({ block: "center" });
-      return;
-    }
-    // Two bots with one name are two identical rows everywhere a bot is picked
-    // (the list, the strip, groups, @mentions, delegation), with no way to tell
-    // them apart.
-    const clash = botList.data?.bots.find(
-      (other) => other.botId !== botId && other.name.trim().toLowerCase() === name.toLowerCase(),
-    );
-    if (clash !== undefined) {
-      setNameError(`You already have a bot called ${clash.name}.`);
       const input = nameInputRef.current;
       input?.focus();
       input?.scrollIntoView({ block: "center" });
@@ -497,69 +275,22 @@ function BotForm({
     setNameError(null);
     setSubmitError(null);
     setBusy(true);
-    const fields = {
-      name,
-      title: draft.title.trim(),
-      description: draft.description.trim(),
-      instructions: draft.instructions.trim(),
-      avatarShape: draft.avatarShape,
-      avatarColor: draft.avatarColor,
-      modelSelection: buildMainModelSelection(),
-      team: draft.team,
-      lead: draft.lead,
-      pinned: draft.pinned,
-      memoryAutoSave: draft.memoryAutoSave,
-    };
-    // Create sends the whole fallback; edit only what changed.
-    const fallback = fallbackInput(
-      bot === null ? null : botFallback(bot),
-      fallbackDraftOf(draft),
+    const plan = planBotSave({
+      botId,
+      saved: bot,
+      draft,
+      baselineNotifications: baseline.notifications,
       providers,
-    );
-    // Create sends the whole schedule when it is on; edit only what changed.
-    const schedule = scheduleInput(
-      bot?.schedule ?? null,
-      scheduleDraftOf(draft),
-      scheduleSelection,
-    );
-    const notificationsMute = muteForChoice(draft.notifications, baseline.notifications);
+      assessment,
+    });
     let result =
-      bot === null
-        ? await createBot({
-            environmentId,
-            input: {
-              botId,
-              ...fields,
-              ...(fallback === undefined ? {} : { fallback }),
-              ...(schedule === undefined ? {} : { schedule }),
-            },
-          })
-        : await updateBot({
-            environmentId,
-            input: {
-              botId,
-              ...fields,
-              ...(fallback === undefined ? {} : { fallback }),
-              ...(schedule === undefined ? {} : { schedule }),
-              hidePreviews: draft.hidePreviews,
-              ...(notificationsMute === undefined ? {} : { notificationsMute }),
-            },
-          });
+      plan.kind === "create"
+        ? await createBot({ environmentId, input: plan.create })
+        : await updateBot({ environmentId, input: plan.update });
     // Create takes no mute and no privacy switch: a new bot created with
     // either gets it right after. The call switch is on the create input.
-    if (
-      bot === null &&
-      (notificationsMute !== undefined || draft.hidePreviews) &&
-      result._tag === "Success"
-    ) {
-      result = await updateBot({
-        environmentId,
-        input: {
-          botId,
-          ...(notificationsMute === undefined ? {} : { notificationsMute }),
-          ...(draft.hidePreviews ? { hidePreviews: true } : {}),
-        },
-      });
+    if (plan.kind === "create" && plan.followUp !== null && result._tag === "Success") {
+      result = await updateBot({ environmentId, input: plan.followUp });
     }
     // Created from a group's settings: it goes straight into that group. A
     // failed add keeps the form open; submitting again retries both steps
