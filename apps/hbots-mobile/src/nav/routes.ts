@@ -11,6 +11,8 @@ export type Origin = "bots" | "team" | "notification" | "share" | "deeplink" | "
 export type Route =
   | { readonly kind: "tab"; readonly tab: TabName }
   | { readonly kind: "team" }
+  | { readonly kind: "teamNew" }
+  | { readonly kind: "teamRemoved" }
   | {
       readonly kind: "chat";
       readonly botId: string;
@@ -143,9 +145,16 @@ export function parseDeepLink(raw: string): NavState | null {
       return { stack: [BOTS, { kind: "group", groupId: first }] };
     case "groupNew":
       return { stack: [BOTS, { kind: "groupNew" }] };
+    case "team":
+      return { stack: [BOTS, { kind: "team" }] };
+    case "teamNew":
+      return { stack: [BOTS, { kind: "teamNew" }] };
     case "task":
       return first === undefined ? null : { stack: [BOTS, { kind: "task", taskId: first }] };
     case "settings":
+      if (first === "removed") {
+        return { stack: [BOTS, { kind: "settings" }, { kind: "teamRemoved" }] };
+      }
       return first === "this-phone"
         ? { stack: [BOTS, { kind: "settings" }, { kind: "thisPhone" }] }
         : { stack: [BOTS, { kind: "settings" }] };

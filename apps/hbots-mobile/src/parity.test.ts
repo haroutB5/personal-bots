@@ -96,9 +96,29 @@ const A10_ITEMS = [
   "rpc:personalGroupsStop",
 ];
 
+const A11_ITEMS = [
+  "screen:routes/_personal.bots_.settings_.removed.tsx#bots-settings-removed",
+  "screen:routes/_personal.bots_.team.tsx#bots-team",
+  "screen:routes/_personal.bots_.teams.new.tsx#bots-teams-new",
+  "sheet:TeamLeadConfirm.tsx#sheet-in-teamleadconfirm",
+  "sheet:TeamMembersSheet.tsx#teammemberssheet",
+  "sheet:TeamScreen.tsx#new-team-with",
+  "action:TeamConstellationCard.tsx#remove-team-remove-team-move-its-bots-first",
+  "action:TeamScreen.tsx#drag-a-bot-between-teams",
+  "card:TeamConstellationCard.tsx#teamconstellationcard",
+  "setting:NewTeamForm.tsx#team-name",
+  "setting:NewTeamForm.tsx#leader-optional",
+  "setting:NewTeamForm.tsx#no-leader-for-now",
+  "setting:NewTeamForm.tsx#field-with-a-data-driven-label-in-newteamform",
+  "setting:NewTeamForm.tsx#bots-to-move-into-the-new-team",
+  "setting:NewTeamForm.tsx#field-with-a-data-driven-label-in-newteamform-2",
+  "rpc:personalBotsListRemoved",
+  "rpc:personalBotsRestore",
+];
+
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10", "A11"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
@@ -111,5 +131,9 @@ describe("Android parity ratchet", () => {
 
   it("claims every A10 item, including the group sheets, cards and every group RPC", () => {
     for (const item of A10_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims every A11 item, including the team sheets, move action and removed-bot RPCs", () => {
+    for (const item of A11_ITEMS) expect(DONE_ITEMS).toContain(item);
   });
 });

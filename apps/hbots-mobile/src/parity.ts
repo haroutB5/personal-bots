@@ -1,4 +1,4 @@
-export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A9", "A10"];
+export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A9", "A10", "A11"];
 export const DONE_ITEMS: readonly string[] = [
   "rpc:personalBotsList",
   "screen:routes/_personal.tsx#personal",
@@ -125,4 +125,21 @@ export const DONE_ITEMS: readonly string[] = [
   "rpc:personalGroupsSendMessage",
   "rpc:personalGroupsContinueRound",
   "rpc:personalGroupsStop",
+  "screen:routes/_personal.bots_.settings_.removed.tsx#bots-settings-removed",
+  "screen:routes/_personal.bots_.team.tsx#bots-team",
+  "screen:routes/_personal.bots_.teams.new.tsx#bots-teams-new",
+  "sheet:TeamLeadConfirm.tsx#sheet-in-teamleadconfirm",
+  "sheet:TeamMembersSheet.tsx#teammemberssheet",
+  "sheet:TeamScreen.tsx#new-team-with",
+  "action:TeamConstellationCard.tsx#remove-team-remove-team-move-its-bots-first",
+  "action:TeamScreen.tsx#drag-a-bot-between-teams",
+  "card:TeamConstellationCard.tsx#teamconstellationcard",
+  "setting:NewTeamForm.tsx#team-name",
+  "setting:NewTeamForm.tsx#leader-optional",
+  "setting:NewTeamForm.tsx#no-leader-for-now",
+  "setting:NewTeamForm.tsx#field-with-a-data-driven-label-in-newteamform",
+  "setting:NewTeamForm.tsx#bots-to-move-into-the-new-team",
+  "setting:NewTeamForm.tsx#field-with-a-data-driven-label-in-newteamform-2",
+  "rpc:personalBotsListRemoved",
+  "rpc:personalBotsRestore",
 ];

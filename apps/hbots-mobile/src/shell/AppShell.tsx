@@ -21,6 +21,9 @@ import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
 import { GroupConversationScreen } from "../groups/GroupConversationScreen";
 import { NewGroupScreen } from "../groups/NewGroupScreen";
+import { NewTeamScreen } from "../teams/NewTeamScreen";
+import { RemovedBotsScreen } from "../teams/RemovedBotsScreen";
+import { TeamScreen } from "../teams/TeamScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
 import { UpdateSettings } from "../UpdateSettings";
@@ -52,6 +55,8 @@ export type RootStackParamList = {
   Task: { readonly taskId: string };
   Routine: { readonly routineId: string };
   Team: undefined;
+  TeamNew: undefined;
+  TeamRemoved: undefined;
   Settings: undefined;
   ThisPhone: undefined;
   Stop: undefined;
@@ -107,13 +112,42 @@ function HeaderScreen({
   );
 }
 
-function SettingsScreen({ navigation }: NativeStackScreenProps<RootStackParamList, "Settings">) {
+function SettingsScreen({
+  navigation,
+  native,
+}: NativeStackScreenProps<RootStackParamList, "Settings"> & {
+  readonly native: NativePersonal;
+}) {
   const insets = useSafeAreaInsets();
+  const removed = native.bots.useRemovedBots(native.environmentId).data?.bots.length ?? 0;
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ScreenHeader title="Settings" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.settingsBody}>
         <View style={styles.group}>
+          {removed > 0 ? (
+            <Pressable
+              onPress={() => navigation.navigate("TeamRemoved")}
+              accessibilityRole="button"
+              accessibilityLabel={`Removed bots, ${removed}`}
+              style={styles.settingsRow}
+            >
+              <View style={styles.settingsIcon}>
+                <IconChevronRight size={20} color={tokens.text} strokeWidth={2} />
+              </View>
+              <View style={styles.settingsText}>
+                <Text style={styles.settingsTitle}>Removed bots</Text>
+                <Text style={styles.settingsDetail} maxFontSizeMultiplier={1.4}>
+                  Bots a team lead removed, and bringing them back
+                </Text>
+              </View>
+              <View style={styles.settingsBadge}>
+                <Text style={styles.settingsBadgeText} maxFontSizeMultiplier={1.3}>
+                  {removed}
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={() => navigation.navigate("ThisPhone")}
             accessibilityRole="button"
@@ -157,6 +191,10 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Tabs", params: { tab: route.tab } };
     case "team":
       return { name: "Team" };
+    case "teamNew":
+      return { name: "TeamNew" };
+    case "teamRemoved":
+      return { name: "TeamRemoved" };
     case "chat":
       return {
         name: "Chat",
@@ -334,12 +372,32 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         </Stack.Screen>
         <Stack.Screen name="Team">
           {({ navigation }) => (
-            <HeaderScreen title="Team" onBack={() => navigation.goBack()}>
-              <Placeholder title="Team" body="Your team will show here." />
-            </HeaderScreen>
+            <TeamScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onNewTeam={() => navigation.navigate("TeamNew")}
+              onNewBot={() => navigation.navigate("BotNew")}
+              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+            />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="TeamNew">
+          {({ navigation }) => (
+            <NewTeamScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onCreated={() => navigation.replace("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="TeamRemoved">
+          {({ navigation }) => (
+            <RemovedBotsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Settings">
+          {(screenProps) => <SettingsScreen {...screenProps} native={props.native} />}
+        </Stack.Screen>
         <Stack.Screen name="ThisPhone">
           {(screenProps) => <ThisPhoneScreen {...screenProps} props={props} />}
         </Stack.Screen>
@@ -449,5 +507,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: tokens.fillMuted,
   },
-  settingsTitle: { color: tokens.text, fontSize: 16, fontWeight: "500", flex: 1 },
+  settingsTitle: { color: tokens.text, fontSize: 16, fontWeight: "500" },
+  settingsText: { flex: 1, gap: 2 },
+  settingsDetail: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16 },
+  settingsBadge: {
+    minWidth: 24,
+    height: 24,
+    paddingHorizontal: 7,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: tokens.fillMuted,
+  },
+  settingsBadgeText: { color: tokens.text, fontSize: 12, fontWeight: "600" },
 });
