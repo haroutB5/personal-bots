@@ -413,7 +413,7 @@ describe("the flusher", () => {
     enqueueOutboxEntry(entry("one"));
     enqueueOutboxEntry(entry("two"));
     markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
-    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
     let connected = true;
     let generation = 0;
     const flusher = createOutboxFlusher({
@@ -453,7 +453,7 @@ describe("the flusher", () => {
     enqueueOutboxEntry(entry("one"));
     enqueueOutboxEntry(entry("two"));
     markOutboxFailed("one", "Couldn't send: an attachment didn't upload. Try again.", true);
-    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
     let connected = true;
     let generation = 0;
     const flusher = createOutboxFlusher({
@@ -494,7 +494,7 @@ describe("the flusher", () => {
     enqueueOutboxEntry(entry("one"));
     enqueueOutboxEntry(entry("two"));
     markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
-    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
     let connected = true;
     const flusher = createOutboxFlusher({
       environmentId: "env",
@@ -522,7 +522,7 @@ describe("the flusher", () => {
     enqueueOutboxEntry(entry("one"));
     enqueueOutboxEntry(entry("two"));
     markOutboxFailed("one", "Couldn't send: that chat is gone.", true);
-    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
     const flusher = createOutboxFlusher({
       environmentId: "env",
       isConnected: () => true,

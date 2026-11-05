@@ -392,7 +392,7 @@ describe("the flusher", () => {
     enqueueOutboxEntry(entry("one"));
     enqueueOutboxEntry(entry("two"));
     markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
-    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
     let connected = true;
     const flusher = createOutboxFlusher({
       environmentId: "env",
@@ -425,7 +425,7 @@ describe("the flusher", () => {
     enqueueOutboxEntry(entry("photo"));
     enqueueOutboxEntry(entry("text-behind-it"));
     markOutboxFailed("photo", "Couldn't send: an attachment didn't upload. Try again.", true);
-    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
     let connected = true;
     const flusher = createOutboxFlusher({
       environmentId: "env",
