@@ -2,7 +2,7 @@ import { createContext, useContext, type ReactElement, type ReactNode } from "re
 
 import { type EnvironmentId, ProviderInstanceId, ProviderSetupError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 

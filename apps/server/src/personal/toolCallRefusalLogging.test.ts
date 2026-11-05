@@ -17,7 +17,7 @@ import * as Logger from "effect/Logger";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
 import { downgradeExpectedRefusals } from "../expectedToolRefusals.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";

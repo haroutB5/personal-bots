@@ -26,7 +26,7 @@ import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.t
  * behaviour rather than the runtime details of each provider.
  */
 import { describe, expect, it } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import {
   EnvironmentId,
   type ClaudeSettings,
@@ -49,7 +49,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import type { BuiltInDriversEnv } from "../builtInDrivers.ts";

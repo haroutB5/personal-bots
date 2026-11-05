@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { HostProcessIsExecutable, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { isSafeSvg, makeProviderCatalog, type ProviderCatalogOptions } from "./ProviderCatalog.ts";
 import { REGISTRY_URL } from "./registry.ts";

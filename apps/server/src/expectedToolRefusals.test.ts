@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as AiError from "effect/unstable/ai/AiError";
+import * as AiError from "effect/ai/AiError";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

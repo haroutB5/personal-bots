@@ -1,5 +1,5 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
@@ -7,14 +7,14 @@ import {
 } from "@t3tools/shared/hostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Argument, Command } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Argument, Command } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export type NativePlatform = "ios" | "android";
 const NativeClientRecord = Schema.Struct({ fingerprint: Schema.String, binary: Schema.String });

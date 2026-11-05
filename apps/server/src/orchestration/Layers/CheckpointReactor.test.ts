@@ -22,7 +22,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";

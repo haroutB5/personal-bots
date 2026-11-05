@@ -14,7 +14,7 @@ import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -33,7 +33,7 @@ export const computerEnvironment = {
   feed: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
     label: "environment-data:personal-browser:feed",
     tag: WS_METHODS.personalBrowserActivity,
-    transform: (stream) => stream.pipe(Stream.scan(EMPTY_COMPUTER_FEED, reduceComputerFeed)),
+    transform: (stream) => stream.pipe(Stream.scan(() => EMPTY_COMPUTER_FEED, reduceComputerFeed)),
   }),
   files: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:personal-browser:files",

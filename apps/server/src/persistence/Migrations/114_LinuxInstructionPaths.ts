@@ -29,7 +29,7 @@
  * left, and a second run changes nothing.
  */
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { parsePathMap, type PathMapping } from "./113_LinuxPathRewrite.ts";
 

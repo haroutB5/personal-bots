@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import {
   CommandId,
   MessageId,

@@ -20,7 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";

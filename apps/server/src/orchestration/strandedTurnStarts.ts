@@ -1,6 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * Turn-start rows of a previous process that no turn can ever consume.

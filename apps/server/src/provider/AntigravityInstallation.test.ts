@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   HostProcessArchitecture,
@@ -8,6 +8,7 @@ import {
 } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -20,8 +21,8 @@ import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 
 import {
@@ -339,7 +340,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           if (command._tag !== "StandardCommand") {
             return yield* Effect.die("Expected one validation process.");
           }
-          const profile = command.options.env?.GEMINI_HOME;
+          const rawProfile = command.options.env?.GEMINI_HOME;
+          const profile =
+            typeof rawProfile === "string" ? rawProfile : rawProfile && Redacted.value(rawProfile);
           if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
           profiles.add(profile);
           const helper = command.args[0] === "-e";

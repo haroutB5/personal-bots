@@ -11,7 +11,7 @@ import * as NodeNet from "node:net";
 
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
@@ -22,7 +22,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 
 import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
 import { SessionStore } from "../../auth/SessionStore.ts";

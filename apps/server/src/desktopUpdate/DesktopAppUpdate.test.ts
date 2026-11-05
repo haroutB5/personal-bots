@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import type { DesktopUpdateState, DesktopUpdateStatusReport } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";

@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { type AtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 

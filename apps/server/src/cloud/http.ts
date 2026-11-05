@@ -51,7 +51,7 @@ import {
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -59,11 +59,11 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
-import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpEffect from "effect/http/HttpEffect";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpServer from "effect/http/HttpServer";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";

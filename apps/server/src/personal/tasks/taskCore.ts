@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import {
   PersonalTaskId,
   PersonalTaskWorkRecord,
@@ -127,7 +127,9 @@ export const makeTaskCore = () =>
           ),
         );
 
-    const readWorkRecord = (taskId: PersonalTaskId) =>
+    const readWorkRecord = (
+      taskId: PersonalTaskId,
+    ): Effect.Effect<PersonalTaskWorkRecord | null, PersonalTasksError> =>
       Option.match(workStore, {
         onNone: () => Effect.succeed(null as PersonalTaskWorkRecord | null),
         onSome: ({ sql }) =>

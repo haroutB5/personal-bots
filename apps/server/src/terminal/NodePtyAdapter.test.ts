@@ -1,7 +1,7 @@
 import * as NodeEvents from "node:events";
 import * as NodeNet from "node:net";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { assert, it } from "@effect/vitest";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";

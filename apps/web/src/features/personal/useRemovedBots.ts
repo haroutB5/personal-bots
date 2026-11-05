@@ -5,7 +5,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";

@@ -7,7 +7,7 @@ import {
   PreviewAutomationHoverInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import { PreviewToolkit } from "./tools.ts";
 
@@ -100,7 +100,9 @@ it("lists the 1.66.6 browser tools, each with its limits in the description", ()
       "preview_close_tab",
     ]),
   );
-  expect(tools.preview_click.description).toMatch(/button \(left, right, middle\), clicks \(1 to 3; 2 is a double click\) and modifiers/);
+  expect(tools.preview_click.description).toMatch(
+    /button \(left, right, middle\), clicks \(1 to 3; 2 is a double click\) and modifiers/,
+  );
   expect(tools.preview_click.description).toMatch(/modifiers/);
   expect(tools.preview_click.description).toMatch(/background tab the preview tools cannot drive/);
   expect(tools.preview_click.description).toMatch(/saved login was filled, only plain left clicks/);

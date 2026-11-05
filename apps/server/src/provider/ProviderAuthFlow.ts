@@ -10,7 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";

@@ -8,7 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
 import * as EffectAcpAgent from "effect-acp/agent";

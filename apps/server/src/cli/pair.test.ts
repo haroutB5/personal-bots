@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -12,7 +12,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import { cli } from "../bin.ts";
 import {

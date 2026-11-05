@@ -7,10 +7,10 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { it, assert } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import * as AcpProtocol from "./protocol.ts";

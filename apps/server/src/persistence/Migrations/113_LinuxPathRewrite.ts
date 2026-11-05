@@ -41,7 +41,7 @@
  *     faviconPath on project/thread create and meta-update events only
  */
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const PATH_MAP_ENV = "T3CODE_PATH_MAP";
 

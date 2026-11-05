@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - real temp files back the spawn-resolution cache tests
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";

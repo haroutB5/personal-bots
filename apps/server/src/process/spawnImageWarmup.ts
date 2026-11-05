@@ -34,9 +34,10 @@ import {
   spawnAsyncResolveEnabled,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Layer from "effect/Layer";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 /** Smaller programs are checked in a few milliseconds (git.exe, taskkill.exe, cmd.exe). */
 export const SPAWN_WARMUP_MIN_BYTES = 16 * 1024 * 1024;
@@ -295,10 +296,16 @@ const programFileOf = async (
   const env = command.options.extendEnv
     ? { ...process.env, ...command.options.env }
     : (command.options.env ?? process.env);
+  const plainEnv = Object.fromEntries(
+    Object.entries(env).map(([key, value]) => [
+      key,
+      value === undefined || typeof value === "string" ? value : Redacted.value(value),
+    ]),
+  );
   if (!spawnAsyncResolveEnabled()) {
     return NodePath.win32.isAbsolute(command.command) ? command.command : undefined;
   }
-  return resolveSpawnExecutableWithNodeAsync(command.command, "win32", env);
+  return resolveSpawnExecutableWithNodeAsync(command.command, "win32", plainEnv);
 };
 
 const warmCommandImages = (

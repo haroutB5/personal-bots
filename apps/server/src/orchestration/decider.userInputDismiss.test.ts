@@ -9,7 +9,7 @@ import {
   type OrchestrationReadModel,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 

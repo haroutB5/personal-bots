@@ -27,7 +27,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

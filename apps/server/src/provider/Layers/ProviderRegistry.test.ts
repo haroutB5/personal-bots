@@ -1,7 +1,7 @@
 import { CodexInstallation } from "../CodexInstallation.ts";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -31,8 +31,8 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";

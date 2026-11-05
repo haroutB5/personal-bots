@@ -16,7 +16,7 @@ import {
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,7 +27,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { GitManager, type GitBranchPullRequest } from "../git/GitManager.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";

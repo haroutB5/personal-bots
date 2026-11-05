@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0113, { parsePathMap, rewriteStoredPath } from "./113_LinuxPathRewrite.ts";
@@ -78,75 +78,84 @@ const readPaths = Effect.gen(function* () {
 });
 
 layer("113_LinuxPathRewrite", (it) => {
-  it.effect("rewrites every stored Windows path once, leaves content alone, and does nothing unmapped", () =>
-    Effect.gen(function* () {
-      yield* seed;
-      const previous = process.env.T3CODE_PATH_MAP;
-      // First boot on the new machine before the mapping is configured.
-      delete process.env.T3CODE_PATH_MAP;
-      if (process.platform === "linux") {
-        // Linux refuses to record this migration with Windows paths and no
-        // map (the fail-safe case in the companion test file); the Windows
-        // no-op is asserted on Windows only.
-        const exit = yield* runMigrations({ toMigrationInclusive: 113 }).pipe(Effect.exit);
-        assert.strictEqual(Exit.isFailure(exit), true);
-      } else {
-        // Windows: the shipping install needs no map and stays a no-op.
-        yield* runMigrations({ toMigrationInclusive: 113 });
-        const unmapped = yield* readPaths;
-        assert.strictEqual(unmapped.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
-      }
+  it.effect(
+    "rewrites every stored Windows path once, leaves content alone, and does nothing unmapped",
+    () =>
+      Effect.gen(function* () {
+        yield* seed;
+        const previous = process.env.T3CODE_PATH_MAP;
+        // First boot on the new machine before the mapping is configured.
+        delete process.env.T3CODE_PATH_MAP;
+        if (process.platform === "linux") {
+          // Linux refuses to record this migration with Windows paths and no
+          // map (the fail-safe case in the companion test file); the Windows
+          // no-op is asserted on Windows only.
+          const exit = yield* runMigrations({ toMigrationInclusive: 113 }).pipe(Effect.exit);
+          assert.strictEqual(Exit.isFailure(exit), true);
+        } else {
+          // Windows: the shipping install needs no map and stays a no-op.
+          yield* runMigrations({ toMigrationInclusive: 113 });
+          const unmapped = yield* readPaths;
+          assert.strictEqual(unmapped.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
+        }
 
-      process.env.T3CODE_PATH_MAP = MAP;
-      try {
-        // A re-run of the migration itself (the mapping was set afterwards).
-        yield* Migration0113;
-        const first = yield* readPaths;
+        process.env.T3CODE_PATH_MAP = MAP;
+        try {
+          // A re-run of the migration itself (the mapping was set afterwards).
+          yield* Migration0113;
+          const first = yield* readPaths;
 
-        assert.deepStrictEqual(
-          first.projects.map((row) => [row.project_id, row.workspace_root, row.favicon_path]),
-          [
-            ["p1", "/home/harout/claude/personal-bots", "/home/harout/.personal-bots/dev/userdata/project-icons/p1.png"],
-            ["p2", "D:/Games/Mods", null],
-            ["p3", "/home/harout/keep", null],
-          ],
-        );
-        assert.deepStrictEqual(
-          first.threads.map((row) => [row.thread_id, row.worktree_path]),
-          [
-            ["t1", "/home/harout/claude/_wt/hbots-linux-server"],
-            ["t2", null],
-            ["t3", "/home/harout/keep"],
-          ],
-        );
-        const payload = (id: string) =>
-          JSON.parse(first.events.find((row) => row.event_id === id)!.payload_json);
-        assert.strictEqual(payload("e1").workspaceRoot, "/home/harout/claude/personal-bots");
-        assert.strictEqual(
-          payload("e1").faviconPath,
-          "/home/harout/.personal-bots/dev/userdata/project-icons/p1.png",
-        );
-        assert.strictEqual(payload("e2").worktreePath, "/home/harout/claude/_wt/hbots-linux-server");
-        // Not one of the three structural event keys: content stays as it was.
-        assert.strictEqual(payload("e2").projectCwd, "C:/Claude/AI/personal-bots/apps/server");
-        assert.strictEqual(
-          payload("e3").text,
-          "the old path was C:/Claude/AI/personal-bots and it stays in history",
-        );
-        assert.strictEqual(payload("e4").workspaceRoot, "D:/Games/Mods");
+          assert.deepStrictEqual(
+            first.projects.map((row) => [row.project_id, row.workspace_root, row.favicon_path]),
+            [
+              [
+                "p1",
+                "/home/harout/claude/personal-bots",
+                "/home/harout/.personal-bots/dev/userdata/project-icons/p1.png",
+              ],
+              ["p2", "D:/Games/Mods", null],
+              ["p3", "/home/harout/keep", null],
+            ],
+          );
+          assert.deepStrictEqual(
+            first.threads.map((row) => [row.thread_id, row.worktree_path]),
+            [
+              ["t1", "/home/harout/claude/_wt/hbots-linux-server"],
+              ["t2", null],
+              ["t3", "/home/harout/keep"],
+            ],
+          );
+          const payload = (id: string) =>
+            JSON.parse(first.events.find((row) => row.event_id === id)!.payload_json);
+          assert.strictEqual(payload("e1").workspaceRoot, "/home/harout/claude/personal-bots");
+          assert.strictEqual(
+            payload("e1").faviconPath,
+            "/home/harout/.personal-bots/dev/userdata/project-icons/p1.png",
+          );
+          assert.strictEqual(
+            payload("e2").worktreePath,
+            "/home/harout/claude/_wt/hbots-linux-server",
+          );
+          // Not one of the three structural event keys: content stays as it was.
+          assert.strictEqual(payload("e2").projectCwd, "C:/Claude/AI/personal-bots/apps/server");
+          assert.strictEqual(
+            payload("e3").text,
+            "the old path was C:/Claude/AI/personal-bots and it stays in history",
+          );
+          assert.strictEqual(payload("e4").workspaceRoot, "D:/Games/Mods");
 
-        // Longest prefix wins: C:/Claude/AI went to claude/, not documents/claude.
-        assert.ok(!first.projects.some((row) => row.workspace_root.includes("documents/claude")));
+          // Longest prefix wins: C:/Claude/AI went to claude/, not documents/claude.
+          assert.ok(!first.projects.some((row) => row.workspace_root.includes("documents/claude")));
 
-        // Idempotent: a re-run changes no row.
-        yield* Migration0113;
-        const second = yield* readPaths;
-        assert.deepStrictEqual(second, first);
-      } finally {
-        if (previous === undefined) delete process.env.T3CODE_PATH_MAP;
-        else process.env.T3CODE_PATH_MAP = previous;
-      }
-    }),
+          // Idempotent: a re-run changes no row.
+          yield* Migration0113;
+          const second = yield* readPaths;
+          assert.deepStrictEqual(second, first);
+        } finally {
+          if (previous === undefined) delete process.env.T3CODE_PATH_MAP;
+          else process.env.T3CODE_PATH_MAP = previous;
+        }
+      }),
   );
 
   it.effect("parses a mapping, ignoring malformed entries and keeping the longest first", () =>

@@ -3,7 +3,7 @@ import { parseEvidence } from "./memoryEvidence.ts";
 // helpers and the in-memory state of a running server (what each chat's session was last given).
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   PERSONAL_MEMORY_MAX_LENGTH,

@@ -81,7 +81,7 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {

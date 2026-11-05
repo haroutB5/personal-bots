@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
 import * as NodeOS from "node:os";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { assert, it } from "@effect/vitest";
 import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { ServerConfig } from "../config.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";

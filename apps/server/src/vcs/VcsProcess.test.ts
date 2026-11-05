@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
@@ -12,7 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   VcsProcessExitError,

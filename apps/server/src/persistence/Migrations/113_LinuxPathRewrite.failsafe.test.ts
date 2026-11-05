@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { linuxPathMapMissingMessage, storedWindowsPathInPayload } from "./113_LinuxPathRewrite.ts";
@@ -25,9 +25,7 @@ const withPlatform = <A, E, R>(
 ): Effect.Effect<A, E, R> => {
   const original = Object.getOwnPropertyDescriptor(process, "platform")!;
   return Effect.acquireUseRelease(
-    Effect.sync(() =>
-      Object.defineProperty(process, "platform", { ...original, value: platform }),
-    ),
+    Effect.sync(() => Object.defineProperty(process, "platform", { ...original, value: platform })),
     () => effect,
     () => Effect.sync(() => Object.defineProperty(process, "platform", original)),
   );

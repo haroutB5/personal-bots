@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderCatalogInstallState } from "@t3tools/contracts";
 import {
@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
 
 import type { AcpSmoke } from "./acpSmoke.ts";

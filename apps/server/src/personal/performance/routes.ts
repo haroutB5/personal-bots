@@ -12,7 +12,7 @@ import { AuthOrchestrationReadScope, type PerformanceStatics } from "@t3tools/co
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { listBotProviderProcesses } from "../../provider/botProviderProcesses.ts";
 import { ServerConfig } from "../../config.ts";

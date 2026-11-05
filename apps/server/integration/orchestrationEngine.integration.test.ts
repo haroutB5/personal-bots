@@ -34,7 +34,7 @@ import type {
   CheckpointDiffFinalizedReceipt,
   TurnProcessingQuiescedReceipt,
 } from "../src/orchestration/Services/RuntimeReceiptBus.ts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);

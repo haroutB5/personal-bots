@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -12,6 +12,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -19,8 +20,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -37,6 +38,9 @@ import {
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { AntigravityDriver, quotaHitUsageLimits } from "./AntigravityDriver.ts";
+
+const plainWord = (value: string | Redacted.Redacted<string> | undefined) =>
+  value === undefined || typeof value === "string" ? value : Redacted.value(value);
 
 const hostPlatform = HostProcessPlatform.defaultValue();
 const windowsHost = hostPlatform === "win32";
@@ -170,20 +174,22 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       const environment = command.options.env ?? {};
       launches.push({
         command: command.command,
-        args: command.args,
+        args: command.args.map((arg) => String(arg)),
         cwd: command.options.cwd,
         extendEnv: command.options.extendEnv,
-        profileDirectory: environment.GEMINI_HOME,
-        harnessPath: environment.ANTIGRAVITY_HARNESS_PATH,
-        forceFileStorage: environment.AGY_ACP_FORCE_FILE_STORAGE,
+        profileDirectory: plainWord(environment.GEMINI_HOME),
+        harnessPath: plainWord(environment.ANTIGRAVITY_HARNESS_PATH),
+        forceFileStorage: plainWord(environment.AGY_ACP_FORCE_FILE_STORAGE),
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
-        geminiApiKey: environment.GEMINI_API_KEY,
+        geminiApiKey: plainWord(environment.GEMINI_API_KEY),
         // Only the agent gets a per-process temp directory. Other launches
         // inherit the host TMPDIR.
         tempDirectory:
-          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : environment.TMPDIR,
+          environment.ANTIGRAVITY_HARNESS_PATH === undefined
+            ? undefined
+            : plainWord(environment.TMPDIR),
         handle,
       });
       return handle;

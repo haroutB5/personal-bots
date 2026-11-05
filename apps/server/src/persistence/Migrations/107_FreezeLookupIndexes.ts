@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Additive indexes for two lookups behind the server's event-loop freezes
 // (stall reports and "sql NNN ms" lines, 10-14 Oct). Both queries keep their

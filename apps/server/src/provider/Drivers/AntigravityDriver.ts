@@ -10,7 +10,7 @@ import {
   NodeRuntimeUnavailableError,
   nodeRuntimeUnavailableMessage,
 } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Deferred from "effect/Deferred";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -20,10 +20,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { AcpError } from "effect-acp/errors";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";

@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 
 import { vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Effect from "effect/Effect";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 

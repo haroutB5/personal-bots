@@ -3,7 +3,7 @@ import {
   computeDpopJwkThumbprint,
   DpopPublicJwk,
 } from "@t3tools/shared/dpop";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

@@ -1,5 +1,5 @@
 import * as Predicate from "effect/Predicate";
-import { McpSchema, Tool } from "effect/unstable/ai";
+import { McpSchema, Tool } from "effect/ai";
 
 type Json = unknown;
 type JsonObject = { [key: string]: Json };

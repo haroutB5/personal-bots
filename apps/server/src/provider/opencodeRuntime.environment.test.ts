@@ -1,5 +1,5 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { it as effectIt } from "@effect/vitest";
 import {
   HostProcessEnvironment,
@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

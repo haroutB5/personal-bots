@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import {
   EnvironmentId,
   PREVIEW_AUTOMATION_OPERATIONS,
@@ -15,8 +15,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpSchema, McpServer, type Tool } from "effect/unstable/ai";
-import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpSchema, McpServer, type Tool } from "effect/ai";
+import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -56,13 +56,13 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
 const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.pipe(
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(ProjectionSnapshotQuery)({
@@ -752,6 +752,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
         version: "1.0.0",
         path: "/mcp",
         protocols: [McpProtocol.v2025_06_18],
+        allowSessionTermination: true,
       });
       yield* HttpRouter.serve(serverLayer, {
         disableListenLog: true,
@@ -907,7 +908,7 @@ it.effect("registers annotated tools and preserves authenticated request context
           Effect.provideService(McpSchema.McpServerClient, client),
           Effect.flip,
         );
-      expect(malformed._tag).toBe("InvalidParams");
+      expect((malformed as { _tag?: string })._tag).toBe("InvalidParams");
 
       const snapshot = yield* server
         .callTool({ name: "preview_snapshot", arguments: { tabId: alternateTabId } })

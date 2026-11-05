@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import { PublishClientConfig, reconcileEnvFile, tokenDigest } from "./clientConfig.ts";
 

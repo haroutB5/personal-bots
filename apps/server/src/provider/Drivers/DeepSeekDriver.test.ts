@@ -16,13 +16,13 @@
  * `enrichProviderSnapshotWithVersionAdvisory` for the advisory the card reads.
  */
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type DeepSeekSettings, type ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";

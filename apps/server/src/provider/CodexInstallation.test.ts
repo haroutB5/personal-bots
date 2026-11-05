@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { BUNDLED_MODEL_MANIFEST, ModelManifest, type ModelManifestData } from "./ModelManifest.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
 import {
   makeCodexInstallation,

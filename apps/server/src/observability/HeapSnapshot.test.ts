@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - tests fake a failed write at the native v8 boundary.
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeV8 from "node:v8";

@@ -374,6 +374,14 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./crypto": {
+      "types": "./src/crypto.ts",
+      "import": "./src/crypto.ts"
+    },
+    "./nodeServices": {
+      "types": "./src/nodeServices.ts",
+      "import": "./src/nodeServices.ts"
     }
   },
   "scripts": {
@@ -381,6 +389,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
@@ -389,7 +398,6 @@
     "yaml": "catalog:"
   },
   "devDependencies": {
-    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"

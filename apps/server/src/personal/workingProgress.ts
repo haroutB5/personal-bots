@@ -1,6 +1,6 @@
 import { pickProgressNote, toolStepNoteText, type ThreadId, type TurnId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * The latest progress note of each chat whose bot is working, for the Bots

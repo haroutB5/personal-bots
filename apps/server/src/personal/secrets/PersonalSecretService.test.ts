@@ -7,7 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   CommandId,
@@ -36,7 +36,7 @@ import * as Option from "effect/Option";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";

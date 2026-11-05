@@ -5,7 +5,7 @@
  * reconnect loop, one slow operation removes the browser from every bot until
  * the server process restarts.
  */
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,

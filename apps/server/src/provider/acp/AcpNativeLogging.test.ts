@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";

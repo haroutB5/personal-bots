@@ -6,8 +6,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { MEMORY_AUTO_APPLY_ENV } from "./memoryAutoApply.ts";

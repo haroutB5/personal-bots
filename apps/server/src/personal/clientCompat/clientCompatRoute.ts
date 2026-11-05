@@ -15,7 +15,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { ServerConfig } from "../../config.ts";
 import { readLatestAndroidRelease } from "../androidUpdates/latestRelease.ts";

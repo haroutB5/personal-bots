@@ -1,5 +1,5 @@
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import {
   PERSONAL_ROUTINE_EVENT_PAYLOAD_MAX_BYTES,
   PERSONAL_ROUTINE_HOOK_ROUTE_PREFIX,
@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {

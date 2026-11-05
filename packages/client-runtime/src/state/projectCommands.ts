@@ -1,6 +1,6 @@
 import { type EnvironmentId, type ProjectReadFileResult, WS_METHODS } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
-import { Atom } from "effect/unstable/reactivity";
+import * as Crypto from "@t3tools/shared/crypto";
+import { Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,

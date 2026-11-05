@@ -17,7 +17,7 @@
  * One refusal keeps a fixed wording: a save_memory schema failure, whose
  * description can echo the memory text the bot tried to save (1.66.15).
  */
-import * as AiError from "effect/unstable/ai/AiError";
+import * as AiError from "effect/ai/AiError";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import * as Logger from "effect/Logger";

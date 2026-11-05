@@ -26,7 +26,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";

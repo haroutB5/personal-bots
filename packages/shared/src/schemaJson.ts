@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -163,33 +164,39 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
  */
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
-  // Strip single-line comments - alternation preserves quoted strings.
-  let stripped = input.replace(
-    /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,
-    (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
-  );
+const parseLenientJsonGetter = SchemaGetter.transformOptionalEffect(
+  (input: Option.Option<string>) =>
+    Option.match(input, {
+      onNone: () => Effect.succeed(Option.none()),
+      onSome: (value) => {
+        // Strip single-line comments - alternation preserves quoted strings.
+        let stripped = value.replace(
+          /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,
+          (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
+        );
 
-  // Strip multi-line comments.
-  stripped = stripped.replace(
-    /("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\//g,
-    (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
-  );
+        // Strip multi-line comments.
+        stripped = stripped.replace(
+          /("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\//g,
+          (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
+        );
 
-  // Strip trailing commas before `}` or `]`. The alternation preserves quoted
-  // strings so a comma inside a string value (e.g. `{"note":"a,]"}`) is not
-  // mistaken for a trailing comma and removed.
-  stripped = stripped.replace(
-    /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
-    (match, stringLiteral: string | undefined, bracket: string | undefined) =>
-      stringLiteral ? match : (bracket ?? ""),
-  );
+        // Strip trailing commas before `}` or `]`. The alternation preserves quoted
+        // strings so a comma inside a string value (e.g. `{"note":"a,]"}`) is not
+        // mistaken for a trailing comma and removed.
+        stripped = stripped.replace(
+          /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
+          (match, stringLiteral: string | undefined, bracket: string | undefined) =>
+            stringLiteral ? match : (bracket ?? ""),
+        );
 
-  return decodeJsonString(stripped).pipe(
-    Effect.asSome,
-    Effect.mapError((error) => error.issue),
-  );
-});
+        return decodeJsonString(stripped).pipe(
+          Effect.asSome,
+          Effect.mapError((error) => error.issue),
+        );
+      },
+    }),
+);
 
 /**
  * Schema transformation: lenient JSONC string ↔ unknown.
@@ -203,7 +210,8 @@ const fromLenientJsonString = new SchemaTransformation.Transformation(
   SchemaGetter.stringifyJson(),
 );
 
-const prettyJsonString = SchemaGetter.parseJson<string>().compose(
+const prettyJsonString = SchemaGetter.compose(
+  SchemaGetter.parseJson<string>(),
   SchemaGetter.stringifyJson({ space: 2 }),
 );
 

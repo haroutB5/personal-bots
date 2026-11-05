@@ -1,12 +1,12 @@
 import { assert, it } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { PullRequestOperationError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as TestClock from "effect/testing/TestClock";
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 const cacheLayer = (directory: string) =>

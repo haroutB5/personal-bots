@@ -15,15 +15,14 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useMemo, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
-import { feedStartsWith } from "./feedStartsWith";
 import { relatedTasksInBatches } from "./relatedTaskBatches";
 
-/** The empty fold, and so the feed's first value (see `feedStartsWith`). */
+/** The empty fold, and so the feed's first value (`Stream.scan` emits it). */
 const EMPTY_TASKS_FEED: ReadonlyMap<string, PersonalTask> = new Map();
 
 /**
@@ -41,18 +40,20 @@ const EMPTY_TASKS_FEED: ReadonlyMap<string, PersonalTask> = new Map();
 export function foldPersonalTasksFeed<E, R>(
   stream: Stream.Stream<{ readonly task: PersonalTask }, E, R>,
 ): Stream.Stream<ReadonlyMap<string, PersonalTask>, E, R> {
-  return feedStartsWith(EMPTY_TASKS_FEED)(
-    stream.pipe(
-      // The replay arrives as one event per task; folding it per event would
-      // copy the map n times (O(n^2)) and re-render every consumer n times.
-      // Chunks bound that to one copy per batch while live upserts still
-      // land within 50ms.
-      Stream.groupedWithin(256, "50 millis"),
-      Stream.scan(EMPTY_TASKS_FEED, (tasks, events) => {
+  return stream.pipe(
+    // The replay arrives as one event per task; folding it per event would
+    // copy the map n times (O(n^2)) and re-render every consumer n times.
+    // Chunks bound that to one copy per batch while live upserts still
+    // land within 50ms.
+    Stream.groupedWithin(256, "50 millis"),
+    Stream.filter((events) => events.length > 0),
+    Stream.scan(
+      () => EMPTY_TASKS_FEED,
+      (tasks, events) => {
         const next = new Map(tasks);
         for (const event of events) next.set(event.task.taskId, event.task);
         return next;
-      }),
+      },
     ),
   );
 }

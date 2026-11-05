@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import type { OrchestrationShellSnapshot, OrchestrationThreadShell } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { SqlitePersistenceMemoryWorker } from "../persistence/Layers/Sqlite.ts";
 import {

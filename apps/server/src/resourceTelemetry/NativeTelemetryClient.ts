@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -32,8 +32,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Ndjson from "effect/encoding/Ndjson";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 import { ServerConfig } from "../config.ts";

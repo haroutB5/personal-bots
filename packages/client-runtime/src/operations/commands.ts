@@ -3,7 +3,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 

@@ -51,7 +51,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";

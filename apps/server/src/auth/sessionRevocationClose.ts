@@ -3,8 +3,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Socket from "effect/unstable/socket/Socket";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import * as Socket from "effect/socket/Socket";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { AuthSessionId } from "@t3tools/contracts";
 
 import * as SessionStore from "./SessionStore.ts";

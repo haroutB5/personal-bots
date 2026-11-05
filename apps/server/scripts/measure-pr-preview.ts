@@ -4,7 +4,7 @@
 // CLI-generated GraphQL
 // queries are replayed with rateLimit.cost, outside the timed section, to measure
 // their cost without confusing other applications' traffic with this process's.
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
 import * as Layer from "effect/Layer";

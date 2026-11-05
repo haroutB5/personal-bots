@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
@@ -307,8 +307,8 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
         return assert.fail("expected a standard Git command");
       }
       commands.push({
-        args: command.args,
-        ...(command.options.env?.LC_ALL ? { lcAll: command.options.env.LC_ALL } : {}),
+        args: command.args.map((arg) => String(arg)),
+        ...(command.options.env?.LC_ALL ? { lcAll: String(command.options.env.LC_ALL) } : {}),
       });
       return makeNonRepositoryHandle();
     }),
@@ -397,7 +397,10 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
           if (!ChildProcess.isStandardCommand(command)) {
             return yield* Effect.die("expected a standard Git command");
           }
-          yield* Ref.update(spawnedArgs, (current) => [...current, command.args]);
+          yield* Ref.update(spawnedArgs, (current) => [
+            ...current,
+            command.args.map((arg) => String(arg)),
+          ]);
           const isWorktreeScan =
             command.args.includes("worktree") && command.args.includes("--porcelain");
           const shouldDelay =
@@ -2859,7 +2862,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("unexpected command");
               if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
-              attempts.push(command.args);
+              attempts.push(command.args.map((arg) => String(arg)));
               yield* Deferred.succeed(started, undefined);
               return ChildProcessSpawner.makeHandle({
                 ...makeNonRepositoryHandle(),

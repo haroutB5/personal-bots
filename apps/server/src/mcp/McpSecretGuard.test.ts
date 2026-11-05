@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type { McpServer } from "effect/unstable/ai";
+import type { McpServer } from "effect/ai";
 
 import { makeSecretRedactor } from "../personal/secrets/secretRedaction.ts";
 import { guardMcpServer } from "./McpSecretGuard.ts";

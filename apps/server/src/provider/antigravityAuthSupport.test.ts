@@ -1,9 +1,9 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as NodePath from "@effect/platform-node/NodePath";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import {
   HostProcessExecutablePath,
@@ -13,6 +13,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
@@ -22,9 +23,9 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as Ndjson from "effect/encoding/Ndjson";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -270,7 +271,7 @@ describe("Antigravity process environment", () => {
       );
       expect(first.profile.toLowerCase()).not.toBe(second.profile.toLowerCase());
       expect(first.runtimeTemp.toLowerCase()).not.toBe(second.runtimeTemp.toLowerCase());
-    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
+    }).pipe(Effect.provide(Layer.mergeAll(Crypto.layer, NodePath.layerPosix))),
   );
 
   it.effect("keeps the unpacked Windows runtime under MAX_PATH for long user names", () =>
@@ -290,7 +291,7 @@ describe("Antigravity process environment", () => {
       expect(
         extracted(path.join(directories.profile, "antigravity-acp", "tmp")).length,
       ).toBeGreaterThanOrEqual(260);
-    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerWin32))),
+    }).pipe(Effect.provide(Layer.mergeAll(Crypto.layer, NodePath.layerWin32))),
   );
 });
 
@@ -883,10 +884,19 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       const command = helperCommand;
       const child = yield* Effect.acquireRelease(
         Effect.sync(() =>
-          NodeChildProcess.spawn(command.command, command.args, {
-            env: { ...command.options.env },
-            stdio: ["ignore", "ignore", "pipe"],
-          }),
+          NodeChildProcess.spawn(
+            command.command,
+            command.args.map((arg) => String(arg)),
+            {
+              env: Object.fromEntries(
+                Object.entries(command.options.env ?? {}).map(([key, value]) => [
+                  key,
+                  value === undefined || typeof value === "string" ? value : Redacted.value(value),
+                ]),
+              ),
+              stdio: ["ignore", "ignore", "pipe"],
+            },
+          ),
         ),
         (process) => Effect.sync(() => void process.kill()),
       );

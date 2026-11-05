@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
-import type * as SqlError from "effect/unstable/sql/SqlError";
+import type * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlError from "effect/sql/SqlError";
 
 /**
  * The persisted sensitive-site taint (migration 077).

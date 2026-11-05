@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Builds a Chromium-shaped cookie
 // table with the same native bindings the source reads.
 import * as NodePath from "node:path";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   HostProcessEnvironment,
@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeSqlite from "node:sqlite";
 
 import type { BrowserImportPathContext } from "./Sources.ts";

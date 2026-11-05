@@ -8,8 +8,8 @@ import * as NodeSqlite from "node:sqlite";
 import { describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { layer as memoryLayer } from "./PersonalMemoryService.ts";

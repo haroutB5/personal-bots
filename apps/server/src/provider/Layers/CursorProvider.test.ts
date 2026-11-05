@@ -2,14 +2,14 @@
 import * as NodeOS from "node:os";
 import * as NodeFSP from "node:fs/promises";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { it as effectIt } from "@effect/vitest";
-import type * as Crypto from "effect/Crypto";
+import type * as Crypto from "@t3tools/shared/crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { ProviderDriverKind, ProviderInstanceId, type CursorSettings } from "@t3tools/contracts";
@@ -37,7 +37,7 @@ import {
 } from "../Drivers/CursorSkills.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./cursorUsageLimits.ts";
 
 const runNode = <A, E>(

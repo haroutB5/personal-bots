@@ -5,8 +5,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { maybeApplyThreadTextPreviews } from "../personal/threadTextPreviews.ts";
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";

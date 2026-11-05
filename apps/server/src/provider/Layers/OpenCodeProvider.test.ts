@@ -2,7 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeCrypto from "node:crypto";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -10,7 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";

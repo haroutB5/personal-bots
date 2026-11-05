@@ -1,7 +1,7 @@
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { ServerConfig } from "./config.ts";

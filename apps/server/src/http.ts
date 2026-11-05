@@ -1,4 +1,4 @@
-import * as Mime from "effect/unstable/http/Mime";
+import * as Mime from "effect/http/Mime";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -23,9 +23,9 @@ import {
   HttpServerResponse,
   HttpServerRequest,
   HttpServerRespondable,
-} from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import { OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
+} from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";

@@ -4,7 +4,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { it } from "@effect/vitest";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
@@ -17,7 +17,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import { makeCli } from "../bin.ts";

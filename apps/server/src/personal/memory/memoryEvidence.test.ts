@@ -2,8 +2,8 @@ import { PersonalBotId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as SqlClient from "effect/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { PersonalMemoryService, layer as memoryLayer } from "./PersonalMemoryService.ts";
 import {

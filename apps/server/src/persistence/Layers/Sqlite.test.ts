@@ -5,11 +5,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type * as NodeWorkerThreads from "node:worker_threads";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
 const capturedWorkers = vi.hoisted(() => ({ workers: [] as NodeWorkerThreads.Worker[] }));

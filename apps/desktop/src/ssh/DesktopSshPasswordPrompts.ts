@@ -2,7 +2,7 @@ import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import { DesktopSshPasswordPromptResolutionInputSchema } from "@t3tools/contracts";
 import type { SshPasswordRequest } from "@t3tools/ssh/auth";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";

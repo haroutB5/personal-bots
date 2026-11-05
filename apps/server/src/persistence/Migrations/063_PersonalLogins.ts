@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Login metadata and grants only. Password bytes live exclusively in ServerSecretStore. */
 export default Effect.gen(function* () {

@@ -13,8 +13,8 @@
  */
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import type { HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import type { HttpClientResponse } from "effect/http";
 
 import { installError, isCatalogInstallError, type CatalogInstallError } from "./errors.ts";
 

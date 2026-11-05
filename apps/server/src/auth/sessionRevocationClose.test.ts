@@ -6,8 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpServerError, HttpServerRequest } from "effect/unstable/http";
-import * as Socket from "effect/unstable/socket/Socket";
+import { HttpServerError, HttpServerRequest } from "effect/http";
+import * as Socket from "effect/socket/Socket";
 
 import {
   SESSION_REVOKED_CLOSE_CODE,

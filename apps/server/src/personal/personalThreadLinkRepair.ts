@@ -1,6 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * A chat create that was interrupted between its two durable writes.
