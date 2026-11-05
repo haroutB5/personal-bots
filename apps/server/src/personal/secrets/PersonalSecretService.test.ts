@@ -129,6 +129,7 @@ const makeLayer = (harness: Harness) =>
             return { sequence: harness.dispatched.length };
           }),
         subscribeDomainEvents: Effect.succeed(Stream.never),
+        streamDomainEvents: Stream.never,
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(

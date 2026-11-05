@@ -12,9 +12,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { DEFAULT_THREAD_TITLE } from "../orchestration/threadTitles.ts";
 import type * as PersonalBotRepository from "./PersonalBotRepository.ts";
-import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
+import { PERSONAL_DEFAULT_THREAD_TITLE, PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 
 /**
  * One bot's open chats have unique names (1.66.5): trimmed, inner whitespace
@@ -50,7 +49,7 @@ export type ChatTitleRepository = Pick<
 /** A placeholder is not a name: it is never refused and never suffixed. */
 export const isPlaceholderChatTitle = (title: string): boolean => {
   const trimmed = title.trim();
-  return trimmed === PERSONAL_THREAD_TITLE || trimmed === DEFAULT_THREAD_TITLE;
+  return trimmed === PERSONAL_THREAD_TITLE || trimmed === PERSONAL_DEFAULT_THREAD_TITLE;
 };
 
 const takenNames = (titles: Iterable<string>): Set<string> => {

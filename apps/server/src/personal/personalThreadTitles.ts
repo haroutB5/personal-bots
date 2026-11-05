@@ -1,9 +1,10 @@
 import { MessageId } from "@t3tools/contracts";
 
-import { DEFAULT_THREAD_TITLE } from "../orchestration/threadTitles.ts";
-
 /** Title of a new bot thread until its first message names it. */
 export const PERSONAL_THREAD_TITLE = "New chat";
+
+/** The orchestrator's placeholder for any thread it made itself. */
+export const PERSONAL_DEFAULT_THREAD_TITLE = "New thread";
 
 const PERSONAL_TASK_MESSAGE_ID_PREFIX = "personal-task-";
 
@@ -92,7 +93,7 @@ export const personalProviderTitleAllowed = (input: {
   }
   if (input.userMessageIds.length !== 1) return false;
   const title = input.title.trim();
-  if (title === PERSONAL_THREAD_TITLE || title === DEFAULT_THREAD_TITLE) return true;
+  if (title === PERSONAL_THREAD_TITLE || title === PERSONAL_DEFAULT_THREAD_TITLE) return true;
   return (
     input.titleState?.source === "generated" && isPersonalTitleSeedVersion(input.titleState.version)
   );

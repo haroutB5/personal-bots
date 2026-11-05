@@ -15,6 +15,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationSession,
   type OrchestrationSessionStatus,
+  type TurnId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
@@ -25,7 +26,11 @@ import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ThreadBackgroundLivenessService } from "../../orchestration/ThreadBackgroundLiveness.ts";
+import {
+  ThreadBackgroundLivenessService,
+  layer as ThreadBackgroundLivenessLive,
+} from "../../orchestration/ThreadBackgroundLiveness.ts";
+import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import {
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessage,
@@ -35,8 +40,13 @@ import {
   type CreateProjectInput,
   type CreateThreadInput,
   type OrchestrationThreadShellV1Wire,
+  type PersonalAppendNoticeInput,
+  type PersonalCompleteNoticeInput,
   type PersonalMessageView,
   type PersonalPostNoticeInput,
+  type PersonalPostUserMessageInput,
+  type PersonalProjectView,
+  type PersonalRenameThreadIfUnchangedInput,
   type PersonalSendInput,
   type PersonalStopInput,
   type PersonalThreadEvent,
@@ -147,6 +157,11 @@ export const toPersonalEvents = (
 const engineError = (operation: string) => (failure: unknown) =>
   new PersonalEngineError({ operation, detail: failureDetail(failure) });
 
+const toProjectView = (shell: {
+  readonly id: ProjectId;
+  readonly workspaceRoot: string;
+}): PersonalProjectView => ({ id: shell.id, workspaceRoot: shell.workspaceRoot });
+
 const toMessageView = (row: ProjectionThreadMessage): PersonalMessageView => ({
   id: row.messageId,
   role: row.role,
@@ -161,237 +176,317 @@ const toMessageView = (row: ProjectionThreadMessage): PersonalMessageView => ({
 
 const atMillis = (iso: string): number => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
 
-export const PersonalEngineV1Live = Layer.effect(
-  PersonalEngine,
-  Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
-    const snapshots = yield* ProjectionSnapshotQuery;
-    const messages = yield* ProjectionThreadMessageRepository;
-    const liveness = yield* ThreadBackgroundLivenessService;
-    const statusByThread = new Map<string, PersonalThreadStatus>();
+const make = Effect.gen(function* () {
+  const engine = yield* OrchestrationEngineService;
+  const snapshots = yield* ProjectionSnapshotQuery;
+  const messages = yield* ProjectionThreadMessageRepository;
+  const liveness = yield* ThreadBackgroundLivenessService;
+  const statusByThread = new Map<string, PersonalThreadStatus>();
 
-    const now = Effect.map(DateTime.now, DateTime.formatIso);
+  const now = Effect.map(DateTime.now, DateTime.formatIso);
 
-    const createProject = (
-      input: CreateProjectInput,
-    ): Effect.Effect<ProjectId, PersonalEngineError> =>
-      Effect.gen(function* () {
-        const projectId = input.projectId ?? ProjectId.make(NodeCrypto.randomUUID());
-        yield* engine.dispatch({
-          type: "project.create",
-          commandId: CommandId.make(`personal-engine:project.create:${projectId}`),
-          projectId,
-          title: input.title,
-          workspaceRoot: input.workspaceRoot,
-          ...(input.createWorkspaceRootIfMissing === undefined
-            ? {}
-            : { createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing }),
-          createdAt: yield* now,
-        });
-        return projectId;
-      }).pipe(Effect.mapError(engineError("createProject")));
+  const createProject = (
+    input: CreateProjectInput,
+  ): Effect.Effect<ProjectId, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const projectId = input.projectId ?? ProjectId.make(NodeCrypto.randomUUID());
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make(`personal-engine:project.create:${projectId}`),
+        projectId,
+        title: input.title,
+        workspaceRoot: input.workspaceRoot,
+        ...(input.createWorkspaceRootIfMissing === undefined
+          ? {}
+          : { createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing }),
+        createdAt: yield* now,
+      });
+      return projectId;
+    }).pipe(Effect.mapError(engineError("createProject")));
 
-    const createThread = (input: CreateThreadInput): Effect.Effect<ThreadId, PersonalEngineError> =>
-      Effect.gen(function* () {
-        const threadId = input.threadId ?? ThreadId.make(NodeCrypto.randomUUID());
-        yield* engine.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make(`personal-engine:thread.create:${threadId}`),
-          threadId,
-          projectId: input.projectId,
-          title: input.title,
-          modelSelection: input.modelSelection,
-          runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
-          branch: input.branch ?? null,
-          worktreePath: input.worktreePath ?? null,
-          createdAt: yield* now,
-        });
-        return threadId;
-      }).pipe(Effect.mapError(engineError("createThread")));
+  const createThread = (input: CreateThreadInput): Effect.Effect<ThreadId, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const threadId = input.threadId ?? ThreadId.make(NodeCrypto.randomUUID());
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`personal-engine:thread.create:${threadId}`),
+        threadId,
+        projectId: input.projectId,
+        title: input.title,
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: input.branch ?? null,
+        worktreePath: input.worktreePath ?? null,
+        createdAt: yield* now,
+      });
+      return threadId;
+    }).pipe(Effect.mapError(engineError("createThread")));
 
-    const send = (input: PersonalSendInput): Effect.Effect<void, PersonalEngineError> =>
-      Effect.gen(function* () {
-        const shell = yield* snapshots.getThreadShellById(input.threadId);
-        if (Option.isNone(shell)) {
-          return yield* Effect.fail(
-            new PersonalEngineError({
-              operation: "send",
-              detail: `thread ${input.threadId} does not exist`,
-            }),
-          );
-        }
-        yield* engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make(`personal-engine:turn.start:${input.messageId}`),
-          threadId: input.threadId,
-          message: {
+  const send = (input: PersonalSendInput): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      // A missing shell is not a refusal: the v1 decider owns that check,
+      // and the callers that had no shell read used these same defaults.
+      const shell = yield* snapshots.getThreadShellById(input.threadId);
+      const thread = Option.getOrUndefined(shell);
+      yield* engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`personal-engine:turn.start:${input.messageId}`),
+        threadId: input.threadId,
+        message: {
+          messageId: input.messageId,
+          role: "user",
+          text: input.text,
+          attachments: input.attachments,
+          ...(input.context === undefined ? {} : { context: input.context }),
+        },
+        ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+        runtimeMode: thread?.runtimeMode ?? "full-access",
+        interactionMode: thread?.interactionMode ?? "default",
+        ...(input.mode === "start" ? {} : { followUp: input.mode }),
+        createdAt: yield* now,
+      });
+    }).pipe(Effect.mapError(engineError("send")));
+
+  const interrupt = (
+    threadId: ThreadId,
+    turnId?: TurnId,
+  ): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make(`personal-engine:turn.interrupt:${NodeCrypto.randomUUID()}`),
+        threadId,
+        ...(turnId === undefined ? {} : { turnId }),
+        createdAt: yield* now,
+      });
+    }).pipe(Effect.mapError(engineError("interrupt")));
+
+  const stop = (input: PersonalStopInput): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.session.stop",
+        // A chat can be stopped again after a later turn starts, so the id is
+        // per call, not per thread.
+        commandId: CommandId.make(`personal-engine:session.stop:${NodeCrypto.randomUUID()}`),
+        threadId: input.threadId,
+        terminateProcesses: input.terminateProcesses,
+        createdAt: yield* now,
+      });
+    }).pipe(Effect.mapError(engineError("stop")));
+
+  const archive = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`personal-engine:thread.archive:${threadId}`),
+        threadId,
+      });
+    }).pipe(Effect.mapError(engineError("archive")));
+
+  const deleteThread = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`personal-engine:thread.delete:${threadId}`),
+        threadId,
+      });
+    }).pipe(Effect.mapError(engineError("deleteThread")));
+
+  const updateMeta = (input: PersonalUpdateMetaInput): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make(`personal-engine:thread.meta:${NodeCrypto.randomUUID()}`),
+        threadId: input.threadId,
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        ...(input.branch === undefined ? {} : { branch: input.branch }),
+        ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+      });
+    }).pipe(Effect.mapError(engineError("updateMeta")));
+
+  const renameThreadIfUnchanged = (
+    input: PersonalRenameThreadIfUnchangedInput,
+  ): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.title.generate.complete",
+        commandId: CommandId.make(`personal-engine:thread.title:${NodeCrypto.randomUUID()}`),
+        threadId: input.threadId,
+        title: input.title,
+        expectedTitle: input.expectedTitle,
+        expectedVersion: input.expectedVersion,
+        needsRefinement: false,
+      });
+    }).pipe(Effect.mapError(engineError("renameThreadIfUnchanged")));
+
+  const appendNotice = (
+    input: PersonalAppendNoticeInput,
+  ): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make(`personal-engine:notice.delta:${input.messageId}:${input.key}`),
+        threadId: input.threadId,
+        messageId: input.messageId,
+        delta: input.delta,
+        ...(input.context === undefined ? {} : { context: input.context }),
+        createdAt: yield* now,
+      });
+    }).pipe(Effect.mapError(engineError("appendNotice")));
+
+  const completeNotice = (
+    input: PersonalCompleteNoticeInput,
+  ): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make(`personal-engine:notice.complete:${input.messageId}`),
+        threadId: input.threadId,
+        messageId: input.messageId,
+        createdAt: yield* now,
+      });
+    }).pipe(Effect.mapError(engineError("completeNotice")));
+
+  const postUserMessage = (
+    input: PersonalPostUserMessageInput,
+  ): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      yield* engine.dispatch({
+        type: "thread.message.user.append",
+        commandId: CommandId.make(`personal-engine:message.user:${input.messageId}`),
+        threadId: input.threadId,
+        message: {
+          messageId: input.messageId,
+          text: input.text,
+          attachments: [],
+          ...(input.context === undefined ? {} : { context: input.context }),
+        },
+        createdAt: yield* now,
+      });
+    }).pipe(Effect.mapError(engineError("postUserMessage")));
+
+  const postNotice = (input: PersonalPostNoticeInput): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      // Both commands write one message. An interruption between them would
+      // leave the notice streaming forever.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* appendNotice({
+            threadId: input.threadId,
             messageId: input.messageId,
-            role: "user",
-            text: input.text,
-            attachments: input.attachments,
+            delta: input.text,
+            key: "notice",
             ...(input.context === undefined ? {} : { context: input.context }),
-          },
-          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-          ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
-          runtimeMode: shell.value.runtimeMode,
-          interactionMode: shell.value.interactionMode,
-          ...(input.mode === "start" ? {} : { followUp: input.mode }),
-          createdAt: yield* now,
-        });
-      }).pipe(Effect.mapError(engineError("send")));
-
-    const interrupt = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
-      Effect.gen(function* () {
-        yield* engine.dispatch({
-          type: "thread.turn.interrupt",
-          commandId: CommandId.make(`personal-engine:turn.interrupt:${NodeCrypto.randomUUID()}`),
-          threadId,
-          createdAt: yield* now,
-        });
-      }).pipe(Effect.mapError(engineError("interrupt")));
-
-    const stop = (input: PersonalStopInput): Effect.Effect<void, PersonalEngineError> =>
-      Effect.gen(function* () {
-        yield* engine.dispatch({
-          type: "thread.session.stop",
-          commandId: CommandId.make(`personal-engine:session.stop:${input.threadId}`),
-          threadId: input.threadId,
-          terminateProcesses: input.terminateProcesses,
-          createdAt: yield* now,
-        });
-      }).pipe(Effect.mapError(engineError("stop")));
-
-    const archive = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
-      Effect.gen(function* () {
-        yield* engine.dispatch({
-          type: "thread.archive",
-          commandId: CommandId.make(`personal-engine:thread.archive:${threadId}`),
-          threadId,
-        });
-      }).pipe(Effect.mapError(engineError("archive")));
-
-    const deleteThread = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
-      Effect.gen(function* () {
-        yield* engine.dispatch({
-          type: "thread.delete",
-          commandId: CommandId.make(`personal-engine:thread.delete:${threadId}`),
-          threadId,
-        });
-      }).pipe(Effect.mapError(engineError("deleteThread")));
-
-    const updateMeta = (input: PersonalUpdateMetaInput): Effect.Effect<void, PersonalEngineError> =>
-      Effect.gen(function* () {
-        yield* engine.dispatch({
-          type: "thread.meta.update",
-          commandId: CommandId.make(`personal-engine:thread.meta:${NodeCrypto.randomUUID()}`),
-          threadId: input.threadId,
-          ...(input.title === undefined ? {} : { title: input.title }),
-          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-          ...(input.branch === undefined ? {} : { branch: input.branch }),
-          ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
-        });
-      }).pipe(Effect.mapError(engineError("updateMeta")));
-
-    const postNotice = (input: PersonalPostNoticeInput): Effect.Effect<void, PersonalEngineError> =>
-      Effect.gen(function* () {
-        const createdAt = yield* now;
-        // Both commands write one message. An interruption between them would
-        // leave the notice streaming forever.
-        yield* Effect.uninterruptible(
-          Effect.gen(function* () {
-            yield* engine.dispatch({
-              type: "thread.message.assistant.delta",
-              commandId: CommandId.make(`personal-engine:notice.delta:${input.messageId}`),
-              threadId: input.threadId,
-              messageId: input.messageId,
-              delta: input.text,
-              createdAt,
-            });
-            yield* engine.dispatch({
-              type: "thread.message.assistant.complete",
-              commandId: CommandId.make(`personal-engine:notice.complete:${input.messageId}`),
-              threadId: input.threadId,
-              messageId: input.messageId,
-              createdAt,
-            });
-          }),
-        );
-      }).pipe(Effect.mapError(engineError("postNotice")));
-
-    const getThread = (threadId: ThreadId) =>
-      snapshots.getThreadShellById(threadId).pipe(Effect.mapError(engineError("getThread")));
-
-    const listForThread = (threadId: ThreadId) =>
-      messages.listByThreadId({ threadId }).pipe(Effect.mapError(engineError("listMessages")));
-
-    const latestAssistantMessage = (input: {
-      readonly threadId: ThreadId;
-      readonly after?: DateTime.Utc;
-    }): Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError> =>
-      Effect.gen(function* () {
-        const rows = yield* listForThread(input.threadId);
-        const afterMillis = input.after === undefined ? null : DateTime.toEpochMillis(input.after);
-        const found = rows
-          .filter(
-            (row) =>
-              row.role === "assistant" &&
-              (afterMillis === null || atMillis(row.createdAt) > afterMillis),
-          )
-          .at(-1);
-        return found === undefined ? Option.none() : Option.some(toMessageView(found));
-      });
-
-    const listMessages = (input: {
-      readonly threadId: ThreadId;
-      readonly limit: number;
-      readonly before?: DateTime.Utc;
-    }): Effect.Effect<ReadonlyArray<PersonalMessageView>, PersonalEngineError> =>
-      Effect.gen(function* () {
-        if (input.limit <= 0) return [];
-        const rows = yield* listForThread(input.threadId);
-        const beforeMillis =
-          input.before === undefined ? null : DateTime.toEpochMillis(input.before);
-        const filtered =
-          beforeMillis === null
-            ? rows
-            : rows.filter((row) => atMillis(row.createdAt) < beforeMillis);
-        return filtered.slice(-input.limit).map(toMessageView);
-      });
-
-    const liveTaskIds = (
-      threadId: ThreadId,
-    ): Effect.Effect<ReadonlyArray<string>, PersonalEngineError> =>
-      Effect.sync(() => liveness.getThreadLiveTaskIds(threadId));
-
-    const shellSnapshot = (input: {
-      readonly unsettledOnly: boolean;
-    }): Effect.Effect<ReadonlyArray<OrchestrationThreadShellV1Wire>, PersonalEngineError> =>
-      snapshots.getShellSnapshot({ unsettledOnly: input.unsettledOnly }).pipe(
-        Effect.map((snapshot) => snapshot.threads as ReadonlyArray<OrchestrationThreadShellV1Wire>),
-        Effect.mapError(engineError("shellSnapshot")),
+          });
+          yield* completeNotice({
+            threadId: input.threadId,
+            messageId: input.messageId,
+          });
+        }),
       );
+    }).pipe(Effect.mapError(engineError("postNotice")));
 
-    const events = engine.streamDomainEvents.pipe(
-      Stream.flatMap((event) => Stream.fromIterable(toPersonalEvents(event, statusByThread))),
+  const getThread = (threadId: ThreadId) =>
+    snapshots.getThreadShellById(threadId).pipe(Effect.mapError(engineError("getThread")));
+
+  const getProject = (projectId: ProjectId) =>
+    snapshots
+      .getProjectShellById(projectId)
+      .pipe(Effect.map(Option.map(toProjectView)), Effect.mapError(engineError("getProject")));
+
+  const listProjects = () =>
+    snapshots.getProjectShells().pipe(
+      Effect.map((shells) => shells.map(toProjectView)),
+      Effect.mapError(engineError("listProjects")),
     );
 
-    return PersonalEngine.of({
-      createProject,
-      createThread,
-      send,
-      interrupt,
-      stop,
-      archive,
-      deleteThread,
-      updateMeta,
-      postNotice,
-      getThread,
-      latestAssistantMessage,
-      listMessages,
-      liveTaskIds,
-      shellSnapshot,
-      events,
+  const listForThread = (threadId: ThreadId) =>
+    messages.listByThreadId({ threadId }).pipe(Effect.mapError(engineError("listMessages")));
+
+  const latestAssistantMessage = (input: {
+    readonly threadId: ThreadId;
+    readonly after?: DateTime.Utc;
+  }): Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const rows = yield* listForThread(input.threadId);
+      const afterMillis = input.after === undefined ? null : DateTime.toEpochMillis(input.after);
+      const found = rows
+        .filter(
+          (row) =>
+            row.role === "assistant" &&
+            (afterMillis === null || atMillis(row.createdAt) > afterMillis),
+        )
+        .at(-1);
+      return found === undefined ? Option.none() : Option.some(toMessageView(found));
     });
-  }),
+
+  const listMessages = (input: {
+    readonly threadId: ThreadId;
+    readonly limit: number;
+    readonly before?: DateTime.Utc;
+  }): Effect.Effect<ReadonlyArray<PersonalMessageView>, PersonalEngineError> =>
+    Effect.gen(function* () {
+      if (input.limit <= 0) return [];
+      const rows = yield* listForThread(input.threadId);
+      const beforeMillis = input.before === undefined ? null : DateTime.toEpochMillis(input.before);
+      const filtered =
+        beforeMillis === null ? rows : rows.filter((row) => atMillis(row.createdAt) < beforeMillis);
+      return filtered.slice(-input.limit).map(toMessageView);
+    });
+
+  const liveTaskIds = (
+    threadId: ThreadId,
+  ): Effect.Effect<ReadonlyArray<string>, PersonalEngineError> =>
+    Effect.sync(() => liveness.getThreadLiveTaskIds(threadId));
+
+  const shellSnapshot = (input: {
+    readonly unsettledOnly: boolean;
+  }): Effect.Effect<ReadonlyArray<OrchestrationThreadShellV1Wire>, PersonalEngineError> =>
+    snapshots.getShellSnapshot({ unsettledOnly: input.unsettledOnly }).pipe(
+      Effect.map((snapshot) => snapshot.threads as ReadonlyArray<OrchestrationThreadShellV1Wire>),
+      Effect.mapError(engineError("shellSnapshot")),
+    );
+
+  const events = engine.streamDomainEvents.pipe(
+    Stream.flatMap((event) => Stream.fromIterable(toPersonalEvents(event, statusByThread))),
+  );
+
+  return PersonalEngine.of({
+    createProject,
+    createThread,
+    send,
+    interrupt,
+    stop,
+    archive,
+    deleteThread,
+    updateMeta,
+    renameThreadIfUnchanged,
+    postNotice,
+    appendNotice,
+    completeNotice,
+    postUserMessage,
+    getThread,
+    getProject,
+    listProjects,
+    latestAssistantMessage,
+    listMessages,
+    liveTaskIds,
+    shellSnapshot,
+    events,
+  });
+});
+
+/** The engine over the v1 surface; every read service comes from the caller. */
+export const PersonalEngineV1Live = Layer.effect(PersonalEngine, make);
+
+/**
+ * The layer consumers use: the v1 read adapters come with it, so a chain
+ * provides only the orchestrator engine and the snapshot query it already has.
+ */
+export const PersonalEngineV1WiredLive = PersonalEngineV1Live.pipe(
+  Layer.provide(ProjectionThreadMessageRepositoryLive),
+  Layer.provide(ThreadBackgroundLivenessLive),
 );

@@ -14,7 +14,6 @@ import * as Schema from "effect/Schema";
 
 import {
   botTeam,
-  CommandId,
   DEFAULT_PERSONAL_BOT_TEAM,
   driverCarriesBotInstructions,
   isBotOnTeam,
@@ -64,9 +63,9 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
+import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import {
   isPlaceholderChatTitle,
@@ -343,9 +342,8 @@ export class PersonalBotService extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const engine = yield* PersonalEngine.PersonalEngine;
   const providers = yield* ProviderRegistry.ProviderRegistry;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -502,8 +500,8 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(repositoryError("project lookup")));
     if (Option.isSome(stored)) {
       const projectId = ProjectId.make(stored.value);
-      const project = yield* snapshots
-        .getProjectShellById(projectId)
+      const project = yield* engine
+        .getProject(projectId)
         .pipe(Effect.mapError(repositoryError("project lookup")));
       if (Option.isSome(project)) {
         return projectId;
@@ -511,8 +509,8 @@ export const make = Effect.gen(function* () {
     }
     const workspaceRoot = personalWorkspaceRoot();
     // Crash recovery: the project may exist while its meta pointer was lost.
-    const shells = yield* snapshots
-      .getProjectShells()
+    const shells = yield* engine
+      .listProjects()
       .pipe(Effect.mapError(repositoryError("project lookup")));
     const adopted = shells.find((shell) => shell.workspaceRoot === workspaceRoot);
     if (adopted !== undefined) {
@@ -525,16 +523,12 @@ export const make = Effect.gen(function* () {
       .makeDirectory(workspaceRoot, { recursive: true })
       .pipe(Effect.mapError(toPersonalBotsError("Personal bots workspace creation failed.")));
     const projectId = ProjectId.make(yield* randomUuid());
-    const createdAt = DateTime.formatIso(yield* DateTime.now);
     yield* engine
-      .dispatch({
-        type: "project.create",
-        commandId: CommandId.make(`personal-bots:project.create:${projectId}`),
+      .createProject({
         projectId,
         title: PERSONAL_PROJECT_TITLE,
         workspaceRoot,
         createWorkspaceRootIfMissing: true,
-        createdAt,
       })
       .pipe(Effect.mapError(toPersonalBotsError("Personal bots project creation failed.")));
     yield* repository
@@ -785,7 +779,6 @@ export const make = Effect.gen(function* () {
       }
       const projectId = yield* ensurePersonalProject();
       const now = yield* DateTime.now;
-      const createdAt = DateTime.formatIso(now);
       const wantedTitle = input.title?.trim() || PERSONAL_THREAD_TITLE;
       const named = !isPlaceholderChatTitle(wantedTitle);
       const ownerTitle = input.titleSource === "owner" && named;
@@ -820,11 +813,7 @@ export const make = Effect.gen(function* () {
               .setMeta({ key: intentKey, value: input.botId })
               .pipe(Effect.mapError(repositoryError("thread link intent")));
             yield* engine
-              .dispatch({
-                type: "thread.create",
-                // Deterministic per thread: a retried createThread reuses the
-                // command receipt instead of creating the thread twice.
-                commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
+              .createThread({
                 threadId: input.threadId,
                 projectId,
                 title,
@@ -833,19 +822,13 @@ export const make = Effect.gen(function* () {
                 interactionMode: "default",
                 branch: null,
                 worktreePath: null,
-                createdAt,
               })
               .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
             if (lockTitle) {
               // A metadata title is manual, so the first message or an AI title
               // never replaces it.
               yield* engine
-                .dispatch({
-                  type: "thread.meta.update",
-                  commandId: CommandId.make(`personal-bots:thread.title:${input.threadId}`),
-                  threadId: input.threadId,
-                  title,
-                })
+                .updateMeta({ threadId: input.threadId, title })
                 .pipe(
                   Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")),
                 );
@@ -900,19 +883,15 @@ export const make = Effect.gen(function* () {
 
   const createSharedThread: PersonalBotService["Service"]["createSharedThread"] = (input) =>
     Effect.gen(function* () {
-      const existing = yield* snapshots
-        .getThreadShellById(input.threadId)
+      const existing = yield* engine
+        .getThread(input.threadId)
         .pipe(Effect.mapError(repositoryError("thread lookup")));
       if (Option.isSome(existing)) {
         return input.threadId;
       }
       const projectId = yield* ensurePersonalProject();
       yield* engine
-        .dispatch({
-          type: "thread.create",
-          // Deterministic per thread, as `createThread` is: a retried create
-          // dedupes on the command receipt rather than making a second thread.
-          commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
+        .createThread({
           threadId: input.threadId,
           projectId,
           title: input.title,
@@ -921,7 +900,6 @@ export const make = Effect.gen(function* () {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
         })
         .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
       return input.threadId;
@@ -952,7 +930,7 @@ export const make = Effect.gen(function* () {
             if (Option.isNone(updated)) {
               return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
             }
-            if (input.archived) yield* stopArchivedSession(input.threadId, now);
+            if (input.archived) yield* stopArchivedSession(input.threadId);
             return updated.value;
           }),
         );
@@ -962,8 +940,8 @@ export const make = Effect.gen(function* () {
       return yield* withChatTitleLock(
         uninterruptibleWrite(
           Effect.gen(function* () {
-            const shell = yield* snapshots
-              .getThreadShellById(input.threadId)
+            const shell = yield* engine
+              .getThread(input.threadId)
               .pipe(Effect.mapError(repositoryError("thread lookup")));
             const renamedTo = Option.isSome(shell)
               ? yield* unarchivedChatTitle(repository, {
@@ -973,14 +951,7 @@ export const make = Effect.gen(function* () {
               : null;
             if (renamedTo !== null) {
               yield* engine
-                .dispatch({
-                  type: "thread.meta.update",
-                  commandId: CommandId.make(
-                    `personal-bots:thread.unarchive-title:${input.threadId}:${NodeCrypto.randomUUID()}`,
-                  ),
-                  threadId: input.threadId,
-                  title: renamedTo,
-                })
+                .updateMeta({ threadId: input.threadId, title: renamedTo })
                 .pipe(Effect.mapError(toPersonalBotsError("Personal bots chat rename failed.")));
             }
             const updated = yield* repository
@@ -1052,21 +1023,13 @@ export const make = Effect.gen(function* () {
    * session started, as when it is deleted. A session already stopped has
    * nothing to end. Best effort: the archive itself already happened.
    */
-  const stopArchivedSession = (threadId: ThreadId, now: DateTime.Utc) =>
+  const stopArchivedSession = (threadId: ThreadId) =>
     Effect.gen(function* () {
-      const shell = yield* snapshots.getThreadShellById(threadId);
+      const shell = yield* engine.getThread(threadId);
       if (Option.isNone(shell)) return;
       const session = shell.value.session;
       if (session == null || session.status === "stopped") return;
-      yield* engine.dispatch({
-        type: "thread.session.stop",
-        commandId: CommandId.make(
-          `personal-bots:archive-stop:${threadId}:${DateTime.toEpochMillis(now)}`,
-        ),
-        threadId,
-        createdAt: DateTime.formatIso(now),
-        terminateProcesses: true,
-      });
+      yield* engine.stop({ threadId, terminateProcesses: true });
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -1091,13 +1054,7 @@ export const make = Effect.gen(function* () {
       yield* uninterruptibleWrite(
         Effect.gen(function* () {
           yield* engine
-            .dispatch({
-              type: "thread.delete",
-              // Same deterministic id the bot purge uses, so a retried delete
-              // reuses the command receipt instead of deleting twice.
-              commandId: CommandId.make(`personal-bots:thread.delete:${input.threadId}`),
-              threadId: input.threadId,
-            })
+            .deleteThread(input.threadId)
             .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread deletion failed.")));
           // The link row goes only after the thread is gone: a dispatch failure
           // keeps the chat listed so the user can retry.
@@ -1398,7 +1355,14 @@ export const make = Effect.gen(function* () {
   } satisfies PersonalBotService["Service"];
 });
 
-export const layer = Layer.effect(PersonalBotService, make);
+/**
+ * Bots are the personal thread layer's composition root: every chat verb goes
+ * through PersonalEngine, so the layer exports the engine too. A service that
+ * needs the seam gets it from the bot service it already depends on.
+ */
+export const layer = Layer.effect(PersonalBotService, make).pipe(
+  Layer.provideMerge(PersonalEngineV1WiredLive),
+);
 
 export const PERSONAL_BOTS_SEED_META_KEY = PERSONAL_META_SEEDED;
 export const PERSONAL_BOTS_PROJECT_META_KEY = PERSONAL_META_PROJECT_ID;

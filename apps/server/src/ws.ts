@@ -195,6 +195,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import * as PersonalEngine from "./personal/engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { personalWorkingProgress } from "./personal/workingProgress.ts";
@@ -647,6 +648,7 @@ const makeWsRpcLayer = (
               Effect.orElseSucceed(() => null),
             );
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const personalEngine = yield* PersonalEngine.PersonalEngine;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Every command dispatched on this connection carries the connecting
@@ -3794,7 +3796,7 @@ const makeWsRpcLayer = (
                 routines: personalRoutines,
                 memory: personalMemory,
                 secrets: personalSecrets,
-                engine: orchestrationEngine,
+                engine: personalEngine,
               },
               input.botId,
             ).pipe(Effect.as({})),
@@ -4117,7 +4119,7 @@ const makeWsRpcLayer = (
                 routines: personalRoutines,
                 memory: personalMemory,
                 secrets: personalSecrets,
-                engine: orchestrationEngine,
+                engine: personalEngine,
               },
               input,
             ).pipe(Effect.as({})),
@@ -5502,7 +5504,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
-              Layer.provide(
+              Layer.provideMerge(
                 PersonalBotService.layer.pipe(Layer.provide(PersonalBotRepository.layer)),
               ),
               Layer.provide(Layer.succeed(PersonalTaskService.PersonalTaskService, personalTasks)),

@@ -11,6 +11,7 @@
  */
 import type {
   ChatAttachment,
+  CommandId,
   MessageId,
   ModelSelection,
   OrchestrationMessageContext,
@@ -100,6 +101,12 @@ export interface CreateProjectInput {
   readonly createWorkspaceRootIfMissing?: boolean;
 }
 
+/** The personal workspace project, as the chat services read it. */
+export interface PersonalProjectView {
+  readonly id: ProjectId;
+  readonly workspaceRoot: string;
+}
+
 export interface CreateThreadInput {
   /** Supplied when a personal row already owns the id. */
   readonly threadId?: ThreadId;
@@ -136,10 +143,48 @@ export interface PersonalUpdateMetaInput {
   readonly worktreePath?: string | null;
 }
 
+/**
+ * A generated title write that must not overwrite a rename it did not see.
+ * The write lands only while the thread still carries `expectedTitle` at
+ * `expectedVersion`; otherwise the engine leaves it alone.
+ */
+export interface PersonalRenameThreadIfUnchangedInput {
+  readonly threadId: ThreadId;
+  readonly title: string;
+  readonly expectedTitle: string;
+  readonly expectedVersion: CommandId | null;
+}
+
 export interface PersonalPostNoticeInput {
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
   readonly text: string;
+  readonly context?: OrchestrationMessageContext;
+}
+
+/**
+ * One streamed chunk of a notice, for callers that mirror a reply as it
+ * arrives. Reuse `key` when retrying the same chunk so it is written once.
+ */
+export interface PersonalAppendNoticeInput {
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly delta: string;
+  readonly key: string;
+  readonly context?: OrchestrationMessageContext;
+}
+
+export interface PersonalCompleteNoticeInput {
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+}
+
+/** A user-role message written into a thread with no turn around it. */
+export interface PersonalPostUserMessageInput {
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly text: string;
+  readonly context?: OrchestrationMessageContext;
 }
 
 export interface PersonalEngineShape {
@@ -148,16 +193,43 @@ export interface PersonalEngineShape {
   ) => Effect.Effect<ProjectId, PersonalEngineError>;
   readonly createThread: (input: CreateThreadInput) => Effect.Effect<ThreadId, PersonalEngineError>;
   readonly send: (input: PersonalSendInput) => Effect.Effect<void, PersonalEngineError>;
-  readonly interrupt: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;
+  /** `turnId` pins the interrupt to the turn the caller saw. */
+  readonly interrupt: (
+    threadId: ThreadId,
+    turnId?: TurnId,
+  ) => Effect.Effect<void, PersonalEngineError>;
   readonly stop: (input: PersonalStopInput) => Effect.Effect<void, PersonalEngineError>;
   readonly archive: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;
   readonly deleteThread: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;
   readonly updateMeta: (input: PersonalUpdateMetaInput) => Effect.Effect<void, PersonalEngineError>;
+  /** Rename only if the thread still matches the title and version seen. */
+  readonly renameThreadIfUnchanged: (
+    input: PersonalRenameThreadIfUnchangedInput,
+  ) => Effect.Effect<void, PersonalEngineError>;
   /** Assistant-role notice with no turn around it. */
   readonly postNotice: (input: PersonalPostNoticeInput) => Effect.Effect<void, PersonalEngineError>;
+  /** Writes one chunk of a streamed notice. */
+  readonly appendNotice: (
+    input: PersonalAppendNoticeInput,
+  ) => Effect.Effect<void, PersonalEngineError>;
+  /** Closes a streamed notice. */
+  readonly completeNotice: (
+    input: PersonalCompleteNoticeInput,
+  ) => Effect.Effect<void, PersonalEngineError>;
+  /** Writes a user-role message with no turn, as a group relay does. */
+  readonly postUserMessage: (
+    input: PersonalPostUserMessageInput,
+  ) => Effect.Effect<void, PersonalEngineError>;
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<PersonalThreadView>, PersonalEngineError>;
+  readonly getProject: (
+    projectId: ProjectId,
+  ) => Effect.Effect<Option.Option<PersonalProjectView>, PersonalEngineError>;
+  readonly listProjects: () => Effect.Effect<
+    ReadonlyArray<PersonalProjectView>,
+    PersonalEngineError
+  >;
   readonly latestAssistantMessage: (input: {
     readonly threadId: ThreadId;
     readonly after?: DateTime.Utc;

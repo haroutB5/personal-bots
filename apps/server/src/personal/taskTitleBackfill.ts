@@ -13,7 +13,6 @@
  */
 import { CommandId, type ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -21,14 +20,12 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersonalEngine } from "./engine/PersonalEngine.ts";
 import { PersonalBotRepository } from "./PersonalBotRepository.ts";
 import { uniqueAutomaticTitle, withChatTitleLock } from "./personalChatTitles.ts";
 import { PERSONAL_THREAD_TITLE, personalTaskThreadTitle } from "./personalThreadTitles.ts";
 
 export const TASK_TITLE_BACKFILL_META_KEY = "task-title-backfill-v1";
-const COMMAND_TAG = "personal-task-title-backfill";
 
 export interface TaskTitleBackfillCandidate {
   readonly threadId: ThreadId;
@@ -81,15 +78,11 @@ const selectLinkedThreads = (sql: SqlClient.SqlClient) =>
       )
       SELECT r.thread_id AS "threadId", r.task_id AS "taskId", r.title AS "taskTitle"
         FROM ranked r
-        JOIN projection_threads p ON p.thread_id = r.thread_id
        WHERE r.rank = 1
-         AND p.deleted_at IS NULL
-         AND p.title = ${PERSONAL_THREAD_TITLE}
          AND r.thread_id NOT IN (SELECT g.thread_id FROM personal_groups g)
          AND r.thread_id NOT IN (
            SELECT m.thread_id FROM personal_group_members m WHERE m.thread_id IS NOT NULL
          )
-       ORDER BY p.created_at ASC, r.thread_id ASC
     `,
   });
 
@@ -100,24 +93,35 @@ const selectLinkedThreads = (sql: SqlClient.SqlClient) =>
  */
 export const selectTaskTitleBackfill = Effect.fn("selectTaskTitleBackfill")(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const snapshots = yield* ProjectionSnapshotQuery;
+  const engine = yield* PersonalEngine;
   const rows = yield* selectLinkedThreads(sql)(undefined);
-  const candidates: Array<TaskTitleBackfillCandidate> = [];
+  const selected: Array<{ candidate: TaskTitleBackfillCandidate; createdAt: string }> = [];
   for (const row of rows) {
-    const shell = yield* snapshots.getThreadShellById(row.threadId as ThreadId);
+    // A missing shell is a deleted or never-created chat.
+    const shell = yield* engine.getThread(row.threadId as ThreadId);
     if (Option.isNone(shell)) continue;
     const thread = shell.value;
     if (thread.title !== PERSONAL_THREAD_TITLE || thread.titleState?.source === "manual") continue;
     const title = personalTaskThreadTitle(row.taskTitle);
     if (title === PERSONAL_THREAD_TITLE) continue;
-    candidates.push({
-      threadId: thread.id,
-      title,
-      taskId: row.taskId,
-      expectedVersion: thread.titleState?.version ?? null,
+    selected.push({
+      candidate: {
+        threadId: thread.id,
+        title,
+        taskId: row.taskId,
+        expectedVersion: thread.titleState?.version ?? null,
+      },
+      createdAt: thread.createdAt,
     });
   }
-  return candidates;
+  // Oldest chat first, as the projection ordered this before the port.
+  return selected
+    .toSorted(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.candidate.threadId.localeCompare(right.candidate.threadId),
+    )
+    .map((entry) => entry.candidate);
 });
 
 /**
@@ -128,17 +132,14 @@ export const selectTaskTitleBackfill = Effect.fn("selectTaskTitleBackfill")(func
 export const renameTaskTitleBackfill = Effect.fn("renameTaskTitleBackfill")(function* (
   candidates: ReadonlyArray<TaskTitleBackfillCandidate>,
 ) {
-  const engine = yield* OrchestrationEngineService;
-  const snapshots = yield* ProjectionSnapshotQuery;
+  const engine = yield* PersonalEngine;
   const repository = yield* PersonalBotRepository;
-  const crypto = yield* Crypto.Crypto;
   let renamed = 0;
   let failed = 0;
   const skipped: Record<TaskTitleBackfillSkipReason, number> = { gone: 0, manual: 0, changed: 0 };
 
   for (const candidate of candidates) {
     const outcome = yield* Effect.gen(function* () {
-      const uuid = yield* crypto.randomUUIDv4;
       // A bot's open chats have unique names: a taken task title gets a number.
       const title = yield* withChatTitleLock(
         Effect.gen(function* () {
@@ -146,19 +147,16 @@ export const renameTaskTitleBackfill = Effect.fn("renameTaskTitleBackfill")(func
             threadId: candidate.threadId,
             title: candidate.title,
           });
-          yield* engine.dispatch({
-            type: "thread.title.generate.complete",
-            commandId: CommandId.make(`server:${COMMAND_TAG}:${uuid}`),
+          yield* engine.renameThreadIfUnchanged({
             threadId: candidate.threadId,
             title: unique,
             expectedTitle: PERSONAL_THREAD_TITLE,
             expectedVersion: candidate.expectedVersion,
-            needsRefinement: false,
           });
           return unique;
         }),
       );
-      const after = yield* snapshots.getThreadShellById(candidate.threadId);
+      const after = yield* engine.getThread(candidate.threadId);
       if (Option.isNone(after)) return "gone" as const;
       if (after.value.title === title && after.value.titleState?.source === "generated") {
         return "renamed" as const;

@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import type * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { isPlaceholderChatTitle } from "./personalChatTitles.ts";
 import type * as PersonalBotRepository from "./PersonalBotRepository.ts";
 
@@ -50,10 +50,7 @@ export interface DeliveryDeps {
     PersonalBotRepository.PersonalBotRepository["Service"],
     "getThreadLink" | "listOpenChats" | "getRemovedChatOrigin"
   >;
-  readonly projections: Pick<
-    ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"],
-    "getThreadShellById"
-  >;
+  readonly threads: Pick<PersonalEngine.PersonalEngine["Service"], "getThread">;
 }
 
 const epochMs = (iso: string) => {
@@ -100,7 +97,7 @@ export const resolveDeliveryThread = Effect.fn("resolveDeliveryThread")(function
   // the chat's state is unknown, and "unknown" must not read as "removed" (which
   // would send the message to another chat or open a new one).
   const linkResult = yield* Effect.result(deps.repository.getThreadLink({ threadId }));
-  const shellResult = yield* Effect.result(deps.projections.getThreadShellById(threadId));
+  const shellResult = yield* Effect.result(deps.threads.getThread(threadId));
   if (Result.isFailure(linkResult) && Result.isFailure(shellResult)) {
     yield* Effect.logWarning(
       "personal delivery could not read a chat's link or shell; leaving it where it is",

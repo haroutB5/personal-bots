@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
@@ -116,6 +117,7 @@ const makeTestLayer = (context: PersonalBotsTestContext) =>
             context.dispatched.push(command);
             return { sequence: context.dispatched.length };
           }),
+        streamDomainEvents: Stream.never,
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
@@ -127,6 +129,7 @@ const makeTestLayer = (context: PersonalBotsTestContext) =>
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getProjectShellById: () => Effect.succeed(Option.none()),
         getProjectShells: () => Effect.succeed([]),
+        getThreadShellById: () => Effect.succeed(Option.none()),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-bots-test-" })),
@@ -478,7 +481,7 @@ it.effect("deleteThread dispatches thread.delete once and removes only that link
     expect(deletes.length).toBe(1);
     expect(deletes[0]).toMatchObject({
       threadId: gone,
-      commandId: `personal-bots:thread.delete:${gone}`,
+      commandId: `personal-engine:thread.delete:${gone}`,
     });
     const listed = yield* service.list();
     expect(listed.threads.map((thread) => thread.threadId)).toEqual([kept]);

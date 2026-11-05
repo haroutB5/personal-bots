@@ -1,9 +1,9 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
-import { CommandId, PERSONAL_TASK_TERMINAL_STATUSES, type PersonalBotId } from "@t3tools/contracts";
+import { PERSONAL_TASK_TERMINAL_STATUSES, type PersonalBotId } from "@t3tools/contracts";
 
-import type * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import type * as PersonalEngine from "./engine/PersonalEngine.ts";
 import type * as PersonalGroupService from "./groups/PersonalGroupService.ts";
 import type * as PersonalMemoryService from "./memory/PersonalMemoryService.ts";
 import type * as PersonalBotService from "./PersonalBotService.ts";
@@ -17,7 +17,7 @@ export interface PersonalBotPurgeServices {
   readonly routines: PersonalRoutineService.PersonalRoutineService["Service"];
   readonly memory: PersonalMemoryService.PersonalMemoryService["Service"];
   readonly secrets: PersonalSecretService.PersonalSecretService["Service"];
-  readonly engine: OrchestrationEngine.OrchestrationEngineService["Service"];
+  readonly engine: PersonalEngine.PersonalEngine["Service"];
   readonly groups: PersonalGroupService.PersonalGroupService["Service"];
 }
 
@@ -81,14 +81,9 @@ export const purgePersonalBot = Effect.fn("purgePersonalBot")(function* (
   const { threads } = yield* bots.list();
   for (const link of threads) {
     if (link.botId !== botId) continue;
-    yield* engine
-      .dispatch({
-        type: "thread.delete",
-        // Deterministic so a retried delete reuses the command receipt.
-        commandId: CommandId.make(`personal-bots:thread.delete:${link.threadId}`),
-        threadId: link.threadId,
-      })
-      .pipe(step("delete chat"));
+    // The port's command is deterministic per thread, so a retried delete
+    // reuses the command receipt.
+    yield* engine.deleteThread(link.threadId).pipe(step("delete chat"));
   }
 
   const entries = yield* memory

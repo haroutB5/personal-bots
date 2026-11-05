@@ -102,7 +102,7 @@ describe("resolveDeliveryThread when the chat cannot be read", () => {
   const boom = Effect.fail({ message: "database is locked" } as never);
   const deps = (overrides: {
     link?: DeliveryDeps["repository"]["getThreadLink"];
-    shell?: DeliveryDeps["projections"]["getThreadShellById"];
+    shell?: DeliveryDeps["threads"]["getThread"];
   }): DeliveryDeps => ({
     repository: {
       getThreadLink: overrides.link ?? (() => boom),
@@ -110,7 +110,7 @@ describe("resolveDeliveryThread when the chat cannot be read", () => {
       getRemovedChatOrigin: () =>
         Effect.succeed(Option.some({ botId: "bot" as never, title: "Main" })),
     },
-    projections: { getThreadShellById: overrides.shell ?? (() => boom) },
+    threads: { getThread: overrides.shell ?? (() => boom) },
   });
 
   it.effect("both lookups failing is logged and answers unknown, never 'removed'", () => {

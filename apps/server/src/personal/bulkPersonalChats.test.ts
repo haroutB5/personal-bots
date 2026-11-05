@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
 import {
   PersonalBotId,
@@ -41,6 +42,7 @@ const makeLayer = (dispatched: Array<OrchestrationCommand>) =>
             dispatched.push(command);
             return { sequence: dispatched.length };
           }),
+        streamDomainEvents: Stream.never,
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(

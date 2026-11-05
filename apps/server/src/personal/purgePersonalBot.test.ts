@@ -77,9 +77,9 @@ function makeServices() {
       purgeBot: ({ botId }: { botId: string }) => record(`groups:${botId}`),
     },
     engine: {
-      dispatch: (command: { type: string; threadId: string }) =>
-        command.threadId === "thread-gone"
-          ? record(`${command.type}:${command.threadId}`)
+      deleteThread: (threadId: string) =>
+        threadId === "thread-gone"
+          ? record(`thread.delete:${threadId}`)
           : Effect.fail({ _tag: "UnexpectedThread" as const }),
     },
   } as unknown as PersonalBotPurgeServices;

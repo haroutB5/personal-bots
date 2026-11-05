@@ -192,6 +192,7 @@ const makeLayer = (harness: Harness, dbPath?: string) =>
             return { sequence: harness.dispatched.length };
           }),
         subscribeDomainEvents: Effect.succeed(Stream.never),
+        streamDomainEvents: Stream.never,
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(

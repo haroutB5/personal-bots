@@ -1,6 +1,4 @@
-import * as NodeCrypto from "node:crypto";
-
-import { CommandId, type ThreadId } from "@t3tools/contracts";
+import { type ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -13,9 +11,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 import { unarchivedChatTitle, withChatTitleLock } from "./personalChatTitles.ts";
@@ -78,8 +75,7 @@ interface CandidateRow extends Omit<TaskChatArchiveCandidate, "pendingRequests">
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const engine = yield* PersonalEngine.PersonalEngine;
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const bots = yield* PersonalBotService.PersonalBotService;
   // A startup sweep and a timed one never overlap.
@@ -106,7 +102,7 @@ export const make = Effect.gen(function* () {
       const threadId = candidate.threadId as ThreadId;
       // Fresh live state: the row's session status comes from the same
       // projection, but background work only lives in the shell.
-      const shell = yield* projections.getThreadShellById(threadId);
+      const shell = yield* engine.getThread(threadId);
       if (Option.isNone(shell)) return false;
       const thread = shell.value;
       const decision = decideTaskChatArchive(
@@ -159,19 +155,12 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           // Another open chat of the bot may have taken the name while this one
           // was archived: it comes back with the lowest free number after it.
-          const shell = yield* projections.getThreadShellById(threadId);
+          const shell = yield* engine.getThread(threadId);
           const renamedTo = Option.isSome(shell)
             ? yield* unarchivedChatTitle(repository, { threadId, title: shell.value.title })
             : null;
           if (renamedTo !== null) {
-            yield* engine.dispatch({
-              type: "thread.meta.update",
-              commandId: CommandId.make(
-                `personal-bots:thread.unarchive-title:${threadId}:${NodeCrypto.randomUUID()}`,
-              ),
-              threadId,
-              title: renamedTo,
-            });
+            yield* engine.updateMeta({ threadId, title: renamedTo });
           }
           const rows = yield* sql<{ readonly threadId: string }>`
             UPDATE personal_bot_threads
@@ -261,9 +250,9 @@ export const make = Effect.gen(function* () {
   const start: PersonalTaskChatArchiveShape["start"] = Effect.fn("PersonalTaskChatArchive.start")(
     function* () {
       yield* forkParked(
-        Stream.runForEach(engine.streamDomainEvents, (event) =>
-          event.type === "thread.turn-start-requested"
-            ? unarchiveForTurn(event.payload.threadId).pipe(Effect.asVoid)
+        Stream.runForEach(engine.events, (event) =>
+          event._tag === "TurnStartRequested"
+            ? unarchiveForTurn(event.threadId).pipe(Effect.asVoid)
             : Effect.void,
         ),
       );

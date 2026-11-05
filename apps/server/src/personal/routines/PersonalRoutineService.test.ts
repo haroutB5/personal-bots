@@ -71,6 +71,7 @@ const makeLayer = (
             return { sequence: dispatched.length };
           }),
         subscribeDomainEvents: Effect.succeed(Stream.never),
+        streamDomainEvents: Stream.never,
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(

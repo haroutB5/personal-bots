@@ -115,6 +115,12 @@ const messageFor = (input: {
 /** A tiny v1 engine: commands mutate the read model, events go to a PubSub. */
 const makeHarness = () => {
   const threads = new Map<string, ThreadRecord>();
+  const hiddenShells = new Set<string>();
+  const projects = new Map<string, { id: ProjectId; workspaceRoot: string }>();
+  projects.set("project-1", {
+    id: ProjectId.make("project-1"),
+    workspaceRoot: "/work/bots",
+  });
   const dispatched: Array<OrchestrationCommand> = [];
   const snapshotOptions: Array<{ unsettledOnly?: boolean }> = [];
   const pubsub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
@@ -313,7 +319,14 @@ const makeHarness = () => {
 
   const snapshotApi = {
     getThreadShellById: (threadId: ThreadId) =>
-      Effect.succeed(Option.fromNullishOr(threads.get(threadId)?.shell)),
+      Effect.succeed(
+        hiddenShells.has(threadId)
+          ? Option.none()
+          : Option.fromNullishOr(threads.get(threadId)?.shell),
+      ),
+    getProjectShellById: (projectId: ProjectId) =>
+      Effect.succeed(Option.fromNullishOr(projects.get(projectId))),
+    getProjectShells: () => Effect.succeed([...projects.values()]),
     getShellSnapshot: (options?: { unsettledOnly?: boolean }) => {
       snapshotOptions.push(options ?? {});
       return Effect.succeed({
@@ -339,7 +352,7 @@ const makeHarness = () => {
     Layer.provide(Layer.succeed(ThreadBackgroundLivenessService, liveness)),
   );
 
-  return { layer, threads, dispatched, snapshotOptions, liveness, pubsub };
+  return { layer, threads, hiddenShells, projects, dispatched, snapshotOptions, liveness, pubsub };
 };
 
 const withEngine = <A, E>(
@@ -383,6 +396,50 @@ describe("PersonalEngineV1 verbs", () => {
         projectId: "project-1",
         title: "Bots",
         workspaceRoot: "/work/bots",
+      });
+    });
+  });
+
+  it.effect("getProject and listProjects read the project shells", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const found = yield* withEngine(harness, (engine) =>
+        engine.getProject(ProjectId.make("project-1")),
+      );
+      const missing = yield* withEngine(harness, (engine) =>
+        engine.getProject(ProjectId.make("project-gone")),
+      );
+      const all = yield* withEngine(harness, (engine) => engine.listProjects());
+
+      expect(Option.getOrNull(found)).toEqual({
+        id: "project-1",
+        workspaceRoot: "/work/bots",
+      });
+      expect(Option.isNone(missing)).toBe(true);
+      expect(all).toEqual([{ id: "project-1", workspaceRoot: "/work/bots" }]);
+    });
+  });
+
+  it.effect("renameThreadIfUnchanged sends the title guard with the version seen", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* withEngine(harness, (engine) =>
+        engine.renameThreadIfUnchanged({
+          threadId: ThreadId.make("thread-1"),
+          title: "Fix the login bug",
+          expectedTitle: "New chat",
+          expectedVersion: CommandId.make("command-1"),
+        }),
+      );
+
+      expect(harness.dispatched).toHaveLength(1);
+      expect(harness.dispatched[0]).toMatchObject({
+        type: "thread.title.generate.complete",
+        threadId: "thread-1",
+        title: "Fix the login bug",
+        expectedTitle: "New chat",
+        expectedVersion: "command-1",
+        needsRefinement: false,
       });
     });
   });
@@ -478,24 +535,31 @@ describe("PersonalEngineV1 verbs", () => {
     });
   });
 
-  it.effect("send to a missing thread fails with the send operation", () => {
+  it.effect("send without a shell still dispatches with the default modes", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
-      const error = yield* withEngine(harness, (engine) =>
-        engine
-          .send({
-            threadId: ThreadId.make("missing"),
-            messageId: MessageId.make("message-1"),
-            text: "Hello",
-            attachments: ATTACHMENTS,
-            mode: "start",
-          })
-          .pipe(Effect.flip),
+      yield* seedThread(harness, "thread-1", "project-1");
+      harness.hiddenShells.add("thread-1");
+      yield* withEngine(harness, (engine) =>
+        engine.send({
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-1"),
+          text: "Hello",
+          attachments: ATTACHMENTS,
+          mode: "start",
+        }),
       );
 
-      expect(error).toBeInstanceOf(PersonalEngineError);
-      expect(error.operation).toBe("send");
-      expect(error.detail).toContain("does not exist");
+      // The v1 decider owns the missing-thread check; the dispatch is the
+      // behavior the old callers relied on.
+      const starts = harness.dispatched.filter((command) => command.type === "thread.turn.start");
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toMatchObject({
+        type: "thread.turn.start",
+        threadId: "thread-1",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
     });
   });
 
@@ -538,6 +602,15 @@ describe("PersonalEngineV1 verbs", () => {
         threadId: "thread-1",
         terminateProcesses: true,
       });
+
+      // A chat restarted after an archive can be stopped again, so a second
+      // stop is a second command, not a deduped no-op.
+      yield* withEngine(harness, (engine) =>
+        engine.stop({ threadId: ThreadId.make("thread-1"), terminateProcesses: true }),
+      );
+      const stops = harness.dispatched.filter((command) => command.type === "thread.session.stop");
+      expect(stops).toHaveLength(2);
+      expect(new Set(stops.map((command) => command.commandId)).size).toBe(2);
     });
   });
 

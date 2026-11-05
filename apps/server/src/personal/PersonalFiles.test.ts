@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "../assets/AssetAccess.ts";
@@ -39,6 +40,7 @@ const testLayer = PersonalBotService.layer.pipe(
   Layer.provideMerge(
     Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
       dispatch: () => Effect.succeed({ sequence: 1 }),
+      streamDomainEvents: Stream.never,
     } as unknown as OrchestrationEngine.OrchestrationEngineShape),
   ),
   Layer.provideMerge(

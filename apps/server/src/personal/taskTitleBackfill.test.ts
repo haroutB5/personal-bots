@@ -24,6 +24,11 @@ import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import {
+  PersonalEngine,
+  type PersonalRenameThreadIfUnchangedInput,
+} from "./engine/PersonalEngine.ts";
+import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import {
   renameTaskTitleBackfill,
@@ -33,14 +38,17 @@ import {
 } from "./taskTitleBackfill.ts";
 
 const makeLayer = () =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
+  PersonalEngineV1WiredLive.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        OrchestrationEngineLive.pipe(
+          Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+          Layer.provide(OrchestrationProjectionPipelineLive),
+        ),
+        OrchestrationProjectionSnapshotQueryLive,
+        PersonalBotRepository.layer,
+      ),
     ),
-    OrchestrationProjectionSnapshotQueryLive,
-    PersonalBotRepository.layer,
-  ).pipe(
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
@@ -350,18 +358,18 @@ describe("task title backfill", () => {
   it.effect("sets the marker only after a clean pass, and a later start does nothing", () =>
     Effect.gen(function* () {
       yield* seed;
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* PersonalEngine;
       const flaky = {
         ...engine,
-        dispatch: ((command) =>
-          command.type === "thread.title.generate.complete" && command.threadId === T.routine
+        renameThreadIfUnchanged: (input: PersonalRenameThreadIfUnchangedInput) =>
+          input.threadId === T.routine
             ? Effect.die(new Error("store unavailable"))
-            : engine.dispatch(command)) as typeof engine.dispatch,
+            : engine.renameThreadIfUnchanged(input),
       };
 
       // First start: one rename fails, so no marker and the rest are renamed.
       const first = yield* runTaskTitleBackfill().pipe(
-        Effect.provideService(OrchestrationEngineService, flaky),
+        Effect.provideService(PersonalEngine, flaky),
       );
       assert.deepEqual(first, {
         renamed: 2,

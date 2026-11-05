@@ -41,9 +41,9 @@ import {
 } from "@t3tools/contracts";
 
 import { timingSafeEqualBase64Url } from "../../auth/utils.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
@@ -246,7 +246,7 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tasks = yield* PersonalTaskService.PersonalTaskService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const engine = yield* PersonalEngine.PersonalEngine;
   // Serialises ticks with mutations so an edit never races a firing.
   const lock = yield* Semaphore.make(1);
   // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off) never catches up its routines.
@@ -379,7 +379,7 @@ export const make = Effect.gen(function* () {
         // Same title only: a routine's output does not belong in an unrelated
         // chat, so with no match the run keeps opening its own chat.
         const resolved = yield* resolveDeliveryThread(
-          { repository: bots, projections: snapshots },
+          { repository: bots, threads: engine },
           sourceThreadId,
           { sameTitleOnly: true },
         );
@@ -406,7 +406,7 @@ export const make = Effect.gen(function* () {
         threadId = resolved.threadId;
       }
       // Absent for a deleted chat.
-      const shell = yield* snapshots.getThreadShellById(threadId);
+      const shell = yield* engine.getThread(threadId);
       if (Option.isNone(shell)) return undefined;
       const members = yield* sql<{ readonly one: number }>`
         SELECT 1 AS "one" FROM personal_group_members

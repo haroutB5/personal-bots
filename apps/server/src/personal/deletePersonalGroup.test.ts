@@ -57,8 +57,7 @@ function makeServices(
       remove: () => Effect.void,
     },
     engine: {
-      dispatch: (command: { type: string; threadId: string }) =>
-        record(`${command.type}:${command.threadId}`),
+      deleteThread: (threadId: string) => record(`thread.delete:${threadId}`),
     },
     groups: {
       list: () =>
