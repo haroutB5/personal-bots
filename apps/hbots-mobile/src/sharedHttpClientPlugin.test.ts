@@ -27,6 +27,8 @@ describe("withSharedHttpClient", () => {
     const output = applyToMainApplication(TEMPLATE);
     expect(output).toContain("private val sharedHttpClient: OkHttpClient by lazy {");
     expect(output).toContain("private class RememberingDns : Dns {");
+    expect(output).toContain("if (cached != null && cached.isNotEmpty())");
+    expect(output).toContain("refresh.execute");
     expect(output.indexOf("setOkHttpClientFactory")).toBeGreaterThan(-1);
     expect(output.indexOf("setOkHttpClientFactory")).toBeLessThan(
       output.indexOf("loadReactNative(this)"),

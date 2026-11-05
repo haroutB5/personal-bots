@@ -15,18 +15,29 @@ const DNS_CLASS = `
 /**
  * The system resolver answers "no address" for a while after a network change.
  * Keep the last good answer so a reconnect can still reach the laptop, and
- * prefer IPv4 because a phone can keep an unreachable IPv6 route.
+ * prefer IPv4 because a phone can keep an unreachable IPv6 route. After a
+ * network change the resolver can also take longer than one connect attempt,
+ * so a known hostname answers from the cache at once and the cache refreshes
+ * in the background for the next attempt.
  */
 private class RememberingDns : Dns {
   private val cache = ConcurrentHashMap<String, List<InetAddress>>()
+  private val refresh = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "hbots-dns").apply { isDaemon = true }
+  }
 
   override fun lookup(hostname: String): List<InetAddress> {
-    val addresses =
-      try {
-        Dns.SYSTEM.lookup(hostname).also { cache[hostname] = it }
-      } catch (error: UnknownHostException) {
-        cache[hostname] ?: throw error
+    val cached = cache[hostname]
+    if (cached != null && cached.isNotEmpty()) {
+      refresh.execute {
+        runCatching { Dns.SYSTEM.lookup(hostname) }
+          .onSuccess { if (it.isNotEmpty()) cache[hostname] = it }
       }
+      return cached.sortedBy { if (it is Inet6Address) 1 else 0 }
+    }
+    val addresses = Dns.SYSTEM.lookup(hostname)
+    if (addresses.isEmpty()) throw UnknownHostException(hostname)
+    cache[hostname] = addresses
     return addresses.sortedBy { if (it is Inet6Address) 1 else 0 }
   }
 }
