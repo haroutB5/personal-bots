@@ -1,4 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { describe, it, assert } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -34,6 +39,8 @@ import {
 } from "./providerMaintenance.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CLAUDE_INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
@@ -1128,3 +1135,136 @@ it.effect("Go back installs an older pinned version unless the manifest marks it
     ),
   );
 });
+
+it.effect(
+  "uninstalls every version newer than the good one when the broken release reports no version",
+  () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-mise-"));
+    const toolDir = NodePath.join(tempDir, "mise", "installs", "claude");
+    const good = "2.1.317";
+    const bad = "2.1.318";
+    const latestPath = NodePath.join(toolDir, "latest");
+    const writeExecutable = (path: string, body: string) => {
+      NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+      NodeFS.writeFileSync(path, body);
+      NodeFS.chmodSync(path, 0o755);
+    };
+    const writeVersion = (version: string) => {
+      writeExecutable(NodePath.join(toolDir, version, "claude"), "#!/bin/sh\nexit 1\n");
+    };
+    const installedVersions = () =>
+      NodeFS.readdirSync(toolDir).filter((entry) => /^\d+\.\d+\.\d+$/.test(entry));
+    writeVersion(good);
+    writeVersion(bad);
+    for (const alias of ["latest", "2", "2.1"]) {
+      NodeFS.symlinkSync(`./${bad}`, NodePath.join(toolDir, alias));
+    }
+    const binDir = NodePath.join(tempDir, "bin");
+    const misePath = NodePath.join(binDir, "mise");
+    // Like mise 2026.10.19: any install or uninstall rebuilds every alias.
+    writeExecutable(
+      misePath,
+      [
+        "#!/bin/sh",
+        `root="${tempDir}/mise/installs"`,
+        "rebuild() {",
+        '  for t in "$root"/*/; do',
+        '    t="${t%/}"',
+        `    hi=$(ls "$t" | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -n 1)`,
+        '    [ -z "$hi" ] && continue',
+        '    rm -f "$t/latest"',
+        `    find "$t" -maxdepth 1 -type l -name '[0-9]*' -delete`,
+        '    ln -sfn "./$hi" "$t/latest"',
+        '    ln -sfn "./$hi" "$t/${hi%%.*}"',
+        '    ln -sfn "./$hi" "$t/${hi%.*}"',
+        "  done",
+        "}",
+        'case "$1" in',
+        '  install) spec="$2"; tool="${spec%%@*}"; version="${spec#*@}"',
+        '    mkdir -p "$root/$tool/$version"; : > "$root/$tool/$version/$tool"',
+        "    rebuild ;;",
+        '  uninstall) spec="$2"; tool="${spec%%@*}"; version="${spec#*@}"',
+        '    rm -rf "$root/$tool/$version"',
+        "    rebuild ;;",
+        "esac",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+
+    const broken: ServerProvider = {
+      ...baseProvider,
+      instanceId: CLAUDE_INSTANCE_ID,
+      driver: CLAUDE_DRIVER,
+      version: null,
+      smokeCheck: {
+        status: "failed",
+        version: bad,
+        checkedAt: "2026-11-05T00:00:00.000Z",
+        message: "Claude Code reports no version.",
+        previousVersion: good,
+      },
+    };
+
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry(broken);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.sync(
+            () =>
+              ({
+                ...makeProviderMaintenanceCapabilities({
+                  provider: CLAUDE_DRIVER,
+                  packageName: "@anthropic-ai/claude-code",
+                  updateExecutable: misePath,
+                  updateArgs: ["install", "claude@latest"],
+                  updateLockKey: "mise",
+                  latestPath,
+                  platform: "linux",
+                }),
+                installedVersions: installedVersions(),
+              }) as ProviderMaintenanceCapabilities,
+          ),
+        refreshInstance: () =>
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) => ({ ...provider, version: good })),
+          ),
+      });
+
+      const result = yield* updater.updateProvider({
+        provider: CLAUDE_DRIVER,
+        instanceId: CLAUDE_INSTANCE_ID,
+        targetVersion: good,
+        rollback: true,
+      });
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(NodeFS.existsSync(NodePath.join(toolDir, bad)), false);
+      for (const alias of ["latest", "2", "2.1"]) {
+        assert.strictEqual(
+          NodeFS.readlinkSync(NodePath.join(toolDir, alias)).replace(/^\.\//, ""),
+          good,
+          `${alias} must resolve to the good version`,
+        );
+      }
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("2.1.318"),
+          mockSpawnerLayer((command, args) => {
+            if (command !== "/bin/sh") return { stdout: "updated" };
+            const run = NodeChildProcess.spawnSync(command, args, { encoding: "utf8" });
+            return {
+              stdout: run.stdout,
+              stderr: run.stderr,
+              code: run.status ?? 1,
+            };
+          }),
+        ),
+      ),
+    );
+  },
+);

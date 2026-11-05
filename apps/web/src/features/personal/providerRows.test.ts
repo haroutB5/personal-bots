@@ -411,12 +411,13 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
             status: "rolled_back",
             toVersion: "0.164.0",
             message: "Went back to 2.1.303. API Error: 500",
+            nextAttemptAt: "2026-12-01T10:00:00.000Z",
           }),
         }),
       ),
     ).toMatchObject({
       state: "updateAvailable",
-      statusText: "Update rolled back",
+      statusText: "Update rolled back · Next attempt Tue 10:00",
       detail: "Went back to 2.1.303. API Error: 500",
       action: { kind: "update", label: "Update" },
     });
@@ -427,14 +428,15 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
           autoUpdate: autoUpdate({
             status: "failed",
             toVersion: "0.164.0",
-            message: "The updater finished but Claude Code still reports 2.1.303.",
+            message: "Went back to 2.1.303. 2.1.304 arrived, not 0.164.0. The test passed.",
+            nextAttemptAt: "2026-12-01T10:00:00.000Z",
           }),
         }),
       ),
     ).toMatchObject({
       state: "updateFailed",
-      statusText: "Update failed",
-      detail: "The updater finished but Claude Code still reports 2.1.303.",
+      statusText: "Update failed · Next attempt Tue 10:00",
+      detail: "Went back to 2.1.303. 2.1.304 arrived, not 0.164.0. The test passed.",
       action: { kind: "tryAgain", label: "Try again" },
     });
     expect(
@@ -471,6 +473,24 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
       statusText: "2.1.303 · Updates automatically",
       detail: "Updated automatically.",
     });
+  });
+
+  it("a failed automatic update keeps the version facts and the next attempt in view", () => {
+    const row = rowOf(
+      provider({
+        versionAdvisory: advisory(),
+        autoUpdate: autoUpdate({
+          status: "failed",
+          fromVersion: "2.1.303",
+          toVersion: "2.1.305",
+          message: "Went back to 2.1.303. 2.1.304 arrived, not 2.1.305. The test passed.",
+          nextAttemptAt: "2026-12-01T10:00:00.000Z",
+        }),
+      }),
+    );
+    expect(row.statusText).toBe("Update failed · Next attempt Tue 10:00");
+    expect(row.detail).toContain("Went back to 2.1.303");
+    expect(row.detail).toContain("2.1.304 arrived, not 2.1.305");
   });
 
   it("no row ever has more than one action", () => {
