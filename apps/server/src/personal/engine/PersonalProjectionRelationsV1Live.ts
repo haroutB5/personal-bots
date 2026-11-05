@@ -13,7 +13,7 @@ import {
   type PersonalProjectionRelationsShape,
 } from "./PersonalProjectionRelations.ts";
 
-const V1_RELATIONS: PersonalProjectionRelationsShape = {
+export const PERSONAL_V1_RELATIONS: PersonalProjectionRelationsShape = {
   threads: "projection_threads",
   messages: "projection_thread_messages",
   sessions: "projection_thread_sessions",
@@ -23,5 +23,5 @@ const V1_RELATIONS: PersonalProjectionRelationsShape = {
 
 export const PersonalProjectionRelationsV1Live = Layer.succeed(
   PersonalProjectionRelations,
-  V1_RELATIONS,
+  PERSONAL_V1_RELATIONS,
 );

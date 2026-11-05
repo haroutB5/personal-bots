@@ -17,10 +17,10 @@ import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 import { unarchivedChatTitle, withChatTitleLock } from "./personalChatTitles.ts";
 import {
-  ARCHIVED_BUSY_CHATS_SQL,
+  archivedBusyChatsSql,
   decideTaskChatArchive,
   TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
-  TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL,
+  taskChatAutoArchiveCandidatesSql,
   TASK_CHAT_AUTO_ARCHIVE_META_KEY,
   TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS,
   TASK_CHAT_OPEN_WORK_SQL,
@@ -29,6 +29,7 @@ import {
   type TaskChatArchiveCandidate,
 } from "./taskChatAutoArchivePolicy.ts";
 import { withStallJob } from "../observability/stallJobs.ts";
+import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
 
 /**
  * Archives finished delegated-task chats after a wait Settings sets (48 hours
@@ -75,6 +76,7 @@ interface CandidateRow extends Omit<TaskChatArchiveCandidate, "pendingRequests">
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const rel = yield* PersonalProjectionRelations;
   const engine = yield* PersonalEngine.PersonalEngine;
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const bots = yield* PersonalBotService.PersonalBotService;
@@ -191,9 +193,9 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  /** Archived chats whose newer turn is still running (`ARCHIVED_BUSY_CHATS_SQL`). */
+  /** Archived chats whose newer turn is still running (`archivedBusyChatsSql`). */
   const healArchivedBusy = Effect.gen(function* () {
-    const busy = yield* sql.unsafe<{ readonly threadId: string }>(ARCHIVED_BUSY_CHATS_SQL);
+    const busy = yield* sql.unsafe<{ readonly threadId: string }>(archivedBusyChatsSql(rel));
     let healed = 0;
     for (const row of busy) {
       if (yield* unarchiveForTurn(row.threadId as ThreadId)) healed += 1;
@@ -217,7 +219,7 @@ export const make = Effect.gen(function* () {
     }
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const idleMs = yield* savedIdleMs;
-    const candidates = yield* sql.unsafe<CandidateRow>(TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL);
+    const candidates = yield* sql.unsafe<CandidateRow>(taskChatAutoArchiveCandidatesSql(rel));
     let archived = 0;
     let archivedTaskChats = 0;
     let archivedRoutineChats = 0;

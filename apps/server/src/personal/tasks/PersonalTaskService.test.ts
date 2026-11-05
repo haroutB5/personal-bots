@@ -47,6 +47,7 @@ import * as OrchestrationEngine from "../../orchestration/Services/Orchestration
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import { PERSONAL_V1_RELATIONS } from "../engine/PersonalProjectionRelationsV1Live.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import {
   makeSqlitePersistenceLive,
@@ -71,7 +72,7 @@ import {
 } from "../browser/sensitiveExposureStore.ts";
 import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
-import { TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL } from "../taskChatAutoArchivePolicy.ts";
+import { taskChatAutoArchiveCandidatesSql } from "../taskChatAutoArchivePolicy.ts";
 import { QUEUED_HELP_NOTE } from "../browser/browserShared.ts";
 
 /**
@@ -5029,7 +5030,7 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         expect((yield* reload(control.taskId)).status).toBe("completed");
 
         const candidates = yield* sql.unsafe<{ readonly threadId: string }>(
-          TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL,
+          taskChatAutoArchiveCandidatesSql(PERSONAL_V1_RELATIONS),
         );
         const candidateIds = candidates.map((row) => row.threadId);
         expect(candidateIds).toContain(controlChat);

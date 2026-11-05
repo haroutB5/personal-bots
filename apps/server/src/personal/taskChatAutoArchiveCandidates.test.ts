@@ -3,7 +3,8 @@ import * as NodeSqlite from "node:sqlite";
 
 import { describe, expect, it } from "@effect/vitest";
 
-import { TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL } from "./taskChatAutoArchivePolicy.ts";
+import { taskChatAutoArchiveCandidatesSql } from "./taskChatAutoArchivePolicy.ts";
+import { PERSONAL_V1_RELATIONS } from "./engine/PersonalProjectionRelationsV1Live.ts";
 
 /**
  * The candidate SQL run against a real in-memory database, so the rule that a
@@ -87,13 +88,15 @@ function addTask(
 }
 
 function candidateThreadIds(db: NodeSqlite.DatabaseSync): ReadonlyArray<string> {
-  const rows = db.prepare(TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL).all() as unknown as ReadonlyArray<{
+  const rows = db
+    .prepare(taskChatAutoArchiveCandidatesSql(PERSONAL_V1_RELATIONS))
+    .all() as unknown as ReadonlyArray<{
     readonly threadId: string;
   }>;
   return rows.map((row) => row.threadId);
 }
 
-describe("TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL", () => {
+describe("taskChatAutoArchiveCandidatesSql", () => {
   it("keeps a delegation chat as a candidate when routine runs land in it later", () => {
     const db = makeDb();
     addChat(db, "thread-release");

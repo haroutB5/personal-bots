@@ -10,6 +10,8 @@ import {
   personalChatArchiveAfterMinutesFromStored,
 } from "@t3tools/contracts";
 
+import type { PersonalProjectionRelationsShape } from "./engine/PersonalProjectionRelations.ts";
+
 /**
  * A finished task chat archives once it has been idle and unopened this long.
  * 48 hours is the default; Settings can set 5m..720h, and the sweep passes the
@@ -85,7 +87,7 @@ export const TASK_CHAT_OPEN_WORK_SQL = `
  *
  * Idle and liveness are decided per row by `decideTaskChatArchive`.
  */
-export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
+export const taskChatAutoArchiveCandidatesSql = (rel: PersonalProjectionRelationsShape): string => `
   SELECT
     bt.thread_id AS "threadId",
     bt.bot_id AS "botId",
@@ -103,12 +105,12 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
     ) AS "taskEndedAt",
     (
       SELECT max(m.created_at)
-      FROM projection_thread_messages m
+      FROM ${rel.messages} m
       WHERE m.thread_id = bt.thread_id
     ) AS "lastMessageAt",
     (
       SELECT max(m.created_at)
-      FROM projection_thread_messages m
+      FROM ${rel.messages} m
       WHERE m.thread_id = bt.thread_id
         AND m.role = 'user'
         AND m.message_id NOT LIKE 'personal-%'
@@ -119,8 +121,8 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
     p.pending_approval_count + p.pending_user_input_count AS "pendingRequests"
   FROM personal_bot_threads bt
   JOIN personal_bots b ON b.bot_id = bt.bot_id
-  JOIN projection_threads p ON p.thread_id = bt.thread_id
-  LEFT JOIN projection_thread_sessions s ON s.thread_id = bt.thread_id
+  JOIN ${rel.threads} p ON p.thread_id = bt.thread_id
+  LEFT JOIN ${rel.sessions} s ON s.thread_id = bt.thread_id
   WHERE bt.archived_at IS NULL
     AND bt.auto_archived_at IS NULL
     AND b.deleted_at IS NULL
@@ -138,7 +140,7 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
           ))
           OR (d.source = 'routine' AND d.created_at <= bt.created_at)
           OR (d.source = 'routine' AND EXISTS (
-            SELECT 1 FROM projection_thread_messages relay
+            SELECT 1 FROM ${rel.messages} relay
             WHERE relay.thread_id = bt.thread_id
               AND relay.role = 'assistant' AND relay.message_id LIKE 'personal-relay-%'
           ))
@@ -169,11 +171,11 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
  * than the archive is the one the archive is stopping, so it never counts.
  * Group relays stay hidden either way.
  */
-export const ARCHIVED_BUSY_CHATS_SQL = `
+export const archivedBusyChatsSql = (rel: PersonalProjectionRelationsShape): string => `
   SELECT bt.thread_id AS "threadId"
   FROM personal_bot_threads bt
-  JOIN projection_thread_sessions s ON s.thread_id = bt.thread_id
-  JOIN projection_turns t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
+  JOIN ${rel.sessions} s ON s.thread_id = bt.thread_id
+  JOIN ${rel.turns} t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
   WHERE bt.archived_at IS NOT NULL
     AND s.status IN ('running', 'starting')
     AND t.requested_at > bt.archived_at
@@ -181,7 +183,7 @@ export const ARCHIVED_BUSY_CHATS_SQL = `
   ORDER BY bt.thread_id ASC
 `;
 
-/** One row of `TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL`. */
+/** One row of `taskChatAutoArchiveCandidatesSql`. */
 export interface TaskChatArchiveCandidate {
   readonly threadId: string;
   readonly botId: string;
