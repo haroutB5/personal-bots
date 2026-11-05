@@ -163,8 +163,10 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
     if (entry.attachments.length > 0) {
       const uploaded = await uploadEntryAttachments(native, chat, entry);
       if (uploaded === null) {
+        // The upload queue already retried a transient failure. A remaining
+        // failure is the server's answer, so it waits for Retry, not a trigger.
         return native.readConnection().connected
-          ? { kind: "unknown", reason: "Couldn't send: an attachment didn't upload. Try again." }
+          ? { kind: "rejected", message: "Couldn't send: an attachment didn't upload. Try again." }
           : { kind: "not-sent" };
       }
       attachments = uploaded;
@@ -227,14 +229,17 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
     };
   }, [native.environmentId]);
 
-  const runnableKey = entries
-    .filter((entry) => entry.environmentId === native.environmentId && entry.status === "waiting")
-    .map((entry) => entry.id)
+  // A new message starts a pass, and a connection change wakes it, including
+  // the offline edge: the flusher needs the drop to tell a real reconnect from
+  // a queue change. A failed entry waits for Retry or a new connection.
+  const queueKey = entries
+    .filter((entry) => entry.environmentId === native.environmentId)
+    .map((entry) => `${entry.id}:${entry.status}`)
     .join("|");
   useEffect(() => {
-    if (!connected || runnableKey.length === 0) return;
+    if (queueKey.length === 0) return;
     flusherRef.current?.trigger();
-  }, [connected, runnableKey]);
+  }, [connected, queueKey]);
 
   const idsKey = entries.map((entry) => entry.id).join("|");
   const sweptRef = useRef(false);

@@ -162,11 +162,12 @@ async function afterConnectionSettles(
 const GAVE_UP = "Couldn't send: your laptop didn't answer. Try again.";
 
 /**
- * A message that stopped without a refusal was never answered, not refused.
- * The next pass tries it again, so its chat is never held back for good by a
- * network failure. A refusal stays put until the user taps Retry.
+ * A failure that was not a refusal means the attempt went unanswered. It waits
+ * for a new connection, because only a new socket can answer it. Any other
+ * trigger leaves it failed, with Retry, so a message the server cannot take
+ * never loops while another waits behind it.
  */
-function resumeUnanswered(environmentId: string): void {
+function reviveInterrupted(environmentId: string): void {
   for (const entry of getOutboxSnapshot().entries) {
     if (entry.environmentId !== environmentId || entry.status !== "failed") continue;
     if (entry.rejected) continue;
@@ -197,7 +198,8 @@ function nextRunnable(
  * One pass over the queue, oldest message first. A chat whose oldest message
  * the laptop refused holds back everything typed after it, so a later message
  * never overtakes it. A message that only went unanswered is revived by the
- * flusher before the next pass, so a network failure does not hold a chat.
+ * flusher when a new connection arrives, so a network failure does not hold a
+ * chat for good without letting it loop on every trigger.
  */
 export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassResult> {
   // Chats with a refused message ahead of the rest never send past it.
@@ -282,10 +284,22 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   const isDisposed = () => disposed;
+  /** null until the first trigger, so a cold start never counts as a reconnect. */
+  let seenConnected: boolean | null = null;
+  let seenGeneration: number | null = null;
 
   const trigger = (): void => {
     if (disposed) return;
-    resumeUnanswered(deps.environmentId);
+    const connected = deps.isConnected();
+    const generation = deps.connectionGeneration?.() ?? null;
+    const reconnected =
+      connected &&
+      (seenConnected === false ||
+        (generation !== null && seenGeneration !== null && generation !== seenGeneration));
+    seenConnected = connected;
+    seenGeneration = generation;
+    if (!connected) return;
+    if (reconnected) reviveInterrupted(deps.environmentId);
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
