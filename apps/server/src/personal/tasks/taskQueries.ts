@@ -24,6 +24,7 @@ export const makeTaskQueries = (core: TaskCore) => {
     fail,
     lock,
     readWorkRecord,
+    rel,
     repository,
     requireTask,
     toPublic,
@@ -103,7 +104,7 @@ export const makeTaskQueries = (core: TaskCore) => {
         input.beforeMessageId === undefined
           ? []
           : yield* sql<{ readonly at: string }>`
-              SELECT created_at AS "at" FROM projection_thread_messages
+              SELECT created_at AS "at" FROM ${sql.unsafe(rel.messages)}
               WHERE message_id = ${input.beforeMessageId} AND thread_id = ${input.threadId}
             `;
       const beforeAt = before[0]?.at ?? null;
@@ -115,7 +116,7 @@ export const makeTaskQueries = (core: TaskCore) => {
         readonly text: string;
       }>`
         SELECT message_id AS "messageId", role, created_at AS "at", text
-        FROM projection_thread_messages
+        FROM ${sql.unsafe(rel.messages)}
         WHERE thread_id = ${input.threadId} AND role IN ('user', 'assistant')
           AND is_streaming = 0
           AND ${beforeAt === null ? sql`1 = 1` : sql`created_at < ${beforeAt}`}

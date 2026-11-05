@@ -18,6 +18,7 @@ import {
   type PersonalTask,
 } from "@t3tools/contracts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
@@ -42,6 +43,7 @@ export const makeTaskCore = () =>
     const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
     const bots = yield* PersonalBotService.PersonalBotService;
     const engine = yield* PersonalEngine.PersonalEngine;
+    const rel = yield* PersonalProjectionRelations;
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const messages = yield* ProjectionThreadMessageRepository;
     const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
@@ -593,6 +595,7 @@ export const makeTaskCore = () =>
       carryExposureToTree,
       persistExposureOnChat,
       engine,
+      rel,
       externalSlots,
       fail,
       helpParkedAttempts,
