@@ -17,6 +17,7 @@ import {
   makeTargetedProviderUpdateAction,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../../provider/providerMaintenance.ts";
+import { listMiseInstalledVersions, miseVersionsNewerThan } from "./miseProviderMaintenance.ts";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
 const makeTempDir = (name: string) =>
@@ -116,7 +117,7 @@ it.layer(NodeServices.layer)("mise provider maintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-mise-rollback");
         const toolDir = NodePath.join(tempDir, "mise", "installs", "claude");
         const good = "2.1.317";
-        const bad = "2.1.318";
+        const newer = ["2.1.318", "2.1.319"];
         const latestPath = NodePath.join(toolDir, "latest");
         const writeVersion = (version: string) => {
           const dir = NodePath.join(toolDir, version);
@@ -129,9 +130,9 @@ it.layer(NodeServices.layer)("mise provider maintenance", (it) => {
           'short = "claude"\nfull = "aqua:anthropics/claude-code"\n',
         );
         writeVersion(good);
-        writeVersion(bad);
+        for (const version of newer) writeVersion(version);
         for (const alias of ["latest", "2", "2.1"]) {
-          NodeFS.symlinkSync(`./${bad}`, NodePath.join(toolDir, alias));
+          NodeFS.symlinkSync(`./${newer.at(-1)!}`, NodePath.join(toolDir, alias));
         }
 
         const binDir = NodePath.join(tempDir, "bin");
@@ -177,15 +178,22 @@ it.layer(NodeServices.layer)("mise provider maintenance", (it) => {
           latestPath,
           platform: "linux",
         });
+        const installed = yield* listMiseInstalledVersions(toolDir);
+        const uninstallVersions = miseVersionsNewerThan(installed, good);
+        expect(uninstallVersions).toEqual(newer);
         const rollback = makeTargetedProviderUpdateAction(capabilities, good, {
-          uninstallVersion: bad,
+          uninstallVersions,
         });
-        expect(rollback?.args[1]).toContain(`uninstall claude@${bad}`);
+        for (const version of newer) {
+          expect(rollback?.args[1]).toContain(`uninstall claude@${version}`);
+        }
         NodeChildProcess.execFileSync("/bin/sh", rollback!.args, {
           env: { PATH: `${binDir}:/usr/bin:/bin` },
         });
 
-        expect(NodeFS.existsSync(NodePath.join(toolDir, bad))).toBe(false);
+        for (const version of newer) {
+          expect(NodeFS.existsSync(NodePath.join(toolDir, version))).toBe(false);
+        }
         const aliasTarget = (alias: string) =>
           NodeFS.readlinkSync(NodePath.join(toolDir, alias)).replace(/^\.\//, "");
         for (const alias of ["latest", "2", "2.1"]) {

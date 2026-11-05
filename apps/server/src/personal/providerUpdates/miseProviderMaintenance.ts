@@ -147,6 +147,55 @@ export const resolveMiseOwnership = Effect.fn("resolveMiseOwnership")(function* 
     : null;
 });
 
+const STABLE_VERSION = /^\d+\.\d+\.\d+$/;
+
+export function isStableMiseVersion(value: string): boolean {
+  return STABLE_VERSION.test(value);
+}
+
+/** Numeric order for `x.y.z` install directories; mise only writes stable versions. */
+export function compareMiseVersions(left: string, right: string): number {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/** Every stable version installed under a mise tool directory, oldest first. */
+export const listMiseInstalledVersions = Effect.fn("listMiseInstalledVersions")(function* (
+  installDir: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entries = yield* fileSystem
+    .readDirectory(installDir)
+    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  return entries.filter(isStableMiseVersion).sort(compareMiseVersions);
+});
+
+/**
+ * The rollback set. Every stable version above the good one must go: mise
+ * rebuilds `latest`, the major and the minor alias to the highest installed
+ * version after any install, so a leftover newer release wins the next time
+ * any tool is installed.
+ */
+export function miseVersionsNewerThan(
+  versions: ReadonlyArray<string>,
+  floor: string,
+): ReadonlyArray<string> {
+  if (!isStableMiseVersion(floor)) return [];
+  return [...new Set(versions)]
+    .filter((version) => isStableMiseVersion(version) && compareMiseVersions(version, floor) > 0)
+    .sort(compareMiseVersions);
+}
+
+export function miseInstallDirFromLatestPath(latestPath: string): string | null {
+  const normalized = slashPath(latestPath);
+  return normalized.endsWith("/latest") ? normalized.slice(0, -"/latest".length) : null;
+}
+
 /** What `mise install <tool>@latest` can actually deliver, or null. */
 export const resolveMiseLatestVersion = Effect.fn("resolveMiseLatestVersion")(function* (
   ownership: MiseOwnership,

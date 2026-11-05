@@ -91,6 +91,18 @@ function megabytes(bytes: number): string {
   return String(Math.max(0, Math.round(bytes / MEGABYTE)));
 }
 
+/** "Next attempt Fri 03:18" for a row whose daily clock is still running. */
+function nextAttemptText(
+  automatic: { readonly nextAttemptAt: string | null },
+  now: Date,
+): string | null {
+  const nextAttemptAt =
+    automatic.nextAttemptAt === null ? Number.NaN : Date.parse(automatic.nextAttemptAt);
+  return Number.isFinite(nextAttemptAt)
+    ? `Next attempt ${formatRetryTime(new Date(nextAttemptAt), now)}`
+    : null;
+}
+
 /** First line of a provider message, trimmed to fit a row's detail line. */
 export function firstLine(text: string | null | undefined, max = 160): string | null {
   const line = text
@@ -391,18 +403,30 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
       );
     }
     if (automatic?.status === "rolled_back") {
-      return row("updateAvailable", "review", "Update rolled back", {
-        tone: "review",
-        detail: firstLine(automatic.message),
-        action: oneClick ? { kind: "update", label: "Update" } : null,
-      });
+      const next = nextAttemptText(automatic, now);
+      return row(
+        "updateAvailable",
+        "review",
+        next === null ? "Update rolled back" : `Update rolled back · ${next}`,
+        {
+          tone: "review",
+          detail: firstLine(automatic.message),
+          action: oneClick ? { kind: "update", label: "Update" } : null,
+        },
+      );
     }
     if (automatic?.status === "failed") {
-      return row("updateFailed", "review", "Update failed", {
-        tone: "review",
-        detail: firstLine(automatic.message),
-        action: oneClick ? { kind: "tryAgain", label: "Try again" } : null,
-      });
+      const next = nextAttemptText(automatic, now);
+      return row(
+        "updateFailed",
+        "review",
+        next === null ? "Update failed" : `Update failed · ${next}`,
+        {
+          tone: "review",
+          detail: firstLine(automatic.message),
+          action: oneClick ? { kind: "tryAgain", label: "Try again" } : null,
+        },
+      );
     }
     if (automatic?.status === "updating") {
       return row(
@@ -413,11 +437,8 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
       );
     }
     if (automatic !== undefined) {
-      const nextAttemptAt =
-        automatic.nextAttemptAt === null ? Number.NaN : Date.parse(automatic.nextAttemptAt);
-      const schedule = Number.isFinite(nextAttemptAt)
-        ? `Updates automatically · Next attempt ${formatRetryTime(new Date(nextAttemptAt), now)}`
-        : null;
+      const next = nextAttemptText(automatic, now);
+      const schedule = next === null ? null : `Updates automatically · ${next}`;
       return row(
         "updateAvailable",
         "live",

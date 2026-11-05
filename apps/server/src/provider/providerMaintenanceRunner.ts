@@ -34,6 +34,7 @@ import {
   ProviderVersionCache,
 } from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
+import { miseVersionsNewerThan } from "../personal/providerUpdates/miseProviderMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
@@ -404,14 +405,23 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const providerSnapshot = (yield* providerRegistry.getProviders).find(
               (candidate) => candidate.instanceId === instanceId,
             );
-            const currentVersion = providerSnapshot?.version ?? null;
+            // A release that exits 1 reports no version, so the rollback takes
+            // its targets from the install directory, never the binary.
+            const miseUninstallVersions =
+              rollback && targetVersion !== undefined && fresh.update?.lockKey === "mise"
+                ? miseVersionsNewerThan(fresh.installedVersions ?? [], targetVersion)
+                : [];
+            if (miseUninstallVersions.length > 0) {
+              yield* Effect.logInfo("mise rollback removes newer versions", {
+                instanceId,
+                targetVersion,
+                versions: miseUninstallVersions,
+              });
+            }
             const command =
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion, {
-                    uninstallVersion:
-                      rollback && currentVersion !== null && currentVersion !== targetVersion
-                        ? currentVersion
-                        : null,
+                    uninstallVersions: miseUninstallVersions,
                   })
                 : fresh.update;
             const recordedPreviousVersion = providerSnapshot?.smokeCheck?.previousVersion;
@@ -458,6 +468,14 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
+            if (fresh.update?.lockKey === "mise") {
+              yield* Effect.logInfo("mise update installed versions", {
+                instanceId,
+                targetVersion: candidateVersion,
+                before: fresh.installedVersions ?? [],
+                after: verified.installedVersions ?? [],
+              });
+            }
             const { verifiedProviders } = yield* verifyRefreshedProvider(
               provider,
               verified,

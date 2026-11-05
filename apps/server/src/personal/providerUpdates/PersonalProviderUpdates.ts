@@ -1043,7 +1043,7 @@ export const makeWith = (
         yield* completeAutoUpdate(after, {
           ...record,
           status: "failed",
-          message: `Could not go back to ${fromVersion} after ${failureSummary} (${rollbackReason})`,
+          message: `Could not go back to ${fromVersion}. ${failureSummary} (${rollbackReason})`,
         });
       });
 
@@ -1133,7 +1133,7 @@ export const makeWith = (
               : verdict.status === "passed"
                 ? " The test passed."
                 : " The test is waiting for the usage limit.";
-        const summary = `The updater finished but ${providerProductName(provider)} reports ${delivered ?? "no version"} instead of ${record.toVersion}.${testNote}`;
+        const summary = `Reports ${delivered ?? "no version"}, not ${record.toVersion}.${testNote}`;
         yield* rollBackAutoUpdate(provider, record, summary, {
           status: "failed",
           summary,
