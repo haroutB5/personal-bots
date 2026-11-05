@@ -36,6 +36,13 @@ describe("withSharedHttpClient", () => {
     expect(output).toContain(".connectTimeout(3, TimeUnit.SECONDS)");
   });
 
+  it("refreshes a cached host at most once at a time", () => {
+    const output = applyToMainApplication(TEMPLATE);
+    expect(output).toContain("private val refreshing = ConcurrentHashMap<String, Boolean>()");
+    expect(output).toContain("if (refreshing.putIfAbsent(hostname, true) == null)");
+    expect(output).toContain("refreshing.remove(hostname)");
+  });
+
   it("leaves an already patched file alone", () => {
     const once = applyToMainApplication(TEMPLATE);
     expect(applyToMainApplication(once)).toBe(once);
