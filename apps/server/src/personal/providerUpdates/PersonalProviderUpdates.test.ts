@@ -5,7 +5,6 @@ import {
   ThreadId,
   type OrchestrationThreadShell,
   type PersonalBot,
-  type ProviderRuntimeEvent,
   type ProviderSession,
   type ServerProvider,
   type ServerProviderSmokeCheck,
@@ -24,6 +23,7 @@ import {
   smokeCheckMetaKey,
   type PersonalProviderUpdatesDeps,
 } from "./PersonalProviderUpdates.ts";
+import type { PersonalSessionEvent } from "../engine/PersonalProviders.ts";
 
 it("names each bot runtime by its product name", () => {
   const name = (driver: string, displayName?: string) =>
@@ -83,16 +83,13 @@ const shell = (overrides: Record<string, unknown> = {}) =>
 
 const bot = { modelSelection: { instanceId: CLAUDE, model: "claude-opus-5" }, sortOrder: 0 };
 
-const event = (type: string, threadId: ThreadId) =>
-  ({
-    type,
-    eventId: `event-${type}`,
-    provider: "claudeAgent",
-    providerInstanceId: CLAUDE,
-    threadId,
-    createdAt: NOW,
-    payload: {},
-  }) as unknown as ProviderRuntimeEvent;
+const started = (threadId: ThreadId): PersonalSessionEvent => ({
+  _tag: "SessionStarted",
+  threadId,
+  instanceId: CLAUDE,
+});
+const settled = (threadId: ThreadId): PersonalSessionEvent => ({ _tag: "TurnSettled", threadId });
+const exited = (threadId: ThreadId): PersonalSessionEvent => ({ _tag: "SessionExited", threadId });
 
 const makeHarness = (meta = new Map<string, string>()) => {
   const state = {
@@ -159,7 +156,7 @@ it.effect("a bot session on the old version restarts only after its turn ends", 
     const { state, deps, setVersion } = makeHarness();
     const service = yield* makeWith(deps);
     state.sessions = [session(BOT_THREAD)];
-    yield* service.handleRuntimeEvent(event("session.started", BOT_THREAD));
+    yield* service.handleRuntimeEvent(started(BOT_THREAD));
 
     // The update lands mid-turn: the running turn is not interrupted.
     state.sessions = [session(BOT_THREAD, { status: "running", activeTurnId: "turn-1" as never })];
@@ -176,7 +173,7 @@ it.effect("a bot session on the old version restarts only after its turn ends", 
 
     // The turn ends and nothing is pending: stopped once, so the next turn resumes on 2.1.264.
     state.shells.set(BOT_THREAD, shell({ latestTurn: { state: "completed" } }));
-    yield* service.handleRuntimeEvent(event("turn.completed", BOT_THREAD));
+    yield* service.handleRuntimeEvent(settled(BOT_THREAD));
     assert.deepEqual(state.stopped, [BOT_THREAD]);
     yield* service.restartStaleSessions;
     assert.deepEqual(state.stopped, [BOT_THREAD]);
@@ -188,10 +185,24 @@ it.effect("sessions already on the new version and non-bot threads are never res
     const { state, deps, setVersion } = makeHarness();
     const service = yield* makeWith(deps);
     state.sessions = [session(PLAIN_THREAD)];
-    yield* service.handleRuntimeEvent(event("session.started", PLAIN_THREAD));
+    yield* service.handleRuntimeEvent(started(PLAIN_THREAD));
     setVersion("2.1.264");
     state.sessions = [session(PLAIN_THREAD), session(BOT_THREAD)];
-    yield* service.handleRuntimeEvent(event("session.started", BOT_THREAD));
+    yield* service.handleRuntimeEvent(started(BOT_THREAD));
+    yield* service.handleProviders(state.providers);
+    yield* service.restartStaleSessions;
+    assert.deepEqual(state.stopped, []);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("an exited session is forgotten and never restarted for an update", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const service = yield* makeWith(deps);
+    state.sessions = [session(BOT_THREAD)];
+    yield* service.handleRuntimeEvent(started(BOT_THREAD));
+    yield* service.handleRuntimeEvent(exited(BOT_THREAD));
+    setVersion("2.1.264");
     yield* service.handleProviders(state.providers);
     yield* service.restartStaleSessions;
     assert.deepEqual(state.stopped, []);

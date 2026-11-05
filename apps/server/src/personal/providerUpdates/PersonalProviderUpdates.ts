@@ -30,7 +30,6 @@ import {
   type OrchestrationThreadShell,
   type PersonalBot,
   type ProviderInstanceId,
-  type ProviderRuntimeEvent,
   type ProviderSession,
   type ServerProvider,
   type ServerProviderSmokeCheck,
@@ -55,9 +54,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import {
+  PersonalProviders,
+  type PersonalSessionEvent,
+  type PersonalSmokeTest,
+} from "../engine/PersonalProviders.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
@@ -142,7 +143,7 @@ export interface PersonalProviderUpdatesDeps {
     instanceId: ProviderInstanceId,
     state: ServerProviderSmokeCheck | null,
   ) => Effect.Effect<void>;
-  readonly runtimeEvents: Stream.Stream<ProviderRuntimeEvent>;
+  readonly runtimeEvents: Stream.Stream<PersonalSessionEvent>;
   readonly listSessions: Effect.Effect<ReadonlyArray<ProviderSession>>;
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, DepFailure>;
   readonly threadShell: (
@@ -178,7 +179,7 @@ export interface PersonalProviderUpdatesShape {
     readonly instanceId: ProviderInstanceId;
   }) => Effect.Effect<void, PersonalBotsError>;
   readonly handleProviders: (providers: ReadonlyArray<ServerProvider>) => Effect.Effect<void>;
-  readonly handleRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
+  readonly handleRuntimeEvent: (event: PersonalSessionEvent) => Effect.Effect<void>;
   readonly restartStaleSessions: Effect.Effect<void>;
   /** Resolves when every queued test message has finished. */
   readonly drainChecks: Effect.Effect<void>;
@@ -366,24 +367,21 @@ export const makeWith = (
       .withPermits(1)(restartPass)
       .pipe(Effect.catchCause(logFailure("personal provider restart pass failed")));
 
-    const handleRuntimeEvent = (event: ProviderRuntimeEvent) =>
+    const handleRuntimeEvent = (event: PersonalSessionEvent) =>
       Effect.gen(function* () {
-        switch (event.type) {
-          case "session.exited":
+        switch (event._tag) {
+          case "SessionExited":
             sessionVersions.delete(event.threadId);
             return;
-          case "turn.completed":
-          case "turn.aborted":
+          case "TurnSettled":
             yield* restartStaleSessions;
             return;
-          case "session.started":
+          case "SessionStarted":
             break;
-          default:
-            return;
         }
         if (!(yield* deps.isPersonalThread(event.threadId))) return;
         const instanceId =
-          event.providerInstanceId ??
+          event.instanceId ??
           (yield* deps.listSessions).find((session) => session.threadId === event.threadId)
             ?.providerInstanceId;
         if (instanceId === undefined) return;
@@ -391,7 +389,7 @@ export const makeWith = (
         sessionVersions.set(event.threadId, { instanceId, version });
       }).pipe(
         Effect.catchCause(
-          logFailure("personal provider runtime event failed", { type: event.type }),
+          logFailure("personal provider runtime event failed", { type: event._tag }),
         ),
       );
 
@@ -806,23 +804,20 @@ export const makeWith = (
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const providers = yield* ProviderRegistry;
-  const providerService = yield* ProviderService;
-  const instances = yield* ProviderInstanceRegistry;
+  const providers = yield* PersonalProviders;
   const projection = yield* ProjectionSnapshotQuery;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const push = yield* PersonalPushService.PersonalPushService;
   return yield* makeWith({
-    getProviders: providers.getProviders,
+    getProviders: providers.listProviders().pipe(Effect.orElseSucceed(() => [])),
     providerChanges: providers.streamChanges,
-    refreshInstance: providers.refreshInstance,
+    refreshInstance: (instanceId) =>
+      providers.refreshInstance(instanceId).pipe(Effect.orElseSucceed(() => [])),
     setSmokeCheck: (instanceId, state) =>
-      providers
-        .setProviderMaintenanceActionState({ instanceId, action: "smokeCheck", state })
-        .pipe(Effect.asVoid),
-    runtimeEvents: providerService.streamEvents,
-    listSessions: providerService.listSessions(),
-    stopSession: (threadId) => providerService.stopSession({ threadId }),
+      providers.setSmokeCheck(instanceId, state).pipe(Effect.orElseSucceed(() => undefined)),
+    runtimeEvents: providers.sessionEvents,
+    listSessions: providers.listSessions().pipe(Effect.orElseSucceed(() => [])),
+    stopSession: (threadId) => providers.stopSession({ threadId }),
     threadShell: (threadId) => projection.getThreadShellById(threadId),
     isPersonalThread: (threadId) =>
       bots.getThreadLink({ threadId }).pipe(Effect.map(Option.isSome)),
@@ -830,14 +825,13 @@ export const make = Effect.gen(function* () {
     getMeta: (key) => bots.getMeta({ key }),
     setMeta: (key, value) => bots.setMeta({ key, value }),
     smokeTestFor: (instanceId) =>
-      instances.getInstance(instanceId).pipe(
-        Effect.map((instance) =>
-          Option.fromNullishOr(instance?.smokeTest).pipe(
-            Option.map(
-              (smokeTest): SmokeTest =>
-                (model) =>
-                  smokeTest({ model }),
-            ),
+      providers.smokeTestFor(instanceId).pipe(
+        Effect.orElseSucceed(() => Option.none<PersonalSmokeTest>()),
+        Effect.map(
+          Option.map(
+            (smokeTest): SmokeTest =>
+              (model) =>
+                smokeTest({ model }),
           ),
         ),
       ),
