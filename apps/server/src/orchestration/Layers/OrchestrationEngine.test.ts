@@ -1052,6 +1052,47 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("answers a receipt read for an accepted, a rejected and an unknown command", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-receipt-create"),
+        projectId: asProjectId("project-receipt"),
+        title: "Receipt Project",
+        workspaceRoot: "/tmp/project-receipt",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt: now(),
+      }),
+    );
+    expect(
+      await system.run(engine.getCommandReceipt(CommandId.make("cmd-receipt-create"))),
+    ).toEqual({ status: "accepted", error: null });
+    expect(
+      await system.run(engine.getCommandReceipt(CommandId.make("cmd-receipt-never-sent"))),
+    ).toEqual({ status: "missing", error: null });
+
+    await system.run(
+      engine
+        .dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-receipt-rejected"),
+          threadId: ThreadId.make("thread-receipt-missing"),
+        })
+        .pipe(Effect.ignore),
+    );
+    const rejected = await system.run(
+      engine.getCommandReceipt(CommandId.make("cmd-receipt-rejected")),
+    );
+    expect(rejected.status).toBe("rejected");
+    expect(rejected.error).toContain("thread-receipt-missing");
+    await system.dispose();
+  });
+
   it("replays append-only events from sequence", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
