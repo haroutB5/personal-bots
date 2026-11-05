@@ -23,6 +23,7 @@ import {
   tokenUsageWindowRanges,
   type ChatSessionRow,
 } from "./botTokenUsage.ts";
+import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
 
 /** A snapshot younger than this is served as it is; an older one is refreshed in the background. */
 export const TOKEN_USAGE_SNAPSHOT_MAX_AGE_MS = 10 * 60 * 1000;
@@ -70,6 +71,7 @@ interface ZoneEntry {
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const rel = yield* PersonalProjectionRelations;
   const usage = yield* UsageService.UsageService;
 
   const zones = new Map<string, ZoneEntry>();
@@ -101,7 +103,7 @@ export const make = Effect.gen(function* () {
           s.resume_cursor_json AS "resumeCursorJson",
           NULL AS "sessionId"
         FROM personal_bot_threads t
-        JOIN provider_session_runtime s ON s.thread_id = t.thread_id
+        JOIN ${sql.unsafe(rel.providerSessions)} s ON s.thread_id = t.thread_id
         UNION ALL
         SELECT
           t.bot_id AS "botId",
@@ -117,7 +119,7 @@ export const make = Effect.gen(function* () {
           s.provider_name AS "providerName",
           s.resume_cursor_json AS "resumeCursorJson"
         FROM personal_bot_threads t
-        JOIN provider_session_runtime s ON s.thread_id = t.thread_id
+        JOIN ${sql.unsafe(rel.providerSessions)} s ON s.thread_id = t.thread_id
       `;
 
   const readActiveBotIds = sql<{ readonly botId: string }>`
