@@ -287,6 +287,18 @@ function writeDatabaseValueOnConnection(
     } catch (cause) {
       resume(Effect.fail(catalogError("write", cause)));
     }
+    const transaction = database.transaction(storeName, "readwrite");
+    // Every failed write fires "abort". A failed commit, such as
+    // QuotaExceededError, fires only "abort" and no "error".
+    transaction.addEventListener("abort", () => {
+      resume(
+        Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
+      );
+    });
+    transaction.addEventListener("complete", () => {
+      resume(Effect.void);
+    });
+    transaction.objectStore(storeName).put(value, key);
   }).pipe(Effect.withSpan("web.connectionStorage.writeDatabaseValue"));
 }
 

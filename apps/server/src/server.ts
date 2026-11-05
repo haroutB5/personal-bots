@@ -34,6 +34,7 @@ import {
   staticAndDevRouteLayer,
   browserApiCorsLayer,
   httpCompressionLayer,
+  untracedRequestsLayer,
 } from "./http.ts";
 import { holdEarlyRequestsUntilHandled } from "./httpEarlyRequestHold.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
@@ -57,6 +58,7 @@ import * as ResetCreditCoordinator from "./provider/Layers/resetCreditCoordinato
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderAuthServiceLive } from "./provider/Layers/ProviderAuthService.ts";
+import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import { AntigravityInstallation } from "./provider/AntigravityInstallation.ts";
 import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
 import { CatalogInstaller } from "./provider/catalog/installer.ts";
@@ -709,22 +711,27 @@ const ProviderCatalogBootRefreshLive = Layer.effectDiscard(
   }),
 );
 
-const AntigravityInstallationRefreshLive = Layer.effectDiscard(
+const ProviderInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const installation = yield* AntigravityInstallation;
+    const antigravity = yield* AntigravityInstallation;
+    const codex = yield* CodexInstallation;
     const instances = yield* ProviderInstanceRegistry;
     const providers = yield* ProviderRegistry;
-    yield* installation.changes.pipe(
-      Stream.map((state) => state.installedVersion),
-      Stream.changes,
-      Stream.drop(1),
-      Stream.runForEach(() =>
+    yield* Stream.merge(
+      antigravity.changes.pipe(
+        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
+        Stream.drop(1),
+      ),
+      codex.changes.pipe(
+        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
+        Stream.drop(1),
+      ),
+    ).pipe(
+      Stream.runForEach((state) =>
         instances.listInstances.pipe(
           Effect.flatMap((entries) =>
             Effect.forEach(
-              entries.filter(
-                (instance) => instance.driverKind === ProviderDriverKind.make("antigravity"),
-              ),
+              entries.filter((instance) => instance.driverKind === state.driver),
               (instance) => providers.refreshInstance(instance.instanceId),
               { discard: true },
             ),
@@ -737,8 +744,80 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
-  Layer.provideMerge(PersonalLoginRequestService.layerLive),
+  Layer.provideMerge(ProviderInstallationRefreshLive),
+  Layer.provideMerge(ReplayMarkers.layer),
+  Layer.provideMerge(ProviderAuthServiceLive),
+  // Core Services
+  Layer.provideMerge(ServerSettingsLayerLive),
+  Layer.provideMerge(CheckpointingLayerLive),
+  // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
+  // GitHub-hosted pull request media with the repository's credential.
+  Layer.provideMerge(
+    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive, GitHubCli.layer),
+  ),
+  Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(VcsLayerLive),
+  Layer.provideMerge(ProviderRuntimeLayerLive),
+  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
+  Layer.provideMerge(PersistenceLayerLive),
+  // Both read a user-owned file out of the state directory and stream changes
+  // to clients; neither depends on the other.
+  Layer.provideMerge(
+    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+  ),
+  Layer.provideMerge(ProviderRegistryLive),
+  // The instance registry is the new routing keystone — text generation,
+  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
+  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
+  // `providerInstances` hydration merges `settings.providers.<kind>`
+  // with explicit `providerInstances` entries on boot.
+  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
 )
+  .pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        AntigravityInstallation.layer,
+        CodexInstallation.layer,
+        ProviderCatalog.layer,
+        CatalogInstaller.layer,
+      ),
+    ),
+    // Shared native/canonical NDJSON writers used by both the per-instance
+    // drivers (native stream, written from inside each `<X>Adapter`) and
+    // `ProviderService` (canonical stream, written after event normalization).
+    // Provided once at the runtime level so every consumer sees the same
+    // logger instances.
+    // `ModelManifest.layer` is the legacy-model classification data, refreshed
+    // from the repo's `model-manifest.json` on `main` and applied by the
+    // Codex/Claude drivers.
+    Layer.provideMerge(
+      Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, ResetCreditCoordinator.layer),
+    ),
+    // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
+    // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
+    // the rewritten registry reads snapshots off the instance registry and
+    // no longer transitively provides it. Exposing it at the runtime level
+    // keeps a single Live for all opencode consumers.
+    Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+    Layer.provideMerge(WorkspaceLayerLive),
+    Layer.provideMerge(
+      Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive),
+    ),
+    Layer.provideMerge(RepositoryIdentityResolverLayerLive),
+    Layer.provideMerge(ServerEnvironmentLayerLive),
+    Layer.provideMerge(AuthLayerLive),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        CloudCliTokenManager.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ExternalLauncher.layer),
+        ),
+        CloudManagedEndpointRuntimeLive,
+      ),
+    ),
+  )
+  .pipe(Layer.provideMerge(PersonalLoginRequestService.layerLive))
   .pipe(
     // The approval service is shared: the owner answers a card over RPC while
     // the gateway asked for it over MCP, and both read the same rows.
@@ -787,84 +866,12 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     // Two independent background sweeps share a step: a pipe takes at most 20.
     Layer.provideMerge(
       Layer.mergeAll(
-        AntigravityInstallationRefreshLive,
+        ProviderInstallationRefreshLive,
         ProviderCatalogBootRefreshLive,
         ReplayMarkers.layer,
       ),
     ),
     Layer.provideMerge(ProviderAuthServiceLive),
-    // Split into a second pipe: a single pipe accepts at most 20 steps. The
-    // order is unchanged, so provideMerge still feeds earlier steps first.
-  )
-  .pipe(
-    // Core Services
-    Layer.provideMerge(ServerSettingsLayerLive),
-    Layer.provideMerge(CheckpointingLayerLive),
-    // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
-    // GitHub-hosted pull request media with the repository's credential.
-    Layer.provideMerge(
-      Layer.mergeAll(
-        SourceControlProviderRegistryLayerLive,
-        PullRequestServiceLive,
-        GitHubCli.layer,
-      ),
-    ),
-    Layer.provideMerge(GitLayerLive),
-    Layer.provideMerge(VcsLayerLive),
-    Layer.provideMerge(ProviderRuntimeLayerLive),
-    Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
-    Layer.provideMerge(PersistenceLayerLive),
-    // Both read a user-owned file out of the state directory and stream changes
-    // to clients; neither depends on the other.
-    Layer.provideMerge(
-      Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
-    ),
-    Layer.provideMerge(ProviderRegistryLive),
-    // The instance registry is the new routing keystone — text generation,
-    // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
-    // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
-    // `providerInstances` hydration merges `settings.providers.<kind>`
-    // with explicit `providerInstances` entries on boot.
-    Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-  )
-  .pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(AntigravityInstallation.layer, ProviderCatalog.layer, CatalogInstaller.layer),
-    ),
-    // Shared native/canonical NDJSON writers used by both the per-instance
-    // drivers (native stream, written from inside each `<X>Adapter`) and
-    // `ProviderService` (canonical stream, written after event normalization).
-    // Provided once at the runtime level so every consumer sees the same
-    // logger instances.
-    // `ModelManifest.layer` is the legacy-model classification data, refreshed
-    // from the repo's `model-manifest.json` on `main` and applied by the
-    // Codex/Claude drivers.
-    Layer.provideMerge(
-      Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, ResetCreditCoordinator.layer),
-    ),
-    // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
-    // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
-    // the rewritten registry reads snapshots off the instance registry and
-    // no longer transitively provides it. Exposing it at the runtime level
-    // keeps a single Live for all opencode consumers.
-    Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-    Layer.provideMerge(WorkspaceLayerLive),
-    Layer.provideMerge(
-      Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive),
-    ),
-    Layer.provideMerge(RepositoryIdentityResolverLayerLive),
-    Layer.provideMerge(ServerEnvironmentLayerLive),
-    Layer.provideMerge(AuthLayerLive),
-    Layer.provideMerge(ServerSecretStore.layer),
-    Layer.provideMerge(
-      Layer.mergeAll(
-        CloudCliTokenManager.layer.pipe(
-          Layer.provide(ServerSecretStore.layer),
-          Layer.provide(ExternalLauncher.layer),
-        ),
-        CloudManagedEndpointRuntimeLive,
-      ),
-    ),
   );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
@@ -933,6 +940,8 @@ export const makeRoutesLayer = Layer.mergeAll(
     websocketRpcRouteLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  // Last, so no route layer can replace the server's one TracerDisabledWhen.
+  untracedRequestsLayer,
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
