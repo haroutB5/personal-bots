@@ -118,6 +118,25 @@ export const OUTBOX_MAX_UNANSWERED = 3;
 /** Waits between passes while the laptop is connected but not answering. */
 export const OUTBOX_RETRY_DELAYS_MS = [1_500, 4_000, 10_000] as const;
 
+export const OUTBOX_INTERRUPTED_BACKOFF_START_MS = 2_000;
+export const OUTBOX_INTERRUPTED_BACKOFF_CAP_MS = 30_000;
+
+/**
+ * How long to wait before resending a message whose attempt was interrupted
+ * `streak` times in a row (1 for the first). Doubles from 2 s and stops at
+ * 30 s, so a gateway that is down is polled twice a minute, not every 1.8 s.
+ */
+export function interruptedRetryDelayMs(streak: number): number {
+  const doublings = Math.max(0, Math.min(streak, 32) - 1);
+  return Math.min(
+    OUTBOX_INTERRUPTED_BACKOFF_START_MS * 2 ** doublings,
+    OUTBOX_INTERRUPTED_BACKOFF_CAP_MS,
+  );
+}
+
+/** Consecutive interrupted attempts per queued message id. */
+export type InterruptedStreaks = Map<string, number>;
+
 /**
  * A send that has not been answered by now counts as unanswered, so one hung request cannot hold up every
  * chat's queue. The next pass resends it under the same ids; the server answers a repeat from its receipt.
@@ -262,7 +281,10 @@ function nextRunnable(
  * flusher when a new connection arrives, so a network failure does not hold a
  * chat for good without letting it loop on every trigger.
  */
-export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassResult> {
+export async function runOutboxPass(
+  deps: OutboxFlushDeps,
+  streaks: InterruptedStreaks = new Map(),
+): Promise<OutboxPassResult> {
   // Chats with a refused message ahead of the rest never send past it.
   const blocked = new Set<string>(
     getOutboxSnapshot()
@@ -270,6 +292,8 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
       .map((entry) => entry.threadId),
   );
   const tried = new Set<string>();
+  const queued = new Set(getOutboxSnapshot().entries.map((item) => item.id));
+  for (const id of streaks.keys()) if (!queued.has(id)) streaks.delete(id);
   const generation = deps.connectionGeneration ?? (() => 0);
   let slowest = 0;
   for (;;) {
@@ -292,11 +316,13 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
     setOutboxSending(entry.id, false);
     switch (outcome.kind) {
       case "sent": {
+        streaks.delete(entry.id);
         removeOutboxEntry(entry.id);
         void deleteOutboxBlobs(entry.id);
         break;
       }
       case "rejected": {
+        streaks.delete(entry.id);
         markOutboxFailed(entry.id, outcome.message, true);
         blocked.add(entry.threadId);
         break;
@@ -308,14 +334,18 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
         break;
       }
       case "interrupted": {
-        // The socket went away under it. Nothing is counted: the next
-        // connection resends the same ids, and the server's receipt makes the
-        // repeat harmless.
+        // The socket went away under it, or a gateway answered for the
+        // server. Nothing is counted: the next connection resends the same
+        // ids, and the server's receipt makes the repeat harmless. While the
+        // socket stays up the wait doubles, so an outage is not hammered.
+        const streak = (streaks.get(entry.id) ?? 0) + 1;
+        streaks.set(entry.id, streak);
         blocked.add(entry.threadId);
-        slowest = Math.max(slowest, OUTBOX_RETRY_DELAYS_MS[0]);
+        slowest = Math.max(slowest, interruptedRetryDelayMs(streak));
         break;
       }
       case "unknown": {
+        streaks.delete(entry.id);
         recordOutboxUnanswered(entry.id, true);
         const attempts =
           getOutboxSnapshot().entries.find((item) => item.id === entry.id)?.attempts ??
@@ -350,9 +380,16 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
   let seenGeneration: number | null = null;
   /** A reconnect wants receipt confirmation before the next pass sends anything. */
   let reconcile = false;
+  /**
+   * Interrupted attempts in a row, per message. Anything that reaches the
+   * flusher from outside its own retry timer (a new connection, a Retry tap, a
+   * new message) clears them, so the backoff only grows while nothing changes.
+   */
+  const streaks: InterruptedStreaks = new Map();
 
-  const trigger = (): void => {
+  const run = (fromRetryTimer: boolean): void => {
     if (disposed) return;
+    if (!fromRetryTimer) streaks.clear();
     const connected = deps.isConnected();
     const generation = deps.connectionGeneration?.() ?? null;
     const reconnected =
@@ -382,10 +419,10 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
             await confirmHeadEntries(deps);
             reviveInterrupted(deps.environmentId);
           }
-          result = await runOutboxPass(deps);
+          result = await runOutboxPass(deps, streaks);
         } while (again && !isDisposed() && deps.isConnected());
         if (result.retryInMs !== null && !isDisposed() && deps.isConnected()) {
-          timer = setTimeout(trigger, result.retryInMs);
+          timer = setTimeout(() => run(true), result.retryInMs);
         }
       } finally {
         running = false;
@@ -394,7 +431,7 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
   };
 
   return {
-    trigger,
+    trigger: (): void => run(false),
     dispose: () => {
       disposed = true;
       if (timer !== null) clearTimeout(timer);
