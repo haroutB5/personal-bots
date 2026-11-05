@@ -1,4 +1,4 @@
-import { TurnId, type OrchestrationSession } from "@t3tools/contracts";
+import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,17 +6,17 @@ import {
   PERSONAL_TURN_RETRY_DELAYS_MS,
   PERSONAL_TURN_RETRY_MAX_ATTEMPTS,
   type TrackedTurn,
+  type TurnRetrySession,
 } from "./personalTurnRetryPolicy.ts";
 
 const UPSTREAM_FAILURE =
   "Error from provider (Console): Upstream request failed: Endpoint is unavailable.";
 
-const session = (
-  overrides: Partial<OrchestrationSession> = {},
-): Pick<OrchestrationSession, "status" | "lastError" | "activeTurnId" | "providerRetry"> => ({
+const session = (overrides: Partial<TurnRetrySession> = {}): TurnRetrySession => ({
   status: "error",
   lastError: UPSTREAM_FAILURE,
   activeTurnId: null,
+  providerRetry: null,
   ...overrides,
 });
 
@@ -70,8 +70,6 @@ describe("decideTurnRetry", () => {
       session: session({
         providerRetry: {
           kind: "rate_limited",
-          provider: "claude",
-          observedAt: "2026-09-17T10:00:00.000Z",
         },
       }),
       tracked: ownerTurn(0),
@@ -98,10 +96,6 @@ describe("decideTurnRetry", () => {
         providerRetry: {
           kind: "retrying",
           auto: "pending",
-          attempt: 1,
-          maxAttempts: 2,
-          provider: "claude",
-          observedAt: "2026-09-17T10:00:00.000Z",
         },
       }),
       tracked: ownerTurn(0),
@@ -111,7 +105,7 @@ describe("decideTurnRetry", () => {
 
   it.each([
     ["the session is still running", session({ status: "running" })],
-    ["the session is healthy", session({ status: "ready", lastError: null })],
+    ["the session is healthy", session({ status: "waiting", lastError: null })],
     ["a turn is still active", session({ activeTurnId: TurnId.make("turn-1") })],
     ["there is no error text", session({ lastError: null })],
   ])("does nothing when %s", (_label, value) => {

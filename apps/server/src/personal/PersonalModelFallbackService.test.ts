@@ -43,7 +43,8 @@ import {
 import { codexRateLimitsToUpdate } from "../provider/Layers/codexUsageLimits.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
-import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV1WiredLive, toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadStatus } from "./engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
@@ -541,6 +542,7 @@ interface Harness {
   /** Instances whose cached usage read was dropped before a re-probe. */
   readonly invalidated: string[];
   readonly running: Set<string>;
+  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
   onRefresh?: () => void;
 }
@@ -554,6 +556,7 @@ const makeHarness = (): Harness => ({
   refreshed: [],
   invalidated: [],
   running: new Set(),
+  statuses: new Map(),
   sequence: 0,
 });
 
@@ -1230,6 +1233,18 @@ const sessionEvent = (harness: Harness): OrchestrationEvent => {
   } as unknown as OrchestrationEvent;
 };
 
+/** Feeds what the engine stream publishes, through the real mapping. */
+const ingestSession = (
+  chat: PersonalChatResume.PersonalChatResumeShape,
+  harness: Harness,
+  event: OrchestrationEvent,
+) =>
+  Effect.gen(function* () {
+    for (const personal of toPersonalEvents(event, harness.statuses)) {
+      yield* chat.ingestDomainEvent(personal);
+    }
+  });
+
 it.effect("a chat turn stopped by a Codex limit continues on the fallback model at once", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -1237,7 +1252,7 @@ it.effect("a chat turn stopped by a Codex limit continues on the fallback model 
     yield* seedBot();
     const sql = yield* SqlClient.SqlClient;
     const chat = yield* PersonalChatResume.PersonalChatResume;
-    yield* chat.ingestDomainEvent(sessionEvent(harness));
+    yield* ingestSession(chat, harness, sessionEvent(harness));
     yield* chat.drain;
 
     const rows = yield* sql<{ readonly status: string; readonly fallback: number }>`
@@ -1272,7 +1287,7 @@ it.effect("a chat turn stopped by a limit waits for the reset when the fallback 
     yield* seedBot({ fallbackEnabled: false });
     const sql = yield* SqlClient.SqlClient;
     const chat = yield* PersonalChatResume.PersonalChatResume;
-    yield* chat.ingestDomainEvent(sessionEvent(harness));
+    yield* ingestSession(chat, harness, sessionEvent(harness));
     yield* chat.drain;
     const rows = yield* sql<{ readonly status: string; readonly fallback: number }>`
       SELECT status, fallback FROM personal_chat_resumes
@@ -1300,7 +1315,7 @@ it.effect("a chat turn stopped by a limit waits when the fallback provider is li
     yield* seedBot();
     const sql = yield* SqlClient.SqlClient;
     const chat = yield* PersonalChatResume.PersonalChatResume;
-    yield* chat.ingestDomainEvent(sessionEvent(harness));
+    yield* ingestSession(chat, harness, sessionEvent(harness));
     yield* chat.drain;
     const rows = yield* sql<{ readonly status: string; readonly fallback: number }>`
       SELECT status, fallback FROM personal_chat_resumes

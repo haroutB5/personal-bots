@@ -51,6 +51,8 @@ import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
+import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 
 // --- stand-ins for the orchestration side (same as PersonalTaskService.test.ts) -------
 
@@ -58,6 +60,7 @@ interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly messages: Map<string, Array<ProjectionThreadMessage>>;
+  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
 }
 
@@ -65,6 +68,7 @@ const makeHarness = (): Harness => ({
   dispatched: [],
   sessions: new Map(),
   messages: new Map(),
+  statuses: new Map(),
   sequence: 0,
 });
 
@@ -250,8 +254,20 @@ const setSession = (harness: Harness, session: OrchestrationSession) =>
   Effect.gen(function* () {
     const service = yield* PersonalTaskService.PersonalTaskService;
     harness.sessions.set(session.threadId, session);
-    yield* service.ingestDomainEvent(sessionEvent(harness, session));
+    yield* ingestSession(service, harness, sessionEvent(harness, session));
     yield* service.drain;
+  });
+
+/** Feeds what the engine stream publishes, through the real mapping. */
+const ingestSession = (
+  service: PersonalTaskService.PersonalTaskService["Service"],
+  harness: Harness,
+  event: OrchestrationEvent,
+) =>
+  Effect.gen(function* () {
+    for (const personal of toPersonalEvents(event, harness.statuses)) {
+      yield* service.ingestDomainEvent(personal);
+    }
   });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -678,7 +694,7 @@ it.effect(
       yield* runTurn(harness, childThread, "", { status: "error", lastError: "Tool crashed" });
       const terminal = harness.sessions.get(childThread)!;
       for (const suffix of ["-replay-a", "-replay-b", "-replay-c"]) {
-        yield* service.ingestDomainEvent(sessionEvent(harness, terminal, suffix));
+        yield* ingestSession(service, harness, sessionEvent(harness, terminal, suffix));
         yield* service.drain;
       }
       yield* sweepNow;
@@ -711,14 +727,14 @@ it.effect(
         activeTurnId: null,
         updatedAt: yield* nowIso,
       });
-      yield* service.ingestDomainEvent(sessionEvent(harness, ready));
+      yield* ingestSession(service, harness, sessionEvent(harness, ready));
       yield* service.drain;
       expect((yield* reload(root.taskId)).status).toBe("running");
       // The projection catches up (reply, then session); the sweep and a replay of the event finish it once.
       yield* writeReply(harness, thread, turnId, "All done.");
       harness.sessions.set(thread, ready);
       yield* sweepNow;
-      yield* service.ingestDomainEvent(sessionEvent(harness, ready, "-again"));
+      yield* ingestSession(service, harness, sessionEvent(harness, ready, "-again"));
       yield* sweepNow;
       const done = yield* reload(root.taskId);
       expect([done.status, done.result?.summary]).toEqual(["completed", "All done."]);
@@ -921,8 +937,8 @@ it.effect(
       const retry = yield* provider.codexLimit(harness, thread, turnId, 6 * 60 * 60_000);
       // The same terminal report again, twice, with fresh event ids.
       const terminal = harness.sessions.get(thread)!;
-      yield* service.ingestDomainEvent(sessionEvent(harness, terminal, "-dup1"));
-      yield* service.ingestDomainEvent(sessionEvent(harness, terminal, "-dup2"));
+      yield* ingestSession(service, harness, sessionEvent(harness, terminal, "-dup1"));
+      yield* ingestSession(service, harness, sessionEvent(harness, terminal, "-dup2"));
       yield* service.drain;
       yield* sweepNow;
       expect(retry.kind).toBe("rate_limited");

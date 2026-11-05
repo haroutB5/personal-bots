@@ -14,7 +14,6 @@ import {
   PersonalTaskWorkRecord,
   PersonalTasksError,
   ThreadId,
-  type OrchestrationEvent,
   type PersonalBotId,
   type PersonalDelegationBrief,
   type PersonalRoutineNotifyMode,
@@ -32,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { forkParked } from "../../serverActivation.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { type WorkRecordPatch } from "./workRecord.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -44,7 +44,6 @@ import { makeTaskSettling } from "./taskSettling.ts";
 import { makeTaskSteering } from "./taskSteering.ts";
 import { makeTaskWaiting } from "./taskWaiting.ts";
 import { SWEEP_INTERVAL, type WorkItem } from "./taskShared.ts";
-import { sessionIsBusy } from "./taskSessionPolicy.ts";
 import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import { heavyJobLockHeld } from "./heavyJobLock.ts";
 
@@ -306,7 +305,7 @@ export class PersonalTaskService extends Context.Service<
     /** Starts the dispatcher: domain-event watch plus the lease/backoff sweep. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     /** Feeds one orchestration event to the dispatcher (the start() stream uses this). */
-    readonly ingestDomainEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
+    readonly ingestDomainEvent: (event: PersonalEngine.PersonalThreadEvent) => Effect.Effect<void>;
     /** Queues one sweep: heartbeat, expired leases, missed completions, backoff wakeups. */
     readonly sweep: Effect.Effect<void>;
     /** Resolves when every queued dispatcher step has finished. */
@@ -376,7 +375,7 @@ export const make = Effect.gen(function* () {
   const core = yield* makeTaskCore();
   const {
     activeThreadIds,
-    commandEvents,
+    engine,
     idleWaitThreadIds,
     lock,
     refreshActiveThreads,
@@ -441,28 +440,28 @@ export const make = Effect.gen(function* () {
   );
 
   const ingestDomainEvent: PersonalTaskService["Service"]["ingestDomainEvent"] = (event) => {
-    switch (event.type) {
-      case "thread.session-set": {
-        const threadId = event.payload.threadId;
+    switch (event._tag) {
+      case "StatusChanged": {
+        const threadId = event.threadId;
         // Settle the attempt first, then see whether a waiting task resumes.
         const session = activeThreadIds.has(threadId)
-          ? worker.enqueue({ type: "session", threadId, session: event.payload.session })
+          ? worker.enqueue({ type: "session", threadId, session: event.session })
           : Effect.void;
         const resume = resumingThreadIds.has(threadId)
           ? worker.enqueue({ type: "resume", threadId })
           : Effect.void;
         const idle =
-          idleWaitThreadIds.has(threadId) && !sessionIsBusy(event.payload.session)
+          idleWaitThreadIds.has(threadId) &&
+          event.status !== "running" &&
+          event.status !== "starting"
             ? worker.enqueue({ type: "pump" })
             : Effect.void;
         return Effect.andThen(Effect.andThen(session, resume), idle);
       }
-      case "thread.message-sent":
+      case "MessageSent":
         // Only completed assistant messages: deltas would flood the worker.
-        return event.payload.role === "assistant" &&
-          !event.payload.streaming &&
-          activeThreadIds.has(event.payload.threadId)
-          ? worker.enqueue({ type: "settle", threadId: event.payload.threadId })
+        return event.role === "assistant" && !event.streaming && activeThreadIds.has(event.threadId)
+          ? worker.enqueue({ type: "settle", threadId: event.threadId })
           : Effect.void;
       default:
         return Effect.void;
@@ -507,7 +506,7 @@ export const make = Effect.gen(function* () {
 
   const start: PersonalTaskService["Service"]["start"] = Effect.fn("PersonalTaskService.start")(
     function* () {
-      const events = yield* commandEvents;
+      const events = engine.events;
       yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
       if (schedulersOff) return;
       yield* forkParked(

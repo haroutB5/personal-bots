@@ -26,8 +26,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { runtimeEventToActivities } from "../../orchestration/Layers/ProviderRuntimeIngestion.ts";
+import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { UPDATES_BOT_ID } from "../claudeCodeReview/reviewPrompts.ts";
+import { PersonalEngineV1WiredLive } from "../engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadEvent, PersonalSessionView } from "../engine/PersonalEngine.ts";
+import { personalStatusOf } from "../engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalPushService from "./PersonalPushService.ts";
@@ -67,6 +72,20 @@ const makeLayer = (
   harness: Harness,
   tasks?: Layer.Layer<PersonalTaskService.PersonalTaskService>,
 ) => {
+  const engineLayer = PersonalEngineV1WiredLive.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
+          dispatch: () => Effect.die("not used"),
+          subscribeDomainEvents: Effect.succeed(Stream.never),
+          streamDomainEvents: Stream.never,
+        } as unknown as OrchestrationEngine.OrchestrationEngineShape),
+        Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          getThreadShellById: () => Effect.succeed(Option.none()),
+        } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
+      ),
+    ),
+  );
   const base = PersonalPushService.layer.pipe(
     Layer.provideMerge(
       Layer.succeed(PersonalPushService.PersonalPushTransport, {
@@ -80,6 +99,7 @@ const makeLayer = (
     tasks === undefined ? (layer) => layer : Layer.provideMerge(tasks),
     Layer.provideMerge(memorySecrets()),
     Layer.provideMerge(PersonalBotRepository.layer),
+    Layer.provideMerge(engineLayer),
     Layer.provideMerge(SqlitePersistenceMemory),
   );
   return base;
@@ -464,29 +484,75 @@ const linkThread = (threadId: ThreadId) =>
     yield* bots.insertThreadLink({ botId: BOT, threadId, createdAt: yield* DateTime.now });
   });
 
-/** The two halves of one turn on `threadId`, as the engine publishes them. */
-const sessionSet = (threadId: ThreadId, status: string, at: string): OrchestrationEvent =>
-  ({
-    type: "thread.session-set",
-    payload: {
-      threadId,
-      session: {
-        threadId,
-        status,
-        providerName: "claude",
-        runtimeMode: "full-access",
-        activeTurnId: status === "running" ? "turn-1" : null,
-        lastError: null,
-        updatedAt: at,
-      },
-    },
-  }) as unknown as OrchestrationEvent;
+/** Feeds exactly what the engine stream would publish for these events. */
+const feed = (events: PersonalThreadEvent | ReadonlyArray<PersonalThreadEvent>) =>
+  Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    for (const event of Array.isArray(events) ? events : [events]) {
+      yield* push.ingestDomainEvent(event);
+    }
+  });
+
+const retryView = (
+  retry: Record<string, unknown> | undefined,
+): PersonalSessionView["providerRetry"] =>
+  retry === undefined
+    ? null
+    : {
+        kind: retry.kind === "rate_limited" ? "rate_limited" : "retrying",
+        provider: typeof retry.provider === "string" ? retry.provider : "claude",
+        observedAt:
+          typeof retry.observedAt === "string" ? retry.observedAt : "2026-09-18T09:00:00.000Z",
+        ...(retry.auto === "pending" || retry.auto === "exhausted" ? { auto: retry.auto } : {}),
+        ...(typeof retry.retryAt === "string" ? { retryAt: retry.retryAt } : {}),
+      };
+
+const sessionView = (
+  threadId: ThreadId,
+  status: string,
+  at: string,
+  extra: { readonly lastError?: string; readonly providerRetry?: Record<string, unknown> } = {},
+): PersonalSessionView => ({
+  threadId,
+  status: personalStatusOf(status as Parameters<typeof personalStatusOf>[0]),
+  activeTurnId: null,
+  lastError: extra.lastError ?? null,
+  providerInstanceId: null,
+  providerName: "claude",
+  providerRetry: retryView(extra.providerRetry),
+  updatedAt: at,
+});
+
+const statusChanged = (
+  threadId: ThreadId,
+  status: string,
+  at: string,
+  extra: { readonly lastError?: string; readonly providerRetry?: Record<string, unknown> } = {},
+): PersonalThreadEvent => {
+  const session = sessionView(threadId, status, at, extra);
+  return { _tag: "StatusChanged", threadId, status: session.status, session };
+};
+
+/** One status change, as the engine publishes it. */
+const sessionSet = (
+  threadId: ThreadId,
+  status: string,
+  at: string,
+): ReadonlyArray<PersonalThreadEvent> => [statusChanged(threadId, status, at)];
+
+const turnCompleted = (threadId: ThreadId, at: string): PersonalThreadEvent => ({
+  _tag: "TurnEnded",
+  threadId,
+  outcome: { _tag: "Completed" },
+  session: sessionView(threadId, "ready", at),
+});
 
 const runTurn = (threadId: ThreadId, at: string) =>
   Effect.gen(function* () {
+    yield* feed(sessionSet(threadId, "running", at));
+    yield* feed(sessionSet(threadId, "ready", at));
+    yield* feed(turnCompleted(threadId, at));
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.ingestDomainEvent(sessionSet(threadId, "running", at));
-    yield* push.ingestDomainEvent(sessionSet(threadId, "ready", at));
     yield* push.drain;
   });
 
@@ -532,15 +598,15 @@ it.effect("a turn that only reaches ready without running is not a reply", () =>
 
     // A session starting or re-attaching publishes "ready" with nobody having
     // spoken; only the running -> ready edge is a reply.
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "ready", "2026-09-18T09:00:00.000Z"));
+    yield* feed(sessionSet(CHAT, "ready", "2026-09-18T09:00:00.000Z"));
     yield* push.drain;
     expect(yield* outbox).toEqual([]);
 
     // A turn the user stopped, and one that errored, are not replies either.
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "running", "2026-09-18T09:01:00.000Z"));
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "interrupted", "2026-09-18T09:01:01.000Z"));
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "running", "2026-09-18T09:02:00.000Z"));
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "error", "2026-09-18T09:02:01.000Z"));
+    yield* feed(sessionSet(CHAT, "running", "2026-09-18T09:01:00.000Z"));
+    yield* feed(sessionSet(CHAT, "interrupted", "2026-09-18T09:01:01.000Z"));
+    yield* feed(sessionSet(CHAT, "running", "2026-09-18T09:02:00.000Z"));
+    yield* feed(sessionSet(CHAT, "error", "2026-09-18T09:02:01.000Z"));
     yield* push.drain;
     expect(yield* outbox).toEqual([]);
   }).pipe(Effect.provide(makeLayer(harness)));
@@ -550,24 +616,22 @@ const failedSession = (
   threadId: ThreadId,
   at: string,
   providerRetry?: Record<string, unknown>,
-): OrchestrationEvent =>
-  ({
-    type: "thread.session-set",
-    payload: {
+): ReadonlyArray<PersonalThreadEvent> => {
+  const session = sessionView(threadId, "error", at, {
+    lastError:
+      "No conversation found with session ID: 853cc750 (key sk-abcdefghijklmnop)\n    at file:///x.js:1:1",
+    ...(providerRetry === undefined ? {} : { providerRetry }),
+  });
+  return [
+    { _tag: "StatusChanged", threadId, status: session.status, session },
+    {
+      _tag: "TurnEnded",
       threadId,
-      session: {
-        threadId,
-        status: "error",
-        providerName: "claudeAgent",
-        runtimeMode: "full-access",
-        activeTurnId: null,
-        lastError:
-          "No conversation found with session ID: 853cc750 (key sk-abcdefghijklmnop)\n    at file:///x.js:1:1",
-        ...(providerRetry === undefined ? {} : { providerRetry }),
-        updatedAt: at,
-      },
+      outcome: { _tag: "Failed", failure: { message: session.lastError, providerRetry: null } },
+      session,
     },
-  }) as unknown as OrchestrationEvent;
+  ];
+};
 
 it.effect("a chat turn that fails and stays failed notifies once, with a short reason", () => {
   const harness: Harness = { sent: [], status: 201 };
@@ -579,8 +643,8 @@ it.effect("a chat turn that fails and stays failed notifies once, with a short r
     yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
 
     // A turn that fails to start never runs: starting -> error.
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "starting", "2026-09-18T09:00:00.000Z"));
-    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-09-18T09:00:01.000Z"));
+    yield* feed(sessionSet(CHAT, "starting", "2026-09-18T09:00:00.000Z"));
+    yield* feed(failedSession(CHAT, "2026-09-18T09:00:01.000Z"));
     yield* push.drain;
     // It waits to see whether the server retries it.
     expect(yield* outbox).toEqual([]);
@@ -597,9 +661,9 @@ it.effect("a chat turn that fails and stays failed notifies once, with a short r
     expect(payload.tag).toBe(`chat-${CHAT}`);
 
     // A failure the server goes on to retry by itself is not news.
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "running", "2026-09-18T09:05:00.000Z"));
-    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-09-18T09:05:01.000Z"));
-    yield* push.ingestDomainEvent(
+    yield* feed(sessionSet(CHAT, "running", "2026-09-18T09:05:00.000Z"));
+    yield* feed(failedSession(CHAT, "2026-09-18T09:05:01.000Z"));
+    yield* feed(
       failedSession(CHAT, "2026-09-18T09:05:02.000Z", {
         kind: "retrying",
         auto: "pending",
@@ -613,7 +677,11 @@ it.effect("a chat turn that fails and stays failed notifies once, with a short r
     expect((yield* outbox).length).toBe(1);
 
     // An error seen with no turn in flight (a session dying on its own) is silent.
-    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-09-18T09:10:00.000Z"));
+    yield* feed({
+      ...statusChanged(CHAT, "error", "2026-09-18T09:10:00.000Z", {
+        lastError: "No conversation found with session ID: 853cc750",
+      }),
+    });
     yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
     yield* push.drain;
     yield* flushIo;
@@ -1153,8 +1221,8 @@ it.effect("a bot with hidden previews: no reply text in the outbox, push body or
       }),
     );
     // A chat turn that fails: the reason line is provider text too.
-    yield* push.ingestDomainEvent(sessionSet(CHAT, "starting", "2026-10-05T09:00:00.000Z"));
-    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-10-05T09:00:01.000Z"));
+    yield* feed(sessionSet(CHAT, "starting", "2026-10-05T09:00:00.000Z"));
+    yield* feed(failedSession(CHAT, "2026-10-05T09:00:01.000Z"));
     yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
     yield* push.drain;
     yield* flushIo;
@@ -1727,7 +1795,7 @@ const chatRow = (threadId: ThreadId, title: string) =>
 const activityAppended = (
   threadId: ThreadId,
   runtime: Record<string, unknown>,
-): OrchestrationEvent => {
+): PersonalThreadEvent => {
   const activity = runtimeEventToActivities({
     provider: "claudeAgent",
     threadId,
@@ -1735,9 +1803,10 @@ const activityAppended = (
   } as unknown as ProviderRuntimeEvent)[0];
   if (activity === undefined) throw new Error("the runtime event produced no activity");
   return {
-    type: "thread.activity-appended",
-    payload: { threadId, activity },
-  } as unknown as OrchestrationEvent;
+    _tag: "ActivityAppended",
+    threadId,
+    activity: { id: activity.id, kind: activity.kind, payload: activity.payload },
+  };
 };
 
 const questionAsked = (threadId: ThreadId, requestId: string, question: string) =>
@@ -1772,9 +1841,7 @@ it.effect("a question in a plain chat notifies once, and the tap opens the chat"
     const push = yield* PersonalPushService.PersonalPushService;
     yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
 
-    yield* push.ingestDomainEvent(
-      questionAsked(CHAT, "req-1", "Which table should I book for Saturday?"),
-    );
+    yield* feed(questionAsked(CHAT, "req-1", "Which table should I book for Saturday?"));
     yield* push.drain;
 
     const rows = yield* outbox;
@@ -1791,14 +1858,12 @@ it.effect("a question in a plain chat notifies once, and the tap opens the chat"
     });
 
     // A re-emitted request (same request id) is the same notification.
-    yield* push.ingestDomainEvent(
-      questionAsked(CHAT, "req-1", "Which table should I book for Saturday?"),
-    );
+    yield* feed(questionAsked(CHAT, "req-1", "Which table should I book for Saturday?"));
     yield* push.drain;
     expect((yield* outbox).length).toBe(1);
 
     // A permission prompt in the same chat: its own push, same chat slot.
-    yield* push.ingestDomainEvent(approvalAsked(CHAT, "req-2", "rm -rf build"));
+    yield* feed(approvalAsked(CHAT, "req-2", "rm -rf build"));
     yield* push.drain;
     const second = JSON.parse((yield* outbox)[1]!.payload);
     expect(second.body).toBe("Needs approval: rm -rf build");
@@ -1821,7 +1886,7 @@ it.effect("the in-app notice for a question carries the same deep link as the pu
     const received = yield* listenInApp("phone");
     yield* push.reportForeground({ connectionId: "phone", foreground: true });
 
-    yield* push.ingestDomainEvent(questionAsked(CHAT, "req-app", "Which table?"));
+    yield* feed(questionAsked(CHAT, "req-app", "Which table?"));
     yield* TestClock.adjust("1 millis");
 
     expect(received.length).toBe(1);
@@ -1854,10 +1919,11 @@ it.effect(
         payload: { questions: [{ id: "q1", header: "Dinner", question: "Which table?" }] },
       } as unknown as ProviderRuntimeEvent)[0];
       if (activity === undefined) throw new Error("the runtime event produced no activity");
-      yield* push.ingestDomainEvent({
-        type: "thread.activity-appended",
-        payload: { threadId: CHAT, activity },
-      } as unknown as OrchestrationEvent);
+      yield* feed({
+        _tag: "ActivityAppended",
+        threadId: CHAT,
+        activity: { id: activity.id, kind: activity.kind, payload: activity.payload },
+      });
       yield* push.drain;
 
       const rows = yield* outbox;
@@ -1896,7 +1962,7 @@ it.effect("a task chat, a routine chat and a group thread never notify the chat"
         '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z', NULL
       )
     `;
-    yield* push.ingestDomainEvent(questionAsked(taskChat, "req-task", "Deploy now?"));
+    yield* feed(questionAsked(taskChat, "req-task", "Deploy now?"));
     yield* push.drain;
     expect(yield* outbox).toEqual([]);
 
@@ -1915,7 +1981,7 @@ it.effect("a task chat, a routine chat and a group thread never notify the chat"
         '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z'
       )
     `;
-    yield* push.ingestDomainEvent(questionAsked(routineChat, "req-routine", "Anything to add?"));
+    yield* feed(questionAsked(routineChat, "req-routine", "Anything to add?"));
     yield* push.drain;
     expect(yield* outbox).toEqual([]);
 
@@ -1939,7 +2005,7 @@ it.effect("a task chat, a routine chat and a group thread never notify the chat"
         'group-2', ${BOT}, ${groupThread}, 'member', 0, 0, '2026-09-18T07:00:00.000Z', NULL
       )
     `;
-    yield* push.ingestDomainEvent(questionAsked(groupThread, "req-group", "Which plan?"));
+    yield* feed(questionAsked(groupThread, "req-group", "Which plan?"));
     yield* push.drain;
     expect(yield* outbox).toEqual([]);
   }).pipe(Effect.provide(makeLayer(harness)));
@@ -1959,13 +2025,13 @@ it.effect(
       yield* visiblePage("phone");
       yield* push.reportViewing({ connectionId: "phone", threadId: CHAT });
 
-      yield* push.ingestDomainEvent(questionAsked(CHAT, "req-read", "Which table?"));
+      yield* feed(questionAsked(CHAT, "req-read", "Which table?"));
       yield* settle;
       expect(yield* outbox).toEqual([]);
 
       // The phone left the chat: the same request now reaches it.
       yield* push.reportViewing({ connectionId: "phone", threadId: null });
-      yield* push.ingestDomainEvent(questionAsked(CHAT, "req-away", "Which table?"));
+      yield* feed(questionAsked(CHAT, "req-away", "Which table?"));
       yield* push.drain;
       expect((yield* outbox).length).toBe(1);
 
@@ -1977,7 +2043,7 @@ it.effect(
         routineResult: true,
         chatReply: true,
       });
-      yield* push.ingestDomainEvent(questionAsked(CHAT, "req-off", "Which table?"));
+      yield* feed(questionAsked(CHAT, "req-off", "Which table?"));
       yield* push.drain;
       expect((yield* outbox).length).toBe(1);
     }).pipe(Effect.provide(makeLayer(harness)));

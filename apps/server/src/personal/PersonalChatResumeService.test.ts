@@ -26,7 +26,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV1WiredLive, toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadStatus } from "./engine/PersonalEngine.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
@@ -73,6 +74,7 @@ interface Harness {
   freeSlots: number;
   readonly reserved: Set<string>;
   taskOwnsTurn: boolean;
+  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
 }
 
@@ -85,6 +87,7 @@ const makeHarness = (): Harness => ({
   freeSlots: 5,
   reserved: new Set(),
   taskOwnsTurn: false,
+  statuses: new Map(),
   sequence: 0,
 });
 
@@ -263,6 +266,18 @@ const deletedEvent = (harness: Harness, threadId: ThreadId): OrchestrationEvent 
   } as OrchestrationEvent;
 };
 
+/** Feeds the events production sees, through the real v1-to-personal mapping. */
+const ingestAll = (
+  service: PersonalChatResume.PersonalChatResumeShape,
+  harness: Harness,
+  event: OrchestrationEvent,
+) =>
+  Effect.gen(function* () {
+    for (const personal of toPersonalEvents(event, harness.statuses)) {
+      yield* service.ingestDomainEvent(personal);
+    }
+  });
+
 /** The owner's message, as the projection stores it. */
 const insertUserMessage = (threadId: ThreadId, messageId: string, createdAtMs: number) =>
   Effect.gen(function* () {
@@ -303,10 +318,14 @@ const hitLimit = (
   retry?: OrchestrationSession["providerRetry"],
 ) =>
   Effect.gen(function* () {
-    yield* service.ingestDomainEvent(
+    yield* ingestAll(
+      service,
+      harness,
       sessionEvent(harness, threadId, limitSession(threadId, retry)),
     );
-    yield* service.ingestDomainEvent(
+    yield* ingestAll(
+      service,
+      harness,
       sessionEvent(harness, threadId, { ...limitSession(threadId, retry), status: "stopped" }),
     );
     yield* service.drain;
@@ -357,13 +376,19 @@ describe("PersonalChatResume", () => {
 
       // It holds a task slot until the resumed turn ends.
       expect(harness.freeSlots).toBe(4);
-      yield* service.ingestDomainEvent(
+      yield* ingestAll(
+        service,
+        harness,
         turnStartEvent(harness, CHAT_A, turn!.message.messageId as string),
       );
-      yield* service.ingestDomainEvent(
+      yield* ingestAll(
+        service,
+        harness,
         sessionEvent(harness, CHAT_A, statusSession(CHAT_A, "running")),
       );
-      yield* service.ingestDomainEvent(
+      yield* ingestAll(
+        service,
+        harness,
         sessionEvent(harness, CHAT_A, statusSession(CHAT_A, "ready")),
       );
       yield* service.drain;
@@ -386,12 +411,14 @@ describe("PersonalChatResume", () => {
       // right after it from a read that had no turn yet: the same limit, two
       // events, and only one row may come of them.
       chat(harness, CHAT_A).latestTurnId = null;
-      yield* service.ingestDomainEvent(sessionEvent(harness, CHAT_A, limitSession(CHAT_A)));
+      yield* ingestAll(service, harness, sessionEvent(harness, CHAT_A, limitSession(CHAT_A)));
       yield* service.drain;
       chat(harness, CHAT_A).latestTurnId = TurnId.make("turn-a1");
       // The error session the server writes after it: same limit, its own
       // observation time, and no turn when it read the chat.
-      yield* service.ingestDomainEvent(
+      yield* ingestAll(
+        service,
+        harness,
         sessionEvent(
           harness,
           CHAT_A,
@@ -421,7 +448,7 @@ describe("PersonalChatResume", () => {
 
       // Chat A: the owner's message event. Chat B: only the stored message
       // (as after a restart, when the event was never seen).
-      yield* service.ingestDomainEvent(turnStartEvent(harness, CHAT_A, "owner-2"));
+      yield* ingestAll(service, harness, turnStartEvent(harness, CHAT_A, "owner-2"));
       yield* insertUserMessage(CHAT_B, "owner-3", HIT_MS + 10 * 60_000);
       yield* service.drain;
 
@@ -443,7 +470,7 @@ describe("PersonalChatResume", () => {
       yield* hitLimit(service, harness, CHAT_A);
       yield* hitLimit(service, harness, CHAT_B);
 
-      yield* service.ingestDomainEvent(deletedEvent(harness, CHAT_A));
+      yield* ingestAll(service, harness, deletedEvent(harness, CHAT_A));
       // The bot chat archive is a flag on the bot's link, not an event.
       chat(harness, CHAT_B).linkArchivedAt = isoAt(HIT_MS + 60_000);
       yield* service.drain;

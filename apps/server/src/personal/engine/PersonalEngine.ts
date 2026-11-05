@@ -46,30 +46,83 @@ export type PersonalTurnOutcome =
   | { readonly _tag: "Interrupted" }
   | { readonly _tag: "Failed"; readonly failure: PersonalTurnFailure };
 
-export type PersonalThreadStatus = "idle" | "starting" | "running" | "waiting" | "error";
+export type PersonalThreadStatus =
+  | "idle"
+  | "starting"
+  | "running"
+  | "waiting"
+  | "stopped"
+  | "interrupted"
+  | "error";
+
+/** A provider wait: the provider's own, or the server re-running a failed turn. */
+export interface PersonalProviderRetryView {
+  readonly kind: "rate_limited" | "retrying";
+  readonly retryAt?: string;
+  readonly attempt?: number;
+  readonly maxAttempts?: number;
+  readonly reason?: string;
+  readonly provider: string;
+  readonly observedAt: string;
+  readonly auto?: "pending" | "exhausted";
+}
+
+/**
+ * The session a status event carries. Subscribers that only need to know
+ * whether a turn runs can read `status`; the ones that decide about a failure
+ * read the provider wait and the error text from the same event.
+ */
+export interface PersonalSessionView {
+  readonly threadId: ThreadId;
+  readonly status: PersonalThreadStatus;
+  readonly activeTurnId: TurnId | null;
+  readonly lastError: string | null;
+  readonly providerInstanceId: string | null;
+  readonly providerName: string | null;
+  readonly providerRetry: PersonalProviderRetryView | null;
+  readonly updatedAt: string;
+}
+
+/** A request for the owner's input, as a push notification sees it. */
+export interface PersonalActivityView {
+  readonly id: string;
+  readonly kind: string;
+  readonly payload: unknown;
+}
 
 export type PersonalThreadEvent =
   | {
       readonly _tag: "TurnStartRequested";
       readonly threadId: ThreadId;
       readonly messageId: MessageId;
+      readonly interactionMode: ProviderInteractionMode;
     }
   | {
       readonly _tag: "MessageSent";
       readonly threadId: ThreadId;
       readonly messageId: MessageId;
       readonly role: "user" | "assistant";
+      readonly text: string;
+      readonly streaming: boolean;
     }
   | {
       readonly _tag: "TurnEnded";
       readonly threadId: ThreadId;
       readonly outcome: PersonalTurnOutcome;
+      readonly session: PersonalSessionView;
     }
   | {
       readonly _tag: "StatusChanged";
       readonly threadId: ThreadId;
       readonly status: PersonalThreadStatus;
+      readonly session: PersonalSessionView;
     }
+  | {
+      readonly _tag: "ActivityAppended";
+      readonly threadId: ThreadId;
+      readonly activity: PersonalActivityView;
+    }
+  | { readonly _tag: "TurnStopRequested"; readonly threadId: ThreadId }
   | { readonly _tag: "ThreadArchived"; readonly threadId: ThreadId }
   | { readonly _tag: "ThreadDeleted"; readonly threadId: ThreadId };
 
@@ -233,7 +286,23 @@ export interface PersonalEngineShape {
   readonly latestAssistantMessage: (input: {
     readonly threadId: ThreadId;
     readonly after?: DateTime.Utc;
+    /** Tie-break for messages written in the same millisecond. */
+    readonly afterMessageId?: MessageId;
+    /** Restricts the read to one turn. */
+    readonly turnId?: TurnId;
   }) => Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError>;
+  readonly latestUserMessage: (input: {
+    readonly threadId: ThreadId;
+    /** Skips the server's own generated messages, which carry this id prefix. */
+    readonly excludeIdPrefix?: string;
+  }) => Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError>;
+  readonly messageById: (
+    messageId: MessageId,
+  ) => Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError>;
+  readonly messagesByIds: (input: {
+    readonly threadId: ThreadId;
+    readonly messageIds: ReadonlyArray<MessageId>;
+  }) => Effect.Effect<ReadonlyArray<PersonalMessageView>, PersonalEngineError>;
   readonly listMessages: (input: {
     readonly threadId: ThreadId;
     readonly limit: number;

@@ -2,9 +2,7 @@ import {
   CommandId,
   ComposerContextId,
   MessageId,
-  type OrchestrationEvent,
   type OrchestrationMessageContext,
-  type OrchestrationSession,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   type PersonalChatNoticeMarker,
   type ThreadId,
@@ -22,7 +20,6 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
@@ -74,7 +71,7 @@ export class PersonalChatResume extends Context.Service<
     /** Subscribes to domain events and starts the sweep. Park-aware. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     /** Feeds one orchestration event in (the start() stream uses this). */
-    readonly ingestDomainEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
+    readonly ingestDomainEvent: (event: PersonalEngine.PersonalThreadEvent) => Effect.Effect<void>;
     /** Resolves when every queued event has been handled. */
     readonly drain: Effect.Effect<void>;
     /** Starts every resume that is due now. The start() loop runs it every 15 s. */
@@ -118,11 +115,10 @@ const noticeContext = (marker: PersonalChatNoticeMarker): OrchestrationMessageCo
   ],
 });
 
-const isBusy = (session: OrchestrationSession | null | undefined) =>
+const isBusy = (session: { readonly status: string } | null | undefined) =>
   session?.status === "running" || session?.status === "starting";
 
 export const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const personalEngine = yield* PersonalEngine.PersonalEngine;
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
   const sql = yield* SqlClient.SqlClient;
@@ -213,7 +209,7 @@ export const make = Effect.gen(function* () {
   /** A chat turn ended on a limit: record the hit, say so, schedule the continue. */
   const onLimitHit = Effect.fn("PersonalChatResume.onLimitHit")(function* (
     threadId: ThreadId,
-    session: OrchestrationSession,
+    session: PersonalEngine.PersonalSessionView,
   ) {
     const retry = session.providerRetry;
     if (retry?.kind !== "rate_limited") return;
@@ -466,7 +462,7 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const onSessionSet = (threadId: ThreadId, session: OrchestrationSession) =>
+  const onSessionSet = (threadId: ThreadId, session: PersonalEngine.PersonalSessionView) =>
     Effect.gen(function* () {
       const slot = held.get(threadId);
       if (slot !== undefined) {
@@ -482,34 +478,34 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  const handleEvent = (event: OrchestrationEvent) => {
-    switch (event.type) {
-      case "thread.session-set":
-        return onSessionSet(event.payload.threadId, event.payload.session);
-      case "thread.turn-start-requested":
+  const handleEvent = (event: PersonalEngine.PersonalThreadEvent) => {
+    switch (event._tag) {
+      case "StatusChanged":
+        return onSessionSet(event.threadId, event.session);
+      case "TurnStartRequested":
         // Anyone writing in the chat (the owner, a task, a group round) takes
         // it on from here; our own continue is the one exception.
-        return isPersonalResumeMessageId(event.payload.messageId)
+        return isPersonalResumeMessageId(event.messageId)
           ? Effect.void
-          : skipScheduled(event.payload.threadId, "new_message");
-      case "thread.deleted":
-        return skipScheduled(event.payload.threadId, "deleted").pipe(
-          Effect.andThen(releaseSlot(event.payload.threadId)),
+          : skipScheduled(event.threadId, "new_message");
+      case "ThreadDeleted":
+        return skipScheduled(event.threadId, "deleted").pipe(
+          Effect.andThen(releaseSlot(event.threadId)),
         );
-      case "thread.archived":
-        return skipScheduled(event.payload.threadId, "archived");
+      case "ThreadArchived":
+        return skipScheduled(event.threadId, "archived");
       default:
         return Effect.void;
     }
   };
 
-  const worker = yield* makeDrainableWorker((event: OrchestrationEvent) =>
+  const worker = yield* makeDrainableWorker((event: PersonalEngine.PersonalThreadEvent) =>
     handleEvent(event).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
           : Effect.logWarning("personal chat resume failed to handle an event", {
-              eventType: event.type,
+              eventType: event._tag,
               cause: Cause.pretty(cause),
             }),
       ),
@@ -518,7 +514,7 @@ export const make = Effect.gen(function* () {
 
   const start: PersonalChatResumeShape["start"] = Effect.fn("PersonalChatResume.start")(
     function* () {
-      const events = yield* engine.subscribeDomainEvents;
+      const events = personalEngine.events;
       yield* forkParked(Stream.runForEach(events, (event) => worker.enqueue(event)));
       if (schedulersOff) return;
       // Resumes due while the server was down run on the first pass.

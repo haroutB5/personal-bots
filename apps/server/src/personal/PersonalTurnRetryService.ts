@@ -1,7 +1,6 @@
 import {
   CommandId,
   type ModelSelection,
-  type OrchestrationEvent,
   type OrchestrationSession,
   type ProviderInteractionMode,
   type ThreadId,
@@ -21,6 +20,7 @@ import * as Stream from "effect/Stream";
 
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
@@ -33,6 +33,7 @@ import {
   nextRetryDelayMs,
   PERSONAL_TURN_RETRY_MAX_ATTEMPTS,
   type TurnRetryDecision,
+  type TurnRetrySession,
 } from "./personalTurnRetryPolicy.ts";
 
 /**
@@ -53,7 +54,7 @@ export class PersonalTurnRetry extends Context.Service<
     /** Subscribes to domain events. Park-aware, like the other personal reactors. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     /** Feeds one orchestration event in (the start() stream uses this). */
-    readonly ingestDomainEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
+    readonly ingestDomainEvent: (event: PersonalEngine.PersonalThreadEvent) => Effect.Effect<void>;
     /** Resolves when every queued event has been handled. */
     readonly drain: Effect.Effect<void>;
   }
@@ -82,6 +83,7 @@ const CONTINUATION_PROMPT = "Continue where you left off.";
 
 export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const personalEngine = yield* PersonalEngine.PersonalEngine;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
@@ -110,17 +112,23 @@ export const make = Effect.gen(function* () {
    * own error text is never overwritten.
    */
   const markSession = (
-    session: OrchestrationSession,
+    threadId: ThreadId,
     auto: "pending" | "exhausted",
     attempt: number,
     retryAt: string | null,
   ) =>
     Effect.gen(function* () {
+      const thread = yield* projections
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(thread)) return;
+      const session = thread.value.session;
+      if (session == null) return;
       const now = yield* nowIso;
       yield* engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make(`personal-turn-retry:${yield* crypto.randomUUIDv4}`),
-        threadId: session.threadId,
+        threadId,
         session: {
           ...session,
           providerRetry: {
@@ -141,7 +149,7 @@ export const make = Effect.gen(function* () {
         Cause.hasInterrupts(cause)
           ? Effect.failCause(cause)
           : Effect.logWarning("personal turn retry could not mark the session", {
-              threadId: session.threadId,
+              threadId,
               cause: Cause.pretty(cause),
             }),
       ),
@@ -252,20 +260,20 @@ export const make = Effect.gen(function* () {
     );
 
   /** Schedules the attempt after `attempts`, or marks the retry spent. */
-  const schedule = (threadId: ThreadId, session: OrchestrationSession) =>
+  const schedule = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const entry = tracked.get(threadId);
       if (entry === undefined) return;
       const delayMs = nextRetryDelayMs(entry.attempts);
       if (delayMs === null) {
-        return yield* markSession(session, "exhausted", PERSONAL_TURN_RETRY_MAX_ATTEMPTS, null);
+        return yield* markSession(threadId, "exhausted", PERSONAL_TURN_RETRY_MAX_ATTEMPTS, null);
       }
       const attempt = entry.attempts + 1;
       entry.attempts = attempt;
       const retryAt = DateTime.formatIso(
         DateTime.add(yield* DateTime.now, { milliseconds: delayMs }),
       );
-      yield* markSession(session, "pending", attempt, retryAt);
+      yield* markSession(threadId, "pending", attempt, retryAt);
       const fiber = yield* Effect.forkDetach(runAttempt(threadId, delayMs));
       const current = tracked.get(threadId);
       if (current === undefined) {
@@ -287,7 +295,7 @@ export const make = Effect.gen(function* () {
       const entry = tracked.get(threadId);
       if (entry === undefined) return;
       entry.pending = null;
-      yield* schedule(threadId, session);
+      yield* schedule(threadId);
     }).pipe(Effect.ignore);
 
   /** Whether the thread belongs to a personal bot. A failed lookup means no. */
@@ -297,7 +305,7 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(false)),
     );
 
-  const onSessionSet = (threadId: ThreadId, session: OrchestrationSession) =>
+  const onSessionSet = (threadId: ThreadId, session: TurnRetrySession) =>
     Effect.gen(function* () {
       const decision = decideTurnRetry({ session, tracked: tracked.get(threadId) ?? null });
       if (decision.kind === "skip") return yield* logSkip(threadId, decision);
@@ -309,15 +317,15 @@ export const make = Effect.gen(function* () {
         });
       }
       if (decision.kind === "exhausted") {
-        return yield* markSession(session, "exhausted", PERSONAL_TURN_RETRY_MAX_ATTEMPTS, null);
+        return yield* markSession(threadId, "exhausted", PERSONAL_TURN_RETRY_MAX_ATTEMPTS, null);
       }
-      yield* schedule(threadId, session);
+      yield* schedule(threadId);
     });
 
   const ingestDomainEvent: PersonalTurnRetryShape["ingestDomainEvent"] = (event) => {
-    switch (event.type) {
-      case "thread.turn-start-requested": {
-        const threadId = event.payload.threadId;
+    switch (event._tag) {
+      case "TurnStartRequested": {
+        const threadId = event.threadId;
         return cancelPending(threadId, false).pipe(
           Effect.andThen(
             Effect.sync(() => {
@@ -326,9 +334,9 @@ export const make = Effect.gen(function* () {
               // tracked but never retried here.
               tracked.set(threadId, {
                 taskDriven:
-                  isPersonalTaskMessageId(event.payload.messageId) ||
-                  isPersonalGroupMessageId(event.payload.messageId),
-                interactionMode: event.payload.interactionMode,
+                  isPersonalTaskMessageId(event.messageId) ||
+                  isPersonalGroupMessageId(event.messageId),
+                interactionMode: event.interactionMode,
                 attempts: 0,
                 pending: null,
               });
@@ -336,32 +344,31 @@ export const make = Effect.gen(function* () {
           ),
         );
       }
-      case "thread.turn-interrupt-requested":
-      case "thread.session-stop-requested": {
+      case "TurnStopRequested": {
         // The owner (or a group, or a task cancel) asked it to stop. A pending
         // retry is part of what stops, and so is any later one: forgetting the
         // turn means the marker-less session the clear writes back is not read
         // as a fresh failure to retry.
-        const threadId = event.payload.threadId;
+        const threadId = event.threadId;
         return cancelPending(threadId, false).pipe(
           Effect.andThen(Effect.sync(() => tracked.delete(threadId))),
           Effect.andThen(clearMarker(threadId)),
         );
       }
-      case "thread.session-set":
-        return onSessionSet(event.payload.threadId, event.payload.session).pipe(Effect.ignore);
+      case "StatusChanged":
+        return onSessionSet(event.threadId, event.session).pipe(Effect.ignore);
       default:
         return Effect.void;
     }
   };
 
-  const worker = yield* makeDrainableWorker((event: OrchestrationEvent) =>
+  const worker = yield* makeDrainableWorker((event: PersonalEngine.PersonalThreadEvent) =>
     ingestDomainEvent(event).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
           : Effect.logWarning("personal turn retry failed to handle an event", {
-              eventType: event.type,
+              eventType: event._tag,
               cause: Cause.pretty(cause),
             }),
       ),
@@ -369,7 +376,7 @@ export const make = Effect.gen(function* () {
   );
 
   const start: PersonalTurnRetryShape["start"] = Effect.fn("PersonalTurnRetry.start")(function* () {
-    const events = yield* engine.subscribeDomainEvents;
+    const events = personalEngine.events;
     yield* forkParked(Stream.runForEach(events, (event) => worker.enqueue(event)));
   });
 

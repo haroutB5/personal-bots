@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TurnId,
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationCommand,
@@ -101,10 +102,11 @@ const messageFor = (input: {
   text: string;
   createdAt: string;
   streaming?: boolean;
+  turnId?: TurnId | null;
 }): ProjectionThreadMessage => ({
   messageId: input.messageId,
   threadId: input.threadId,
-  turnId: null,
+  turnId: input.turnId ?? null,
   role: input.role,
   text: input.text,
   isStreaming: input.streaming ?? false,
@@ -188,6 +190,7 @@ const makeHarness = () => {
             payload: {
               threadId: command.threadId,
               messageId: command.message.messageId,
+              interactionMode: command.interactionMode,
               followUp: command.followUp,
             },
           },
@@ -197,6 +200,7 @@ const makeHarness = () => {
               threadId: command.threadId,
               messageId: command.message.messageId,
               role: "user",
+              text: command.message.text,
               streaming: false,
             },
           },
@@ -289,6 +293,7 @@ const makeHarness = () => {
               threadId: command.threadId,
               messageId: command.messageId,
               role: "assistant",
+              text: existing?.text ?? "",
               streaming: false,
             },
           },
@@ -341,6 +346,38 @@ const makeHarness = () => {
   const messageApi = {
     listByThreadId: (input: { threadId: ThreadId }) =>
       Effect.succeed([...(threads.get(input.threadId)?.messages ?? [])]),
+    getByMessageId: (input: { messageId: MessageId }) => {
+      for (const record of threads.values()) {
+        const found = record.messages.find((row) => row.messageId === input.messageId);
+        if (found !== undefined) return Effect.succeed(Option.some(found));
+      }
+      return Effect.succeed(Option.none());
+    },
+    getLatestAssistantMessageForTurn: (input: { threadId: ThreadId; turnId: TurnId }) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          [...(threads.get(input.threadId)?.messages ?? [])]
+            .filter((row) => row.role === "assistant" && row.turnId === input.turnId)
+            .at(-1),
+        ),
+      ),
+    getLatestAssistantMessageAfter: (input: {
+      threadId: ThreadId;
+      afterCreatedAt: string;
+      afterMessageId: MessageId;
+    }) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          [...(threads.get(input.threadId)?.messages ?? [])]
+            .filter((row) => row.role === "assistant")
+            .filter(
+              (row) =>
+                Date.parse(row.createdAt) > Date.parse(input.afterCreatedAt) ||
+                (row.createdAt === input.afterCreatedAt && row.messageId > input.afterMessageId),
+            )
+            .at(-1),
+        ),
+      ),
   };
 
   const liveness = makeThreadBackgroundLiveness();
@@ -823,6 +860,84 @@ describe("PersonalEngineV1 reads", () => {
       expect(harness.snapshotOptions).toEqual([{ unsettledOnly: true }]);
     });
   });
+
+  it.effect("message reads return the newest owner, reply and named rows", () => {
+    const harness = makeHarness();
+    const threadId = ThreadId.make("thread-1");
+    const at = (n: number) => `2026-11-05T12:00:0${n}.000Z`;
+    return Effect.gen(function* () {
+      yield* seedThread(harness, "thread-1", "project-1");
+      harness.threads.get("thread-1")!.messages.push(
+        messageFor({
+          threadId,
+          messageId: MessageId.make("u1"),
+          role: "user",
+          text: "first",
+          createdAt: at(0),
+        }),
+        messageFor({
+          threadId,
+          messageId: MessageId.make("a1"),
+          role: "assistant",
+          text: "reply one",
+          createdAt: at(1),
+          turnId: TurnId.make("turn-1"),
+        }),
+        messageFor({
+          threadId,
+          messageId: MessageId.make("u2"),
+          role: "user",
+          text: "second",
+          createdAt: at(2),
+        }),
+        messageFor({
+          threadId,
+          messageId: MessageId.make("a2"),
+          role: "assistant",
+          text: "reply two",
+          createdAt: at(3),
+          turnId: TurnId.make("turn-2"),
+        }),
+        messageFor({
+          threadId,
+          messageId: MessageId.make("personal-resume-1"),
+          role: "user",
+          text: "continue",
+          createdAt: at(4),
+        }),
+      );
+
+      const [latestUser, latestAssistant, byTurn, after, byId, byIds] = yield* withEngine(
+        harness,
+        (engine) =>
+          Effect.all(
+            [
+              engine.latestUserMessage({ threadId, excludeIdPrefix: "personal-resume-" }),
+              engine.latestAssistantMessage({ threadId }),
+              engine.latestAssistantMessage({ threadId, turnId: TurnId.make("turn-1") }),
+              engine.latestAssistantMessage({
+                threadId,
+                after: DateTime.makeUnsafe(at(1)),
+                afterMessageId: MessageId.make("a1"),
+              }),
+              engine.messageById(MessageId.make("a1")),
+              engine.messagesByIds({
+                threadId,
+                messageIds: [MessageId.make("u1"), MessageId.make("a2"), MessageId.make("nope")],
+              }),
+            ],
+            { concurrency: 1 },
+          ),
+      );
+
+      expect(Option.getOrThrow(latestUser).id).toBe("u2");
+      expect(Option.getOrThrow(latestAssistant).id).toBe("a2");
+      expect(Option.getOrThrow(byTurn).id).toBe("a1");
+      expect(Option.getOrThrow(after).id).toBe("a2");
+      expect(Option.getOrThrow(byId).text).toBe("reply one");
+      expect(byIds.map((message) => message.id)).toEqual(["u1", "a2"]);
+    });
+  });
 });
 
 describe("PersonalEngineV1 events", () => {
@@ -831,10 +946,21 @@ describe("PersonalEngineV1 events", () => {
   it("maps every v1 tag to its personal event", () => {
     expect(
       toPersonalEvents(
-        event("thread.turn-start-requested", { threadId: "t1", messageId: "m1" }),
+        event("thread.turn-start-requested", {
+          threadId: "t1",
+          messageId: "m1",
+          interactionMode: "default",
+        }),
         new Map(),
       ),
-    ).toEqual([{ _tag: "TurnStartRequested", threadId: "t1", messageId: "m1" }]);
+    ).toEqual([
+      {
+        _tag: "TurnStartRequested",
+        threadId: "t1",
+        messageId: "m1",
+        interactionMode: "default",
+      },
+    ]);
 
     expect(
       toPersonalEvents(
@@ -842,11 +968,21 @@ describe("PersonalEngineV1 events", () => {
           threadId: "t1",
           messageId: "m1",
           role: "assistant",
+          text: "hello",
           streaming: false,
         }),
         new Map(),
       ),
-    ).toEqual([{ _tag: "MessageSent", threadId: "t1", messageId: "m1", role: "assistant" }]);
+    ).toEqual([
+      {
+        _tag: "MessageSent",
+        threadId: "t1",
+        messageId: "m1",
+        role: "assistant",
+        text: "hello",
+        streaming: false,
+      },
+    ]);
 
     expect(toPersonalEvents(event("thread.archived", { threadId: "t1" }), new Map())).toEqual([
       { _tag: "ThreadArchived", threadId: "t1" },
@@ -856,6 +992,29 @@ describe("PersonalEngineV1 events", () => {
       { _tag: "ThreadDeleted", threadId: "t1" },
     ]);
 
+    expect(
+      toPersonalEvents(
+        event("thread.activity-appended", {
+          threadId: "t1",
+          activity: { id: "a1", kind: "approval.requested", payload: { requestId: "r1" } },
+        }),
+        new Map(),
+      ),
+    ).toEqual([
+      {
+        _tag: "ActivityAppended",
+        threadId: "t1",
+        activity: { id: "a1", kind: "approval.requested", payload: { requestId: "r1" } },
+      },
+    ]);
+
+    expect(
+      toPersonalEvents(event("thread.turn-interrupt-requested", { threadId: "t1" }), new Map()),
+    ).toEqual([{ _tag: "TurnStopRequested", threadId: "t1" }]);
+    expect(
+      toPersonalEvents(event("thread.session-stop-requested", { threadId: "t1" }), new Map()),
+    ).toEqual([{ _tag: "TurnStopRequested", threadId: "t1" }]);
+
     const running = toPersonalEvents(
       event("thread.session-set", {
         threadId: "t1",
@@ -863,7 +1022,14 @@ describe("PersonalEngineV1 events", () => {
       }),
       new Map(),
     );
-    expect(running).toEqual([{ _tag: "StatusChanged", threadId: "t1", status: "running" }]);
+    expect(running).toMatchObject([
+      {
+        _tag: "StatusChanged",
+        threadId: "t1",
+        status: "running",
+        session: { threadId: "t1", status: "running", activeTurnId: null, lastError: null },
+      },
+    ]);
 
     const ready = toPersonalEvents(
       event("thread.session-set", {
@@ -872,7 +1038,7 @@ describe("PersonalEngineV1 events", () => {
       }),
       new Map([["t1", "running"]]),
     );
-    expect(ready).toEqual([
+    expect(ready).toMatchObject([
       { _tag: "StatusChanged", threadId: "t1", status: "waiting" },
       { _tag: "TurnEnded", threadId: "t1", outcome: { _tag: "Completed" } },
     ]);
@@ -896,7 +1062,7 @@ describe("PersonalEngineV1 events", () => {
       new Map([["t1", "running"]]),
     );
 
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-1)).toMatchObject({
       _tag: "TurnEnded",
       threadId: "t1",
       outcome: {
@@ -905,6 +1071,11 @@ describe("PersonalEngineV1 events", () => {
           message: "rate limited",
           providerRetry: { kind: "rate_limited", retryAt: "2026-11-05T13:00:00.000Z" },
         },
+      },
+      session: {
+        status: "error",
+        lastError: "rate limited",
+        providerRetry: { kind: "rate_limited", retryAt: "2026-11-05T13:00:00.000Z" },
       },
     });
   });
@@ -918,7 +1089,7 @@ describe("PersonalEngineV1 events", () => {
       new Map([["t1", "running"]]),
     );
 
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-1)).toMatchObject({
       _tag: "TurnEnded",
       threadId: "t1",
       outcome: { _tag: "Interrupted" },
@@ -933,15 +1104,15 @@ describe("PersonalEngineV1 events", () => {
       }),
       new Map(),
     );
-    expect(events).toEqual([{ _tag: "StatusChanged", threadId: "t1", status: "idle" }]);
+    expect(events).toMatchObject([{ _tag: "StatusChanged", threadId: "t1", status: "idle" }]);
   });
 
-  it("maps every session status onto the five personal states", () => {
+  it("maps every session status onto the personal states", () => {
     expect(
       ["idle", "stopped", "interrupted", "starting", "running", "ready", "error"].map((status) =>
         personalStatusOf(status as OrchestrationSession["status"]),
       ),
-    ).toEqual(["idle", "idle", "idle", "starting", "running", "waiting", "error"]);
+    ).toEqual(["idle", "stopped", "interrupted", "starting", "running", "waiting", "error"]);
   });
 
   it.effect("the engine stream delivers a turn start and its user message", () => {
@@ -968,9 +1139,21 @@ describe("PersonalEngineV1 events", () => {
       });
 
       const events = [...(yield* Fiber.join(collected))];
-      expect(events).toEqual([
-        { _tag: "TurnStartRequested", threadId: "thread-1", messageId: "message-1" },
-        { _tag: "MessageSent", threadId: "thread-1", messageId: "message-1", role: "user" },
+      expect(events).toMatchObject([
+        {
+          _tag: "TurnStartRequested",
+          threadId: "thread-1",
+          messageId: "message-1",
+          interactionMode: "default",
+        },
+        {
+          _tag: "MessageSent",
+          threadId: "thread-1",
+          messageId: "message-1",
+          role: "user",
+          text: "Hello",
+          streaming: false,
+        },
       ]);
     }).pipe(Effect.provide(harness.layer));
   });

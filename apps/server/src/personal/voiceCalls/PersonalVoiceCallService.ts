@@ -544,26 +544,21 @@ export const make = Effect.gen(function* () {
    * conversation said, not what the machinery did.
    */
   const recentMessages = (threadId: ThreadId) =>
-    sql<{ readonly role: string; readonly text: string; readonly at: string }>`
-      SELECT role AS "role", text AS "text", created_at AS "at"
-      FROM projection_thread_messages
-      WHERE thread_id = ${threadId}
-        AND role IN ('user', 'assistant')
-        AND length(trim(text)) > 0
-      ORDER BY created_at DESC, message_id DESC
-      LIMIT ${VOICE_CALL_CONTEXT_MESSAGES}
-    `.pipe(
+    engine.listMessages({ threadId, limit: VOICE_CALL_CONTEXT_MESSAGES }).pipe(
       Effect.map((rows) =>
         rows
+          .filter(
+            (row) =>
+              (row.role === "user" || row.role === "assistant") && row.text.trim().length > 0,
+          )
           .filter((row) => !isServerOnlyNotice(row.text))
           .map((row): VoiceCallContextMessage => ({
             role: row.role === "user" ? "user" : "bot",
             // A key the owner pasted into a message must not reach Google: the
             // same strict redaction memory applies, applied on the way out.
             text: redactSecrets(row.text),
-            at: DateTime.makeUnsafe(row.at),
-          }))
-          .reverse(),
+            at: DateTime.makeUnsafe(row.createdAt),
+          })),
       ),
       Effect.orElseSucceed(() => [] as ReadonlyArray<VoiceCallContextMessage>),
     );
@@ -959,24 +954,25 @@ export const make = Effect.gen(function* () {
 
   /** The newest finished reply in the chat, already redacted and bounded. */
   const latestReply = (threadId: ThreadId) =>
-    sql<{ readonly messageId: string; readonly text: string; readonly at: string }>`
-      SELECT message_id AS "messageId", text AS "text", created_at AS "at"
-      FROM projection_thread_messages
-      WHERE thread_id = ${threadId}
-        AND role = 'assistant'
-        AND is_streaming = 0
-        AND length(trim(text)) > 0
-      ORDER BY created_at DESC, message_id DESC
-      LIMIT 5
-    `.pipe(
-      Effect.map((rows) => rows.find((row) => !isServerOnlyNotice(row.text))),
+    engine.listMessages({ threadId, limit: 5 }).pipe(
+      Effect.map((rows) =>
+        rows
+          .filter(
+            (row) =>
+              row.role === "assistant" &&
+              !row.streaming &&
+              row.text.trim().length > 0 &&
+              !isServerOnlyNotice(row.text),
+          )
+          .at(-1),
+      ),
       Effect.map((row) =>
         row === undefined
           ? null
           : {
-              messageId: row.messageId,
+              messageId: row.id,
               text: redactSecrets(row.text).slice(0, VOICE_CALL_SNAPSHOT_REPLY_CHARS),
-              at: DateTime.makeUnsafe(row.at),
+              at: DateTime.makeUnsafe(row.createdAt),
             },
       ),
       Effect.orElseSucceed(() => null),

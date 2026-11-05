@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { projectActivityPayload } from "../orchestration/ActivityPayloadProjection.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { serverPerfOptimizationOn } from "./perfFlags.ts";
 
 export const REASONING_PREVIEW_CHARS = 400;
@@ -160,16 +161,15 @@ export function maybeApplyThreadTextPreviews(
 export const readThreadFullText = (input: PersonalThreadFullTextInput) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const engine = yield* PersonalEngine.PersonalEngine;
     const messageIds = input.messageIds ?? [];
     const activityIds = input.activityIds ?? [];
     const messages =
       messageIds.length === 0
         ? []
-        : yield* sql<{ readonly messageId: string; readonly text: string }>`
-            SELECT message_id AS "messageId", text
-            FROM projection_thread_messages
-            WHERE thread_id = ${input.threadId} AND ${sql.in("message_id", messageIds)}
-          `;
+        : yield* engine
+            .messagesByIds({ threadId: input.threadId, messageIds })
+            .pipe(Effect.orElseSucceed(() => []));
     const activityRows =
       activityIds.length === 0
         ? []
@@ -197,7 +197,7 @@ export const readThreadFullText = (input: PersonalThreadFullTextInput) =>
       return [{ activityId: row.activityId, payload: projected.payload }];
     });
     return {
-      messages: messages.map((row) => ({ messageId: row.messageId, text: row.text })),
+      messages: messages.map((message) => ({ messageId: message.id, text: message.text })),
       activities,
     } as unknown as PersonalThreadFullTextResult;
   });

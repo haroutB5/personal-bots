@@ -24,6 +24,9 @@ import * as TestClock from "effect/testing/TestClock";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadStatus } from "./engine/PersonalEngine.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalTurnRetry from "./PersonalTurnRetryService.ts";
 import { PERSONAL_TURN_RETRY_DELAYS_MS } from "./personalTurnRetryPolicy.ts";
@@ -52,6 +55,7 @@ interface Harness {
   taskOwnsTurn: boolean;
   /** The bot's model selection as it is now (edits land here). */
   botModelSelection: ModelSelection;
+  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
 }
 
@@ -63,6 +67,7 @@ const makeHarness = (): Harness => ({
   failSend: false,
   taskOwnsTurn: false,
   botModelSelection: { instanceId: INSTANCE, model: "big-pickle" },
+  statuses: new Map(),
   sequence: 0,
 });
 
@@ -112,6 +117,11 @@ const makeLayer = (harness: Harness) =>
               : Option.none(),
           ),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(PersonalEngine.PersonalEngine, {
+        events: Stream.never,
+      } as unknown as PersonalEngine.PersonalEngineShape),
     ),
     Layer.provideMerge(
       Layer.succeed(ProviderService, {
@@ -200,6 +210,18 @@ const sessionEvent = (harness: Harness, session: OrchestrationSession): Orchestr
   } as OrchestrationEvent;
 };
 
+/** Feeds the events production sees, through the real v1-to-personal mapping. */
+const ingestAll = (
+  service: PersonalTurnRetry.PersonalTurnRetryShape,
+  harness: Harness,
+  event: OrchestrationEvent,
+) =>
+  Effect.gen(function* () {
+    for (const personal of toPersonalEvents(event, harness.statuses)) {
+      yield* service.ingestDomainEvent(personal);
+    }
+  });
+
 /** Every command that would put a second copy of the message on the thread. */
 const messageCreatingCommands = (harness: Harness) =>
   harness.dispatched.filter(
@@ -216,9 +238,11 @@ const failOwnerTurn = (
   lastError: string = UPSTREAM_FAILURE,
 ) =>
   Effect.gen(function* () {
-    yield* retry.ingestDomainEvent(turnStartEvent(harness, OWNER_MESSAGE));
+    yield* ingestAll(retry, harness, turnStartEvent(harness, OWNER_MESSAGE));
     yield* retry.drain;
-    yield* retry.ingestDomainEvent(
+    yield* ingestAll(
+      retry,
+      harness,
       sessionEvent(harness, makeSession({ status: "error", lastError })),
     );
     yield* retry.drain;
@@ -228,14 +252,18 @@ const failOwnerTurn = (
 const failRetriedTurn = (retry: PersonalTurnRetry.PersonalTurnRetryShape, harness: Harness) =>
   Effect.gen(function* () {
     // turn.started clears the marker, exactly as the runtime ingestion does.
-    yield* retry.ingestDomainEvent(
+    yield* ingestAll(
+      retry,
+      harness,
       sessionEvent(
         harness,
         makeSession({ status: "running", activeTurnId: TurnId.make("turn-retry") }),
       ),
     );
     yield* retry.drain;
-    yield* retry.ingestDomainEvent(
+    yield* ingestAll(
+      retry,
+      harness,
       sessionEvent(harness, makeSession({ status: "error", lastError: UPSTREAM_FAILURE })),
     );
     yield* retry.drain;
@@ -347,7 +375,7 @@ it.effect("drops a pending retry when the owner presses Stop", () =>
         yield* failOwnerTurn(retry, harness);
         expect(autoMarker(harness)).toMatchObject({ auto: "pending" });
 
-        yield* retry.ingestDomainEvent(interruptEvent(harness));
+        yield* ingestAll(retry, harness, interruptEvent(harness));
         yield* retry.drain;
 
         expect(autoMarker(harness)).toBeUndefined();
@@ -422,12 +450,12 @@ it.effect("does not re-arm a retry from the session its own Stop wrote back", ()
       Effect.gen(function* () {
         const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
         yield* failOwnerTurn(retry, harness);
-        yield* retry.ingestDomainEvent(interruptEvent(harness));
+        yield* ingestAll(retry, harness, interruptEvent(harness));
         yield* retry.drain;
         // The engine echoes the marker-less error session back as an event.
         const cleared = harness.session;
         expect(cleared?.providerRetry?.auto).toBeUndefined();
-        yield* retry.ingestDomainEvent(sessionEvent(harness, cleared!));
+        yield* ingestAll(retry, harness, sessionEvent(harness, cleared!));
         yield* retry.drain;
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
         expect(harness.sends).toHaveLength(0);
@@ -483,9 +511,11 @@ function failOwnerTurnWithMessage(
   messageId: MessageId,
 ) {
   return Effect.gen(function* () {
-    yield* retry.ingestDomainEvent(turnStartEvent(harness, messageId));
+    yield* ingestAll(retry, harness, turnStartEvent(harness, messageId));
     yield* retry.drain;
-    yield* retry.ingestDomainEvent(
+    yield* ingestAll(
+      retry,
+      harness,
       sessionEvent(harness, makeSession({ status: "error", lastError: UPSTREAM_FAILURE })),
     );
     yield* retry.drain;

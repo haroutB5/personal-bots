@@ -12,7 +12,6 @@ import {
   PersonalGroupsError,
   PersonalGroupVoteId,
   ThreadId,
-  type OrchestrationEvent,
   type PersonalBotId,
   type PersonalGroup,
   type PersonalGroupContinueRoundInput,
@@ -28,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { forkParked } from "../../serverActivation.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -97,7 +97,7 @@ export class PersonalGroupService extends Context.Service<
     readonly subscribe: Stream.Stream<PersonalGroupStreamEvent, PersonalGroupsError>;
     readonly changes: Stream.Stream<PersonalGroupStreamEvent>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
-    readonly ingestDomainEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
+    readonly ingestDomainEvent: (event: PersonalEngine.PersonalThreadEvent) => Effect.Effect<void>;
     readonly sweep: Effect.Effect<void>;
     readonly drain: Effect.Effect<void>;
     /**
@@ -120,8 +120,7 @@ export class PersonalGroupService extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const core = yield* makeGroupCore();
-  const { activeMemberThreadIds, commandEvents, groupThreadIds, lock, refreshCaches, upserts } =
-    core;
+  const { activeMemberThreadIds, engine, groupThreadIds, lock, refreshCaches, upserts } = core;
 
   const votes = makeGroupVotes(core);
   // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): no sweep, and no member turn starts.
@@ -178,29 +177,29 @@ export const make = Effect.gen(function* () {
   );
 
   const ingestDomainEvent: PersonalGroupService["Service"]["ingestDomainEvent"] = (event) => {
-    switch (event.type) {
-      case "thread.message-sent": {
-        const threadId = event.payload.threadId;
+    switch (event._tag) {
+      case "MessageSent": {
+        const threadId = event.threadId;
         // The feedback-loop guard: everything on a group thread is this
         // service's own relay output. Reading it back would restart the round.
         if (groupThreadIds.has(threadId)) {
           return Effect.void;
         }
-        if (!activeMemberThreadIds.has(threadId) || event.payload.role !== "assistant") {
+        if (!activeMemberThreadIds.has(threadId) || event.role !== "assistant") {
           return Effect.void;
         }
-        return event.payload.streaming
-          ? worker.enqueue({ type: "relay", threadId, delta: event.payload.text })
+        return event.streaming
+          ? worker.enqueue({ type: "relay", threadId, delta: event.text })
           : worker.enqueue({ type: "settle", threadId });
       }
-      case "thread.session-set": {
-        const threadId = event.payload.threadId;
+      case "StatusChanged": {
+        const threadId = event.threadId;
         return activeMemberThreadIds.has(threadId)
           ? worker.enqueue({ type: "settle", threadId })
           : Effect.void;
       }
-      case "thread.turn-start-requested": {
-        const threadId = event.payload.threadId;
+      case "TurnStartRequested": {
+        const threadId = event.threadId;
         return groupThreadIds.has(threadId)
           ? worker.enqueue({ type: "stray", threadId })
           : Effect.void;
@@ -245,7 +244,7 @@ export const make = Effect.gen(function* () {
 
   const start: PersonalGroupService["Service"]["start"] = Effect.fn("PersonalGroupService.start")(
     function* () {
-      const events = yield* commandEvents;
+      const events = engine.events;
       yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
       if (schedulersOff) return;
       yield* forkParked(

@@ -12,6 +12,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   ProjectId,
   ThreadId,
+  type MessageId,
   type OrchestrationEvent,
   type OrchestrationSession,
   type OrchestrationSessionStatus,
@@ -48,6 +49,7 @@ import {
   type PersonalProjectView,
   type PersonalRenameThreadIfUnchangedInput,
   type PersonalSendInput,
+  type PersonalSessionView,
   type PersonalStopInput,
   type PersonalThreadEvent,
   type PersonalThreadStatus,
@@ -57,12 +59,10 @@ import { failureDetail, PersonalEngineError } from "./errors.ts";
 
 const BUSY_STATUSES: ReadonlySet<PersonalThreadStatus> = new Set(["starting", "running"]);
 
-/** v1 session status to the five personal states. */
+/** v1 session status to the personal states. */
 export const personalStatusOf = (status: OrchestrationSessionStatus): PersonalThreadStatus => {
   switch (status) {
     case "idle":
-    case "stopped":
-    case "interrupted":
       return "idle";
     case "starting":
       return "starting";
@@ -70,6 +70,10 @@ export const personalStatusOf = (status: OrchestrationSessionStatus): PersonalTh
       return "running";
     case "ready":
       return "waiting";
+    case "stopped":
+      return "stopped";
+    case "interrupted":
+      return "interrupted";
     case "error":
       return "error";
   }
@@ -91,6 +95,38 @@ const failureOf = (
       : { kind: session.providerRetry.kind, retryAt: session.providerRetry.retryAt ?? null },
 });
 
+/** The session as subscribers read it. One shape for every event that carries one. */
+export const toPersonalSessionView = (session: OrchestrationSession): PersonalSessionView => ({
+  threadId: session.threadId,
+  status: personalStatusOf(session.status),
+  activeTurnId: session.activeTurnId,
+  lastError: session.lastError,
+  providerInstanceId: session.providerInstanceId ?? null,
+  providerName: session.providerName,
+  providerRetry:
+    session.providerRetry === undefined
+      ? null
+      : {
+          kind: session.providerRetry.kind,
+          provider: session.providerRetry.provider,
+          observedAt: session.providerRetry.observedAt,
+          ...(session.providerRetry.retryAt === undefined
+            ? {}
+            : { retryAt: session.providerRetry.retryAt }),
+          ...(session.providerRetry.attempt === undefined
+            ? {}
+            : { attempt: session.providerRetry.attempt }),
+          ...(session.providerRetry.maxAttempts === undefined
+            ? {}
+            : { maxAttempts: session.providerRetry.maxAttempts }),
+          ...(session.providerRetry.reason === undefined
+            ? {}
+            : { reason: session.providerRetry.reason }),
+          ...(session.providerRetry.auto === undefined ? {} : { auto: session.providerRetry.auto }),
+        },
+  updatedAt: session.updatedAt,
+});
+
 /**
  * One v1 event becomes zero, one or two personal events. `statusByThread`
  * carries the previous status so a turn end is a busy-to-rest transition, not
@@ -108,11 +144,12 @@ export const toPersonalEvents = (
           _tag: "TurnStartRequested",
           threadId: event.payload.threadId,
           messageId: event.payload.messageId,
+          interactionMode: event.payload.interactionMode,
         },
       ];
     case "thread.message-sent": {
       const role = event.payload.role;
-      if (event.payload.streaming || (role !== "user" && role !== "assistant")) {
+      if (role !== "user" && role !== "assistant") {
         return [];
       }
       return [
@@ -121,6 +158,8 @@ export const toPersonalEvents = (
           threadId: event.payload.threadId,
           messageId: event.payload.messageId,
           role,
+          text: event.payload.text,
+          streaming: event.payload.streaming,
         },
       ];
     }
@@ -129,7 +168,10 @@ export const toPersonalEvents = (
       const status = personalStatusOf(session.status);
       const previous = statusByThread.get(threadId);
       statusByThread.set(threadId, status);
-      const events: Array<PersonalThreadEvent> = [{ _tag: "StatusChanged", threadId, status }];
+      const view = toPersonalSessionView(session);
+      const events: Array<PersonalThreadEvent> = [
+        { _tag: "StatusChanged", threadId, status, session: view },
+      ];
       const wasBusy = previous !== undefined && BUSY_STATUSES.has(previous);
       if (wasBusy && session.activeTurnId === null && !BUSY_STATUSES.has(status)) {
         events.push({
@@ -138,13 +180,29 @@ export const toPersonalEvents = (
           outcome:
             status === "error"
               ? { _tag: "Failed", failure: failureOf(session) }
-              : status === "idle"
-                ? { _tag: "Interrupted" }
-                : { _tag: "Completed" },
+              : status === "waiting"
+                ? { _tag: "Completed" }
+                : { _tag: "Interrupted" },
+          session: view,
         });
       }
       return events;
     }
+    case "thread.activity-appended":
+      return [
+        {
+          _tag: "ActivityAppended",
+          threadId: event.payload.threadId,
+          activity: {
+            id: event.payload.activity.id,
+            kind: event.payload.activity.kind,
+            payload: event.payload.activity.payload,
+          },
+        },
+      ];
+    case "thread.turn-interrupt-requested":
+    case "thread.session-stop-requested":
+      return [{ _tag: "TurnStopRequested", threadId: event.payload.threadId }];
     case "thread.archived":
       return [{ _tag: "ThreadArchived", threadId: event.payload.threadId }];
     case "thread.deleted":
@@ -409,8 +467,25 @@ const make = Effect.gen(function* () {
   const latestAssistantMessage = (input: {
     readonly threadId: ThreadId;
     readonly after?: DateTime.Utc;
+    readonly afterMessageId?: MessageId;
+    readonly turnId?: TurnId;
   }): Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError> =>
     Effect.gen(function* () {
+      if (input.turnId !== undefined) {
+        const found = yield* messages.getLatestAssistantMessageForTurn({
+          threadId: input.threadId,
+          turnId: input.turnId,
+        });
+        return Option.map(found, toMessageView);
+      }
+      if (input.after !== undefined && input.afterMessageId !== undefined) {
+        const found = yield* messages.getLatestAssistantMessageAfter({
+          threadId: input.threadId,
+          afterCreatedAt: DateTime.formatIso(input.after),
+          afterMessageId: input.afterMessageId,
+        });
+        return Option.map(found, toMessageView);
+      }
       const rows = yield* listForThread(input.threadId);
       const afterMillis = input.after === undefined ? null : DateTime.toEpochMillis(input.after);
       const found = rows
@@ -421,7 +496,43 @@ const make = Effect.gen(function* () {
         )
         .at(-1);
       return found === undefined ? Option.none() : Option.some(toMessageView(found));
-    });
+    }).pipe(Effect.mapError(engineError("latestAssistantMessage")));
+
+  const latestUserMessage = (input: {
+    readonly threadId: ThreadId;
+    readonly excludeIdPrefix?: string;
+  }): Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const rows = yield* listForThread(input.threadId);
+      const found = rows
+        .filter(
+          (row) =>
+            row.role === "user" &&
+            (input.excludeIdPrefix === undefined ||
+              !row.messageId.startsWith(input.excludeIdPrefix)),
+        )
+        .at(-1);
+      return found === undefined ? Option.none() : Option.some(toMessageView(found));
+    }).pipe(Effect.mapError(engineError("latestUserMessage")));
+
+  const messageById = (
+    messageId: MessageId,
+  ): Effect.Effect<Option.Option<PersonalMessageView>, PersonalEngineError> =>
+    messages.getByMessageId({ messageId }).pipe(
+      Effect.map((found) => Option.map(found, toMessageView)),
+      Effect.mapError(engineError("messageById")),
+    );
+
+  const messagesByIds = (input: {
+    readonly threadId: ThreadId;
+    readonly messageIds: ReadonlyArray<MessageId>;
+  }): Effect.Effect<ReadonlyArray<PersonalMessageView>, PersonalEngineError> =>
+    Effect.gen(function* () {
+      if (input.messageIds.length === 0) return [];
+      const wanted = new Set(input.messageIds);
+      const rows = yield* listForThread(input.threadId);
+      return rows.filter((row) => wanted.has(row.messageId)).map(toMessageView);
+    }).pipe(Effect.mapError(engineError("messagesByIds")));
 
   const listMessages = (input: {
     readonly threadId: ThreadId;
@@ -472,6 +583,9 @@ const make = Effect.gen(function* () {
     getProject,
     listProjects,
     latestAssistantMessage,
+    latestUserMessage,
+    messageById,
+    messagesByIds,
     listMessages,
     liveTaskIds,
     shellSnapshot,

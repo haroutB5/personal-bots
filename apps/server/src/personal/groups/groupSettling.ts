@@ -5,12 +5,9 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import {
-  CommandId,
-  PersonalGroupId,
-  ThreadId,
-  type OrchestrationSession,
-} from "@t3tools/contracts";
+import { CommandId, PersonalGroupId, ThreadId } from "@t3tools/contracts";
+import type { PersonalSessionView } from "../engine/PersonalEngine.ts";
+import { toPersonalSessionView } from "../engine/PersonalEngineV1Live.ts";
 import { classifyProviderError, providerWaitPause } from "../tasks/PersonalTaskService.ts";
 import { GROUP_LIMIT_RESUME_BUSY_WAIT_MS, GROUP_RESUMED_NOTICE_TEXT } from "./groupLimitResumes.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
@@ -86,10 +83,11 @@ export const makeGroupSettling = (
       yield* writeRound(round, clearActive);
       return;
     }
-    const session: OrchestrationSession | null | undefined = shell.value.session;
-    if (session === null || session === undefined) {
+    const raw = shell.value.session;
+    if (raw === null || raw === undefined) {
       return;
     }
+    const session: PersonalSessionView = toPersonalSessionView(raw);
     if (session.status === "running") {
       if (round.activeTurnId === null && session.activeTurnId !== null) {
         round = yield* writeRound(round, { activeTurnId: session.activeTurnId });
@@ -103,7 +101,10 @@ export const makeGroupSettling = (
           reason: wait.reason,
         });
       }
-      const pause = providerWaitPause(session.providerRetry, DateTime.toEpochMillis(now));
+      const pause = providerWaitPause(
+        session.providerRetry ?? undefined,
+        DateTime.toEpochMillis(now),
+      );
       if (pause !== null) {
         yield* handleThrottle(
           group,
@@ -126,7 +127,7 @@ export const makeGroupSettling = (
       return;
     }
     switch (session.status) {
-      case "ready": {
+      case "waiting": {
         const last = yield* finalReplyText(round, threadId);
         if ((!observed && last === undefined) || last?.isStreaming === true) {
           return;

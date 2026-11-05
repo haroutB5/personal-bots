@@ -42,7 +42,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import { type DesktopDriver, DesktopHelperError, WindowsDesktopDriver } from "./DesktopHelper.ts";
 import { createLinuxDesktopDriver } from "./linux/driver.ts";
@@ -1271,7 +1271,7 @@ export const layer = Layer.effect(
   PersonalDesktop,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const engine = yield* PersonalEngine.PersonalEngine;
     const platform = yield* HostProcessPlatform;
     const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
@@ -1356,11 +1356,10 @@ export const layer = Layer.effect(
     // A turn that ends lets go of the PC: nobody should hold the user's
     // desktop across a finished reply, and a stopped chat may try again on
     // the user's next message.
-    const events = yield* engine.subscribeDomainEvents;
+    const events = engine.events;
     yield* Stream.runForEach(events, (event) =>
-      event.type === "thread.session-set" &&
-      !ACTIVE_SESSION_STATUSES.has(event.payload.session.status)
-        ? service.threadTurnEnded(event.payload.threadId)
+      event._tag === "StatusChanged" && !ACTIVE_SESSION_STATUSES.has(event.session.status)
+        ? service.threadTurnEnded(event.threadId)
         : Effect.void,
     ).pipe(Effect.forkScoped);
     yield* sweep.pipe(

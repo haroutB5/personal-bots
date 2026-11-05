@@ -47,10 +47,10 @@ export const classifyProviderError = (message: string | null): "rate_limited" | 
  * this one.
  */
 export const providerRetryOfAttempt = (
-  retry: OrchestrationSession["providerRetry"],
+  retry: OrchestrationSession["providerRetry"] | null,
   attemptStartedAtMs: number,
 ): OrchestrationSession["providerRetry"] => {
-  if (retry === undefined) return undefined;
+  if (retry === undefined || retry === null) return undefined;
   const observedAtMs = Date.parse(retry.observedAt);
   return Number.isFinite(observedAtMs) && observedAtMs < attemptStartedAtMs ? undefined : retry;
 };
@@ -200,7 +200,8 @@ export const settleSessionError = (input: {
   return {
     kind: "finish",
     clearRenewalWait,
-    category: limit !== undefined || capacity ? "rate_limited" : classifyProviderError(input.lastError),
+    category:
+      limit !== undefined || capacity ? "rate_limited" : classifyProviderError(input.lastError),
     ...(limit === undefined
       ? capacity
         ? {

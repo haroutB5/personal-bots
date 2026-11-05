@@ -5,10 +5,16 @@ import type {
   PersonalThreadFullTextInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemoryWorker } from "../persistence/Layers/Sqlite.ts";
+import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
 import {
   COMMAND_PREVIEW_CHARS,
   REASONING_PREVIEW_CHARS,
@@ -22,6 +28,24 @@ const at = "2026-10-26T03:00:00.000Z";
 const long = "x".repeat(5_000);
 const longCommand = `cat <<'EOF'\n${"y".repeat(4_000)}\nEOF`;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+/** The whole-text read needs the message port; nothing here opens a turn. */
+const engineLayer = PersonalEngineV1WiredLive.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
+        dispatch: () => Effect.die("not used"),
+        subscribeDomainEvents: Effect.succeed(Stream.never),
+        streamDomainEvents: Stream.never,
+      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
+      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getThreadShellById: () => Effect.succeed(Option.none()),
+      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
+    ),
+  ),
+);
+
+const testLayer = engineLayer.pipe(Layer.provideMerge(SqlitePersistenceMemoryWorker));
 
 const message = (id: string, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -148,5 +172,5 @@ it.effect("reads the whole text of the named messages and activities of one thre
     const payload = result.activities[0]!.payload as { data: Record<string, unknown> };
     expect(payload.data.command).toBe(longCommand);
     expect(payload.data).not.toHaveProperty("stdout");
-  }).pipe(Effect.provide(SqlitePersistenceMemoryWorker)),
+  }).pipe(Effect.provide(testLayer)),
 );

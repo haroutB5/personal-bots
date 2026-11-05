@@ -46,6 +46,8 @@ import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
+import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
@@ -84,6 +86,8 @@ interface Harness {
   readonly messages: Map<string, Array<ProjectionThreadMessage>>;
   /** Titles the projection reports for chats (a chat without one has no title key). */
   readonly titles: Map<string, string>;
+  /** Previous personal status per thread, as the production stream keeps it. */
+  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
 }
 
@@ -100,6 +104,7 @@ const makeHarness = (): Harness => ({
   sessions: new Map(),
   messages: new Map(),
   titles: new Map(),
+  statuses: new Map(),
   sequence: 0,
 });
 
@@ -291,14 +296,23 @@ const sessionEvent = (harness: Harness, session: OrchestrationSession): Orchestr
   } as OrchestrationEvent;
 };
 
+/** Feeds the events production sees, through the real v1-to-personal mapping. */
+const ingestAll = (harness: Harness, event: OrchestrationEvent) =>
+  Effect.gen(function* () {
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    for (const personal of toPersonalEvents(event, harness.statuses)) {
+      yield* service.ingestDomainEvent(personal);
+    }
+  });
+
 const setSession = (
   harness: Harness,
   session: OrchestrationSession,
 ): Effect.Effect<void, never, PersonalTaskService.PersonalTaskService> =>
   Effect.gen(function* () {
-    const service = yield* PersonalTaskService.PersonalTaskService;
     harness.sessions.set(session.threadId, session);
-    yield* service.ingestDomainEvent(sessionEvent(harness, session));
+    yield* ingestAll(harness, sessionEvent(harness, session));
+    const service = yield* PersonalTaskService.PersonalTaskService;
     yield* service.drain;
   });
 
@@ -692,7 +706,7 @@ it.effect("a child's completion re-queues its parent exactly once", () => {
     yield* runTurn(harness, childThread, "Fixed.");
     // Replays of the child's terminal session and a full sweep change nothing.
     const replay = harness.sessions.get(childThread)!;
-    yield* service.ingestDomainEvent(sessionEvent(harness, replay));
+    yield* ingestAll(harness, sessionEvent(harness, replay));
     yield* service.sweep;
     yield* service.drain;
 
@@ -807,7 +821,7 @@ it.effect("a finished child is delivered at once while its sibling is still runn
 
     // Replays of either child's terminal session and a sweep deliver nothing again.
     for (const thread of [fastThread, slowThread]) {
-      yield* service.ingestDomainEvent(sessionEvent(harness, harness.sessions.get(thread)!));
+      yield* ingestAll(harness, sessionEvent(harness, harness.sessions.get(thread)!));
     }
     yield* service.sweep;
     yield* service.drain;
@@ -4536,7 +4550,8 @@ it.effect(
         updatedAt: DateTime.formatIso(DateTime.add(first, { milliseconds: 5 })),
       });
       harness.sessions.set(thread, lost);
-      yield* service.ingestDomainEvent(
+      yield* ingestAll(
+        harness,
         sessionEvent(
           harness,
           makeSession({
@@ -4549,7 +4564,7 @@ it.effect(
           }),
         ),
       );
-      yield* service.ingestDomainEvent(sessionEvent(harness, lost));
+      yield* ingestAll(harness, sessionEvent(harness, lost));
       yield* service.drain;
 
       // The bot moved to its fallback model and the task ran again at once,

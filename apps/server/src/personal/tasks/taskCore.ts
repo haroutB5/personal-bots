@@ -17,7 +17,6 @@ import {
   type PersonalBotId,
   type PersonalTask,
 } from "@t3tools/contracts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
@@ -43,8 +42,6 @@ export const makeTaskCore = () =>
     const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
     const bots = yield* PersonalBotService.PersonalBotService;
     const engine = yield* PersonalEngine.PersonalEngine;
-    // A5 moves the task's event subscriber onto the port's reduced stream.
-    const commandEvents = yield* OrchestrationEngine.OrchestrationEngineService;
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const messages = yield* ProjectionThreadMessageRepository;
     const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
@@ -606,7 +603,6 @@ export const makeTaskCore = () =>
       carryExposureToTree,
       persistExposureOnChat,
       engine,
-      commandEvents: commandEvents.subscribeDomainEvents,
       externalSlots,
       fail,
       helpParkedAttempts,

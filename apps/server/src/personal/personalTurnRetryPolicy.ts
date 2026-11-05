@@ -1,5 +1,23 @@
-import type { OrchestrationSession } from "@t3tools/contracts";
+import type { TurnId } from "@t3tools/contracts";
 import { classifyTurnFailure, isTransientTurnFailureKind } from "@t3tools/shared/turnFailure";
+
+/** The session fields the retry decision reads, in the personal event's terms. */
+export interface TurnRetrySession {
+  readonly status:
+    | "idle"
+    | "starting"
+    | "running"
+    | "waiting"
+    | "stopped"
+    | "interrupted"
+    | "error";
+  readonly lastError: string | null;
+  readonly activeTurnId: TurnId | null;
+  readonly providerRetry: {
+    readonly kind: "rate_limited" | "retrying";
+    readonly auto?: "pending" | "exhausted";
+  } | null;
+}
 
 /**
  * Waits before each automatic attempt. Two attempts only, and the gap grows so
@@ -63,16 +81,13 @@ export type TurnRetryDecision =
  * fires when it must not are both expensive, and both are otherwise invisible.
  */
 export function decideTurnRetry(input: {
-  readonly session: Pick<
-    OrchestrationSession,
-    "status" | "lastError" | "activeTurnId" | "providerRetry"
-  >;
+  readonly session: TurnRetrySession;
   readonly tracked: TrackedTurn | null;
 }): TurnRetryDecision {
   const { session, tracked } = input;
   if (session.status !== "error") return { kind: "skip", reason: "session_not_failed" };
   if (session.activeTurnId !== null) return { kind: "skip", reason: "turn_still_active" };
-  if (session.providerRetry?.auto !== undefined) {
+  if (session.providerRetry?.auto != null) {
     return { kind: "skip", reason: "already_marked" };
   }
   if (session.providerRetry?.kind === "rate_limited") {

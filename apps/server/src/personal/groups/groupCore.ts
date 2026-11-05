@@ -25,7 +25,6 @@ import {
   type PersonalGroupSystemEvent,
   type PersonalGroupVote,
 } from "@t3tools/contracts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import type { PersonalEngineError } from "../engine/errors.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -58,8 +57,6 @@ export const makeGroupCore = () =>
     const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
     const bots = yield* PersonalBotService.PersonalBotService;
     const engine = yield* PersonalEngine.PersonalEngine;
-    // A5 moves the group's event subscriber onto the port's reduced stream.
-    const commandEvents = yield* OrchestrationEngine.OrchestrationEngineService;
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const messages = yield* ProjectionThreadMessageRepository;
 
@@ -354,7 +351,6 @@ export const makeGroupCore = () =>
       carryTaint,
       runOrLog,
       engine,
-      commandEvents: commandEvents.subscribeDomainEvents,
       fail,
       groupThreadIds,
       leaseOwner,

@@ -3,12 +3,12 @@ import {
   ComposerContextId,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   type OrchestrationMessageContext,
-  type OrchestrationSession,
   type PersonalTask,
   type PersonalTaskAttempt,
   type PersonalTaskMessageMarker,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { PersonalSessionView } from "../engine/PersonalEngine.ts";
 import { personalTaskMessageId } from "../personalThreadTitles.ts";
 
 /** What the task service's parts share: its status types, timings and message ids. */
@@ -86,7 +86,7 @@ export type WorkItem =
   | {
       readonly type: "session";
       readonly threadId: ThreadId;
-      readonly session: OrchestrationSession;
+      readonly session: PersonalSessionView;
     }
   | { readonly type: "settle"; readonly threadId: ThreadId }
   | { readonly type: "resume"; readonly threadId: ThreadId };

@@ -29,15 +29,14 @@ import {
   type PersonalPushInAppNotification,
   type PersonalPushSettings,
   type PersonalPushSubscribeInput,
-  type OrchestrationEvent,
   type PersonalGroupRound,
   type PersonalGroupRoundStatus,
   type PersonalTask,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { updatesQuietHoursVerdict } from "../claudeCodeReview/quietHours.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -566,7 +565,7 @@ export class PersonalPushService extends Context.Service<
     /** Queues a group's one notification when its round ends (deduped per ending). */
     readonly notifyGroupRound: (round: PersonalGroupRound) => Effect.Effect<void>;
     /** Feeds one orchestration event in (the start() stream uses this). */
-    readonly ingestDomainEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
+    readonly ingestDomainEvent: (event: PersonalEngine.PersonalThreadEvent) => Effect.Effect<void>;
     /**
      * One connection says which chat it has open and visible (null = none).
      * Notifications for that chat are held back while it is being read.
@@ -651,7 +650,7 @@ export const make = Effect.gen(function* () {
   const transport = yield* PersonalPushTransport;
   const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
-  const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
+  const engine = yield* Effect.serviceOption(PersonalEngine.PersonalEngine);
   const groups = yield* Effect.serviceOption(PersonalGroupService.PersonalGroupService);
 
   const fail = (message: string, cause?: unknown) =>
@@ -1215,15 +1214,14 @@ export const make = Effect.gen(function* () {
 
   /** The newest assistant text in a chat, for the in-app banner only. */
   const latestReplyPreview = (threadId: string) =>
-    sql<{ readonly text: string }>`
-      SELECT text FROM projection_thread_messages
-      WHERE thread_id = ${threadId} AND role = 'assistant'
-      ORDER BY created_at DESC
-      LIMIT 1
-    `.pipe(
-      Effect.map((rows) => (rows[0] === undefined ? undefined : inAppPreview(rows[0].text))),
-      Effect.orElseSucceed(() => undefined),
-    );
+    Option.isSome(engine)
+      ? engine.value.latestAssistantMessage({ threadId: ThreadId.make(threadId) }).pipe(
+          Effect.map((message) =>
+            Option.isNone(message) ? undefined : inAppPreview(message.value.text),
+          ),
+          Effect.orElseSucceed(() => undefined),
+        )
+      : Effect.succeed(undefined);
 
   /** The run's notify mode and the bot's notify_user call; all null for a task that has neither. */
   const readTaskNotifyState = (taskId: string): Effect.Effect<TaskNotifyState> =>
@@ -1640,32 +1638,22 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * A turn ending is the transition running -> ready, not the "ready" state
-   * itself: a session that starts or is re-attached publishes "ready" too, and
-   * that is nobody replying. Only the edge is a reply.
+   * The port reports a turn end as one edge event, so a session that starts or
+   * is re-attached cannot be mistaken for a reply. `Failed` carries the retry
+   * wait: our own settled retry and the provider's rate limit are not
+   * "hit a problem", so they stay silent.
    *
-   * "interrupted" and "stopped" are the user's own doing and "error" belongs
-   * to the task stream's "hit a problem", so they clear the thread without
-   * notifying. Threads are remembered only between their own start and end, so
-   * this set is bounded by the turns actually in flight; after a restart the
-   * turn already running is not remembered, and its end is silent rather than
-   * risk a notification for a turn that was never observed.
+   * A failure waits CHAT_FAILURE_SETTLE_MS in `pendingFailures` (keyed by
+   * thread, valued by its session's updatedAt); any later session change for
+   * the thread (a retry, a new turn) drops it.
    */
-  const runningThreadIds = new Set<string>();
-  /**
-   * Threads with a turn starting or running, for failures: a turn that fails
-   * to start never runs. A failure waits CHAT_FAILURE_SETTLE_MS in
-   * `pendingFailures` (keyed by thread, valued by its session's updatedAt);
-   * any later session change for the thread (a retry, a new turn) drops it.
-   */
-  const turnThreadIds = new Set<string>();
   const pendingFailures = new Map<string, string>();
 
   const ingestDomainEvent: PersonalPushService["Service"]["ingestDomainEvent"] = (event) => {
-    if (event.type === "thread.activity-appended") {
+    if (event._tag === "ActivityAppended") {
       // The filter runs before anything reads: most events here are tool
       // steps and reasoning notes, and they must not cost a lookup.
-      const activity = event.payload.activity;
+      const activity = event.activity;
       if (activity.kind !== "approval.requested" && activity.kind !== "user-input.requested") {
         return Effect.void;
       }
@@ -1685,7 +1673,7 @@ export const make = Effect.gen(function* () {
         eventId: `chat-needs:${providerRequestId ?? activity.id}`,
         kind: activity.kind === "approval.requested" ? "approval" : "question",
         botId: null,
-        threadId: event.payload.threadId,
+        threadId: event.threadId,
         detail:
           activity.kind === "approval.requested"
             ? approvalDetail(payload)
@@ -1693,24 +1681,19 @@ export const make = Effect.gen(function* () {
         requestId: providerRequestId,
       });
     }
-    if (event.type !== "thread.session-set") return Effect.void;
-    const { threadId, session } = event.payload;
-    pendingFailures.delete(threadId);
-    const hadTurn = turnThreadIds.delete(threadId);
-    if (session.status === "running" || session.status === "starting") {
-      turnThreadIds.add(threadId);
-    }
-    if (session.status === "running") {
-      runningThreadIds.add(threadId);
+    if (event._tag === "StatusChanged") {
+      pendingFailures.delete(event.threadId);
       return Effect.void;
     }
-    const wasRunning = runningThreadIds.delete(threadId);
-    if (
-      hadTurn &&
-      session.status === "error" &&
-      session.providerRetry?.auto !== "pending" &&
-      session.providerRetry?.kind !== "rate_limited"
-    ) {
+    if (event._tag !== "TurnEnded") return Effect.void;
+    const { threadId, session, outcome } = event;
+    if (outcome._tag === "Failed") {
+      if (
+        session.providerRetry?.auto === "pending" ||
+        session.providerRetry?.kind === "rate_limited"
+      ) {
+        return Effect.void;
+      }
       const key = session.updatedAt;
       pendingFailures.set(threadId, key);
       return Effect.sleep(CHAT_FAILURE_SETTLE_MS).pipe(
@@ -1725,7 +1708,7 @@ export const make = Effect.gen(function* () {
         Effect.asVoid,
       );
     }
-    return wasRunning && session.status === "ready"
+    return outcome._tag === "Completed"
       ? notifyChatReply({ threadId, turnEndedAt: session.updatedAt })
       : Effect.void;
   };
@@ -1797,7 +1780,7 @@ export const make = Effect.gen(function* () {
         yield* forkParked(Stream.runForEach(tasks.value.changes, notifyTask));
       }
       if (Option.isSome(engine)) {
-        const events = yield* engine.value.subscribeDomainEvents;
+        const events = engine.value.events;
         yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
       }
       if (Option.isSome(groups)) {

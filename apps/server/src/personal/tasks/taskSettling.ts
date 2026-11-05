@@ -13,6 +13,8 @@ import {
 import { type ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { isMissingProviderConversationText } from "../../provider/missingProviderConversation.ts";
+import type { PersonalSessionView } from "../engine/PersonalEngine.ts";
+import { toPersonalSessionView } from "../engine/PersonalEngineV1Live.ts";
 import { LEASE_MINUTES, attemptMessageId, minutesFrom, type Changed } from "./taskShared.ts";
 import {
   BACKGROUND_WAIT_PROVIDER,
@@ -249,7 +251,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
    */
   const backgroundOutcome = Effect.fn("PersonalTaskService.backgroundOutcome")(function* (
     attempt: PersonalTaskAttempt,
-    session: OrchestrationSession,
+    session: PersonalSessionView,
     last: ProjectionThreadMessage | undefined,
   ) {
     // A task parked on browser help (or a desktop pause) is waiting for the
@@ -349,9 +351,9 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   // turn dying, not the attempt that started on the fallback, so it ends nothing.
   const fromSupersededSession = Effect.fn("PersonalTaskService.fromSupersededSession")(function* (
     attempt: PersonalTaskAttempt,
-    session: OrchestrationSession,
+    session: PersonalSessionView,
   ) {
-    if (session.providerInstanceId === undefined) return false;
+    if (session.providerInstanceId == null) return false;
     const task = yield* repository.getTask(attempt.taskId);
     if (Option.isNone(task)) return false;
     const states = yield* botRepository.listFallbackStates();
@@ -373,18 +375,19 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   // in 1.66.101 but not in older events), and this keeps that limit.
   const settle = Effect.fn("PersonalTaskService.settle")(function* (
     threadId: ThreadId,
-    eventProviderRetry?: OrchestrationSession["providerRetry"],
+    eventProviderRetry?: PersonalSessionView["providerRetry"],
   ) {
     const attempt = yield* activeAttemptForThread(threadId);
     if (attempt === null) {
       return;
     }
     const shell = yield* snapshots.getThreadShellById(threadId);
-    const session = Option.isSome(shell) ? shell.value.session : null;
-    if (session === null || session === undefined) {
+    const raw = Option.isSome(shell) ? shell.value.session : null;
+    if (raw === null || raw === undefined) {
       return;
     }
-    const providerRetry = session.providerRetry ?? eventProviderRetry;
+    const session = toPersonalSessionView(raw);
+    const providerRetry = session.providerRetry ?? eventProviderRetry ?? undefined;
     // Everything after this attempt's own user message belongs to it; a
     // session state or reply from an earlier attempt on the same thread does
     // not. Ordering by the anchor, not by clock, keeps equal timestamps safe.
@@ -427,7 +430,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
       anchorMessage !== undefined &&
       Date.parse(session.updatedAt) >= Date.parse(anchorMessage.createdAt);
     switch (session.status) {
-      case "ready": {
+      case "waiting": {
         if (!observed && !fresh) {
           return;
         }
@@ -516,7 +519,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
             : {
                 limit: {
                   provider: settlement.limit.provider,
-                  instanceId: session.providerInstanceId,
+                  instanceId: session.providerInstanceId ?? undefined,
                   reason: settlement.limit.reason,
                   retryAt: settlement.limit.retryAt,
                   ...(settlement.limit.capacity === true ? { capacity: true } : {}),
@@ -570,7 +573,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
 
   const observeSession = Effect.fn("PersonalTaskService.observeSession")(function* (
     threadId: ThreadId,
-    session: OrchestrationSession,
+    session: PersonalSessionView,
   ) {
     if (session.status === "running") {
       let attempt = yield* activeAttemptForThread(threadId);

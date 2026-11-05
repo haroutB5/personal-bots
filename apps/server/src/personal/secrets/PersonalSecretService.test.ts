@@ -66,6 +66,8 @@ import * as PersonalBotService from "../PersonalBotService.ts";
 import { PERSONAL_BOT_APP_RULES } from "../personalBotInstructions.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
+import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import * as PersonalSecretService from "./PersonalSecretService.ts";
 import { secretAccessLock } from "./secretAccessLock.ts";
@@ -102,6 +104,7 @@ interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly messages: Map<string, Array<ProjectionThreadMessage>>;
+  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
 }
 
@@ -109,6 +112,7 @@ const makeHarness = (): Harness => ({
   dispatched: [],
   sessions: new Map(),
   messages: new Map(),
+  statuses: new Map(),
   sequence: 0,
 });
 
@@ -232,7 +236,7 @@ const setSession = (harness: Harness, session: OrchestrationSession) =>
     harness.sessions.set(session.threadId, session);
     harness.sequence += 1;
     const id = `evt-${harness.sequence}`;
-    yield* service.ingestDomainEvent({
+    const event = {
       sequence: harness.sequence,
       eventId: EventId.make(id),
       aggregateKind: "thread",
@@ -244,7 +248,10 @@ const setSession = (harness: Harness, session: OrchestrationSession) =>
       correlationId: CorrelationId.make(`cmd-${id}`),
       metadata: {},
       payload: { threadId: session.threadId, session },
-    } as OrchestrationEvent);
+    } as OrchestrationEvent;
+    for (const personal of toPersonalEvents(event, harness.statuses)) {
+      yield* service.ingestDomainEvent(personal);
+    }
     yield* service.drain;
   });
 

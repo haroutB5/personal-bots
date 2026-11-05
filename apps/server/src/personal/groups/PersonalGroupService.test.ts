@@ -36,6 +36,8 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
@@ -71,6 +73,7 @@ interface Harness {
   readonly messages: Map<string, Array<ProjectionThreadMessage>>;
   /** Threads a `thread.create` made and no `thread.delete` removed. */
   readonly liveThreads: Set<string>;
+  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
 }
 
@@ -79,6 +82,7 @@ const makeHarness = (): Harness => ({
   sessions: new Map(),
   messages: new Map(),
   liveThreads: new Set(),
+  statuses: new Map(),
   sequence: 0,
 });
 
@@ -368,14 +372,23 @@ const eventBase = (harness: Harness, aggregateId: string, occurredAt: string) =>
 
 const setSession = (harness: Harness, session: OrchestrationSession) =>
   Effect.gen(function* () {
-    const service = yield* PersonalGroupService.PersonalGroupService;
     harness.sessions.set(session.threadId, session);
-    yield* service.ingestDomainEvent({
+    yield* ingestAll(harness, {
       ...eventBase(harness, session.threadId, session.updatedAt),
       type: "thread.session-set",
       payload: { threadId: session.threadId, session },
     } as OrchestrationEvent);
+    const service = yield* PersonalGroupService.PersonalGroupService;
     yield* service.drain;
+  });
+
+/** Feeds the events production sees, through the real v1-to-personal mapping. */
+const ingestAll = (harness: Harness, event: OrchestrationEvent) =>
+  Effect.gen(function* () {
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    for (const personal of toPersonalEvents(event, harness.statuses)) {
+      yield* service.ingestDomainEvent(personal);
+    }
   });
 
 const messageSentEvent = (
@@ -420,8 +433,8 @@ const beginTurn = (harness: Harness, threadId: ThreadId) =>
 /** One streamed chunk of a member's reply, as the provider would send it. */
 const streamChunk = (harness: Harness, threadId: ThreadId, turnId: TurnId, chunk: string) =>
   Effect.gen(function* () {
-    const service = yield* PersonalGroupService.PersonalGroupService;
-    yield* service.ingestDomainEvent(
+    yield* ingestAll(
+      harness,
       messageSentEvent(harness, {
         threadId,
         messageId: MessageId.make(`member-${turnId}`),
@@ -432,6 +445,7 @@ const streamChunk = (harness: Harness, threadId: ThreadId, turnId: TurnId, chunk
         at: DateTime.formatIso(yield* DateTime.now),
       }),
     );
+    const service = yield* PersonalGroupService.PersonalGroupService;
     yield* service.drain;
   });
 
@@ -1137,7 +1151,8 @@ it.effect("deltas relay live into the group thread, marked with the speaker", ()
     // the active-member-thread filter, which a group thread also fails; the
     // guard is what makes that safe to reorder or relax.)
     const before = harness.dispatched.length;
-    yield* service.ingestDomainEvent(
+    yield* ingestAll(
+      harness,
       messageSentEvent(harness, {
         threadId: GROUP_THREAD,
         messageId: MessageId.make("echo-1"),
@@ -1166,7 +1181,7 @@ it.effect("a stray turn on the group thread is interrupted and reported", () => 
 
     // The developer view can start a turn on any thread. A provider running on
     // the shared thread would have no persona and would speak for nobody.
-    yield* service.ingestDomainEvent({
+    yield* ingestAll(harness, {
       ...eventBase(harness, GROUP_THREAD, DateTime.formatIso(yield* DateTime.now)),
       type: "thread.turn-start-requested",
       payload: {
@@ -1188,7 +1203,7 @@ it.effect("a stray turn on the group thread is interrupted and reported", () => 
 
     // A turn-start on an unrelated thread is none of this service's business.
     const before = harness.dispatched.length;
-    yield* service.ingestDomainEvent({
+    yield* ingestAll(harness, {
       ...eventBase(harness, "thread-unrelated", DateTime.formatIso(yield* DateTime.now)),
       type: "thread.turn-start-requested",
       payload: {
