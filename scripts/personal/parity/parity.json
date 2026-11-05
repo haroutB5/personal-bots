@@ -6349,7 +6349,7 @@
       "web": "computer/computerState.ts:35",
       "rpcKind": "subscription",
       "wire": "personalBrowser.activity",
-      "contract": "packages/contracts/src/rpc.ts:770",
+      "contract": "packages/contracts/src/rpc.ts:772",
       "views": [
         "ChatsScreen.tsx",
         "ConversationScreen.tsx",
@@ -6368,7 +6368,7 @@
       "web": "computer/computerState.ts:40",
       "rpcKind": "query",
       "wire": "personalBrowser.listFiles",
-      "contract": "packages/contracts/src/rpc.ts:769",
+      "contract": "packages/contracts/src/rpc.ts:771",
       "views": [
         "ChatsScreen.tsx",
         "ConversationScreen.tsx",
@@ -6387,7 +6387,7 @@
       "web": "computer/computerState.ts:44",
       "rpcKind": "command",
       "wire": "personalBrowser.takeControl",
-      "contract": "packages/contracts/src/rpc.ts:766",
+      "contract": "packages/contracts/src/rpc.ts:768",
       "views": [
         "ChatsScreen.tsx",
         "ConversationScreen.tsx",
@@ -6407,7 +6407,7 @@
       "web": "computer/computerState.ts:48",
       "rpcKind": "command",
       "wire": "personalBrowser.returnToAgent",
-      "contract": "packages/contracts/src/rpc.ts:767",
+      "contract": "packages/contracts/src/rpc.ts:769",
       "views": [
         "ChatsScreen.tsx",
         "ConversationScreen.tsx",
@@ -6427,7 +6427,7 @@
       "web": "computer/computerState.ts:52",
       "rpcKind": "command",
       "wire": "personalBrowser.close",
-      "contract": "packages/contracts/src/rpc.ts:768",
+      "contract": "packages/contracts/src/rpc.ts:770",
       "views": [
         "ChatsScreen.tsx",
         "ConversationScreen.tsx",
@@ -6447,7 +6447,7 @@
       "web": "computer/computerState.ts:56",
       "rpcKind": "command",
       "wire": "personalBrowser.approveEgress",
-      "contract": "packages/contracts/src/rpc.ts:771",
+      "contract": "packages/contracts/src/rpc.ts:773",
       "views": [
         "ChatsScreen.tsx",
         "ConversationScreen.tsx",
@@ -6467,7 +6467,7 @@
       "web": "computer/computerState.ts:60",
       "rpcKind": "command",
       "wire": "personalBrowser.refuseEgress",
-      "contract": "packages/contracts/src/rpc.ts:772",
+      "contract": "packages/contracts/src/rpc.ts:774",
       "views": [
         "ChatsScreen.tsx",
         "ConversationScreen.tsx",
@@ -6487,7 +6487,7 @@
       "web": "computer/desktopState.ts:27",
       "rpcKind": "subscription",
       "wire": "personalDesktop.status",
-      "contract": "packages/contracts/src/rpc.ts:774",
+      "contract": "packages/contracts/src/rpc.ts:776",
       "views": [
         "ChatsScreen.tsx",
         "ConversationDesktopLine.tsx",
@@ -6506,7 +6506,7 @@
       "web": "computer/desktopState.ts:31",
       "rpcKind": "command",
       "wire": "personalDesktop.stop",
-      "contract": "packages/contracts/src/rpc.ts:775",
+      "contract": "packages/contracts/src/rpc.ts:777",
       "views": [
         "ChatsScreen.tsx",
         "ConversationDesktopLine.tsx",
@@ -6526,7 +6526,7 @@
       "web": "computer/desktopState.ts:36",
       "rpcKind": "subscription",
       "wire": "personalDesktop.activity",
-      "contract": "packages/contracts/src/rpc.ts:776",
+      "contract": "packages/contracts/src/rpc.ts:778",
       "views": [
         "ChatsScreen.tsx",
         "ConversationDesktopLine.tsx",
@@ -6545,7 +6545,7 @@
       "web": "useConnectionApprovals.ts:26",
       "rpcKind": "query",
       "wire": "personalConnectionApprovals.list",
-      "contract": "packages/contracts/src/rpc.ts:749",
+      "contract": "packages/contracts/src/rpc.ts:751",
       "views": ["ConversationScreen.tsx"],
       "pr": "A7",
       "status": "planned",
@@ -6558,7 +6558,7 @@
       "web": "useConnectionApprovals.ts:45",
       "rpcKind": "command",
       "wire": "personalConnectionApprovals.decide",
-      "contract": "packages/contracts/src/rpc.ts:750",
+      "contract": "packages/contracts/src/rpc.ts:752",
       "views": ["ConversationScreen.tsx"],
       "userAction": true,
       "pr": "A7",
@@ -6572,7 +6572,7 @@
       "web": "useLeadBotChanges.ts:24",
       "rpcKind": "query",
       "wire": "personalLeadBotChanges.list",
-      "contract": "packages/contracts/src/rpc.ts:696",
+      "contract": "packages/contracts/src/rpc.ts:698",
       "views": ["ConversationScreen.tsx"],
       "pr": "A6",
       "status": "planned",
@@ -6585,7 +6585,7 @@
       "web": "useLeadBotChanges.ts:40",
       "rpcKind": "command",
       "wire": "personalLeadBotChanges.decide",
-      "contract": "packages/contracts/src/rpc.ts:697",
+      "contract": "packages/contracts/src/rpc.ts:699",
       "views": ["ConversationScreen.tsx"],
       "userAction": true,
       "pr": "A6",
@@ -6599,7 +6599,7 @@
       "web": "useLoginRequests.ts:18",
       "rpcKind": "query",
       "wire": "personalLoginRequests.list",
-      "contract": "packages/contracts/src/rpc.ts:755",
+      "contract": "packages/contracts/src/rpc.ts:757",
       "views": ["ConversationScreen.tsx"],
       "pr": "A7",
       "status": "planned",
@@ -6612,7 +6612,7 @@
       "web": "useLoginRequests.ts:24",
       "rpcKind": "command",
       "wire": "personalLoginRequests.submit",
-      "contract": "packages/contracts/src/rpc.ts:756",
+      "contract": "packages/contracts/src/rpc.ts:758",
       "views": ["ConversationScreen.tsx"],
       "userAction": true,
       "pr": "A7",
@@ -6626,7 +6626,7 @@
       "web": "useLoginRequests.ts:28",
       "rpcKind": "command",
       "wire": "personalLoginRequests.cancel",
-      "contract": "packages/contracts/src/rpc.ts:757",
+      "contract": "packages/contracts/src/rpc.ts:759",
       "views": ["ConversationScreen.tsx"],
       "userAction": true,
       "pr": "A7",
@@ -6640,7 +6640,7 @@
       "web": "useMessageSearch.ts:13",
       "rpcKind": "command",
       "wire": "personalBots.searchMessages",
-      "contract": "packages/contracts/src/rpc.ts:671",
+      "contract": "packages/contracts/src/rpc.ts:673",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -6710,7 +6710,7 @@
       "web": "usePersonalAutomation.ts:62",
       "rpcKind": "subscription",
       "wire": "personalTasks.subscribe",
-      "contract": "packages/contracts/src/rpc.ts:707",
+      "contract": "packages/contracts/src/rpc.ts:709",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -6747,7 +6747,7 @@
       "web": "usePersonalAutomation.ts:68",
       "rpcKind": "query",
       "wire": "personalTasks.get",
-      "contract": "packages/contracts/src/rpc.ts:703",
+      "contract": "packages/contracts/src/rpc.ts:705",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -6784,7 +6784,7 @@
       "web": "usePersonalAutomation.ts:75",
       "rpcKind": "query",
       "wire": "personalTasks.related",
-      "contract": "packages/contracts/src/rpc.ts:709",
+      "contract": "packages/contracts/src/rpc.ts:711",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -6821,7 +6821,7 @@
       "web": "usePersonalAutomation.ts:82",
       "rpcKind": "command",
       "wire": "personalTasks.history",
-      "contract": "packages/contracts/src/rpc.ts:708",
+      "contract": "packages/contracts/src/rpc.ts:710",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -6859,7 +6859,7 @@
       "web": "usePersonalAutomation.ts:87",
       "rpcKind": "query",
       "wire": "personalRoutines.list",
-      "contract": "packages/contracts/src/rpc.ts:778",
+      "contract": "packages/contracts/src/rpc.ts:780",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -6927,7 +6927,7 @@
       "web": "usePersonalAutomation.ts:102",
       "rpcKind": "query",
       "wire": "personalMemory.list",
-      "contract": "packages/contracts/src/rpc.ts:790",
+      "contract": "packages/contracts/src/rpc.ts:792",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -6964,7 +6964,7 @@
       "web": "usePersonalAutomation.ts:110",
       "rpcKind": "query",
       "wire": "personalMemory.rulesUsage",
-      "contract": "packages/contracts/src/rpc.ts:798",
+      "contract": "packages/contracts/src/rpc.ts:800",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7001,7 +7001,7 @@
       "web": "usePersonalAutomation.ts:123",
       "rpcKind": "query",
       "wire": "personalMemory.turnContext",
-      "contract": "packages/contracts/src/rpc.ts:799",
+      "contract": "packages/contracts/src/rpc.ts:801",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7038,7 +7038,7 @@
       "web": "usePersonalAutomation.ts:134",
       "rpcKind": "query",
       "wire": "personalMemory.tidyLog",
-      "contract": "packages/contracts/src/rpc.ts:801",
+      "contract": "packages/contracts/src/rpc.ts:803",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7075,7 +7075,7 @@
       "web": "usePersonalAutomation.ts:145",
       "rpcKind": "query",
       "wire": "personalMemory.cards",
-      "contract": "packages/contracts/src/rpc.ts:806",
+      "contract": "packages/contracts/src/rpc.ts:808",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7112,7 +7112,7 @@
       "web": "usePersonalAutomation.ts:152",
       "rpcKind": "query",
       "wire": "personalPush.getSettings",
-      "contract": "packages/contracts/src/rpc.ts:810",
+      "contract": "packages/contracts/src/rpc.ts:812",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7149,7 +7149,7 @@
       "web": "usePersonalAutomation.ts:194",
       "rpcKind": "command",
       "wire": "personalTasks.cancel",
-      "contract": "packages/contracts/src/rpc.ts:705",
+      "contract": "packages/contracts/src/rpc.ts:707",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7187,7 +7187,7 @@
       "web": "usePersonalAutomation.ts:199",
       "rpcKind": "command",
       "wire": "personalTasks.retry",
-      "contract": "packages/contracts/src/rpc.ts:706",
+      "contract": "packages/contracts/src/rpc.ts:708",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7225,7 +7225,7 @@
       "web": "usePersonalAutomation.ts:204",
       "rpcKind": "command",
       "wire": "personalRoutines.create",
-      "contract": "packages/contracts/src/rpc.ts:779",
+      "contract": "packages/contracts/src/rpc.ts:781",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7263,7 +7263,7 @@
       "web": "usePersonalAutomation.ts:210",
       "rpcKind": "command",
       "wire": "personalRoutines.update",
-      "contract": "packages/contracts/src/rpc.ts:780",
+      "contract": "packages/contracts/src/rpc.ts:782",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7301,7 +7301,7 @@
       "web": "usePersonalAutomation.ts:216",
       "rpcKind": "command",
       "wire": "personalRoutines.delete",
-      "contract": "packages/contracts/src/rpc.ts:781",
+      "contract": "packages/contracts/src/rpc.ts:783",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7339,7 +7339,7 @@
       "web": "usePersonalAutomation.ts:222",
       "rpcKind": "command",
       "wire": "personalRoutines.pause",
-      "contract": "packages/contracts/src/rpc.ts:782",
+      "contract": "packages/contracts/src/rpc.ts:784",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7377,7 +7377,7 @@
       "web": "usePersonalAutomation.ts:228",
       "rpcKind": "command",
       "wire": "personalRoutines.resume",
-      "contract": "packages/contracts/src/rpc.ts:783",
+      "contract": "packages/contracts/src/rpc.ts:785",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7415,7 +7415,7 @@
       "web": "usePersonalAutomation.ts:234",
       "rpcKind": "command",
       "wire": "personalRoutines.deleteMany",
-      "contract": "packages/contracts/src/rpc.ts:784",
+      "contract": "packages/contracts/src/rpc.ts:786",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7453,7 +7453,7 @@
       "web": "usePersonalAutomation.ts:240",
       "rpcKind": "command",
       "wire": "personalRoutines.setEnabledMany",
-      "contract": "packages/contracts/src/rpc.ts:785",
+      "contract": "packages/contracts/src/rpc.ts:787",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7491,7 +7491,7 @@
       "web": "usePersonalAutomation.ts:246",
       "rpcKind": "command",
       "wire": "personalRoutines.runNow",
-      "contract": "packages/contracts/src/rpc.ts:786",
+      "contract": "packages/contracts/src/rpc.ts:788",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7529,7 +7529,7 @@
       "web": "usePersonalAutomation.ts:252",
       "rpcKind": "command",
       "wire": "personalRoutines.regenerateHook",
-      "contract": "packages/contracts/src/rpc.ts:787",
+      "contract": "packages/contracts/src/rpc.ts:789",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7567,7 +7567,7 @@
       "web": "usePersonalAutomation.ts:258",
       "rpcKind": "command",
       "wire": "personalMemory.delete",
-      "contract": "packages/contracts/src/rpc.ts:793",
+      "contract": "packages/contracts/src/rpc.ts:795",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7605,7 +7605,7 @@
       "web": "usePersonalAutomation.ts:265",
       "rpcKind": "command",
       "wire": "personalMemory.feedback",
-      "contract": "packages/contracts/src/rpc.ts:800",
+      "contract": "packages/contracts/src/rpc.ts:802",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7643,7 +7643,7 @@
       "web": "usePersonalAutomation.ts:271",
       "rpcKind": "command",
       "wire": "personalMemory.deleteMany",
-      "contract": "packages/contracts/src/rpc.ts:794",
+      "contract": "packages/contracts/src/rpc.ts:796",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7681,7 +7681,7 @@
       "web": "usePersonalAutomation.ts:278",
       "rpcKind": "command",
       "wire": "personalMemory.restore",
-      "contract": "packages/contracts/src/rpc.ts:795",
+      "contract": "packages/contracts/src/rpc.ts:797",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7719,7 +7719,7 @@
       "web": "usePersonalAutomation.ts:285",
       "rpcKind": "query",
       "wire": "personalMemory.get",
-      "contract": "packages/contracts/src/rpc.ts:797",
+      "contract": "packages/contracts/src/rpc.ts:799",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7756,7 +7756,7 @@
       "web": "usePersonalAutomation.ts:306",
       "rpcKind": "command",
       "wire": "personalMemory.undoNote",
-      "contract": "packages/contracts/src/rpc.ts:796",
+      "contract": "packages/contracts/src/rpc.ts:798",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7794,7 +7794,7 @@
       "web": "usePersonalAutomation.ts:312",
       "rpcKind": "command",
       "wire": "personalMemory.tidySetMode",
-      "contract": "packages/contracts/src/rpc.ts:802",
+      "contract": "packages/contracts/src/rpc.ts:804",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7832,7 +7832,7 @@
       "web": "usePersonalAutomation.ts:319",
       "rpcKind": "command",
       "wire": "personalMemory.tidyRun",
-      "contract": "packages/contracts/src/rpc.ts:803",
+      "contract": "packages/contracts/src/rpc.ts:805",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7870,7 +7870,7 @@
       "web": "usePersonalAutomation.ts:330",
       "rpcKind": "command",
       "wire": "personalMemory.tidyDecide",
-      "contract": "packages/contracts/src/rpc.ts:804",
+      "contract": "packages/contracts/src/rpc.ts:806",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7908,7 +7908,7 @@
       "web": "usePersonalAutomation.ts:341",
       "rpcKind": "command",
       "wire": "personalMemory.tidyUndo",
-      "contract": "packages/contracts/src/rpc.ts:805",
+      "contract": "packages/contracts/src/rpc.ts:807",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7946,7 +7946,7 @@
       "web": "usePersonalAutomation.ts:348",
       "rpcKind": "command",
       "wire": "personalPush.subscribe",
-      "contract": "packages/contracts/src/rpc.ts:811",
+      "contract": "packages/contracts/src/rpc.ts:813",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -7983,7 +7983,7 @@
       "web": "usePersonalAutomation.ts:354",
       "rpcKind": "command",
       "wire": "personalPush.unsubscribe",
-      "contract": "packages/contracts/src/rpc.ts:812",
+      "contract": "packages/contracts/src/rpc.ts:814",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -8020,7 +8020,7 @@
       "web": "usePersonalAutomation.ts:360",
       "rpcKind": "command",
       "wire": "personalPush.test",
-      "contract": "packages/contracts/src/rpc.ts:813",
+      "contract": "packages/contracts/src/rpc.ts:815",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -8058,7 +8058,7 @@
       "web": "usePersonalAutomation.ts:366",
       "rpcKind": "command",
       "wire": "personalPush.setPreferences",
-      "contract": "packages/contracts/src/rpc.ts:814",
+      "contract": "packages/contracts/src/rpc.ts:816",
       "views": [
         "BotRoutinesSection.tsx",
         "BotThreadsScreen.tsx",
@@ -8096,7 +8096,7 @@
       "web": "usePersonalAutomation.ts:374",
       "rpcKind": "command",
       "wire": "personalBots.prewarmThread",
-      "contract": "packages/contracts/src/rpc.ts:675",
+      "contract": "packages/contracts/src/rpc.ts:677",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -8165,7 +8165,7 @@
       "web": "usePersonalAutomation.ts:379",
       "rpcKind": "command",
       "wire": "personalPush.reportViewing",
-      "contract": "packages/contracts/src/rpc.ts:815",
+      "contract": "packages/contracts/src/rpc.ts:817",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -8234,7 +8234,7 @@
       "web": "usePersonalAutomation.ts:385",
       "rpcKind": "command",
       "wire": "personalPush.reportForeground",
-      "contract": "packages/contracts/src/rpc.ts:816",
+      "contract": "packages/contracts/src/rpc.ts:818",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -8303,7 +8303,7 @@
       "web": "usePersonalConnections.ts:15",
       "rpcKind": "query",
       "wire": "personalConnections.list",
-      "contract": "packages/contracts/src/rpc.ts:736",
+      "contract": "packages/contracts/src/rpc.ts:738",
       "views": ["PersonalConnectionsScreen.tsx"],
       "pr": "A15",
       "status": "planned",
@@ -8316,7 +8316,7 @@
       "web": "usePersonalConnections.ts:30",
       "rpcKind": "command",
       "wire": "personalConnections.connect",
-      "contract": "packages/contracts/src/rpc.ts:737",
+      "contract": "packages/contracts/src/rpc.ts:739",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8330,7 +8330,7 @@
       "web": "usePersonalConnections.ts:36",
       "rpcKind": "command",
       "wire": "personalConnections.validate",
-      "contract": "packages/contracts/src/rpc.ts:738",
+      "contract": "packages/contracts/src/rpc.ts:740",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8344,7 +8344,7 @@
       "web": "usePersonalConnections.ts:42",
       "rpcKind": "command",
       "wire": "personalConnections.disable",
-      "contract": "packages/contracts/src/rpc.ts:739",
+      "contract": "packages/contracts/src/rpc.ts:741",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8358,7 +8358,7 @@
       "web": "usePersonalConnections.ts:48",
       "rpcKind": "command",
       "wire": "personalConnections.reconnect",
-      "contract": "packages/contracts/src/rpc.ts:740",
+      "contract": "packages/contracts/src/rpc.ts:742",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8372,7 +8372,7 @@
       "web": "usePersonalConnections.ts:54",
       "rpcKind": "command",
       "wire": "personalConnections.disconnect",
-      "contract": "packages/contracts/src/rpc.ts:741",
+      "contract": "packages/contracts/src/rpc.ts:743",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8386,7 +8386,7 @@
       "web": "usePersonalConnections.ts:60",
       "rpcKind": "command",
       "wire": "personalConnections.rotate",
-      "contract": "packages/contracts/src/rpc.ts:742",
+      "contract": "packages/contracts/src/rpc.ts:744",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8400,7 +8400,7 @@
       "web": "usePersonalConnections.ts:70",
       "rpcKind": "command",
       "wire": "personalConnections.browserConnect",
-      "contract": "packages/contracts/src/rpc.ts:743",
+      "contract": "packages/contracts/src/rpc.ts:745",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8414,7 +8414,7 @@
       "web": "usePersonalConnections.ts:76",
       "rpcKind": "command",
       "wire": "personalConnections.setSettings",
-      "contract": "packages/contracts/src/rpc.ts:744",
+      "contract": "packages/contracts/src/rpc.ts:746",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8428,7 +8428,7 @@
       "web": "usePersonalConnections.ts:86",
       "rpcKind": "command",
       "wire": "personalConnections.importProbe",
-      "contract": "packages/contracts/src/rpc.ts:745",
+      "contract": "packages/contracts/src/rpc.ts:747",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8442,7 +8442,7 @@
       "web": "usePersonalConnections.ts:91",
       "rpcKind": "command",
       "wire": "personalConnections.importAdopt",
-      "contract": "packages/contracts/src/rpc.ts:746",
+      "contract": "packages/contracts/src/rpc.ts:748",
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8456,7 +8456,7 @@
       "web": "usePersonalGroups.ts:27",
       "rpcKind": "query",
       "wire": "personalGroups.list",
-      "contract": "packages/contracts/src/rpc.ts:714",
+      "contract": "packages/contracts/src/rpc.ts:716",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8479,7 +8479,7 @@
       "web": "usePersonalGroups.ts:104",
       "rpcKind": "subscription",
       "wire": "personalGroups.subscribe",
-      "contract": "packages/contracts/src/rpc.ts:723",
+      "contract": "packages/contracts/src/rpc.ts:725",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8502,7 +8502,7 @@
       "web": "usePersonalGroups.ts:129",
       "rpcKind": "command",
       "wire": "personalGroups.create",
-      "contract": "packages/contracts/src/rpc.ts:715",
+      "contract": "packages/contracts/src/rpc.ts:717",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -8571,7 +8571,7 @@
       "web": "usePersonalGroups.ts:135",
       "rpcKind": "command",
       "wire": "personalGroups.update",
-      "contract": "packages/contracts/src/rpc.ts:716",
+      "contract": "packages/contracts/src/rpc.ts:718",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8595,7 +8595,7 @@
       "web": "usePersonalGroups.ts:141",
       "rpcKind": "command",
       "wire": "personalGroups.delete",
-      "contract": "packages/contracts/src/rpc.ts:717",
+      "contract": "packages/contracts/src/rpc.ts:719",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8619,7 +8619,7 @@
       "web": "usePersonalGroups.ts:147",
       "rpcKind": "command",
       "wire": "personalGroups.addMember",
-      "contract": "packages/contracts/src/rpc.ts:718",
+      "contract": "packages/contracts/src/rpc.ts:720",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8643,7 +8643,7 @@
       "web": "usePersonalGroups.ts:153",
       "rpcKind": "command",
       "wire": "personalGroups.removeMember",
-      "contract": "packages/contracts/src/rpc.ts:719",
+      "contract": "packages/contracts/src/rpc.ts:721",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8667,7 +8667,7 @@
       "web": "usePersonalGroups.ts:164",
       "rpcKind": "command",
       "wire": "personalGroups.sendMessage",
-      "contract": "packages/contracts/src/rpc.ts:720",
+      "contract": "packages/contracts/src/rpc.ts:722",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8691,7 +8691,7 @@
       "web": "usePersonalGroups.ts:169",
       "rpcKind": "command",
       "wire": "personalGroups.continueRound",
-      "contract": "packages/contracts/src/rpc.ts:721",
+      "contract": "packages/contracts/src/rpc.ts:723",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8715,7 +8715,7 @@
       "web": "usePersonalGroups.ts:174",
       "rpcKind": "command",
       "wire": "personalGroups.stop",
-      "contract": "packages/contracts/src/rpc.ts:722",
+      "contract": "packages/contracts/src/rpc.ts:724",
       "views": [
         "AllChatsCount.tsx",
         "BotForm.tsx",
@@ -8739,7 +8739,7 @@
       "web": "usePersonalLogins.ts:15",
       "rpcKind": "query",
       "wire": "personalLogins.list",
-      "contract": "packages/contracts/src/rpc.ts:754",
+      "contract": "packages/contracts/src/rpc.ts:756",
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "pr": "A15",
       "status": "planned",
@@ -8752,7 +8752,7 @@
       "web": "usePersonalLogins.ts:27",
       "rpcKind": "command",
       "wire": "personalLogins.create",
-      "contract": "packages/contracts/src/rpc.ts:758",
+      "contract": "packages/contracts/src/rpc.ts:760",
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8766,7 +8766,7 @@
       "web": "usePersonalLogins.ts:33",
       "rpcKind": "command",
       "wire": "personalLogins.update",
-      "contract": "packages/contracts/src/rpc.ts:759",
+      "contract": "packages/contracts/src/rpc.ts:761",
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8780,7 +8780,7 @@
       "web": "usePersonalLogins.ts:39",
       "rpcKind": "command",
       "wire": "personalLogins.delete",
-      "contract": "packages/contracts/src/rpc.ts:760",
+      "contract": "packages/contracts/src/rpc.ts:762",
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8794,7 +8794,7 @@
       "web": "usePersonalLogins.ts:45",
       "rpcKind": "command",
       "wire": "personalLogins.deleteMany",
-      "contract": "packages/contracts/src/rpc.ts:762",
+      "contract": "packages/contracts/src/rpc.ts:764",
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8808,7 +8808,7 @@
       "web": "usePersonalLogins.ts:51",
       "rpcKind": "command",
       "wire": "personalLogins.setSensitive",
-      "contract": "packages/contracts/src/rpc.ts:761",
+      "contract": "packages/contracts/src/rpc.ts:763",
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
@@ -8822,7 +8822,7 @@
       "web": "useRemovedBots.ts:24",
       "rpcKind": "query",
       "wire": "personalBots.listRemoved",
-      "contract": "packages/contracts/src/rpc.ts:680",
+      "contract": "packages/contracts/src/rpc.ts:682",
       "views": ["PersonalSettingsScreen.tsx", "RemovedBotsScreen.tsx"],
       "pr": "A11",
       "status": "planned",
@@ -8835,7 +8835,7 @@
       "web": "useRemovedBots.ts:42",
       "rpcKind": "command",
       "wire": "personalBots.restore",
-      "contract": "packages/contracts/src/rpc.ts:681",
+      "contract": "packages/contracts/src/rpc.ts:683",
       "views": ["PersonalSettingsScreen.tsx", "RemovedBotsScreen.tsx"],
       "userAction": true,
       "pr": "A11",
@@ -8849,7 +8849,7 @@
       "web": "useSecretRequests.ts:23",
       "rpcKind": "query",
       "wire": "personalSecrets.listPending",
-      "contract": "packages/contracts/src/rpc.ts:726",
+      "contract": "packages/contracts/src/rpc.ts:728",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8867,7 +8867,7 @@
       "web": "useSecretRequests.ts:43",
       "rpcKind": "command",
       "wire": "personalSecrets.fulfill",
-      "contract": "packages/contracts/src/rpc.ts:727",
+      "contract": "packages/contracts/src/rpc.ts:729",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8886,7 +8886,7 @@
       "web": "useSecretRequests.ts:50",
       "rpcKind": "command",
       "wire": "personalSecrets.cancel",
-      "contract": "packages/contracts/src/rpc.ts:728",
+      "contract": "packages/contracts/src/rpc.ts:730",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8905,7 +8905,7 @@
       "web": "useSecretRequests.ts:64",
       "rpcKind": "query",
       "wire": "personalSecrets.list",
-      "contract": "packages/contracts/src/rpc.ts:729",
+      "contract": "packages/contracts/src/rpc.ts:731",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8923,7 +8923,7 @@
       "web": "useSecretRequests.ts:76",
       "rpcKind": "command",
       "wire": "personalSecrets.create",
-      "contract": "packages/contracts/src/rpc.ts:730",
+      "contract": "packages/contracts/src/rpc.ts:732",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8942,7 +8942,7 @@
       "web": "useSecretRequests.ts:85",
       "rpcKind": "command",
       "wire": "personalSecrets.setSharing",
-      "contract": "packages/contracts/src/rpc.ts:732",
+      "contract": "packages/contracts/src/rpc.ts:734",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8961,7 +8961,7 @@
       "web": "useSecretRequests.ts:95",
       "rpcKind": "command",
       "wire": "personalSecrets.setMode",
-      "contract": "packages/contracts/src/rpc.ts:733",
+      "contract": "packages/contracts/src/rpc.ts:735",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8980,7 +8980,7 @@
       "web": "useSecretRequests.ts:105",
       "rpcKind": "command",
       "wire": "personalSecrets.delete",
-      "contract": "packages/contracts/src/rpc.ts:731",
+      "contract": "packages/contracts/src/rpc.ts:733",
       "views": [
         "ApiKeysScreen.tsx",
         "ChatsScreen.tsx",
@@ -8999,7 +8999,7 @@
       "web": "useWorkingProgress.ts:33",
       "rpcKind": "query",
       "wire": "personalBots.workingProgress",
-      "contract": "packages/contracts/src/rpc.ts:672",
+      "contract": "packages/contracts/src/rpc.ts:674",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9067,7 +9067,7 @@
       "web": "state/lazyThreadShells.ts:35",
       "rpcKind": "query",
       "wire": "personalBots.threadShells",
-      "contract": "packages/contracts/src/rpc.ts:668",
+      "contract": "packages/contracts/src/rpc.ts:670",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9135,7 +9135,7 @@
       "web": "state/threadFullText.ts:16",
       "rpcKind": "query",
       "wire": "personalBots.threadFullText",
-      "contract": "packages/contracts/src/rpc.ts:669",
+      "contract": "packages/contracts/src/rpc.ts:671",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9203,7 +9203,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:44",
       "rpcKind": "query",
       "wire": "personalBots.list",
-      "contract": "packages/contracts/src/rpc.ts:660",
+      "contract": "packages/contracts/src/rpc.ts:662",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9271,7 +9271,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:66",
       "rpcKind": "subscription",
       "wire": "personalPush.inApp",
-      "contract": "packages/contracts/src/rpc.ts:817",
+      "contract": "packages/contracts/src/rpc.ts:819",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9339,7 +9339,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:78",
       "rpcKind": "command",
       "wire": "personalPush.ackInApp",
-      "contract": "packages/contracts/src/rpc.ts:818",
+      "contract": "packages/contracts/src/rpc.ts:820",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9408,7 +9408,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:127",
       "rpcKind": "query",
       "wire": "personalBots.getProfile",
-      "contract": "packages/contracts/src/rpc.ts:676",
+      "contract": "packages/contracts/src/rpc.ts:678",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9476,7 +9476,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:138",
       "rpcKind": "query",
       "wire": "personalBots.listFiles",
-      "contract": "packages/contracts/src/rpc.ts:678",
+      "contract": "packages/contracts/src/rpc.ts:680",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9544,7 +9544,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:152",
       "rpcKind": "query",
       "wire": "personalBots.tokenUsage",
-      "contract": "packages/contracts/src/rpc.ts:673",
+      "contract": "packages/contracts/src/rpc.ts:675",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9612,7 +9612,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:177",
       "rpcKind": "command",
       "wire": "personalBots.create",
-      "contract": "packages/contracts/src/rpc.ts:661",
+      "contract": "packages/contracts/src/rpc.ts:663",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9681,7 +9681,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:183",
       "rpcKind": "command",
       "wire": "personalBots.update",
-      "contract": "packages/contracts/src/rpc.ts:662",
+      "contract": "packages/contracts/src/rpc.ts:664",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9750,7 +9750,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:190",
       "rpcKind": "command",
       "wire": "personalBots.recheckProvider",
-      "contract": "packages/contracts/src/rpc.ts:679",
+      "contract": "packages/contracts/src/rpc.ts:681",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9819,7 +9819,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:195",
       "rpcKind": "command",
       "wire": "personalBots.delete",
-      "contract": "packages/contracts/src/rpc.ts:663",
+      "contract": "packages/contracts/src/rpc.ts:665",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9888,7 +9888,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:201",
       "rpcKind": "command",
       "wire": "personalBots.createThread",
-      "contract": "packages/contracts/src/rpc.ts:664",
+      "contract": "packages/contracts/src/rpc.ts:666",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -9957,7 +9957,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:207",
       "rpcKind": "command",
       "wire": "personalBots.archiveThread",
-      "contract": "packages/contracts/src/rpc.ts:665",
+      "contract": "packages/contracts/src/rpc.ts:667",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10026,7 +10026,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:213",
       "rpcKind": "command",
       "wire": "personalBots.deleteThread",
-      "contract": "packages/contracts/src/rpc.ts:666",
+      "contract": "packages/contracts/src/rpc.ts:668",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10095,7 +10095,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:221",
       "rpcKind": "command",
       "wire": "personalBots.archiveThreads",
-      "contract": "packages/contracts/src/rpc.ts:667",
+      "contract": "packages/contracts/src/rpc.ts:669",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10164,7 +10164,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:227",
       "rpcKind": "command",
       "wire": "personalBots.deleteThreads",
-      "contract": "packages/contracts/src/rpc.ts:674",
+      "contract": "packages/contracts/src/rpc.ts:676",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10233,7 +10233,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:238",
       "rpcKind": "command",
       "wire": "personalBots.updateThreads",
-      "contract": "packages/contracts/src/rpc.ts:670",
+      "contract": "packages/contracts/src/rpc.ts:672",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10302,7 +10302,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:264",
       "rpcKind": "command",
       "wire": "personalFiles.delete",
-      "contract": "packages/contracts/src/rpc.ts:698",
+      "contract": "packages/contracts/src/rpc.ts:700",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10371,7 +10371,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:270",
       "rpcKind": "command",
       "wire": "personalFiles.deleteMany",
-      "contract": "packages/contracts/src/rpc.ts:699",
+      "contract": "packages/contracts/src/rpc.ts:701",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10440,7 +10440,7 @@
       "web": "packages/personal-client/src/bots/personalBots.ts:276",
       "rpcKind": "command",
       "wire": "personalBots.setProfile",
-      "contract": "packages/contracts/src/rpc.ts:677",
+      "contract": "packages/contracts/src/rpc.ts:679",
       "views": [
         "AllChatsCount.tsx",
         "ApiKeysScreen.tsx",
@@ -10509,7 +10509,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:78",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.start",
-      "contract": "packages/contracts/src/rpc.ts:685",
+      "contract": "packages/contracts/src/rpc.ts:687",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10565,7 +10565,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:84",
       "rpcKind": "query",
       "wire": "personalVoiceCalls.list",
-      "contract": "packages/contracts/src/rpc.ts:692",
+      "contract": "packages/contracts/src/rpc.ts:694",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10620,7 +10620,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:95",
       "rpcKind": "query",
       "wire": "personalVoiceCalls.transcript",
-      "contract": "packages/contracts/src/rpc.ts:694",
+      "contract": "packages/contracts/src/rpc.ts:696",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10675,7 +10675,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:106",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.sample",
-      "contract": "packages/contracts/src/rpc.ts:695",
+      "contract": "packages/contracts/src/rpc.ts:697",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10731,7 +10731,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:120",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.snapshot",
-      "contract": "packages/contracts/src/rpc.ts:693",
+      "contract": "packages/contracts/src/rpc.ts:695",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10787,7 +10787,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:126",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.send",
-      "contract": "packages/contracts/src/rpc.ts:690",
+      "contract": "packages/contracts/src/rpc.ts:692",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10843,7 +10843,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:132",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.finish",
-      "contract": "packages/contracts/src/rpc.ts:691",
+      "contract": "packages/contracts/src/rpc.ts:693",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10899,7 +10899,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:149",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.checkKey",
-      "contract": "packages/contracts/src/rpc.ts:686",
+      "contract": "packages/contracts/src/rpc.ts:688",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -10955,7 +10955,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:155",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.lookupMemory",
-      "contract": "packages/contracts/src/rpc.ts:687",
+      "contract": "packages/contracts/src/rpc.ts:689",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -11011,7 +11011,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:164",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.renewPass",
-      "contract": "packages/contracts/src/rpc.ts:688",
+      "contract": "packages/contracts/src/rpc.ts:690",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
@@ -11067,7 +11067,7 @@
       "web": "packages/personal-client/src/conversation/voice/voiceCallApi.ts:170",
       "rpcKind": "command",
       "wire": "personalVoiceCalls.searchWeb",
-      "contract": "packages/contracts/src/rpc.ts:689",
+      "contract": "packages/contracts/src/rpc.ts:691",
       "views": [
         "BotAvatar.tsx",
         "BotFallbackSection.tsx",
