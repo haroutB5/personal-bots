@@ -189,6 +189,22 @@
       "types": "./src/groups/personalGroups.ts",
       "import": "./src/groups/personalGroups.ts"
     },
+    "./teams/newTeamModel": {
+      "types": "./src/teams/newTeamModel.ts",
+      "import": "./src/teams/newTeamModel.ts"
+    },
+    "./teams/teamDiagramModel": {
+      "types": "./src/teams/teamDiagramModel.ts",
+      "import": "./src/teams/teamDiagramModel.ts"
+    },
+    "./teams/teamMoves": {
+      "types": "./src/teams/teamMoves.ts",
+      "import": "./src/teams/teamMoves.ts"
+    },
+    "./teams/removedBotsModel": {
+      "types": "./src/teams/removedBotsModel.ts",
+      "import": "./src/teams/removedBotsModel.ts"
+    },
     "./conversation/greeting": {
       "types": "./src/conversation/greeting.ts",
       "import": "./src/conversation/greeting.ts"
