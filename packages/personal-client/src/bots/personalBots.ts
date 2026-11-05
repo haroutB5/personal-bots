@@ -3,12 +3,15 @@ import type {
   PersonalBotsListResult,
   PersonalBotTokenUsageResult,
   PersonalFilesListResult,
+  PersonalConnectionApprovalListResult,
   PersonalLeadBotChangeListResult,
+  PersonalLoginRequest,
   PersonalMemoryCardsResult,
   PersonalMemoryRulesUsage,
   PersonalProfile,
   PersonalPushInAppNotification,
   PersonalRoutineListResult,
+  PersonalSecretsListPendingResult,
   PersonalTask,
   PersonalTaskDetail,
   PersonalTaskListResult,
@@ -328,6 +331,62 @@ export function createPersonalBotsClient<R, ER, P>(
     staleTimeMs: 10_000,
   });
 
+  /**
+   * Every secret a bot is waiting on. Polled: the server has no secret
+   * subscription, and a request that lands while the chat is open still has to
+   * surface without reopening the screen.
+   */
+  const personalSecretsListPending = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-secrets:pending",
+    tag: WS_METHODS.personalSecretsListPending,
+    staleTimeMs: 5_000,
+    refreshIntervalMs: 15_000,
+  });
+
+  const personalSecretsFulfill = createEnvironmentRpcCommand(runtime, {
+    label: "personal-secrets:fulfill",
+    tag: WS_METHODS.personalSecretsFulfill,
+  });
+
+  const personalSecretsCancel = createEnvironmentRpcCommand(runtime, {
+    label: "personal-secrets:cancel",
+    tag: WS_METHODS.personalSecretsCancel,
+  });
+
+  /** Sign-in requests for one chat; the server keeps the settled rows for the card's ending. */
+  const personalLoginRequests = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-login-requests:list",
+    tag: WS_METHODS.personalLoginRequestsList,
+    staleTimeMs: 2_000,
+    refreshIntervalMs: 2_000,
+  });
+
+  const personalLoginRequestsSubmit = createEnvironmentRpcCommand(runtime, {
+    label: "personal-login-requests:submit",
+    tag: WS_METHODS.personalLoginRequestsSubmit,
+  });
+
+  const personalLoginRequestsCancel = createEnvironmentRpcCommand(runtime, {
+    label: "personal-login-requests:cancel",
+    tag: WS_METHODS.personalLoginRequestsCancel,
+  });
+
+  /**
+   * Every gated vendor call waiting on the owner. Polled shorter than the
+   * secret list: the task on the other end is blocked and the approval expires.
+   */
+  const personalConnectionApprovals = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-connection-approvals:pending",
+    tag: WS_METHODS.personalConnectionApprovalsList,
+    staleTimeMs: 3_000,
+    refreshIntervalMs: 8_000,
+  });
+
+  const personalConnectionApprovalsDecide = createEnvironmentRpcCommand(runtime, {
+    label: "personal-connection-approvals:decide",
+    tag: WS_METHODS.personalConnectionApprovalsDecide,
+  });
+
   const personalFileDelete = createEnvironmentRpcCommand(runtime, {
     label: "personal-files:delete",
     tag: WS_METHODS.personalFilesDelete,
@@ -560,8 +619,55 @@ export function createPersonalBotsClient<R, ER, P>(
     return client.useEnvironmentQuery(atom);
   }
 
+  function usePersonalPendingSecrets(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalSecretsListPendingResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null ? null : personalSecretsListPending({ environmentId, input: {} }),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalLoginRequests(
+    environmentId: EnvironmentId | null,
+    threadId: string,
+  ): EnvironmentQueryView<{ readonly requests: ReadonlyArray<PersonalLoginRequest> }> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || threadId.trim() === ""
+          ? null
+          : personalLoginRequests({ environmentId, input: { threadId: threadId as never } }),
+      [environmentId, threadId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalConnectionApprovals(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalConnectionApprovalListResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null ? null : personalConnectionApprovals({ environmentId, input: {} }),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   return {
     personalBotsListInput,
+    personalSecretsListPending,
+    personalSecretsFulfill,
+    personalSecretsCancel,
+    personalLoginRequests,
+    personalLoginRequestsSubmit,
+    personalLoginRequestsCancel,
+    personalConnectionApprovals,
+    personalConnectionApprovalsDecide,
+    usePersonalPendingSecrets,
+    usePersonalLoginRequests,
+    usePersonalConnectionApprovals,
     personalTasksFeed,
     personalTasksGet,
     personalTasksCancel,

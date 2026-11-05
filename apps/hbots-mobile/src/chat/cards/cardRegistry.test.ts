@@ -6,8 +6,16 @@ import { CARD_KINDS, isChatCard } from "./cardKinds";
 const item = (kind: string): ConversationItem => ({ kind, id: kind }) as never;
 
 describe("isChatCard", () => {
-  it("claims exactly the four card kinds in the registry", () => {
-    expect(CARD_KINDS).toEqual(["delegation", "question", "lead-bot-change", "memory-change"]);
+  it("claims exactly the card kinds in the registry", () => {
+    expect(CARD_KINDS).toEqual([
+      "delegation",
+      "question",
+      "secret",
+      "login",
+      "connection-approval",
+      "lead-bot-change",
+      "memory-change",
+    ]);
     for (const kind of CARD_KINDS) expect(isChatCard(item(kind))).toBe(true);
   });
 

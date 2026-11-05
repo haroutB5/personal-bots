@@ -189,6 +189,10 @@
       "types": "./src/memory/presentation.ts",
       "import": "./src/memory/presentation.ts"
     },
+    "./settings/secretAccess": {
+      "types": "./src/settings/secretAccess.ts",
+      "import": "./src/settings/secretAccess.ts"
+    },
     "./conversation/previewPrivacy": {
       "types": "./src/conversation/previewPrivacy.ts",
       "import": "./src/conversation/previewPrivacy.ts"

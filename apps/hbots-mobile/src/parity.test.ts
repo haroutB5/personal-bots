@@ -25,7 +25,7 @@ const A1_A2_ITEMS = [
 
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A6"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A6", "A7"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {

@@ -1,4 +1,4 @@
-export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A6"];
+export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A6", "A7"];
 export const DONE_ITEMS: readonly string[] = [
   "rpc:personalBotsList",
   "screen:routes/_personal.tsx#personal",
@@ -68,4 +68,26 @@ export const DONE_ITEMS: readonly string[] = [
   "setting:QuestionCard.tsx#or-type-your-own-answer",
   "rpc:personalLeadBotChangesList",
   "rpc:personalLeadBotChangesDecide",
+  "card:ConnectionApprovalCard.tsx#connectionapprovalcard",
+  "card:LoginRequestCard.tsx#loginrequestcard",
+  "card:SecretRequestCard.tsx#secretrequestcard",
+  "setting:LoginRequestCard.tsx#username-or-email",
+  "setting:LoginRequestCard.tsx#password",
+  "setting:LoginRequestCard.tsx#save-for-next-time",
+  "setting:SecretAccessFields.tsx#allowed-address",
+  "setting:SecretAccessFields.tsx#another-header-it-may-go-in",
+  "setting:SecretAccessFields.tsx#also-allow-it-in-the-web-address-and-the-request",
+  "setting:SecretAccessFields.tsx#only-for-paths-starting-with-optional",
+  "setting:SecretAccessFields.tsx#only-these-methods-none-ticked-means-all",
+  "setting:SecretAccessFields.tsx#field-with-a-data-driven-label-in-secretaccessfi",
+  "setting:SecretRequestCard.tsx#field-with-a-data-driven-label-in-secretrequestc",
+  "setting:SecretRequestCard.tsx#allow-all-bots-to-use-this-key",
+  "rpc:personalConnectionApprovalsList",
+  "rpc:personalConnectionApprovalsDecide",
+  "rpc:personalLoginRequestsList",
+  "rpc:personalLoginRequestsSubmit",
+  "rpc:personalLoginRequestsCancel",
+  "rpc:personalSecretsListPending",
+  "rpc:personalSecretsFulfill",
+  "rpc:personalSecretsCancel",
 ];

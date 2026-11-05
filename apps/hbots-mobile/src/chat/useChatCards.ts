@@ -1,9 +1,12 @@
 import type {
   EnvironmentId,
   PersonalBot,
+  PersonalConnectionApproval,
   PersonalMemoryRulesUsage,
+  PersonalSecretRequest,
   ServerProvider,
 } from "@t3tools/contracts";
+import * as Redacted from "effect/Redacted";
 import {
   derivePendingRequests,
   deriveUserInputHistory,
@@ -17,6 +20,10 @@ import {
   delegatedChildren,
   waitingLabelsByThread,
 } from "@hbots/personal-client/conversation/delegationModel";
+import {
+  deriveConnectionApprovalCards,
+  type ConnectionApprovalOutcome,
+} from "@hbots/personal-client/conversation/connectionApprovalCards";
 import { placeChatCards } from "@hbots/personal-client/conversation/feedCards";
 import { deriveLeadBotChangeCards } from "@hbots/personal-client/conversation/leadBotChangeCards";
 import { deriveMemoryCards } from "@hbots/personal-client/conversation/memoryCards";
@@ -24,6 +31,11 @@ import {
   deriveQuestionCards,
   deriveUserInputResolutions,
 } from "@hbots/personal-client/conversation/questionCards";
+import {
+  deriveSecretRequestCards,
+  type SecretRequestOutcome,
+} from "@hbots/personal-client/conversation/secretRequestCards";
+import type { SecretAccessChoice } from "@hbots/personal-client/settings/secretAccess";
 import { mergeTaskLists } from "@hbots/personal-client/conversation/taskPresentation";
 import { useMemo, useState } from "react";
 
@@ -103,6 +115,142 @@ export function useChatCards(input: {
     [memoryQuery.data, threadId],
   );
 
+  const pendingSecretsQuery = native.bots.usePersonalPendingSecrets(environmentId);
+  const pendingSecrets = useMemo(
+    () => pendingSecretsQuery.data?.requests ?? [],
+    [pendingSecretsQuery.data],
+  );
+  const [seenSecrets, setSeenSecrets] = useState<ReadonlyMap<string, PersonalSecretRequest>>(
+    () => new Map(),
+  );
+  const [secretOutcomes, setSecretOutcomes] = useState<ReadonlyMap<string, SecretRequestOutcome>>(
+    () => new Map(),
+  );
+  const [respondingSecretIds, setRespondingSecretIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  if (pendingSecrets.some((request) => !seenSecrets.has(request.requestId))) {
+    const next = new Map(seenSecrets);
+    for (const request of pendingSecrets) next.set(request.requestId, request);
+    setSeenSecrets(next);
+  }
+  const secretCards = useMemo(
+    () => deriveSecretRequestCards(pendingSecrets, threadId, seenSecrets, secretOutcomes),
+    [pendingSecrets, secretOutcomes, seenSecrets, threadId],
+  );
+
+  const approvalsQuery = native.bots.usePersonalConnectionApprovals(environmentId);
+  const pendingApprovals = useMemo(
+    () => approvalsQuery.data?.approvals ?? [],
+    [approvalsQuery.data],
+  );
+  const [seenApprovals, setSeenApprovals] = useState<
+    ReadonlyMap<string, PersonalConnectionApproval>
+  >(() => new Map());
+  const [approvalOutcomes, setApprovalOutcomes] = useState<
+    ReadonlyMap<string, ConnectionApprovalOutcome>
+  >(() => new Map());
+  const [respondingApprovalIds, setRespondingApprovalIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  if (pendingApprovals.some((approval) => !seenApprovals.has(approval.approvalId))) {
+    const next = new Map(seenApprovals);
+    for (const approval of pendingApprovals) next.set(approval.approvalId, approval);
+    setSeenApprovals(next);
+  }
+  const approvalCards = useMemo(
+    () =>
+      deriveConnectionApprovalCards(pendingApprovals, threadId, seenApprovals, approvalOutcomes),
+    [approvalOutcomes, pendingApprovals, seenApprovals, threadId],
+  );
+
+  const loginQuery = native.bots.usePersonalLoginRequests(environmentId, threadId);
+  const loginRequests = useMemo(
+    () =>
+      (loginQuery.data?.requests ?? []).filter((request) => String(request.threadId) === threadId),
+    [loginQuery.data, threadId],
+  );
+
+  const fulfillSecret = native.client.useAtomCommand(native.bots.personalSecretsFulfill, {
+    reportFailure: false,
+  });
+  const cancelSecret = native.client.useAtomCommand(native.bots.personalSecretsCancel, {
+    reportFailure: false,
+  });
+  const decideApproval = native.client.useAtomCommand(
+    native.bots.personalConnectionApprovalsDecide,
+    { reportFailure: false },
+  );
+
+  const provideSecret = (
+    requestId: string,
+    value: string,
+    shared: boolean,
+    access: SecretAccessChoice,
+  ) => {
+    if (environmentId === null) return;
+    setRespondingSecretIds((current) => new Set(current).add(requestId));
+    void fulfillSecret({
+      environmentId,
+      input: {
+        requestId: requestId as never,
+        value: Redacted.make(value),
+        shared,
+        mode: access.mode,
+        origins: [...access.origins],
+        placement: access.placement,
+      },
+    }).then((result) => {
+      if (result._tag === "Success") {
+        setSecretOutcomes((current) => new Map(current).set(requestId, "provided"));
+      }
+      setRespondingSecretIds((current) => {
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+      pendingSecretsQuery.refresh();
+    });
+  };
+
+  const declineSecret = (requestId: string) => {
+    if (environmentId === null) return;
+    setRespondingSecretIds((current) => new Set(current).add(requestId));
+    void cancelSecret({
+      environmentId,
+      input: { requestId: requestId as never },
+    }).then((result) => {
+      if (result._tag === "Success") {
+        setSecretOutcomes((current) => new Map(current).set(requestId, "declined"));
+      }
+      setRespondingSecretIds((current) => {
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+      pendingSecretsQuery.refresh();
+    });
+  };
+
+  const decideConnectionApproval = (approvalId: string, decision: "approved" | "denied") => {
+    if (environmentId === null) return;
+    setRespondingApprovalIds((current) => new Set(current).add(approvalId));
+    void decideApproval({
+      environmentId,
+      input: { approvalId: approvalId as never, decision },
+    }).then((result) => {
+      if (result._tag === "Success") {
+        setApprovalOutcomes((current) => new Map(current).set(approvalId, decision));
+      }
+      setRespondingApprovalIds((current) => {
+        const next = new Set(current);
+        next.delete(approvalId);
+        return next;
+      });
+      approvalsQuery.refresh();
+    });
+  };
+
   const leadQuery = native.bots.usePersonalLeadBotChanges(environmentId);
   const leadBotChanges = useMemo(
     () => deriveLeadBotChangeCards(leadQuery.data?.changes ?? [], threadId),
@@ -126,13 +274,22 @@ export function useChatCards(input: {
     const withDelegations = placeDelegationCards(input.items, children);
     return placeChatCards(withDelegations, {
       questions: questionCards,
-      secrets: [],
-      logins: [],
-      connectionApprovals: [],
+      secrets: secretCards,
+      logins: loginRequests,
+      connectionApprovals: approvalCards,
       leadBotChanges,
       memoryChanges,
     });
-  }, [children, input.items, leadBotChanges, memoryChanges, questionCards]);
+  }, [
+    approvalCards,
+    children,
+    input.items,
+    leadBotChanges,
+    loginRequests,
+    memoryChanges,
+    questionCards,
+    secretCards,
+  ]);
 
   const botsById = useMemo(
     () => new Map(input.bots.map((bot) => [bot.botId as string, bot] as const)),
@@ -151,9 +308,20 @@ export function useChatCards(input: {
       providers: input.providers,
       waitingLabelFor: (id) => (id === null ? null : (waitingLabels.get(id) ?? null)),
       onOpenChat: input.onOpenChat,
+      secrets: {
+        respondingIds: respondingSecretIds,
+        onProvide: provideSecret,
+        onDecline: declineSecret,
+      },
+      connectionApprovals: {
+        respondingIds: respondingApprovalIds,
+        onDecide: decideConnectionApproval,
+      },
     }),
     [
       botsById,
+      decideConnectionApproval,
+      declineSecret,
       environmentId,
       input.botName,
       input.chat,
@@ -161,6 +329,9 @@ export function useChatCards(input: {
       input.onOpenChat,
       input.providers,
       native,
+      provideSecret,
+      respondingApprovalIds,
+      respondingSecretIds,
       threadId,
       waitingLabels,
     ],

@@ -1,4 +1,5 @@
 import type { EnvironmentId, PersonalBot, ServerProvider } from "@t3tools/contracts";
+import type { SecretAccessChoice } from "@hbots/personal-client/settings/secretAccess";
 
 import type { ChatEnvironment } from "../chatEnvironment";
 import type { NativePersonal } from "../../personal/nativePersonalClient";
@@ -23,4 +24,18 @@ export interface CardContext {
   /** What a task parked on another bot is waiting on, by that bot's thread. */
   readonly waitingLabelFor: (threadId: string | null) => string | null;
   readonly onOpenChat: (botId: string, threadId: string) => void;
+  readonly secrets: {
+    readonly respondingIds: ReadonlySet<string>;
+    readonly onProvide: (
+      requestId: string,
+      value: string,
+      shared: boolean,
+      access: SecretAccessChoice,
+    ) => void;
+    readonly onDecline: (requestId: string) => void;
+  };
+  readonly connectionApprovals: {
+    readonly respondingIds: ReadonlySet<string>;
+    readonly onDecide: (approvalId: string, decision: "approved" | "denied") => void;
+  };
 }
