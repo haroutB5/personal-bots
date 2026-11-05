@@ -5209,7 +5209,6 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
-              Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
                 PersonalBotService.layer.pipe(Layer.provide(PersonalBotRepository.layer)),
               ),
