@@ -336,6 +336,70 @@
     "./lists/bulkSelection": {
       "types": "./src/lists/bulkSelection.ts",
       "import": "./src/lists/bulkSelection.ts"
+    },
+    "./settings/providerRows": {
+      "types": "./src/settings/providerRows.ts",
+      "import": "./src/settings/providerRows.ts"
+    },
+    "./settings/providerPageModel": {
+      "types": "./src/settings/providerPageModel.ts",
+      "import": "./src/settings/providerPageModel.ts"
+    },
+    "./settings/catalogModel": {
+      "types": "./src/settings/catalogModel.ts",
+      "import": "./src/settings/catalogModel.ts"
+    },
+    "./settings/providerFacts": {
+      "types": "./src/settings/providerFacts.ts",
+      "import": "./src/settings/providerFacts.ts"
+    },
+    "./settings/signInAddress": {
+      "types": "./src/settings/signInAddress.ts",
+      "import": "./src/settings/signInAddress.ts"
+    },
+    "./settings/providerUpdate": {
+      "types": "./src/settings/providerUpdate.ts",
+      "import": "./src/settings/providerUpdate.ts"
+    },
+    "./settings/passwordsModel": {
+      "types": "./src/settings/passwordsModel.ts",
+      "import": "./src/settings/passwordsModel.ts"
+    },
+    "./settings/connectionsModel": {
+      "types": "./src/settings/connectionsModel.ts",
+      "import": "./src/settings/connectionsModel.ts"
+    },
+    "./settings/secretAccess": {
+      "types": "./src/settings/secretAccess.ts",
+      "import": "./src/settings/secretAccess.ts"
+    },
+    "./memory/memoryPresentation": {
+      "types": "./src/memory/memoryPresentation.ts",
+      "import": "./src/memory/memoryPresentation.ts"
+    },
+    "./memory/personalMemory": {
+      "types": "./src/memory/personalMemory.ts",
+      "import": "./src/memory/personalMemory.ts"
+    },
+    "./logins/personalLogins": {
+      "types": "./src/logins/personalLogins.ts",
+      "import": "./src/logins/personalLogins.ts"
+    },
+    "./secrets/personalSecrets": {
+      "types": "./src/secrets/personalSecrets.ts",
+      "import": "./src/secrets/personalSecrets.ts"
+    },
+    "./connections/personalConnections": {
+      "types": "./src/connections/personalConnections.ts",
+      "import": "./src/connections/personalConnections.ts"
+    },
+    "./settings/personalSettings": {
+      "types": "./src/settings/personalSettings.ts",
+      "import": "./src/settings/personalSettings.ts"
+    },
+    "./settings/providerSetup": {
+      "types": "./src/settings/providerSetup.ts",
+      "import": "./src/settings/providerSetup.ts"
     }
   },
   "scripts": {

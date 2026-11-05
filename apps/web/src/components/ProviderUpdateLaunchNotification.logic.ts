@@ -19,12 +19,8 @@ export type ProviderUpdateCandidate = ServerProvider & {
   };
 };
 
-export type ProviderSettingsUpdateCandidate = ServerProvider & {
-  readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
-    readonly canUpdate: true;
-    readonly updateCommand: string;
-  };
-};
+export type { ProviderSettingsUpdateCandidate } from "@hbots/personal-client/settings/providerUpdate";
+export { isProviderSettingsUpdateCandidate } from "@hbots/personal-client/settings/providerUpdate";
 
 export type ProviderUpdateToastType = "warning" | "loading" | "error" | "success";
 export type ProviderUpdateToastPhase = "initial" | "running" | "failed" | "unchanged" | "succeeded";
@@ -159,19 +155,6 @@ export function collectProviderUpdateCandidates(
   providers: ReadonlyArray<ServerProvider>,
 ): ProviderUpdateCandidate[] {
   return dedupeProvidersByDriver(providers.filter(isProviderUpdateCandidate));
-}
-
-export function isProviderSettingsUpdateCandidate(
-  provider: ServerProvider,
-): provider is ProviderSettingsUpdateCandidate {
-  return (
-    provider.enabled &&
-    provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
-    provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
-    provider.versionAdvisory?.status === "behind_latest" &&
-    provider.versionAdvisory.canUpdate === true &&
-    provider.versionAdvisory.updateCommand !== null
-  );
 }
 
 export function hasOneClickUpdateProviderCandidate(

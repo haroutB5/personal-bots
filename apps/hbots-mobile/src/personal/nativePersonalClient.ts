@@ -23,6 +23,12 @@ import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
 import { createPersonalGroupsClient } from "@hbots/personal-client/groups/personalGroups";
+import { createPersonalMemoryClient } from "@hbots/personal-client/memory/personalMemory";
+import { createPersonalLoginsClient } from "@hbots/personal-client/logins/personalLogins";
+import { createPersonalSecretsClient } from "@hbots/personal-client/secrets/personalSecrets";
+import { createPersonalConnectionsClient } from "@hbots/personal-client/connections/personalConnections";
+import { createPersonalSettingsClient } from "@hbots/personal-client/settings/personalSettings";
+import { createProviderSetupClient } from "@hbots/personal-client/settings/providerSetup";
 import {
   parseSystemSummary,
   SYSTEM_SUMMARY_TIMEOUT_MS,
@@ -174,6 +180,12 @@ export interface NativePersonal {
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
   readonly bots: ReturnType<typeof createPersonalBotsClient>;
   readonly groups: ReturnType<typeof createPersonalGroupsClient>;
+  readonly settings: ReturnType<typeof createPersonalSettingsClient>;
+  readonly providers: ReturnType<typeof createProviderSetupClient>;
+  readonly memory: ReturnType<typeof createPersonalMemoryClient>;
+  readonly logins: ReturnType<typeof createPersonalLoginsClient>;
+  readonly secrets: ReturnType<typeof createPersonalSecretsClient>;
+  readonly connections: ReturnType<typeof createPersonalConnectionsClient>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly shellsOf: (
     snapshot: OrchestrationShellSnapshot | null,
@@ -301,6 +313,12 @@ export function createNativePersonal(
       );
     },
   });
+  const settings = createPersonalSettingsClient(runtime, client);
+  const providers = createProviderSetupClient(runtime, client);
+  const memory = createPersonalMemoryClient(runtime, client);
+  const logins = createPersonalLoginsClient(runtime, client);
+  const secrets = createPersonalSecretsClient(runtime, client);
+  const connections = createPersonalConnectionsClient(runtime, client);
   const shell = createEnvironmentShellAtoms(runtime);
 
   let disposed = false;
@@ -509,6 +527,12 @@ export function createNativePersonal(
     client,
     bots,
     groups,
+    settings,
+    providers,
+    memory,
+    logins,
+    secrets,
+    connections,
     shell,
     shellsOf: (snapshot) =>
       snapshot === null ? [] : snapshot.threads.map((thread) => ({ ...thread, environmentId })),
