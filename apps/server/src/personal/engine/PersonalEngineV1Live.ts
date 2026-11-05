@@ -59,7 +59,6 @@ import {
   type PersonalUpdateMetaInput,
   type PersonalWorkingRow,
 } from "./PersonalEngine.ts";
-import { PersonalProjectionRelationsV1Live } from "./PersonalProjectionRelationsV1Live.ts";
 import { failureDetail, PersonalEngineError } from "./errors.ts";
 
 const BUSY_STATUSES: ReadonlySet<PersonalThreadStatus> = new Set(["starting", "running"]);
@@ -765,5 +764,4 @@ export const PersonalEngineV1Live = Layer.effect(PersonalEngine, make);
 export const PersonalEngineV1WiredLive = PersonalEngineV1Live.pipe(
   Layer.provide(ProjectionThreadMessageRepositoryLive),
   Layer.provide(ThreadBackgroundLivenessLive),
-  Layer.provideMerge(PersonalProjectionRelationsV1Live),
 );

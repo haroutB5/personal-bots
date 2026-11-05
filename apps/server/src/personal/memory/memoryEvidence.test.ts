@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as SqlClient from "effect/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { PersonalMemoryService, layer as memoryLayer } from "./PersonalMemoryService.ts";
+import { PersonalMemoryService } from "./PersonalMemoryService.ts";
 import {
   PersonalMemoryTidy,
   PersonalMemoryTidyJudge,
@@ -14,6 +14,7 @@ import {
 import { ageWeight, RETRIEVAL_ENV } from "./memoryRetrieval.ts";
 import { memoryLine } from "./memoryBlock.ts";
 import { memoryProvenanceLabel } from "./memoryEvidence.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 const botId = PersonalBotId.make("evidence-bot");
 const threadId = ThreadId.make("evidence-thread");

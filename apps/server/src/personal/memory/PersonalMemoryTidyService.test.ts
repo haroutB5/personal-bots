@@ -23,7 +23,6 @@ import {
   PERSONAL_MEMORY_MAX_PENDING_PER_BOT,
   NOTE_FORGOTTEN_REASON,
   PersonalMemoryService,
-  layer as memoryLayer,
 } from "./PersonalMemoryService.ts";
 import {
   PersonalMemoryTidy,
@@ -33,6 +32,7 @@ import {
   layer as tidyLayer,
 } from "./PersonalMemoryTidyService.ts";
 import { MEMORY_AUTO_APPLY_ENV } from "./memoryAutoApply.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 // These tests are the cards mode, where every change waits for the owner's OK: the kill
 // switch. The automatic mode (the default) has its own tests in PersonalMemoryTidyService.auto.test.ts.

@@ -15,6 +15,8 @@ import {
 } from "@t3tools/contracts";
 
 import { makeSensitiveExposureStore } from "../browser/sensitiveExposureStore.ts";
+import { PersonalEngine } from "../engine/PersonalEngine.ts";
+import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
 import { looksLikeSecret } from "../secretText.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { parseAppsJson } from "./memoryApps.ts";
@@ -49,6 +51,8 @@ export type SentPreferences = {
 export const makeMemoryCore = () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const engine = yield* PersonalEngine;
+    const rel = yield* PersonalProjectionRelations;
     const exposures = makeSensitiveExposureStore(sql);
     const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
 
@@ -231,6 +235,8 @@ export const makeMemoryCore = () =>
 
     return {
       sql,
+      engine,
+      rel,
       exposures,
       tasks,
       fail,

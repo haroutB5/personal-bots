@@ -14,19 +14,19 @@ import {
 import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
 
 export const makeMemoryProvenance = (core: MemoryCore) => {
-  const { sql } = core;
+  const { sql, engine, rel } = core;
 
   const ownerMessages: PersonalMemoryService["Service"]["ownerMessages"] = (threadId) =>
     Effect.gen(function* () {
       // App-written user-role messages all carry a "personal-" id (task and
       // steer briefs, routine runs, group relays, notices, lead answers).
       const recent = yield* sql<{ readonly text: string; readonly messageId: string }>`
-        SELECT text, message_id AS "messageId" FROM projection_thread_messages
+        SELECT text, message_id AS "messageId" FROM ${sql.unsafe(rel.messages)}
         WHERE thread_id = ${threadId} AND role = 'user' AND message_id NOT LIKE 'personal-%'
         ORDER BY created_at DESC LIMIT 30
       `;
       const first = yield* sql<{ readonly messageId: string }>`
-        SELECT message_id AS "messageId" FROM projection_thread_messages
+        SELECT message_id AS "messageId" FROM ${sql.unsafe(rel.messages)}
         WHERE thread_id = ${threadId} AND role = 'user'
         ORDER BY created_at ASC LIMIT 1
       `;
@@ -34,9 +34,9 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
       // one: a message queued during a task turn has not started anything.
       const latest = yield* sql<{ readonly messageId: string; readonly text: string }>`
         SELECT m.message_id AS "messageId", m.text AS "text"
-        FROM projection_thread_sessions s
-        JOIN projection_turns t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
-        JOIN projection_thread_messages m ON m.message_id = t.pending_message_id
+        FROM ${sql.unsafe(rel.sessions)} s
+        JOIN ${sql.unsafe(rel.turns)} t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
+        JOIN ${sql.unsafe(rel.messages)} m ON m.message_id = t.pending_message_id
         WHERE s.thread_id = ${threadId} AND m.role = 'user'
         LIMIT 1
       `;
@@ -53,24 +53,7 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
 
   /** Whether any turn of the thread used a web or browser tool (the same tools as `readWeb`). */
   const threadUsedWeb = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const rows = yield* sql<{ readonly found: number }>`
-        SELECT 1 AS "found"
-        FROM projection_thread_activities a
-        WHERE a.thread_id = ${threadId} AND a.kind LIKE 'tool.%'
-          AND (
-            json_extract(a.payload_json, '$.itemType') = 'web_search'
-            OR ${sql.or(
-              WEB_TOOL_NEEDLES.map(
-                (needle) =>
-                  sql`instr(lower(a.summary || ' ' || COALESCE(json_extract(a.payload_json, '$.title'), '') || ' ' || substr(COALESCE(json_extract(a.payload_json, '$.detail'), ''), 1, 80)), ${needle}) > 0`,
-              ),
-            )}
-          )
-        LIMIT 1
-      `;
-      return rows.length > 0;
-    });
+    engine.threadUsedWeb({ threadId, needles: WEB_TOOL_NEEDLES });
 
   const noteOrigin: PersonalMemoryService["Service"]["noteOrigin"] = (threadId) =>
     Effect.gen(function* () {
@@ -84,9 +67,9 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
         SELECT m.message_id AS "messageId", t.requested_at AS "requestedAt",
           (SELECT pt.source FROM personal_tasks pt WHERE pt.thread_id = s.thread_id
             ORDER BY pt.created_at DESC LIMIT 1) AS "taskSource"
-        FROM projection_thread_sessions s
-        JOIN projection_turns t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
-        JOIN projection_thread_messages m ON m.message_id = t.pending_message_id
+        FROM ${sql.unsafe(rel.sessions)} s
+        JOIN ${sql.unsafe(rel.turns)} t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
+        JOIN ${sql.unsafe(rel.messages)} m ON m.message_id = t.pending_message_id
         WHERE s.thread_id = ${threadId}
         LIMIT 1
       `;
@@ -97,15 +80,11 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
       const id = current.messageId;
       const origin = originOfMessage(id, current.taskSource);
       // In this turn.
-      const tools = yield* sql<{ readonly itemType: string | null; readonly text: string }>`
-        SELECT json_extract(a.payload_json, '$.itemType') AS "itemType",
-          a.summary || ' ' || COALESCE(json_extract(a.payload_json, '$.title'), '') || ' '
-            || substr(COALESCE(json_extract(a.payload_json, '$.detail'), ''), 1, 80) AS "text"
-        FROM projection_thread_activities a
-        WHERE a.thread_id = ${threadId} AND a.kind LIKE 'tool.%'
-          AND a.created_at >= ${current.requestedAt}
-        LIMIT 2000
-      `;
+      const tools = yield* engine.toolStepsSince({
+        threadId,
+        since: current.requestedAt,
+        limit: 2000,
+      });
       const readWeb = usedWebTool(tools);
       return { origin, messageId: id, readWeb, threadReadWeb: threadReadWeb || readWeb };
     }).pipe(

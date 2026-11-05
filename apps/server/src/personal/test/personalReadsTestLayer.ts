@@ -1,0 +1,32 @@
+/**
+ * The personal read ports over a test database, for suites that seed the v1
+ * projection tables with SQL and never run the orchestrator. The engine verbs
+ * that need the orchestrator are not wired, so a suite that calls one fails.
+ */
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  ThreadBackgroundLivenessService,
+  make as makeThreadBackgroundLiveness,
+} from "../../orchestration/ThreadBackgroundLiveness.ts";
+import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
+import { PersonalEngineV1Live } from "../engine/PersonalEngineV1Live.ts";
+import { PersonalProjectionRelationsV1Live } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import { layer as memoryLayer } from "../memory/PersonalMemoryService.ts";
+
+/** PersonalEngine and PersonalProjectionRelations. Needs SqlClient from the suite. */
+export const personalReadsTestLayer = PersonalEngineV1Live.pipe(
+  Layer.provide(
+    Layer.succeed(OrchestrationEngineService, { streamDomainEvents: Stream.empty } as never),
+  ),
+  Layer.provide(Layer.succeed(ProjectionSnapshotQuery, {} as never)),
+  Layer.provide(Layer.succeed(ProjectionThreadMessageRepository, {} as never)),
+  Layer.provide(Layer.succeed(ThreadBackgroundLivenessService, makeThreadBackgroundLiveness())),
+  Layer.provideMerge(PersonalProjectionRelationsV1Live),
+);
+
+/** PersonalMemoryService over the read ports above. Needs SqlClient from the suite. */
+export const personalMemoryTestLayer = memoryLayer.pipe(Layer.provideMerge(personalReadsTestLayer));

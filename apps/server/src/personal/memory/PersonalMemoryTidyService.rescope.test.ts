@@ -7,13 +7,14 @@ import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { PersonalMemoryService, layer as memoryLayer } from "./PersonalMemoryService.ts";
+import { PersonalMemoryService } from "./PersonalMemoryService.ts";
 import {
   PersonalMemoryTidy,
   PersonalMemoryTidyJudge,
   layer as tidyLayer,
 } from "./PersonalMemoryTidyService.ts";
 import { MEMORY_AUTO_APPLY_ENV } from "./memoryAutoApply.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 // These tests are the cards mode, where every change waits for the owner's OK: the kill
 // switch. The automatic mode (the default) has its own tests in PersonalMemoryTidyService.auto.test.ts.

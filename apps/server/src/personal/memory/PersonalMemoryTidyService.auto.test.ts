@@ -12,12 +12,13 @@ import * as NodeServices from "@t3tools/shared/nodeServices";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { MEMORY_AUTO_APPLY_ENV } from "./memoryAutoApply.ts";
 import type { TidyJudgeOutput } from "./memoryTidy.ts";
-import { PersonalMemoryService, layer as memoryLayer } from "./PersonalMemoryService.ts";
+import { PersonalMemoryService } from "./PersonalMemoryService.ts";
 import {
   PersonalMemoryTidy,
   PersonalMemoryTidyJudge,
   layer as tidyLayer,
 } from "./PersonalMemoryTidyService.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 const BOT_A = PersonalBotId.make("bot-a");
 

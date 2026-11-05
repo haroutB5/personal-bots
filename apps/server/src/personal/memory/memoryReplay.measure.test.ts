@@ -22,7 +22,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { APP_SCOPING_ENV, detectActiveApps, MEMORY_APPS, mentionsApp } from "./memoryApps.ts";
 import { isStatusLike, RETRIEVAL_ENV } from "./memoryRetrieval.ts";
-import { PersonalMemoryService, layer as memoryLayer } from "./PersonalMemoryService.ts";
+import { PersonalMemoryService } from "./PersonalMemoryService.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 const LIVE_DB = process.env.HBOTS_MEMORY_REPLAY_DB;
 const OUT_DIR = process.env.HBOTS_MEMORY_REPLAY_OUT;

@@ -12,12 +12,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { layer as memoryLayer } from "./PersonalMemoryService.ts";
 import {
   PersonalMemoryTidy,
   PersonalMemoryTidyJudge,
   layer as tidyLayer,
 } from "./PersonalMemoryTidyService.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 const LIVE_DB = process.env.HBOTS_TIDY_UPGRADE_DB;
 const OUT = process.env.HBOTS_TIDY_UPGRADE_OUT;

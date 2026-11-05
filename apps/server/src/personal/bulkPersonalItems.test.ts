@@ -20,10 +20,11 @@ import {
   deletePersonalRoutines,
   setPersonalRoutinesEnabled,
 } from "./bulkPersonalItems.ts";
-import { PersonalMemoryService, layer as memoryLayer } from "./memory/PersonalMemoryService.ts";
+import { PersonalMemoryService } from "./memory/PersonalMemoryService.ts";
 import type * as PersonalBotService from "./PersonalBotService.ts";
 import type * as PersonalRoutineService from "./routines/PersonalRoutineService.ts";
 import type * as PersonalLoginService from "./secrets/PersonalLoginService.ts";
+import { personalMemoryTestLayer as memoryLayer } from "./test/personalReadsTestLayer.ts";
 
 const MemoryLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
 

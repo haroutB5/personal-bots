@@ -5,7 +5,8 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { PersonalMemoryService, layer as memoryLayer } from "./PersonalMemoryService.ts";
+import { PersonalMemoryService } from "./PersonalMemoryService.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
 

@@ -15,9 +15,9 @@ import {
   PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
   PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
   PersonalMemoryService,
-  layer as memoryLayer,
 } from "./PersonalMemoryService.ts";
 import { APP_SCOPING_ENV } from "./memoryApps.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
 

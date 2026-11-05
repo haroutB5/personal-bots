@@ -82,8 +82,8 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
 import { personalTaskMessageId } from "../../personal/personalThreadTitles.ts";
-import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalVoiceCallRepository from "../../personal/voiceCalls/PersonalVoiceCallRepository.ts";
+import { personalMemoryTestLayer } from "../../personal/test/personalReadsTestLayer.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -535,7 +535,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(
         input?.personalMemory === true
-          ? Layer.merge(PersonalBotRepository.layer, PersonalMemoryService.layer)
+          ? Layer.merge(PersonalBotRepository.layer, personalMemoryTestLayer)
           : PersonalBotRepository.layer,
       ),
       // The call summary a bot's next turn is given after a phone call. The

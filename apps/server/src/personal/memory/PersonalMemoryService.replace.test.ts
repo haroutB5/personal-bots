@@ -19,11 +19,8 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { makeMemoryCore } from "./memoryCore.ts";
 import { makeMemoryPersistence } from "./memoryPersistence.ts";
 import { localDay } from "./memoryTidy.ts";
-import {
-  PersonalMemoryService,
-  RULE_FORGOTTEN_REASON,
-  layer as memoryLayer,
-} from "./PersonalMemoryService.ts";
+import { PersonalMemoryService, RULE_FORGOTTEN_REASON } from "./PersonalMemoryService.ts";
+import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
 const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
 
