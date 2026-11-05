@@ -22,6 +22,7 @@ const DNS_CLASS = `
  */
 private class RememberingDns : Dns {
   private val cache = ConcurrentHashMap<String, List<InetAddress>>()
+  private val refreshing = ConcurrentHashMap<String, Boolean>()
   private val refresh = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
     Thread(runnable, "hbots-dns").apply { isDaemon = true }
   }
@@ -29,9 +30,15 @@ private class RememberingDns : Dns {
   override fun lookup(hostname: String): List<InetAddress> {
     val cached = cache[hostname]
     if (cached != null && cached.isNotEmpty()) {
-      refresh.execute {
-        runCatching { Dns.SYSTEM.lookup(hostname) }
-          .onSuccess { if (it.isNotEmpty()) cache[hostname] = it }
+      if (refreshing.putIfAbsent(hostname, true) == null) {
+        refresh.execute {
+          try {
+            runCatching { Dns.SYSTEM.lookup(hostname) }
+              .onSuccess { if (it.isNotEmpty()) cache[hostname] = it }
+          } finally {
+            refreshing.remove(hostname)
+          }
+        }
       }
       return cached.sortedBy { if (it is Inet6Address) 1 else 0 }
     }
