@@ -1,6 +1,6 @@
 import type { ServerProvider } from "@t3tools/contracts";
 
-import { botsNamed, firstLine, type ProviderRow } from "./providerRows.js";
+import { botsNamed, firstLine, type ProviderRow } from "./providerRows.ts";
 
 /** The three steps of the setup card (provider-setup SPEC 5.3). */
 export type SetupStepKey = "install" | "signIn" | "test";

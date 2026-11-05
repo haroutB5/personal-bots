@@ -6,11 +6,11 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-import { isProviderSettingsUpdateCandidate } from "./providerUpdate.js";
+import { isProviderSettingsUpdateCandidate } from "./providerUpdate.ts";
 
-import { resolveBotProvider } from "../bots/botSummaries.js";
-import { formatRetryTime } from "../conversation/conversationModel.js";
-import { formatBalanceAmount, USAGE_CARD_DRIVERS } from "../usage/usagePresentation.js";
+import { resolveBotProvider } from "../bots/botSummaries.ts";
+import { formatRetryTime } from "../conversation/conversationModel.ts";
+import { formatBalanceAmount, USAGE_CARD_DRIVERS } from "../usage/usagePresentation.ts";
 
 /**
  * Settings > Providers: one row per provider, one status, at most one action

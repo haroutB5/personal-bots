@@ -17,8 +17,8 @@ import {
   personalMemoryAppLabel,
 } from "@t3tools/contracts";
 
-import { PERSONAL_TIME_ZONE } from "../conversation/greeting.js";
-import { formatRelativeTime } from "../bots/relativeTime.js";
+import { PERSONAL_TIME_ZONE } from "../conversation/greeting.ts";
+import { formatRelativeTime } from "../bots/relativeTime.ts";
 
 /** `YYYY-MM-DD` of an instant, on the app's local calendar. */
 export function memoryDayLabel(then: Date | number, timeZone: string = PERSONAL_TIME_ZONE): string {
@@ -370,6 +370,9 @@ export function pendingTidyGroups<C extends Pick<PersonalMemoryTidyChange, "chan
   }
   return groups;
 }
+
+/** Where the Memory screen keeps, on this device, when it was last opened. */
+export const MEMORY_LAST_SEEN_KEY = "personal-memory-last-seen";
 
 /**
  * A preference a bot saved since the screen was last opened here. Never on a

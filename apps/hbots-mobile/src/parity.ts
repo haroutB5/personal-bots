@@ -8,6 +8,7 @@ export const MERGED_PRS: readonly string[] = [
   "A10",
   "A11",
   "A14",
+  "A15",
 ];
 export const DONE_ITEMS: readonly string[] = [
   "rpc:personalBotsList",

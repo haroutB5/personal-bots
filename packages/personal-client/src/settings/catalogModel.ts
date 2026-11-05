@@ -1,5 +1,5 @@
 import type { ServerProvider } from "@t3tools/contracts";
-import { resolveBotProvider } from "../bots/botSummaries.js";
+import { resolveBotProvider } from "../bots/botSummaries.ts";
 import type {
   ProviderCatalogCost,
   ProviderCatalogEntry,
