@@ -558,24 +558,14 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
             }),
           }),
     });
-    yield* engine
-      .dispatch({
-        type: "thread.turn.interrupt",
-        commandId: CommandId.make(
-          `personal-task:${attempt.taskId}:${attempt.attempt}:provider-wait`,
-        ),
-        threadId: attempt.providerThreadId,
-        ...(attempt.turnId !== null ? { turnId: attempt.turnId } : {}),
-        createdAt: DateTime.formatIso(now),
-      })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("personal task could not interrupt a turn waiting on its provider", {
-            taskId: attempt.taskId,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
+    yield* engine.interrupt(attempt.providerThreadId, attempt.turnId ?? undefined).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("personal task could not interrupt a turn waiting on its provider", {
+          taskId: attempt.taskId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
   });
 
   const observeSession = Effect.fn("PersonalTaskService.observeSession")(function* (

@@ -74,8 +74,7 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -216,8 +215,7 @@ interface CallableChat {
 export const make = Effect.gen(function* () {
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const botService = yield* PersonalBotService.PersonalBotService;
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const engine = yield* PersonalEngine.PersonalEngine;
   const sessions = yield* PersonalSessionAccess.PersonalSessionAccess;
   const calls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   const secrets = yield* PersonalSecretRepository.PersonalSecretRepository;
@@ -413,8 +411,8 @@ export const make = Effect.gen(function* () {
           "Voice calls are for team leads. Make this bot a team lead on its page to call it.",
         );
       }
-      const shell = yield* projections
-        .getThreadShellById(chat.threadId)
+      const shell = yield* engine
+        .getThread(chat.threadId)
         .pipe(Effect.mapError((cause) => fail("not_found", "Could not read that chat.", cause)));
       if (Option.isNone(shell)) {
         return yield* fail("not_owner_chat", "That chat cannot take a call.");
@@ -799,21 +797,14 @@ export const make = Effect.gen(function* () {
       // message: the dispatch is awaited here and a refusal comes back as a
       // typed `send_failed`, so the voice is never told a lie it can repeat.
       yield* engine
-        .dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make(`personal-voice-call:${input.callId}:${messageId}:turn.start`),
+        .send({
           threadId: chat.threadId,
+          messageId,
+          text,
+          attachments: [],
+          context,
+          mode: "start",
           ...(modelSelection === undefined ? {} : { modelSelection }),
-          message: {
-            messageId,
-            role: "user",
-            text,
-            attachments: [],
-            context,
-          },
-          runtimeMode: chat.shell.runtimeMode,
-          interactionMode: chat.shell.interactionMode,
-          createdAt: DateTime.formatIso(createdAt),
         })
         .pipe(
           Effect.mapError((cause) =>
@@ -1030,8 +1021,8 @@ export const make = Effect.gen(function* () {
           "Voice calls are for team leads. Make this bot a team lead on its page to call it.",
         );
       }
-      const shell = yield* projections
-        .getThreadShellById(threadId)
+      const shell = yield* engine
+        .getThread(threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
       const exposed = yield* sensitiveExposure(threadId);
       const privateChat = exposed.length > 0;

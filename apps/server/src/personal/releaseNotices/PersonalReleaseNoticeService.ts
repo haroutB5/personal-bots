@@ -32,7 +32,6 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
-  CommandId,
   ComposerContextId,
   MessageId,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
@@ -41,7 +40,6 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -51,11 +49,10 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../../config.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -104,20 +101,20 @@ export function releaseNoticeText(notice: ReleaseNotice): string {
     notice.outcome === "waiting"
       ? `Release waiting: ${name} is still waiting for idle.`
       : notice.outcome === "live"
-      ? `Release landed: ${name} is live. Smoke ${exitText(notice.smokeExit)}. No rollback.`
-      : notice.outcome === "rolled_back"
-        ? `Release failed: ${name} failed its smoke (${exitText(notice.smokeExit)}) and was rolled back to ${rollbackTo}: rollback ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}.`
-        : notice.outcome === "rollback_failed"
-          ? `Release failed and the rollback failed too: ${name} smoke ${exitText(notice.smokeExit)}; rollback to ${rollbackTo} ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}. The server may be down or on the wrong release.`
-          : `Release not activated: ${name} stopped before the restart. Nothing changed on the live server.`;
+        ? `Release landed: ${name} is live. Smoke ${exitText(notice.smokeExit)}. No rollback.`
+        : notice.outcome === "rolled_back"
+          ? `Release failed: ${name} failed its smoke (${exitText(notice.smokeExit)}) and was rolled back to ${rollbackTo}: rollback ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}.`
+          : notice.outcome === "rollback_failed"
+            ? `Release failed and the rollback failed too: ${name} smoke ${exitText(notice.smokeExit)}; rollback to ${rollbackTo} ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}. The server may be down or on the wrong release.`
+            : `Release not activated: ${name} stopped before the restart. Nothing changed on the live server.`;
   const next =
     notice.outcome === "waiting"
       ? "Check the blockers and the log; the waiter is still running."
       : notice.outcome === "live"
-      ? "Confirm the live release and start QA now."
-      : notice.outcome === "rollback_failed"
-        ? "Check status.ps1 and the log now and tell Harout plainly."
-        : "Read the log, fix the cause and re-arm.";
+        ? "Confirm the live release and start QA now."
+        : notice.outcome === "rollback_failed"
+          ? "Check status.ps1 and the log now and tell Harout plainly."
+          : "Read the log, fix the cause and re-arm.";
   const detail = (notice.detail ?? "").trim();
   return [
     "Release notice from the app's release waiter (the user did not type this).",
@@ -168,8 +165,7 @@ const errorCode = (cause: unknown) => String((cause as { readonly code?: string 
 
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const engine = yield* PersonalEngine.PersonalEngine;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const botService = yield* PersonalBotService.PersonalBotService;
   const inbox = NodePath.join(config.baseDir, "personal", RELEASE_NOTICE_DIR);
@@ -216,15 +212,15 @@ export const make = Effect.gen(function* () {
       // Only a bot chat: the inbox is local, but it still never reaches an
       // ordinary T3 thread or a chat nobody can trace to a bot.
       const target = yield* resolveDeliveryThread(
-        { repository: bots, projections },
+        { repository: bots, threads: engine },
         requestedThreadId,
       );
       if (target.kind === "unknown") {
         return yield* reject(fileName, `thread ${rawThreadId} is not a bot chat`);
       }
       if (target.kind === "open") {
-        const gone = yield* projections
-          .getThreadShellById(requestedThreadId)
+        const gone = yield* engine
+          .getThread(requestedThreadId)
           .pipe(Effect.orElseSucceed(() => Option.none()));
         if (Option.isNone(gone)) {
           return yield* reject(fileName, `thread ${rawThreadId} is not a bot chat`);
@@ -266,8 +262,8 @@ export const make = Effect.gen(function* () {
           threadId,
         });
       }
-      const shell = yield* projections
-        .getThreadShellById(threadId)
+      const shell = yield* engine
+        .getThread(threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
       const modelSelection = yield* botModelSelectionForThread(
         bots,
@@ -275,21 +271,14 @@ export const make = Effect.gen(function* () {
         Option.getOrUndefined(shell)?.modelSelection,
       );
       // The chat is open (or new), so its turn start has nothing to unarchive.
-      yield* engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make(`personal-release-notice:${noticeId}:turn.start`),
+      yield* engine.send({
         threadId,
+        messageId: MessageId.make(`${RELEASE_NOTICE_MESSAGE_ID_PREFIX}${noticeId}`),
+        text: releaseNoticeText(notice),
+        attachments: [],
+        context: noticeContext,
+        mode: "start",
         ...(modelSelection !== undefined ? { modelSelection } : {}),
-        message: {
-          messageId: MessageId.make(`${RELEASE_NOTICE_MESSAGE_ID_PREFIX}${noticeId}`),
-          role: "user",
-          text: releaseNoticeText(notice),
-          attachments: [],
-          context: noticeContext,
-        },
-        runtimeMode: Option.getOrUndefined(shell)?.runtimeMode ?? "full-access",
-        interactionMode: Option.getOrUndefined(shell)?.interactionMode ?? "default",
-        createdAt: DateTime.formatIso(yield* DateTime.now),
       });
       yield* Effect.logInfo("release notice posted", {
         file: fileName,
@@ -318,7 +307,12 @@ export const make = Effect.gen(function* () {
   const queueWaitingAlerts = Effect.promise(async () => {
     if (Date.now() < nextWaitingScan) return;
     nextWaitingScan = Date.now() + 30_000;
-    const runDir = NodePath.join(NodePath.basename(config.baseDir) === "dev" ? NodePath.dirname(config.baseDir) : config.baseDir, "run");
+    const runDir = NodePath.join(
+      NodePath.basename(config.baseDir) === "dev"
+        ? NodePath.dirname(config.baseDir)
+        : config.baseDir,
+      "run",
+    );
     const files = await NodeFSP.readdir(runDir).catch(() => [] as string[]);
     for (const file of files) {
       if (!/^restart-\d+\.\d+\.\d+-result\.json$/.test(file)) continue;
@@ -330,27 +324,58 @@ export const make = Effect.gen(function* () {
         if (typeof result !== "object" || result === null) continue;
         const r = result as Record<string, unknown>;
         const a = r.waitingAlert;
-        if (r.status !== "waiting_for_idle" || r.mode !== "run" || r.runner !== "hbots-release.mjs (linux)" ||
-            typeof r.notifyThread !== "string" || typeof r.version !== "string" ||
-            typeof r.release !== "string" || typeof r.runnerPid !== "number" ||
-            typeof r.updatedAt !== "string" || !Number.isFinite(Date.parse(r.updatedAt)) ||
-            Date.now() - Date.parse(r.updatedAt) > 90_000 || Date.parse(r.updatedAt) > Date.now() + 5_000 ||
-            typeof a !== "object" || a === null) continue;
+        if (
+          r.status !== "waiting_for_idle" ||
+          r.mode !== "run" ||
+          r.runner !== "hbots-release.mjs (linux)" ||
+          typeof r.notifyThread !== "string" ||
+          typeof r.version !== "string" ||
+          typeof r.release !== "string" ||
+          typeof r.runnerPid !== "number" ||
+          typeof r.updatedAt !== "string" ||
+          !Number.isFinite(Date.parse(r.updatedAt)) ||
+          Date.now() - Date.parse(r.updatedAt) > 90_000 ||
+          Date.parse(r.updatedAt) > Date.now() + 5_000 ||
+          typeof a !== "object" ||
+          a === null
+        )
+          continue;
         const alert = a as Record<string, unknown>;
-        if ((alert.minutes !== 20 && alert.minutes !== 60) || typeof alert.text !== "string" ||
-            typeof alert.at !== "string" || !Number.isFinite(Date.parse(alert.at))) continue;
+        if (
+          (alert.minutes !== 20 && alert.minutes !== 60) ||
+          typeof alert.text !== "string" ||
+          typeof alert.at !== "string" ||
+          !Number.isFinite(Date.parse(alert.at))
+        )
+          continue;
         // The runner delivered this alert into the inbox itself (1.66.99): the
         // durable file is already there, so a second one would double-post.
         if (typeof alert.noticeFile === "string") continue;
         const id = `waiting-${r.runnerPid}-${alert.minutes}-${Date.parse(alert.at)}`;
         const name = `${id}.json`;
-        const exists = async (p: string) => NodeFSP.access(p).then(() => true, () => false);
-        if (await exists(NodePath.join(inbox, "posted", name)) || await exists(NodePath.join(inbox, "rejected", name))) continue;
+        const exists = async (p: string) =>
+          NodeFSP.access(p).then(
+            () => true,
+            () => false,
+          );
+        if (
+          (await exists(NodePath.join(inbox, "posted", name))) ||
+          (await exists(NodePath.join(inbox, "rejected", name)))
+        )
+          continue;
         await NodeFSP.mkdir(inbox, { recursive: true });
-        await NodeFSP.writeFile(NodePath.join(inbox, name), JSON.stringify({
-          threadId: r.notifyThread, version: r.version, release: r.release,
-          outcome: "waiting", detail: alert.text.slice(0, DETAIL_MAX_CHARS), writtenAt: alert.at,
-        }), { flag: "wx" });
+        await NodeFSP.writeFile(
+          NodePath.join(inbox, name),
+          JSON.stringify({
+            threadId: r.notifyThread,
+            version: r.version,
+            release: r.release,
+            outcome: "waiting",
+            detail: alert.text.slice(0, DETAIL_MAX_CHARS),
+            writtenAt: alert.at,
+          }),
+          { flag: "wx" },
+        );
       } catch {
         // Files can change between listing and reading; the next sweep retries.
       }

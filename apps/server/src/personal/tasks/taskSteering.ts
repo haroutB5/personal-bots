@@ -243,20 +243,13 @@ export const makeTaskSteering = (
             // running steers that turn instead of starting another. The thread's
             // own modes, since a changed runtime mode restarts the session.
             yield* engine
-              .dispatch({
-                type: "thread.turn.start",
-                commandId: CommandId.make(`personal-task:${task.taskId}:steer:${steerId}`),
+              .send({
                 threadId: attempt.providerThreadId,
+                messageId: personalTaskSteerMessageId(steerId),
+                text,
+                attachments: [],
+                mode: "start",
                 ...(modelSelection !== undefined ? { modelSelection } : {}),
-                message: {
-                  messageId: personalTaskSteerMessageId(steerId),
-                  role: "user",
-                  text,
-                  attachments: [],
-                },
-                runtimeMode: thread?.runtimeMode ?? "full-access",
-                interactionMode: thread?.interactionMode ?? "default",
-                createdAt: DateTime.formatIso(now),
               })
               .pipe(Effect.mapError((cause) => fail("Could not deliver the update.", cause)));
             yield* repository.insertResumeNote({

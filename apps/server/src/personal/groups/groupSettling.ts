@@ -36,7 +36,8 @@ export const makeGroupSettling = (
   const {
     activeMemberThreadIds,
     botName,
-    dispatchOrLog,
+    engine,
+    runOrLog,
     fail,
     leaseOwner,
     limitResumes,
@@ -238,12 +239,7 @@ export const makeGroupSettling = (
     if (Option.isNone(group)) {
       return;
     }
-    yield* dispatchOrLog("interrupt stray turn", {
-      type: "thread.turn.interrupt",
-      commandId: CommandId.make(`personal-group:stray:${NodeCrypto.randomUUID()}`),
-      threadId,
-      createdAt: DateTime.formatIso(yield* DateTime.now),
-    });
+    yield* runOrLog("interrupt stray turn", engine.interrupt(threadId));
     yield* writeSystemRow(
       group.value,
       null,

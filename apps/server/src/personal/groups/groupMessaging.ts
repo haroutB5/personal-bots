@@ -86,25 +86,19 @@ export const makeGroupMessaging = (
                 createdAt: now,
               });
               yield* engine
-                .dispatch({
-                  type: "thread.message.user.append",
-                  commandId: CommandId.make(`personal-group:${input.messageId}:append`),
+                .postUserMessage({
                   threadId: group.threadId,
-                  message: {
-                    messageId: input.messageId,
-                    text: input.text,
-                    attachments: [],
-                    context: personalGroupMessageContext(
-                      {
-                        groupId: group.groupId,
-                        seq: row.seq,
-                        roundId,
-                        speaker: { kind: "user" },
-                      },
-                      input.replyTo,
-                    ),
-                  },
-                  createdAt: DateTime.formatIso(now),
+                  messageId: input.messageId,
+                  text: input.text,
+                  context: personalGroupMessageContext(
+                    {
+                      groupId: group.groupId,
+                      seq: row.seq,
+                      roundId,
+                      speaker: { kind: "user" },
+                    },
+                    input.replyTo,
+                  ),
                 })
                 .pipe(
                   Effect.mapError((cause) =>

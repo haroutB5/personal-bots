@@ -1,5 +1,5 @@
 {
-  "note": "Appendix B census at L2, minus the callers ported in A2. Direct entries are found by the import and table detectors; indirect entries reach v1 through another personal module and carry the reason.",
+  "note": "Appendix B census at L2, minus the callers ported in A2 and A3. Direct entries are found by the import and table detectors; indirect entries reach v1 through another personal module and carry the reason.",
   "files": [
     "apps/server/src/mcp/toolkits/personal/handlers.ts",
     "apps/server/src/personal/PersonalBotRepository.ts",
@@ -33,7 +33,6 @@
     "apps/server/src/personal/push/PersonalPushService.ts",
     "apps/server/src/personal/push/clientDiagRoute.ts",
     "apps/server/src/personal/push/sentPushesRoute.ts",
-    "apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.ts",
     "apps/server/src/personal/routines/hookRoutes.ts",
     "apps/server/src/personal/secrets/PersonalSessionAccess.ts",
     "apps/server/src/personal/sessionPrewarm.ts",

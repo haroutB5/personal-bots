@@ -21,7 +21,8 @@ export const makeGroupManagement = (core: GroupCore, votes: GroupVotes, turns: G
   const {
     botName,
     bots,
-    dispatchOrLog,
+    engine,
+    runOrLog,
     fail,
     groupThreadIds,
     liveBots,
@@ -234,11 +235,7 @@ export const makeGroupManagement = (core: GroupCore, votes: GroupVotes, turns: G
           const now = yield* DateTime.now;
           yield* repository.softDeleteGroup({ groupId: input.groupId, deletedAt: now });
           groupThreadIds.delete(group.value.threadId);
-          yield* dispatchOrLog("delete group thread", {
-            type: "thread.delete",
-            commandId: CommandId.make(`personal-group:thread.delete:${group.value.threadId}`),
-            threadId: group.value.threadId,
-          });
+          yield* runOrLog("delete group thread", engine.deleteThread(group.value.threadId));
         }),
       )
       .pipe(toPublic("delete"));

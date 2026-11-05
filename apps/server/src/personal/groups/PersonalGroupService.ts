@@ -120,7 +120,8 @@ export class PersonalGroupService extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const core = yield* makeGroupCore();
-  const { activeMemberThreadIds, engine, groupThreadIds, lock, refreshCaches, upserts } = core;
+  const { activeMemberThreadIds, commandEvents, groupThreadIds, lock, refreshCaches, upserts } =
+    core;
 
   const votes = makeGroupVotes(core);
   // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): no sweep, and no member turn starts.
@@ -244,7 +245,7 @@ export const make = Effect.gen(function* () {
 
   const start: PersonalGroupService["Service"]["start"] = Effect.fn("PersonalGroupService.start")(
     function* () {
-      const events = yield* engine.subscribeDomainEvents;
+      const events = yield* commandEvents;
       yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
       if (schedulersOff) return;
       yield* forkParked(

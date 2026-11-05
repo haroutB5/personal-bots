@@ -26,6 +26,7 @@ import {
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { PersonalEngineV1WiredLive } from "../engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
@@ -191,6 +192,7 @@ const makeHarness = (options: {
   };
   const saved = [...(options.secret === null ? [] : [key]), ...(options.extraSecrets ?? [])];
   return voiceCallLayer.pipe(
+    Layer.provideMerge(PersonalEngineV1WiredLive),
     Layer.provideMerge(PersonalVoiceCallRepository.layer),
     Layer.provideMerge(PersonalSecretRepository.layer),
     Layer.provideMerge(PersonalLoginRequestRepository.layer),

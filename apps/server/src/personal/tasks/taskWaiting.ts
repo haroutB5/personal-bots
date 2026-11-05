@@ -96,14 +96,7 @@ export const makeTaskWaiting = (
                 // it and queue on the "stopped" session event (tryResume).
                 resumingThreadIds.add(task.threadId);
                 yield* engine
-                  .dispatch({
-                    type: "thread.session.stop",
-                    commandId: CommandId.make(
-                      `personal-task:${task.taskId}:resume:${input.noteId}:session.stop`,
-                    ),
-                    threadId: task.threadId,
-                    createdAt: DateTime.formatIso(now),
-                  })
+                  .stop({ threadId: task.threadId, terminateProcesses: false })
                   .pipe(
                     Effect.mapError((cause) =>
                       fail("Could not restart the bot's provider session.", cause),

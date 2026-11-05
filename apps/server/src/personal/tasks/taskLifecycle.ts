@@ -142,26 +142,9 @@ export const makeTaskLifecycle = (
       yield* bots
         .createThread({ botId: input.botId, threadId, title, lockTitle: true })
         .pipe(Effect.mapError((cause) => fail("The relay could not open a chat.", cause)));
-      const createdAt = DateTime.formatIso(yield* DateTime.now);
-      const commandId = (step: string) =>
-        CommandId.make(`personal-relay:${digest.slice(0, 32)}:${step}`);
-      yield* Effect.gen(function* () {
-        yield* engine.dispatch({
-          type: "thread.message.assistant.delta",
-          commandId: commandId("delta"),
-          threadId,
-          messageId,
-          delta: input.text,
-          createdAt,
-        });
-        yield* engine.dispatch({
-          type: "thread.message.assistant.complete",
-          commandId: commandId("complete"),
-          threadId,
-          messageId,
-          createdAt,
-        });
-      }).pipe(Effect.mapError((cause) => fail("The relay could not post its message.", cause)));
+      yield* engine
+        .postNotice({ threadId, messageId, text: input.text })
+        .pipe(Effect.mapError((cause) => fail("The relay could not post its message.", cause)));
       return yield* lock.withPermit(
         Effect.gen(function* () {
           const now = yield* DateTime.now;
@@ -496,29 +479,18 @@ export const makeTaskLifecycle = (
             }),
           );
           const interruptedAt = yield* DateTime.now;
-          const createdAt = DateTime.formatIso(interruptedAt);
           for (const attempt of interrupted) {
             releaseThread(attempt.providerThreadId, DateTime.toEpochMillis(interruptedAt));
             // Interrupt by the attempt's own thread (and turn when known),
             // never by process name.
-            yield* engine
-              .dispatch({
-                type: "thread.turn.interrupt",
-                commandId: CommandId.make(
-                  `personal-task:${attempt.taskId}:${attempt.attempt}:interrupt`,
-                ),
-                threadId: attempt.providerThreadId,
-                ...(attempt.turnId !== null ? { turnId: attempt.turnId } : {}),
-                createdAt,
-              })
-              .pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("personal task cancel could not interrupt its turn", {
-                    taskId: attempt.taskId,
-                    cause: Cause.pretty(cause),
-                  }),
-                ),
-              );
+            yield* engine.interrupt(attempt.providerThreadId, attempt.turnId ?? undefined).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("personal task cancel could not interrupt its turn", {
+                  taskId: attempt.taskId,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
           }
           yield* publish(changed);
           yield* worker.enqueue({ type: "pump" });

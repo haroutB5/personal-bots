@@ -46,8 +46,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
@@ -614,12 +613,10 @@ export const make = Effect.gen(function* () {
   const bots = yield* PersonalBotService.PersonalBotService;
   const routines = yield* PersonalRoutineService.PersonalRoutineService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const engine = yield* PersonalEngine.PersonalEngine;
   const sql = yield* SqlClient.SqlClient;
   // Optional so the service stays testable without notifications; the server always has it.
   const push = yield* Effect.serviceOption(PersonalPushService.PersonalPushService);
-  // Optional for the same reason: without it a lead is not sent a turn with the answer.
-  const projections = yield* Effect.serviceOption(ProjectionSnapshotQuery.ProjectionSnapshotQuery);
   const seedModelOverride = yield* Config.String(PERSONAL_SEED_MODEL_ENV).pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -921,27 +918,12 @@ export const make = Effect.gen(function* () {
     readonly line: string;
     readonly nowIso: string;
   }) =>
-    engine
-      .dispatch({
-        type: "thread.message.assistant.delta",
-        commandId: CommandId.make(`${input.commandKey}:notice:delta`),
-        threadId: input.threadId as ThreadId,
-        messageId: MessageId.make(PERSONAL_NOTICE_MESSAGE_ID_PREFIX + input.messageKey),
-        delta: input.line,
-        context,
-        createdAt: input.nowIso,
-      })
-      .pipe(
-        Effect.andThen(
-          engine.dispatch({
-            type: "thread.message.assistant.complete",
-            commandId: CommandId.make(`${input.commandKey}:notice:complete`),
-            threadId: input.threadId as ThreadId,
-            messageId: MessageId.make(PERSONAL_NOTICE_MESSAGE_ID_PREFIX + input.messageKey),
-            createdAt: input.nowIso,
-          }),
-        ),
-      );
+    engine.postNotice({
+      threadId: input.threadId as ThreadId,
+      messageId: MessageId.make(PERSONAL_NOTICE_MESSAGE_ID_PREFIX + input.messageKey),
+      text: input.line,
+      context,
+    });
 
   /**
    * After the change has happened: the audit row (which the daily create limit
@@ -1031,9 +1013,8 @@ export const make = Effect.gen(function* () {
         nowIso,
       }).pipe(bestEffort("answer line not written", row.confirmationId));
     }
-    if (Option.isNone(projections)) return;
-    const shell = yield* projections.value
-      .getThreadShellById(row.threadId as ThreadId)
+    const shell = yield* engine
+      .getThread(row.threadId as ThreadId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(shell) || shell.value.archivedAt != null) return;
     const modelSelection = yield* botModelSelectionForThread(
@@ -1042,21 +1023,14 @@ export const make = Effect.gen(function* () {
       shell.value.modelSelection,
     );
     yield* engine
-      .dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make(`personal-lead-answer:${row.confirmationId}:turn.start`),
+      .send({
         threadId: row.threadId as ThreadId,
+        messageId: MessageId.make(PERSONAL_LEAD_ANSWER_MESSAGE_ID_PREFIX + row.confirmationId),
+        text: leadBotAnswerText(answer),
+        attachments: [],
+        context: answerContext,
+        mode: "start",
         ...(modelSelection !== undefined ? { modelSelection } : {}),
-        message: {
-          messageId: MessageId.make(PERSONAL_LEAD_ANSWER_MESSAGE_ID_PREFIX + row.confirmationId),
-          role: "user",
-          text: leadBotAnswerText(answer),
-          attachments: [],
-          context: answerContext,
-        },
-        runtimeMode: shell.value.runtimeMode,
-        interactionMode: shell.value.interactionMode,
-        createdAt: nowIso,
       })
       .pipe(bestEffort("lead not told", row.confirmationId));
   });

@@ -48,7 +48,7 @@ export const makeGroupTurns = (
     botRepository,
     bots,
     carryTaint,
-    dispatchOrLog,
+    runOrLog,
     engine,
     fail,
     leaseOwner,
@@ -115,13 +115,10 @@ export const makeGroupTurns = (
     if (round.activeThreadId === null) {
       return;
     }
-    yield* dispatchOrLog("interrupt member turn", {
-      type: "thread.turn.interrupt",
-      commandId: CommandId.make(`personal-group:${round.roundId}:${reason}:interrupt`),
-      threadId: round.activeThreadId,
-      ...(round.activeTurnId !== null ? { turnId: round.activeTurnId } : {}),
-      createdAt: DateTime.formatIso(yield* DateTime.now),
-    });
+    yield* runOrLog(
+      "interrupt member turn",
+      engine.interrupt(round.activeThreadId, round.activeTurnId ?? undefined),
+    );
   });
 
   /** Starts the next member's turn. Returns whether a turn actually started. */
@@ -251,28 +248,21 @@ export const makeGroupTurns = (
       Option.isSome(memberThread) ? memberThread.value.modelSelection : undefined,
     );
     const dispatched = yield* engine
-      .dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make(`personal-group:${round.roundId}:${String(turn)}:turn.start`),
+      .send({
         threadId,
-        ...(modelSelection !== undefined ? { modelSelection } : {}),
-        message: {
-          messageId: briefMessageId(round.roundId, turn),
-          role: "user",
-          text: brief,
-          attachments: [],
-          context: personalGroupMessageContext({
-            groupId: group.groupId,
-            seq: latestSeq,
-            roundId: round.roundId,
-            speaker: { kind: "user" },
-            relayedFromGroup: true,
-          }),
-        },
+        messageId: briefMessageId(round.roundId, turn),
+        text: brief,
+        attachments: [],
+        context: personalGroupMessageContext({
+          groupId: group.groupId,
+          seq: latestSeq,
+          roundId: round.roundId,
+          speaker: { kind: "user" },
+          relayedFromGroup: true,
+        }),
+        mode: "start",
         titleSeed: group.name,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        createdAt: DateTime.formatIso(now),
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
       })
       .pipe(
         Effect.as(true),

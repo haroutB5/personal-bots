@@ -26,6 +26,8 @@ import {
   type PersonalGroupVote,
 } from "@t3tools/contracts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import type { PersonalEngineError } from "../engine/errors.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -55,7 +57,9 @@ export const makeGroupCore = () =>
       );
     const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
     const bots = yield* PersonalBotService.PersonalBotService;
-    const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const engine = yield* PersonalEngine.PersonalEngine;
+    // A5 moves the group's event subscriber onto the port's reduced stream.
+    const commandEvents = yield* OrchestrationEngine.OrchestrationEngineService;
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const messages = yield* ProjectionThreadMessageRepository;
 
@@ -254,9 +258,8 @@ export const makeGroupCore = () =>
     // Writing into the group transcript
     // ---------------------------------------------------------------------
 
-    const dispatchOrLog = (operation: string, command: Parameters<typeof engine.dispatch>[0]) =>
-      engine.dispatch(command).pipe(
-        Effect.asVoid,
+    const runOrLog = (operation: string, effect: Effect.Effect<void, PersonalEngineError>) =>
+      effect.pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.interrupt
@@ -279,30 +282,29 @@ export const makeGroupCore = () =>
       readonly offset: number;
       readonly marker: PersonalGroupMessageMarker | null;
     }) {
-      yield* dispatchOrLog("relay delta", {
-        type: "thread.message.assistant.delta",
-        commandId: CommandId.make(
-          `personal-group:${input.messageId}:delta:${String(input.offset)}`,
-        ),
-        threadId: input.group.threadId,
-        messageId: input.messageId,
-        delta: input.delta,
-        ...(input.marker === null ? {} : { context: personalGroupMessageContext(input.marker) }),
-        createdAt: DateTime.formatIso(yield* DateTime.now),
-      });
+      yield* runOrLog(
+        "relay delta",
+        engine.appendNotice({
+          threadId: input.group.threadId,
+          messageId: input.messageId,
+          delta: input.delta,
+          key: String(input.offset),
+          ...(input.marker === null ? {} : { context: personalGroupMessageContext(input.marker) }),
+        }),
+      );
     });
 
     const relayComplete = Effect.fn("PersonalGroupService.relayComplete")(function* (input: {
       readonly group: GroupRecord;
       readonly messageId: MessageId;
     }) {
-      yield* dispatchOrLog("relay complete", {
-        type: "thread.message.assistant.complete",
-        commandId: CommandId.make(`personal-group:${input.messageId}:complete`),
-        threadId: input.group.threadId,
-        messageId: input.messageId,
-        createdAt: DateTime.formatIso(yield* DateTime.now),
-      });
+      yield* runOrLog(
+        "relay complete",
+        engine.completeNotice({
+          threadId: input.group.threadId,
+          messageId: input.messageId,
+        }),
+      );
     });
 
     /** A server-authored line in the transcript: joins, skips, pauses, stops. */
@@ -350,8 +352,9 @@ export const makeGroupCore = () =>
       botRepository,
       bots,
       carryTaint,
-      dispatchOrLog,
+      runOrLog,
       engine,
+      commandEvents: commandEvents.subscribeDomainEvents,
       fail,
       groupThreadIds,
       leaseOwner,

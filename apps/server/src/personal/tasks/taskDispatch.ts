@@ -371,22 +371,15 @@ export const makeTaskDispatch = (
       attempt.providerThreadId,
       Option.isSome(thread) ? thread.value.modelSelection : undefined,
     );
-    yield* engine.dispatch({
-      type: "thread.turn.start",
-      commandId: CommandId.make(`personal-task:${task.taskId}:${attempt.attempt}:turn.start`),
+    yield* engine.send({
       threadId: attempt.providerThreadId,
-      ...(modelSelection !== undefined ? { modelSelection } : {}),
-      message: {
-        messageId: attemptMessageId(attempt),
-        role: "user",
-        text,
-        attachments: [],
-        context: personalTaskMessageContext(marker),
-      },
+      messageId: attemptMessageId(attempt),
+      text,
+      attachments: [],
+      context: personalTaskMessageContext(marker),
+      mode: "start",
       titleSeed: task.title,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdAt: DateTime.formatIso(yield* DateTime.now),
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
     });
   });
 
@@ -413,7 +406,7 @@ export const makeTaskDispatch = (
       .pipe(Effect.orElseSucceed(() => false));
     if (groupRelay) return { threadId: task.threadId, note: null };
     const target = yield* resolveDeliveryThread(
-      { repository: botRepository, projections: snapshots },
+      { repository: botRepository, threads: engine },
       task.threadId,
       // A routine's output only goes to a chat of the same name (as at creation).
       // A task on a chat that was deleted is cancelled with it; only a live link is judged.

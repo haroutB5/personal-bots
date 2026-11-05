@@ -376,7 +376,7 @@ export const make = Effect.gen(function* () {
   const core = yield* makeTaskCore();
   const {
     activeThreadIds,
-    engine,
+    commandEvents,
     idleWaitThreadIds,
     lock,
     refreshActiveThreads,
@@ -507,7 +507,7 @@ export const make = Effect.gen(function* () {
 
   const start: PersonalTaskService["Service"]["start"] = Effect.fn("PersonalTaskService.start")(
     function* () {
-      const events = yield* engine.subscribeDomainEvents;
+      const events = yield* commandEvents;
       yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
       if (schedulersOff) return;
       yield* forkParked(
