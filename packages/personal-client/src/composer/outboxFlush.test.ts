@@ -13,6 +13,7 @@ import {
 import {
   classifySendFailure,
   createOutboxFlusher,
+  OUTBOX_CONNECTION_CHECK_MS,
   OUTBOX_MAX_UNANSWERED,
   OUTBOX_SEND_TIMEOUT_MS,
   runOutboxPass,
@@ -308,7 +309,8 @@ describe("a send cut off by the connection going away", () => {
       status: "waiting",
       attempts: 0,
     });
-    expect(result.retryInMs).not.toBeNull();
+    // The pass stops; the next connection starts it again.
+    expect(result.retryInMs).toBeNull();
   });
 
   it("never gives up on a message through any number of replaced sockets", async () => {
@@ -393,7 +395,7 @@ describe("a send that never answers", () => {
           : Promise.resolve({ kind: "sent" });
       },
     });
-    await vi.advanceTimersByTimeAsync(OUTBOX_SEND_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(OUTBOX_SEND_TIMEOUT_MS + OUTBOX_CONNECTION_CHECK_MS);
     const result = await pass;
     expect(sent).toEqual(["hung", "fine"]);
     expect(ids()).toEqual(["hung"]);

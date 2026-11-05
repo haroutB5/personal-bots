@@ -60,10 +60,11 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Sorts a failed command into the four outcomes. Only a known "the laptop
- * answered no" counts as a refusal; anything unrecognised (a dropped socket, a
- * timeout, an interrupted request, a defect) is treated as "may have landed",
- * because resending the same ids is always safe and giving up on it is not.
+ * Sorts a failed command into the outcomes the error alone can decide. Only a
+ * known "the laptop answered no" counts as a refusal; anything unrecognised (a
+ * dropped socket, a timeout, an interrupted request, a defect) is treated as
+ * "may have landed", because resending the same ids is always safe and giving
+ * up on it is not. The queue decides "interrupted" from the connection state.
  */
 export function classifySendFailure(error: unknown): SendOutcome {
   const tag = errorTag(error);
@@ -138,6 +139,25 @@ function answeredWithin(
   });
 }
 
+/**
+ * A rejection reaches the queue before the client always sees the socket go.
+ * Give the connection one check interval to catch up, so an attempt that died
+ * with its socket is not filed as an unanswered one. This is the difference
+ * between a flapping network never delivering and a message that keeps its
+ * place in the queue.
+ */
+async function afterConnectionSettles(
+  outcome: SendOutcome,
+  connectionLost: () => boolean,
+): Promise<SendOutcome> {
+  if (outcome.kind !== "unknown") return outcome;
+  if (connectionLost()) return { kind: "interrupted" };
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, OUTBOX_CONNECTION_CHECK_MS);
+  });
+  return connectionLost() ? { kind: "interrupted" } : outcome;
+}
+
 const GAVE_UP = "Couldn't send: your laptop didn't answer. Try again.";
 
 export interface OutboxPassResult {
@@ -183,9 +203,12 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
     tried.add(entry.id);
     setOutboxSending(entry.id, true);
     const startedOn = generation();
-    const outcome = await answeredWithin(
-      () => deps.send(entry),
-      entry.attachments.length > 0 ? OUTBOX_UPLOAD_SEND_TIMEOUT_MS : OUTBOX_SEND_TIMEOUT_MS,
+    const outcome = await afterConnectionSettles(
+      await answeredWithin(
+        () => deps.send(entry),
+        entry.attachments.length > 0 ? OUTBOX_UPLOAD_SEND_TIMEOUT_MS : OUTBOX_SEND_TIMEOUT_MS,
+        () => !deps.isConnected() || generation() !== startedOn,
+      ),
       () => !deps.isConnected() || generation() !== startedOn,
     );
     setOutboxSending(entry.id, false);

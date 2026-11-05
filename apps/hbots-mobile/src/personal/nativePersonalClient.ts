@@ -179,6 +179,12 @@ export interface NativePersonal {
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
   readonly readSystemSummary: () => Promise<SystemSummary | null>;
   readonly useConnectionState: () => SupervisorConnectionState;
+  /**
+   * The connection as it is right now, read from the session loop itself. A
+   * send that fails must ask this, not the last render's phase, or a socket
+   * that has already gone still looks connected for a frame.
+   */
+  readonly readConnection: () => { readonly connected: boolean; readonly generation: number };
   readonly retry: () => void;
   readonly dispose: () => Promise<void>;
 }
@@ -349,6 +355,7 @@ export function createNativePersonal(
   };
 
   const generation = { value: 0 };
+  let socketAlive = false;
   const setState = (next: SupervisorConnectionState) => {
     Effect.runSync(SubscriptionRef.set(stateRef, next));
   };
@@ -376,11 +383,13 @@ export function createNativePersonal(
           ),
         );
         if (disposed) {
+          socketAlive = false;
           await next.dispose();
           return;
         }
         const connectedAt = Date.now();
         current = next;
+        socketAlive = true;
         Effect.runSync(SubscriptionRef.set(sessionRef, Option.some(next.session)));
         Effect.runSync(
           SubscriptionRef.set(
@@ -434,6 +443,7 @@ export function createNativePersonal(
           retrySignal.promise,
           liveness,
         ]);
+        socketAlive = false;
         stopWatchdog();
         // A session that drops within ten seconds is part of the same outage.
         if (Date.now() - connectedAt >= 10_000) {
@@ -443,6 +453,7 @@ export function createNativePersonal(
           startNetworkWatch();
         }
       } catch (cause) {
+        socketAlive = false;
         unstable += 1;
         lastDetail = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
         startNetworkWatch();
@@ -526,6 +537,7 @@ export function createNativePersonal(
       }, []);
       return state;
     },
+    readConnection: () => ({ connected: socketAlive, generation: generation.value }),
     retry: () => {
       if (current !== null) {
         const session = current;

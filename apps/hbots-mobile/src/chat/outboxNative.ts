@@ -153,8 +153,6 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
     reportFailure: false,
   });
   const connected = connection.phase === "connected";
-  const connectedRef = useRef(connected);
-  const generationRef = useRef(connection.generation);
   const startTurnRef = useRef(startTurn);
 
   const sendEntry = async (entry: OutboxEntry): Promise<SendOutcome> => {
@@ -165,7 +163,7 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
     if (entry.attachments.length > 0) {
       const uploaded = await uploadEntryAttachments(native, chat, entry);
       if (uploaded === null) {
-        return connectedRef.current
+        return native.readConnection().connected
           ? { kind: "unknown", reason: "Couldn't send: an attachment didn't upload. Try again." }
           : { kind: "not-sent" };
       }
@@ -210,8 +208,6 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
 
   const sendEntryRef = useRef(sendEntry);
   useEffect(() => {
-    connectedRef.current = connected;
-    generationRef.current = connection.generation;
     startTurnRef.current = startTurn;
     sendEntryRef.current = sendEntry;
   });
@@ -220,8 +216,8 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
   useEffect(() => {
     const flusher = createOutboxFlusher({
       environmentId: native.environmentId,
-      isConnected: () => connectedRef.current,
-      connectionGeneration: () => generationRef.current,
+      isConnected: () => native.readConnection().connected,
+      connectionGeneration: () => native.readConnection().generation,
       send: (entry) => sendEntryRef.current(entry),
     });
     flusherRef.current = flusher;
