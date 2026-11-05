@@ -113,6 +113,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
@@ -851,6 +852,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalPushService.PersonalPushService)({}),
           Layer.mock(PersonalLeadBots.PersonalLeadBotService)({}),
           Layer.mock(PersonalProviderUpdates.PersonalProviderUpdates)({}),
+          Layer.mock(ProviderMaintenanceRunner.ProviderMaintenanceRunner)({}),
           Layer.mock(PersonalBotTokenUsage.PersonalBotTokenUsage)({}),
           Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
           // The chat-open session prewarm the WS route builds once.

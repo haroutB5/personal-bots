@@ -214,6 +214,14 @@ export function makeProviderMaintenanceCapabilities(input: {
 export function makeTargetedProviderUpdateAction(
   capabilities: ProviderMaintenanceCapabilities,
   version: string,
+  options: {
+    /**
+     * The version an update installed before it failed. mise rebuilds every
+     * alias to the highest installed version after any install, so a rollback
+     * that only moves `latest` is undone by the next update of any tool.
+     */
+    readonly uninstallVersion?: string | null;
+  } = {},
 ): ProviderMaintenanceCommandAction | null {
   if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
   const update = capabilities.update;
@@ -226,8 +234,14 @@ export function makeTargetedProviderUpdateAction(
     const toolSpec = update.args[index]!.slice(0, -"@latest".length);
     if (toolSpec.length === 0) return null;
     const shellQuote = (word: string) => quoteShellWord(word, HostProcessPlatform.defaultValue());
+    const uninstallVersion = options.uninstallVersion;
     const script = [
       `[ -L ${shellQuote(latestPath)} ] || { echo "mise latest is not a symlink" >&2; exit 1; }`,
+      ...(uninstallVersion && uninstallVersion !== version
+        ? [
+            `${shellQuote(update.executable)} uninstall ${shellQuote(toolSpec)}@${shellQuote(uninstallVersion)}`,
+          ]
+        : []),
       `${shellQuote(update.executable)} install ${shellQuote(toolSpec)}@${version}`,
       `ln -sfn ${shellQuote(version)} ${shellQuote(latestPath)}`,
     ].join(" && ");
@@ -480,6 +494,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "vp",
       updateArgs: ["i", "-g", packageName],
       updateLockKey: "vite-plus-global",
+      ...packageManagerEnvironment(context),
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
@@ -489,6 +504,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "bun",
       updateArgs: ["i", "-g", `${packageName}@latest`],
       updateLockKey: "bun-global",
+      ...packageManagerEnvironment(context),
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
@@ -498,6 +514,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "pnpm",
       updateArgs: ["add", "-g", `${packageName}@latest`],
       updateLockKey: "pnpm-global",
+      ...packageManagerEnvironment(context),
     });
   }
 
@@ -524,6 +541,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         `${packageName}@latest`,
       ],
       updateLockKey: `npm-global:${normalizeCommandPath(npmPrefix)}`,
+      ...packageManagerEnvironment(context),
     });
   }
 
@@ -604,6 +622,17 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
     .pipe(Effect.orElseSucceed(() => false));
   return hasManifest ? shimDir : null;
 });
+
+/**
+ * The instance's PATH decides which package manager runs, matching the binary
+ * the provider itself uses. The rest of the server environment still applies.
+ */
+function packageManagerEnvironment(context: ProviderMaintenanceResolutionContext): {
+  readonly env?: NodeJS.ProcessEnv;
+} {
+  const path = nonEmptyString(context.env.PATH);
+  return path === null ? {} : { env: { PATH: path } };
+}
 
 export function makePackageManagedProviderMaintenanceResolver(
   definition: PackageManagedProviderMaintenanceDefinition,

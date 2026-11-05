@@ -932,15 +932,20 @@ export const makeWith = (
       provider: ServerProvider,
       record: PersistedAutoUpdate,
       reason: string,
+      options: {
+        readonly status?: "rolled_back" | "failed";
+        readonly summary?: string;
+      } = {},
     ) =>
       Effect.gen(function* () {
         const instanceId = provider.instanceId;
         const fromVersion = record.fromVersion;
+        const failureSummary = options.summary ?? `${record.toVersion} failed the test: ${reason}`;
         if (fromVersion === null) {
           yield* completeAutoUpdate(provider, {
             ...record,
             status: "failed",
-            message: `Could not go back: the previous version is unknown. ${reason}`,
+            message: `Could not go back: the previous version is unknown. ${failureSummary}`,
           });
           return;
         }
@@ -1024,7 +1029,8 @@ export const makeWith = (
           yield* deps.setSmokeCheck(instanceId, null);
           yield* completeAutoUpdate(after, {
             ...goingBack,
-            message: `Went back to ${fromVersion}. ${record.toVersion} failed the test: ${reason}`,
+            status: options.status ?? "rolled_back",
+            message: `Went back to ${fromVersion}. ${failureSummary}`,
           });
           return;
         }
@@ -1034,7 +1040,7 @@ export const makeWith = (
         yield* completeAutoUpdate(after, {
           ...record,
           status: "failed",
-          message: `Could not go back to ${fromVersion} after ${record.toVersion} failed the test: ${reason} (${rollbackReason})`,
+          message: `Could not go back to ${fromVersion} after ${failureSummary} (${rollbackReason})`,
         });
       });
 
@@ -1075,11 +1081,7 @@ export const makeWith = (
           (yield* deps.getProviders).find((candidate) => candidate.instanceId === instanceId) ??
           provider;
         if (refreshed.version !== targetVersion) {
-          yield* completeAutoUpdate(refreshed, {
-            ...updating,
-            status: "failed",
-            message: `The updater finished but ${providerProductName(provider)} still reports ${refreshed.version ?? "no version"}.`,
-          });
+          yield* rollBackUnrequestedVersion(refreshed, updating, bots);
           return;
         }
 
@@ -1107,12 +1109,44 @@ export const makeWith = (
         );
       });
 
+    /**
+     * The version that landed is not the one the update asked for. It has
+     * never been tested, so test it and go back to the last known working
+     * version; the failure stays visible with Try again.
+     */
+    const rollBackUnrequestedVersion = (
+      provider: ServerProvider,
+      record: PersistedAutoUpdate,
+      bots: ReadonlyArray<PersonalBot>,
+    ) =>
+      Effect.gen(function* () {
+        const delivered = provider.version;
+        const verdict = yield* autoUpdateCheck(provider, bots);
+        const testNote =
+          verdict === null
+            ? " The test could not run."
+            : verdict.status === "failed"
+              ? ` The test failed: ${verdict.message ?? "no detail"}`
+              : verdict.status === "passed"
+                ? " The test passed."
+                : " The test is waiting for the usage limit.";
+        const summary = `The updater finished but ${providerProductName(provider)} reports ${delivered ?? "no version"} instead of ${record.toVersion}.${testNote}`;
+        yield* rollBackAutoUpdate(provider, record, summary, {
+          status: "failed",
+          summary,
+        });
+      });
+
     const finishInterruptedUpdate = (
       provider: ServerProvider,
       record: PersistedAutoUpdate,
       bots: ReadonlyArray<PersonalBot>,
     ) =>
       Effect.gen(function* () {
+        if (provider.version !== record.toVersion) {
+          yield* rollBackUnrequestedVersion(provider, record, bots);
+          return;
+        }
         const verdict = yield* autoUpdateCheck(provider, bots);
         if (verdict?.status === "passed") {
           yield* completeAutoUpdate(provider, {

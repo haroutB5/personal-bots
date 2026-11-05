@@ -662,7 +662,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   // personal_meta, all of which the rest of this chain provides.
   Layer.provideMerge(
     Layer.merge(
-      PersonalProviderUpdates.layer.pipe(Layer.provide(providerMaintenanceRunnerLayer)),
+      PersonalProviderUpdates.layer.pipe(Layer.provideMerge(providerMaintenanceRunnerLayer)),
       DeepSeekBalanceWatcher.layer,
     ),
   ),

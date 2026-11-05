@@ -151,7 +151,10 @@ const makeHarness = (meta = new Map<string, string>()) => {
           input.provider.versionAdvisory?.latestVersion ??
           input.provider.version ??
           "2.1.317";
-        const landed = state.updateLandsAs === undefined ? target : state.updateLandsAs;
+        const landed =
+          input.rollback === true || state.updateLandsAs === undefined
+            ? target
+            : state.updateLandsAs;
         setProvider(landed, target === "2.1.310" ? "2.1.317" : target);
         return state.providers;
       }),

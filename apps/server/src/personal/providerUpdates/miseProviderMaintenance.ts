@@ -5,10 +5,13 @@
  * `<data>/mise/installs/<dir>/<version>/…`, or behind a shim at
  * `<data>/mise/shims/<name>`. Its version is moved by `mise install
  * <tool>@latest`, which repoints the `latest` alias and keeps the previous
- * version on disk for a rollback. Installing an older version does not move
- * that alias, so the rollback installs it and then points the alias back. The
- * latest version must come from `mise latest <tool>`, never npm: npm publishes
- * a release before mise's registry has it, and trusting npm makes the app
+ * version on disk for a rollback. Every install of any tool rebuilds each
+ * tool's `latest` and major/minor aliases to its highest installed version,
+ * so moving the alias alone does not hold. A rollback uninstalls the failed
+ * version, installs the previous one and points `latest` back; with the bad
+ * version gone, the next alias rebuild cannot pick it again. The latest
+ * version must come from `mise latest <tool>`, never npm: npm publishes a
+ * release before mise's registry has it, and trusting npm makes the app
  * update to a version mise cannot install.
  *
  * @module personal/providerUpdates/miseProviderMaintenance

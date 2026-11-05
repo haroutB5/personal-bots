@@ -413,11 +413,20 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
       );
     }
     if (automatic !== undefined) {
-      return row("updateAvailable", "live", "Updates automatically", {
-        detail:
-          firstLine(automatic.message) ??
-          (latest === null ? "A new version is ready." : `New version ${latest}.`),
-      });
+      const nextAttemptAt =
+        automatic.nextAttemptAt === null ? Number.NaN : Date.parse(automatic.nextAttemptAt);
+      const schedule = Number.isFinite(nextAttemptAt)
+        ? `Updates automatically · Next attempt ${formatRetryTime(new Date(nextAttemptAt), now)}`
+        : null;
+      return row(
+        "updateAvailable",
+        "live",
+        latest === null ? "New version" : `New version ${latest}`,
+        {
+          detail: schedule ?? firstLine(automatic.message) ?? "Updates automatically.",
+          action: oneClick ? { kind: "update", label: "Update" } : null,
+        },
+      );
     }
     return row(
       "updateAvailable",

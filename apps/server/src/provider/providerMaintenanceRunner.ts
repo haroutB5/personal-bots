@@ -14,6 +14,7 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -310,7 +311,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     );
 
-  const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
+  const runUpdateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
     const provider = typeof target === "string" ? target : target.provider;
@@ -400,13 +401,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 provider,
                 candidateVersion,
               );
+            const providerSnapshot = (yield* providerRegistry.getProviders).find(
+              (candidate) => candidate.instanceId === instanceId,
+            );
+            const currentVersion = providerSnapshot?.version ?? null;
             const command =
               targetVersion !== undefined
-                ? makeTargetedProviderUpdateAction(fresh, targetVersion)
+                ? makeTargetedProviderUpdateAction(fresh, targetVersion, {
+                    uninstallVersion:
+                      rollback && currentVersion !== null && currentVersion !== targetVersion
+                        ? currentVersion
+                        : null,
+                  })
                 : fresh.update;
-            const recordedPreviousVersion = (yield* providerRegistry.getProviders).find(
-              (candidate) => candidate.instanceId === instanceId,
-            )?.smokeCheck?.previousVersion;
+            const recordedPreviousVersion = providerSnapshot?.smokeCheck?.previousVersion;
             const rejected =
               rollback && (targetVersion === undefined || targetVersion !== recordedPreviousVersion)
                 ? true
@@ -524,6 +532,17 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ),
       );
   });
+
+  /**
+   * The command runs in a daemon fiber so a Settings page that closes mid
+   * update cannot cancel it and leave `updateState` running forever. The
+   * caller still waits for the result and receives its error.
+   */
+  const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = (target) =>
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkDetach(runUpdateProvider(target));
+      return yield* Fiber.join(fiber);
+    });
 
   return ProviderMaintenanceRunner.of({
     updateProvider,
