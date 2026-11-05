@@ -620,7 +620,7 @@ export const make = Effect.gen(function* () {
         // The token has to outlive the whole call, not just its start.
         const ttlSeconds = Math.max(VOICE_CALL_TOKEN_TTL_SECONDS, VOICE_CALL_MAX_MINUTES * 60);
         const token = yield* mint(key, ttlSeconds);
-        const notes = yield* personalWorkingProgress(sql, [chat.threadId]).pipe(
+        const notes = yield* personalWorkingProgress(engine, [chat.threadId]).pipe(
           Effect.orElseSucceed(() => [] as ReadonlyArray<{ readonly note: string }>),
         );
         const context = yield* recentMessages(chat.threadId);
@@ -1037,7 +1037,7 @@ export const make = Effect.gen(function* () {
           latestReplyAt: null,
         } satisfies VoiceCallSnapshotResult;
       }
-      const notes = yield* personalWorkingProgress(sql, [threadId]).pipe(
+      const notes = yield* personalWorkingProgress(engine, [threadId]).pipe(
         Effect.orElseSucceed(() => [] as ReadonlyArray<{ readonly note: string }>),
       );
       const reply = yield* latestReply(threadId);

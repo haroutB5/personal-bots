@@ -1,15 +1,21 @@
 import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { PersonalEngine } from "./engine/PersonalEngine.ts";
+import { personalReadsTestLayer } from "./test/personalReadsTestLayer.ts";
 import { personalWorkingProgress } from "./workingProgress.ts";
+
+const testLayer = personalReadsTestLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
 
 const thread = (id: string) => ThreadId.make(id);
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const engine = yield* PersonalEngine;
   const addThread = (id: string, status: string, userAt: string) =>
     Effect.gen(function* () {
       yield* sql`
@@ -39,12 +45,12 @@ const seed = Effect.gen(function* () {
       VALUES (${activityId}, ${id}, NULL, 'tool', 'tool.started', ${summary},
         ${title === null ? "{}" : `{"title":"${title}","detail":"cat .env"}`}, ${seq}, ${at})
     `;
-  return { sql, addThread, addReasoning, addTool };
+  return { sql, engine, addThread, addReasoning, addTool };
 });
 
 it.effect("notes for working chats only, newest of thinking and tool title, this turn only", () =>
   Effect.gen(function* () {
-    const { addThread, addReasoning, addTool, sql } = yield* seed;
+    const { addThread, addReasoning, addTool, engine } = yield* seed;
     // Working: thinking summary, then a newer tool step; an older turn's thinking is ignored.
     yield* addThread("t-working", "running", "2026-09-29T10:00:00.000Z");
     yield* addReasoning("t-working", "r-old", "**Yesterday's plan**", "2026-09-29T09:30:00.000Z");
@@ -84,13 +90,13 @@ it.effect("notes for working chats only, newest of thinking and tool title, this
     const ids = ["t-working", "t-thinking", "t-summary", "t-quiet", "t-idle", "t-unknown"].map(
       thread,
     );
-    const notes = yield* personalWorkingProgress(sql, ids);
+    const notes = yield* personalWorkingProgress(engine, ids);
     expect(Object.fromEntries(notes.map((entry) => [entry.threadId, entry.note]))).toEqual({
       "t-working": "Running tests",
       "t-thinking": "Planning the fix",
       "t-summary": "Searching the repo",
     });
-    expect(yield* personalWorkingProgress(sql, [])).toEqual([]);
+    expect(yield* personalWorkingProgress(engine, [])).toEqual([]);
     // A tool step in the turn says the bot is working, whichever note won.
     expect(Object.fromEntries(notes.map((entry) => [entry.threadId, entry.toolStep]))).toEqual({
       "t-working": true,
@@ -100,12 +106,12 @@ it.effect("notes for working chats only, newest of thinking and tool title, this
 
     // The tool's detail (a command, a path) never reaches the note.
     expect(notes.every((entry) => !entry.note.includes(".env"))).toBe(true);
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("a turn the server starts on its own shows none of the previous turn's notes", () =>
   Effect.gen(function* () {
-    const { addThread, addReasoning, addTool, sql } = yield* seed;
+    const { addThread, addReasoning, addTool, sql, engine } = yield* seed;
     // One owner message at 10:00; turn-1 answered it and thought and ran a tool.
     yield* addThread("t-follow-up", "running", "2026-09-29T10:00:00.000Z");
     yield* sql`
@@ -129,7 +135,7 @@ it.effect("a turn the server starts on its own shows none of the previous turn's
     );
 
     // While turn-1 runs, its note is named after turn-1.
-    const during = yield* personalWorkingProgress(sql, [thread("t-follow-up")]);
+    const during = yield* personalWorkingProgress(engine, [thread("t-follow-up")]);
     expect(during).toEqual([
       { threadId: "t-follow-up", turnId: "turn-1", note: "MCP tool call", toolStep: true },
     ]);
@@ -141,7 +147,7 @@ it.effect("a turn the server starts on its own shows none of the previous turn's
     `;
     yield* sql`UPDATE projection_threads SET latest_turn_id = 'turn-2' WHERE thread_id = 't-follow-up'`;
     // Nothing said yet in turn-2: no note, not turn-1's.
-    expect(yield* personalWorkingProgress(sql, [thread("t-follow-up")])).toEqual([]);
+    expect(yield* personalWorkingProgress(engine, [thread("t-follow-up")])).toEqual([]);
 
     // Turn-2's first words name turn-2.
     yield* addReasoning(
@@ -150,7 +156,7 @@ it.effect("a turn the server starts on its own shows none of the previous turn's
       "**Checking the child's result**",
       "2026-09-29T10:05:03.000Z",
     );
-    expect(yield* personalWorkingProgress(sql, [thread("t-follow-up")])).toEqual([
+    expect(yield* personalWorkingProgress(engine, [thread("t-follow-up")])).toEqual([
       {
         threadId: "t-follow-up",
         turnId: "turn-2",
@@ -158,5 +164,5 @@ it.effect("a turn the server starts on its own shows none of the previous turn's
         toolStep: false,
       },
     ]);
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(testLayer)),
 );

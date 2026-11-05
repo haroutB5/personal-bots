@@ -3904,7 +3904,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsWorkingProgress]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsWorkingProgress,
-            personalWorkingProgress(sql, input.threadIds).pipe(
+            personalWorkingProgress(personalEngine, input.threadIds).pipe(
               Effect.map((notes) => ({ notes })),
               Effect.mapError(
                 (cause) =>
