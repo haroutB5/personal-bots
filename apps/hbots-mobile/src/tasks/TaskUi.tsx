@@ -55,7 +55,7 @@ export function Card({
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-export function SectionLabel({ children }: { readonly children: string }) {
+export function SectionLabel({ children }: { readonly children: ReactNode }) {
   return (
     <Text style={styles.sectionLabel} maxFontSizeMultiplier={1.3}>
       {children}

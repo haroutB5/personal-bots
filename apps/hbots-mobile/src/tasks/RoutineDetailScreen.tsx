@@ -4,7 +4,11 @@ import {
 } from "@hbots/personal-client/conversation/taskPresentation";
 import { NOTIFY_MODES, routineNotifyMode } from "@hbots/personal-client/routines/routineDraft";
 import { isEventRoutine, routineHookUrl } from "@hbots/personal-client/routines/routineHook";
-import type { PersonalBot, PersonalRoutineOccurrence } from "@t3tools/contracts";
+import {
+  describePersonalRoutineTrigger,
+  type PersonalBot,
+  type PersonalRoutineOccurrence,
+} from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useState } from "react";
@@ -212,8 +216,7 @@ export function RoutineDetailScreen({
               {routine.title}
             </Text>
             <Text style={styles.triggerText} maxFontSizeMultiplier={1.6}>
-              {routine.trigger === "event" ? "Event" : "On a schedule"}
-              {routine.eventLabel === null ? "" : ` · ${routine.eventLabel}`}
+              {describePersonalRoutineTrigger(routine)}
             </Text>
             <View style={styles.divider}>
               {isEvent ? (

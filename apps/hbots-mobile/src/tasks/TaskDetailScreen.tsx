@@ -98,6 +98,30 @@ function WorkRecordCard({ record }: { readonly record: PersonalTaskWorkRecord })
               ))}
             </View>
           ) : null}
+          {record.lastResult.length > 0 ? (
+            <View>
+              <SectionLabel>
+                Last result{record.lastStatus === null ? "" : ` (${record.lastStatus})`}
+              </SectionLabel>
+              <Text style={styles.bodyText} maxFontSizeMultiplier={1.6}>
+                {record.lastResult}
+              </Text>
+            </View>
+          ) : null}
+          {record.updates.length > 0 ? (
+            <View>
+              <SectionLabel>Updates it was sent</SectionLabel>
+              {record.updates.map((update) => (
+                <Text
+                  key={`${update.at}-${update.text}`}
+                  style={styles.bodyText}
+                  maxFontSizeMultiplier={1.6}
+                >
+                  · {update.text}
+                </Text>
+              ))}
+            </View>
+          ) : null}
         </View>
       ) : null}
     </Pressable>
