@@ -743,7 +743,7 @@ export function BotsScreen({
           </View>
         ) : null}
 
-        {groupSections.groups.length > 0 || groupSections.archived.length > 0 ? (
+        {loaded ? (
           <View style={styles.groupsSection}>
             <View style={styles.groupsHeadingRow}>
               <Text style={styles.groupsHeading}>Groups</Text>
@@ -756,6 +756,11 @@ export function BotsScreen({
                 <Text style={styles.groupsNewText}>New</Text>
               </Pressable>
             </View>
+            {groupSections.groups.length === 0 ? (
+              <Text style={styles.groupsEmpty}>
+                Start a group when two bots should answer in the same conversation.
+              </Text>
+            ) : null}
             {groupSections.groups.map((row) => (
               <GroupChatRow
                 key={row.groupId}
@@ -1221,6 +1226,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   groupsNewText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "600" },
+  groupsEmpty: {
+    color: tokens.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
   groupsArchivedLabel: {
     color: tokens.textSecondary,
     fontSize: 13,
