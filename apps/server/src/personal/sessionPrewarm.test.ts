@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "@effect/vitest";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersonalEngine } from "./engine/PersonalEngine.ts";
 import { PersonalProviders, type PersonalPrewarmOutcome } from "./engine/PersonalProviders.ts";
 import { PersonalProvidersError } from "./engine/errors.ts";
 import { PersonalGroupService } from "./groups/PersonalGroupService.ts";
@@ -80,8 +80,8 @@ function setup(input?: {
     Layer.mock(PersonalGroupService)({
       groupNameForMemberThread: () => Effect.succeed(Option.fromNullOr(input?.group ?? null)),
     }),
-    Layer.mock(ProjectionSnapshotQuery)({
-      getThreadShellById: (id) =>
+    Layer.mock(PersonalEngine)({
+      getThread: (id) =>
         Effect.succeed(
           Option.some({
             id,

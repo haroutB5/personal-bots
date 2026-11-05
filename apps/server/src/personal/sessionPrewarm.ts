@@ -5,7 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersonalEngine } from "./engine/PersonalEngine.ts";
 import { PersonalProviders, type PersonalPrewarmOutcome } from "./engine/PersonalProviders.ts";
 import { sendModelSelection } from "./botModelSelection.ts";
 import { PersonalGroupService } from "./groups/PersonalGroupService.ts";
@@ -51,7 +51,7 @@ export const makePersonalSessionPrewarmer = (options?: {
     const providers = yield* PersonalProviders;
     const bots = yield* PersonalBotRepository;
     const groups = yield* PersonalGroupService;
-    const projection = yield* ProjectionSnapshotQuery;
+    const engine = yield* PersonalEngine;
     const debounceMs = options?.debounceMs ?? SESSION_PREWARM_DEBOUNCE_MS;
     const maxUnused = options?.maxUnused ?? SESSION_PREWARM_MAX_UNUSED;
     const lastAttemptMs = new Map<ThreadId, number>();
@@ -61,7 +61,7 @@ export const makePersonalSessionPrewarmer = (options?: {
     /** Forgets prewarms that were used (a turn since) or whose session is gone. */
     const countUnused = Effect.gen(function* () {
       for (const [threadId, at] of prewarmedAt) {
-        const thread = yield* projection.getThreadShellById(threadId);
+        const thread = yield* engine.getThread(threadId);
         const unused =
           Option.isSome(thread) &&
           thread.value.session !== null &&
@@ -82,7 +82,7 @@ export const makePersonalSessionPrewarmer = (options?: {
         }
         const bot = yield* bots.getBotById({ botId: link.value.botId });
         if (Option.isNone(bot)) return "not-a-bot-chat" as const;
-        const thread = yield* projection.getThreadShellById(threadId);
+        const thread = yield* engine.getThread(threadId);
         if (Option.isNone(thread)) return "missing" as const;
         // The model the next turn will actually run on: a bot on its model
         // schedule, the DeepSeek peak switch or a usage-limit fallback warms

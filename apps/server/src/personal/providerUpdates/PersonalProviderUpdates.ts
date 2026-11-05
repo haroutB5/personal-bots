@@ -53,7 +53,6 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   PersonalProviders,
   type PersonalSessionEvent,
@@ -61,6 +60,7 @@ import {
 } from "../engine/PersonalProviders.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import { PersonalEngine } from "../engine/PersonalEngine.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
 import {
@@ -805,7 +805,7 @@ export const makeWith = (
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const providers = yield* PersonalProviders;
-  const projection = yield* ProjectionSnapshotQuery;
+  const engine = yield* PersonalEngine;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const push = yield* PersonalPushService.PersonalPushService;
   return yield* makeWith({
@@ -818,7 +818,7 @@ export const make = Effect.gen(function* () {
     runtimeEvents: providers.sessionEvents,
     listSessions: providers.listSessions().pipe(Effect.orElseSucceed(() => [])),
     stopSession: (threadId) => providers.stopSession({ threadId }),
-    threadShell: (threadId) => projection.getThreadShellById(threadId),
+    threadShell: (threadId) => engine.getThread(threadId),
     isPersonalThread: (threadId) =>
       bots.getThreadLink({ threadId }).pipe(Effect.map(Option.isSome)),
     listBots: bots.listBots(),

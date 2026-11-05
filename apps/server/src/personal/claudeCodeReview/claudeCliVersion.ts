@@ -7,6 +7,10 @@
  *
  * @module personal/claudeCodeReview/claudeCliVersion
  */
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import type { ClaudeSettings } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -14,7 +18,13 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+/** A leading `~` or `~/` in a configured path means the user's home directory. */
+const expandHomePath = (value: string): string =>
+  value === "~"
+    ? NodeOS.homedir()
+    : value.startsWith("~/") || value.startsWith("~\\")
+      ? NodePath.join(NodeOS.homedir(), value.slice(2))
+      : value;
 
 /** "claude 2.1.100" or "v2.1.100" becomes "2.1.100". */
 export function parseGenericCliVersion(output: string): string | null {
