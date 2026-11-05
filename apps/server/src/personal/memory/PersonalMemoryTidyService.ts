@@ -30,7 +30,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { isExpensiveSeedModel } from "../seedModel.ts";
 import { readLiveHbotsVersion } from "../releaseVersion.ts";
@@ -177,29 +177,32 @@ export function tidyModel(override: string | undefined): string {
 export const judgeLayer = Layer.effect(
   PersonalMemoryTidyJudge,
   Effect.gen(function* () {
-    const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const providers = yield* PersonalProviders;
     const model = tidyModel(process.env[PERSONAL_MEMORY_TIDY_MODEL_ENV]);
     const instanceId = ProviderInstanceId.make("claudeAgent");
     return PersonalMemoryTidyJudge.of({
       model,
       judge: (prompt) =>
         Effect.gen(function* () {
-          const instance = yield* registry.getInstance(instanceId);
-          const generate = instance?.textGeneration.generateStructured;
-          if (generate === undefined) {
+          const generate = yield* providers
+            .structuredGenerator(instanceId)
+            .pipe(Effect.mapError((error) => error.message));
+          if (Option.isNone(generate)) {
             return yield* Effect.fail("The Claude provider is not available.");
           }
-          return yield* generate({
-            prompt,
-            outputSchema: TidyJudgeOutput,
-            modelSelection: {
-              instanceId,
-              model,
-              ...(model.includes("haiku")
-                ? {}
-                : { options: [{ id: "effort", value: TIDY_EFFORT }] }),
-            },
-          }).pipe(Effect.mapError((error) => error.message));
+          return yield* generate
+            .value({
+              prompt,
+              outputSchema: TidyJudgeOutput,
+              modelSelection: {
+                instanceId,
+                model,
+                ...(model.includes("haiku")
+                  ? {}
+                  : { options: [{ id: "effort", value: TIDY_EFFORT }] }),
+              },
+            })
+            .pipe(Effect.mapError((error) => error.message));
         }),
     });
   }),
