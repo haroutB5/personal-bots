@@ -15,6 +15,21 @@
       "revertCommit": "88c72e9727be",
       "heldAt": "2026-09-26",
       "upstream": "2679d279c"
+    },
+    {
+      "id": "expo-58-toolchain-for-hbots-mobile",
+      "shas": [],
+      "area": "pnpm-workspace overrides and the Hermes source-map patch",
+      "whatChanged": "Upstream's Expo 58 catalog overrides pin @expo/metro-config, @expo/dom-webview and expo-constants globally. apps/hbots-mobile stays on Expo 57 in phase 1, so those three overrides are removed and each app resolves its own toolchain. The Hermes source-map patch trunk carried on metro-config 57.0.12 is carried at 57.0.13, the version the Expo 57 range resolves, because 57.0.13 does not contain the fix.",
+      "options": [
+        "Keep hbots-mobile on Expo 57 with its own toolchain and patch (phase 1)",
+        "Move to Expo 58 with the rest of the platform bump (phase 2)"
+      ],
+      "recommendation": "Keep the split until the phase 2 platform bump moves apps/hbots-mobile to Expo 58, then restore the global overrides and the 58 patch only.",
+      "holdBy": "keep_ours",
+      "revertCommit": null,
+      "heldAt": "2026-11-05",
+      "upstream": "024d49520e"
     }
   ],
   "$acceptedComment": "Decisions the owner has already answered. A key listed here is settled: ship that upstream change like any other improvement, never hold it and never ask again. Remove an entry only if the owner changes his mind.",
