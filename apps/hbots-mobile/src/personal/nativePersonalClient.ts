@@ -21,6 +21,7 @@ import {
 } from "@t3tools/client-runtime/state/shell";
 import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
+import { createPersonalAutomationClient } from "@hbots/personal-client/automation/automationClient";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
 import {
   parseSystemSummary,
@@ -172,6 +173,7 @@ export interface NativePersonal {
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
   readonly bots: ReturnType<typeof createPersonalBotsClient>;
+  readonly automation: ReturnType<typeof createPersonalAutomationClient>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly shellsOf: (
     snapshot: OrchestrationShellSnapshot | null,
@@ -292,6 +294,7 @@ export function createNativePersonal(
   };
   const client = createPersonalClient(runtime, ports, host);
   const bots = createPersonalBotsClient(runtime, client);
+  const automation = createPersonalAutomationClient(runtime);
   const shell = createEnvironmentShellAtoms(runtime);
 
   let disposed = false;
@@ -499,6 +502,7 @@ export function createNativePersonal(
     runtime,
     client,
     bots,
+    automation,
     shell,
     shellsOf: (snapshot) =>
       snapshot === null ? [] : snapshot.threads.map((thread) => ({ ...thread, environmentId })),
