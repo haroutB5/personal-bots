@@ -4,7 +4,7 @@
     "ref": "personal-bots/main"
   },
   "android": {
-    "ref": "HEAD",
+    "ref": "feat/hbots-android-settings",
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
