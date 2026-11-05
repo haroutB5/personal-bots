@@ -1033,7 +1033,7 @@ export const makeWith = (
           yield* completeAutoUpdate(after, {
             ...goingBack,
             status: options.status ?? "rolled_back",
-            message: `Went back to ${fromVersion}. ${failureSummary}`,
+            message: `${failureSummary} Went back to ${fromVersion}.`,
           });
           return;
         }

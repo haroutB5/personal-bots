@@ -417,8 +417,8 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
       ),
     ).toMatchObject({
       state: "updateAvailable",
-      statusText: "Update rolled back · Next attempt Tue 10:00",
-      detail: "Went back to 2.1.303. API Error: 500",
+      statusText: "Update rolled back",
+      detail: "Next attempt Tue 10:00 · Went back to 2.1.303. API Error: 500",
       action: { kind: "update", label: "Update" },
     });
     expect(
@@ -435,8 +435,9 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
       ),
     ).toMatchObject({
       state: "updateFailed",
-      statusText: "Update failed · Next attempt Tue 10:00",
-      detail: "Went back to 2.1.303. 2.1.304 arrived, not 0.164.0. The test passed.",
+      statusText: "Update failed",
+      detail:
+        "Next attempt Tue 10:00 · Went back to 2.1.303. 2.1.304 arrived, not 0.164.0. The test passed.",
       action: { kind: "tryAgain", label: "Try again" },
     });
     expect(
@@ -488,7 +489,8 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
         }),
       }),
     );
-    expect(row.statusText).toBe("Update failed · Next attempt Tue 10:00");
+    expect(row.statusText).toBe("Update failed");
+    expect(row.detail).toContain("Next attempt Tue 10:00");
     expect(row.detail).toContain("Went back to 2.1.303");
     expect(row.detail).toContain("2.1.304 arrived, not 2.1.305");
   });

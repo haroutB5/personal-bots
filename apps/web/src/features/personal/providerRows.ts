@@ -103,6 +103,16 @@ function nextAttemptText(
     : null;
 }
 
+/** The schedule leads the detail line so a clamped row never hides it. */
+function detailWithNextAttempt(
+  next: string | null,
+  message: string | null | undefined,
+): string | null {
+  const detail = firstLine(message);
+  if (next === null) return detail;
+  return detail === null ? next : `${next} · ${detail}`;
+}
+
 /** First line of a provider message, trimmed to fit a row's detail line. */
 export function firstLine(text: string | null | undefined, max = 160): string | null {
   const line = text
@@ -404,29 +414,19 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
     }
     if (automatic?.status === "rolled_back") {
       const next = nextAttemptText(automatic, now);
-      return row(
-        "updateAvailable",
-        "review",
-        next === null ? "Update rolled back" : `Update rolled back · ${next}`,
-        {
-          tone: "review",
-          detail: firstLine(automatic.message),
-          action: oneClick ? { kind: "update", label: "Update" } : null,
-        },
-      );
+      return row("updateAvailable", "review", "Update rolled back", {
+        tone: "review",
+        detail: detailWithNextAttempt(next, automatic.message),
+        action: oneClick ? { kind: "update", label: "Update" } : null,
+      });
     }
     if (automatic?.status === "failed") {
       const next = nextAttemptText(automatic, now);
-      return row(
-        "updateFailed",
-        "review",
-        next === null ? "Update failed" : `Update failed · ${next}`,
-        {
-          tone: "review",
-          detail: firstLine(automatic.message),
-          action: oneClick ? { kind: "tryAgain", label: "Try again" } : null,
-        },
-      );
+      return row("updateFailed", "review", "Update failed", {
+        tone: "review",
+        detail: detailWithNextAttempt(next, automatic.message),
+        action: oneClick ? { kind: "tryAgain", label: "Try again" } : null,
+      });
     }
     if (automatic?.status === "updating") {
       return row(
