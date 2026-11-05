@@ -32,7 +32,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -210,7 +210,7 @@ const CLAUDE_DRIVER = "claudeAgent";
 const decodeDeepSeekSettings = Schema.decodeUnknownOption(DeepSeekSettings);
 
 export const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const engine = yield* PersonalEngine.PersonalEngine;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const settingsService = yield* ServerSettings.ServerSettingsService;
@@ -306,23 +306,11 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const uuid = yield* crypto.randomUUIDv4;
       const messageId = MessageId.make(`${PERSONAL_NOTICE_MESSAGE_ID_PREFIX}fallback-${uuid}`);
-      const createdAt = iso(yield* nowMs);
-      const id = ThreadId.make(threadId);
-      yield* engine.dispatch({
-        type: "thread.message.assistant.delta",
-        commandId: CommandId.make(`personal-model-fallback:${uuid}:notice:delta`),
-        threadId: id,
+      yield* engine.postNotice({
+        threadId: ThreadId.make(threadId),
         messageId,
-        delta: text,
+        text,
         context: noticeContext(marker),
-        createdAt,
-      });
-      yield* engine.dispatch({
-        type: "thread.message.assistant.complete",
-        commandId: CommandId.make(`personal-model-fallback:${uuid}:notice:complete`),
-        threadId: id,
-        messageId,
-        createdAt,
       });
     }).pipe(
       Effect.catchCause((cause) =>

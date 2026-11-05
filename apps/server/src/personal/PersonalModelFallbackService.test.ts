@@ -43,6 +43,7 @@ import {
 import { codexRateLimitsToUpdate } from "../provider/Layers/codexUsageLimits.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
+import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
@@ -563,6 +564,7 @@ const makeLayer = (
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
 ) =>
   PersonalModelFallback.layer.pipe(
+    Layer.provideMerge(PersonalEngineV1WiredLive),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerSettings.layerTest(settings)),
@@ -574,7 +576,28 @@ const makeLayer = (
             return { sequence: harness.dispatched.length };
           }),
         subscribeDomainEvents: Effect.succeed(Stream.never),
+        streamDomainEvents: Stream.never,
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        // The chat-resume service shares this engine; a chat that hit its
+        // limit needs its shell here, as the real projection would give it.
+        getThreadShellById: (threadId: ThreadId) =>
+          Effect.succeed(
+            Option.some({
+              id: threadId,
+              session: CHAT_INSTANCE_SESSION("error"),
+              archivedAt: null,
+              latestTurn: { turnId: TurnId.make("turn-1") },
+              modelSelection: HOME,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            }),
+          ),
+        getProjectShellById: () => Effect.succeed(Option.none()),
+        getProjectShells: () => Effect.succeed([]),
+      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(
       Layer.succeed(ProviderRegistry.ProviderRegistry, {

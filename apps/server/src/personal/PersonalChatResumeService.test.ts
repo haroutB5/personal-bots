@@ -26,6 +26,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
@@ -100,60 +101,65 @@ function chatState(turnId: string): ChatState {
 const chat = (harness: Harness, threadId: ThreadId) => harness.chats.get(threadId)!;
 
 const depsLayer = (harness: Harness, fallback?: PersonalModelFallback.PersonalModelFallbackShape) =>
-  Layer.mergeAll(
-    Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-      dispatch: (command: OrchestrationCommand) =>
-        Effect.sync(() => {
-          harness.dispatched.push(command);
-          return { sequence: harness.dispatched.length };
+  PersonalEngineV1WiredLive.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
+          dispatch: (command: OrchestrationCommand) =>
+            Effect.sync(() => {
+              harness.dispatched.push(command);
+              return { sequence: harness.dispatched.length };
+            }),
+          subscribeDomainEvents: Effect.succeed(Stream.never),
+          streamDomainEvents: Stream.never,
+        } as unknown as OrchestrationEngine.OrchestrationEngineShape),
+        Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          getThreadShellById: (threadId: ThreadId) =>
+            Effect.sync(() => {
+              const state = harness.chats.get(threadId);
+              if (state === undefined || state.deleted) return Option.none();
+              return Option.some({
+                id: threadId,
+                session: state.session,
+                archivedAt: state.archivedAt,
+                latestTurn: state.latestTurnId === null ? null : { turnId: state.latestTurnId },
+                modelSelection: { instanceId: INSTANCE, model: "claude-opus-5-5" },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+              });
+            }),
+        } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
+        Layer.succeed(PersonalBotRepository.PersonalBotRepository, {
+          getThreadLink: ({ threadId }: { readonly threadId: ThreadId }) =>
+            Effect.sync(() => {
+              const state = harness.chats.get(threadId);
+              if (state === undefined || state.deleted) return Option.none();
+              return Option.some({ threadId, botId: BOT, archivedAt: state.linkArchivedAt });
+            }),
+          getBotById: ({ botId }: { readonly botId: PersonalBotId }) =>
+            Effect.succeed(Option.some({ botId, modelSelection: BOT_MODEL })),
+        } as unknown as PersonalBotRepository.PersonalBotRepository["Service"]),
+        Layer.mock(PersonalTaskService.PersonalTaskService)({
+          ownsThreadTurn: () => Effect.sync(() => harness.taskOwnsTurn),
+          reserveExternalSlot: (key: string) =>
+            Effect.sync(() => {
+              if (harness.reserved.has(key)) return true;
+              if (harness.freeSlots <= 0) return false;
+              harness.freeSlots -= 1;
+              harness.reserved.add(key);
+              return true;
+            }),
+          releaseExternalSlot: (key: string) =>
+            Effect.sync(() => {
+              if (harness.reserved.delete(key)) harness.freeSlots += 1;
+            }),
         }),
-      subscribeDomainEvents: Effect.succeed(Stream.never),
-    } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-      getThreadShellById: (threadId: ThreadId) =>
-        Effect.sync(() => {
-          const state = harness.chats.get(threadId);
-          if (state === undefined || state.deleted) return Option.none();
-          return Option.some({
-            id: threadId,
-            session: state.session,
-            archivedAt: state.archivedAt,
-            latestTurn: state.latestTurnId === null ? null : { turnId: state.latestTurnId },
-            modelSelection: { instanceId: INSTANCE, model: "claude-opus-5-5" },
-            runtimeMode: "full-access",
-            interactionMode: "default",
-          });
-        }),
-    } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    Layer.succeed(PersonalBotRepository.PersonalBotRepository, {
-      getThreadLink: ({ threadId }: { readonly threadId: ThreadId }) =>
-        Effect.sync(() => {
-          const state = harness.chats.get(threadId);
-          if (state === undefined || state.deleted) return Option.none();
-          return Option.some({ threadId, botId: BOT, archivedAt: state.linkArchivedAt });
-        }),
-      getBotById: ({ botId }: { readonly botId: PersonalBotId }) =>
-        Effect.succeed(Option.some({ botId, modelSelection: BOT_MODEL })),
-    } as unknown as PersonalBotRepository.PersonalBotRepository["Service"]),
-    Layer.mock(PersonalTaskService.PersonalTaskService)({
-      ownsThreadTurn: () => Effect.sync(() => harness.taskOwnsTurn),
-      reserveExternalSlot: (key: string) =>
-        Effect.sync(() => {
-          if (harness.reserved.has(key)) return true;
-          if (harness.freeSlots <= 0) return false;
-          harness.freeSlots -= 1;
-          harness.reserved.add(key);
-          return true;
-        }),
-      releaseExternalSlot: (key: string) =>
-        Effect.sync(() => {
-          if (harness.reserved.delete(key)) harness.freeSlots += 1;
-        }),
-    }),
-    ...(fallback === undefined
-      ? []
-      : [Layer.succeed(PersonalModelFallback.PersonalModelFallback, fallback)]),
-    NodeServices.layer,
+        ...(fallback === undefined
+          ? []
+          : [Layer.succeed(PersonalModelFallback.PersonalModelFallback, fallback)]),
+        NodeServices.layer,
+      ),
+    ),
   );
 
 /** A fresh service on the shared database: a server start. */

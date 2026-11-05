@@ -23,7 +23,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
@@ -123,7 +123,7 @@ const isBusy = (session: OrchestrationSession | null | undefined) =>
 
 export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const personalEngine = yield* PersonalEngine.PersonalEngine;
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
@@ -202,23 +202,11 @@ export const make = Effect.gen(function* () {
     marker: PersonalChatNoticeMarker,
   ) =>
     Effect.gen(function* () {
-      const messageId = MessageId.make(`${PERSONAL_NOTICE_MESSAGE_ID_PREFIX}${resumeId}`);
-      const createdAt = iso(yield* nowMs);
-      yield* engine.dispatch({
-        type: "thread.message.assistant.delta",
-        commandId: CommandId.make(`personal-chat-resume:${resumeId}:notice:delta`),
+      yield* personalEngine.postNotice({
         threadId,
-        messageId,
-        delta: text,
+        messageId: MessageId.make(`${PERSONAL_NOTICE_MESSAGE_ID_PREFIX}${resumeId}`),
+        text,
         context: noticeContext(marker),
-        createdAt,
-      });
-      yield* engine.dispatch({
-        type: "thread.message.assistant.complete",
-        commandId: CommandId.make(`personal-chat-resume:${resumeId}:notice:complete`),
-        threadId,
-        messageId,
-        createdAt,
       });
     });
 
@@ -243,8 +231,8 @@ export const make = Effect.gen(function* () {
     }
     if (yield* taskOwnsTurn(threadId)) return;
 
-    const shell = yield* projections
-      .getThreadShellById(threadId)
+    const shell = yield* personalEngine
+      .getThread(threadId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(shell)) return;
     const hitKey = shell.value.latestTurn?.turnId ?? session.updatedAt;
@@ -358,8 +346,8 @@ export const make = Effect.gen(function* () {
     row: ResumeRow,
     now: number,
   ) {
-    const shell = yield* projections
-      .getThreadShellById(row.threadId)
+    const shell = yield* personalEngine
+      .getThread(row.threadId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(shell)) return { kind: "skip", reason: "deleted" } satisfies DueOutcome;
     if (shell.value.archivedAt != null) {
@@ -389,7 +377,7 @@ export const make = Effect.gen(function* () {
   });
 
   const startResume = Effect.fn("PersonalChatResume.startResume")(function* (row: ResumeRow) {
-    const shell = yield* projections.getThreadShellById(row.threadId);
+    const shell = yield* personalEngine.getThread(row.threadId);
     if (Option.isNone(shell)) return;
     const modelSelection = yield* botModelSelectionForThread(
       personalBots,
@@ -398,24 +386,17 @@ export const make = Effect.gen(function* () {
     );
     const provider = providerLabel(row.provider);
     const onFallback = row.fallback === 1;
-    yield* engine.dispatch({
-      type: "thread.turn.start",
-      commandId: CommandId.make(`personal-chat-resume:${row.resumeId}:turn.start`),
+    yield* personalEngine.send({
       threadId: row.threadId,
+      messageId: MessageId.make(`${PERSONAL_RESUME_MESSAGE_ID_PREFIX}${row.resumeId}`),
+      text: onFallback ? PERSONAL_CHAT_FALLBACK_RESUME_PROMPT : PERSONAL_CHAT_RESUME_PROMPT,
+      attachments: [],
+      context: noticeContext({
+        notice: onFallback ? "model-fallback-resumed" : "usage-limit-resumed",
+        provider,
+      }),
+      mode: "start",
       ...(modelSelection !== undefined ? { modelSelection } : {}),
-      message: {
-        messageId: MessageId.make(`${PERSONAL_RESUME_MESSAGE_ID_PREFIX}${row.resumeId}`),
-        role: "user",
-        text: onFallback ? PERSONAL_CHAT_FALLBACK_RESUME_PROMPT : PERSONAL_CHAT_RESUME_PROMPT,
-        attachments: [],
-        context: noticeContext({
-          notice: onFallback ? "model-fallback-resumed" : "usage-limit-resumed",
-          provider,
-        }),
-      },
-      runtimeMode: shell.value.runtimeMode,
-      interactionMode: shell.value.interactionMode,
-      createdAt: iso(yield* nowMs),
     });
   });
 
