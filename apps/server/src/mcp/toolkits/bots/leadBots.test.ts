@@ -46,7 +46,7 @@ import * as PersonalLoginRequestService from "../../../personal/secrets/Personal
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalTaskRepository from "../../../personal/tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
-import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../../../personal/engine/PersonalProviders.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { BotsToolkitHandlersLive } from "./handlers.ts";
 import { BotsToolkit } from "./tools.ts";
@@ -168,14 +168,15 @@ const makeLayer = (harness: Harness) =>
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
+      Layer.mock(PersonalProviders)({
         // One shot: the staged race happens once, on the first read after it is set.
-        getProviders: Effect.suspend(() => {
-          const hook = harness.beforeDelete;
-          harness.beforeDelete = null;
-          return hook?.() ?? Effect.void;
-        }).pipe(Effect.as([claudeProvider])),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+        listProviders: () =>
+          Effect.suspend(() => {
+            const hook = harness.beforeDelete;
+            harness.beforeDelete = null;
+            return hook?.() ?? Effect.void;
+          }).pipe(Effect.as([claudeProvider])),
+      }),
     ),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(

@@ -25,7 +25,7 @@ import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
@@ -104,9 +104,9 @@ const makeLayer = () =>
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([claudeSnapshot()]),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.succeed([claudeSnapshot()]),
+      }),
     ),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),

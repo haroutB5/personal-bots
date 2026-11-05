@@ -40,7 +40,7 @@ import { OrchestrationEventStoreLive } from "../../persistence/Layers/Orchestrat
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -137,10 +137,10 @@ const makeChainLayer = (provider: FakeProvider) => {
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([]),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.succeed([]),
         refreshInstance: () => Effect.succeed([]),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      }),
     ),
     Layer.provideMerge(ServerSettingsService.layerTest({})),
     Layer.provideMerge(

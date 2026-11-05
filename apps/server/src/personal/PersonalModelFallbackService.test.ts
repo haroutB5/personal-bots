@@ -35,7 +35,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import {
   applyUsageLimitsUpdate,
   resolveUsageLimitsAfterProbe,
@@ -615,19 +615,19 @@ const makeLayer = (
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.sync(() => harness.providers),
-        refreshInstance: (instanceId: string) =>
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.sync(() => harness.providers),
+        refreshInstance: (instanceId) =>
           Effect.sync(() => {
             harness.refreshed.push(instanceId);
             harness.onRefresh?.();
             return harness.providers;
           }),
-        invalidateUsage: (instanceId: string) =>
+        invalidateUsage: (instanceId) =>
           Effect.sync(() => {
             harness.invalidated.push(instanceId);
           }),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      }),
     ),
     Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
     Layer.provideMerge(NodeServices.layer),

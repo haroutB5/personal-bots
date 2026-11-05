@@ -26,7 +26,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
@@ -44,9 +44,9 @@ const testLayer = PersonalBotService.layer.pipe(
     } as unknown as OrchestrationEngine.OrchestrationEngineShape),
   ),
   Layer.provideMerge(
-    Layer.succeed(ProviderRegistry.ProviderRegistry, {
-      getProviders: Effect.succeed([]),
-    } as unknown as ProviderRegistry.ProviderRegistryShape),
+    Layer.mock(PersonalProviders)({
+      listProviders: () => Effect.succeed([]),
+    }),
   ),
   Layer.provideMerge(
     Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {

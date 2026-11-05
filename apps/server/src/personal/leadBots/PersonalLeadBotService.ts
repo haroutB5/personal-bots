@@ -47,7 +47,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -613,7 +613,9 @@ export const make = Effect.gen(function* () {
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const bots = yield* PersonalBotService.PersonalBotService;
   const routines = yield* PersonalRoutineService.PersonalRoutineService;
-  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const providerPort = yield* PersonalProviders;
+  // The registry read this replaces could not fail, so a port failure is a defect here too.
+  const providers = { getProviders: providerPort.listProviders().pipe(Effect.orDie) };
   const engine = yield* PersonalEngine.PersonalEngine;
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;

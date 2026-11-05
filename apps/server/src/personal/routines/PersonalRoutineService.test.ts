@@ -30,7 +30,7 @@ import {
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { pushEventForTask } from "../push/PersonalPushService.ts";
@@ -75,9 +75,9 @@ const makeLayer = (
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([]),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.succeed([]),
+      }),
     ),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(

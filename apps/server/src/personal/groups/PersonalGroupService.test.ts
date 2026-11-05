@@ -47,7 +47,7 @@ import {
   type ProjectionThreadMessage,
   type ProjectionThreadMessageRepositoryShape,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import {
@@ -200,9 +200,9 @@ const makeLayer = (harness: Harness, dbPath?: string) =>
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([]),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.succeed([]),
+      }),
     ),
     Layer.provideMerge(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {

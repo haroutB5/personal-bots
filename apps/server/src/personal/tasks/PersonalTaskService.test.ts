@@ -58,7 +58,7 @@ import {
   type ProjectionThreadMessage,
   type ProjectionThreadMessageRepositoryShape,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
-import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import { makeNativeAcpAdapter } from "../../provider/Layers/NativeAcpAdapter.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -151,10 +151,10 @@ const makeLayer = (
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed(fallbackProviders ?? []),
-        refreshInstance: () => Effect.succeed(fallbackProviders ?? []),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.succeed((fallbackProviders ?? []) as never),
+        refreshInstance: () => Effect.succeed((fallbackProviders ?? []) as never),
+      }),
     ),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(

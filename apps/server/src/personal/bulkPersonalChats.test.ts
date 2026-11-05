@@ -18,7 +18,7 @@ import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import { archivePersonalChats, deletePersonalChats } from "./bulkPersonalChats.ts";
 import { deletePersonalChat, type PersonalChatDeleteServices } from "./deletePersonalChat.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
@@ -46,9 +46,9 @@ const makeLayer = (dispatched: Array<OrchestrationCommand>) =>
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([]),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.succeed([]),
+      }),
     ),
     Layer.provideMerge(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {

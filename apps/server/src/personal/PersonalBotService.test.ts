@@ -24,7 +24,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 const DEFAULT_VOICE_CALLS = {
   voiceCalls: { voiceName: "Charon", quietHangupMinutes: 2, languages: "English" },
 } as const;
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 
@@ -121,9 +121,9 @@ const makeTestLayer = (context: PersonalBotsTestContext) =>
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.sync(() => [...context.snapshots]),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.sync(() => [...context.snapshots]),
+      }),
     ),
     Layer.provideMerge(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {

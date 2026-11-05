@@ -48,7 +48,7 @@ import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginSe
 import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalTaskRepository from "../../../personal/tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
-import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../../../personal/engine/PersonalProviders.ts";
 import { HostOperationError } from "../../../personal/browser/pageOperations.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { personalTaskMessageId } from "../../../personal/personalThreadTitles.ts";
@@ -181,9 +181,9 @@ const makeLayer = (harness: Harness) =>
       } as unknown as OrchestrationEngine.OrchestrationEngineShape),
     ),
     Layer.provideMerge(
-      Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([]),
-      } as unknown as ProviderRegistry.ProviderRegistryShape),
+      Layer.mock(PersonalProviders)({
+        listProviders: () => Effect.succeed([]),
+      }),
     ),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(

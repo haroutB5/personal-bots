@@ -33,7 +33,7 @@ import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { withStallJob } from "../observability/stallJobs.ts";
@@ -212,7 +212,15 @@ const decodeDeepSeekSettings = Schema.decodeUnknownOption(DeepSeekSettings);
 
 export const make = Effect.gen(function* () {
   const engine = yield* PersonalEngine.PersonalEngine;
-  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const providerPort = yield* PersonalProviders;
+  // The registry calls these replace could not fail, so a port failure is a defect here too.
+  const providers = {
+    getProviders: providerPort.listProviders().pipe(Effect.orDie),
+    invalidateUsage: (instanceId: ProviderInstanceId) =>
+      providerPort.invalidateUsage(instanceId).pipe(Effect.orDie),
+    refreshInstance: (instanceId: ProviderInstanceId) =>
+      providerPort.refreshInstance(instanceId).pipe(Effect.orDie),
+  };
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const sql = yield* SqlClient.SqlClient;

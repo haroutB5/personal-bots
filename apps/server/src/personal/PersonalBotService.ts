@@ -63,7 +63,7 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
@@ -343,7 +343,9 @@ export class PersonalBotService extends Context.Service<
 export const make = Effect.gen(function* () {
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const engine = yield* PersonalEngine.PersonalEngine;
-  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const providerPort = yield* PersonalProviders;
+  // The registry read this replaces could not fail, so a port failure is a defect here too.
+  const providers = { getProviders: providerPort.listProviders().pipe(Effect.orDie) };
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
