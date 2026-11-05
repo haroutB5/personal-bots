@@ -11,14 +11,25 @@ const native = requireOptionalNativeModule<NetworkResetModule>("HbotsNetwork");
 /** Long enough for a healthy round trip, short enough for the recovery budget. */
 const PROBE_TIMEOUT_MS = 3_000;
 
+/** Long enough for an OkHttp eviction, short enough that a stuck reset cannot hold recovery. */
+const RESET_TIMEOUT_MS = 2_000;
+
 /**
  * Drops the shared OkHttp pool. A dropped network can leave sockets bound to
  * the old route in it; new attempts then wait on them until their timeout.
+ * A reset that never returns must not become the thing that keeps the app
+ * offline, so the loop stops waiting for it after the timeout and tries the
+ * connection anyway.
  */
 export async function resetNetworkClient(): Promise<void> {
   if (native === null) return;
   try {
-    await native.reset();
+    await Promise.race([
+      native.reset(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, RESET_TIMEOUT_MS);
+      }),
+    ]);
   } catch {
     // A missing or failed reset only means the next attempt keeps the old pool.
   }
