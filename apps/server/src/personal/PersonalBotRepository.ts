@@ -233,7 +233,7 @@ export interface PersonalBotProviderSession {
   /**
    * `provider_session_runtime.resume_cursor_json`, as stored. The session id a
    * Claude CLI carries on its command line lives in here (`$.resume`), not in
-   * `projection_thread_sessions.provider_session_id`, which is empty on a real
+   * the sessions relation's `provider_session_id`, which is empty on a real
    * data root; `sessionIdFromResumeCursor` reads it for the provider at hand.
    */
   readonly resumeCursorJson: string | null;
