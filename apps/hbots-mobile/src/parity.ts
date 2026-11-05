@@ -1,4 +1,4 @@
-export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5"];
+export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A6"];
 export const DONE_ITEMS: readonly string[] = [
   "rpc:personalBotsList",
   "screen:routes/_personal.tsx#personal",
@@ -58,4 +58,14 @@ export const DONE_ITEMS: readonly string[] = [
   "action:ReplyableMessage.tsx#copy-text",
   "action:ReplyableMessage.tsx#swipe-a-message-to-reply-or-see-its-time",
   "setting:PersonalComposer.tsx#message-message-x",
+  "action:DelegationCard.tsx#open-chat",
+  "card:DelegationCard.tsx#delegationcard",
+  "card:LeadBotChangeCard.tsx#leadbotchangecard",
+  "card:MemoryChangeCard.tsx#memorychangecard",
+  "card:QuestionCard.tsx#questioncard",
+  "card:RulesUsageCard.tsx#rulesusagecard",
+  "card:WorkRecordCard.tsx#workrecordcard",
+  "setting:QuestionCard.tsx#or-type-your-own-answer",
+  "rpc:personalLeadBotChangesList",
+  "rpc:personalLeadBotChangesDecide",
 ];

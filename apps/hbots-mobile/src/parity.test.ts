@@ -25,10 +25,27 @@ const A1_A2_ITEMS = [
 
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5"]);
+    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A6"]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
     for (const item of A1_A2_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("keeps every A6 card claimed", () => {
+    for (const item of [
+      "card:DelegationCard.tsx#delegationcard",
+      "card:LeadBotChangeCard.tsx#leadbotchangecard",
+      "card:MemoryChangeCard.tsx#memorychangecard",
+      "card:QuestionCard.tsx#questioncard",
+      "card:RulesUsageCard.tsx#rulesusagecard",
+      "card:WorkRecordCard.tsx#workrecordcard",
+      "action:DelegationCard.tsx#open-chat",
+      "setting:QuestionCard.tsx#or-type-your-own-answer",
+      "rpc:personalLeadBotChangesList",
+      "rpc:personalLeadBotChangesDecide",
+    ]) {
+      expect(DONE_ITEMS).toContain(item);
+    }
   });
 });

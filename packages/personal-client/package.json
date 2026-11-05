@@ -169,6 +169,26 @@
       "types": "./src/conversation/taskPresentation.ts",
       "import": "./src/conversation/taskPresentation.ts"
     },
+    "./conversation/pendingUserInput": {
+      "types": "./src/conversation/pendingUserInput.ts",
+      "import": "./src/conversation/pendingUserInput.ts"
+    },
+    "./conversation/feedCards": {
+      "types": "./src/conversation/feedCards.ts",
+      "import": "./src/conversation/feedCards.ts"
+    },
+    "./conversation/leadBotTextDiff": {
+      "types": "./src/conversation/leadBotTextDiff.ts",
+      "import": "./src/conversation/leadBotTextDiff.ts"
+    },
+    "./tasks/feed": {
+      "types": "./src/tasks/feed.ts",
+      "import": "./src/tasks/feed.ts"
+    },
+    "./memory/presentation": {
+      "types": "./src/memory/presentation.ts",
+      "import": "./src/memory/presentation.ts"
+    },
     "./conversation/previewPrivacy": {
       "types": "./src/conversation/previewPrivacy.ts",
       "import": "./src/conversation/previewPrivacy.ts"

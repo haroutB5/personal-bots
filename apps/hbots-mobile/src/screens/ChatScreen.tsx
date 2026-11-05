@@ -48,7 +48,9 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { Composer } from "../chat/Composer";
 import { buildChatChips, chatHeaderModel, findChatBot } from "../chat/chatModel";
+import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
 import { MessageList } from "../chat/MessageList";
+import { useChatCards } from "../chat/useChatCards";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import { BotAvatar } from "../shell/BotAvatar";
@@ -179,17 +181,30 @@ export function ChatScreen({
           }),
     [thread, showToolSteps],
   );
+  const cards = useChatCards({
+    native,
+    chat,
+    environmentId,
+    threadId,
+    activities: thread?.activities ?? [],
+    items,
+    bots: list.data?.bots ?? [],
+    botName: record?.bot?.name ?? "Bot",
+    providers,
+    nowMs: now,
+    onOpenChat,
+  });
   const latestMessageStatus = useMemo(
     () =>
       thread === null
         ? null
         : deriveLatestMessageReadStatus({
-            items,
+            items: cards.items,
             activities: thread.activities,
             busy: thread.session?.status === "running" || thread.session?.status === "starting",
             latestTurn: thread.latestTurn,
           }),
-    [items, thread],
+    [cards.items, thread],
   );
   const usedTokens = useMemo(() => {
     if (thread === null) return null;
@@ -587,10 +602,12 @@ export function ChatScreen({
         </View>
       ) : (
         <>
+          {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
           <MessageList
             native={native}
             chat={chat}
-            items={items}
+            cardContext={cards.context}
+            items={cards.items}
             pending={pending}
             queued={queued}
             botName={header.botName}

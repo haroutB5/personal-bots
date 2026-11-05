@@ -4,11 +4,19 @@ import { Schema } from "effect";
 import {
   PersonalBotThreadShellsInput,
   PersonalBotTokenUsageInput,
+  PersonalLeadBotChangeDecideInput,
+  PersonalMemoryCardsInput,
+  PersonalMemoryTidyDecideInput,
+  PersonalTaskIdInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 
 const decodeThreadShells = Schema.decodeUnknownSync(PersonalBotThreadShellsInput);
 const decodeTokenUsage = Schema.decodeUnknownSync(PersonalBotTokenUsageInput);
+const decodeLeadDecide = Schema.decodeUnknownSync(PersonalLeadBotChangeDecideInput);
+const decodeMemoryCards = Schema.decodeUnknownSync(PersonalMemoryCardsInput);
+const decodeMemoryDecide = Schema.decodeUnknownSync(PersonalMemoryTidyDecideInput);
+const decodeTask = Schema.decodeUnknownSync(PersonalTaskIdInput);
 
 describe("A2 rpc contract", () => {
   it("names the tags the phone calls", () => {
@@ -31,5 +39,31 @@ describe("A2 rpc contract", () => {
     expect(decodeTokenUsage({ timeZone: "Europe/London" })).toEqual({
       timeZone: "Europe/London",
     });
+  });
+});
+
+describe("A6 rpc contract", () => {
+  it("names the tags the phone calls", () => {
+    expect(WS_METHODS.personalLeadBotChangesList).toBe("personalLeadBotChanges.list");
+    expect(WS_METHODS.personalLeadBotChangesDecide).toBe("personalLeadBotChanges.decide");
+    expect(WS_METHODS.personalTasksSubscribe).toBe("personalTasks.subscribe");
+    expect(WS_METHODS.personalTasksGet).toBe("personalTasks.get");
+    expect(WS_METHODS.personalMemoryCards).toBe("personalMemory.cards");
+    expect(WS_METHODS.personalMemoryRulesUsage).toBe("personalMemory.rulesUsage");
+  });
+
+  it("decodes the card commands the phone sends", () => {
+    expect(decodeLeadDecide({ changeId: "c1", changeHash: "abc", decision: "approved" })).toEqual({
+      changeId: "c1",
+      changeHash: "abc",
+      decision: "approved",
+    });
+    expect(decodeMemoryCards({ threadId: "th1" })).toEqual({ threadId: "th1" });
+    expect(decodeMemoryDecide({ changeId: 7, approve: false, changeHash: "abc" })).toEqual({
+      changeId: 7,
+      approve: false,
+      changeHash: "abc",
+    });
+    expect(decodeTask({ taskId: "t1" })).toEqual({ taskId: "t1" });
   });
 });
