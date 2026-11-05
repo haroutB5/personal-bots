@@ -857,7 +857,7 @@
       "web": "NewChatDialog.tsx:30",
       "component": "NewChatDialog",
       "logic": {
-        "files": 36,
+        "files": 35,
         "inPackage": [
           "perfFlags.ts",
           "usePersonalBots.ts",
@@ -982,7 +982,7 @@
       "web": "TeamScreen.tsx:817",
       "primitive": "Sheet",
       "logic": {
-        "files": 56,
+        "files": 55,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -1222,7 +1222,7 @@
       "web": "BotThreadsScreen.tsx:632",
       "via": "menu",
       "logic": {
-        "files": 73,
+        "files": 72,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -1269,7 +1269,7 @@
       "web": "BotThreadsScreen.tsx:639",
       "via": "menu",
       "logic": {
-        "files": 73,
+        "files": 72,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -1316,7 +1316,7 @@
       "web": "ChatsScreen.tsx:890",
       "via": "menu",
       "logic": {
-        "files": 82,
+        "files": 81,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -1376,7 +1376,7 @@
       "web": "ChatsScreen.tsx:891",
       "via": "menu",
       "logic": {
-        "files": 82,
+        "files": 81,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -1436,7 +1436,7 @@
       "web": "ChatsScreen.tsx:894",
       "via": "menu",
       "logic": {
-        "files": 82,
+        "files": 81,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -1496,7 +1496,7 @@
       "web": "ConversationScreen.tsx:1597",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 126,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1593,7 +1593,7 @@
       "web": "ConversationScreen.tsx:1600",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 126,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1690,7 +1690,7 @@
       "web": "ConversationScreen.tsx:1611",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 126,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1787,7 +1787,7 @@
       "web": "ConversationScreen.tsx:1623",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 126,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1884,7 +1884,7 @@
       "web": "ConversationScreen.tsx:1632",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 126,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1981,7 +1981,7 @@
       "web": "ConversationScreen.tsx:1646",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 126,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2078,7 +2078,7 @@
       "web": "DelegationCard.tsx:190",
       "via": "menu",
       "logic": {
-        "files": 29,
+        "files": 28,
         "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -2098,7 +2098,7 @@
       "web": "FilesScreen.tsx:334",
       "via": "menu",
       "logic": {
-        "files": 31,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -2121,7 +2121,7 @@
       "web": "GroupConversationScreen.tsx:598",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2158,7 +2158,7 @@
       "web": "GroupConversationScreen.tsx:600",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2195,7 +2195,7 @@
       "web": "GroupConversationScreen.tsx:611",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2232,7 +2232,7 @@
       "web": "GroupConversationScreen.tsx:614",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2269,7 +2269,7 @@
       "web": "GroupConversationScreen.tsx:618",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2306,7 +2306,7 @@
       "web": "GroupConversationScreen.tsx:622",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2343,7 +2343,7 @@
       "web": "GroupConversationScreen.tsx:624",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2425,7 +2425,7 @@
       "web": "MemoryScreen.tsx:536",
       "via": "menu",
       "logic": {
-        "files": 51,
+        "files": 50,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
@@ -2459,7 +2459,7 @@
       "web": "PasswordsScreen.tsx:438",
       "via": "menu",
       "logic": {
-        "files": 28,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -2699,7 +2699,7 @@
       "web": "TasksScreen.tsx:390",
       "via": "menu",
       "logic": {
-        "files": 33,
+        "files": 32,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -2740,7 +2740,7 @@
       "web": "computer/ComputerScreen.tsx:1265",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 60,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2770,7 +2770,7 @@
       "web": "computer/ComputerScreen.tsx:1266",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 60,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2800,7 +2800,7 @@
       "web": "computer/ComputerScreen.tsx:1270",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 60,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2830,7 +2830,7 @@
       "web": "computer/ComputerScreen.tsx:1397",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 60,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2860,7 +2860,7 @@
       "web": "computer/ComputerScreen.tsx:1402",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 60,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2890,7 +2890,7 @@
       "web": "BotThreadsScreen.tsx:202",
       "via": "gesture",
       "logic": {
-        "files": 73,
+        "files": 72,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -2937,7 +2937,7 @@
       "web": "BotThreadsScreen.tsx:240",
       "via": "gesture",
       "logic": {
-        "files": 73,
+        "files": 72,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -3014,7 +3014,7 @@
       "web": "ChatsScreen.tsx:1171",
       "via": "gesture",
       "logic": {
-        "files": 82,
+        "files": 81,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -3103,7 +3103,7 @@
       "web": "FilesScreen.tsx:174",
       "via": "gesture",
       "logic": {
-        "files": 31,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -3126,7 +3126,7 @@
       "web": "FilesScreen.tsx:177",
       "via": "gesture",
       "logic": {
-        "files": 31,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -3149,7 +3149,7 @@
       "web": "MemoryScreen.tsx:176",
       "via": "gesture",
       "logic": {
-        "files": 51,
+        "files": 50,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
@@ -3198,7 +3198,7 @@
       "web": "PasswordsScreen.tsx:304",
       "via": "gesture",
       "logic": {
-        "files": 28,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -3320,7 +3320,7 @@
       "web": "TasksScreen.tsx:169",
       "via": "gesture",
       "logic": {
-        "files": 33,
+        "files": 32,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -3346,7 +3346,7 @@
       "web": "TeamScreen.tsx:513",
       "via": "gesture",
       "logic": {
-        "files": 56,
+        "files": 55,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -3433,7 +3433,7 @@
       "title": "ContextUsedPanel",
       "web": "ContextUsedPanel.tsx:1",
       "logic": {
-        "files": 44,
+        "files": 43,
         "inPackage": [
           "usePersonalBots.ts",
           "relativeTime.ts",
@@ -3457,7 +3457,7 @@
       "title": "ConversationRoutinesPanel",
       "web": "ConversationRoutinesPanel.tsx:1",
       "logic": {
-        "files": 26,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": ["conversationRoutinesModel.ts", "routineHook.ts", "usePersonalAutomation.ts"]
       },
@@ -3484,7 +3484,7 @@
       "title": "DelegationCard",
       "web": "DelegationCard.tsx:1",
       "logic": {
-        "files": 29,
+        "files": 28,
         "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3657,7 +3657,7 @@
       "title": "RulesUsageCard",
       "web": "RulesUsageCard.tsx:1",
       "logic": {
-        "files": 26,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": ["memoryPresentation.ts", "usePersonalAutomation.ts"]
       },
@@ -3806,7 +3806,7 @@
       "web": "PersonalSettingsScreen.tsx:450",
       "section": "Your name",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3831,7 +3831,7 @@
       "web": "PersonalSettingsScreen.tsx:455",
       "section": "Your name",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3856,7 +3856,7 @@
       "web": "PersonalSettingsScreen.tsx:468",
       "section": "Bots",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3881,7 +3881,7 @@
       "web": "PersonalSettingsScreen.tsx:481",
       "section": "Bots",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3906,7 +3906,7 @@
       "web": "PersonalSettingsScreen.tsx:507",
       "section": "Bots",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3931,7 +3931,7 @@
       "web": "PersonalSettingsScreen.tsx:528",
       "section": "Bots",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3956,7 +3956,7 @@
       "web": "PersonalSettingsScreen.tsx:556",
       "section": "Appearance",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3980,7 +3980,7 @@
       "web": "PersonalSettingsScreen.tsx:561",
       "section": "Appearance",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4004,7 +4004,7 @@
       "web": "PersonalSettingsScreen.tsx:568",
       "section": "Chat",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4029,7 +4029,7 @@
       "web": "PersonalSettingsScreen.tsx:576",
       "section": "Chat",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4054,7 +4054,7 @@
       "web": "PersonalSettingsScreen.tsx:583",
       "section": "Chat",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4079,7 +4079,7 @@
       "web": "PersonalSettingsScreen.tsx:589",
       "section": "Chat",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4104,7 +4104,7 @@
       "web": "PersonalSettingsScreen.tsx:602",
       "section": "Voice calls",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4129,7 +4129,7 @@
       "web": "PersonalSettingsScreen.tsx:606",
       "section": "Voice calls",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4154,7 +4154,7 @@
       "web": "PersonalSettingsScreen.tsx:609",
       "section": "Plugins",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4179,7 +4179,7 @@
       "web": "PersonalSettingsScreen.tsx:622",
       "section": "Plugins",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4204,7 +4204,7 @@
       "web": "PersonalSettingsScreen.tsx:644",
       "section": "Plugins",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4229,7 +4229,7 @@
       "web": "PersonalSettingsScreen.tsx:666",
       "section": "Plugins",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4254,7 +4254,7 @@
       "web": "PersonalSettingsScreen.tsx:683",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4279,7 +4279,7 @@
       "web": "PersonalSettingsScreen.tsx:693",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4304,7 +4304,7 @@
       "web": "PersonalSettingsScreen.tsx:701",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4329,7 +4329,7 @@
       "web": "PersonalSettingsScreen.tsx:709",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4354,7 +4354,7 @@
       "web": "PersonalSettingsScreen.tsx:754",
       "section": "About",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4379,7 +4379,7 @@
       "web": "PersonalSettingsScreen.tsx:771",
       "section": "About",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4404,7 +4404,7 @@
       "web": "PersonalSettingsScreen.tsx:797",
       "section": "Advanced",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4428,7 +4428,7 @@
       "web": "PersonalSettingsScreen.tsx:812",
       "section": "Advanced",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4452,7 +4452,7 @@
       "web": "PersonalSettingsScreen.tsx:839",
       "section": "Advanced",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4586,7 +4586,7 @@
       "web": "BotForm.tsx:611",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4618,7 +4618,7 @@
       "web": "BotForm.tsx:638",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4650,7 +4650,7 @@
       "web": "BotForm.tsx:654",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4682,7 +4682,7 @@
       "web": "BotForm.tsx:668",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4714,7 +4714,7 @@
       "web": "BotForm.tsx:682",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4746,7 +4746,7 @@
       "web": "BotForm.tsx:731",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4778,7 +4778,7 @@
       "web": "BotForm.tsx:762",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4810,7 +4810,7 @@
       "web": "BotForm.tsx:792",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4842,7 +4842,7 @@
       "web": "BotForm.tsx:823",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4874,7 +4874,7 @@
       "web": "BotForm.tsx:896",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4906,7 +4906,7 @@
       "web": "BotForm.tsx:923",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4938,7 +4938,7 @@
       "web": "BotForm.tsx:938",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -4970,7 +4970,7 @@
       "web": "BotForm.tsx:953",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -5002,7 +5002,7 @@
       "web": "BotForm.tsx:969",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -5034,7 +5034,7 @@
       "web": "BotForm.tsx:999",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -5066,7 +5066,7 @@
       "web": "BotForm.tsx:1029",
       "via": "field",
       "logic": {
-        "files": 54,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -5263,7 +5263,7 @@
       "web": "MemoryScreen.tsx:566",
       "via": "field",
       "logic": {
-        "files": 51,
+        "files": 50,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
@@ -5297,7 +5297,7 @@
       "web": "NewGroupScreen.tsx:119",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 24,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
@@ -5312,7 +5312,7 @@
       "web": "NewGroupScreen.tsx:156",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 24,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
@@ -5327,7 +5327,7 @@
       "web": "NewGroupScreen.tsx:180",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 24,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
@@ -5468,7 +5468,7 @@
       "web": "NotificationsScreen.tsx:286",
       "via": "field",
       "logic": {
-        "files": 34,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "relativeTime.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5490,7 +5490,7 @@
       "web": "PasswordsScreen.tsx:133",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5513,7 +5513,7 @@
       "web": "PasswordsScreen.tsx:159",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5536,7 +5536,7 @@
       "web": "PasswordsScreen.tsx:198",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5559,7 +5559,7 @@
       "web": "PasswordsScreen.tsx:213",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5662,7 +5662,7 @@
       "web": "RoutineForm.tsx:254",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5682,7 +5682,7 @@
       "web": "RoutineForm.tsx:276",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5702,7 +5702,7 @@
       "web": "RoutineForm.tsx:294",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5722,7 +5722,7 @@
       "web": "RoutineForm.tsx:317",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5742,7 +5742,7 @@
       "web": "RoutineForm.tsx:336",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5762,7 +5762,7 @@
       "web": "RoutineForm.tsx:366",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5782,7 +5782,7 @@
       "web": "RoutineForm.tsx:385",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5802,7 +5802,7 @@
       "web": "RoutineForm.tsx:416",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5822,7 +5822,7 @@
       "web": "RoutineForm.tsx:437",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5842,7 +5842,7 @@
       "web": "RoutineForm.tsx:450",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5862,7 +5862,7 @@
       "web": "RoutineForm.tsx:466",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5882,7 +5882,7 @@
       "web": "RoutineForm.tsx:486",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5902,7 +5902,7 @@
       "web": "RoutineForm.tsx:493",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5922,7 +5922,7 @@
       "web": "RoutineForm.tsx:511",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5942,7 +5942,7 @@
       "web": "RoutineForm.tsx:514",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -6568,7 +6568,7 @@
       "id": "rpc:personalTasksSubscribe",
       "kind": "rpc",
       "title": "personalTasksSubscribe (subscription)",
-      "web": "usePersonalAutomation.ts:62",
+      "web": "usePersonalAutomation.ts:63",
       "rpcKind": "subscription",
       "wire": "personalTasks.subscribe",
       "contract": "packages/contracts/src/rpc.ts:725",
@@ -6605,7 +6605,7 @@
       "id": "rpc:personalTasksGet",
       "kind": "rpc",
       "title": "personalTasksGet (query)",
-      "web": "usePersonalAutomation.ts:68",
+      "web": "usePersonalAutomation.ts:69",
       "rpcKind": "query",
       "wire": "personalTasks.get",
       "contract": "packages/contracts/src/rpc.ts:721",
@@ -6642,7 +6642,7 @@
       "id": "rpc:personalTasksRelated",
       "kind": "rpc",
       "title": "personalTasksRelated (query)",
-      "web": "usePersonalAutomation.ts:75",
+      "web": "usePersonalAutomation.ts:76",
       "rpcKind": "query",
       "wire": "personalTasks.related",
       "contract": "packages/contracts/src/rpc.ts:727",
@@ -6679,7 +6679,7 @@
       "id": "rpc:personalTasksHistory",
       "kind": "rpc",
       "title": "personalTasksHistory (command)",
-      "web": "usePersonalAutomation.ts:82",
+      "web": "usePersonalAutomation.ts:83",
       "rpcKind": "command",
       "wire": "personalTasks.history",
       "contract": "packages/contracts/src/rpc.ts:726",
@@ -6717,7 +6717,7 @@
       "id": "rpc:personalRoutinesList",
       "kind": "rpc",
       "title": "personalRoutinesList (query)",
-      "web": "usePersonalAutomation.ts:87",
+      "web": "usePersonalAutomation.ts:88",
       "rpcKind": "query",
       "wire": "personalRoutines.list",
       "contract": "packages/contracts/src/rpc.ts:796",
@@ -6785,7 +6785,7 @@
       "id": "rpc:personalMemoryList",
       "kind": "rpc",
       "title": "personalMemoryList (query)",
-      "web": "usePersonalAutomation.ts:102",
+      "web": "usePersonalAutomation.ts:103",
       "rpcKind": "query",
       "wire": "personalMemory.list",
       "contract": "packages/contracts/src/rpc.ts:808",
@@ -6822,7 +6822,7 @@
       "id": "rpc:personalMemoryRulesUsage",
       "kind": "rpc",
       "title": "personalMemoryRulesUsage (query)",
-      "web": "usePersonalAutomation.ts:110",
+      "web": "usePersonalAutomation.ts:111",
       "rpcKind": "query",
       "wire": "personalMemory.rulesUsage",
       "contract": "packages/contracts/src/rpc.ts:816",
@@ -6859,7 +6859,7 @@
       "id": "rpc:personalMemoryTurnContext",
       "kind": "rpc",
       "title": "personalMemoryTurnContext (query)",
-      "web": "usePersonalAutomation.ts:123",
+      "web": "usePersonalAutomation.ts:124",
       "rpcKind": "query",
       "wire": "personalMemory.turnContext",
       "contract": "packages/contracts/src/rpc.ts:817",
@@ -6896,7 +6896,7 @@
       "id": "rpc:personalMemoryTidyLog",
       "kind": "rpc",
       "title": "personalMemoryTidyLog (query)",
-      "web": "usePersonalAutomation.ts:134",
+      "web": "usePersonalAutomation.ts:135",
       "rpcKind": "query",
       "wire": "personalMemory.tidyLog",
       "contract": "packages/contracts/src/rpc.ts:819",
@@ -6933,7 +6933,7 @@
       "id": "rpc:personalMemoryCards",
       "kind": "rpc",
       "title": "personalMemoryCards (query)",
-      "web": "usePersonalAutomation.ts:145",
+      "web": "usePersonalAutomation.ts:146",
       "rpcKind": "query",
       "wire": "personalMemory.cards",
       "contract": "packages/contracts/src/rpc.ts:824",
@@ -6970,7 +6970,7 @@
       "id": "rpc:personalPushGetSettings",
       "kind": "rpc",
       "title": "personalPushGetSettings (query)",
-      "web": "usePersonalAutomation.ts:152",
+      "web": "usePersonalAutomation.ts:153",
       "rpcKind": "query",
       "wire": "personalPush.getSettings",
       "contract": "packages/contracts/src/rpc.ts:828",
@@ -7007,7 +7007,7 @@
       "id": "rpc:personalTasksCancel",
       "kind": "rpc",
       "title": "personalTasksCancel (command)",
-      "web": "usePersonalAutomation.ts:194",
+      "web": "usePersonalAutomation.ts:195",
       "rpcKind": "command",
       "wire": "personalTasks.cancel",
       "contract": "packages/contracts/src/rpc.ts:723",
@@ -7045,7 +7045,7 @@
       "id": "rpc:personalTasksRetry",
       "kind": "rpc",
       "title": "personalTasksRetry (command)",
-      "web": "usePersonalAutomation.ts:199",
+      "web": "usePersonalAutomation.ts:200",
       "rpcKind": "command",
       "wire": "personalTasks.retry",
       "contract": "packages/contracts/src/rpc.ts:724",
@@ -7083,7 +7083,7 @@
       "id": "rpc:personalRoutinesCreate",
       "kind": "rpc",
       "title": "personalRoutinesCreate (command)",
-      "web": "usePersonalAutomation.ts:204",
+      "web": "usePersonalAutomation.ts:205",
       "rpcKind": "command",
       "wire": "personalRoutines.create",
       "contract": "packages/contracts/src/rpc.ts:797",
@@ -7121,7 +7121,7 @@
       "id": "rpc:personalRoutinesUpdate",
       "kind": "rpc",
       "title": "personalRoutinesUpdate (command)",
-      "web": "usePersonalAutomation.ts:210",
+      "web": "usePersonalAutomation.ts:211",
       "rpcKind": "command",
       "wire": "personalRoutines.update",
       "contract": "packages/contracts/src/rpc.ts:798",
@@ -7159,7 +7159,7 @@
       "id": "rpc:personalRoutinesDelete",
       "kind": "rpc",
       "title": "personalRoutinesDelete (command)",
-      "web": "usePersonalAutomation.ts:216",
+      "web": "usePersonalAutomation.ts:217",
       "rpcKind": "command",
       "wire": "personalRoutines.delete",
       "contract": "packages/contracts/src/rpc.ts:799",
@@ -7197,7 +7197,7 @@
       "id": "rpc:personalRoutinesPause",
       "kind": "rpc",
       "title": "personalRoutinesPause (command)",
-      "web": "usePersonalAutomation.ts:222",
+      "web": "usePersonalAutomation.ts:223",
       "rpcKind": "command",
       "wire": "personalRoutines.pause",
       "contract": "packages/contracts/src/rpc.ts:800",
@@ -7235,7 +7235,7 @@
       "id": "rpc:personalRoutinesResume",
       "kind": "rpc",
       "title": "personalRoutinesResume (command)",
-      "web": "usePersonalAutomation.ts:228",
+      "web": "usePersonalAutomation.ts:229",
       "rpcKind": "command",
       "wire": "personalRoutines.resume",
       "contract": "packages/contracts/src/rpc.ts:801",
@@ -7273,7 +7273,7 @@
       "id": "rpc:personalRoutinesDeleteMany",
       "kind": "rpc",
       "title": "personalRoutinesDeleteMany (command)",
-      "web": "usePersonalAutomation.ts:234",
+      "web": "usePersonalAutomation.ts:235",
       "rpcKind": "command",
       "wire": "personalRoutines.deleteMany",
       "contract": "packages/contracts/src/rpc.ts:802",
@@ -7311,7 +7311,7 @@
       "id": "rpc:personalRoutinesSetEnabledMany",
       "kind": "rpc",
       "title": "personalRoutinesSetEnabledMany (command)",
-      "web": "usePersonalAutomation.ts:240",
+      "web": "usePersonalAutomation.ts:241",
       "rpcKind": "command",
       "wire": "personalRoutines.setEnabledMany",
       "contract": "packages/contracts/src/rpc.ts:803",
@@ -7349,7 +7349,7 @@
       "id": "rpc:personalRoutinesRunNow",
       "kind": "rpc",
       "title": "personalRoutinesRunNow (command)",
-      "web": "usePersonalAutomation.ts:246",
+      "web": "usePersonalAutomation.ts:247",
       "rpcKind": "command",
       "wire": "personalRoutines.runNow",
       "contract": "packages/contracts/src/rpc.ts:804",
@@ -7387,7 +7387,7 @@
       "id": "rpc:personalRoutinesRegenerateHook",
       "kind": "rpc",
       "title": "personalRoutinesRegenerateHook (command)",
-      "web": "usePersonalAutomation.ts:252",
+      "web": "usePersonalAutomation.ts:253",
       "rpcKind": "command",
       "wire": "personalRoutines.regenerateHook",
       "contract": "packages/contracts/src/rpc.ts:805",
@@ -7425,7 +7425,7 @@
       "id": "rpc:personalMemoryDelete",
       "kind": "rpc",
       "title": "personalMemoryDelete (command)",
-      "web": "usePersonalAutomation.ts:258",
+      "web": "usePersonalAutomation.ts:259",
       "rpcKind": "command",
       "wire": "personalMemory.delete",
       "contract": "packages/contracts/src/rpc.ts:811",
@@ -7463,7 +7463,7 @@
       "id": "rpc:personalMemoryFeedback",
       "kind": "rpc",
       "title": "personalMemoryFeedback (command)",
-      "web": "usePersonalAutomation.ts:265",
+      "web": "usePersonalAutomation.ts:266",
       "rpcKind": "command",
       "wire": "personalMemory.feedback",
       "contract": "packages/contracts/src/rpc.ts:818",
@@ -7501,7 +7501,7 @@
       "id": "rpc:personalMemoryDeleteMany",
       "kind": "rpc",
       "title": "personalMemoryDeleteMany (command)",
-      "web": "usePersonalAutomation.ts:271",
+      "web": "usePersonalAutomation.ts:272",
       "rpcKind": "command",
       "wire": "personalMemory.deleteMany",
       "contract": "packages/contracts/src/rpc.ts:812",
@@ -7539,7 +7539,7 @@
       "id": "rpc:personalMemoryRestore",
       "kind": "rpc",
       "title": "personalMemoryRestore (command)",
-      "web": "usePersonalAutomation.ts:278",
+      "web": "usePersonalAutomation.ts:279",
       "rpcKind": "command",
       "wire": "personalMemory.restore",
       "contract": "packages/contracts/src/rpc.ts:813",
@@ -7577,7 +7577,7 @@
       "id": "rpc:personalMemoryGet",
       "kind": "rpc",
       "title": "personalMemoryGet (query)",
-      "web": "usePersonalAutomation.ts:285",
+      "web": "usePersonalAutomation.ts:286",
       "rpcKind": "query",
       "wire": "personalMemory.get",
       "contract": "packages/contracts/src/rpc.ts:815",
@@ -7614,7 +7614,7 @@
       "id": "rpc:personalMemoryUndoNote",
       "kind": "rpc",
       "title": "personalMemoryUndoNote (command)",
-      "web": "usePersonalAutomation.ts:306",
+      "web": "usePersonalAutomation.ts:307",
       "rpcKind": "command",
       "wire": "personalMemory.undoNote",
       "contract": "packages/contracts/src/rpc.ts:814",
@@ -7652,7 +7652,7 @@
       "id": "rpc:personalMemoryTidySetMode",
       "kind": "rpc",
       "title": "personalMemoryTidySetMode (command)",
-      "web": "usePersonalAutomation.ts:312",
+      "web": "usePersonalAutomation.ts:313",
       "rpcKind": "command",
       "wire": "personalMemory.tidySetMode",
       "contract": "packages/contracts/src/rpc.ts:820",
@@ -7690,7 +7690,7 @@
       "id": "rpc:personalMemoryTidyRun",
       "kind": "rpc",
       "title": "personalMemoryTidyRun (command)",
-      "web": "usePersonalAutomation.ts:319",
+      "web": "usePersonalAutomation.ts:320",
       "rpcKind": "command",
       "wire": "personalMemory.tidyRun",
       "contract": "packages/contracts/src/rpc.ts:821",
@@ -7728,7 +7728,7 @@
       "id": "rpc:personalMemoryTidyDecide",
       "kind": "rpc",
       "title": "personalMemoryTidyDecide (command)",
-      "web": "usePersonalAutomation.ts:330",
+      "web": "usePersonalAutomation.ts:331",
       "rpcKind": "command",
       "wire": "personalMemory.tidyDecide",
       "contract": "packages/contracts/src/rpc.ts:822",
@@ -7766,7 +7766,7 @@
       "id": "rpc:personalMemoryTidyUndo",
       "kind": "rpc",
       "title": "personalMemoryTidyUndo (command)",
-      "web": "usePersonalAutomation.ts:341",
+      "web": "usePersonalAutomation.ts:342",
       "rpcKind": "command",
       "wire": "personalMemory.tidyUndo",
       "contract": "packages/contracts/src/rpc.ts:823",
@@ -7804,7 +7804,7 @@
       "id": "rpc:personalPushSubscribe",
       "kind": "rpc",
       "title": "personalPushSubscribe (command)",
-      "web": "usePersonalAutomation.ts:348",
+      "web": "usePersonalAutomation.ts:349",
       "rpcKind": "command",
       "wire": "personalPush.subscribe",
       "contract": "packages/contracts/src/rpc.ts:829",
@@ -7841,7 +7841,7 @@
       "id": "rpc:personalPushUnsubscribe",
       "kind": "rpc",
       "title": "personalPushUnsubscribe (command)",
-      "web": "usePersonalAutomation.ts:354",
+      "web": "usePersonalAutomation.ts:355",
       "rpcKind": "command",
       "wire": "personalPush.unsubscribe",
       "contract": "packages/contracts/src/rpc.ts:830",
@@ -7878,7 +7878,7 @@
       "id": "rpc:personalPushTest",
       "kind": "rpc",
       "title": "personalPushTest (command)",
-      "web": "usePersonalAutomation.ts:360",
+      "web": "usePersonalAutomation.ts:361",
       "rpcKind": "command",
       "wire": "personalPush.test",
       "contract": "packages/contracts/src/rpc.ts:831",
@@ -7916,7 +7916,7 @@
       "id": "rpc:personalPushSetPreferences",
       "kind": "rpc",
       "title": "personalPushSetPreferences (command)",
-      "web": "usePersonalAutomation.ts:366",
+      "web": "usePersonalAutomation.ts:367",
       "rpcKind": "command",
       "wire": "personalPush.setPreferences",
       "contract": "packages/contracts/src/rpc.ts:832",
@@ -7954,7 +7954,7 @@
       "id": "rpc:personalBotsPrewarmThread",
       "kind": "rpc",
       "title": "personalBotsPrewarmThread (command)",
-      "web": "usePersonalAutomation.ts:374",
+      "web": "usePersonalAutomation.ts:375",
       "rpcKind": "command",
       "wire": "personalBots.prewarmThread",
       "contract": "packages/contracts/src/rpc.ts:693",
@@ -7992,7 +7992,7 @@
       "id": "rpc:personalPushReportViewing",
       "kind": "rpc",
       "title": "personalPushReportViewing (command)",
-      "web": "usePersonalAutomation.ts:379",
+      "web": "usePersonalAutomation.ts:380",
       "rpcKind": "command",
       "wire": "personalPush.reportViewing",
       "contract": "packages/contracts/src/rpc.ts:833",
@@ -8061,7 +8061,7 @@
       "id": "rpc:personalPushReportForeground",
       "kind": "rpc",
       "title": "personalPushReportForeground (command)",
-      "web": "usePersonalAutomation.ts:385",
+      "web": "usePersonalAutomation.ts:386",
       "rpcKind": "command",
       "wire": "personalPush.reportForeground",
       "contract": "packages/contracts/src/rpc.ts:834",
@@ -8283,7 +8283,7 @@
       "id": "rpc:personalGroupsList",
       "kind": "rpc",
       "title": "personalGroupsList (query)",
-      "web": "usePersonalGroups.ts:27",
+      "web": "usePersonalGroups.ts:26",
       "rpcKind": "query",
       "wire": "personalGroups.list",
       "contract": "packages/contracts/src/rpc.ts:732",
@@ -8306,7 +8306,7 @@
       "id": "rpc:personalGroupsSubscribe",
       "kind": "rpc",
       "title": "personalGroupsSubscribe (subscription)",
-      "web": "usePersonalGroups.ts:104",
+      "web": "usePersonalGroups.ts:102",
       "rpcKind": "subscription",
       "wire": "personalGroups.subscribe",
       "contract": "packages/contracts/src/rpc.ts:741",
@@ -8329,7 +8329,7 @@
       "id": "rpc:personalGroupsCreate",
       "kind": "rpc",
       "title": "personalGroupsCreate (command)",
-      "web": "usePersonalGroups.ts:129",
+      "web": "usePersonalGroups.ts:127",
       "rpcKind": "command",
       "wire": "personalGroups.create",
       "contract": "packages/contracts/src/rpc.ts:733",
@@ -8398,7 +8398,7 @@
       "id": "rpc:personalGroupsUpdate",
       "kind": "rpc",
       "title": "personalGroupsUpdate (command)",
-      "web": "usePersonalGroups.ts:135",
+      "web": "usePersonalGroups.ts:133",
       "rpcKind": "command",
       "wire": "personalGroups.update",
       "contract": "packages/contracts/src/rpc.ts:734",
@@ -8422,7 +8422,7 @@
       "id": "rpc:personalGroupsDelete",
       "kind": "rpc",
       "title": "personalGroupsDelete (command)",
-      "web": "usePersonalGroups.ts:141",
+      "web": "usePersonalGroups.ts:139",
       "rpcKind": "command",
       "wire": "personalGroups.delete",
       "contract": "packages/contracts/src/rpc.ts:735",
@@ -8446,7 +8446,7 @@
       "id": "rpc:personalGroupsAddMember",
       "kind": "rpc",
       "title": "personalGroupsAddMember (command)",
-      "web": "usePersonalGroups.ts:147",
+      "web": "usePersonalGroups.ts:145",
       "rpcKind": "command",
       "wire": "personalGroups.addMember",
       "contract": "packages/contracts/src/rpc.ts:736",
@@ -8470,7 +8470,7 @@
       "id": "rpc:personalGroupsRemoveMember",
       "kind": "rpc",
       "title": "personalGroupsRemoveMember (command)",
-      "web": "usePersonalGroups.ts:153",
+      "web": "usePersonalGroups.ts:151",
       "rpcKind": "command",
       "wire": "personalGroups.removeMember",
       "contract": "packages/contracts/src/rpc.ts:737",
@@ -8494,7 +8494,7 @@
       "id": "rpc:personalGroupsSendMessage",
       "kind": "rpc",
       "title": "personalGroupsSendMessage (command)",
-      "web": "usePersonalGroups.ts:164",
+      "web": "usePersonalGroups.ts:162",
       "rpcKind": "command",
       "wire": "personalGroups.sendMessage",
       "contract": "packages/contracts/src/rpc.ts:738",
@@ -8518,7 +8518,7 @@
       "id": "rpc:personalGroupsContinueRound",
       "kind": "rpc",
       "title": "personalGroupsContinueRound (command)",
-      "web": "usePersonalGroups.ts:169",
+      "web": "usePersonalGroups.ts:167",
       "rpcKind": "command",
       "wire": "personalGroups.continueRound",
       "contract": "packages/contracts/src/rpc.ts:739",
@@ -8542,7 +8542,7 @@
       "id": "rpc:personalGroupsStop",
       "kind": "rpc",
       "title": "personalGroupsStop (command)",
-      "web": "usePersonalGroups.ts:174",
+      "web": "usePersonalGroups.ts:172",
       "rpcKind": "command",
       "wire": "personalGroups.stop",
       "contract": "packages/contracts/src/rpc.ts:740",
@@ -9111,7 +9111,7 @@
       "id": "rpc:personalPushAckInApp",
       "kind": "rpc",
       "title": "personalPushAckInApp (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:78",
+      "web": "packages/personal-client/src/bots/personalBots.ts:79",
       "rpcKind": "command",
       "wire": "personalPush.ackInApp",
       "contract": "packages/contracts/src/rpc.ts:836",
@@ -9180,7 +9180,7 @@
       "id": "rpc:personalBotsGetProfile",
       "kind": "rpc",
       "title": "personalBotsGetProfile (query)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:127",
+      "web": "packages/personal-client/src/bots/personalBots.ts:128",
       "rpcKind": "query",
       "wire": "personalBots.getProfile",
       "contract": "packages/contracts/src/rpc.ts:694",
@@ -9248,7 +9248,7 @@
       "id": "rpc:personalBotsListFiles",
       "kind": "rpc",
       "title": "personalBotsListFiles (query)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:138",
+      "web": "packages/personal-client/src/bots/personalBots.ts:139",
       "rpcKind": "query",
       "wire": "personalBots.listFiles",
       "contract": "packages/contracts/src/rpc.ts:696",
@@ -9316,7 +9316,7 @@
       "id": "rpc:personalBotsTokenUsage",
       "kind": "rpc",
       "title": "personalBotsTokenUsage (query)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:152",
+      "web": "packages/personal-client/src/bots/personalBots.ts:153",
       "rpcKind": "query",
       "wire": "personalBots.tokenUsage",
       "contract": "packages/contracts/src/rpc.ts:691",
@@ -9384,7 +9384,7 @@
       "id": "rpc:personalBotsCreate",
       "kind": "rpc",
       "title": "personalBotsCreate (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:177",
+      "web": "packages/personal-client/src/bots/personalBots.ts:178",
       "rpcKind": "command",
       "wire": "personalBots.create",
       "contract": "packages/contracts/src/rpc.ts:679",
@@ -9453,7 +9453,7 @@
       "id": "rpc:personalBotsUpdate",
       "kind": "rpc",
       "title": "personalBotsUpdate (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:183",
+      "web": "packages/personal-client/src/bots/personalBots.ts:184",
       "rpcKind": "command",
       "wire": "personalBots.update",
       "contract": "packages/contracts/src/rpc.ts:680",
@@ -9522,7 +9522,7 @@
       "id": "rpc:personalBotsRecheckProvider",
       "kind": "rpc",
       "title": "personalBotsRecheckProvider (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:190",
+      "web": "packages/personal-client/src/bots/personalBots.ts:191",
       "rpcKind": "command",
       "wire": "personalBots.recheckProvider",
       "contract": "packages/contracts/src/rpc.ts:697",
@@ -9591,7 +9591,7 @@
       "id": "rpc:personalBotsDelete",
       "kind": "rpc",
       "title": "personalBotsDelete (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:195",
+      "web": "packages/personal-client/src/bots/personalBots.ts:196",
       "rpcKind": "command",
       "wire": "personalBots.delete",
       "contract": "packages/contracts/src/rpc.ts:681",
@@ -9660,7 +9660,7 @@
       "id": "rpc:personalBotsCreateThread",
       "kind": "rpc",
       "title": "personalBotsCreateThread (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:201",
+      "web": "packages/personal-client/src/bots/personalBots.ts:202",
       "rpcKind": "command",
       "wire": "personalBots.createThread",
       "contract": "packages/contracts/src/rpc.ts:682",
@@ -9729,7 +9729,7 @@
       "id": "rpc:personalBotsArchiveThread",
       "kind": "rpc",
       "title": "personalBotsArchiveThread (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:207",
+      "web": "packages/personal-client/src/bots/personalBots.ts:208",
       "rpcKind": "command",
       "wire": "personalBots.archiveThread",
       "contract": "packages/contracts/src/rpc.ts:683",
@@ -9798,7 +9798,7 @@
       "id": "rpc:personalBotsDeleteThread",
       "kind": "rpc",
       "title": "personalBotsDeleteThread (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:213",
+      "web": "packages/personal-client/src/bots/personalBots.ts:214",
       "rpcKind": "command",
       "wire": "personalBots.deleteThread",
       "contract": "packages/contracts/src/rpc.ts:684",
@@ -9867,7 +9867,7 @@
       "id": "rpc:personalBotsArchiveThreads",
       "kind": "rpc",
       "title": "personalBotsArchiveThreads (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:221",
+      "web": "packages/personal-client/src/bots/personalBots.ts:222",
       "rpcKind": "command",
       "wire": "personalBots.archiveThreads",
       "contract": "packages/contracts/src/rpc.ts:685",
@@ -9936,7 +9936,7 @@
       "id": "rpc:personalBotsDeleteThreads",
       "kind": "rpc",
       "title": "personalBotsDeleteThreads (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:227",
+      "web": "packages/personal-client/src/bots/personalBots.ts:228",
       "rpcKind": "command",
       "wire": "personalBots.deleteThreads",
       "contract": "packages/contracts/src/rpc.ts:692",
@@ -10005,7 +10005,7 @@
       "id": "rpc:personalBotsUpdateThreads",
       "kind": "rpc",
       "title": "personalBotsUpdateThreads (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:238",
+      "web": "packages/personal-client/src/bots/personalBots.ts:239",
       "rpcKind": "command",
       "wire": "personalBots.updateThreads",
       "contract": "packages/contracts/src/rpc.ts:688",
@@ -10074,7 +10074,7 @@
       "id": "rpc:personalFilesDelete",
       "kind": "rpc",
       "title": "personalFilesDelete (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:244",
+      "web": "packages/personal-client/src/bots/personalBots.ts:245",
       "rpcKind": "command",
       "wire": "personalFiles.delete",
       "contract": "packages/contracts/src/rpc.ts:716",
@@ -10143,7 +10143,7 @@
       "id": "rpc:personalFilesDeleteMany",
       "kind": "rpc",
       "title": "personalFilesDeleteMany (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:250",
+      "web": "packages/personal-client/src/bots/personalBots.ts:251",
       "rpcKind": "command",
       "wire": "personalFiles.deleteMany",
       "contract": "packages/contracts/src/rpc.ts:717",
@@ -10212,7 +10212,7 @@
       "id": "rpc:personalBotsSetProfile",
       "kind": "rpc",
       "title": "personalBotsSetProfile (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:256",
+      "web": "packages/personal-client/src/bots/personalBots.ts:257",
       "rpcKind": "command",
       "wire": "personalBots.setProfile",
       "contract": "packages/contracts/src/rpc.ts:695",
