@@ -47,6 +47,7 @@ const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unkno
 export const makeMemoryPersistence = (core: MemoryCore) => {
   const {
     sql,
+    rel,
     exposures,
     tasks,
     fail,
@@ -388,7 +389,7 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
   }) =>
     Effect.gen(function* () {
       const rows = yield* sql<{ readonly contextJson: string | null }>`
-        SELECT context_json AS "contextJson" FROM projection_thread_messages
+        SELECT context_json AS "contextJson" FROM ${sql.unsafe(rel.messages)}
         WHERE message_id = ${input.noticeMessageId} AND thread_id = ${input.threadId}
       `;
       for (const row of rows) {
