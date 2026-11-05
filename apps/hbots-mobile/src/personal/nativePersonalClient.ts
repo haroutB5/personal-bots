@@ -22,6 +22,7 @@ import {
 import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
+import { createPersonalGroupsClient } from "@hbots/personal-client/groups/personalGroups";
 import {
   parseSystemSummary,
   SYSTEM_SUMMARY_TIMEOUT_MS,
@@ -172,6 +173,7 @@ export interface NativePersonal {
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
   readonly bots: ReturnType<typeof createPersonalBotsClient>;
+  readonly groups: ReturnType<typeof createPersonalGroupsClient>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly shellsOf: (
     snapshot: OrchestrationShellSnapshot | null,
@@ -292,6 +294,13 @@ export function createNativePersonal(
   };
   const client = createPersonalClient(runtime, ports, host);
   const bots = createPersonalBotsClient(runtime, client);
+  const groups = createPersonalGroupsClient(runtime, client, {
+    refreshBots: (registry, environmentId) => {
+      registry.refresh(
+        bots.personalBotsList({ environmentId, input: bots.personalBotsListInput() }),
+      );
+    },
+  });
   const shell = createEnvironmentShellAtoms(runtime);
 
   let disposed = false;
@@ -499,6 +508,7 @@ export function createNativePersonal(
     runtime,
     client,
     bots,
+    groups,
     shell,
     shellsOf: (snapshot) =>
       snapshot === null ? [] : snapshot.threads.map((thread) => ({ ...thread, environmentId })),

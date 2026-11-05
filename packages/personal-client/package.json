@@ -185,6 +185,10 @@
       "types": "./src/conversation/groupModel.ts",
       "import": "./src/conversation/groupModel.ts"
     },
+    "./groups/personalGroups": {
+      "types": "./src/groups/personalGroups.ts",
+      "import": "./src/groups/personalGroups.ts"
+    },
     "./conversation/greeting": {
       "types": "./src/conversation/greeting.ts",
       "import": "./src/conversation/greeting.ts"
