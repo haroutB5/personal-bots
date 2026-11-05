@@ -27,11 +27,14 @@ export interface ServerIdentity {
   readonly shortId: string;
 }
 
-async function fetchDescriptor(httpBaseUrl: string): Promise<ExecutionEnvironmentDescriptor> {
+async function fetchDescriptor(
+  httpBaseUrl: string,
+  signal?: AbortSignal,
+): Promise<ExecutionEnvironmentDescriptor> {
   const descriptor = await requestJson(
     "descriptor",
     new URL("/.well-known/t3/environment", httpBaseUrl),
-    {},
+    signal === undefined ? {} : { signal },
     5000,
   );
   return decodeDescriptor(descriptor);
@@ -57,8 +60,9 @@ export async function inspectServer(target: PairingTarget): Promise<ServerIdenti
 export async function openSocketUrl(
   session: StoredSession,
   clientAppVersion: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const descriptor = await fetchDescriptor(session.httpBaseUrl);
+  const descriptor = await fetchDescriptor(session.httpBaseUrl, signal);
   assertSameEnvironment(session.environmentId, descriptor.environmentId);
   const ticketUrl = new URL("/api/auth/websocket-ticket", session.httpBaseUrl);
   const ticket = await requestJson(
@@ -67,6 +71,7 @@ export async function openSocketUrl(
     {
       method: "POST",
       headers: await authorizationHeaders(session, "POST", ticketUrl.toString()),
+      ...(signal === undefined ? {} : { signal }),
     },
     5000,
   );

@@ -30,7 +30,16 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
@@ -42,7 +51,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
-import { botsHomeState } from "./botsHomeState";
+import { botsHomeState, snapshotRowTarget } from "./botsHomeState";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { SystemStatsLine } from "./SystemStatsLine";
@@ -182,13 +191,22 @@ function SnapshotRow({
   row,
   now,
   last,
+  onPress,
 }: {
   readonly row: ChatsSnapshot["rows"][number];
   readonly now: number;
   readonly last: boolean;
+  readonly onPress: () => void;
 }) {
   return (
-    <View style={[styles.row, last ? styles.rowLast : null]}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${row.name}, ${row.preview.length > 0 ? row.preview : "No chats yet"}`}
+      accessibilityHint="Opens the chat"
+      android_ripple={{ color: "rgba(255,255,255,0.08)" }}
+      style={[styles.row, last ? styles.rowLast : null]}
+    >
       <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={56} label={row.name} />
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
@@ -206,7 +224,7 @@ function SnapshotRow({
           {row.preview.length > 0 ? row.preview : "No chats yet"}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -560,7 +578,10 @@ export function BotsScreen({
   });
 
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.screen}
+    >
       <PersonalOfflineBanner native={native} />
       <View style={styles.header}>
         <View style={styles.titleRow}>
@@ -618,7 +639,7 @@ export function BotsScreen({
           </Pressable>
         ) : null}
 
-        {list.error !== null ? (
+        {state === "error" ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>Couldn't load your bots.</Text>
             <Pressable
@@ -693,6 +714,11 @@ export function BotsScreen({
                 row={row}
                 now={now}
                 last={index === snapshotSplit.rest.length - 1}
+                onPress={() => {
+                  const target = snapshotRowTarget(row);
+                  if (target.kind === "chat") onOpenChat(row.botId, target.threadId);
+                  else onOpenBot(row.botId);
+                }}
               />
             ))}
           </>
@@ -861,7 +887,7 @@ export function BotsScreen({
         onSnoozed={() => setActionError(null)}
         onError={setActionError}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

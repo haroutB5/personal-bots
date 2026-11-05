@@ -251,6 +251,75 @@ describe("one pass over the queue", () => {
   });
 });
 
+describe("a send cut off by the connection going away", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("goes out again on the new connection, not at the send timeout", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const sends: string[] = [];
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send: (item) => {
+        sends.push(item.id);
+        return sends.length === 1
+          ? new Promise<SendOutcome>(() => {})
+          : Promise.resolve({ kind: "sent" });
+      },
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sends).toEqual(["one"]);
+
+    // The phone drops the network with the send in flight, then connects again.
+    connected = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    generation += 1;
+    connected = true;
+    flusher.trigger();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(sends).toEqual(["one", "one"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("does not use up the message's unanswered attempts, however often the network drops", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const send = vi.fn((): Promise<SendOutcome> => new Promise(() => {}));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      connected = false;
+      await vi.advanceTimersByTimeAsync(500);
+      generation += 1;
+      connected = true;
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(500);
+    }
+
+    expect(send).toHaveBeenCalledTimes(6);
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      status: "waiting",
+      attempts: 0,
+    });
+    flusher.dispose();
+  });
+});
+
 describe("a send that never answers", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

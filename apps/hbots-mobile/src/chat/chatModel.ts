@@ -81,6 +81,8 @@ export function chatHeaderModel(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly usedTokens: number | null;
   readonly nowMs: number;
+  /** The last list's name for this bot, used when the live list is offline. */
+  readonly fallbackBotName?: string | null;
 }): ChatHeaderModel {
   const state = deriveConversationState({
     session: input.session,
@@ -96,7 +98,7 @@ export function chatHeaderModel(input: {
   const mute =
     input.bot === null ? { muted: false as const } : botMuteState(input.bot, input.nowMs);
   return {
-    botName: input.bot?.name ?? "Bot",
+    botName: input.bot?.name ?? input.fallbackBotName ?? "Bot",
     chatTitle: conversationChatTitle(input.title),
     muted: mute.muted,
     muteLabel: mute.muted ? mutedUntilLabel(mute, input.nowMs) : null,

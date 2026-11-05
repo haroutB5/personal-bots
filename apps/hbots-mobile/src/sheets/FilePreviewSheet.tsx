@@ -1,5 +1,10 @@
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useEffect, useState } from "react";
+import type { AssetResource } from "@t3tools/contracts";
+import {
+  assetUrlStateFromResult,
+  EMPTY_ASSET_URL_ATOM,
+} from "@t3tools/client-runtime/state/assets";
+import { useAtomValue } from "@effect/atom-react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
@@ -11,6 +16,11 @@ const TEXT_EXTENSIONS =
   /\.(?:txt|md|markdown|json|jsonc|ts|tsx|js|jsx|css|scss|html|xml|yml|yaml|toml|ini|cfg|log|sh|bash|zsh|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|sql|env)$/i;
 const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
 
+/**
+ * The chat's file sheet. The file's URL is an asset atom, the same path the
+ * web viewer uses, so a personal chat resolves it under the Personal project's
+ * folder and a project chat under its worktree.
+ */
 export function FilePreviewSheet({
   native,
   chat,
@@ -26,84 +36,84 @@ export function FilePreviewSheet({
   readonly path: string | null;
   readonly onClose: () => void;
 }) {
-  const createUrl = native.client.useAtomCommand(chat.assets.createUrl as never, {
-    reportFailure: false,
-  }) as (target: {
-    readonly environmentId: string;
-    readonly input: {
-      readonly resource: {
-        readonly _tag: "host-file";
-        readonly cwd: string;
-        readonly path: string;
-        readonly disposition: "inline";
-      };
-    };
-  }) => Promise<
-    | { readonly _tag: "Success"; readonly value: { readonly relativeUrl: string } }
-    | { readonly _tag: "Failure"; readonly cause?: unknown }
-  >;
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
-  const [url, setUrl] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const absolute = path !== null && /^[\\/]|^~|^[A-Za-z]:[\\/]/u.test(path);
+  const readsText = path !== null && TEXT_EXTENSIONS.test(path);
+  const resource = useMemo<AssetResource | null>(
+    () =>
+      visible && path !== null && (cwd !== null || absolute)
+        ? {
+            _tag: "host-file",
+            cwd: cwd ?? "",
+            path,
+            // The inline route only mints previewable media, HTML and PDF.
+            // Text needs the download route, which serves any file type.
+            disposition: readsText ? "download" : "inline",
+          }
+        : null,
+    [absolute, cwd, path, readsText, visible],
+  );
+  const urlAtom = useMemo(
+    () =>
+      resource === null
+        ? EMPTY_ASSET_URL_ATOM
+        : chat.assets.createUrl({
+            environmentId: native.environmentId,
+            input: { resource },
+          }),
+    [chat.assets, native.environmentId, resource],
+  );
+  const state = assetUrlStateFromResult(useAtomValue(urlAtom), native.httpBaseUrl);
+  const url = state._tag === "Success" ? state.url : null;
 
   useEffect(() => {
     let live = true;
-    if (!visible || path === null || cwd === null) return;
-    setLoading(true);
-    setError(null);
     setText(null);
-    setUrl(null);
+    setFetchError(null);
+    if (url === null || path === null || !TEXT_EXTENSIONS.test(path)) return;
     void (async () => {
       try {
-        const result = await createUrl({
-          environmentId: native.environmentId,
-          input: {
-            resource: { _tag: "host-file", cwd, path, disposition: "inline" },
-          },
-        });
+        const response = await fetch(url, { cache: "no-store" });
         if (!live) return;
-        if (result._tag !== "Success") {
-          const cause = squashAtomCommandFailure(result as never);
-          setError(
-            cause instanceof Error && cause.message.length > 0
-              ? cause.message
-              : "Couldn't open that file.",
-          );
+        if (!response.ok) {
+          setFetchError("Couldn't read that file.");
           return;
         }
-        const resolved = new URL(result.value.relativeUrl, native.httpBaseUrl).toString();
-        setUrl(resolved);
-        if (TEXT_EXTENSIONS.test(path)) {
-          const response = await fetch(resolved, { cache: "no-store" });
-          if (!live) return;
-          if (!response.ok) {
-            setError("Couldn't read that file.");
-            return;
-          }
-          setText(await response.text());
-        } else if (!IMAGE_EXTENSIONS.test(path)) {
-          setError("This file can't be shown on the phone.");
-        }
+        setText(await response.text());
       } catch {
-        if (live) setError("Couldn't open that file.");
-      } finally {
-        if (live) setLoading(false);
+        if (live) setFetchError("Couldn't open that file.");
       }
     })();
     return () => {
       live = false;
     };
-  }, [chat.assets, createUrl, cwd, native, path, visible]);
+  }, [path, url]);
 
   const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
+  const error =
+    fetchError ??
+    (state._tag === "Failure"
+      ? state.protectedFile === true
+        ? "This file holds credentials or machine state, so it is never shown."
+        : state.notFound === true
+          ? "Couldn't open this file. It may have moved or been deleted."
+          : "Couldn't open that file."
+      : null);
+  const canShowImage = path !== null && IMAGE_EXTENSIONS.test(path);
+  const wrongKind =
+    state._tag === "Success" && path !== null && !canShowImage && !TEXT_EXTENSIONS.test(path)
+      ? "This file can't be shown on the phone."
+      : null;
+
   return (
     <SheetShell visible={visible} title={name} onClose={onClose}>
       <View style={styles.body}>
         <Text style={styles.path} numberOfLines={2}>
           {path ?? ""}
         </Text>
-        {loading ? (
+        {state._tag === "Loading" ? (
           <View style={styles.center}>
             <ActivityIndicator color={tokens.textSecondary} />
           </View>
@@ -111,20 +121,28 @@ export function FilePreviewSheet({
           <Text style={styles.error} accessibilityRole="alert">
             {error}
           </Text>
+        ) : wrongKind !== null ? (
+          <Text style={styles.error} accessibilityRole="alert">
+            {wrongKind}
+          </Text>
         ) : text !== null ? (
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
             <Text style={styles.code} selectable>
               {text}
             </Text>
           </ScrollView>
-        ) : url !== null ? (
+        ) : url !== null && canShowImage ? (
           <Image
             source={{ uri: url }}
             style={styles.image}
             resizeMode="contain"
             accessibilityLabel={name}
           />
-        ) : null}
+        ) : (
+          <View style={styles.center}>
+            <ActivityIndicator color={tokens.textSecondary} />
+          </View>
+        )}
       </View>
     </SheetShell>
   );

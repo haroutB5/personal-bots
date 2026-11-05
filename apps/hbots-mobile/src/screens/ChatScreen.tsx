@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -34,11 +35,14 @@ import {
   removeOutboxEntry,
   retryOutboxEntry,
 } from "@hbots/personal-client/composer/outbox";
+import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
 import { sharedPreferencesFromProfile } from "@hbots/personal-client/settings/profilePreferences";
 import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+
+import { resolveChatCwd } from "@hbots/personal-client/feed/chatCwd";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
@@ -153,6 +157,11 @@ export function ChatScreen({
     [botId, links, list.data?.bots, shells, threadId],
   );
   const thread = view.thread;
+  const projects = useMemo(
+    () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
+    [shellState.snapshot],
+  );
+  const chatCwd = resolveChatCwd(thread, projects);
   const shell = record?.shell ?? null;
   const archived = shell?.archivedAt != null;
   const link = links.find((candidate) => candidate.threadId === threadId) ?? null;
@@ -193,6 +202,13 @@ export function ChatScreen({
     return null;
   }, [thread]);
   const providerWait = providerWaitState(thread?.session ?? null) !== null;
+  const cachedBot = useMemo(
+    () =>
+      readChatsSnapshot(native.client.ports.kv, environmentId)?.rows.find(
+        (row) => row.botId === botId,
+      ) ?? null,
+    [botId, environmentId, native.client.ports.kv],
+  );
   const header = chatHeaderModel({
     bot: record?.bot ?? null,
     shell,
@@ -203,6 +219,7 @@ export function ChatScreen({
     providers,
     usedTokens,
     nowMs: now,
+    fallbackBotName: cachedBot?.name ?? null,
   });
   const chips = useMemo(
     () =>
@@ -406,18 +423,18 @@ export function ChatScreen({
           >
             <IconChevronLeft size={24} color={tokens.text} strokeWidth={1.75} />
           </Pressable>
-          {record?.bot != null ? (
+          {record?.bot != null || cachedBot !== null ? (
             <Pressable
               onPress={() => onOpenBot(botId)}
               accessibilityRole="button"
-              accessibilityLabel={`Edit ${record.bot.name}`}
+              accessibilityLabel={`Edit ${header.botName}`}
               style={styles.headerIdentity}
             >
               <BotAvatar
-                shape={record.bot.avatarShape}
-                color={record.bot.avatarColor}
+                shape={record?.bot?.avatarShape ?? cachedBot?.avatarShape ?? "blob"}
+                color={record?.bot?.avatarColor ?? cachedBot?.avatarColor ?? tokens.primary}
                 size={48}
-                label={record.bot.name}
+                label={header.botName}
               />
               <View style={styles.headerText}>
                 <View style={styles.headerTitleRow}>
@@ -427,6 +444,14 @@ export function ChatScreen({
                   {header.muted ? (
                     <IconBellOff size={15} color={tokens.textSecondary} strokeWidth={2} />
                   ) : null}
+                  <Text
+                    style={styles.titleChip}
+                    numberOfLines={1}
+                    maxFontSizeMultiplier={1.3}
+                    accessibilityLabel={`Chat: ${header.chatTitle}`}
+                  >
+                    {header.chatTitle}
+                  </Text>
                   {header.contextBadge !== null ? (
                     <Text style={styles.contextBadge}>{header.contextBadge}</Text>
                   ) : null}
@@ -563,6 +588,8 @@ export function ChatScreen({
       ) : (
         <>
           <MessageList
+            native={native}
+            chat={chat}
             items={items}
             pending={pending}
             queued={queued}
@@ -574,8 +601,9 @@ export function ChatScreen({
             latestMessageStatus={latestMessageStatus}
             onReply={(quote) => setReplyTo(quote)}
             onMessageMenu={setMessageMenu}
-            onOpenFile={(path) => {
-              if (thread.worktreePath !== null) setFilePath(path);
+            onOpenFile={(path) => setFilePath(path)}
+            onOpenLink={(url) => {
+              void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
             }}
             onCancelQueued={(id) => removeOutboxEntry(id)}
             onRetryQueued={(id) => retryOutboxEntry(id)}
@@ -735,7 +763,7 @@ export function ChatScreen({
         native={native}
         chat={chat}
         visible={filePath !== null}
-        cwd={thread?.worktreePath ?? null}
+        cwd={chatCwd}
         path={filePath}
         onClose={() => setFilePath(null)}
       />
@@ -856,6 +884,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 23,
     fontWeight: "700",
+    flexShrink: 1,
+  },
+  titleChip: {
+    color: tokens.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.borderStrong,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 1,
+    maxWidth: "48%",
     flexShrink: 1,
   },
   contextBadge: {

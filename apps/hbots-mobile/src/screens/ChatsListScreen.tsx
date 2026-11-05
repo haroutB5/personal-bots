@@ -5,7 +5,16 @@ import { IconArchive, IconChevronLeft, IconPin, IconPlus } from "@tabler/icons-r
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { useMemo, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
@@ -190,7 +199,10 @@ export function ChatsListScreen({
   };
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={[styles.screen, { paddingTop: insets.top }]}
+    >
       {selecting ? (
         <View style={styles.header}>
           <Pressable
@@ -434,7 +446,7 @@ export function ChatsListScreen({
           onCreated={(threadId) => onOpenChat(threadId)}
         />
       ) : null}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
