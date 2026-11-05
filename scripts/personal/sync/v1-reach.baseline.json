@@ -1,16 +1,11 @@
 {
-  "note": "Appendix B census at L2, minus the callers ported in A2, A3, A5, A6a and A6b. Direct entries are found by the import and table detectors; indirect entries reach v1 through another personal module and carry the reason.",
+  "note": "Appendix B census at L2, minus the callers ported in A2, A3, A5, A6a, A6b and A7. Direct entries are found by the import and table detectors; indirect entries reach v1 through another personal module and carry the reason.",
   "files": [
     "apps/server/src/mcp/toolkits/personal/handlers.ts",
     "apps/server/src/personal/PersonalBotRepository.ts",
-    "apps/server/src/personal/PersonalBotService.ts",
-    "apps/server/src/personal/PersonalModelFallbackService.ts",
-    "apps/server/src/personal/PersonalTurnRetryService.ts",
-    "apps/server/src/personal/claudeCodeReview/PersonalClaudeCodeReview.ts",
     "apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts",
     "apps/server/src/personal/engine/PersonalEngineV1Live.ts",
     "apps/server/src/personal/engine/PersonalProjectionRelationsV1Live.ts",
-    "apps/server/src/personal/engine/PersonalProviders.ts",
     "apps/server/src/personal/engine/PersonalProvidersV1Live.ts",
     "apps/server/src/personal/groups/PersonalGroupService.ts",
     "apps/server/src/personal/groups/groupCore.ts",
@@ -18,16 +13,12 @@
     "apps/server/src/personal/groups/groupMessaging.ts",
     "apps/server/src/personal/groups/groupSettling.ts",
     "apps/server/src/personal/groups/groupTurns.ts",
-    "apps/server/src/personal/leadBots/PersonalLeadBotService.ts",
-    "apps/server/src/personal/memory/PersonalMemoryTidyService.ts",
     "apps/server/src/personal/memory/memoryNotice.ts",
     "apps/server/src/personal/performance/botAttribution.ts",
-    "apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts",
     "apps/server/src/personal/push/clientDiagRoute.ts",
     "apps/server/src/personal/push/sentPushesRoute.ts",
     "apps/server/src/personal/routines/hookRoutes.ts",
     "apps/server/src/personal/secrets/PersonalSessionAccess.ts",
-    "apps/server/src/personal/sessionPrewarm.ts",
     "apps/server/src/personal/tasks/PersonalTaskService.ts",
     "apps/server/src/personal/tasks/taskCore.ts",
     "apps/server/src/personal/tasks/taskDispatch.ts",
@@ -36,7 +27,6 @@
     "apps/server/src/personal/tasks/taskSteering.ts",
     "apps/server/src/personal/tasks/taskWaiting.ts",
     "apps/server/src/personal/threadTextPreviews.ts",
-    "apps/server/src/personal/voiceCalls/voiceCallSummaryClaude.ts",
     "packages/contracts/src/personalBots.ts",
     "packages/contracts/src/personalFollowUp.ts"
   ],
@@ -50,7 +40,6 @@
     "apps/server/src/personal/tasks/taskDispatch.ts": "reaches v1 through TaskCore's snapshot query",
     "apps/server/src/personal/tasks/taskLifecycle.ts": "reaches v1 through TaskCore's snapshot query",
     "apps/server/src/personal/tasks/taskSteering.ts": "reaches v1 through TaskCore's snapshot query",
-    "apps/server/src/personal/tasks/taskWaiting.ts": "reaches v1 through TaskCore's snapshot query",
-    "apps/server/src/personal/PersonalBotService.ts": "default-bot seeding still reads ProviderRegistry; A7 moves it to PersonalProviders"
+    "apps/server/src/personal/tasks/taskWaiting.ts": "reaches v1 through TaskCore's snapshot query"
   }
 }
