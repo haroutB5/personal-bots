@@ -1,10 +1,10 @@
 {
   "generatedBy": "scripts/personal/parity/parity-matrix.mjs",
   "web": {
-    "ref": "3c18bf5e3a01d6f71918b8f09aee53b612997808"
+    "ref": "HEAD"
   },
   "android": {
-    "ref": "3c18bf5e3a01d6f71918b8f09aee53b612997808",
+    "ref": "HEAD",
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
