@@ -288,6 +288,61 @@ describe("a send cut off by the connection going away", () => {
     flusher.dispose();
   });
 
+  it("does not count an attempt whose socket was replaced before it answered", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const result = await runOutboxPass({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send: async () => {
+        // The socket died under the send, and the replacement is already in
+        // place before the rejection reaches the queue.
+        connected = false;
+        generation += 1;
+        return { kind: "unknown" };
+      },
+    });
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      status: "waiting",
+      attempts: 0,
+    });
+    expect(result.retryInMs).not.toBeNull();
+  });
+
+  it("never gives up on a message through any number of replaced sockets", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const send = vi.fn(async (): Promise<SendOutcome> => {
+      connected = false;
+      generation += 1;
+      return { kind: "unknown" };
+    });
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let cycle = 0; cycle < 8; cycle += 1) {
+      connected = true;
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(200);
+    }
+
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      status: "waiting",
+      attempts: 0,
+      error: null,
+    });
+    flusher.dispose();
+  });
+
   it("does not use up the message's unanswered attempts, however often the network drops", async () => {
     enqueueOutboxEntry(entry("one"));
     let generation = 0;
