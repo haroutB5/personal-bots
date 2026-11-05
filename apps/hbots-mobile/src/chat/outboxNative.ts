@@ -7,7 +7,10 @@ import {
   type ChatAttachment,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { runAttachmentUploadCycle } from "@t3tools/client-runtime/state/attachments";
+import {
+  runAttachmentUploadCycle,
+  type AttachmentUploadCycleResult,
+} from "@t3tools/client-runtime/state/attachments";
 import {
   configureOutbox,
   useOutboxSnapshot,
@@ -35,6 +38,30 @@ export function configureNativeOutbox(native: NativePersonal): void {
   configureOutboxBlobs(native.client.ports.blobs);
 }
 
+/** The upload endpoint answered 4xx or 5xx: the server saw the bytes and said no. */
+export class UploadRefusedError extends Error {
+  constructor(readonly status: number) {
+    super(`Upload rejected (${status})`);
+    this.name = "UploadRefusedError";
+  }
+}
+
+const UPLOAD_REFUSED_MESSAGE = "Couldn't send: an attachment didn't upload. Try again.";
+
+type FailedUpload = Extract<AttachmentUploadCycleResult, { status: "failed" }>;
+
+/**
+ * Only an answer from the upload endpoint is a refusal. A network error, a
+ * timeout, a failed mint or an unresolved URL never reached the server, so the
+ * queue retries it on the next connection instead of waiting for Retry.
+ */
+export function failedAttachmentOutcome(result: FailedUpload, connected: boolean): SendOutcome {
+  if (result.step === "transfer" && result.error instanceof UploadRefusedError) {
+    return { kind: "rejected", message: UPLOAD_REFUSED_MESSAGE };
+  }
+  return connected ? { kind: "interrupted" } : { kind: "not-sent" };
+}
+
 async function uploadFile(
   uri: string,
   url: string,
@@ -50,9 +77,26 @@ async function uploadFile(
     headers: { "Content-Type": mimeType },
     signal,
   });
+  if (result.status >= 400) throw new UploadRefusedError(result.status);
   if (result.status < 200 || result.status >= 300) {
-    throw new Error(`Upload rejected (${result.status})`);
+    throw new Error(`Upload failed (${result.status})`);
   }
+}
+
+/**
+ * A new socket generation means the network under the old uploads is gone.
+ * The shared OkHttp pool can still hold a connection bound to it, and the
+ * first request after the change waits on that dead socket until its timeout.
+ * Evicting the pool before the first upload of a generation opens the upload
+ * on a fresh connection.
+ */
+let uploadNetworkGeneration: number | null = null;
+
+async function prepareNetworkForUpload(native: NativePersonal): Promise<void> {
+  const generation = native.readConnection().generation;
+  if (uploadNetworkGeneration === generation) return;
+  uploadNetworkGeneration = generation;
+  await resetNetworkClient();
 }
 
 export interface DraftAttachment {
@@ -64,6 +108,10 @@ export interface DraftAttachment {
   readonly uri: string;
 }
 
+type AttachmentUpload =
+  | { readonly kind: "uploaded"; readonly attachment: ChatAttachment }
+  | { readonly kind: "failed"; readonly result: FailedUpload };
+
 async function uploadOne(
   native: NativePersonal,
   chat: ChatEnvironment,
@@ -74,7 +122,7 @@ async function uploadOne(
     readonly kind: "image" | "file";
   },
   uri: string,
-): Promise<ChatAttachment | null> {
+): Promise<AttachmentUpload> {
   const controller = new AbortController();
   const result = await runAttachmentUploadCycle({
     registry: appAtomRegistry,
@@ -101,14 +149,30 @@ async function uploadOne(
       abort: () => controller.abort(),
     }),
   });
-  if (result.status !== "uploaded") return null;
-  return {
-    type: meta.kind,
-    id: result.attachmentId,
-    name: meta.name,
-    mimeType: meta.mimeType,
-    sizeBytes: meta.sizeBytes,
-  } as ChatAttachment;
+  if (result.status === "uploaded") {
+    return {
+      kind: "uploaded",
+      attachment: {
+        type: meta.kind,
+        id: result.attachmentId,
+        name: meta.name,
+        mimeType: meta.mimeType,
+        sizeBytes: meta.sizeBytes,
+      } as ChatAttachment,
+    };
+  }
+  if (result.status === "cancelled") {
+    return {
+      kind: "failed",
+      result: {
+        status: "failed",
+        step: "transfer",
+        attachmentId: result.attachmentId,
+        error: new Error("Upload cancelled."),
+      },
+    };
+  }
+  return { kind: "failed", result };
 }
 
 export async function uploadDraftAttachments(
@@ -119,26 +183,40 @@ export async function uploadDraftAttachments(
   const uploaded: ChatAttachment[] = [];
   for (const attachment of attachments) {
     const next = await uploadOne(native, chat, attachment, attachment.uri);
-    if (next === null) return null;
-    uploaded.push(next);
+    if (next.kind === "failed") return null;
+    uploaded.push(next.attachment);
   }
   return uploaded;
 }
+
+type AttachmentsUpload =
+  | { readonly kind: "uploaded"; readonly attachments: ReadonlyArray<ChatAttachment> }
+  | { readonly kind: "failed"; readonly result: FailedUpload };
 
 async function uploadEntryAttachments(
   native: NativePersonal,
   chat: ChatEnvironment,
   entry: OutboxEntry,
-): Promise<ReadonlyArray<ChatAttachment> | null> {
+): Promise<AttachmentsUpload> {
   const uploaded: ChatAttachment[] = [];
   for (const meta of entry.attachments) {
     const blob = await getOutboxBlob<NativeBlob>(entry.id, meta.id);
-    if (blob === null) return null;
+    if (blob === null) {
+      return {
+        kind: "failed",
+        result: {
+          status: "failed",
+          step: "transfer",
+          attachmentId: null,
+          error: new Error("The attachment's bytes are missing."),
+        },
+      };
+    }
     const next = await uploadOne(native, chat, meta, blob.uri);
-    if (next === null) return null;
-    uploaded.push(next);
+    if (next.kind === "failed") return next;
+    uploaded.push(next.attachment);
   }
-  return uploaded;
+  return { kind: "uploaded", attachments: uploaded };
 }
 
 /**
@@ -161,15 +239,11 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
     }
     let attachments: ReadonlyArray<ChatAttachment> = [];
     if (entry.attachments.length > 0) {
-      const uploaded = await uploadEntryAttachments(native, chat, entry);
-      if (uploaded === null) {
-        // The upload queue already retried a transient failure. A remaining
-        // failure is the server's answer, so it waits for Retry, not a trigger.
-        return native.readConnection().connected
-          ? { kind: "rejected", message: "Couldn't send: an attachment didn't upload. Try again." }
-          : { kind: "not-sent" };
+      const upload = await uploadEntryAttachments(native, chat, entry);
+      if (upload.kind === "failed") {
+        return failedAttachmentOutcome(upload.result, native.readConnection().connected);
       }
-      attachments = uploaded;
+      attachments = upload.attachments;
     }
     try {
       const context = withPersonalFollowUp(

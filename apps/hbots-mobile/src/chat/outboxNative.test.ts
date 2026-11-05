@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("expo", () => ({
+  requireOptionalNativeModule: () => ({
+    reset: async () => true,
+    isOnline: () => true,
+    canReachNetwork: async () => true,
+  }),
+}));
 
 import { failedAttachmentOutcome, UploadRefusedError } from "./outboxNative";
 
