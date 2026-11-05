@@ -11,11 +11,13 @@
  */
 import type { DeepSeekEngine, DeepSeekSettings } from "@t3tools/contracts";
 
+import { DSH_PINNED_VERSION } from "../../personal/deepseek/dshPinnedVersion.ts";
+
 /** The kill switch: set it to `claude-code` (or `off`) to force the old engine. */
 export const DEEPSEEK_ENGINE_ENV = "PERSONAL_DEEPSEEK_ENGINE";
 
 /** Install directory name the pinned runtime lives under, and its version. */
-export const DSH_PINNED_VERSION = "0.2.1-rc.3";
+export { DSH_PINNED_VERSION };
 export const DSH_RUNTIME_DIR_NAME = `dsh-${DSH_PINNED_VERSION}`;
 
 /** The harness home inside a data root: `<stateDir>/dsh`. */

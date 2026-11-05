@@ -52,7 +52,7 @@ import * as NodeOS from "node:os";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
-import { DSH_PINNED_VERSION } from "../../provider/Drivers/DeepSeekEngine.ts";
+import { DSH_PINNED_VERSION } from "../deepseek/dshPinnedVersion.ts";
 import { runClaudeCommand } from "../../provider/Layers/ClaudeProvider.ts";
 import { parseGenericCliVersion } from "../../provider/providerSnapshot.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
