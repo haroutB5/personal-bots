@@ -33,6 +33,19 @@ export type SendOutcome =
   | { readonly kind: "unknown"; readonly reason?: string }
   | { readonly kind: "rejected"; readonly message: string };
 
+/**
+ * What the laptop says about a command whose reply the phone never saw.
+ * - `landed`: it handled the command, so the message is on the transcript.
+ * - `refused`: it handled and rejected the command, with the reason.
+ * - `absent`: it has no receipt, so the message did not land and must be sent.
+ * - `unknown`: the read did not answer; leave the entry for the next attempt.
+ */
+export type ConfirmOutcome =
+  | { readonly kind: "landed" }
+  | { readonly kind: "refused"; readonly message: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "unknown" };
+
 /** Errors that mean the request never went out (the client refused it before sending). */
 const NOT_SENT_TAGS: ReadonlySet<string> = new Set([
   "EnvironmentRpcUnavailableError",
@@ -92,6 +105,12 @@ export interface OutboxFlushDeps {
   readonly connectionGeneration?: () => number;
   /** Uploads what must be uploaded and sends the one command. Never throws on a failed send. */
   readonly send: (entry: OutboxEntry) => Promise<SendOutcome>;
+  /**
+   * Asks the laptop whether an entry's command was handled. Called for the
+   * oldest entry of each chat after a reconnect, before anything is resent, so
+   * a message whose confirmation was lost does not hold its chat any longer.
+   */
+  readonly confirm?: (entry: OutboxEntry) => Promise<ConfirmOutcome>;
 }
 
 /** Consecutive unanswered attempts before the queue stops retrying by itself. */
@@ -109,6 +128,9 @@ export const OUTBOX_UPLOAD_SEND_TIMEOUT_MS = 6 * 60_000;
 
 /** How often an in-flight send checks it is still on the socket it started on. */
 export const OUTBOX_CONNECTION_CHECK_MS = 250;
+
+/** A receipt read that hangs must not hold the queue behind it. */
+export const OUTBOX_CONFIRM_TIMEOUT_MS = 5_000;
 
 /**
  * Bounds one send attempt two ways. The timeout covers a laptop that is
@@ -172,6 +194,45 @@ function reviveInterrupted(environmentId: string): void {
     if (entry.environmentId !== environmentId || entry.status !== "failed") continue;
     if (entry.rejected) continue;
     retryOutboxEntry(entry.id);
+  }
+}
+
+/**
+ * Settles the oldest entry of every chat against the laptop's command
+ * receipts. On a link that drops every few seconds the phone can miss the
+ * reply to a send whose command landed, and that entry then holds its chat
+ * behind it forever. A landed entry leaves the queue, a refused one shows its
+ * reason, and an absent or unanswered one stays for the normal pass.
+ */
+async function confirmHeadEntries(deps: OutboxFlushDeps): Promise<void> {
+  const confirm = deps.confirm;
+  if (confirm === undefined) return;
+  const heads = new Map<string, OutboxEntry>();
+  for (const entry of getOutboxSnapshot().entries) {
+    if (entry.environmentId !== deps.environmentId || entry.rejected) continue;
+    const head = heads.get(entry.threadId);
+    if (head === undefined || entry.seq < head.seq) heads.set(entry.threadId, entry);
+  }
+  for (const entry of heads.values()) {
+    const outcome = await new Promise<ConfirmOutcome>((resolve) => {
+      const timer = setTimeout(() => resolve({ kind: "unknown" }), OUTBOX_CONFIRM_TIMEOUT_MS);
+      confirm(entry).then(
+        (answer) => {
+          clearTimeout(timer);
+          resolve(answer);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve({ kind: "unknown" });
+        },
+      );
+    });
+    if (outcome.kind === "landed") {
+      removeOutboxEntry(entry.id);
+      void deleteOutboxBlobs(entry.id);
+    } else if (outcome.kind === "refused") {
+      markOutboxFailed(entry.id, outcome.message, true);
+    }
   }
 }
 
@@ -287,6 +348,8 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
   /** null until the first trigger, so a cold start never counts as a reconnect. */
   let seenConnected: boolean | null = null;
   let seenGeneration: number | null = null;
+  /** A reconnect wants receipt confirmation before the next pass sends anything. */
+  let reconcile = false;
 
   const trigger = (): void => {
     if (disposed) return;
@@ -299,7 +362,7 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
     seenConnected = connected;
     seenGeneration = generation;
     if (!connected) return;
-    if (reconnected) reviveInterrupted(deps.environmentId);
+    if (reconnected) reconcile = true;
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
@@ -314,6 +377,11 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
         let result: OutboxPassResult;
         do {
           again = false;
+          if (reconcile) {
+            reconcile = false;
+            await confirmHeadEntries(deps);
+            reviveInterrupted(deps.environmentId);
+          }
           result = await runOutboxPass(deps);
         } while (again && !isDisposed() && deps.isConnected());
         if (result.retryInMs !== null && !isDisposed() && deps.isConnected()) {

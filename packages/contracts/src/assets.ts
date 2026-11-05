@@ -11,6 +11,13 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
+/**
+ * Every answer from the attachment upload route carries this header. A gateway
+ * error (a Cloudflare 502, a proxy 503) does not, so the phone can tell the
+ * endpoint refusing the bytes from a network path that never reached it.
+ */
+export const ATTACHMENT_UPLOAD_ENDPOINT_HEADER = "x-hbots-upload-endpoint";
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,

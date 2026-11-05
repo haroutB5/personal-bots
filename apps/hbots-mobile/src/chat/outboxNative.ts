@@ -1,4 +1,5 @@
 import {
+  ATTACHMENT_UPLOAD_ENDPOINT_HEADER,
   CommandId,
   MessageId,
   ThreadId,
@@ -25,12 +26,13 @@ import {
 import {
   classifySendFailure,
   createOutboxFlusher,
+  type ConfirmOutcome,
   type SendOutcome,
 } from "@hbots/personal-client/composer/outboxFlush";
 import type { NativeBlob } from "../platform/nativePorts";
 import { appAtomRegistry } from "../personal/atomRegistry";
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { evictConnectionPool } from "../personal/networkReset";
+import { evictConnectionPool, uploadFileNative } from "../personal/networkReset";
 import type { ChatEnvironment } from "./chatEnvironment";
 import { useEffect, useRef } from "react";
 
@@ -48,6 +50,20 @@ export class UploadRefusedError extends Error {
 }
 
 const UPLOAD_REFUSED_MESSAGE = "Couldn't send: an attachment didn't upload. Try again.";
+
+/**
+ * What an HTTP answer to an upload means. Only a 4xx/5xx that carries the
+ * upload route's marker is the endpoint refusing the bytes; any other answer
+ * came from something in between, so the bytes never reached the server.
+ */
+export function classifyUploadAnswer(
+  status: number,
+  endpoint: boolean,
+): "uploaded" | "refused" | "unreached" {
+  if (status >= 200 && status < 300) return "uploaded";
+  if (status >= 400 && endpoint) return "refused";
+  return "unreached";
+}
 
 type FailedUpload = Extract<AttachmentUploadCycleResult, { status: "failed" }>;
 
@@ -69,18 +85,17 @@ async function uploadFile(
   mimeType: string,
   signal: AbortSignal,
 ): Promise<void> {
-  const { File, UploadType } = await import("expo-file-system");
   if (signal.aborted) throw new Error("Upload cancelled.");
-  const file = new File(uri);
-  const result = await file.upload(url, {
-    httpMethod: "POST",
-    uploadType: UploadType.BINARY_CONTENT,
-    headers: { "Content-Type": mimeType },
-    signal,
-  });
-  if (result.status >= 400) throw new UploadRefusedError(result.status);
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`Upload failed (${result.status})`);
+  const result = await uploadFileNative(url, uri, mimeType, ATTACHMENT_UPLOAD_ENDPOINT_HEADER);
+  switch (classifyUploadAnswer(result.status, result.endpoint)) {
+    case "uploaded":
+      return;
+    case "refused":
+      throw new UploadRefusedError(result.status);
+    case "unreached":
+      // A gateway answered, not the upload route. The bytes never reached the
+      // server, so the queue retries instead of asking for a Retry.
+      throw new Error(`Upload did not reach the endpoint (${result.status}).`);
   }
 }
 
@@ -233,8 +248,12 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
   const startTurn = native.client.useAtomCommand(chat.thread.startTurn, {
     reportFailure: false,
   });
+  const commandReceipt = native.client.useAtomCommand(chat.thread.commandReceipt, {
+    reportFailure: false,
+  });
   const connected = connection.phase === "connected";
   const startTurnRef = useRef(startTurn);
+  const commandReceiptRef = useRef(commandReceipt);
 
   const sendEntry = async (entry: OutboxEntry): Promise<SendOutcome> => {
     if (entry.turn === null) {
@@ -288,7 +307,36 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
   const sendEntryRef = useRef(sendEntry);
   useEffect(() => {
     startTurnRef.current = startTurn;
+    commandReceiptRef.current = commandReceipt;
     sendEntryRef.current = sendEntry;
+  });
+
+  /**
+   * A message whose command landed but whose reply was lost is not resent: the
+   * laptop's receipt says it is on the transcript, so the queue drops it and
+   * the next message in that chat can go. A rejected receipt keeps its reason.
+   */
+  const confirmEntry = async (entry: OutboxEntry): Promise<ConfirmOutcome> => {
+    const result = await commandReceiptRef.current({
+      environmentId: native.environmentId,
+      input: { commandId: CommandId.make(entry.commandId) },
+    });
+    if (result._tag !== "Success") return { kind: "unknown" };
+    switch (result.value.status) {
+      case "accepted":
+        return { kind: "landed" };
+      case "rejected":
+        return {
+          kind: "refused",
+          message: `Couldn't send: ${result.value.error ?? "the laptop refused this message."}`,
+        };
+      case "missing":
+        return { kind: "absent" };
+    }
+  };
+  const confirmEntryRef = useRef(confirmEntry);
+  useEffect(() => {
+    confirmEntryRef.current = confirmEntry;
   });
 
   const flusherRef = useRef<ReturnType<typeof createOutboxFlusher> | null>(null);
@@ -298,6 +346,7 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
       isConnected: () => native.readConnection().connected,
       connectionGeneration: () => native.readConnection().generation,
       send: (entry) => sendEntryRef.current(entry),
+      confirm: (entry) => confirmEntryRef.current(entry),
     });
     flusherRef.current = flusher;
     return () => {
