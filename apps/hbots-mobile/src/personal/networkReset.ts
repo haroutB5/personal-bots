@@ -4,7 +4,6 @@ interface NetworkResetModule {
   readonly reset: () => Promise<boolean>;
   readonly isOnline: () => boolean;
   readonly canReachNetwork: () => Promise<boolean>;
-  readonly displayName: (uri: string, assetId: string) => Promise<string | null>;
 }
 
 const native = requireOptionalNativeModule<NetworkResetModule>("HbotsNetwork");
@@ -66,15 +65,4 @@ export async function phoneHasInternet(): Promise<boolean> {
     }
   }
   return jsProbe();
-}
-
-/** The gallery display name for a picked file, when the platform reports one. */
-export async function displayNameOf(uri: string, assetId: string | null): Promise<string | null> {
-  if (native === null) return null;
-  try {
-    const name = await native.displayName(uri, assetId ?? "");
-    return name !== null && name.trim().length > 0 ? name : null;
-  } catch {
-    return null;
-  }
 }
