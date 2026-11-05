@@ -11,7 +11,7 @@ import {
   toggleAllSelection,
   toggleSelection,
   visibleSelection,
-} from "./bulkSelection";
+} from "./bulkSelection.ts";
 
 const FILE = { one: "file", many: "files" };
 const MEMORY = { one: "memory", many: "memories" };

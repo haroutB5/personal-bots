@@ -1,7 +1,16 @@
-import type { PersonalRoutine } from "@t3tools/contracts";
+import { personalRoutineHookPath, type PersonalRoutine } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { formatLocalDateTime, routineNextRunLabel } from "./taskPresentation.ts";
+import { formatLocalDateTime, routineNextRunLabel } from "../conversation/taskPresentation.ts";
+
+/**
+ * The webhook URL to hand to GitHub, Slack, or a home-automation box. The
+ * origin is whatever the phone reached the server on, so the caller passes the
+ * one it is connected through.
+ */
+export function routineHookUrl(origin: string, hookToken: string): string {
+  return `${origin.replace(/\/+$/, "")}${personalRoutineHookPath(hookToken)}`;
+}
 
 type RoutineTriggerFields = Pick<PersonalRoutine, "enabled" | "eventLabel" | "lastFiredAt"> &
   Pick<PersonalRoutine, "schedule" | "nextDueAt" | "timeZone">;

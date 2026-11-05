@@ -7,10 +7,11 @@ import {
   draftFromRoutine,
   notifyModeAllowed,
   notifyModeFromDraft,
+  routineDraftIssues,
   sameSchedule,
   scheduleFromDraft,
   todayInZone,
-} from "./routineDraft";
+} from "./routineDraft.ts";
 
 const blank = draftFromRoutine(null, "bot-1", "2026-09-14");
 
@@ -118,5 +119,37 @@ describe("defaultRoutineBotId", () => {
   it("falls back to the first bot, and to nothing before the list loads", () => {
     expect(defaultRoutineBotId([bot("a", "Assistant"), bot("c", "CTO")])).toBe("a");
     expect(defaultRoutineBotId([])).toBe("");
+  });
+});
+
+describe("routineDraftIssues", () => {
+  it("marks each empty required field and says what to fix", () => {
+    expect(routineDraftIssues({ ...blank, title: "  ", prompt: "" })).toEqual({
+      title: "Give the routine a name.",
+      prompt: "Say what the bot should do.",
+    });
+  });
+
+  it("asks for an event name only on an event routine", () => {
+    expect(
+      routineDraftIssues({
+        ...blank,
+        title: "Brief",
+        prompt: "Summarise",
+        trigger: "event",
+        eventLabel: " ",
+      }),
+    ).toEqual({
+      eventLabel: "Name the event, for example 'PR merged'.",
+    });
+    expect(
+      routineDraftIssues({
+        ...blank,
+        title: "Brief",
+        prompt: "Summarise",
+        trigger: "schedule",
+        eventLabel: "",
+      }),
+    ).toEqual({});
   });
 });

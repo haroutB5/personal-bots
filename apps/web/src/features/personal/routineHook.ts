@@ -1,18 +1,8 @@
-import { personalRoutineHookPath } from "@t3tools/contracts";
-
-/**
- * The webhook URL to hand to GitHub, Slack, or a home-automation box.
- *
- * The origin is whatever the phone reached the server on — the T3 Connect
- * tunnel hostname when the phone is out of the house, the LAN address when it
- * is not. The server never knows which one the user wants pasted into a
- * third-party dashboard, and only the tunnel one is reachable from the
- * internet, so the URL is built from the origin the page is actually served
- * from rather than from anything the server reports.
- */
-export function routineHookUrl(origin: string, hookToken: string): string {
-  return `${origin.replace(/\/+$/, "")}${personalRoutineHookPath(hookToken)}`;
-}
+export {
+  isEventRoutine,
+  routineHookUrl,
+  routineTriggerStatusLabel,
+} from "@hbots/personal-client/routines/routineHook";
 
 /** The origin the client is served from, or null when there is no document. */
 export function currentOrigin(): string | null {
@@ -40,8 +30,3 @@ export function isLocalOnlyOrigin(origin: string): boolean {
     hostname === "::1"
   );
 }
-
-export {
-  isEventRoutine,
-  routineTriggerStatusLabel,
-} from "@hbots/personal-client/conversation/routineStatus";

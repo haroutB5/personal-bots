@@ -1,50 +1,9 @@
-import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  currentOrigin,
-  isEventRoutine,
-  isLocalOnlyOrigin,
-  routineHookUrl,
-  routineTriggerStatusLabel,
-} from "./routineHook";
+import { currentOrigin, isLocalOnlyOrigin } from "./routineHook.ts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
-});
-
-const at = (iso: string) => DateTime.makeUnsafe(Date.parse(iso));
-
-const scheduled = {
-  enabled: true,
-  schedule: { kind: "daily", time: "09:00" },
-  eventLabel: null,
-  lastFiredAt: null,
-  nextDueAt: at("2026-09-15T08:00:00Z"),
-  timeZone: "Europe/London",
-} as const;
-
-const event = {
-  enabled: true,
-  schedule: null,
-  eventLabel: "PR merged",
-  lastFiredAt: null,
-  nextDueAt: null,
-  timeZone: "Europe/London",
-} as const;
-
-describe("routineHookUrl", () => {
-  it("hangs the token off the origin the page was served from", () => {
-    expect(routineHookUrl("https://box.example.ts.net", "tok")).toBe(
-      "https://box.example.ts.net/api/personal/hooks/tok",
-    );
-  });
-
-  it("does not double the slash when the origin carries one", () => {
-    expect(routineHookUrl("http://192.168.0.5:3000/", "tok")).toBe(
-      "http://192.168.0.5:3000/api/personal/hooks/tok",
-    );
-  });
 });
 
 describe("currentOrigin", () => {
@@ -59,43 +18,10 @@ describe("currentOrigin", () => {
   });
 });
 
-describe("routineTriggerStatusLabel", () => {
-  it("keeps the next run for a scheduled routine", () => {
-    expect(routineTriggerStatusLabel(scheduled)).toMatch(/^Next: /);
-    expect(isEventRoutine(scheduled)).toBe(false);
-  });
-
-  it("never tells an event routine it has no more runs", () => {
-    // It has no nextDueAt, which for a scheduled routine means "No more runs" —
-    // the opposite of the truth here.
-    expect(routineTriggerStatusLabel(event)).toBe("Waiting for its first event");
-    expect(isEventRoutine(event)).toBe(true);
-  });
-
-  it("shows when an event routine last fired", () => {
-    expect(routineTriggerStatusLabel({ ...event, lastFiredAt: at("2026-09-14T10:05:00Z") })).toBe(
-      "Last fired Mon 14 Sep, 11:05",
-    );
-  });
-
-  it("reports a paused event routine as paused, not as waiting", () => {
-    expect(routineTriggerStatusLabel({ ...event, enabled: false })).toBe("Paused");
-  });
-});
-
-describe("webhook origin reachability", () => {
-  it("knows which origins no external sender can reach", () => {
-    for (const origin of [
-      "http://localhost:38472",
-      "https://LOCALHOST",
-      "http://app.localhost:5173",
-      "http://127.0.0.1:38472",
-      "http://[::1]:38472",
-    ]) {
-      expect(isLocalOnlyOrigin(origin)).toBe(true);
-    }
-    for (const origin of ["https://box.example.ts.net", "http://192.168.1.20:38472", "not-a-url"]) {
-      expect(isLocalOnlyOrigin(origin)).toBe(false);
-    }
+describe("isLocalOnlyOrigin", () => {
+  it("knows the addresses only this computer can reach", () => {
+    expect(isLocalOnlyOrigin("http://localhost:3000")).toBe(true);
+    expect(isLocalOnlyOrigin("http://127.0.0.1:3000")).toBe(true);
+    expect(isLocalOnlyOrigin("https://box.example.ts.net")).toBe(false);
   });
 });

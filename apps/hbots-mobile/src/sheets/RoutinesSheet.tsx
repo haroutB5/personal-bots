@@ -1,6 +1,6 @@
 import type { PersonalRoutine } from "@t3tools/contracts";
 import { routinesForBot } from "@hbots/personal-client/conversation/routinesModel";
-import { routineTriggerStatusLabel } from "@hbots/personal-client/conversation/routineStatus";
+import { routineTriggerStatusLabel } from "@hbots/personal-client/routines/routineHook";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";

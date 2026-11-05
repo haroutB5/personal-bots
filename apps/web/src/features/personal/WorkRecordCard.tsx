@@ -2,22 +2,14 @@ import type { JSX } from "react";
 
 import type { PersonalTaskWorkRecord } from "@t3tools/contracts";
 
+import { workRecordIsEmpty } from "./taskPresentation";
+
+export { workRecordIsEmpty };
+
 const LABEL =
   "text-[12px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
 const LIST = "mt-0.5 flex flex-col gap-1";
 const ITEM = "text-[14px] leading-snug break-words text-[var(--personal-text)]";
-
-/** Whether the record holds anything the bot or the server added beyond the objective. */
-export function workRecordIsEmpty(record: PersonalTaskWorkRecord): boolean {
-  return (
-    record.decisions.length === 0 &&
-    record.evidence.length === 0 &&
-    record.outstanding.length === 0 &&
-    record.nextStep.length === 0 &&
-    record.lastResult.length === 0 &&
-    record.updates.length === 0
-  );
-}
 
 /**
  * A task's work record, tucked away: the short state that outlives its chat

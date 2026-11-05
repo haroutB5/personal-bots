@@ -24,8 +24,14 @@ import { BotsScreen } from "./BotsScreen";
 import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
+import { FilesScreen } from "../files/FilesScreen";
 import { ChatScreen } from "../screens/ChatScreen";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
+import { RoutineDetailScreen } from "../tasks/RoutineDetailScreen";
+import { RoutineFormScreen } from "../tasks/RoutineFormScreen";
+import { TaskDetailScreen } from "../tasks/TaskDetailScreen";
+import { TasksScreen } from "../tasks/TasksScreen";
+import { EmptyText } from "../tasks/TaskUi";
 
 export interface AppShellProps {
   readonly native: NativePersonal;
@@ -45,6 +51,7 @@ export type RootStackParamList = {
   Bot: { readonly botId: string };
   Task: { readonly taskId: string };
   Routine: { readonly routineId: string };
+  RoutineForm: { readonly routineId?: string };
   Team: undefined;
   Settings: undefined;
   ThisPhone: undefined;
@@ -267,17 +274,35 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           )}
         </Stack.Screen>
         <Stack.Screen name="Task">
-          {({ navigation }) => (
-            <HeaderScreen title="Task" onBack={() => navigation.goBack()}>
-              <Placeholder title="Task" body="Task detail will show here." />
-            </HeaderScreen>
+          {({ navigation, route }) => (
+            <TaskDetailScreen
+              native={props.native}
+              taskId={route.params.taskId}
+              onBack={() => navigation.goBack()}
+              onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+              onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Routine">
-          {({ navigation }) => (
-            <HeaderScreen title="Routine" onBack={() => navigation.goBack()}>
-              <Placeholder title="Routine" body="Routine detail will show here." />
-            </HeaderScreen>
+          {({ navigation, route }) => (
+            <RoutineDetailScreen
+              native={props.native}
+              routineId={route.params.routineId}
+              onBack={() => navigation.goBack()}
+              onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+              onEdit={() => navigation.push("RoutineForm", { routineId: route.params.routineId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="RoutineForm">
+          {({ navigation, route }) => (
+            <RoutineFormRoute
+              native={props.native}
+              routineId={route.params?.routineId}
+              onBack={() => navigation.goBack()}
+              onSaved={(routineId) => navigation.replace("Routine", { routineId })}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Team">
@@ -301,6 +326,42 @@ function Shell({ props }: { readonly props: AppShellProps }) {
       </Stack.Navigator>
     </NavigationContainer>
   );
+}
+
+function RoutineFormRoute({
+  native,
+  routineId,
+  onBack,
+  onSaved,
+}: {
+  readonly native: NativePersonal;
+  readonly routineId: string | undefined;
+  readonly onBack: () => void;
+  readonly onSaved: (routineId: string) => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const routines = native.automation.usePersonalRoutines(native.environmentId);
+  if (routineId !== undefined && routines.data === null) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <ScreenHeader title="Routine" onBack={onBack} />
+        <EmptyText>Loading…</EmptyText>
+      </View>
+    );
+  }
+  const routine =
+    routineId === undefined
+      ? null
+      : (routines.data?.routines.find((entry) => entry.routineId === routineId) ?? null);
+  if (routineId !== undefined && routine === null) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <ScreenHeader title="Routine" onBack={onBack} />
+        <EmptyText>This routine was not found.</EmptyText>
+      </View>
+    );
+  }
+  return <RoutineFormScreen native={native} routine={routine} onBack={onBack} onSaved={onSaved} />;
 }
 
 function TabsWithBots({
@@ -342,11 +403,16 @@ function TabsWithBots({
             onOpenSettings={() => navigation.navigate("Settings")}
           />
         ) : tab === "tasks" ? (
-          <Placeholder title="Tasks" body="Your tasks will show here." />
+          <TasksScreen
+            native={native}
+            onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+            onOpenRoutine={(routineId) => navigation.push("Routine", { routineId })}
+            onNewRoutine={() => navigation.navigate("RoutineForm", {})}
+          />
         ) : tab === "computer" ? (
           <Placeholder title="Computer" body="The live computer view will show here." />
         ) : (
-          <Placeholder title="Files" body="Shared files will show here." />
+          <FilesScreen native={native} />
         )}
       </View>
       <BottomBar

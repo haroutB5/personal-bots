@@ -9,7 +9,7 @@ import {
   formatFileSize,
   groupFilesByBot,
   TEXT_PREVIEW_MAX_BYTES,
-} from "./filesModel";
+} from "./filesModel.ts";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 const decodeFile = Schema.decodeUnknownSync(PersonalFile);

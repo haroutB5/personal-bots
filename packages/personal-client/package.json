@@ -197,10 +197,6 @@
       "types": "./src/conversation/routinesModel.ts",
       "import": "./src/conversation/routinesModel.ts"
     },
-    "./conversation/routineStatus": {
-      "types": "./src/conversation/routineStatus.ts",
-      "import": "./src/conversation/routineStatus.ts"
-    },
     "./bots/chatChipRows": {
       "types": "./src/bots/chatChipRows.ts",
       "import": "./src/bots/chatChipRows.ts"
@@ -308,6 +304,30 @@
     "./usage/tokenUsagePresentation": {
       "types": "./src/usage/tokenUsagePresentation.ts",
       "import": "./src/usage/tokenUsagePresentation.ts"
+    },
+    "./automation/automationClient": {
+      "types": "./src/automation/automationClient.ts",
+      "import": "./src/automation/automationClient.ts"
+    },
+    "./automation/taskFeed": {
+      "types": "./src/automation/taskFeed.ts",
+      "import": "./src/automation/taskFeed.ts"
+    },
+    "./routines/routineDraft": {
+      "types": "./src/routines/routineDraft.ts",
+      "import": "./src/routines/routineDraft.ts"
+    },
+    "./routines/routineHook": {
+      "types": "./src/routines/routineHook.ts",
+      "import": "./src/routines/routineHook.ts"
+    },
+    "./files/filesModel": {
+      "types": "./src/files/filesModel.ts",
+      "import": "./src/files/filesModel.ts"
+    },
+    "./lists/bulkSelection": {
+      "types": "./src/lists/bulkSelection.ts",
+      "import": "./src/lists/bulkSelection.ts"
     }
   },
   "scripts": {
