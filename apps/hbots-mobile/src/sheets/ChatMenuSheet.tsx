@@ -18,6 +18,9 @@ export function ChatMenuSheet({
   onNewChat,
   onAllChats,
   onMute,
+  onTokenUsage,
+  onContextUsed,
+  onRoutines,
 }: {
   readonly visible: boolean;
   readonly bot: PersonalBot | null;
@@ -33,6 +36,9 @@ export function ChatMenuSheet({
   readonly onNewChat: () => void;
   readonly onAllChats: () => void;
   readonly onMute: (mute: PersonalBotNotificationMute) => void;
+  readonly onTokenUsage: () => void;
+  readonly onContextUsed: () => void;
+  readonly onRoutines: () => void;
 }) {
   const mute = bot === null ? { muted: false as const } : botMuteState(bot, nowMs);
   return (
@@ -41,6 +47,9 @@ export function ChatMenuSheet({
       {providerWait ? <SheetAction label="Switch model…" onPress={onSwitchModel} /> : null}
       <SheetAction label="Chat settings…" onPress={onChatSettings} />
       <SheetAction label="Search messages" onPress={onSearch} />
+      <SheetAction label="Token usage" onPress={onTokenUsage} />
+      <SheetAction label="Context used" onPress={onContextUsed} />
+      <SheetAction label="Routines" onPress={onRoutines} />
       {bot?.allowVoiceCalls === true ? (
         <SheetAction label={`Call ${bot.name}`} onPress={onCall} />
       ) : null}

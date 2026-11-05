@@ -3,9 +3,19 @@ import type {
   PersonalBotsListResult,
   PersonalBotTokenUsageResult,
   PersonalFilesListResult,
+  PersonalConnectionApprovalListResult,
+  PersonalLeadBotChangeListResult,
+  PersonalLoginRequest,
+  PersonalMemoryCardsResult,
+  PersonalMemoryRulesUsage,
+  PersonalMemoryTurnContext,
   PersonalProfile,
   PersonalPushInAppNotification,
   PersonalRoutineListResult,
+  PersonalSecretsListPendingResult,
+  PersonalTask,
+  PersonalTaskDetail,
+  PersonalTaskListResult,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import type { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
@@ -23,6 +33,7 @@ import type { PersonalClient } from "../client.ts";
 import { PERSONAL_TIME_ZONE } from "../conversation/greeting.ts";
 import { perfOptimizationOn } from "../perf/perfFlags.ts";
 import type { EnvironmentQueryView } from "../react/query.ts";
+import { foldPersonalTasksFeed } from "../tasks/feed.ts";
 
 /**
  * Builds the bots list, its profile and file queries, every mutation the
@@ -259,6 +270,137 @@ export function createPersonalBotsClient<R, ER, P>(
     idleTtlMs: 5 * 60_000,
   });
 
+  /** Unfinished tasks and the newest finished ones, replay then live upserts. */
+  const personalTasksFeed = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "personal-tasks:feed",
+    tag: WS_METHODS.personalTasksSubscribe,
+    transform: foldPersonalTasksFeed,
+  });
+
+  /** One task with its attempts, children and work record, read only when opened. */
+  const personalTasksGet = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-tasks:get",
+    tag: WS_METHODS.personalTasksGet,
+    staleTimeMs: 2_000,
+  });
+
+  const personalTasksCancel = createEnvironmentRpcCommand(runtime, {
+    label: "personal-tasks:cancel",
+    tag: WS_METHODS.personalTasksCancel,
+  });
+
+  /** A chat's own tasks and their children, beyond what the feed replays. */
+  const personalTasksRelated = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-tasks:related",
+    tag: WS_METHODS.personalTasksRelated,
+    staleTimeMs: 30_000,
+  });
+
+  /**
+   * Every team-lead request, pending and settled in the last week. Polled
+   * because no subscription exists: a lead asking mid-conversation has to
+   * surface without the owner reopening the chat.
+   */
+  const personalLeadBotChanges = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-lead-bot-changes:list",
+    tag: WS_METHODS.personalLeadBotChangesList,
+    staleTimeMs: 3_000,
+    refreshIntervalMs: 6_000,
+  });
+
+  const personalLeadBotChangeDecide = createEnvironmentRpcCommand(runtime, {
+    label: "personal-lead-bot-changes:decide",
+    tag: WS_METHODS.personalLeadBotChangesDecide,
+  });
+
+  /** A bot's save or forget of memory other bots see, waiting for the owner. */
+  const personalMemoryCards = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-memory:cards",
+    tag: WS_METHODS.personalMemoryCards,
+    staleTimeMs: 3_000,
+  });
+
+  const personalMemoryTidyDecide = createEnvironmentRpcCommand(runtime, {
+    label: "personal-memory:tidy-decide",
+    tag: WS_METHODS.personalMemoryTidyDecide,
+  });
+
+  /** How full the fullest bots' rules are, for the limit warning card. */
+  const personalMemoryRulesUsage = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-memory:rules-usage",
+    tag: WS_METHODS.personalMemoryRulesUsage,
+    staleTimeMs: 10_000,
+  });
+
+  /** One turn's memory: rules, notes and why they matched. Read only when opened. */
+  const personalMemoryTurnContext = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-memory:turn-context",
+    tag: WS_METHODS.personalMemoryTurnContext,
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+  });
+
+  const personalMemoryFeedback = createEnvironmentRpcCommand(runtime, {
+    label: "personal-memory:feedback",
+    tag: WS_METHODS.personalMemoryFeedback,
+  });
+
+  /**
+   * Every secret a bot is waiting on. Polled: the server has no secret
+   * subscription, and a request that lands while the chat is open still has to
+   * surface without reopening the screen.
+   */
+  const personalSecretsListPending = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-secrets:pending",
+    tag: WS_METHODS.personalSecretsListPending,
+    staleTimeMs: 5_000,
+    refreshIntervalMs: 15_000,
+  });
+
+  const personalSecretsFulfill = createEnvironmentRpcCommand(runtime, {
+    label: "personal-secrets:fulfill",
+    tag: WS_METHODS.personalSecretsFulfill,
+  });
+
+  const personalSecretsCancel = createEnvironmentRpcCommand(runtime, {
+    label: "personal-secrets:cancel",
+    tag: WS_METHODS.personalSecretsCancel,
+  });
+
+  /** Sign-in requests for one chat; the server keeps the settled rows for the card's ending. */
+  const personalLoginRequests = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-login-requests:list",
+    tag: WS_METHODS.personalLoginRequestsList,
+    staleTimeMs: 2_000,
+    refreshIntervalMs: 2_000,
+  });
+
+  const personalLoginRequestsSubmit = createEnvironmentRpcCommand(runtime, {
+    label: "personal-login-requests:submit",
+    tag: WS_METHODS.personalLoginRequestsSubmit,
+  });
+
+  const personalLoginRequestsCancel = createEnvironmentRpcCommand(runtime, {
+    label: "personal-login-requests:cancel",
+    tag: WS_METHODS.personalLoginRequestsCancel,
+  });
+
+  /**
+   * Every gated vendor call waiting on the owner. Polled shorter than the
+   * secret list: the task on the other end is blocked and the approval expires.
+   */
+  const personalConnectionApprovals = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-connection-approvals:pending",
+    tag: WS_METHODS.personalConnectionApprovalsList,
+    staleTimeMs: 3_000,
+    refreshIntervalMs: 8_000,
+  });
+
+  const personalConnectionApprovalsDecide = createEnvironmentRpcCommand(runtime, {
+    label: "personal-connection-approvals:decide",
+    tag: WS_METHODS.personalConnectionApprovalsDecide,
+  });
+
   const personalFileDelete = createEnvironmentRpcCommand(runtime, {
     label: "personal-files:delete",
     tag: WS_METHODS.personalFilesDelete,
@@ -417,8 +559,164 @@ export function createPersonalBotsClient<R, ER, P>(
     return client.useEnvironmentQuery(atom);
   }
 
+  /** The live task feed. Null until the first replay value lands. */
+  function usePersonalTasks(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<ReadonlyMap<string, PersonalTask>> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalTasksFeed({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalRelatedTasks(
+    environmentId: EnvironmentId | null,
+    threadId: string,
+  ): EnvironmentQueryView<PersonalTaskListResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || threadId.trim() === ""
+          ? null
+          : personalTasksRelated({ environmentId, input: { threadId: threadId as never } }),
+      [environmentId, threadId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalTaskDetail(
+    environmentId: EnvironmentId | null,
+    taskId: string | null,
+  ): EnvironmentQueryView<PersonalTaskDetail> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || taskId === null
+          ? null
+          : personalTasksGet({ environmentId, input: { taskId: taskId as never } }),
+      [environmentId, taskId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalLeadBotChanges(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalLeadBotChangeListResult> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalLeadBotChanges({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalMemoryCards(
+    environmentId: EnvironmentId | null,
+    threadId: string,
+  ): EnvironmentQueryView<PersonalMemoryCardsResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || threadId.trim() === ""
+          ? null
+          : personalMemoryCards({ environmentId, input: { threadId: threadId as never } }),
+      [environmentId, threadId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalMemoryRulesUsage(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalMemoryRulesUsage> {
+    const atom = useMemo(
+      () =>
+        environmentId === null ? null : personalMemoryRulesUsage({ environmentId, input: {} }),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalMemoryTurnContext(
+    environmentId: EnvironmentId | null,
+    input: { readonly threadId: string; readonly messageId: string } | null,
+  ): EnvironmentQueryView<PersonalMemoryTurnContext | null> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || input === null
+          ? null
+          : personalMemoryTurnContext({
+              environmentId,
+              input: { threadId: input.threadId as never, messageId: input.messageId as never },
+            }),
+      [environmentId, input],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalPendingSecrets(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalSecretsListPendingResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null ? null : personalSecretsListPending({ environmentId, input: {} }),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalLoginRequests(
+    environmentId: EnvironmentId | null,
+    threadId: string,
+  ): EnvironmentQueryView<{ readonly requests: ReadonlyArray<PersonalLoginRequest> }> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || threadId.trim() === ""
+          ? null
+          : personalLoginRequests({ environmentId, input: { threadId: threadId as never } }),
+      [environmentId, threadId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function usePersonalConnectionApprovals(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalConnectionApprovalListResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null ? null : personalConnectionApprovals({ environmentId, input: {} }),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   return {
     personalBotsListInput,
+    personalSecretsListPending,
+    personalSecretsFulfill,
+    personalSecretsCancel,
+    personalLoginRequests,
+    personalLoginRequestsSubmit,
+    personalLoginRequestsCancel,
+    personalConnectionApprovals,
+    personalConnectionApprovalsDecide,
+    usePersonalPendingSecrets,
+    usePersonalLoginRequests,
+    usePersonalConnectionApprovals,
+    personalTasksFeed,
+    personalTasksGet,
+    personalTasksCancel,
+    personalTasksRelated,
+    personalLeadBotChanges,
+    personalLeadBotChangeDecide,
+    personalMemoryCards,
+    personalMemoryTidyDecide,
+    personalMemoryRulesUsage,
+    personalMemoryTurnContext,
+    personalMemoryFeedback,
+    usePersonalMemoryTurnContext,
+    usePersonalTasks,
+    usePersonalRelatedTasks,
+    usePersonalTaskDetail,
+    usePersonalLeadBotChanges,
+    usePersonalMemoryCards,
+    usePersonalMemoryRulesUsage,
     personalBotsList,
     personalPushInAppFeed,
     personalPushAckInApp,

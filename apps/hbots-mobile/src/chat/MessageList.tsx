@@ -28,6 +28,8 @@ import { Animated, FlatList, PanResponder, Pressable, StyleSheet, Text, View } f
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import type { CardContext } from "./cards/types";
+import { isChatCard, renderChatCard } from "./cards/registry";
 import type { ChatEnvironment } from "./chatEnvironment";
 import { AttachmentImage } from "./AttachmentImage";
 import {
@@ -440,6 +442,7 @@ function UserBubble({
 export function MessageList({
   native,
   chat,
+  cardContext,
   items,
   pending,
   queued,
@@ -460,6 +463,7 @@ export function MessageList({
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
+  readonly cardContext: CardContext;
   readonly items: ReadonlyArray<ConversationItem>;
   readonly pending: ReadonlyArray<PendingOutgoingMessage>;
   readonly queued: ReadonlyArray<OutboxRow>;
@@ -577,6 +581,9 @@ export function MessageList({
               <Text style={styles.dividerText}>{formatDayDivider(item.at, new Date())}</Text>
             </View>
           );
+        }
+        if (isChatCard(item)) {
+          return renderChatCard(item, cardContext);
         }
         if (item.kind === "work") {
           return (

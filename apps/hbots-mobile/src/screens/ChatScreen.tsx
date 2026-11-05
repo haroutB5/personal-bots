@@ -1,6 +1,10 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
+  CommandId,
+  MessageId,
   ThreadId,
+  WRAPUP_CHAT_PROMPT,
+  botEffectiveModelSelection,
   type PersonalBotNotificationMute,
   type PersonalReplyQuote,
 } from "@t3tools/contracts";
@@ -31,10 +35,20 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
+  newOutboxId,
+  outboxCommandId,
   useOutboxRows,
   removeOutboxEntry,
   retryOutboxEntry,
 } from "@hbots/personal-client/composer/outbox";
+import { hidesBotPreviews } from "@hbots/personal-client/conversation/previewPrivacy";
+import {
+  buildChatSettingsTarget,
+  chatSettingsHeader,
+  chatSettingsRows,
+  type ChatSettingsRowId,
+} from "@hbots/personal-client/bots/chatSettingsModel";
+import { DEFAULT_TOKEN_USAGE_WINDOW } from "@hbots/personal-client/usage/tokenUsagePresentation";
 import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
@@ -48,14 +62,20 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { Composer } from "../chat/Composer";
 import { buildChatChips, chatHeaderModel, findChatBot } from "../chat/chatModel";
+import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
+import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
 import { MessageList } from "../chat/MessageList";
+import { useChatCards } from "../chat/useChatCards";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import { BotAvatar } from "../shell/BotAvatar";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
-import { ChatActionsSheet } from "../sheets/ChatActionsSheet";
+import { BotUsageSheet } from "../sheets/BotUsageSheet";
 import { ChatMenuSheet } from "../sheets/ChatMenuSheet";
+import { ChatSettingsSheet } from "../sheets/ChatSettingsSheet";
+import { ContextUsedSheet } from "../sheets/ContextUsedSheet";
+import { RoutinesSheet } from "../sheets/RoutinesSheet";
 import { FilePreviewSheet } from "../sheets/FilePreviewSheet";
 import { MessageMenuSheet, type MessageMenuTarget } from "../sheets/MessageMenuSheet";
 import { NewChatSheet } from "../sheets/NewChatSheet";
@@ -80,6 +100,7 @@ export function ChatScreen({
   onOpenChat,
   onOpenChats,
   onOpenBot,
+  onOpenRoutine,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -89,6 +110,7 @@ export function ChatScreen({
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
   readonly onOpenBot: (botId: string) => void;
+  readonly onOpenRoutine: (routineId: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId;
@@ -110,6 +132,10 @@ export function ChatScreen({
   const [replyTo, setReplyTo] = useState<PersonalReplyQuote | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [routinesOpen, setRoutinesOpen] = useState(false);
+  const [usageWindow, setUsageWindow] = useState(DEFAULT_TOKEN_USAGE_WINDOW);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
@@ -150,6 +176,10 @@ export function ChatScreen({
   const searchMessages = native.client.useAtomCommand(native.bots.personalBotsSearchMessages, {
     reportFailure: false,
   });
+  const startTurn = native.client.useAtomCommand(chat.thread.startTurn, {
+    reportFailure: false,
+  });
+  const tokenUsage = native.bots.usePersonalTokenUsage(environmentId);
 
   const links = list.data?.threads ?? [];
   const record = useMemo(
@@ -179,17 +209,30 @@ export function ChatScreen({
           }),
     [thread, showToolSteps],
   );
+  const cards = useChatCards({
+    native,
+    chat,
+    environmentId,
+    threadId,
+    activities: thread?.activities ?? [],
+    items,
+    bots: list.data?.bots ?? [],
+    botName: record?.bot?.name ?? "Bot",
+    providers,
+    nowMs: now,
+    onOpenChat,
+  });
   const latestMessageStatus = useMemo(
     () =>
       thread === null
         ? null
         : deriveLatestMessageReadStatus({
-            items,
+            items: cards.items,
             activities: thread.activities,
             busy: thread.session?.status === "running" || thread.session?.status === "starting",
             latestTurn: thread.latestTurn,
           }),
-    [items, thread],
+    [cards.items, thread],
   );
   const usedTokens = useMemo(() => {
     if (thread === null) return null;
@@ -232,6 +275,33 @@ export function ChatScreen({
     [botId, links, shells, threadId],
   );
   const running = thread?.session?.status === "running" || thread?.session?.status === "starting";
+  const settingsTarget = useMemo(() => {
+    if (shell === null) return null;
+    const bot = record?.bot ?? null;
+    return buildChatSettingsTarget({
+      threadId,
+      currentThreadId: threadId,
+      kind: archived ? "archived" : "chat",
+      link: link ?? syntheticLink(botId, threadId, shell),
+      shell,
+      waitingLabel: null,
+      unread: false,
+      hidePreviews: bot !== null && hidesBotPreviews(bot),
+      openChatBusy: running,
+      nowMs: now,
+    });
+  }, [archived, botId, link, now, record?.bot, running, shell, threadId]);
+  const settingsHeader = settingsTarget === null ? null : chatSettingsHeader(settingsTarget, now);
+  const settingsGroups =
+    settingsTarget === null
+      ? []
+      : chatSettingsRows(settingsTarget, {
+          turnsUnavailable: false,
+          wrapupSending: false,
+          threadLoading: thread === null,
+          nowMs: now,
+        });
+  const contextMessageId = useMemo(() => lastTurnStartMessageId(cards.items), [cards.items]);
 
   useEffect(() => {
     if (thread === null || openLogged.current) return;
@@ -362,6 +432,78 @@ export function ChatScreen({
       input: { threadId: ThreadId.make(threadId) },
     });
     setActionError(failureText(result, "Couldn't stop this turn."));
+  };
+
+  const wrapup = async () => {
+    setSettingsOpen(false);
+    if (record?.bot == null || thread === null) return;
+    const messageId = newOutboxId();
+    const result = await startTurn({
+      environmentId,
+      input: {
+        commandId: CommandId.make(outboxCommandId(messageId)),
+        threadId: ThreadId.make(threadId),
+        message: {
+          messageId: MessageId.make(messageId),
+          role: "user",
+          text: WRAPUP_CHAT_PROMPT,
+          attachments: [],
+        },
+        modelSelection: botEffectiveModelSelection(record.bot),
+        titleSeed: thread.title,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    setActionError(failureText(result, "Couldn't start the wrapup. Try again."));
+  };
+
+  const onSettingsRow = (id: ChatSettingsRowId) => {
+    switch (id) {
+      case "pin":
+      case "unpin":
+        void togglePin();
+        return;
+      case "snooze":
+        setSettingsOpen(false);
+        setSnoozeOpen(true);
+        return;
+      case "wake":
+        setSettingsOpen(false);
+        void updateThreads({
+          environmentId,
+          input: {
+            threadIds: [ThreadId.make(threadId)],
+            snoozedUntil: null,
+          },
+        });
+        return;
+      case "markUnread":
+        setSettingsOpen(false);
+        void updateThreads({
+          environmentId,
+          input: {
+            threadIds: [ThreadId.make(threadId)],
+            markUnread: true,
+          },
+        });
+        return;
+      case "rename":
+        setSettingsOpen(false);
+        setRenameOpen(true);
+        return;
+      case "wrapup":
+        void wrapup();
+        return;
+      case "archive":
+      case "unarchive":
+        void archive();
+        return;
+      case "delete":
+        void remove();
+        return;
+    }
   };
 
   const loadEarlier = () => {
@@ -587,10 +729,12 @@ export function ChatScreen({
         </View>
       ) : (
         <>
+          {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
           <MessageList
             native={native}
             chat={chat}
-            items={items}
+            cardContext={cards.context}
+            items={cards.items}
             pending={pending}
             queued={queued}
             botName={header.botName}
@@ -694,26 +838,54 @@ export function ChatScreen({
           onOpenChats(botId);
         }}
         onMute={(mute) => void setMute(mute)}
-      />
-      <ChatActionsSheet
-        native={native}
-        chat={chat}
-        row={
-          settingsOpen && shell !== null
-            ? { link: link ?? syntheticLink(botId, threadId, shell), shell }
-            : null
-        }
-        onClose={() => setSettingsOpen(false)}
-        onRename={() => {
-          setSettingsOpen(false);
-          setRenameOpen(true);
+        onTokenUsage={() => {
+          setMenuOpen(false);
+          setUsageOpen(true);
         }}
-        onTogglePin={() => void togglePin()}
-        onArchive={() => void archive()}
-        onDelete={() => void remove()}
-        onSnooze={() => {
-          setSettingsOpen(false);
-          setSnoozeOpen(true);
+        onContextUsed={() => {
+          setMenuOpen(false);
+          setContextOpen(true);
+        }}
+        onRoutines={() => {
+          setMenuOpen(false);
+          setRoutinesOpen(true);
+        }}
+      />
+      <ChatSettingsSheet
+        visible={settingsOpen}
+        header={settingsHeader}
+        groups={settingsGroups}
+        onClose={() => setSettingsOpen(false)}
+        onSelect={onSettingsRow}
+      />
+      <BotUsageSheet
+        visible={usageOpen}
+        bot={record?.bot ?? null}
+        usage={tokenUsage.data}
+        windowId={usageWindow}
+        onWindowChange={setUsageWindow}
+        onClose={() => setUsageOpen(false)}
+        onOpenChat={() => {
+          setUsageOpen(false);
+          onOpenChats(botId);
+        }}
+      />
+      <ContextUsedSheet
+        native={native}
+        visible={contextOpen}
+        threadId={threadId}
+        messageId={contextMessageId}
+        onClose={() => setContextOpen(false)}
+      />
+      <RoutinesSheet
+        native={native}
+        visible={routinesOpen}
+        botId={botId}
+        botName={header.botName}
+        onClose={() => setRoutinesOpen(false)}
+        onOpenRoutine={(routineId) => {
+          setRoutinesOpen(false);
+          onOpenRoutine(routineId);
         }}
       />
       <NewChatSheet
