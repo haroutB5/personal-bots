@@ -6,6 +6,7 @@ import {
   type OutboxEntry,
   recordOutboxUnanswered,
   removeOutboxEntry,
+  retryOutboxEntry,
   setOutboxSending,
 } from "./outbox.ts";
 import { deleteOutboxBlobs } from "./outboxBlobs.ts";
@@ -160,6 +161,19 @@ async function afterConnectionSettles(
 
 const GAVE_UP = "Couldn't send: your laptop didn't answer. Try again.";
 
+/**
+ * A message that stopped without a refusal was never answered, not refused.
+ * The next pass tries it again, so its chat is never held back for good by a
+ * network failure. A refusal stays put until the user taps Retry.
+ */
+function resumeUnanswered(environmentId: string): void {
+  for (const entry of getOutboxSnapshot().entries) {
+    if (entry.environmentId !== environmentId || entry.status !== "failed") continue;
+    if (entry.rejected) continue;
+    retryOutboxEntry(entry.id);
+  }
+}
+
 export interface OutboxPassResult {
   /** The pass stopped early and wants another one after this many ms; null when it is done. */
   readonly retryInMs: number | null;
@@ -270,6 +284,7 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
 
   const trigger = (): void => {
     if (disposed) return;
+    resumeUnanswered(deps.environmentId);
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
