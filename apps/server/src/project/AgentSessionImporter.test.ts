@@ -229,6 +229,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          getCommandReceipt: () => Effect.succeed({ status: "missing", error: null }),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -334,6 +335,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          getCommandReceipt: () => Effect.succeed({ status: "missing", error: null }),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -399,6 +401,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          getCommandReceipt: () => Effect.succeed({ status: "missing", error: null }),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -470,6 +473,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          getCommandReceipt: () => Effect.succeed({ status: "missing", error: null }),
           latestSequence: Effect.succeed(0),
         });
 
@@ -508,6 +512,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          getCommandReceipt: () => Effect.succeed({ status: "missing", error: null }),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({

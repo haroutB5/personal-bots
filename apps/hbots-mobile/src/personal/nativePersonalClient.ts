@@ -1,6 +1,10 @@
-import type { OrchestrationShellSnapshot, ServerProvider } from "@t3tools/contracts";
-import { EnvironmentId } from "@t3tools/contracts";
+import type { OrchestrationShellSnapshot, ServerProvider, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, OrchestrationThreadDetailSnapshot } from "@t3tools/contracts";
 import { EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
+import { ThreadSnapshotLoader } from "@t3tools/client-runtime/state/threads";
+import * as ExpoCrypto from "expo-crypto";
+import * as EffectCrypto from "effect/Crypto";
+import * as Schema from "effect/Schema";
 import {
   type ConnectionCatalogEntry,
   type PreparedConnection,
@@ -36,6 +40,10 @@ import { useEffect, useState } from "react";
 import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
+import { createNativeEnvironmentCache } from "./nativeCache";
+import { connectWithDeadline } from "./connectDeadline";
+import { phoneHasInternet, resetNetworkClient } from "./networkReset";
+import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
 
@@ -61,7 +69,11 @@ const connectingState = (generation: number, attempt: number): SupervisorConnect
   retryAt: null,
 });
 
-const offlineState = (generation: number, attempt: number): SupervisorConnectionState => ({
+const offlineState = (
+  generation: number,
+  attempt: number,
+  detail = "Can't reach your laptop.",
+): SupervisorConnectionState => ({
   desired: true,
   network: "online",
   phase: "offline",
@@ -70,7 +82,7 @@ const offlineState = (generation: number, attempt: number): SupervisorConnection
   generation,
   lastFailure: new ConnectionTransientError({
     reason: "remote-unavailable",
-    detail: "Can't reach your laptop.",
+    detail,
   }),
   retryAt: null,
 });
@@ -78,24 +90,61 @@ const offlineState = (generation: number, attempt: number): SupervisorConnection
 /**
  * The shell snapshot is large and changes with every streamed message, so it
  * is not written to SecureStore. A1's cold paint comes from the capped chats
- * snapshot; activity lands with the socket a moment later.
+ * snapshot; activity lands with the socket a moment later. Threads settle into
+ * `nativeCache.ts`, which is what makes a chat reopen paint at once.
  */
 function makeShellCache() {
-  return EnvironmentCacheStore.of({
-    loadShell: () => Effect.succeed(Option.none()),
-    saveShell: () => Effect.void,
-    loadThread: () => Effect.succeed(Option.none()),
-    saveThread: () => Effect.void,
-    removeThread: () => Effect.void,
-    loadServerConfig: () => Effect.succeed(Option.none()),
-    saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
-    saveVcsRefs: () => Effect.void,
-    removeVcsRefs: () => Effect.void,
-    clearVcsRefs: () => Effect.void,
-    clear: () => Effect.void,
-  });
+  return createNativeEnvironmentCache();
 }
+
+const decodeThreadSnapshot = Schema.decodeUnknownSync(OrchestrationThreadDetailSnapshot);
+
+const threadSnapshotLoader = (stored: StoredSession): ThreadSnapshotLoader["Service"] =>
+  ThreadSnapshotLoader.of({
+    load: (_prepared, threadId: ThreadId) =>
+      Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(
+            new URL(
+              `/api/orchestration/threads/${encodeURIComponent(threadId)}`,
+              stored.httpBaseUrl,
+            ),
+            {
+              headers: { Authorization: `Bearer ${stored.accessToken}` },
+              cache: "no-store",
+            },
+          );
+          if (!response.ok) return Option.none<OrchestrationThreadDetailSnapshot>();
+          return Option.some(decodeThreadSnapshot((await response.json()) as unknown));
+        },
+        catch: () => null,
+      }).pipe(Effect.catch(() => Effect.succeed(Option.none<OrchestrationThreadDetailSnapshot>()))),
+  });
+
+function toExpoDigestAlgorithm(
+  algorithm: EffectCrypto.DigestAlgorithm,
+): ExpoCrypto.CryptoDigestAlgorithm {
+  switch (algorithm) {
+    case "SHA-1":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA1;
+    case "SHA-256":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA256;
+    case "SHA-384":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA384;
+    case "SHA-512":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA512;
+  }
+}
+
+const cryptoLayer = EffectCrypto.make({
+  randomBytes: ExpoCrypto.getRandomBytes,
+  digest: (algorithm, data) =>
+    Effect.promise(async () => {
+      const input = new Uint8Array(data.length);
+      input.set(data);
+      return new Uint8Array(await ExpoCrypto.digest(toExpoDigestAlgorithm(algorithm), input));
+    }),
+});
 
 function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
   const [value, setValue] = useState<A>(() => Effect.runSync(SubscriptionRef.get(ref)));
@@ -113,10 +162,13 @@ function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
 export type NativePersonalRuntime =
   | EnvironmentRegistry
   | EnvironmentCacheStore
-  | ShellSnapshotLoader;
+  | ShellSnapshotLoader
+  | ThreadSnapshotLoader
+  | EffectCrypto.Crypto;
 
 export interface NativePersonal {
   readonly environmentId: EnvironmentId;
+  readonly httpBaseUrl: string;
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
   readonly bots: ReturnType<typeof createPersonalBotsClient>;
@@ -127,6 +179,12 @@ export interface NativePersonal {
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
   readonly readSystemSummary: () => Promise<SystemSummary | null>;
   readonly useConnectionState: () => SupervisorConnectionState;
+  /**
+   * The connection as it is right now, read from the session loop itself. A
+   * send that fails must ask this, not the last render's phase, or a socket
+   * that has already gone still looks connected for a frame.
+   */
+  readonly readConnection: () => { readonly connected: boolean; readonly generation: number };
   readonly retry: () => void;
   readonly dispose: () => Promise<void>;
 }
@@ -214,15 +272,17 @@ export function createNativePersonal(
   });
 
   const cache = makeShellCache();
-  const loader = ShellSnapshotLoader.of({
-    load: () => Effect.succeed(Option.none()),
-  });
+  const loader = threadSnapshotLoader(stored);
 
   const runtime = Atom.runtime(
     Layer.mergeAll(
       Layer.succeed(EnvironmentRegistry, registry),
       Layer.succeed(EnvironmentCacheStore, cache),
-      Layer.succeed(ShellSnapshotLoader, loader),
+      Layer.succeed(ShellSnapshotLoader, {
+        load: () => Effect.succeed(Option.none()),
+      }),
+      Layer.succeed(ThreadSnapshotLoader, loader),
+      Layer.succeed(EffectCrypto.Crypto, cryptoLayer),
     ),
   );
 
@@ -248,8 +308,54 @@ export function createNativePersonal(
     return { promise, wake };
   };
   let retrySignal = newRetrySignal();
+  /**
+   * Retry pacing is there so a laptop that is off does not get hammered. A
+   * network that comes back is a new fact, so the pending wait is void, and
+   * the next attempt starts at once. The flag carries a wake that arrived
+   * while an attempt was in flight, when nothing was listening yet.
+   */
+  let retryImmediately = false;
+  const wakeRetry = () => {
+    retryImmediately = true;
+    retrySignal.wake();
+  };
+  let unstable = 0;
+  /**
+   * The phone's own network coming back is the one fact the retry loop cannot
+   * see, so a light watcher wakes it at once instead of waiting out the
+   * backoff. It only ever wakes the loop: recovery happens in place, with no
+   * app restart, because a restart loses the open chat for no gain.
+   */
+  let networkTimer: ReturnType<typeof setInterval> | null = null;
+  const stopNetworkWatch = () => {
+    if (networkTimer === null) return;
+    clearInterval(networkTimer);
+    networkTimer = null;
+  };
+  const startNetworkWatch = () => {
+    if (networkTimer !== null || disposed) return;
+    let checking = false;
+    let wasOnline = true;
+    networkTimer = setInterval(() => {
+      if (disposed || checking || current !== null) return;
+      checking = true;
+      void phoneHasInternet().then((online) => {
+        checking = false;
+        if (disposed || current !== null) return;
+        if (!online) {
+          wasOnline = false;
+          return;
+        }
+        if (!wasOnline) {
+          wasOnline = true;
+          wakeRetry();
+        }
+      });
+    }, 1_000);
+  };
 
   const generation = { value: 0 };
+  let socketAlive = false;
   const setState = (next: SupervisorConnectionState) => {
     Effect.runSync(SubscriptionRef.set(stateRef, next));
   };
@@ -260,19 +366,30 @@ export function createNativePersonal(
 
   const loop = async () => {
     let attempt = 0;
+    let lastDetail = "Can't reach your laptop.";
     for (;;) {
       if (disposed) return;
-      generation.value += 1;
-      setState(connectingState(generation.value, attempt));
       try {
-        const next = await connectNativeSession(stored, appVersion, (providers) => {
-          Effect.runSync(SubscriptionRef.set(providersRef, providers));
-        });
+        generation.value += 1;
+        setState(connectingState(generation.value, attempt));
+        const next = await connectWithDeadline((signal) =>
+          connectNativeSession(
+            stored,
+            appVersion,
+            (providers) => {
+              Effect.runSync(SubscriptionRef.set(providersRef, providers));
+            },
+            signal,
+          ),
+        );
         if (disposed) {
+          socketAlive = false;
           await next.dispose();
           return;
         }
+        const connectedAt = Date.now();
         current = next;
+        socketAlive = true;
         Effect.runSync(SubscriptionRef.set(sessionRef, Option.some(next.session)));
         Effect.runSync(
           SubscriptionRef.set(
@@ -293,8 +410,53 @@ export function createNativePersonal(
           () => undefined,
         );
         setState(connectedState(generation.value));
-        await Promise.race([Effect.runPromise(next.closed), disposedPromise, retrySignal.promise]);
+        let stopWatchdog: () => void = () => undefined;
+        const liveness = new Promise<void>((resolve) => {
+          let stopped = false;
+          let timer: ReturnType<typeof setTimeout>;
+          const tick = async () => {
+            if (stopped || disposed) return;
+            try {
+              await Promise.race([
+                Effect.runPromise(next.session.probe),
+                sleep(4_000).then(() => {
+                  throw new Error("probe timeout");
+                }),
+              ]);
+            } catch {
+              resolve();
+              return;
+            }
+            if (!stopped) {
+              timer = setTimeout(tick, 5_000);
+            }
+          };
+          timer = setTimeout(tick, 4_000);
+          stopWatchdog = () => {
+            stopped = true;
+            clearTimeout(timer);
+          };
+        });
+        await Promise.race([
+          Effect.runPromise(next.closed),
+          disposedPromise,
+          retrySignal.promise,
+          liveness,
+        ]);
+        socketAlive = false;
+        stopWatchdog();
+        // A session that drops within ten seconds is part of the same outage.
+        if (Date.now() - connectedAt >= 10_000) {
+          unstable = 0;
+        } else {
+          unstable += 1;
+          startNetworkWatch();
+        }
       } catch (cause) {
+        socketAlive = false;
+        unstable += 1;
+        lastDetail = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
+        startNetworkWatch();
         if (
           !disposed &&
           options.onAuthDead !== undefined &&
@@ -303,24 +465,37 @@ export function createNativePersonal(
           options.onAuthDead(cause);
         }
       }
-      if (disposed) return;
-      const ended = current;
-      current = null;
-      if (ended !== null) {
-        Effect.runSync(SubscriptionRef.set(sessionRef, Option.none()));
-        await ended.dispose();
+      try {
+        if (shouldResetNetworkClient(unstable)) await resetNetworkClient();
+        if (disposed) return;
+        const ended = current;
+        current = null;
+        if (ended !== null) {
+          Effect.runSync(SubscriptionRef.set(sessionRef, Option.none()));
+          await Promise.race([ended.dispose(), sleep(3_000)]);
+        }
+        retrySignal = newRetrySignal();
+        attempt += 1;
+        setState(offlineState(generation.value, attempt, lastDetail));
+        const waitMs = retryImmediately ? 0 : backoffMs(attempt - 1);
+        retryImmediately = false;
+        await Promise.race([sleep(waitMs), disposedPromise, retrySignal.promise]);
+      } catch (cause) {
+        // The loop's whole job is to keep trying, so one failed iteration is
+        // followed by another. Tearing down a dead socket can throw, and that
+        // must not leave the app offline with nothing left to reconnect it.
+        console.error("[hbots] reconnect iteration failed", cause);
+        await Promise.race([sleep(1_000), disposedPromise]);
       }
-      retrySignal = newRetrySignal();
-      attempt += 1;
-      setState(offlineState(generation.value, attempt));
-      await Promise.race([sleep(backoffMs(attempt - 1)), disposedPromise, retrySignal.promise]);
     }
   };
 
+  startNetworkWatch();
   void loop();
 
   return {
     environmentId,
+    httpBaseUrl: stored.httpBaseUrl,
     runtime,
     client,
     bots,
@@ -362,16 +537,18 @@ export function createNativePersonal(
       }, []);
       return state;
     },
+    readConnection: () => ({ connected: socketAlive, generation: generation.value }),
     retry: () => {
       if (current !== null) {
         const session = current;
         current = null;
         void session.dispose();
       }
-      retrySignal.wake();
+      wakeRetry();
     },
     dispose: async () => {
       disposed = true;
+      stopNetworkWatch();
       wakeDisposed?.();
       const session = current;
       current = null;

@@ -241,6 +241,30 @@
       "types": "./src/feed/contextUsed.ts",
       "import": "./src/feed/contextUsed.ts"
     },
+    "./feed/chatFeed": {
+      "types": "./src/feed/chatFeed.ts",
+      "import": "./src/feed/chatFeed.ts"
+    },
+    "./feed/chatCwd": {
+      "types": "./src/feed/chatCwd.ts",
+      "import": "./src/feed/chatCwd.ts"
+    },
+    "./feed/renameChat": {
+      "types": "./src/feed/renameChat.ts",
+      "import": "./src/feed/renameChat.ts"
+    },
+    "./feed/messageReply": {
+      "types": "./src/feed/messageReply.ts",
+      "import": "./src/feed/messageReply.ts"
+    },
+    "./feed/composerText": {
+      "types": "./src/feed/composerText.ts",
+      "import": "./src/feed/composerText.ts"
+    },
+    "./bots/botMuteModel": {
+      "types": "./src/bots/botMuteModel.ts",
+      "import": "./src/bots/botMuteModel.ts"
+    },
     "./usage/tokenUsagePresentation": {
       "types": "./src/usage/tokenUsagePresentation.ts",
       "import": "./src/usage/tokenUsagePresentation.ts"

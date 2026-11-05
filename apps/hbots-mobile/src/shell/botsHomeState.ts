@@ -28,3 +28,12 @@ export function botsHomeState(input: {
   if (input.visibleCount > 0) return "list";
   return input.query.trim().length > 0 ? "no-match" : "empty";
 }
+
+/** What a cached Bots row opens: its last chat, or the bot when it has none. */
+export type SnapshotRowTarget =
+  | { readonly kind: "chat"; readonly threadId: string }
+  | { readonly kind: "bot" };
+
+export function snapshotRowTarget(row: { readonly threadId: string | null }): SnapshotRowTarget {
+  return row.threadId === null ? { kind: "bot" } : { kind: "chat", threadId: row.threadId };
+}

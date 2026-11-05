@@ -4,7 +4,7 @@ import { RequestFailure } from "./failure";
 import { backoffMs, describePairFailure } from "./connection";
 
 describe("backoffMs", () => {
-  it("doubles from 2 seconds and stops at 30", () => {
+  it("doubles from 1 second and stops at 4, inside the reconnect budget", () => {
     expect([0, 1, 2, 3, 4, 5, 9].map(backoffMs)).toEqual([
       1_000, 2_000, 4_000, 4_000, 4_000, 4_000, 4_000,
     ]);

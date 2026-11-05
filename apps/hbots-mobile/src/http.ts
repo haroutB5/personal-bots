@@ -18,11 +18,17 @@ export async function requestJson(
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<unknown> {
   const controller = new AbortController();
+  const external = init.signal ?? null;
   let timedOut = false;
-  const timer = setTimeout(() => {
+  const abort = () => {
     timedOut = true;
     controller.abort();
-  }, timeoutMs);
+  };
+  if (external !== null) {
+    if (external.aborted) abort();
+    else external.addEventListener("abort", abort);
+  }
+  const timer = setTimeout(abort, timeoutMs);
   try {
     let text: string;
     let status: number;
@@ -43,5 +49,6 @@ export async function requestJson(
     }
   } finally {
     clearTimeout(timer);
+    external?.removeEventListener("abort", abort);
   }
 }

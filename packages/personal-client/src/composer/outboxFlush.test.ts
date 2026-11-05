@@ -13,9 +13,11 @@ import {
 import {
   classifySendFailure,
   createOutboxFlusher,
+  OUTBOX_CONNECTION_CHECK_MS,
   OUTBOX_MAX_UNANSWERED,
   OUTBOX_SEND_TIMEOUT_MS,
   runOutboxPass,
+  type ConfirmOutcome,
   type SendOutcome,
 } from "./outboxFlush.ts";
 
@@ -251,6 +253,131 @@ describe("one pass over the queue", () => {
   });
 });
 
+describe("a send cut off by the connection going away", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("goes out again on the new connection, not at the send timeout", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const sends: string[] = [];
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send: (item) => {
+        sends.push(item.id);
+        return sends.length === 1
+          ? new Promise<SendOutcome>(() => {})
+          : Promise.resolve({ kind: "sent" });
+      },
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sends).toEqual(["one"]);
+
+    // The phone drops the network with the send in flight, then connects again.
+    connected = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    generation += 1;
+    connected = true;
+    flusher.trigger();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(sends).toEqual(["one", "one"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("does not count an attempt whose socket was replaced before it answered", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const result = await runOutboxPass({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send: async () => {
+        // The socket died under the send, and the replacement is already in
+        // place before the rejection reaches the queue.
+        connected = false;
+        generation += 1;
+        return { kind: "unknown" };
+      },
+    });
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      status: "waiting",
+      attempts: 0,
+    });
+    // The pass stops; the next connection starts it again.
+    expect(result.retryInMs).toBeNull();
+  });
+
+  it("never gives up on a message through any number of replaced sockets", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const send = vi.fn(async (): Promise<SendOutcome> => {
+      connected = false;
+      generation += 1;
+      return { kind: "unknown" };
+    });
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let cycle = 0; cycle < 8; cycle += 1) {
+      connected = true;
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(200);
+    }
+
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      status: "waiting",
+      attempts: 0,
+      error: null,
+    });
+    flusher.dispose();
+  });
+
+  it("does not use up the message's unanswered attempts, however often the network drops", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    let connected = true;
+    const send = vi.fn((): Promise<SendOutcome> => new Promise(() => {}));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      connected = false;
+      await vi.advanceTimersByTimeAsync(500);
+      generation += 1;
+      connected = true;
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(500);
+    }
+
+    expect(send).toHaveBeenCalledTimes(6);
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      status: "waiting",
+      attempts: 0,
+    });
+    flusher.dispose();
+  });
+});
+
 describe("a send that never answers", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
@@ -269,7 +396,7 @@ describe("a send that never answers", () => {
           : Promise.resolve({ kind: "sent" });
       },
     });
-    await vi.advanceTimersByTimeAsync(OUTBOX_SEND_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(OUTBOX_SEND_TIMEOUT_MS + OUTBOX_CONNECTION_CHECK_MS);
     const result = await pass;
     expect(sent).toEqual(["hung", "fine"]);
     expect(ids()).toEqual(["hung"]);
@@ -282,6 +409,132 @@ describe("a send that never answers", () => {
 describe("the flusher", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("an unanswered head stays failed across triggers and revives only on a new connection", async () => {
+    enqueueOutboxEntry(entry("one"));
+    enqueueOutboxEntry(entry("two"));
+    markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
+    let connected = true;
+    let generation = 0;
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    // A cold start with a failed entry waits for Retry or a new connection.
+    expect(send).not.toHaveBeenCalled();
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries.map((item) => [item.id, item.status])).toEqual([
+      ["one", "failed"],
+      ["two", "waiting"],
+    ]);
+
+    connected = false;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    connected = true;
+    generation += 1;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(send.mock.calls.map((call) => (call[0] as OutboxEntry).id)).toEqual(["one", "two"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("a refusal stays failed across triggers and reconnects until Retry", async () => {
+    enqueueOutboxEntry(entry("one"));
+    enqueueOutboxEntry(entry("two"));
+    markOutboxFailed("one", "Couldn't send: an attachment didn't upload. Try again.", true);
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
+    let connected = true;
+    let generation = 0;
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => generation,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      flusher.trigger();
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    connected = false;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    connected = true;
+    generation += 1;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries.map((item) => [item.id, item.status])).toEqual([
+      ["one", "failed"],
+      ["two", "waiting"],
+    ]);
+
+    retryOutboxEntry("one");
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send.mock.calls.map((call) => (call[0] as OutboxEntry).id)).toEqual(["one", "two"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("a page with no socket counter revives an unanswered head on the connection edge", async () => {
+    enqueueOutboxEntry(entry("one"));
+    enqueueOutboxEntry(entry("two"));
+    markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
+    let connected = true;
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send).not.toHaveBeenCalled();
+
+    connected = false;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    connected = true;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(send.mock.calls.map((call) => (call[0] as OutboxEntry).id)).toEqual(["one", "two"]);
+    flusher.dispose();
+  });
+
+  it("a head the laptop refused stays failed until Retry", async () => {
+    enqueueOutboxEntry(entry("one"));
+    enqueueOutboxEntry(entry("two"));
+    markOutboxFailed("one", "Couldn't send: that chat is gone.", true);
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({ kind: "sent" }));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => true,
+      send,
+    });
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({ status: "failed", rejected: true });
+    flusher.dispose();
+  });
 
   it("picks up a message queued while a pass is running", async () => {
     enqueueOutboxEntry(entry("one"));
@@ -361,6 +614,114 @@ describe("the flusher", () => {
     flusher.trigger();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(send).toHaveBeenCalledTimes(1);
+    flusher.dispose();
+  });
+});
+
+describe("a lost confirmation on a new connection", () => {
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 100; tick += 1) {
+      await Promise.resolve();
+    }
+  }
+
+  it("takes the receipt's word that a message landed and releases the chat", async () => {
+    enqueueOutboxEntry(entry("landed"));
+    markOutboxFailed("landed", "Couldn't send: your laptop didn't answer. Try again.", false);
+    enqueueOutboxEntry(entry("behind"));
+    let connected = false;
+    const confirmed: string[] = [];
+    const sent: string[] = [];
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => 1,
+      confirm: async (item) => {
+        confirmed.push(item.id);
+        return { kind: "landed" };
+      },
+      send: async (item) => {
+        sent.push(item.id);
+        return { kind: "sent" };
+      },
+    });
+    flusher.trigger();
+    connected = true;
+    flusher.trigger();
+    await settle();
+    expect(confirmed).toEqual(["landed"]);
+    expect(sent).toEqual(["behind"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("carries the laptop's refusal from the receipt instead of resending", async () => {
+    enqueueOutboxEntry(entry("refused"));
+    markOutboxFailed("refused", "Couldn't send: your laptop didn't answer. Try again.", false);
+    enqueueOutboxEntry(entry("behind"));
+    let connected = false;
+    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => 1,
+      confirm: async () => ({ kind: "refused", message: "Couldn't send: that chat is gone." }),
+      send,
+    });
+    flusher.trigger();
+    connected = true;
+    flusher.trigger();
+    await settle();
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      id: "refused",
+      status: "failed",
+      rejected: true,
+      error: "Couldn't send: that chat is gone.",
+    });
+    expect(ids()).toEqual(["refused", "behind"]);
+    flusher.dispose();
+  });
+
+  it("sends a message the receipt says never landed, then the next one", async () => {
+    enqueueOutboxEntry(entry("absent"));
+    markOutboxFailed("absent", "Couldn't send: your laptop didn't answer. Try again.", false);
+    enqueueOutboxEntry(entry("behind"));
+    let connected = false;
+    const sent: string[] = [];
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => 1,
+      confirm: async () => ({ kind: "absent" }),
+      send: async (item) => {
+        sent.push(item.id);
+        return { kind: "sent" };
+      },
+    });
+    flusher.trigger();
+    connected = true;
+    flusher.trigger();
+    await settle();
+    expect(sent).toEqual(["absent", "behind"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("does not ask for a receipt on the first connection", async () => {
+    enqueueOutboxEntry(entry("first"));
+    const confirm = vi.fn(async (): Promise<ConfirmOutcome> => ({ kind: "landed" }));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => true,
+      connectionGeneration: () => 1,
+      confirm,
+      send: async () => ({ kind: "sent" }),
+    });
+    flusher.trigger();
+    await settle();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(ids()).toEqual([]);
     flusher.dispose();
   });
 });
