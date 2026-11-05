@@ -731,7 +731,10 @@ export const makeWith = (
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const instanceId = provider.instanceId;
-        if (checking.has(instanceId)) return;
+        // The auto-update flow runs its own test after the install. A second
+        // check from the version-change watcher would rewrite the verdict the
+        // rollback relies on and make it refuse to go back.
+        if (checking.has(instanceId) || autoUpdating.has(instanceId)) return;
         const version = provider.version;
         if (version === null || !provider.installed || !provider.enabled) {
           // Nothing testable; a verdict about another version must not linger.
