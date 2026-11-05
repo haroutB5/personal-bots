@@ -89,6 +89,7 @@ import {
   type LeadModelResult,
 } from "./leadBotModel.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
+import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
 
 export const LEAD_BOT_NAME_MAX = 60;
 export const LEAD_BOT_TITLE_MAX = 60;
@@ -615,6 +616,7 @@ export const make = Effect.gen(function* () {
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const engine = yield* PersonalEngine.PersonalEngine;
   const sql = yield* SqlClient.SqlClient;
+  const rel = yield* PersonalProjectionRelations;
   // Optional so the service stays testable without notifications; the server always has it.
   const push = yield* Effect.serviceOption(PersonalPushService.PersonalPushService);
   const seedModelOverride = yield* Config.String(PERSONAL_SEED_MODEL_ENV).pipe(
@@ -658,9 +660,9 @@ export const make = Effect.gen(function* () {
       `;
       const activeSessions = yield* sql<{ readonly n: number }>`
         SELECT count(*) AS n
-        FROM projection_thread_sessions session
+        FROM ${sql.unsafe(rel.sessions)} session
         JOIN personal_bot_threads link ON link.thread_id = session.thread_id
-        LEFT JOIN projection_threads thread ON thread.thread_id = session.thread_id
+        LEFT JOIN ${sql.unsafe(rel.threads)} thread ON thread.thread_id = session.thread_id
         WHERE link.bot_id = ${botId}
           AND session.status IN ('starting', 'running')
           AND (thread.thread_id IS NULL OR thread.deleted_at IS NULL)
