@@ -22,7 +22,6 @@ import type * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
 
-import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import type { PersonalProvidersError } from "./errors.ts";
 
 export type PersonalPrewarmOutcome =
@@ -57,9 +56,6 @@ export type PersonalSmokeTest = (input: {
 }) => Effect.Effect<void, PersonalProvidersError>;
 
 export interface PersonalProvidersShape {
-  readonly getInstance: (
-    instanceId: ProviderInstanceId,
-  ) => Effect.Effect<ProviderInstance | undefined, PersonalProvidersError>;
   readonly listProviders: () => Effect.Effect<
     ReadonlyArray<ServerProvider>,
     PersonalProvidersError

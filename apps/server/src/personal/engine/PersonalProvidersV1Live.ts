@@ -151,7 +151,6 @@ const makeProviders = (prewarm: Prewarm) =>
       );
 
     return PersonalProviders.of({
-      getInstance,
       listProviders,
       refreshInstance,
       invalidateUsage,

@@ -164,21 +164,6 @@ const withProviders = <A, E>(
   }).pipe(Effect.provide(harness.layer));
 
 describe("PersonalProvidersV1", () => {
-  it.effect("getInstance returns the live instance or undefined", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const found = yield* withProviders(harness, (providers) =>
-        providers.getInstance(INSTANCE_ID),
-      );
-      expect(found).toBeDefined();
-
-      const missing = yield* withProviders(harness, (providers) =>
-        providers.getInstance("other" as ProviderInstanceId),
-      );
-      expect(missing).toBeUndefined();
-    });
-  });
-
   it.effect("listProviders returns the registry snapshot", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
