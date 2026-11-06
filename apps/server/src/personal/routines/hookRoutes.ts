@@ -24,7 +24,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import { PersonalRoutineService } from "./PersonalRoutineService.ts";
 
 /** No caching, no sniffing, and no hint of the app behind it. */

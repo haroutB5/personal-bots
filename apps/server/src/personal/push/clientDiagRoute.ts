@@ -25,7 +25,7 @@ import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
-import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
 export const PERSONAL_CLIENT_DIAG_PATH = "/api/personal/client-diag";
 export const CLIENT_DIAG_MAX_BYTES = 4096;

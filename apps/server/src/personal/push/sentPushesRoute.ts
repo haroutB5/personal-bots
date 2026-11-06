@@ -22,7 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import { PersonalPushService } from "./PersonalPushService.ts";
 import { isAllowedPushEndpoint } from "./webPushCrypto.ts";
