@@ -48,3 +48,15 @@ export function deviceRow(device: PersonalDevice, now: number): DeviceRow {
 export function deviceRows(devices: readonly PersonalDevice[], now: number): DeviceRow[] {
   return devices.map((device) => deviceRow(device, now));
 }
+
+/**
+ * How old the list may be when the screen is reopened. The query's own
+ * staleTime is five seconds; past that the screen asks again instead of
+ * showing a session made while the app was open.
+ */
+export const DEVICES_FRESH_MS = 5_000;
+
+/** A list that has loaded but is older than the fresh window should be re-asked. */
+export function devicesNeedRefresh(dataUpdatedAt: number | null, nowMs: number): boolean {
+  return dataUpdatedAt !== null && nowMs - dataUpdatedAt >= DEVICES_FRESH_MS;
+}

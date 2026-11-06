@@ -99,6 +99,18 @@ function checkLink(link: PairingTarget): PairingState {
   return { step: "checking", link };
 }
 
+/**
+ * Failures whose button says "Scan again". Retrying them against the same
+ * link only replays the code that already failed: a spent or expired one, or
+ * a code that was never hbots'. Those open the scanner instead.
+ */
+const SCAN_AGAIN_FAILURES: ReadonlySet<PairFailure> = new Set(["expired", "used", "not-hbots"]);
+
+/** The step the failure's button promises: scanner for Scan again, the same link for Try again. */
+export function retryFor(reason: PairFailure, link: PairingTarget): PairRetry {
+  return SCAN_AGAIN_FAILURES.has(reason) ? { kind: "scan" } : { kind: "link", link };
+}
+
 export function failureFor(cause: unknown): PairFailure {
   if (cause instanceof DpopRequiredError) {
     return "not-secure";
@@ -154,7 +166,7 @@ export function reducePairing(state: PairingState, action: PairingAction): Pairi
         ? {
             step: "failed",
             reason: action.reason,
-            retry: { kind: "link", link: state.link },
+            retry: retryFor(action.reason, state.link),
           }
         : state;
     case "confirm":
@@ -184,7 +196,7 @@ export function reducePairing(state: PairingState, action: PairingAction): Pairi
         ? {
             step: "failed",
             reason: action.reason,
-            retry: { kind: "link", link: state.link },
+            retry: retryFor(action.reason, state.link),
           }
         : state;
     case "cameraDenied":

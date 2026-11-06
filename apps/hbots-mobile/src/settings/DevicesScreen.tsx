@@ -1,7 +1,8 @@
 import type { AuthSessionId } from "@t3tools/contracts";
+import { useFocusEffect } from "@react-navigation/native";
 import { commandFailureMessage } from "@hbots/personal-client/bots/commandFeedback";
-import { deviceRows } from "@hbots/personal-client/settings/devices";
-import { useState } from "react";
+import { deviceRows, devicesNeedRefresh } from "@hbots/personal-client/settings/devices";
+import { useCallback, useState } from "react";
 import { Alert, StyleSheet, Text } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -20,6 +21,14 @@ export function DevicesScreen({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const rows = devices.data === null ? null : deviceRows(devices.data.devices, Date.now());
+  const { dataUpdatedAt, refresh } = devices;
+  // A session can be made while the app stays open, so a list older than the
+  // fresh window is re-asked every time the screen comes back into focus.
+  useFocusEffect(
+    useCallback(() => {
+      if (devicesNeedRefresh(dataUpdatedAt, Date.now())) refresh();
+    }, [dataUpdatedAt, refresh]),
+  );
 
   const confirmRevoke = (sessionId: string, label: string) => {
     Alert.alert(`Revoke ${label}?`, "That device signs out at once. Your bots keep running.", [

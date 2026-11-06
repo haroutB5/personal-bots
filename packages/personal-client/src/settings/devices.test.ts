@@ -2,7 +2,7 @@ import type { AuthSessionId, PersonalDevice } from "@t3tools/contracts";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { deviceKindLabel, deviceRow } from "./devices.ts";
+import { deviceKindLabel, deviceRow, devicesNeedRefresh } from "./devices.ts";
 
 const NOW = Date.parse("2026-11-06T12:00:00Z");
 
@@ -40,5 +40,14 @@ describe("device rows", () => {
   it("falls back to the sign-in time when the device never connected", () => {
     const row = deviceRow(device({ lastSeenAt: null }), NOW);
     expect(row.detail).toBe("Phone · android · Signed in 1h");
+  });
+});
+
+describe("device list freshness", () => {
+  it("asks again when the list was last read more than five seconds ago", () => {
+    expect(devicesNeedRefresh(null, NOW)).toBe(false);
+    expect(devicesNeedRefresh(NOW - 4_000, NOW)).toBe(false);
+    expect(devicesNeedRefresh(NOW - 5_000, NOW)).toBe(true);
+    expect(devicesNeedRefresh(NOW - 60_000, NOW)).toBe(true);
   });
 });

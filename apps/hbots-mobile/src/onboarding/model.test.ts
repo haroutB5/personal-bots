@@ -94,6 +94,34 @@ describe("pairing reducer", () => {
     expect(reducePairing(failed, { type: "retry" })).toEqual({ step: "checking", link: LINK });
   });
 
+  it("opens the scanner after a spent, expired or foreign code", () => {
+    for (const reason of ["used", "expired", "not-hbots"] as const) {
+      const failed = reducePairing(
+        { step: "checking", link: LINK },
+        { type: "checkFailed", reason },
+      );
+      expect(failed).toEqual({ step: "failed", reason, retry: { kind: "scan" } });
+      expect(reducePairing(failed, { type: "retry" })).toEqual({ step: "scan" });
+    }
+  });
+
+  it("opens the scanner after pairing fails on a spent code", () => {
+    const failed = reducePairing(
+      { step: "pairing", link: LINK, server: SERVER, label: "Find X9 Pro" },
+      { type: "pairFailed", reason: "used" },
+    );
+    expect(failed).toEqual({ step: "failed", reason: "used", retry: { kind: "scan" } });
+    expect(reducePairing(failed, { type: "retry" })).toEqual({ step: "scan" });
+  });
+
+  it("checks the same link again after a security refusal", () => {
+    const failed = reducePairing(
+      { step: "pairing", link: LINK, server: SERVER, label: "Find X9 Pro" },
+      { type: "pairFailed", reason: "not-secure" },
+    );
+    expect(reducePairing(failed, { type: "retry" })).toEqual({ step: "checking", link: LINK });
+  });
+
   it("refuses to pair with an empty device label", () => {
     const label: PairingState = { step: "label", link: LINK, server: SERVER, label: "  " };
     expect(reducePairing(label, { type: "pair" })).toEqual(label);
