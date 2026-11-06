@@ -19,8 +19,8 @@
       "rpc": 127
     },
     "byStatus": {
-      "done": 348,
-      "planned": 30,
+      "done": 349,
+      "planned": 29,
       "n/a": 35,
       "unassigned": 0
     },
@@ -506,7 +506,7 @@
       "layout": false,
       "scope": "pairing",
       "pr": "A17",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Paste-a-link pairing only (apps/hbots-mobile/src/App.tsx:773). No QR scan, server confirm or device label.",
       "check": "Open /pair on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
