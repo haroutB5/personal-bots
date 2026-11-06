@@ -46,6 +46,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
+import { authorizedFetch } from "../authorizedRequest";
 import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
 import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
@@ -56,6 +57,8 @@ import { phoneHasInternet, resetNetworkClient } from "./networkReset";
 import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
+import { canManageDevices } from "../sessionScopes";
+import { authMethodOf } from "../sessionAuth";
 
 const connectedState = (generation: number): SupervisorConnectionState => ({
   desired: true,
@@ -114,15 +117,13 @@ const threadSnapshotLoader = (stored: StoredSession): ThreadSnapshotLoader["Serv
     load: (_prepared, threadId: ThreadId) =>
       Effect.tryPromise({
         try: async () => {
-          const response = await fetch(
+          const response = await authorizedFetch(
+            stored,
             new URL(
               `/api/orchestration/threads/${encodeURIComponent(threadId)}`,
               stored.httpBaseUrl,
             ),
-            {
-              headers: { Authorization: `Bearer ${stored.accessToken}` },
-              cache: "no-store",
-            },
+            { cache: "no-store" },
           );
           if (!response.ok) return Option.none<OrchestrationThreadDetailSnapshot>();
           return Option.some(decodeThreadSnapshot((await response.json()) as unknown));
@@ -178,6 +179,10 @@ export type NativePersonalRuntime =
 
 export interface NativePersonal {
   readonly environmentId: EnvironmentId;
+  /** The label this phone gave at pairing; Settings > This phone shows it. */
+  readonly deviceLabel: string;
+  /** Both access scopes were granted, so Settings > Devices can list and revoke. */
+  readonly canManageDevices: boolean;
   readonly httpBaseUrl: string;
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
@@ -435,7 +440,14 @@ export function createNativePersonal(
               label: stored.label,
               httpBaseUrl: stored.httpBaseUrl,
               socketUrl: "",
-              httpAuthorization: { _tag: "Bearer" as const, token: stored.accessToken },
+              httpAuthorization:
+                authMethodOf(stored) === "dpop"
+                  ? {
+                      _tag: "Dpop" as const,
+                      accessToken: stored.accessToken,
+                      expiresAtEpochMs: stored.expiresAt,
+                    }
+                  : { _tag: "Bearer" as const, token: stored.accessToken },
               target,
             }),
           ),
@@ -531,6 +543,8 @@ export function createNativePersonal(
 
   return {
     environmentId,
+    deviceLabel: stored.deviceLabel ?? stored.label,
+    canManageDevices: canManageDevices(stored.scope),
     httpBaseUrl: stored.httpBaseUrl,
     runtime,
     client,
@@ -552,12 +566,15 @@ export function createNativePersonal(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), SYSTEM_SUMMARY_TIMEOUT_MS);
       try {
-        const response = await fetch(new URL(SYSTEM_SUMMARY_URL, stored.httpBaseUrl), {
-          method: "GET",
-          headers: { Authorization: `Bearer ${stored.accessToken}` },
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const response = await authorizedFetch(
+          stored,
+          new URL(SYSTEM_SUMMARY_URL, stored.httpBaseUrl),
+          {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
         if (!response.ok) return null;
         return parseSystemSummary(await response.json());
       } catch {

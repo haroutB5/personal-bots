@@ -90,6 +90,23 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
   );
 
+  it.effect("expires a one-time pairing link after five minutes", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const early = yield* bootstrapCredentials.issueOneTimeToken();
+
+      yield* TestClock.adjust(Duration.minutes(4));
+      const inTime = yield* bootstrapCredentials.consume(early.credential);
+      expect(inTime.method).toBe("one-time-token");
+
+      const late = yield* bootstrapCredentials.issueOneTimeToken();
+      yield* TestClock.adjust(Duration.sum(Duration.minutes(5), Duration.millis(1)));
+      const expired = yield* Effect.flip(bootstrapCredentials.consume(late.credential));
+
+      expect(expired._tag).toBe("ExpiredBootstrapCredentialError");
+    }).pipe(Effect.provide(Layer.merge(makePairingGrantStoreLayer(), TestClock.layer()))),
+  );
+
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;

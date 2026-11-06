@@ -33,6 +33,14 @@ export class RequestFailure extends Error {
   }
 }
 
+/** The server answered a pairing exchange without binding the token to the phone key. */
+export class DpopRequiredError extends Error {
+  constructor() {
+    super("The server issued a Bearer session to a phone.");
+    this.name = "DpopRequiredError";
+  }
+}
+
 export type Failure =
   | {
       readonly kind: "authDead";

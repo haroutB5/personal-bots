@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthAdministrativeScopes } from "@t3tools/contracts";
+import {
+  AuthAdministrativeScopes,
+  AuthPhoneClientScopes,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -407,20 +411,75 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(makeEnvironmentAuthLayer({ mode: "web", host: "192.168.1.50" }))),
   );
 
-  it.effect("does not exchange ordinary pairing grants for administrative access tokens", () =>
+  it.effect("pairs a standard link with the phone scope set it holds, without access scopes", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const pairingCredential = yield* serverAuth.issuePairingCredential();
 
-      const error = yield* serverAuth
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairingCredential.credential,
+        [...AuthPhoneClientScopes],
+        requestMetadata,
+      );
+
+      expect(token.scope).toBe(AuthStandardClientScopes.join(" "));
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("pairs a phone link with the access scopes it holds", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const pairingCredential = yield* serverAuth.issuePairingCredential({
+        scopes: [...AuthPhoneClientScopes],
+      });
+
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairingCredential.credential,
+        [...AuthPhoneClientScopes],
+        requestMetadata,
+      );
+
+      expect(token.scope).toBe(AuthPhoneClientScopes.join(" "));
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("never widens a link beyond the scopes it holds", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const pairingCredential = yield* serverAuth.issuePairingCredential({
+        scopes: ["orchestration:read"],
+      });
+
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairingCredential.credential,
+        [...AuthPhoneClientScopes],
+        requestMetadata,
+      );
+
+      expect(token.scope).toBe("orchestration:read");
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("keeps a link usable when the request holds none of its scopes", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const pairingCredential = yield* serverAuth.issuePairingCredential();
+
+      const refused = yield* serverAuth
         .exchangeBootstrapCredentialForAccessToken(
           pairingCredential.credential,
-          ["orchestration:read", "access:write"],
+          ["access:write"],
           requestMetadata,
         )
         .pipe(Effect.flip);
+      expect(refused._tag).toBe("ServerAuthScopeNotGrantedError");
 
-      expect(error._tag).toBe("ServerAuthScopeNotGrantedError");
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairingCredential.credential,
+        undefined,
+        requestMetadata,
+      );
+      expect(token.scope).toBe(AuthStandardClientScopes.join(" "));
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 

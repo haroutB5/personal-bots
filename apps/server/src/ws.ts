@@ -239,6 +239,7 @@ import * as PersonalRoutineService from "./personal/routines/PersonalRoutineServ
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import { listPersonalDevices, revokePersonalDevice } from "./personal/devices/PersonalDevices.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { serveUntilSessionRevoked } from "./auth/sessionRevocationClose.ts";
@@ -4336,6 +4337,18 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.personalPushAckInApp,
             personalPush.ackInApp({ id: input.id }).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalDevicesList]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalDevicesList,
+            listPersonalDevices(serverAuth, currentSessionId),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalDevicesRevoke]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalDevicesRevoke,
+            revokePersonalDevice(serverAuth, currentSessionId, input.sessionId),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>

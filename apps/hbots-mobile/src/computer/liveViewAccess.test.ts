@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("../dpop", () => ({ createDpopProof: vi.fn() }));
+
 import { RequestFailure } from "../failure";
 import type { StoredSession } from "../session";
 import {

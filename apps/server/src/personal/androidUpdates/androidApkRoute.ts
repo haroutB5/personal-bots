@@ -1,7 +1,7 @@
 /**
  * `GET /api/personal/android/apk/<version>`: the current APK, for the phone's
- * self-updater. Bearer only, because it runs outside a browser and must never
- * be reachable with a cookie.
+ * self-updater. Bearer or DPoP only, because it runs outside a browser and must
+ * never be reachable with a cookie.
  *
  * The version is the manifest's version, never a path the client composes:
  * it decodes as `HbotsVersion`, must equal the published release, and only
@@ -15,7 +15,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import { openMediaFile, streamMediaFile } from "../../assets/MediaFile.ts";
 import * as ServerConfig from "../../config.ts";
-import { authenticateBearerPersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
+import { authenticateTokenPersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import {
   ANDROID_APK_CONTENT_TYPE,
   readLatestAndroidRelease,
@@ -34,7 +34,7 @@ export const personalAndroidApkRouteLayer = HttpRouter.add(
   "GET",
   `${PERSONAL_ANDROID_APK_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
-    yield* authenticateBearerPersonalRoute(AuthOrchestrationReadScope);
+    yield* authenticateTokenPersonalRoute(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const pathname = (request.url ?? "").split("?", 1)[0] ?? "";
     if (!pathname.startsWith(`${PERSONAL_ANDROID_APK_ROUTE_PREFIX}/`)) return badRequest();

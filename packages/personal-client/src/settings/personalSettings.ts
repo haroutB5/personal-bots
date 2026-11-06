@@ -29,6 +29,22 @@ export function createPersonalSettingsClient<R, ER, P>(
     tag: WS_METHODS.personalPushTest,
   });
 
+  const devices = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-devices:list",
+    tag: WS_METHODS.personalDevicesList,
+    staleTimeMs: 5_000,
+    idleTtlMs: 5 * 60_000,
+  });
+
+  const revokeDeviceCommand = createEnvironmentRpcCommand(runtime, {
+    label: "personal-devices:revoke",
+    tag: WS_METHODS.personalDevicesRevoke,
+    onSuccess: (target, registry) =>
+      Effect.sync(() => {
+        registry.refresh(devices({ environmentId: target.environmentId, input: {} }));
+      }),
+  });
+
   const personalPushSetPreferences = createEnvironmentRpcCommand(runtime, {
     label: "personal-push:set-preferences",
     tag: WS_METHODS.personalPushSetPreferences,
@@ -68,13 +84,36 @@ export function createPersonalSettingsClient<R, ER, P>(
     );
   }
 
+  function useDevices(environmentId: EnvironmentId | null) {
+    const atom = useMemo(
+      () => (environmentId === null ? null : devices({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function useRevokeDevice(environmentId: EnvironmentId | null) {
+    const revoke = client.useAtomCommand(revokeDeviceCommand, { reportFailure: false });
+    return useCallback(
+      async (sessionId: Parameters<typeof revoke>[0]["input"]["sessionId"]) => {
+        if (environmentId === null) return null;
+        return revoke({ environmentId, input: { sessionId } });
+      },
+      [environmentId, revoke],
+    );
+  }
+
   return {
     pushSettings,
     personalPushTest,
     personalPushSetPreferences,
+    devices,
+    revokeDevice: revokeDeviceCommand,
     usePushSettings,
     useSendTestNotification,
     useSavePushPreferences,
+    useDevices,
+    useRevokeDevice,
   };
 }
 

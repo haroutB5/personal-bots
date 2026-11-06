@@ -478,6 +478,7 @@ const RULES = [
     ),
   ],
   [/^screen routes\/pair\.tsx/, { pr: "A17" }],
+  [/^screen routes\/_personal\.bots_\.settings_\.devices\.tsx/, { pr: "A18" }],
   [/^screen routes\/_personal\.tsx/, { pr: "A1" }],
   [/^screen routes\/_personal\.bots\.tsx/, { pr: "A2" }],
   [/^screen routes\/_personal\.bots_\.\$botId\.\$threadId/, { pr: "A4" }],
@@ -495,6 +496,18 @@ const RULES = [
   [/^screen routes\/_personal\.computer\.tsx/, { pr: "A16" }],
   [/^screen routes\/_personal\.files\.tsx/, { pr: "A13" }],
   [/^screen routes\/_personal\.tasks/, { pr: "A12" }],
+  [
+    /^sheet PersonalSettingsScreen\.tsx Create pairing link/,
+    NA(
+      "The phone is the device that scans a pairing link. Minting one for another phone stays on the laptop's web Settings; the phone pairs from onboarding frame 1a.",
+    ),
+  ],
+  [
+    /^setting PersonalSettingsScreen\.tsx Plugins \/ PairPhoneRow/,
+    NA(
+      "Pairing starts from onboarding frame 1a on the phone. Another phone is paired from the laptop's web Settings.",
+    ),
+  ],
   [
     /^setting PersonalSettingsScreen\.tsx Appearance/,
     NA("Android is dark only by the approved spec (SPEC.md section 0, plan section 4)."),
@@ -567,6 +580,7 @@ const RULES = [
     /ChatsScreen|BotRow|ChatSectionRows|AllChatsCount|UnreadChatsBadge|PersonalUsageStrip|PersonalResetCredits|ProviderMixBar|UsageRangeControl|PersonalOfflineBanner|InAppNotifications|PersonalEmptyTab|BotAvatar|PinMark/,
     { pr: "A2" },
   ],
+  [/DevicesScreen/, { pr: "A18" }],
   [/PersonalUnreachableScreen/, { pr: "A1" }],
   [/PersonalShell|PersonalTabBar|RouteLoadError|edge swipe back|drag a sheet down/, { pr: "A1" }],
   [
@@ -601,6 +615,7 @@ const RPC_RULES = [
     { pr: "A7" },
   ],
   [/^personal(Memory|Logins|Connections|Secrets)/, { pr: "A15" }],
+  [/^personalDevices/, { pr: "A18" }],
   [/^personal(Browser|Desktop)/, { pr: "A16" }],
   [/^personalVoiceCalls/, { pr: "X4" }],
 ];

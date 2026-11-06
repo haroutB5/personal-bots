@@ -51,6 +51,14 @@ const config: ExpoConfig = {
     "expo-secure-store",
     "expo-system-ui",
     [
+      "expo-camera",
+      {
+        cameraPermission: "hbots uses the camera only to scan the pairing code on your laptop.",
+        microphonePermission: false,
+        recordAudioAndroid: false,
+      },
+    ],
+    [
       "expo-build-properties",
       {
         android: {

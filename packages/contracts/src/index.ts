@@ -54,6 +54,7 @@ export * from "./personalDesktop.ts";
 export * from "./personalRoutines.ts";
 export * from "./personalMemory.ts";
 export * from "./personalPush.ts";
+export * from "./personalDevices.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";

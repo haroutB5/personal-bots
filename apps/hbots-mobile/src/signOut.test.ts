@@ -3,6 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { StoredSession } from "./session";
 import { describeSignOut, revokeRemoteSession } from "./signOut";
 
+vi.mock("./dpop", () => ({
+  createDpopProof: async () => ({ proof: "test-proof", thumbprint: "test-thumbprint" }),
+  loadOrCreateDpopKey: async () => ({
+    privateJwk: {},
+    publicJwk: {},
+    thumbprint: "test-thumbprint",
+  }),
+}));
+
 const SESSION: StoredSession = {
   environmentId: "env-1",
   label: "Laptop",

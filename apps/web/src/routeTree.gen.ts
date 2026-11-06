@@ -50,6 +50,7 @@ import { Route as PersonalBotsSettingsRemovedRouteImport } from './routes/_perso
 import { Route as PersonalBotsSettingsPasswordsRouteImport } from './routes/_personal.bots_.settings_.passwords'
 import { Route as PersonalBotsSettingsNotificationsRouteImport } from './routes/_personal.bots_.settings_.notifications'
 import { Route as PersonalBotsSettingsMemoryRouteImport } from './routes/_personal.bots_.settings_.memory'
+import { Route as PersonalBotsSettingsDevicesRouteImport } from './routes/_personal.bots_.settings_.devices'
 import { Route as PersonalBotsSettingsConnectionsRouteImport } from './routes/_personal.bots_.settings_.connections'
 import { Route as PersonalBotsSettingsApiKeysRouteImport } from './routes/_personal.bots_.settings_.api-keys'
 import { Route as PersonalBotsGroupsNewRouteImport } from './routes/_personal.bots_.groups.new'
@@ -272,6 +273,12 @@ const PersonalBotsSettingsMemoryRoute =
     path: '/bots/settings/memory',
     getParentRoute: () => PersonalRoute,
   } as any)
+const PersonalBotsSettingsDevicesRoute =
+  PersonalBotsSettingsDevicesRouteImport.update({
+    id: '/bots_/settings_/devices',
+    path: '/bots/settings/devices',
+    getParentRoute: () => PersonalRoute,
+  } as any)
 const PersonalBotsSettingsConnectionsRoute =
   PersonalBotsSettingsConnectionsRouteImport.update({
     id: '/bots_/settings_/connections',
@@ -369,6 +376,7 @@ export interface FileRoutesByFullPath {
   '/bots/groups/new': typeof PersonalBotsGroupsNewRoute
   '/bots/settings/api-keys': typeof PersonalBotsSettingsApiKeysRoute
   '/bots/settings/connections': typeof PersonalBotsSettingsConnectionsRoute
+  '/bots/settings/devices': typeof PersonalBotsSettingsDevicesRoute
   '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
   '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/bots/settings/passwords': typeof PersonalBotsSettingsPasswordsRoute
@@ -420,6 +428,7 @@ export interface FileRoutesByTo {
   '/bots/groups/new': typeof PersonalBotsGroupsNewRoute
   '/bots/settings/api-keys': typeof PersonalBotsSettingsApiKeysRoute
   '/bots/settings/connections': typeof PersonalBotsSettingsConnectionsRoute
+  '/bots/settings/devices': typeof PersonalBotsSettingsDevicesRoute
   '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
   '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/bots/settings/passwords': typeof PersonalBotsSettingsPasswordsRoute
@@ -474,6 +483,7 @@ export interface FileRoutesById {
   '/_personal/bots_/groups/new': typeof PersonalBotsGroupsNewRoute
   '/_personal/bots_/settings_/api-keys': typeof PersonalBotsSettingsApiKeysRoute
   '/_personal/bots_/settings_/connections': typeof PersonalBotsSettingsConnectionsRoute
+  '/_personal/bots_/settings_/devices': typeof PersonalBotsSettingsDevicesRoute
   '/_personal/bots_/settings_/memory': typeof PersonalBotsSettingsMemoryRoute
   '/_personal/bots_/settings_/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/_personal/bots_/settings_/passwords': typeof PersonalBotsSettingsPasswordsRoute
@@ -527,6 +537,7 @@ export interface FileRouteTypes {
     | '/bots/groups/new'
     | '/bots/settings/api-keys'
     | '/bots/settings/connections'
+    | '/bots/settings/devices'
     | '/bots/settings/memory'
     | '/bots/settings/notifications'
     | '/bots/settings/passwords'
@@ -578,6 +589,7 @@ export interface FileRouteTypes {
     | '/bots/groups/new'
     | '/bots/settings/api-keys'
     | '/bots/settings/connections'
+    | '/bots/settings/devices'
     | '/bots/settings/memory'
     | '/bots/settings/notifications'
     | '/bots/settings/passwords'
@@ -631,6 +643,7 @@ export interface FileRouteTypes {
     | '/_personal/bots_/groups/new'
     | '/_personal/bots_/settings_/api-keys'
     | '/_personal/bots_/settings_/connections'
+    | '/_personal/bots_/settings_/devices'
     | '/_personal/bots_/settings_/memory'
     | '/_personal/bots_/settings_/notifications'
     | '/_personal/bots_/settings_/passwords'
@@ -945,6 +958,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PersonalBotsSettingsMemoryRouteImport
       parentRoute: typeof PersonalRoute
     }
+    '/_personal/bots_/settings_/devices': {
+      id: '/_personal/bots_/settings_/devices'
+      path: '/bots/settings/devices'
+      fullPath: '/bots/settings/devices'
+      preLoaderRoute: typeof PersonalBotsSettingsDevicesRouteImport
+      parentRoute: typeof PersonalRoute
+    }
     '/_personal/bots_/settings_/connections': {
       id: '/_personal/bots_/settings_/connections'
       path: '/bots/settings/connections'
@@ -1049,6 +1069,7 @@ interface PersonalRouteChildren {
   PersonalBotsGroupsNewRoute: typeof PersonalBotsGroupsNewRoute
   PersonalBotsSettingsApiKeysRoute: typeof PersonalBotsSettingsApiKeysRoute
   PersonalBotsSettingsConnectionsRoute: typeof PersonalBotsSettingsConnectionsRoute
+  PersonalBotsSettingsDevicesRoute: typeof PersonalBotsSettingsDevicesRoute
   PersonalBotsSettingsMemoryRoute: typeof PersonalBotsSettingsMemoryRoute
   PersonalBotsSettingsNotificationsRoute: typeof PersonalBotsSettingsNotificationsRoute
   PersonalBotsSettingsPasswordsRoute: typeof PersonalBotsSettingsPasswordsRoute
@@ -1078,6 +1099,7 @@ const PersonalRouteChildren: PersonalRouteChildren = {
   PersonalBotsGroupsNewRoute: PersonalBotsGroupsNewRoute,
   PersonalBotsSettingsApiKeysRoute: PersonalBotsSettingsApiKeysRoute,
   PersonalBotsSettingsConnectionsRoute: PersonalBotsSettingsConnectionsRoute,
+  PersonalBotsSettingsDevicesRoute: PersonalBotsSettingsDevicesRoute,
   PersonalBotsSettingsMemoryRoute: PersonalBotsSettingsMemoryRoute,
   PersonalBotsSettingsNotificationsRoute:
     PersonalBotsSettingsNotificationsRoute,

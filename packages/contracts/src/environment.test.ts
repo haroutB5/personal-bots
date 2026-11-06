@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ExecutionEnvironmentDescriptor, environmentShortId } from "./environment.ts";
 
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
 
@@ -13,7 +13,21 @@ const descriptor = {
   capabilities: { repositoryIdentity: true },
 } as const;
 
+describe("environmentShortId", () => {
+  it("writes the first eight id characters as an upper-case XXXX-XXXX code", () => {
+    expect(environmentShortId("7f3a91c2-4d5e-4f60-8a71-2b3c4d5e6f70")).toBe("7F3A-91C2");
+  });
+
+  it("pads a short id so both sides always compare four and four characters", () => {
+    expect(environmentShortId("abc")).toBe("ABC0-0000");
+  });
+});
+
 describe("ExecutionEnvironmentDescriptor", () => {
+  it("carries the server short id when the server advertises it", () => {
+    expect(decodeDescriptor({ ...descriptor, shortId: "7F3A-91C2" }).shortId).toBe("7F3A-91C2");
+  });
+
   it("requires an advertised required-worktree bootstrap capability", () => {
     expect(decodeDescriptor(descriptor).capabilities.requiredWorktreeBootstrap).toBeUndefined();
     expect(
