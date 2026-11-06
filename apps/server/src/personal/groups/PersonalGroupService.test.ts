@@ -358,6 +358,22 @@ const makeLayer = (harness: Harness, dbPath?: string) => {
   );
 };
 
+/**
+ * Restart cases need a real database file. Keep it inside the worktree's
+ * scratch dir, not the shared /tmp, which other heavy jobs can fill.
+ */
+const makeTempDbPath = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve(process.cwd(), "../../.tmp");
+  yield* fs.makeDirectory(root, { recursive: true });
+  const directory = yield* fs.makeTempDirectoryScoped({
+    directory: root,
+    prefix: "t3-personal-groups-db-",
+  });
+  return path.join(directory, "state.sqlite");
+});
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -1648,10 +1664,7 @@ it.effect("a resume is skipped when the group was archived or deleted", () => {
 
 it.effect("a resume booked before a restart runs once after it", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
+    const dbPath = yield* makeTempDbPath;
 
     const before = makeHarness();
     const assistantThread = yield* cutOffThenRoundEnds(before).pipe(
@@ -1663,32 +1676,6 @@ it.effect("a resume booked before a restart runs once after it", () =>
     const after = makeHarness();
     after.liveThreads.add(assistantThread);
     yield* Effect.gen(function* () {
-      const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
-      const sqlRaw = yield* SqlClient.SqlClient;
-      console.log("DEBUG resume now", DateTime.formatIso(yield* DateTime.now));
-      const debug = yield* repository.latestRoundForGroup(GROUP);
-      console.log(
-        "DEBUG resume",
-        JSON.stringify(
-          Option.isNone(debug)
-            ? null
-            : {
-                status: debug.value.status,
-                activeBotId: debug.value.activeBotId,
-                leaseOwner: debug.value.leaseOwner,
-                leaseExpiresAt: debug.value.leaseExpiresAt,
-                availableAt: debug.value.availableAt,
-                deadlineAt: debug.value.deadlineAt,
-              },
-        ),
-        JSON.stringify(yield* limitRows),
-        JSON.stringify(
-          yield* sqlRaw<{
-            readonly resumeAt: string;
-            readonly hitAt: string;
-          }>`SELECT resume_at AS "resumeAt", hit_at AS "hitAt" FROM personal_group_limit_resumes`,
-        ),
-      );
       yield* sweepGroup;
       const resumed = yield* currentRound;
       expect(resumed.status).toBe("running");
@@ -1713,10 +1700,7 @@ const restoredGroupCopyAfterReset = <E, R>(
   check: (after: Harness) => Effect.Effect<void, E, R>,
 ) =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
+    const dbPath = yield* makeTempDbPath;
 
     const before = makeHarness();
     const assistantThread = yield* cutOffThenRoundEnds(before).pipe(
@@ -1851,10 +1835,7 @@ it.effect("after two automatic continues the third hit only says so", () => {
 
 it.effect("an expired lease interrupts the round and nothing re-runs without Continue", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
+    const dbPath = yield* makeTempDbPath;
 
     const before = makeHarness();
     const memberThread = yield* Effect.gen(function* () {
@@ -1873,75 +1854,14 @@ it.effect("an expired lease interrupts the round and nothing re-runs without Con
     after.liveThreads.add(memberThread);
     yield* Effect.gen(function* () {
       const service = yield* PersonalGroupService.PersonalGroupService;
-      const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
-      console.log("DEBUG now enter", DateTime.formatIso(yield* DateTime.now));
-      const debug = yield* repository.latestRoundForGroup(GROUP);
-      console.log(
-        "DEBUG lease",
-        JSON.stringify(
-          Option.isNone(debug)
-            ? null
-            : {
-                status: debug.value.status,
-                activeBotId: debug.value.activeBotId,
-                activeThreadId: debug.value.activeThreadId,
-                leaseOwner: debug.value.leaseOwner,
-                leaseExpiresAt: debug.value.leaseExpiresAt,
-                deadlineAt: debug.value.deadlineAt,
-              },
-        ),
-      );
       // Before the old lease expires, nothing happens.
       yield* service.sweep;
       yield* service.drain;
-      const afterFirst = yield* repository.latestRoundForGroup(GROUP);
-      console.log(
-        "DEBUG lease after first",
-        JSON.stringify(
-          Option.isNone(afterFirst)
-            ? null
-            : {
-                status: afterFirst.value.status,
-                leaseOwner: afterFirst.value.leaseOwner,
-                leaseExpiresAt: afterFirst.value.leaseExpiresAt,
-              },
-        ),
-      );
       expect((yield* currentRound).status).toBe("running");
 
       yield* TestClock.adjust("3 minutes");
-      console.log("DEBUG now later", DateTime.formatIso(yield* DateTime.now));
-      const later = yield* repository.latestRoundForGroup(GROUP);
-      console.log(
-        "DEBUG lease later",
-        JSON.stringify(
-          Option.isNone(later)
-            ? null
-            : {
-                status: later.value.status,
-                activeBotId: later.value.activeBotId,
-                leaseOwner: later.value.leaseOwner,
-                leaseExpiresAt: later.value.leaseExpiresAt,
-                deadlineAt: later.value.deadlineAt,
-              },
-        ),
-      );
       yield* service.sweep;
       yield* service.drain;
-
-      const afterSweep = yield* repository.latestRoundForGroup(GROUP);
-      console.log(
-        "DEBUG lease after sweep",
-        JSON.stringify(
-          Option.isNone(afterSweep)
-            ? null
-            : {
-                status: afterSweep.value.status,
-                leaseOwner: afterSweep.value.leaseOwner,
-                leaseExpiresAt: afterSweep.value.leaseExpiresAt,
-              },
-        ),
-      );
 
       const interrupted = yield* currentRound;
       expect(interrupted.status).toBe("interrupted");

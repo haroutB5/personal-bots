@@ -9,15 +9,12 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
-import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import { PersonalEngine } from "../engine/PersonalEngine.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
@@ -87,12 +84,8 @@ const makeServicesLayer = (harness: RoutineHarness = makeHarness()) =>
     Layer.provideMerge(NodeServices.layer),
   );
 
-const makeLayer = (dbPath?: string, harness: RoutineHarness = makeHarness()) =>
-  makeServicesLayer(harness).pipe(
-    Layer.provideMerge(
-      dbPath === undefined ? personalTestDatabase : makeSqlitePersistenceLive(dbPath),
-    ),
-  );
+const makeLayer = (harness: RoutineHarness = makeHarness()) =>
+  makeServicesLayer(harness).pipe(Layer.provideMerge(personalTestDatabase));
 
 const BOT = PersonalBotId.make("bot-planner");
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -459,13 +452,9 @@ it.effect("after a 10h sleep, coalesce runs the latest missed slot once and skip
 
 it.effect("a restart before the routine advanced does not duplicate the occurrence", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-routines-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
-
-    // One durable database, two builds of the services: the second build has
-    // none of the first's in-memory state, as a fresh process would not.
+    // One database, two builds of the services: the second build has none of
+    // the first's in-memory state, as a fresh process would not. The test
+    // database stands in for the durable state a restart reads back.
     yield* Effect.gen(function* () {
       yield* Effect.gen(function* () {
         yield* setNow("2026-09-14T06:00:00Z");
@@ -499,8 +488,8 @@ it.effect("a restart before the routine advanced does not duplicate the occurren
         expect((yield* routineTasks("morning")).length).toBe(1);
         expect(yield* nextDueIso("morning")).toBe("2026-09-15T08:00:00.000Z");
       }).pipe(Effect.provide(makeServicesLayer()));
-    }).pipe(Effect.provide(makeSqlitePersistenceLive(dbPath)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(personalTestDatabase));
+  }),
 );
 
 it.effect("Run now creates its own occurrence key and dedupes on the request id", () =>
@@ -932,7 +921,7 @@ it.effect("relays an event payload's message verbatim into the bot's chat, with 
     expect(task?.threadId).toBe(posts[0]!.threadId);
     // The same event the task stream turns into a routine notification.
     expect(pushEventForTask(task!)).toBe("routine_result");
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("fails a relay whose payload has no message, and posts nothing", () => {
@@ -958,7 +947,7 @@ it.effect("fails a relay whose payload has no message, and posts nothing", () =>
     expect(fired._tag).toBe("Failed");
     expect(assistantPosts(harness)).toEqual([]);
     expect((yield* occurrences(EVENT_ROUTINE)).map((row) => row.status)).toEqual(["failed"]);
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a scheduled relay posts its prompt, and an edit keeps the delivery", () => {
@@ -987,7 +976,7 @@ it.effect("a scheduled relay posts its prompt, and an edit keeps the delivery", 
     yield* tickAndDrain;
     expect(assistantPosts(harness).map((post) => post.text)).toEqual(["Stand-up in five minutes."]);
     expect(turnStarts(harness)).toEqual([]);
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 // ── Preparers (the nightly Claude Code update run) ─────────────────────
@@ -1200,7 +1189,7 @@ it.effect("a routine made from a chat stores it and posts its run into that chat
     expect(
       record !== null && record !== undefined && "payload" in record ? record.payload : null,
     ).toEqual(expect.objectContaining({ source: "routine", title: "Confirm release" }));
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a busy chat holds the run queued until it is idle, then runs it once", () => {
@@ -1233,7 +1222,7 @@ it.effect("a busy chat holds the run queued until it is idle, then runs it once"
     yield* tasks.drain;
     expect(chatTurnStarts(harness).map((start) => start.threadId)).toEqual([CHAT]);
     expect((yield* routineTasks("busy"))[0]?.status).toBe("running");
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect(
@@ -1279,7 +1268,7 @@ it.effect(
         expect([CHAT, archived, deleted]).not.toContain(task?.threadId);
       }
       expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(CHAT);
-    }).pipe(Effect.provide(makeLayer(undefined, harness)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
@@ -1339,7 +1328,7 @@ it.effect(
       expect(
         harness.dispatched.filter((command) => command.type === "thread.metadata.update"),
       ).toEqual([]);
-    }).pipe(Effect.provide(makeLayer(undefined, harness)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
@@ -1370,7 +1359,7 @@ it.effect(
       expect([archived, stranger]).not.toContain(task?.threadId);
       expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(archived);
       expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(stranger);
-    }).pipe(Effect.provide(makeLayer(undefined, harness)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
@@ -1411,7 +1400,7 @@ it.effect(
       expect([relay, open]).not.toContain(task?.threadId);
       expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(relay);
       expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(open);
-    }).pipe(Effect.provide(makeLayer(undefined, harness)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
@@ -1440,7 +1429,7 @@ it.effect("newChatEachRun opts out, and an edit can turn it back off", () => {
 
     expect((yield* routineTasks("opted-out"))[0]?.threadId).not.toBe(CHAT);
     expect((yield* routineTasks("flipped"))[0]?.threadId).toBe(CHAT);
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a routine with no source chat (legacy or Scheduled screen) opens a new chat", () => {
@@ -1467,7 +1456,7 @@ it.effect("a routine with no source chat (legacy or Scheduled screen) opens a ne
     expect(task?.threadId).toBeTruthy();
     expect(task?.threadId).not.toBe(CHAT);
     expect(harness.dispatched.some((command) => command.type === "thread.create")).toBe(true);
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a retried slot or Run now posts into the chat once, one run at a time", () => {
@@ -1512,7 +1501,7 @@ it.effect("a retried slot or Run now posts into the chat once, one run at a time
       expect.objectContaining({ localOccurrence: "2026-09-25T16:20", status: "created" }),
       expect.objectContaining({ localOccurrence: "manual:again", status: "created" }),
     ]);
-  }).pipe(Effect.provide(makeLayer(undefined, harness)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 // A routine's notify mode: what a run is told, and the mode the run keeps.
@@ -1726,7 +1715,7 @@ it.effect(
       expect(turnStarts(harness)).toEqual([]);
       // Still due: the copy changed nothing about it.
       expect(yield* nextDueIso(routineId)).toBe("2026-09-14T08:00:00.000Z");
-    }).pipe(Effect.provide(makeLayer(undefined, harness)), withSchedulersEnv("off"));
+    }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv("off"));
   },
 );
 
@@ -1744,5 +1733,5 @@ it.effect("schedulers unset or on: the same due routine fires once and its task 
     expect(created.map((task) => task.status)).toEqual(["running"]);
     expect(turnStarts(harness).length).toBe(1);
     expect(yield* nextDueIso(routineId)).toBe("2026-09-15T08:00:00.000Z");
-  }).pipe(Effect.provide(makeLayer(undefined, harness)), withSchedulersEnv(undefined));
+  }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv(undefined));
 });
