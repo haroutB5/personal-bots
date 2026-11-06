@@ -5753,6 +5753,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("pairs a standard link with the held phone scopes and keeps devices out of reach", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairing = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({}),
+      });
+      assert.equal(pairing.status, 200);
+      const { credential } = (yield* pairing.json) as { readonly credential: string };
+
+      const exchanged = yield* exchangeAccessToken(credential, {
+        scope: AuthPhoneClientScopes.join(" "),
+      });
+      assert.equal(exchanged.response.status, 200);
+      assert.equal(exchanged.body.scope, AuthStandardClientScopes.join(" "));
+
+      const listError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(yield* wsUrlForBearerToken(exchanged.body.access_token ?? ""), (client) =>
+            client[WS_METHODS.personalDevicesList]({}),
+          ),
+        ),
+      );
+      assert.equal(listError._tag, "EnvironmentAuthorizationError");
+      if (listError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(listError.requiredScope, "access:read");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("allows a phone-scoped session to list and revoke devices", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

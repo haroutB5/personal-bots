@@ -785,7 +785,7 @@ export const make = Effect.gen(function* () {
   > => {
     if (!devAuth?.matches(credential)) {
       return bootstrapCredentials
-        .consume(credential, input)
+        .resolve(credential, input)
         .pipe(Effect.mapError(toBootstrapExchangeError));
     }
     return sessions.verify(credential).pipe(
@@ -806,9 +806,17 @@ export const make = Effect.gen(function* () {
       resolveBootstrapGrant(credential, input).pipe(
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
-            const grantedScopes = requestedScopes ?? grant.scopes;
-            if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
+            const grantedScopes =
+              requestedScopes === undefined
+                ? grant.scopes
+                : grant.scopes.filter((scope) => requestedScopes.includes(scope));
+            if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
+            }
+            if (grant.method !== "reusable-dev-token") {
+              yield* bootstrapCredentials
+                .consume(credential, input)
+                .pipe(Effect.mapError(toBootstrapExchangeError));
             }
             const method = input?.proofKeyThumbprint
               ? ("dpop-access-token" as const)
