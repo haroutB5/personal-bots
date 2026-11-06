@@ -8,7 +8,7 @@ import {
 } from "@hbots/personal-client/settings/secretAccess";
 import { IconCheck, IconX } from "@tabler/icons-react-native";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useSecureScreen } from "../../platform/secureScreen";
 import { tokens } from "../../shell/tokens";
@@ -50,6 +50,8 @@ function Pending({
   const unverified = request.unverifiedOrigins ?? [];
   const problem = secretAccessProblem(access);
   const ready = value.length > 0 && !responding;
+  const maxHeight = context.cardMaxHeight ?? 0;
+  const constrained = maxHeight > 0;
 
   const save = () => {
     if (!ready) return;
@@ -63,60 +65,71 @@ function Pending({
   };
 
   return (
-    <View style={cardStyles.card} accessibilityLabel={`${context.botName} needs a secret`}>
-      <Text style={styles.kicker}>{context.botName} needs a secret</Text>
-      <Text style={cardStyles.body}>{request.label}</Text>
-      {purpose.length > 0 ? <Text style={cardStyles.secondary}>{purpose}</Text> : null}
-      {unverified.length > 0 ? (
-        <Text style={styles.warning}>
-          {context.botName} chose {unverified.join(", ")} for this key. This app does not know that
-          address as one for {request.name}, and the key will be sent there. Save it only if you
-          trust it, or change the address below.
-        </Text>
-      ) : null}
-
-      <Text style={styles.label}>{request.name}</Text>
-      <TextInput
-        value={value}
-        editable={!responding}
-        secureTextEntry
-        autoComplete="off"
-        autoCorrect={false}
-        autoCapitalize="none"
-        importantForAutofill="no"
-        contextMenuHidden
-        onFocus={() => context.revealCard?.(secretCardItemId(card.requestId))}
-        onChangeText={setValue}
-        style={styles.input}
-      />
-      <Text style={styles.help}>
-        Saved to your computer's secret store as {request.name}. It is never shown in this chat and
-        never sent to {context.botName} as text.
-      </Text>
-
-      <View style={{ marginTop: 12 }}>
-        <SecretAccessFields
-          state={access}
-          onChange={setAccess}
-          disabled={responding}
-          showProblem={showProblem}
-          botName={context.botName}
-          showPlacement
-        />
-      </View>
-
-      <Pressable
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: shared, disabled: responding }}
-        disabled={responding}
-        onPress={() => setShared((current) => !current)}
-        style={({ pressed }) => [styles.sharedRow, pressed ? cardStyles.pressed : null]}
+    <View
+      style={[cardStyles.card, constrained ? { maxHeight } : null]}
+      accessibilityLabel={`${context.botName} needs a secret`}
+    >
+      <ScrollView
+        style={styles.body}
+        scrollEnabled={constrained}
+        nestedScrollEnabled
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.checkBox, shared ? styles.checkBoxOn : null]}>
-          {shared ? <IconCheck size={13} color={tokens.primaryText} strokeWidth={3} /> : null}
+        <Text style={styles.kicker}>{context.botName} needs a secret</Text>
+        <Text style={cardStyles.body}>{request.label}</Text>
+        {purpose.length > 0 ? <Text style={cardStyles.secondary}>{purpose}</Text> : null}
+        {unverified.length > 0 ? (
+          <Text style={styles.warning}>
+            {context.botName} chose {unverified.join(", ")} for this key. This app does not know
+            that address as one for {request.name}, and the key will be sent there. Save it only if
+            you trust it, or change the address below.
+          </Text>
+        ) : null}
+
+        <Text style={styles.label}>{request.name}</Text>
+        <TextInput
+          value={value}
+          editable={!responding}
+          secureTextEntry
+          autoComplete="off"
+          autoCorrect={false}
+          autoCapitalize="none"
+          importantForAutofill="no"
+          contextMenuHidden
+          onFocus={() => context.revealCard?.(secretCardItemId(card.requestId))}
+          onChangeText={setValue}
+          style={styles.input}
+        />
+        <Text style={styles.help}>
+          Saved to your computer's secret store as {request.name}. It is never shown in this chat
+          and never sent to {context.botName} as text.
+        </Text>
+
+        <View style={{ marginTop: 12 }}>
+          <SecretAccessFields
+            state={access}
+            onChange={setAccess}
+            disabled={responding}
+            showProblem={showProblem}
+            botName={context.botName}
+            showPlacement
+          />
         </View>
-        <Text style={styles.sharedLabel}>Allow all bots to use this key</Text>
-      </Pressable>
+
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: shared, disabled: responding }}
+          disabled={responding}
+          onPress={() => setShared((current) => !current)}
+          style={({ pressed }) => [styles.sharedRow, pressed ? cardStyles.pressed : null]}
+        >
+          <View style={[styles.checkBox, shared ? styles.checkBoxOn : null]}>
+            {shared ? <IconCheck size={13} color={tokens.primaryText} strokeWidth={3} /> : null}
+          </View>
+          <Text style={styles.sharedLabel}>Allow all bots to use this key</Text>
+        </Pressable>
+      </ScrollView>
 
       <View style={cardStyles.row}>
         <Pressable
@@ -258,6 +271,7 @@ const styles = StyleSheet.create({
     color: tokens.text,
     fontSize: 15,
   },
+  body: { flexGrow: 0, flexShrink: 1 },
   save: {
     marginLeft: "auto",
     minWidth: 112,

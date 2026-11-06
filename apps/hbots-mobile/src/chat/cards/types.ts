@@ -26,6 +26,11 @@ export interface CardContext {
   readonly onOpenChat: (botId: string, threadId: string) => void;
   /** Brings a feed row into view, used when a card's form takes keyboard focus. */
   readonly revealCard?: (itemId: string) => void;
+  /**
+   * The tallest a focused card row may grow while the keyboard is up, so its
+   * bottom stays above the composer. Null when the keyboard is closed.
+   */
+  readonly cardMaxHeight?: number | null;
   readonly secrets: {
     readonly respondingIds: ReadonlySet<string>;
     readonly onProvide: (

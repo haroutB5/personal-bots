@@ -60,6 +60,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { Composer } from "../chat/Composer";
 import { buildChatChips, chatHeaderModel, findChatBot } from "../chat/chatModel";
+import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
 import { MessageList } from "../chat/MessageList";
@@ -154,6 +155,17 @@ export function ChatScreen({
   const openedAt = useRef(performance.now());
   const openLogged = useRef(false);
   const keyboard = useKeyboardInset();
+  const [composerHeight, setComposerHeight] = useState(0);
+  const [dockHeight, setDockHeight] = useState(36);
+  const [listHeight, setListHeight] = useState(0);
+  const chatLayout = chatKeyboardLayout({
+    bodyHeight: keyboard.frameHeight,
+    keyboardInset: keyboard.padding,
+    keyboardOpen: keyboard.open,
+    composerHeight,
+    dockHeight,
+    listHeight,
+  });
   const messageListControl = useRef<MessageListHandle | null>(null);
   const revealCard = (itemId: string) => messageListControl.current?.scrollToCard(itemId);
 
@@ -227,6 +239,7 @@ export function ChatScreen({
     nowMs: now,
     onOpenChat,
     onRevealCard: revealCard,
+    cardMaxHeight: chatLayout.keyboardOpen ? chatLayout.cardMaxHeight : null,
   });
   const latestMessageStatus = useMemo(
     () =>
@@ -763,6 +776,7 @@ export function ChatScreen({
               onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
               loadEarlierBusy={page?.loadingOlder === true}
               listControl={messageListControl}
+              onHeightChange={setListHeight}
               keyboardInset={keyboard.padding}
             />
             {archived ? (
@@ -773,38 +787,46 @@ export function ChatScreen({
                 </Pressable>
               </View>
             ) : (
-              <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
-                <Pressable
-                  onPress={onOpenComputer}
-                  accessibilityRole="button"
-                  accessibilityLabel="Computer"
-                  style={styles.computerDock}
+              <>
+                {chatLayout.dockVisible ? (
+                  <Pressable
+                    onPress={onOpenComputer}
+                    onLayout={(event) => setDockHeight(event.nativeEvent.layout.height)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Computer"
+                    style={styles.computerDock}
+                  >
+                    <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
+                    <Text style={styles.computerDockText}>Computer</Text>
+                  </Pressable>
+                ) : null}
+                <View
+                  style={{ paddingBottom: Math.max(insets.bottom, 8) }}
+                  onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
                 >
-                  <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
-                  <Text style={styles.computerDockText}>Computer</Text>
-                </Pressable>
-                <Composer
-                  native={native}
-                  chat={chat}
-                  thread={thread}
-                  threadId={threadId}
-                  bot={record?.bot ?? null}
-                  botName={header.botName}
-                  working={running}
-                  replyTo={replyTo}
-                  onClearReply={() => setReplyTo(null)}
-                  onPendingChange={setPending}
-                  onSendError={setActionError}
-                  onInterrupt={async () => {
-                    const result = await interrupt({
-                      environmentId,
-                      input: { threadId: ThreadId.make(threadId) },
-                    });
-                    setActionError(failureText(result, "Couldn't stop this turn."));
-                  }}
-                  onSent={() => undefined}
-                />
-              </View>
+                  <Composer
+                    native={native}
+                    chat={chat}
+                    thread={thread}
+                    threadId={threadId}
+                    bot={record?.bot ?? null}
+                    botName={header.botName}
+                    working={running}
+                    replyTo={replyTo}
+                    onClearReply={() => setReplyTo(null)}
+                    onPendingChange={setPending}
+                    onSendError={setActionError}
+                    onInterrupt={async () => {
+                      const result = await interrupt({
+                        environmentId,
+                        input: { threadId: ThreadId.make(threadId) },
+                      });
+                      setActionError(failureText(result, "Couldn't stop this turn."));
+                    }}
+                    onSent={() => undefined}
+                  />
+                </View>
+              </>
             )}
           </>
         )}

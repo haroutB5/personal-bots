@@ -57,6 +57,9 @@ type Row =
 
 type ImageAttachment = Extract<ChatAttachment, { readonly type: "image" }>;
 
+/** An inverted list draws offset 0 at the visual bottom, where a card's Save row sits. */
+const CARD_REVEAL_VIEW_POSITION = 0;
+
 function isImageAttachment(attachment: ChatAttachment): attachment is ImageAttachment {
   return attachment.type === "image";
 }
@@ -472,6 +475,7 @@ export function MessageList({
   groupSpeaker,
   listControl,
   keyboardInset = 0,
+  onHeightChange,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -502,6 +506,8 @@ export function MessageList({
   readonly keyboardInset?: number;
   /** Set by the chat screen so a card can bring itself above the keyboard. */
   readonly listControl?: { current: MessageListHandle | null };
+  /** The measured list viewport, used to bound a focused card row. */
+  readonly onHeightChange?: (height: number) => void;
   /** Group transcripts only: who a member message belongs to. */
   readonly groupSpeaker?: (botId: string) => {
     readonly name: string;
@@ -529,9 +535,14 @@ export function MessageList({
       lastReveal.current = itemId;
       const index = scrollIndexForItem(rows, itemId);
       if (index === null) return;
-      // Inverted: viewPosition 1 puts the card's top at the visible top, so
-      // the field sits just under the header and Save scrolls above the IME.
-      listRef.current?.scrollToIndex({ index, viewPosition: 1, animated: true });
+      // Inverted: viewPosition 0 puts the card's bottom, where Save sits, at
+      // the visible bottom. The card is bounded to the list while the keyboard
+      // is open, so its whole body fits above the composer.
+      listRef.current?.scrollToIndex({
+        index,
+        viewPosition: CARD_REVEAL_VIEW_POSITION,
+        animated: true,
+      });
     },
     [rows],
   );
@@ -554,7 +565,10 @@ export function MessageList({
     <FlatList
       ref={listRef}
       data={rows.toReversed()}
+      extraData={cardContext}
       inverted
+      nestedScrollEnabled
+      onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
       style={styles.list}
       keyExtractor={(row) => row.key}
       contentContainerStyle={styles.content}

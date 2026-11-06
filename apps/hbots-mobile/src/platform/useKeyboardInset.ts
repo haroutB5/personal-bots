@@ -10,6 +10,10 @@ import { keyboardRemainder } from "./keyboardInset";
  */
 export function useKeyboardInset(active = true): {
   readonly padding: number;
+  /** True while the IME is up, even when the window resize already made room. */
+  readonly open: boolean;
+  /** The measured container height, which shrinks on a window that resizes. */
+  readonly frameHeight: number;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 } {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -31,14 +35,14 @@ export function useKeyboardInset(active = true): {
     };
   }, [active]);
 
-  if (!active) return { padding: 0, onLayout: () => undefined };
+  if (!active) return { padding: 0, open: false, frameHeight, onLayout: () => undefined };
   const onLayout = (event: LayoutChangeEvent) => {
     const height = event.nativeEvent.layout.height;
     setFrameHeight(height);
     if (keyboardHeight === 0) baseHeight.current = height;
   };
   if (keyboardHeight === 0 || baseHeight.current === null) {
-    return { padding: 0, onLayout };
+    return { padding: 0, open: keyboardHeight > 0, frameHeight, onLayout };
   }
   return {
     padding: keyboardRemainder({
@@ -46,6 +50,8 @@ export function useKeyboardInset(active = true): {
       frameHeight,
       keyboardHeight,
     }),
+    open: true,
+    frameHeight,
     onLayout,
   };
 }

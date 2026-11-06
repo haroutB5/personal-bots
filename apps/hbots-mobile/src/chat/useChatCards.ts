@@ -71,6 +71,7 @@ export function useChatCards(input: {
   readonly nowMs: number;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onRevealCard?: (itemId: string) => void;
+  readonly cardMaxHeight?: number | null;
 }): {
   readonly items: ConversationItem[];
   readonly context: CardContext;
@@ -344,6 +345,7 @@ export function useChatCards(input: {
       waitingLabelFor: (id) => (id === null ? null : (waitingLabels.get(id) ?? null)),
       onOpenChat: input.onOpenChat,
       revealCard: input.onRevealCard,
+      cardMaxHeight: input.cardMaxHeight ?? null,
       secrets: {
         respondingIds: respondingSecretIds,
         onProvide: provideSecret,
@@ -360,6 +362,7 @@ export function useChatCards(input: {
       declineSecret,
       environmentId,
       input.botName,
+      input.cardMaxHeight,
       input.chat,
       input.nowMs,
       input.onOpenChat,
