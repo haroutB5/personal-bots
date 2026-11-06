@@ -1,5 +1,5 @@
-import * as Clipboard from "expo-clipboard";
-import { useCallback, useEffect, useRef, useState } from "react";
+import * as Device from "expo-device";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -7,7 +7,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -22,16 +21,17 @@ import {
   setCrashBaseUrl,
 } from "./crash/crashReporter";
 import { apkUrlFor, fetchCompat, type AndroidRelease } from "./compat";
-import { describePairFailure } from "./connection";
 import { classifyFailure } from "./failure";
-import { pair } from "./pairing";
-import { describePairingLinkError, parsePairingLink } from "./pairingLink";
+import { OnboardingScreen } from "./onboarding/OnboardingScreen";
+import { failureFor, reducePairing } from "./onboarding/model";
+import { inspectServer, pair } from "./pairing";
 import { AppAtomRegistryProvider } from "./personal/atomRegistry";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
 import { renewSession } from "./renew";
 import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
 import { loadServer, saveServer } from "./serverMemory";
 import { clearSession, loadSession, saveSession, type StoredSession } from "./session";
+import { authMethodOf } from "./sessionAuth";
 import { createSessionLifetime } from "./sessionLifetime";
 import { describeSignOut, revokeRemoteSession } from "./signOut";
 import { AppShell } from "./shell/AppShell";
@@ -96,7 +96,7 @@ const sessionLifetime = createSessionLifetime({
 
 function App() {
   const [screen, setScreen] = useState<Screen>({ kind: "booting" });
-  const [link, setLink] = useState("");
+  const [pairing, dispatchPairing] = useReducer(reducePairing, { step: "welcome" as const });
   const [update, setUpdate] = useState<UpdateSnapshot | null>(null);
   const [latest, setLatest] = useState<AndroidRelease | null>(null);
   const [minimumVersion, setMinimumVersion] = useState<string | null>(null);
@@ -118,7 +118,12 @@ function App() {
     installedVersion,
     update?.rejected ?? null,
   );
-
+  const pairingNotice =
+    screen.kind !== "unpaired"
+      ? null
+      : screen.requiredVersion !== null
+        ? `This hbots version is too old. Your laptop needs ${screen.requiredVersion} or newer. Pair this phone to install the update.`
+        : (signedOutUpdate ?? screen.notice);
   const activeSession = screen.kind === "ready" || screen.kind === "tooOld" ? screen.session : null;
 
   useEffect(() => {
@@ -167,6 +172,7 @@ function App() {
         : {
             apkUrl: apkUrlFor(session.httpBaseUrl, compat.latest),
             bearer: session.accessToken,
+            authMethod: authMethodOf(session),
           };
     await offerUpdate(compat.latest, auth, manual, epoch);
     return compat;
@@ -343,38 +349,45 @@ function App() {
     return () => clearInterval(timer);
   }, [checkForUpdate]);
 
-  const submitLink = useCallback(async () => {
-    const parsed = parsePairingLink(link);
-    if (!parsed.ok) {
-      setScreen({
-        kind: "unpaired",
-        error: describePairingLinkError(parsed.error),
-        notice: null,
-        requiredVersion: minimumVersion,
-      });
+  useEffect(() => {
+    if (pairing.step !== "checking") return;
+    let live = true;
+    const required = minimumVersion;
+    if (required !== null && isTooOld(installedVersion, required)) {
+      dispatchPairing({ type: "checkFailed", reason: "app-too-old" });
       return;
     }
-    setScreen({ kind: "connecting", step: "Pairing" });
-    try {
-      const session = await pair(parsed.target);
-      await sessionLifetime.adopt(session);
-      await saveServer(session.httpBaseUrl);
-      setLink("");
-      startRenew();
-      await goOnline(session, 0);
-    } catch (cause) {
-      setScreen({
-        kind: "unpaired",
-        error: describePairFailure(cause),
-        notice: null,
-        requiredVersion: minimumVersion,
-      });
-    }
-  }, [goOnline, link, minimumVersion, startRenew]);
+    void inspectServer(pairing.link).then(
+      (server) => {
+        if (live) dispatchPairing({ type: "checked", server });
+      },
+      (cause: unknown) => {
+        if (live) dispatchPairing({ type: "checkFailed", reason: failureFor(cause) });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [installedVersion, minimumVersion, pairing]);
 
-  const pasteLink = useCallback(async () => {
-    setLink(await Clipboard.getStringAsync());
-  }, []);
+  useEffect(() => {
+    if (pairing.step !== "pairing") return;
+    let live = true;
+    void (async () => {
+      try {
+        const session = await pair(pairing.link, pairing.label);
+        await sessionLifetime.adopt(session);
+        await saveServer(session.httpBaseUrl);
+        startRenew();
+        await goOnline(session, 0);
+      } catch (cause) {
+        if (live) dispatchPairing({ type: "pairFailed", reason: failureFor(cause) });
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [goOnline, pairing, startRenew]);
 
   const signOut = useCallback(
     async (session: StoredSession) => {
@@ -387,6 +400,7 @@ function App() {
         native.client.ports.kv.removeItem(CHATS_SNAPSHOT_KEY);
       }
       const outcome = await revokeRemoteSession(session);
+      dispatchPairing({ type: "reset" });
       await saveServer(session.httpBaseUrl);
       const compat = await fetchCompat(session.httpBaseUrl);
       if (compat !== null) {
@@ -421,6 +435,7 @@ function App() {
   );
 
   const pairAgain = useCallback(() => {
+    dispatchPairing({ type: "reset" });
     setScreen({
       kind: "unpaired",
       error: null,
@@ -445,6 +460,19 @@ function App() {
             onInstall={() => void confirmUpdateInstall()}
             onOpenPermission={() => void openInstallPermission()}
             onSignOut={() => confirmSignOut(screen.session)}
+          />
+        ) : screen.kind === "unpaired" ? (
+          <OnboardingScreen
+            state={pairing}
+            dispatch={dispatchPairing}
+            defaultLabel={Device.modelName ?? "This phone"}
+            notice={pairingNotice}
+            onUpdate={() =>
+              Alert.alert(
+                "Update hbots",
+                "Install the newest hbots from your laptop, then pair this phone again.",
+              )
+            }
           />
         ) : (
           <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
@@ -503,7 +531,7 @@ function App() {
                     </Pressable>
                   )}
                 </>
-              ) : screen.kind === "signedOut" ? (
+              ) : (
                 <>
                   <Text style={styles.headline}>You were signed out</Text>
                   <Text style={styles.help}>
@@ -518,58 +546,6 @@ function App() {
                   >
                     <Text style={styles.primaryText}>Pair again</Text>
                   </Pressable>
-                </>
-              ) : (
-                <>
-                  {screen.requiredVersion !== null ? (
-                    <View style={styles.errorBox}>
-                      <Text style={styles.error}>
-                        This hbots version is too old. Your laptop needs {screen.requiredVersion} or
-                        newer. Pair this phone to install the update.
-                      </Text>
-                    </View>
-                  ) : signedOutUpdate !== null ? (
-                    <View style={styles.noticeBox}>
-                      <Text style={styles.notice}>{signedOutUpdate}</Text>
-                    </View>
-                  ) : null}
-                  {screen.notice !== null ? (
-                    <View style={styles.noticeBox}>
-                      <Text style={styles.notice}>{screen.notice}</Text>
-                    </View>
-                  ) : null}
-                  <Text style={styles.label}>Pairing link</Text>
-                  <TextInput
-                    value={link}
-                    onChangeText={setLink}
-                    placeholder="https://your-server/pair#token=..."
-                    placeholderTextColor={COLORS.muted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="off"
-                    importantForAutofill="no"
-                    multiline
-                    style={styles.input}
-                  />
-                  <Pressable
-                    onPress={() => void pasteLink()}
-                    accessibilityRole="button"
-                    style={styles.secondaryButton}
-                  >
-                    <Text style={styles.secondaryText}>Paste</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => void submitLink()}
-                    accessibilityRole="button"
-                    style={styles.primaryButton}
-                  >
-                    <Text style={styles.primaryText}>Pair</Text>
-                  </Pressable>
-                  {screen.error !== null ? (
-                    <View style={styles.errorBox}>
-                      <Text style={styles.error}>{screen.error}</Text>
-                    </View>
-                  ) : null}
                 </>
               )}
             </View>

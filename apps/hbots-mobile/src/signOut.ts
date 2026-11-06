@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 
+import { authorizationHeaders } from "./authorizedRequest";
 import { classifyFailure, RequestFailure } from "./failure";
 import { requestJson } from "./http";
 import type { StoredSession } from "./session";
@@ -10,14 +11,11 @@ const decodeRevoked = Schema.decodeUnknownSync(Schema.Struct({ revoked: Schema.B
 
 export async function revokeRemoteSession(session: StoredSession): Promise<RemoteSignOut> {
   try {
-    const body = await requestJson(
-      "revoke",
-      new URL("/api/auth/session/revoke", session.httpBaseUrl),
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${session.accessToken}` },
-      },
-    );
+    const url = new URL("/api/auth/session/revoke", session.httpBaseUrl);
+    const body = await requestJson("revoke", url, {
+      method: "POST",
+      headers: await authorizationHeaders(session, "POST", url.toString()),
+    });
     return decodeRevoked(body).revoked ? "revoked" : "unreachable";
   } catch (cause) {
     if (

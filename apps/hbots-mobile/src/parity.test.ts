@@ -319,6 +319,7 @@ describe("Android parity ratchet", () => {
       "A14",
       "A15",
       "A16",
+      "A17",
     ]);
   });
 
@@ -373,5 +374,9 @@ describe("Android parity ratchet", () => {
 
   it("claims every A16 item, including the live view, its actions, cards and RPCs", () => {
     for (const item of A16_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims the A17 pairing screen", () => {
+    expect(DONE_ITEMS).toContain("screen:routes/pair.tsx#pair");
   });
 });

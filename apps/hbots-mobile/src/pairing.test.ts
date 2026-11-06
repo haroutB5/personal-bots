@@ -4,6 +4,15 @@ import { classifyFailure } from "./failure";
 import { decodeTicket, openSocketUrl, pair } from "./pairing";
 import type { StoredSession } from "./session";
 
+vi.mock("./dpop", () => ({
+  createDpopProof: async () => ({ proof: "test-proof", thumbprint: "test-thumbprint" }),
+  loadOrCreateDpopKey: async () => ({
+    privateJwk: {},
+    publicJwk: {},
+    thumbprint: "test-thumbprint",
+  }),
+}));
+
 const BASE = "https://relay.example.test/";
 
 const DESCRIPTOR = {
@@ -17,7 +26,7 @@ const DESCRIPTOR = {
 const TOKEN = {
   access_token: "tok-1",
   issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-  token_type: "Bearer",
+  token_type: "DPoP",
   expires_in: 2_592_000,
   scope: "ws",
 };
@@ -66,22 +75,32 @@ describe("decodeTicket", () => {
 });
 
 describe("pair", () => {
-  it("exchanges the one-time token and returns a session for that environment", async () => {
-    routeFetch({
+  it("sends the phone proof and device label, then stores a bound session", async () => {
+    const fetchSpy = routeFetch({
       "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
       "/oauth/token": () => json(200, TOKEN),
     });
-    const session = await pair({
-      httpBaseUrl: BASE,
-      wsBaseUrl: "wss://relay.example.test/",
-      credential: "one-time",
-    });
+    const session = await pair(
+      {
+        httpBaseUrl: BASE,
+        wsBaseUrl: "wss://relay.example.test/",
+        credential: "one-time",
+      },
+      "Find X9 Pro",
+    );
     expect(session).toMatchObject({
       environmentId: "env-1",
       label: "Harout's laptop",
       accessToken: "tok-1",
+      authMethod: "dpop",
       httpBaseUrl: BASE,
     });
+    const exchange = fetchSpy.mock.calls.find(([target]) =>
+      String(target).endsWith("/oauth/token"),
+    );
+    expect(exchange?.[1]?.headers).toMatchObject({ dpop: "test-proof" });
+    expect(String(exchange?.[1]?.body)).toContain("client_label=Find+X9+Pro");
+    expect(String(exchange?.[1]?.body)).toContain("client_device_type=mobile");
   });
 
   it("reports a spent link as signed out", async () => {
@@ -89,11 +108,14 @@ describe("pair", () => {
       "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
       "/oauth/token": () => json(401, { code: "auth_invalid" }),
     });
-    const failure = await pair({
-      httpBaseUrl: BASE,
-      wsBaseUrl: "wss://relay.example.test/",
-      credential: "spent",
-    }).catch(classifyFailure);
+    const failure = await pair(
+      {
+        httpBaseUrl: BASE,
+        wsBaseUrl: "wss://relay.example.test/",
+        credential: "spent",
+      },
+      "Find X9 Pro",
+    ).catch(classifyFailure);
     expect(failure).toEqual({ kind: "authDead", reason: "unauthorized" });
   });
 });

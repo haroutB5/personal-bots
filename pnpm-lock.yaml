@@ -223,6 +223,9 @@ importers:
       '@hbots/personal-client':
         specifier: workspace:*
         version: link:../../packages/personal-client
+      '@noble/curves':
+        specifier: 'catalog:'
+        version: 1.9.1
       '@react-navigation/native':
         specifier: 7.3.4
         version: 7.3.4(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
@@ -250,12 +253,18 @@ importers:
       expo-build-properties:
         specifier: ~57.0.15
         version: 57.0.15(expo@57.0.18)
+      expo-camera:
+        specifier: ~57.0.4
+        version: 57.0.4(@types/emscripten@1.41.5)(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       expo-clipboard:
         specifier: ~57.0.1
         version: 57.0.1(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       expo-crypto:
         specifier: ~57.0.2
         version: 57.0.2(expo@57.0.18)
+      expo-device:
+        specifier: ~57.0.1
+        version: 57.0.1(expo@57.0.18)
       expo-document-picker:
         specifier: ~57.0.1
         version: 57.0.1(expo@57.0.18)
@@ -19561,7 +19570,7 @@ snapshots:
   expo-camera@57.0.4(@types/emscripten@1.41.5)(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):
     dependencies:
       barcode-detector: 3.2.0(@types/emscripten@1.41.5)
-      expo: 57.0.18(41fd11498a34454c91128cdad32f22f8)
+      expo: 57.0.18(a43d12e192ace4ae463d00b8d08cfa0a)
       react: 19.2.3
       react-native: 0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
@@ -19625,7 +19634,7 @@ snapshots:
 
   expo-device@57.0.1(expo@57.0.18):
     dependencies:
-      expo: 57.0.18(41fd11498a34454c91128cdad32f22f8)
+      expo: 57.0.18(a43d12e192ace4ae463d00b8d08cfa0a)
       ua-parser-js: 0.7.41
 
   expo-document-picker@57.0.1(expo@57.0.18):
