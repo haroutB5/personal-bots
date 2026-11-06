@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { parsePairingLink } from "../pairingLink";
+import { useSecureScreen } from "../platform/secureScreen";
 import { tokens } from "../shell/tokens";
 import { failureCopy, type PairingAction, type PairingState } from "./model";
 
@@ -385,6 +386,8 @@ export function OnboardingScreen({
   onUpdate,
 }: OnboardingScreenProps) {
   const insets = useSafeAreaInsets();
+  // Every onboarding step can show the one-time link: no screenshots, no recents thumbnail.
+  useSecureScreen(true);
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (state.step === "welcome") return false;
