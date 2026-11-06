@@ -77,7 +77,7 @@ const testLayer = NodeSqliteClient.layer({ filename: ":memory:" });
 
 const seedLinks = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* runMigrations({ toMigrationInclusive: 141 });
+  yield* runMigrations({ toMigrationInclusive: 142 });
   for (const botId of ["bot-1", "bot-2"]) {
     yield* sql`
       INSERT INTO personal_bots (
