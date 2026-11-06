@@ -988,7 +988,7 @@
       "web": "TeamLeadConfirm.tsx:34",
       "primitive": "Sheet",
       "logic": {
-        "files": 9,
+        "files": 10,
         "inPackage": ["teamConstellationModel.ts", "teamDiagramModel.ts", "perfFlags.ts"],
         "direct": ["teamConstellationModel.ts"]
       },
@@ -1018,7 +1018,7 @@
       "web": "TeamScreen.tsx:817",
       "primitive": "Sheet",
       "logic": {
-        "files": 60,
+        "files": 61,
         "inPackage": [
           "usePersonalAutomation.ts",
           "usePersonalBots.ts",
@@ -2946,7 +2946,7 @@
       "web": "TeamConstellationCard.tsx:173",
       "via": "menu",
       "logic": {
-        "files": 10,
+        "files": 11,
         "inPackage": ["teamConstellationModel.ts", "teamDiagramModel.ts", "perfFlags.ts"],
         "direct": ["teamDiagramModel.ts", "teamConstellationModel.ts", "useTeamBotDrag.ts"]
       },
@@ -3675,7 +3675,7 @@
       "web": "TeamScreen.tsx:513",
       "via": "gesture",
       "logic": {
-        "files": 60,
+        "files": 61,
         "inPackage": [
           "usePersonalAutomation.ts",
           "usePersonalBots.ts",
@@ -4031,7 +4031,7 @@
       "title": "TeamConstellationCard",
       "web": "TeamConstellationCard.tsx:1",
       "logic": {
-        "files": 10,
+        "files": 11,
         "inPackage": ["teamConstellationModel.ts", "teamDiagramModel.ts", "perfFlags.ts"],
         "direct": ["teamDiagramModel.ts", "teamConstellationModel.ts", "useTeamBotDrag.ts"]
       },
