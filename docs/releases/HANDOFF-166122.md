@@ -33,3 +33,19 @@ Binary only. The previous release is `35e43c97bd39` (1.66.121). No migration ran
 - The token card keeps its cached result until its ten-minute timer fires or the app restarts. This matches the web refresh rules.
 - The Team header can say two bots when the server has four, because bots that share a group are not on the team chart. This is unchanged from 1.66.121.
 - A connection approval card in a group was not seeded on the device. It uses the same card registry as the secret and login cards.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=72a6eb43b7ef45d6eda617b69b4758d415ed2d97 release=72a6eb43b7ef json-sha256=981a8937341e6006d0186b509a452a69def4a54b5291191bae13d3acd74b579c result=PASS -->
+
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+- server-tests: PASS, exit 0
+
+<!-- gate-evidence:end -->
