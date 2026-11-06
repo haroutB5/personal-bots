@@ -895,7 +895,7 @@
       "id": "sheet:PersonalSettingsScreen.tsx#create-pairing-link",
       "kind": "sheet",
       "title": "Create pairing link",
-      "web": "PersonalSettingsScreen.tsx:493",
+      "web": "PersonalSettingsScreen.tsx:496",
       "primitive": "Dialog",
       "logic": {
         "files": 35,
@@ -4158,7 +4158,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#your-name-section",
       "kind": "setting",
       "title": "Your name (section)",
-      "web": "PersonalSettingsScreen.tsx:577",
+      "web": "PersonalSettingsScreen.tsx:580",
       "section": "Your name",
       "logic": {
         "files": 35,
@@ -4190,7 +4190,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#your-name-displaynameform",
       "kind": "setting",
       "title": "Your name / DisplayNameForm",
-      "web": "PersonalSettingsScreen.tsx:582",
+      "web": "PersonalSettingsScreen.tsx:585",
       "section": "Your name",
       "logic": {
         "files": 35,
@@ -4222,7 +4222,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-section",
       "kind": "setting",
       "title": "Bots (section)",
-      "web": "PersonalSettingsScreen.tsx:595",
+      "web": "PersonalSettingsScreen.tsx:598",
       "section": "Bots",
       "logic": {
         "files": 35,
@@ -4254,7 +4254,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-team",
       "kind": "setting",
       "title": "Bots / Team",
-      "web": "PersonalSettingsScreen.tsx:608",
+      "web": "PersonalSettingsScreen.tsx:611",
       "section": "Bots",
       "logic": {
         "files": 35,
@@ -4286,7 +4286,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-new-bot",
       "kind": "setting",
       "title": "Bots / New bot",
-      "web": "PersonalSettingsScreen.tsx:634",
+      "web": "PersonalSettingsScreen.tsx:637",
       "section": "Bots",
       "logic": {
         "files": 35,
@@ -4318,7 +4318,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-removed-bots",
       "kind": "setting",
       "title": "Bots / Removed bots",
-      "web": "PersonalSettingsScreen.tsx:655",
+      "web": "PersonalSettingsScreen.tsx:658",
       "section": "Bots",
       "logic": {
         "files": 35,
@@ -4350,7 +4350,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#appearance-section",
       "kind": "setting",
       "title": "Appearance (section)",
-      "web": "PersonalSettingsScreen.tsx:683",
+      "web": "PersonalSettingsScreen.tsx:686",
       "section": "Appearance",
       "logic": {
         "files": 35,
@@ -4381,7 +4381,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#appearance-appearancecontrol",
       "kind": "setting",
       "title": "Appearance / AppearanceControl",
-      "web": "PersonalSettingsScreen.tsx:688",
+      "web": "PersonalSettingsScreen.tsx:691",
       "section": "Appearance",
       "logic": {
         "files": 35,
@@ -4412,7 +4412,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-section",
       "kind": "setting",
       "title": "Chat (section)",
-      "web": "PersonalSettingsScreen.tsx:695",
+      "web": "PersonalSettingsScreen.tsx:698",
       "section": "Chat",
       "logic": {
         "files": 35,
@@ -4444,7 +4444,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-show-tool-steps",
       "kind": "setting",
       "title": "Chat / Show tool steps",
-      "web": "PersonalSettingsScreen.tsx:703",
+      "web": "PersonalSettingsScreen.tsx:706",
       "section": "Chat",
       "logic": {
         "files": 35,
@@ -4476,7 +4476,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-show-routines-in-chats",
       "kind": "setting",
       "title": "Chat / Show routines in chats",
-      "web": "PersonalSettingsScreen.tsx:710",
+      "web": "PersonalSettingsScreen.tsx:713",
       "section": "Chat",
       "logic": {
         "files": 35,
@@ -4508,7 +4508,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-autoarchivetaskchatsrow",
       "kind": "setting",
       "title": "Chat / AutoArchiveTaskChatsRow",
-      "web": "PersonalSettingsScreen.tsx:716",
+      "web": "PersonalSettingsScreen.tsx:719",
       "section": "Chat",
       "logic": {
         "files": 35,
@@ -4540,7 +4540,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#voice-calls-section",
       "kind": "setting",
       "title": "Voice calls (section)",
-      "web": "PersonalSettingsScreen.tsx:729",
+      "web": "PersonalSettingsScreen.tsx:732",
       "section": "Voice calls",
       "logic": {
         "files": 35,
@@ -4572,7 +4572,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#voice-calls-voicesettingssection",
       "kind": "setting",
       "title": "Voice calls / VoiceSettingsSection",
-      "web": "PersonalSettingsScreen.tsx:733",
+      "web": "PersonalSettingsScreen.tsx:736",
       "section": "Voice calls",
       "logic": {
         "files": 35,
@@ -4604,7 +4604,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-section",
       "kind": "setting",
       "title": "Plugins (section)",
-      "web": "PersonalSettingsScreen.tsx:736",
+      "web": "PersonalSettingsScreen.tsx:739",
       "section": "Plugins",
       "logic": {
         "files": 35,
@@ -4636,7 +4636,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-pairphonerow",
       "kind": "setting",
       "title": "Plugins / PairPhoneRow",
-      "web": "PersonalSettingsScreen.tsx:741",
+      "web": "PersonalSettingsScreen.tsx:744",
       "section": "Plugins",
       "logic": {
         "files": 35,
@@ -4667,7 +4667,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-connections",
       "kind": "setting",
       "title": "Plugins / Connections",
-      "web": "PersonalSettingsScreen.tsx:750",
+      "web": "PersonalSettingsScreen.tsx:753",
       "section": "Plugins",
       "logic": {
         "files": 35,
@@ -4699,7 +4699,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-passwords",
       "kind": "setting",
       "title": "Plugins / Passwords",
-      "web": "PersonalSettingsScreen.tsx:772",
+      "web": "PersonalSettingsScreen.tsx:775",
       "section": "Plugins",
       "logic": {
         "files": 35,
@@ -4731,7 +4731,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-api-keys",
       "kind": "setting",
       "title": "Plugins / API keys",
-      "web": "PersonalSettingsScreen.tsx:794",
+      "web": "PersonalSettingsScreen.tsx:797",
       "section": "Plugins",
       "logic": {
         "files": 35,
@@ -4763,7 +4763,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-devices",
       "kind": "setting",
       "title": "Plugins / Devices",
-      "web": "PersonalSettingsScreen.tsx:816",
+      "web": "PersonalSettingsScreen.tsx:819",
       "section": "Plugins",
       "logic": {
         "files": 35,
@@ -4795,7 +4795,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-section",
       "kind": "setting",
       "title": "Routines, memory and notifications (section)",
-      "web": "PersonalSettingsScreen.tsx:833",
+      "web": "PersonalSettingsScreen.tsx:836",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 35,
@@ -4827,7 +4827,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-routines",
       "kind": "setting",
       "title": "Routines, memory and notifications / Routines",
-      "web": "PersonalSettingsScreen.tsx:843",
+      "web": "PersonalSettingsScreen.tsx:846",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 35,
@@ -4859,7 +4859,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-memory",
       "kind": "setting",
       "title": "Routines, memory and notifications / Memory",
-      "web": "PersonalSettingsScreen.tsx:851",
+      "web": "PersonalSettingsScreen.tsx:854",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 35,
@@ -4891,7 +4891,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-notifications",
       "kind": "setting",
       "title": "Routines, memory and notifications / Notifications",
-      "web": "PersonalSettingsScreen.tsx:859",
+      "web": "PersonalSettingsScreen.tsx:862",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 35,
@@ -4923,7 +4923,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#about-section",
       "kind": "setting",
       "title": "About (section)",
-      "web": "PersonalSettingsScreen.tsx:904",
+      "web": "PersonalSettingsScreen.tsx:907",
       "section": "About",
       "logic": {
         "files": 35,
@@ -4955,7 +4955,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#about-about",
       "kind": "setting",
       "title": "About / About",
-      "web": "PersonalSettingsScreen.tsx:921",
+      "web": "PersonalSettingsScreen.tsx:924",
       "section": "About",
       "logic": {
         "files": 35,
@@ -4987,7 +4987,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-section",
       "kind": "setting",
       "title": "Advanced (section)",
-      "web": "PersonalSettingsScreen.tsx:947",
+      "web": "PersonalSettingsScreen.tsx:950",
       "section": "Advanced",
       "logic": {
         "files": 35,
@@ -5018,7 +5018,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-developer-view",
       "kind": "setting",
       "title": "Advanced / Developer view",
-      "web": "PersonalSettingsScreen.tsx:962",
+      "web": "PersonalSettingsScreen.tsx:965",
       "section": "Advanced",
       "logic": {
         "files": 35,
@@ -5049,7 +5049,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-diagnostics-overlay",
       "kind": "setting",
       "title": "Advanced / Diagnostics overlay",
-      "web": "PersonalSettingsScreen.tsx:989",
+      "web": "PersonalSettingsScreen.tsx:992",
       "section": "Advanced",
       "logic": {
         "files": 35,
