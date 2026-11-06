@@ -31,11 +31,9 @@ object UpdateNotifier {
       manager.createNotificationChannel(
         NotificationChannel(spec.id, spec.name, spec.importance).apply {
           description = spec.description
-          if (spec.silent) {
-            setSound(null, null)
-            enableVibration(false)
-          }
           setShowBadge(!spec.silent)
+          enableVibration(spec.vibrate)
+          if (spec.silent) setSound(null, null)
         },
       )
     }
