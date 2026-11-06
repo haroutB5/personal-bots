@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/CodexChatGptModels.ts b/apps/server/src/provider/CodexChatGptModels.ts
+index 5b00d1d828864c97c604d147e3a54df01fbcbe5b..6a3dcb3b872abec76ba187f6b74d8d5bec9f4b08 100644
+--- a/apps/server/src/provider/CodexChatGptModels.ts
++++ b/apps/server/src/provider/CodexChatGptModels.ts
+@@ -1,7 +1,7 @@
+ import type { ServerProviderModel } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Schema from "effect/Schema";
+-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest } from "effect/http";
+ 
+ export class ChatGptCatalogError extends Schema.TaggedError<ChatGptCatalogError>()(
+   "ChatGptCatalogError",

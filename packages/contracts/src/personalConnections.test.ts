@@ -18,7 +18,7 @@ describe("personal connection contracts", () => {
     // codec, which turns the plain string into a Redacted. The bare type-level
     // decoder expects a Redacted already (Effect v4 Schema.Redacted), so a raw
     // string has to go through the JSON codec, exactly as the server gets it.
-    const input = Schema.decodeUnknownSync(Schema.toCodecJson(PersonalConnectionConnectInput))({
+    const input = Schema.decodeSync(Schema.toCodecJson(PersonalConnectionConnectInput))({
       vendorId: "github",
       credentials: { accessToken: TOKEN },
     });

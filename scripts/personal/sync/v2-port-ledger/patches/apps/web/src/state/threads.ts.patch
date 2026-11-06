@@ -1,0 +1,41 @@
+diff --git a/apps/web/src/state/threads.ts b/apps/web/src/state/threads.ts
+index 31f8fea47b3f56c4a934dce1dc3eab9f518e90a1..3382076150815e388f84768efba117f68838d4d3 100644
+--- a/apps/web/src/state/threads.ts
++++ b/apps/web/src/state/threads.ts
+@@ -1,4 +1,4 @@
+-import { useAtomValue } from "@effect/atom-react";
++import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+ import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+ import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
+ import {
+@@ -12,7 +12,7 @@ import {
+ } from "@t3tools/client-runtime/state/threads";
+ import type { EnvironmentId, OrchestrationThreadShell, ThreadId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import { environmentCatalog } from "../connection/catalog";
+ import { connectionAtomRuntime } from "../connection/runtime";
+@@ -50,6 +50,21 @@ export function useEnvironmentThread(
+   ) as EnvironmentThreadState;
+ }
+ 
++/**
++ * Asks for a thread again now, for a Retry button: the stream already retries
++ * on its own, but keeps the error on screen until an attempt succeeds.
++ */
++export function useRetryEnvironmentThread(
++  environmentId: EnvironmentId | null,
++  threadId: ThreadId | null,
++): () => void {
++  const atom =
++    environmentId !== null && threadId !== null
++      ? environmentThreads.stateAtom(environmentId, threadId)
++      : EMPTY_THREAD_STATE_ATOM;
++  return useAtomRefresh(atom);
++}
++
+ type KeptThreads = ReadonlyMap<EnvironmentId, ReadonlySet<ThreadId>>;
+ 
+ // True once a thread's own stream no longer needs to stay open: it is in sync

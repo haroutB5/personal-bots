@@ -1,0 +1,100 @@
+diff --git a/packages/contracts/src/model.ts b/packages/contracts/src/model.ts
+index 31e5f9d633050b71b07ced42590e1d4df5bf3162..612d5e410a9b21603294f624662c81b960e72e6e 100644
+--- a/packages/contracts/src/model.ts
++++ b/packages/contracts/src/model.ts
+@@ -148,6 +148,50 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
+ const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
+ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+ const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
++const DEEPSEEK_DRIVER_KIND = ProviderDriverKind.make("deepseek");
++
++/** Canonical DeepSeek Flash model id (DeepSeek-V4.1-Flash). */
++export const DEEPSEEK_FLASH_MODEL = "deepseek-flash";
++/** Documented legacy Flash aliases that route to V4.1-Flash at Flash price. */
++export const DEEPSEEK_FLASH_ALIASES: ReadonlyArray<string> = ["deepseek-v4-flash", "vision-exp"];
++
++/**
++ * Agent modes a DeepSeek bot may run in on the DeepSeek Harness (dsh) engine.
++ *
++ * dsh's own presets (`standard`, `ptc`, `minimal`, `cordis`) live only in its
++ * web profile, so the ACP launch patch reproduces the three that make sense
++ * for a chat bot as extra rows. `cordis` (dsh's "Creator") is deliberately
++ * absent: it authors and installs dsh plugin bundles, a self-modifying
++ * harness. "both" is absent too (twice the base prompt, no benefit).
++ *
++ * The mode is pinned to a chat's session: resuming a Standard session under
++ * the Code overlay fails at DeepSeek's API (deferred tools), so a mode change
++ * applies to new chats and fresh sessions only.
++ */
++export const DEEPSEEK_DSH_AGENT_MODES = [
++  { value: "standard", label: "Standard" },
++  { value: "code", label: "Code" },
++  { value: "minimal", label: "Minimal" },
++] as const;
++
++export type DeepSeekDshAgentMode = (typeof DEEPSEEK_DSH_AGENT_MODES)[number]["value"];
++
++/** The agent mode a session runs when nothing else is chosen. */
++export const DEEPSEEK_DEFAULT_AGENT_MODE: DeepSeekDshAgentMode = "standard";
++
++/**
++ * Model-selection option id carrying a DeepSeek bot's agent mode, alongside
++ * `effort` and `contextWindow`. Only the dsh engine offers the descriptor.
++ */
++export const DEEPSEEK_AGENT_MODE_OPTION_ID = "agentMode";
++
++/** Engines a DeepSeek instance can run its bots on. */
++export const DEEPSEEK_ENGINES = [
++  { value: "dsh", label: "DeepSeek Harness (dsh)" },
++  { value: "claude-code", label: "Claude Code" },
++] as const;
++
++export type DeepSeekEngine = (typeof DEEPSEEK_ENGINES)[number]["value"];
+ 
+ export const DEFAULT_MODEL = "gpt-6-astra";
+ 
+@@ -174,17 +218,25 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
+   [GROK_DRIVER_KIND]: "grok-build",
+   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
++  [DEEPSEEK_DRIVER_KIND]: DEEPSEEK_FLASH_MODEL,
+ };
+ 
++/**
++ * Where a Claude background text job retries once when the default model
++ * (Haiku 5.5) fails or is refused: the Haiku before it.
++ */
++export const CLAUDE_TEXT_GENERATION_FALLBACK_MODEL = "claude-haiku-4-5";
++
+ /** Per-provider text generation model defaults. */
+ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
+   Record<ProviderDriverKind, string>
+ > = {
+   [CODEX_DRIVER_KIND]: DEFAULT_TEXT_GENERATION_MODEL,
+   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+-  [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
++  [CLAUDE_DRIVER_KIND]: "claude-haiku-5-5",
+   [CURSOR_DRIVER_KIND]: "composer-2",
+   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
++  [DEEPSEEK_DRIVER_KIND]: DEEPSEEK_FLASH_MODEL,
+ };
+ 
+ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
+@@ -211,6 +263,11 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
+     "opus-4.5": "claude-opus-4-5",
+   },
+   [OPENCODE_DRIVER_KIND]: {},
++  [DEEPSEEK_DRIVER_KIND]: {
++    "deepseek-v4-flash": DEEPSEEK_FLASH_MODEL,
++    "vision-exp": DEEPSEEK_FLASH_MODEL,
++    flash: DEEPSEEK_FLASH_MODEL,
++  },
+ };
+ 
+ // ── Provider display names ────────────────────────────────────────────
+@@ -222,4 +279,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
+   [CURSOR_DRIVER_KIND]: "Cursor",
+   [GROK_DRIVER_KIND]: "Grok",
+   [OPENCODE_DRIVER_KIND]: "OpenCode",
++  [DEEPSEEK_DRIVER_KIND]: "DeepSeek",
+ };

@@ -1,0 +1,40 @@
+diff --git a/apps/server/src/provider/Drivers/GrokDriver.ts b/apps/server/src/provider/Drivers/GrokDriver.ts
+index 70d7a3f6e3780070c029111f46584f42d846c808..0bc3b25917803da710476097061abf211b3fac25 100644
+--- a/apps/server/src/provider/Drivers/GrokDriver.ts
++++ b/apps/server/src/provider/Drivers/GrokDriver.ts
+@@ -1,11 +1,11 @@
+ import { GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { HttpClient } from "effect/unstable/http";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient } from "effect/http";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+ import { ServerConfig } from "../../config.ts";
+@@ -165,13 +165,19 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
+         initialSnapshot: (settings) =>
+           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+         checkProvider,
+-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
++        enrichSnapshot: ({
++          settings,
++          snapshot: currentSnapshot,
++          publishSnapshot,
++          refreshLatestVersion,
++        }) =>
+           resolveMaintenance().pipe(
+             Effect.flatMap((maintenanceCapabilities) =>
+               enrichGrokSnapshot({
+                 snapshot: currentSnapshot,
+                 maintenanceCapabilities,
+                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
++                forceLatestVersionRefresh: refreshLatestVersion === true,
+                 publishSnapshot,
+                 httpClient,
+               }),

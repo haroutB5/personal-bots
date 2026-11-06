@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/use-thread-pr.ts b/apps/mobile/src/state/use-thread-pr.ts
+index c903abbb07f2b2c6e1e077ed538749fd2f284111..8895fcb671dc2a96eee10a19eaeef426eab289c6 100644
+--- a/apps/mobile/src/state/use-thread-pr.ts
++++ b/apps/mobile/src/state/use-thread-pr.ts
+@@ -5,7 +5,7 @@ import {
+   createLinkedPullRequestSummaryAtomFamily,
+   pullRequestDetailToVcsStatus,
+ } from "@t3tools/client-runtime/state/pull-requests";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useCallback, useEffect, useMemo } from "react";
+ 
+ import { connectionAtomRuntime } from "../connection/runtime";

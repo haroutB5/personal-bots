@@ -1,0 +1,185 @@
+diff --git a/apps/server/src/provider/providerMaintenance.ts b/apps/server/src/provider/providerMaintenance.ts
+index ace445b0306056b8badd6eb9d4349133c728c6ee..e97a07b4551c46e505121ca5b9196ec39a47a030 100644
+--- a/apps/server/src/provider/providerMaintenance.ts
++++ b/apps/server/src/provider/providerMaintenance.ts
+@@ -12,13 +12,15 @@ import * as Context from "effect/Context";
+ import * as DateTime from "effect/DateTime";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
++import * as Exit from "effect/Exit";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Option from "effect/Option";
++import * as Ref from "effect/Ref";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient, HttpClientRequest } from "effect/http";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+ 
+@@ -65,6 +67,12 @@ export interface ProviderMaintenanceCapabilities {
+    * installer was asked and did not know.
+    */
+   readonly latestVersion?: string | null;
++  /**
++   * npm dist-tags to consider when the registry is authoritative. Defaults to
++   * `["latest"]`. The DeepSeek Harness also publishes release candidates on
++   * `next`, which is where a harness update lands first.
++   */
++  readonly latestVersionTags?: ReadonlyArray<string>;
+ }
+ 
+ export interface ProviderMaintenanceCommandAction {
+@@ -161,6 +169,7 @@ export function makeProviderMaintenanceCapabilities(input: {
+   readonly platform?: NodeJS.Platform;
+   readonly env?: NodeJS.ProcessEnv;
+   readonly latestVersion?: string | null;
++  readonly latestVersionTags?: ReadonlyArray<string>;
+ }): ProviderMaintenanceCapabilities {
+   const platform = input.platform ?? HostProcessPlatform.defaultValue();
+   const update =
+@@ -183,6 +192,7 @@ export function makeProviderMaintenanceCapabilities(input: {
+     packageName: input.packageName,
+     update,
+     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
++    ...(input.latestVersionTags ? { latestVersionTags: input.latestVersionTags } : {}),
+   };
+ }
+ 
+@@ -216,6 +226,7 @@ export function makeTargetedProviderUpdateAction(
+ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
+   readonly provider: ProviderDriverKind;
+   readonly packageName: string | null;
++  readonly latestVersionTags?: ReadonlyArray<string>;
+ }): ProviderMaintenanceCapabilities {
+   return makeProviderMaintenanceCapabilities({
+     provider: input.provider,
+@@ -223,6 +234,7 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
+     updateExecutable: null,
+     updateArgs: [],
+     updateLockKey: null,
++    ...(input.latestVersionTags ? { latestVersionTags: input.latestVersionTags } : {}),
+   });
+ }
+ 
+@@ -606,12 +618,20 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
+ export const makeCachedProviderMaintenanceResolution = Effect.fn(
+   "makeCachedProviderMaintenanceResolution",
+ )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
+-  const [cached, invalidate] = yield* Effect.cachedInvalidateWithTTL(
++  const makeCached = Effect.cachedWithTTL(
+     resolve,
+-    MAINTENANCE_CAPABILITIES_CACHE_TTL,
++    // A cancelled enrichment must not leave every subsequent reader with
++    // its failed exit for an hour. Successful ownership remains cached.
++    (exit) => (Exit.isSuccess(exit) ? MAINTENANCE_CAPABILITIES_CACHE_TTL : Duration.zero),
+   );
++  const cachedRef = yield* Ref.make(yield* makeCached);
+   return (options?: { readonly fresh?: boolean }) =>
+-    options?.fresh ? invalidate.pipe(Effect.andThen(cached)) : cached;
++    options?.fresh
++      ? makeCached.pipe(
++          Effect.tap((cached) => Ref.set(cachedRef, cached)),
++          Effect.flatten,
++        )
++      : Ref.get(cachedRef).pipe(Effect.flatten);
+ });
+ 
+ function deriveVersionAdvisory(input: {
+@@ -660,10 +680,13 @@ export function createProviderVersionAdvisory(input: {
+   };
+ }
+ 
+-const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
++const fetchNpmTagVersion = Effect.fn("fetchNpmTagVersion")(function* (
++  packageName: string,
++  tag: string,
++) {
+   const client = yield* HttpClient.HttpClient;
+   const request = HttpClientRequest.get(
+-    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
++    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${encodeURIComponent(tag)}`,
+   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
+   const response = yield* client.execute(request).pipe(
+     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
+@@ -683,8 +706,30 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
+   return payload ? nonEmptyString(payload.version) : null;
+ });
+ 
++/**
++ * The newest version across the given npm dist-tags. A provider with only
++ * `latest` costs one request, exactly as before; the DeepSeek Harness also
++ * asks `next` because its release candidates land there first, and takes the
++ * higher semver. `alpha` is never asked for.
++ */
++const fetchNpmNewestVersion = Effect.fn("fetchNpmNewestVersion")(function* (
++  packageName: string,
++  tags: ReadonlyArray<string>,
++) {
++  const versions: Array<string> = [];
++  for (const tag of tags) {
++    const version = yield* fetchNpmTagVersion(packageName, tag);
++    if (version) versions.push(version);
++  }
++  if (versions.length === 0) return null;
++  return versions.reduce((best, version) =>
++    compareSemverVersions(version, best) > 0 ? version : best,
++  );
++});
++
+ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
+   maintenanceCapabilities: ProviderMaintenanceCapabilities,
++  options?: { readonly force?: boolean },
+ ) {
+   if (maintenanceCapabilities.latestVersion !== undefined) {
+     return maintenanceCapabilities.latestVersion;
+@@ -693,16 +738,22 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
+   if (!packageName) {
+     return null;
+   }
++  const tags = maintenanceCapabilities.latestVersionTags ?? ["latest"];
++  // The tag set is part of the key when more than `latest` is asked for: the
++  // same package could be checked on `latest` only by another driver. The
++  // default `latest` keeps the original bare-package key and its cache entries.
++  const cacheKey =
++    tags.length === 1 && tags[0] === "latest" ? packageName : `${packageName}|${tags.join(",")}`;
+ 
+   const latestVersionCache = yield* ProviderVersionCache;
+-  const cached = latestVersionCache.get(packageName);
++  const cached = latestVersionCache.get(cacheKey);
+   const now = DateTime.toEpochMillis(yield* DateTime.now);
+-  if (cached && cached.expiresAt > now) {
++  if (options?.force !== true && cached && cached.expiresAt > now) {
+     return cached.version;
+   }
+ 
+-  const version = yield* fetchNpmLatestVersion(packageName);
+-  latestVersionCache.set(packageName, {
++  const version = yield* fetchNpmNewestVersion(packageName, tags);
++  latestVersionCache.set(cacheKey, {
+     expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
+     version,
+   });
+@@ -716,6 +767,8 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
+   maintenanceCapabilities?: ProviderMaintenanceCapabilities,
+   options?: {
+     readonly enableProviderUpdateChecks: boolean | undefined;
++    /** A manual Refresh bypasses the 1 h registry cache for this call. */
++    readonly forceLatestVersionRefresh?: boolean;
+   },
+ ) {
+   const capabilities =
+@@ -737,7 +790,9 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
+     };
+   }
+ 
+-  const latestVersion = yield* resolveLatestProviderVersion(capabilities);
++  const latestVersion = yield* resolveLatestProviderVersion(capabilities, {
++    force: options?.forceLatestVersionRefresh === true,
++  });
+   return {
+     ...snapshot,
+     versionAdvisory: createProviderVersionAdvisory({

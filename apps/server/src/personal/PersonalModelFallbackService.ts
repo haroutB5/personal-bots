@@ -1,7 +1,5 @@
 import {
-  CommandId,
   ComposerContextId,
-  DeepSeekSettings,
   type ModelSelection,
   MessageId,
   type OrchestrationMessageContext,
@@ -21,7 +19,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "@t3tools/shared/crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -208,7 +206,11 @@ const DEEPSEEK_DRIVER = "deepseek";
 const CLAUDE_DRIVER = "claudeAgent";
 
 /** Decodes one DeepSeek instance config; a non-DeepSeek config decodes to none. */
-const decodeDeepSeekSettings = Schema.decodeUnknownOption(DeepSeekSettings);
+/** The one DeepSeek instance setting read here; HEAD contracts settings.ts 777-848. Owner D1. */
+const DeepSeekPeakSetting = Schema.Struct({
+  peakSwitch: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+const decodeDeepSeekSettings = Schema.decodeUnknownOption(DeepSeekPeakSetting);
 
 export const make = Effect.gen(function* () {
   const engine = yield* PersonalEngine.PersonalEngine;
@@ -225,7 +227,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
 
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
   const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -314,7 +316,7 @@ export const make = Effect.gen(function* () {
   /** The muted line, as the whole text of an assistant-role notice row. Best effort. */
   const postNotice = (threadId: string, text: string, marker: PersonalChatNoticeMarker) =>
     Effect.gen(function* () {
-      const uuid = yield* crypto.randomUUIDv4;
+      const uuid = yield* crypto.uuidV4().pipe(Effect.orDie);
       const messageId = MessageId.make(`${PERSONAL_NOTICE_MESSAGE_ID_PREFIX}fallback-${uuid}`);
       yield* engine.postNotice({
         threadId: ThreadId.make(threadId),

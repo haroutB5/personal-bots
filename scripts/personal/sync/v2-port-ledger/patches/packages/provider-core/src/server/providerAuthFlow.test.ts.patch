@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/provider/ProviderAuthFlow.test.ts b/apps/server/src/provider/ProviderAuthFlow.test.ts
+index 5ea9a0fc2f3b0c3b43d157bc4243d826c6600320..398ed5ca0498caf1da8f2a0a29827e26a8ae025a 100644
+--- a/apps/server/src/provider/ProviderAuthFlow.test.ts
++++ b/apps/server/src/provider/ProviderAuthFlow.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import {
+   ProviderInstanceId,

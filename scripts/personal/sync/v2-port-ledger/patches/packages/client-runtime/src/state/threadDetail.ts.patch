@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/threadDetail.ts b/packages/client-runtime/src/state/threadDetail.ts
+index d32329a741b4d5888054e0eeba18d06a61a0217a..aff9a9adc5563226e4ca70225ee6e1f283af219d 100644
+--- a/packages/client-runtime/src/state/threadDetail.ts
++++ b/packages/client-runtime/src/state/threadDetail.ts
+@@ -9,7 +9,7 @@ import type {
+   ScopedThreadRef,
+ } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import type { EnvironmentThread, EnvironmentThreadShell } from "./models.ts";
+ import { scopeThread } from "./models.ts";

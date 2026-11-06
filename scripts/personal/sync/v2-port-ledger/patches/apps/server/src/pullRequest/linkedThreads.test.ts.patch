@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/pullRequest/linkedThreads.test.ts b/apps/server/src/pullRequest/linkedThreads.test.ts
+index a87b33c439eca3554c0cadaf4c5f15d338bfb377..faeae62729f488a18a7b3688496b7fafc09df7a0 100644
+--- a/apps/server/src/pullRequest/linkedThreads.test.ts
++++ b/apps/server/src/pullRequest/linkedThreads.test.ts
+@@ -1,6 +1,6 @@
+ import { assert, expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+ import { listLinkedPullRequestThreads } from "./linkedThreads.ts";

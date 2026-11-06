@@ -1,0 +1,45 @@
+diff --git a/apps/web/public/manifest.webmanifest b/apps/web/public/manifest.webmanifest
+index 0389551332ffcefc1500428b1e77e58186324ede..690251d602711c6492285e3eac07598c9dab1a36 100644
+--- a/apps/web/public/manifest.webmanifest
++++ b/apps/web/public/manifest.webmanifest
+@@ -1,20 +1,31 @@
+ {
+   "id": "/",
+-  "start_url": "/",
++  "name": "Bots",
++  "description": "Your bots, chats and tasks, running on your own computer.",
++  "short_name": "Bots",
++  "start_url": "/bots",
+   "scope": "/",
+   "display": "standalone",
+-  "background_color": "#161616",
+-  "theme_color": "#161616",
++  "background_color": "#0a0a0a",
++  "theme_color": "#0a0a0a",
+   "icons": [
+     {
+-      "src": "/favicon-32x32.png",
+-      "sizes": "32x32",
+-      "type": "image/png"
++      "src": "/icons/bots-192.png",
++      "sizes": "192x192",
++      "type": "image/png",
++      "purpose": "any"
+     },
+     {
+-      "src": "/apple-touch-icon.png",
+-      "sizes": "180x180",
+-      "type": "image/png"
++      "src": "/icons/bots-512.png",
++      "sizes": "512x512",
++      "type": "image/png",
++      "purpose": "any"
++    },
++    {
++      "src": "/icons/bots-maskable-512.png",
++      "sizes": "512x512",
++      "type": "image/png",
++      "purpose": "maskable"
+     }
+   ]
+ }

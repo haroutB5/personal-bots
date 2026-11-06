@@ -1,0 +1,10 @@
+diff --git a/apps/desktop/src/updates/updatesTestHarness.ts b/apps/desktop/src/updates/updatesTestHarness.ts
+index 5455f1602855069bf9e4a1f7320454289254b7be..0e6c4692e300c16e64ac03be0544142a61565bf2 100644
+--- a/apps/desktop/src/updates/updatesTestHarness.ts
++++ b/apps/desktop/src/updates/updatesTestHarness.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import type { DesktopUpdateState } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

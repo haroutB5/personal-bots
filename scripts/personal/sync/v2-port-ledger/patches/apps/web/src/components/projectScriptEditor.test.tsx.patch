@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/components/projectScriptEditor.test.tsx b/apps/web/src/components/projectScriptEditor.test.tsx
+index becb3a369f62d708d262538db7adbf12bef50461..27c98a02456178254839dd63ae58b83da9a31338 100644
+--- a/apps/web/src/components/projectScriptEditor.test.tsx
++++ b/apps/web/src/components/projectScriptEditor.test.tsx
+@@ -1,5 +1,5 @@
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { act, StrictMode, type ReactNode } from "react";
+ import { create, type ReactTestRenderer } from "react-test-renderer";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

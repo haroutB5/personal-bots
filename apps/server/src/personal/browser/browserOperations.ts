@@ -6,7 +6,6 @@ import {
   type PreviewAutomationClickInput,
   type PreviewAutomationDragInput,
   type PreviewAutomationEvaluateInput,
-  type PreviewAutomationHistoryInput,
   type PreviewAutomationHoverInput,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
@@ -39,7 +38,6 @@ import {
   performClick,
   performDrag,
   performEvaluate,
-  performHistory,
   performHover,
   performPress,
   performScroll,
@@ -289,7 +287,7 @@ export const makeBrowserOperations = (
           yield* syncPreviewStatus(tab);
           return { tab, result: statusOf(tab) };
         }
-        case "closeTab": {
+        case "close": {
           // Only a tab this chat opened, named explicitly: an inherited "current tab" is never closed by accident.
           const tab = request.tabIdExplicit === true ? tabForRequest(request) : undefined;
           if (tab === undefined) {
@@ -354,10 +352,7 @@ export const makeBrowserOperations = (
             );
           }
           // Same rule as preview_press: nothing but the plainest input reaches a tab holding a credential.
-          if (
-            tab.loginProtected &&
-            ((input.button ?? "left") !== "left" || (input.modifiers?.length ?? 0) > 0)
-          ) {
+          if (tab.loginProtected && (input.button ?? "left") !== "left") {
             return yield* rejectUrl(
               "Only plain left clicks are allowed after a saved login is filled: no right or middle button and no held keys.",
             );
@@ -381,44 +376,15 @@ export const makeBrowserOperations = (
         }
         case "drag": {
           const input = request.input as PreviewAutomationDragInput;
-          if (
-            tab.loginProtected &&
-            (input.fromLocator !== undefined || input.toLocator !== undefined)
-          ) {
+          if (tab.loginProtected) {
             return yield* rejectUrl(
               "Locator drags are disabled after a saved login is filled. Use coordinates captured before use_login.",
             );
           }
-          yield* attempt({ locator: input.fromLocator }, () =>
+          yield* attempt({ locator: input.source }, () =>
             performDrag(tab.page, input, driverTimeoutFor(request.timeoutMs, input.timeoutMs)),
           );
           return { tab, result: { tabId: tab.tabId } };
-        }
-        case "history": {
-          const input = request.input as PreviewAutomationHistoryInput;
-          // A reload re-sends the form and back/forward can restore the filled document from cache.
-          if (tab.loginProtected) {
-            return yield* rejectUrl(
-              "This tab contains a saved login, so back, forward and reload are disabled. Submit the form, then open a new tab to continue.",
-            );
-          }
-          // Where the page is about to go counts as a navigation for the sensitive-site guard.
-          const action = input.action;
-          const destination =
-            action === "reload"
-              ? tab.page.url()
-              : yield* attempt({}, () => tab.page.historyTarget(action));
-          yield* guardEgress(request.threadId, {
-            kind: "navigate",
-            target: destination === null ? null : webOrigin(destination),
-          });
-          yield* attempt({}, () =>
-            performHistory(tab.page, input, driverTimeoutFor(request.timeoutMs, input.timeoutMs)),
-          );
-          // A script a bot ran stays a risk here: back and forward can restore the old document from cache.
-          runFork(logBotCheckLanding(tab));
-          yield* syncPreviewStatus(tab);
-          return { tab, result: statusOf(tab) };
         }
         case "type": {
           const input = request.input as PreviewAutomationTypeInput;
@@ -554,14 +520,6 @@ export const makeBrowserOperations = (
         return typeof target === "string" ? `Hovered ${target.slice(0, 60)}` : "Hovered the page";
       case "drag":
         return "Dragged on the page";
-      case "history":
-        return input.action === "back"
-          ? "Went back"
-          : input.action === "forward"
-            ? "Went forward"
-            : "Reloaded the page";
-      case "closeTab":
-        return "Closed a browser tab";
       case "type":
         return "Typed into the page";
       case "press":

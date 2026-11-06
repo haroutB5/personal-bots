@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts b/apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts
+index 6a24b49dc9307f949620ea93e194e45afc210a55..68194de885fe6e7e9c8f8dfba720342c0a20ae6c 100644
+--- a/apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts
++++ b/apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts
+@@ -26,7 +26,7 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
+ import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+ import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
+ import * as ProviderAdapterRegistryLayer from "./ProviderAdapterRegistry.ts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ 
+ const CODEX_DRIVER = ProviderDriverKind.make("codex");
+ const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");

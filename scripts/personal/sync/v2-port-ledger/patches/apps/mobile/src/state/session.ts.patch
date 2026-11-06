@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/session.ts b/apps/mobile/src/state/session.ts
+index 747ab7c72ee2705cb05004efac3ccad10b7df598..18086c601852cb868a3f2e2e1652843e7e35ffc4 100644
+--- a/apps/mobile/src/state/session.ts
++++ b/apps/mobile/src/state/session.ts
+@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
+ import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import { connectionAtomRuntime } from "../connection/runtime";
+ 

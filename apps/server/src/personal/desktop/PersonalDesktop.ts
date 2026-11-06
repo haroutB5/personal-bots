@@ -28,7 +28,7 @@ import {
   type PersonalDesktopStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -1272,7 +1272,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const engine = yield* PersonalEngine.PersonalEngine;
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());

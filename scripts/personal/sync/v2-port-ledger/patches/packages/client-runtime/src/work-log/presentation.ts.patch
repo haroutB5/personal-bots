@@ -1,0 +1,20 @@
+diff --git a/packages/client-runtime/src/work-log/presentation.ts b/packages/client-runtime/src/work-log/presentation.ts
+index 9f9f049d29fe8d5e34fe74fe4b38ca6ce833236d..862db5fbc369c699a22a3602788232712f138ae3 100644
+--- a/packages/client-runtime/src/work-log/presentation.ts
++++ b/packages/client-runtime/src/work-log/presentation.ts
+@@ -105,6 +105,15 @@ const T3_MCP_TOOL_LABELS: Record<
+     "the preview page",
+   ],
+   preview_click: ["Click", "Clicking", "Clicked", "in the preview browser"],
++  preview_hover: ["Hover", "Hovering", "Hovered", "in the preview browser"],
++  preview_drag: ["Drag", "Dragging", "Dragged", "in the preview browser"],
++  preview_history: [
++    "Go back, forward or reload",
++    "Going back, forward or reloading",
++    "Went back, forward or reloaded",
++    "the preview browser",
++  ],
++  preview_close_tab: ["Close", "Closing", "Closed", "a tab in the preview browser"],
+   preview_press: ["Press", "Pressing", "Pressed", "a key in the preview browser"],
+   preview_type: ["Type", "Typing", "Typed", "in the preview browser"],
+   preview_scroll: ["Scroll", "Scrolling", "Scrolled", "the preview browser"],

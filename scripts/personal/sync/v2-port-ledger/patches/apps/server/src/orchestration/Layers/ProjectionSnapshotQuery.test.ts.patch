@@ -1,0 +1,19 @@
+diff --git a/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts b/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts
+index cfba9029763360a759197245f578653647a05509..4ba0dc2700b1daed2af24fd3702419fc8d3484a5 100644
+--- a/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts
++++ b/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts
+@@ -14,12 +14,12 @@ import {
+   OrchestrationMessageContext,
+ } from "@t3tools/contracts";
+ import { assert, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";

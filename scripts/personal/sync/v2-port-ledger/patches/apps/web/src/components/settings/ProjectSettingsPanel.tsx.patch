@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/settings/ProjectSettingsPanel.tsx b/apps/web/src/components/settings/ProjectSettingsPanel.tsx
+index 8e5edec0f485ce8a222cfcb5af4b7ee989aaf8e8..0d368abef6aacfc8e7707c621bbb345991564d2d 100644
+--- a/apps/web/src/components/settings/ProjectSettingsPanel.tsx
++++ b/apps/web/src/components/settings/ProjectSettingsPanel.tsx
+@@ -6,7 +6,7 @@ import {
+   type AtomCommandResult,
+ } from "@t3tools/client-runtime/state/runtime";
+ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
+ import { useLocation, useNavigate } from "@tanstack/react-router";
+ import * as Cause from "effect/Cause";

@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/state/query.ts b/apps/web/src/state/query.ts
+index f5cb765a2479cdffaf82c6199be52faf4b9cb3c8..34d1161da8a1b691151a5ce23a43cb781f37ef89 100644
+--- a/apps/web/src/state/query.ts
++++ b/apps/web/src/state/query.ts
+@@ -1,7 +1,7 @@
+ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+ import * as Cause from "effect/Cause";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ const EMPTY_ASYNC_RESULT_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
+   Atom.withLabel("web-environment-query:empty"),

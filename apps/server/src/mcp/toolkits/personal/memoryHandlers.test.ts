@@ -29,6 +29,7 @@ import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSession
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { PersonalToolkitHandlersLive } from "./handlers.ts";
 import { PersonalToolkit } from "./tools.ts";
+import { mcpThreadScope } from "../../../personal/testing/mcpThreadScope.ts";
 
 // The tests below this line are the cards mode (the kill switch): a rule waits for the owner's tap.
 // The automatic mode, the default since 1.60.42, has its own block at the end of this file.
@@ -274,14 +275,17 @@ function saveMemory(input: {
     };
   }).pipe(
     Effect.provide(layer),
-    Effect.provideService(McpInvocationContext, {
-      environmentId: EnvironmentId.make("env"),
-      threadId: ThreadId.make("thread"),
-      providerSessionId: "session",
-      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-      capabilities: new Set(["personal" as const]),
-      issuedAt: 1,
-    }),
+    Effect.provideService(
+      McpInvocationContext,
+      mcpThreadScope({
+        environmentId: EnvironmentId.make("env"),
+        threadId: ThreadId.make("thread"),
+        providerSessionId: "session",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        capabilities: new Set(["personal" as const]),
+        issuedAt: 1,
+      }),
+    ),
   );
 }
 

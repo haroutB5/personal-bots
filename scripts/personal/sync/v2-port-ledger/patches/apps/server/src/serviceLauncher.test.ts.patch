@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/serviceLauncher.test.ts b/apps/server/src/serviceLauncher.test.ts
+index 30b239f3e47fc4aba6c7bdd105389d199d87a57b..399548a73276fed15d95a0ec9751d4b45a80c984 100644
+--- a/apps/server/src/serviceLauncher.test.ts
++++ b/apps/server/src/serviceLauncher.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

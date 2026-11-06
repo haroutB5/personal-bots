@@ -1,0 +1,56 @@
+diff --git a/apps/server/src/auth/EnvironmentAuth.ts b/apps/server/src/auth/EnvironmentAuth.ts
+index 481ffc2fad644d4a903f5374f27ad4bccc10c89a..d3b3f86c913b10e468bd3fece028b659cc4259cc 100644
+--- a/apps/server/src/auth/EnvironmentAuth.ts
++++ b/apps/server/src/auth/EnvironmentAuth.ts
+@@ -21,14 +21,14 @@ import {
+ } from "@t3tools/contracts";
+ import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
++import * as HttpServerRequest from "effect/http/HttpServerRequest";
+ 
+ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+ import * as ServerConfig from "../config.ts";
+@@ -810,16 +810,29 @@ export const make = Effect.gen(function* () {
+             if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
+               return yield* new ServerAuthScopeNotGrantedError({});
+             }
++            const method = input?.proofKeyThumbprint
++              ? ("dpop-access-token" as const)
++              : ("bearer-access-token" as const);
++            const policy = SessionStore.sessionPolicyForGrant({
++              grant:
++                grant.subject === "cloud-connect"
++                  ? "cloud-connect"
++                  : grant.method === "desktop-bootstrap"
++                    ? "desktop-bootstrap"
++                    : grant.method === "reusable-dev-token"
++                      ? "dev-token"
++                      : "one-time-token",
++              method,
++            });
+             return yield* sessions
+               .issue({
+-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
++                method,
+                 subject: grant.subject,
+                 scopes: grantedScopes,
++                ttl: policy.ttl,
++                renewal: policy.renewal,
+                 ...(input?.proofKeyThumbprint
+-                  ? {
+-                      proofKeyThumbprint: input.proofKeyThumbprint,
+-                      ttl: Duration.hours(1),
+-                    }
++                  ? { proofKeyThumbprint: input.proofKeyThumbprint }
+                   : {}),
+                 // Desktop restarts forget the previous bearer token. Replace
+                 // its session, including stale entries left by older versions.

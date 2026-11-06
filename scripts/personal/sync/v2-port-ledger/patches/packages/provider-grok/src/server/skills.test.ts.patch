@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/Drivers/GrokSkills.test.ts b/apps/server/src/provider/Drivers/GrokSkills.test.ts
+index ce8a31b519852ecfe4430092c452345b69cc3de4..6f194644617f2e07671e06f8fec44fa5cf6c06f5 100644
+--- a/apps/server/src/provider/Drivers/GrokSkills.test.ts
++++ b/apps/server/src/provider/Drivers/GrokSkills.test.ts
+@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import { discoverGrokSkills } from "./GrokSkills.ts";
+ 

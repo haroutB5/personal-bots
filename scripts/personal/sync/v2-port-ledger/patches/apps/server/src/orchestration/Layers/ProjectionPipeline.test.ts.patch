@@ -1,0 +1,612 @@
+diff --git a/apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts b/apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts
+index e8c7154f38e74921cd9428660cf8f675df814b15..87c938fc8954205ab8dd1d58482ec113d87bc12f 100644
+--- a/apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts
++++ b/apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts
+@@ -6,6 +6,7 @@ import {
+   DEFAULT_PROVIDER_INTERACTION_MODE,
+   EventId,
+   MessageId,
++  PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+   ProjectId,
+   ThreadId,
+   type ThreadPullRequestSnapshot,
+@@ -14,7 +15,7 @@ import {
+   ProviderInstanceId,
+ } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+@@ -22,7 +23,7 @@ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Tracer from "effect/Tracer";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+ import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+@@ -66,6 +67,7 @@ const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pip
+ const encodeThreadLinkedPullRequest = Schema.encodeSync(
+   Schema.fromJsonString(ThreadLinkedPullRequest),
+ );
++const decodeUnknownFromJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+ 
+ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-cursor-batch-")))(
+   "OrchestrationProjectionPipeline cursor batches",
+@@ -4282,6 +4284,395 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
+         assert.deepEqual(pendingRows, [{ messageId: "new-message" }]);
+       }),
+     );
++
++    it.effect(
++      "clears the steered message's pending turn start on delivery, in the real order",
++      () =>
++        Effect.gen(function* () {
++          // The event order a Claude steer produces (QA 1.66.28): a turn is
++          // running, the owner's second message requests a turn start, the
++          // provider folds it into the running turn and reports it taken in
++          // (user-message.delivered), then the running turn completes. No
++          // turn.started ever names the steered message, so the delivery is the
++          // only signal that its pending row is done.
++          const projectionPipeline = yield* OrchestrationProjectionPipeline;
++          const eventStore = yield* OrchestrationEventStore;
++          const sql = yield* SqlClient.SqlClient;
++          const threadId = ThreadId.make("thread-steer-delivery");
++
++          yield* eventStore.append({
++            type: "thread.turn-start-requested",
++            eventId: EventId.make("evt-steer-own-start"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-12T10:00:00.000Z",
++            commandId: CommandId.make("cmd-steer-own-start"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-steer-own-start"),
++            metadata: {},
++            payload: {
++              threadId,
++              messageId: MessageId.make("message-own"),
++              runtimeMode: "full-access",
++              createdAt: "2026-10-12T10:00:00.000Z",
++            },
++          });
++          yield* eventStore.append({
++            type: "thread.session-set",
++            eventId: EventId.make("evt-steer-turn-running"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-12T10:00:01.000Z",
++            commandId: CommandId.make("cmd-steer-turn-running"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-steer-turn-running"),
++            metadata: {},
++            payload: {
++              threadId,
++              session: {
++                threadId,
++                status: "running",
++                providerName: "claudeAgent",
++                runtimeMode: "full-access",
++                activeTurnId: TurnId.make("turn-steer-running"),
++                lastError: null,
++                updatedAt: "2026-10-12T10:00:01.000Z",
++              },
++            },
++          });
++          yield* eventStore.append({
++            type: "thread.turn-start-requested",
++            eventId: EventId.make("evt-steer-start"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-12T10:00:02.000Z",
++            commandId: CommandId.make("cmd-steer-start"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-steer-start"),
++            metadata: {},
++            payload: {
++              threadId,
++              messageId: MessageId.make("message-steer"),
++              runtimeMode: "full-access",
++              createdAt: "2026-10-12T10:00:02.000Z",
++            },
++          });
++          yield* eventStore.append({
++            type: "thread.activity-appended",
++            eventId: EventId.make("evt-steer-delivered"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-12T10:00:03.000Z",
++            commandId: CommandId.make("cmd-steer-delivered"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-steer-delivered"),
++            metadata: {},
++            payload: {
++              threadId,
++              activity: {
++                id: EventId.make("activity-steer-delivered"),
++                tone: "info",
++                kind: "user-message.delivered",
++                summary: "Message read",
++                payload: { messageId: "message-steer" },
++                turnId: TurnId.make("turn-steer-running"),
++                createdAt: "2026-10-12T10:00:03.000Z",
++              },
++            },
++          });
++          yield* eventStore.append({
++            type: "thread.session-set",
++            eventId: EventId.make("evt-steer-turn-done"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-12T10:00:04.000Z",
++            commandId: CommandId.make("cmd-steer-turn-done"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-steer-turn-done"),
++            metadata: {},
++            payload: {
++              threadId,
++              session: {
++                threadId,
++                status: "ready",
++                providerName: "claudeAgent",
++                runtimeMode: "full-access",
++                activeTurnId: null,
++                lastError: null,
++                updatedAt: "2026-10-12T10:00:04.000Z",
++              },
++            },
++          });
++
++          yield* projectionPipeline.bootstrap;
++
++          const pendingRows = yield* sql<{ readonly messageId: string }>`
++          SELECT pending_message_id AS "messageId"
++          FROM projection_turns
++          WHERE thread_id = ${threadId}
++            AND turn_id IS NULL
++            AND state = 'pending'
++        `;
++          assert.deepEqual(pendingRows, []);
++          const turnRows = yield* sql<{
++            readonly turnId: string;
++            readonly state: string;
++            readonly pendingMessageId: string | null;
++          }>`
++          SELECT
++            turn_id AS "turnId",
++            state,
++            pending_message_id AS "pendingMessageId"
++          FROM projection_turns
++          WHERE thread_id = ${threadId}
++        `;
++          assert.deepEqual(turnRows, [
++            {
++              turnId: "turn-steer-running",
++              state: "completed",
++              pendingMessageId: "message-own",
++            },
++          ]);
++        }),
++    );
++
++    it.effect("a delivery for another message leaves a pending turn start alone", () =>
++      Effect.gen(function* () {
++        const projectionPipeline = yield* OrchestrationProjectionPipeline;
++        const eventStore = yield* OrchestrationEventStore;
++        const sql = yield* SqlClient.SqlClient;
++        const threadId = ThreadId.make("thread-delivery-other");
++
++        yield* eventStore.append({
++          type: "thread.turn-start-requested",
++          eventId: EventId.make("evt-late-start"),
++          aggregateKind: "thread",
++          aggregateId: threadId,
++          occurredAt: "2026-10-12T11:00:00.000Z",
++          commandId: CommandId.make("cmd-late-start"),
++          causationEventId: null,
++          correlationId: CorrelationId.make("cmd-late-start"),
++          metadata: {},
++          payload: {
++            threadId,
++            messageId: MessageId.make("message-late"),
++            runtimeMode: "full-access",
++            createdAt: "2026-10-12T11:00:00.000Z",
++          },
++        });
++        yield* eventStore.append({
++          type: "thread.activity-appended",
++          eventId: EventId.make("evt-other-delivered"),
++          aggregateKind: "thread",
++          aggregateId: threadId,
++          occurredAt: "2026-10-12T11:00:01.000Z",
++          commandId: CommandId.make("cmd-other-delivered"),
++          causationEventId: null,
++          correlationId: CorrelationId.make("cmd-other-delivered"),
++          metadata: {},
++          payload: {
++            threadId,
++            activity: {
++              id: EventId.make("activity-other-delivered"),
++              tone: "info",
++              kind: "user-message.delivered",
++              summary: "Message read",
++              payload: { messageId: "message-other" },
++              turnId: null,
++              createdAt: "2026-10-12T11:00:01.000Z",
++            },
++          },
++        });
++
++        yield* projectionPipeline.bootstrap;
++
++        const pendingRows = yield* sql<{ readonly messageId: string }>`
++          SELECT pending_message_id AS "messageId"
++          FROM projection_turns
++          WHERE thread_id = ${threadId}
++            AND turn_id IS NULL
++            AND state = 'pending'
++        `;
++        assert.deepEqual(pendingRows, [{ messageId: "message-late" }]);
++      }),
++    );
++
++    it.effect(
++      "clears a queued send's pending turn start when its turn ends without starting one",
++      () =>
++        Effect.gen(function* () {
++          // A provider that queues a mid-turn send as its own turn (DeepSeek,
++          // Codex) holds the pending row until that turn starts. When the
++          // running turn ends and the queued one never comes - a queue dropped
++          // or a process replaced - the row used to stay pending forever: the
++          // ready session-set only cleared it for a command id prefix nothing
++          // emits. The turn is over, so the row is stale by then.
++          const projectionPipeline = yield* OrchestrationProjectionPipeline;
++          const eventStore = yield* OrchestrationEventStore;
++          const sql = yield* SqlClient.SqlClient;
++          const threadId = ThreadId.make("thread-queued-orphan");
++
++          yield* eventStore.append({
++            type: "thread.turn-start-requested",
++            eventId: EventId.make("evt-orphan-running"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-17T03:52:11.000Z",
++            commandId: CommandId.make("cmd-orphan-running"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-orphan-running"),
++            metadata: {},
++            payload: {
++              threadId,
++              messageId: MessageId.make("message-running"),
++              runtimeMode: "full-access",
++              createdAt: "2026-10-17T03:52:11.000Z",
++            },
++          });
++          yield* eventStore.append({
++            type: "thread.session-set",
++            eventId: EventId.make("evt-orphan-running-set"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-17T03:52:13.000Z",
++            commandId: CommandId.make("cmd-orphan-running-set"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-orphan-running-set"),
++            metadata: {},
++            payload: {
++              threadId,
++              session: {
++                threadId,
++                status: "running",
++                providerName: "deepseek",
++                runtimeMode: "full-access",
++                activeTurnId: TurnId.make("turn-orphan-running"),
++                lastError: null,
++                updatedAt: "2026-10-17T03:52:13.000Z",
++              },
++            },
++          });
++          yield* eventStore.append({
++            type: "thread.turn-start-requested",
++            eventId: EventId.make("evt-orphan-queued"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-17T03:53:56.000Z",
++            commandId: CommandId.make("cmd-orphan-queued"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("cmd-orphan-queued"),
++            metadata: {},
++            payload: {
++              threadId,
++              messageId: MessageId.make("message-queued"),
++              runtimeMode: "full-access",
++              createdAt: "2026-10-17T03:53:56.000Z",
++            },
++          });
++          yield* eventStore.append({
++            type: "thread.session-set",
++            eventId: EventId.make("evt-orphan-ready"),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt: "2026-10-17T03:59:00.000Z",
++            // The provider's own session-set, not a server-issued one.
++            commandId: CommandId.make("provider:evt-orphan-ready:thread-session-set:uuid"),
++            causationEventId: null,
++            correlationId: CorrelationId.make("provider:evt-orphan-ready"),
++            metadata: {},
++            payload: {
++              threadId,
++              session: {
++                threadId,
++                status: "ready",
++                providerName: "deepseek",
++                runtimeMode: "full-access",
++                activeTurnId: null,
++                lastError: null,
++                updatedAt: "2026-10-17T03:59:00.000Z",
++              },
++            },
++          });
++
++          yield* projectionPipeline.bootstrap;
++
++          const pendingRows = yield* sql<{ readonly messageId: string }>`
++            SELECT pending_message_id AS "messageId"
++            FROM projection_turns
++            WHERE thread_id = ${threadId}
++              AND turn_id IS NULL
++              AND state = 'pending'
++          `;
++          assert.deepEqual(pendingRows, []);
++          const turnRows = yield* sql<{ readonly state: string }>`
++            SELECT state FROM projection_turns WHERE thread_id = ${threadId}
++          `;
++          assert.deepEqual(turnRows, [{ state: "completed" }]);
++        }),
++    );
++
++    it.effect("keeps a pending turn start while the session is still starting", () =>
++      Effect.gen(function* () {
++        // "starting" is the status whose turn is still ahead of it: the row must
++        // survive so the turn that follows keeps its requested-at and message.
++        const projectionPipeline = yield* OrchestrationProjectionPipeline;
++        const eventStore = yield* OrchestrationEventStore;
++        const sql = yield* SqlClient.SqlClient;
++        const threadId = ThreadId.make("thread-still-starting");
++
++        yield* eventStore.append({
++          type: "thread.turn-start-requested",
++          eventId: EventId.make("evt-starting-request"),
++          aggregateKind: "thread",
++          aggregateId: threadId,
++          occurredAt: "2026-10-17T04:00:00.000Z",
++          commandId: CommandId.make("cmd-starting-request"),
++          causationEventId: null,
++          correlationId: CorrelationId.make("cmd-starting-request"),
++          metadata: {},
++          payload: {
++            threadId,
++            messageId: MessageId.make("message-starting"),
++            runtimeMode: "full-access",
++            createdAt: "2026-10-17T04:00:00.000Z",
++          },
++        });
++        yield* eventStore.append({
++          type: "thread.session-set",
++          eventId: EventId.make("evt-starting-set"),
++          aggregateKind: "thread",
++          aggregateId: threadId,
++          occurredAt: "2026-10-17T04:00:01.000Z",
++          commandId: CommandId.make("cmd-starting-set"),
++          causationEventId: null,
++          correlationId: CorrelationId.make("cmd-starting-set"),
++          metadata: {},
++          payload: {
++            threadId,
++            session: {
++              threadId,
++              status: "starting",
++              providerName: "deepseek",
++              runtimeMode: "full-access",
++              activeTurnId: null,
++              lastError: null,
++              updatedAt: "2026-10-17T04:00:01.000Z",
++            },
++          },
++        });
++
++        yield* projectionPipeline.bootstrap;
++
++        const pendingRows = yield* sql<{ readonly messageId: string }>`
++          SELECT pending_message_id AS "messageId"
++          FROM projection_turns
++          WHERE thread_id = ${threadId}
++            AND turn_id IS NULL
++            AND state = 'pending'
++        `;
++        assert.deepEqual(pendingRows, [{ messageId: "message-starting" }]);
++      }),
++    );
+   },
+ );
+ 
+@@ -4870,3 +5261,177 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
+     }),
+   );
+ });
++
++it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-delta-context-")))(
++  "OrchestrationProjectionPipeline streamed message context",
++  (it) => {
++    // Group chats mark the speaker on the FIRST delta of a relayed reply and
++    // never again: the later deltas and the completing upsert carry no context.
++    // If the projection dropped it there, every finished group message would
++    // lose its attribution.
++    it.effect("keeps a first-delta context across later deltas and the completing upsert", () =>
++      Effect.gen(function* () {
++        const projectionPipeline = yield* OrchestrationProjectionPipeline;
++        const eventStore = yield* OrchestrationEventStore;
++        const sql = yield* SqlClient.SqlClient;
++        const now = "2026-01-01T00:00:00.000Z";
++        const threadId = ThreadId.make("thread-group");
++        const messageId = MessageId.make("message-group-reply");
++        const context = {
++          version: 1,
++          records: [
++            {
++              version: 1,
++              contextId: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
++              label: "Group message",
++              kind: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
++              payload: {
++                groupId: "group-1",
++                seq: 4,
++                roundId: "round-1",
++                speaker: { kind: "bot", botId: "bot-a", name: "Backend" },
++              },
++            },
++          ],
++        };
++
++        yield* eventStore.append({
++          type: "thread.created",
++          eventId: EventId.make("evt-g1"),
++          aggregateKind: "thread",
++          aggregateId: threadId,
++          occurredAt: now,
++          commandId: CommandId.make("cmd-g1"),
++          causationEventId: null,
++          correlationId: CorrelationId.make("cmd-g1"),
++          metadata: {},
++          payload: {
++            threadId,
++            projectId: ProjectId.make("project-group"),
++            title: "Group",
++            modelSelection: {
++              instanceId: ProviderInstanceId.make("codex"),
++              model: "gpt-5-codex",
++            },
++            runtimeMode: "full-access",
++            branch: null,
++            worktreePath: null,
++            createdAt: now,
++            updatedAt: now,
++          },
++        });
++
++        const appendMessage = (
++          suffix: string,
++          occurredAt: string,
++          payload: Record<string, unknown>,
++        ) =>
++          eventStore.append({
++            type: "thread.message-sent",
++            eventId: EventId.make(`evt-${suffix}`),
++            aggregateKind: "thread",
++            aggregateId: threadId,
++            occurredAt,
++            commandId: CommandId.make(`cmd-${suffix}`),
++            causationEventId: null,
++            correlationId: CorrelationId.make(`cmd-${suffix}`),
++            metadata: {},
++            payload: {
++              threadId,
++              messageId,
++              role: "assistant",
++              turnId: null,
++              createdAt: occurredAt,
++              updatedAt: occurredAt,
++              ...payload,
++            },
++          });
++
++        // First delta: text plus the speaker marker.
++        yield* appendMessage("g2", now, { text: "Ship", streaming: true, context });
++        // Later delta, no context.
++        yield* appendMessage("g3", "2026-01-01T00:00:01.000Z", {
++          text: " it.",
++          streaming: true,
++        });
++        // Completion: empty text, no context, the upsert that finishes the row.
++        yield* appendMessage("g4", "2026-01-01T00:00:02.000Z", { text: "", streaming: false });
++
++        yield* projectionPipeline.bootstrap;
++
++        const rows = yield* sql<{
++          readonly text: string;
++          readonly isStreaming: number;
++          readonly contextJson: string | null;
++        }>`
++          SELECT text, is_streaming AS "isStreaming", context_json AS "contextJson"
++          FROM projection_thread_messages
++          WHERE message_id = ${messageId}
++        `;
++        assert.equal(rows.length, 1);
++        assert.equal(rows[0]?.text, "Ship it.");
++        assert.equal(rows[0]?.isStreaming, 0);
++        assert.deepEqual(decodeUnknownFromJsonString(rows[0]?.contextJson ?? "null"), context);
++      }),
++    );
++  },
++);
++
++it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-session-delete-")))(
++  "OrchestrationProjectionPipeline",
++  (it) => {
++    it.effect("a chat deleted mid-turn leaves its session stopped, not running", () =>
++      Effect.gen(function* () {
++        const projectionPipeline = yield* OrchestrationProjectionPipeline;
++        const eventStore = yield* OrchestrationEventStore;
++        const sql = yield* SqlClient.SqlClient;
++        const threadId = ThreadId.make("thread-deleted-mid-turn");
++        const base = (id: string, occurredAt: string) => ({
++          eventId: EventId.make(id),
++          aggregateKind: "thread" as const,
++          aggregateId: threadId,
++          occurredAt,
++          commandId: CommandId.make(`cmd-${id}`),
++          causationEventId: null,
++          correlationId: CorrelationId.make(`cmd-${id}`),
++          metadata: {},
++        });
++        yield* eventStore.append({
++          ...base("evt-session-running", "2026-09-28T10:00:00.000Z"),
++          type: "thread.session-set",
++          payload: {
++            threadId,
++            session: {
++              threadId,
++              status: "running",
++              providerName: "claudeAgent",
++              runtimeMode: "full-access",
++              activeTurnId: TurnId.make("turn-mid"),
++              lastError: null,
++              updatedAt: "2026-09-28T10:00:00.000Z",
++            },
++          },
++        });
++        yield* eventStore.append({
++          ...base("evt-session-deleted", "2026-09-28T10:01:00.000Z"),
++          type: "thread.deleted",
++          payload: { threadId, deletedAt: "2026-09-28T10:01:00.000Z" },
++        });
++
++        yield* projectionPipeline.bootstrap;
++
++        const rows = yield* sql<{
++          readonly status: string;
++          readonly activeTurnId: string | null;
++          readonly updatedAt: string;
++        }>`
++          SELECT status, active_turn_id AS "activeTurnId", updated_at AS "updatedAt"
++          FROM projection_thread_sessions WHERE thread_id = ${threadId}
++        `;
++        assert.deepEqual(rows, [
++          { status: "stopped", activeTurnId: null, updatedAt: "2026-09-28T10:01:00.000Z" },
++        ]);
++      }),
++    );
++  },
++);

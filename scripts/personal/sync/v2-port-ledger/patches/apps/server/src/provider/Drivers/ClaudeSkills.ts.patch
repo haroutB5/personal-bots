@@ -1,0 +1,52 @@
+diff --git a/apps/server/src/provider/Drivers/ClaudeSkills.ts b/apps/server/src/provider/Drivers/ClaudeSkills.ts
+index 259ceeb4b775b2a3878782383471cd6b400215b4..56c964718e115c1a03426649aac6d1d3be197d43 100644
+--- a/apps/server/src/provider/Drivers/ClaudeSkills.ts
++++ b/apps/server/src/provider/Drivers/ClaudeSkills.ts
+@@ -30,7 +30,8 @@ type ClaudeSkillScope = "user" | "project";
+ 
+ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+ 
+-type SkillFrontmatter =
++/** Exported so every provider path can report the same refusal reason. */
++export type SkillFrontmatter =
+   | { readonly kind: "missing" }
+   | { readonly kind: "malformed" }
+   | {
+@@ -69,17 +70,34 @@ function parseFrontmatterBoolean(value: unknown): boolean | undefined {
+   }
+ }
+ 
+-function parseSkillFrontmatter(contents: string): SkillFrontmatter {
++export function parseSkillFrontmatter(contents: string): SkillFrontmatter {
+   const match = FRONTMATTER_PATTERN.exec(contents);
+   if (!match) {
+     return { kind: "missing" };
+   }
+ 
++  const frontmatter = match[1] ?? "";
+   let parsed: unknown;
+   try {
+-    parsed = parseYamlDocument(match[1] ?? "");
++    parsed = parseYamlDocument(frontmatter);
+   } catch {
+-    return { kind: "malformed" };
++    // Claude Code accepts plain scalars containing `: `. Repair only those,
++    // leaving comments and YAML structure for the full-document parser.
++    const repaired = frontmatter.replace(
++      /^([\w-]+:[ \t]*)([^\r\n]*)/gm,
++      (line, prefix: string, value: string) => {
++        const scalar = value.split(/[ \t]+#/)[0] ?? "";
++        if (!/:[ \t]/.test(scalar) || /^(?:["'[\]{}|>&*!#%@`]|[-?:](?:[ \t]|$))/.test(scalar)) {
++          return line;
++        }
++        return `${prefix}${JSON.stringify(scalar)}${value.slice(scalar.length)}`;
++      },
++    );
++    try {
++      parsed = parseYamlDocument(repaired);
++    } catch {
++      return { kind: "malformed" };
++    }
+   }
+   if (typeof parsed !== "object" || parsed === null) {
+     return { kind: "malformed" };

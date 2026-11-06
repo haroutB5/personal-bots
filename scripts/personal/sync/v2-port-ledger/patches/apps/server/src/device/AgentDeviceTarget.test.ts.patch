@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/device/AgentDeviceTarget.test.ts b/apps/server/src/device/AgentDeviceTarget.test.ts
+index 46862f87d1b007c373e0a7c3332d7275d04b93ff..5fb48fa3c60fc7c15f67fc2562f96d4c6f9e4509 100644
+--- a/apps/server/src/device/AgentDeviceTarget.test.ts
++++ b/apps/server/src/device/AgentDeviceTarget.test.ts
+@@ -7,7 +7,7 @@ import {
+ import { describe, expect, it } from "@effect/vitest";
+ import * as NodeChildProcess from "node:child_process";
+ import * as NodeUtil from "node:util";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";

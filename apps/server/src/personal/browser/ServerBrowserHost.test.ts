@@ -5,11 +5,11 @@
  * reconnect loop, one slow operation removes the browser from every bot until
  * the server process restarts.
  */
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  PREVIEW_AUTOMATION_OPERATIONS,
+  PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   PreviewAutomationNoAvailableHostError,
   ProviderInstanceId,
   ThreadId,
@@ -28,6 +28,10 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../../mcp/PreviewAutomationBroker.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 import * as ServerBrowserHost from "./ServerBrowserHost.ts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import { mcpThreadScope } from "../../personal/testing/mcpThreadScope.ts";
+
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(7));
 
 const environmentId = EnvironmentId.make("environment-test");
 
@@ -39,14 +43,14 @@ const descriptor = {
   capabilities: { repositoryIdentity: true },
 };
 
-const scope = {
+const scope = mcpThreadScope({
   environmentId,
   threadId: ThreadId.make("thread-1"),
   providerSessionId: "provider-session-1",
   providerInstanceId: ProviderInstanceId.make("codex"),
   capabilities: new Set(["preview"] as const),
   issuedAt: 1,
-};
+});
 
 /** Counts every registration attempt the host makes against the real broker. */
 const countingBrokerLayer = (connects: { count: number }) =>
@@ -77,6 +81,7 @@ const hostLayer = (
       }),
     ),
     Layer.provideMerge(countingBrokerLayer(connects)),
+    Layer.provideMerge(Layer.succeed(SecureRandom.SecureRandom, testCrypto)),
   );
 
 type BrowserStatus = { readonly available: boolean };
@@ -253,7 +258,7 @@ it("advertises the 1.66.6 operations and still leaves recording to the desktop a
   }
   expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).not.toContain("recordingStart");
   // Every operation the host serves is one the broker knows.
-  expect(new Set(PREVIEW_AUTOMATION_OPERATIONS)).toEqual(
+  expect(new Set(PREVIEW_AUTOMATION_SERVER_OPERATIONS)).toEqual(
     new Set([...ServerBrowserHost.SERVER_BROWSER_OPERATIONS, "recordingStart", "recordingStop"]),
   );
 });

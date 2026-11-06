@@ -1,0 +1,25 @@
+diff --git a/apps/web/src/lib/contextWindow.test.ts b/apps/web/src/lib/contextWindow.test.ts
+index b87c0664403e47e98d9bb355a9187f01ad7a87d8..133fe2999abb210006a19be87a76473c84bc9abd 100644
+--- a/apps/web/src/lib/contextWindow.test.ts
++++ b/apps/web/src/lib/contextWindow.test.ts
+@@ -63,6 +63,20 @@ describe("contextWindow", () => {
+     });
+   });
+ 
++  it("keeps the used count when a provider reports no context window size", () => {
++    const snapshot = deriveLatestContextWindowSnapshot([
++      makeActivity("activity-1", "context-window.updated", { usedTokens: 42_000 }),
++    ]);
++
++    expect(snapshot).toMatchObject({
++      usedTokens: 42_000,
++      maxTokens: null,
++      remainingTokens: null,
++      usedPercentage: null,
++      remainingPercentage: null,
++    });
++  });
++
+   it("formats compact token counts", () => {
+     expect(formatContextWindowTokens(999)).toBe("999");
+     expect(formatContextWindowTokens(1400)).toBe("1.4k");

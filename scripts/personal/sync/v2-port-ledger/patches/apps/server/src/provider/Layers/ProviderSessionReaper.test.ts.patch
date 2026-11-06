@@ -1,0 +1,26 @@
+diff --git a/apps/server/src/provider/Layers/ProviderSessionReaper.test.ts b/apps/server/src/provider/Layers/ProviderSessionReaper.test.ts
+index 7b1fec90f86759e5e2d8f33b9c05f8896fd2e423..6fb160221ccd4f31d3377636db4a59bf55972118 100644
+--- a/apps/server/src/provider/Layers/ProviderSessionReaper.test.ts
++++ b/apps/server/src/provider/Layers/ProviderSessionReaper.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   ProjectId,
+   ThreadId,
+@@ -192,6 +192,7 @@ describe("ProviderSessionReaper", () => {
+     const providerService: ProviderServiceShape = {
+       startSession: () => unsupported(),
+       sendTurn: () => unsupported(),
++      validateTurn: () => unsupported(),
+       compactThread: () => unsupported(),
+       interruptTurn: () => unsupported(),
+       respondToRequest: () => unsupported(),
+@@ -234,6 +235,7 @@ describe("ProviderSessionReaper", () => {
+       Layer.provideMerge(
+         Layer.succeed(ProjectionSnapshotQuery, {
+           getUserInputActivity: () => Effect.die("unused"),
++          getPendingInputActivities: () => Effect.succeed([]),
+           listActivitiesByKind: () => Effect.die("unused"),
+           getCommandReadModel: () => Effect.die("unused"),
+           getSnapshot: () => Effect.die("unused"),

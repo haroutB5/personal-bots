@@ -1,0 +1,23 @@
+diff --git a/scripts/build-npm-platform-packages.ts b/scripts/build-npm-platform-packages.ts
+index 4f56f5b449e60bc57b590ad5470a003e50f32f58..8f6c93efe6aef12a86f84d55577373f165b200b6 100644
+--- a/scripts/build-npm-platform-packages.ts
++++ b/scripts/build-npm-platform-packages.ts
+@@ -21,15 +21,15 @@
+  */
+ import { legacyCliLauncherScript } from "@t3tools/shared/legacyCliLauncher";
+ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Logger from "effect/Logger";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { Command, Flag } from "effect/unstable/cli";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { Command, Flag } from "effect/cli";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import {
+   CLI_ARCHIVE_PLATFORM_KEYS,

@@ -1,0 +1,13 @@
+diff --git a/scripts/notify-discord-release.test.ts b/scripts/notify-discord-release.test.ts
+index dba0c6cd5dacde8d216e3cdbc330b4e10a56ec8b..5ea3c52bf9e3fc3f0e23a96dc5d76a2cafd0b129 100644
+--- a/scripts/notify-discord-release.test.ts
++++ b/scripts/notify-discord-release.test.ts
+@@ -1,7 +1,7 @@
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import { HttpClient, HttpClientError, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+ 
+ import { buildDiscordReleaseAnnouncement, postDiscordWebhook } from "./notify-discord-release.ts";
+ 

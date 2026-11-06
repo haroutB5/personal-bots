@@ -1,0 +1,175 @@
+diff --git a/apps/server/src/textGeneration/ClaudeTextGeneration.ts b/apps/server/src/textGeneration/ClaudeTextGeneration.ts
+index 357ecd686e46e87e70df65cc37e86c6c0e863272..2f7106ce2917980a8dfa3f23efb51cf290d4f5a3 100644
+--- a/apps/server/src/textGeneration/ClaudeTextGeneration.ts
++++ b/apps/server/src/textGeneration/ClaudeTextGeneration.ts
+@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
+ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+@@ -49,6 +49,12 @@ import {
+   scopeClaudeModelCatalog,
+ } from "../provider/ClaudeModelCatalog.ts";
+ import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
++import {
++  CLAUDE_TEXT_GENERATION_DEFAULT_MODEL,
++  resolveTextGenerationModel,
++  textGenerationBackgroundEffort,
++  textGenerationFallbackModel,
++} from "../personal/claude/claudeBackgroundModels.ts";
+ 
+ const CLAUDE_TIMEOUT_MS = 180_000;
+ 
+@@ -70,6 +76,23 @@ const decodeClaudeOutput = Schema.decodeEffect(
+   Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
+ );
+ 
++const ClaudeErrorResult = Schema.Struct({ is_error: Schema.Literal(true), result: Schema.String });
++const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
++const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
++
++/**
++ * The error a failed `claude -p --output-format json` run reports on stdout. Stderr may only
++ * hold notices from a wrapper around the binary, so the caller prefers this when present.
++ */
++function claudeErrorResult(stdout: string): string | undefined {
++  const output = Option.getOrUndefined(decodeJsonOption(stdout));
++  const messages: ReadonlyArray<unknown> = Array.isArray(output) ? output : [output];
++  return messages
++    .filter(isClaudeErrorResult)
++    .map((message) => message.result.trim())
++    .findLast((result) => result.length > 0);
++}
++
+ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
+   claudeSettings: ClaudeSettings,
+   environment?: NodeJS.ProcessEnv,
+@@ -102,7 +125,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
+       | "generateCommitMessage"
+       | "generatePrContent"
+       | "generateBranchName"
+-      | "generateThreadTitle",
++      | "generateThreadTitle"
++      | "generateStructured",
+     value: unknown,
+     detail: string,
+   ): Effect.Effect<string, TextGenerationError> =>
+@@ -121,7 +145,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
+    * Spawn the Claude CLI with structured JSON output and return the parsed,
+    * schema-validated result.
+    */
+-  const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
++  const runClaudeJsonOnce = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
+     operation,
+     cwd,
+     prompt,
+@@ -132,7 +156,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
+       | "generateCommitMessage"
+       | "generatePrContent"
+       | "generateBranchName"
+-      | "generateThreadTitle";
++      | "generateThreadTitle"
++      | "generateStructured";
+     cwd: string;
+     prompt: string;
+     outputSchemaJson: S;
+@@ -187,7 +212,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
+     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
+       // Titles need only the supplied prompt, not configuration from the checkout.
+       const workingDirectory =
+-        operation === "generateThreadTitle"
++        operation === "generateThreadTitle" || operation === "generateStructured"
+           ? yield* fileSystem
+               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
+               .pipe(
+@@ -252,7 +277,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
+       if (exitCode !== 0) {
+         const stderrDetail = stderr.trim();
+         const stdoutDetail = stdout.trim();
+-        const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
++        const detail =
++          claudeErrorResult(stdoutDetail) ??
++          (stderrDetail.length > 0 ? stderrDetail : stdoutDetail);
+         return yield* new TextGenerationError({
+           operation,
+           detail:
+@@ -310,6 +337,52 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
+     );
+   });
+ 
++  /**
++   * Background text jobs (titles, branch names, commit and PR text) run on the
++   * Claude default model, Haiku 5.5, at low effort unless the job names an
++   * effort (a title must not lag). If that default fails or is refused, the job
++   * retries once on Haiku 4.5. A model the owner chose is used as it is, with no
++   * retry. Kill switches: PERSONAL_TEXTGEN_MODEL, PERSONAL_TEXTGEN_EFFORT.
++   */
++  const runClaudeJson = Effect.fn("runClaudeJson.withFallback")(function* <S extends Schema.Top>(
++    input: Parameters<typeof runClaudeJsonOnce<S>>[0],
++  ): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
++    const requested = input.modelSelection;
++    const model = resolveTextGenerationModel(requested.model);
++    const effort = textGenerationBackgroundEffort();
++    const hasEffort = getModelSelectionStringOptionValue(requested, "effort") !== undefined;
++    const primary: ModelSelection = {
++      ...requested,
++      model,
++      // Only the default model is sped up; a model the owner chose keeps its own effort.
++      ...(effort !== null && !hasEffort && model === CLAUDE_TEXT_GENERATION_DEFAULT_MODEL
++        ? { options: [...(requested.options ?? []), { id: "effort", value: effort }] }
++        : {}),
++    };
++    const fallbackModel = textGenerationFallbackModel(model);
++    if (fallbackModel === undefined) {
++      return yield* runClaudeJsonOnce({ ...input, modelSelection: primary });
++    }
++    return yield* runClaudeJsonOnce({ ...input, modelSelection: primary }).pipe(
++      Effect.catchTag("TextGenerationError", (error) =>
++        Effect.logWarning("Claude text generation failed on the default model; retrying", {
++          operation: input.operation,
++          model,
++          fallbackModel,
++          detail: error.detail.slice(0, 300),
++        }).pipe(
++          Effect.andThen(
++            // Haiku 4.5 has no effort setting: the retry sends the bare model.
++            runClaudeJsonOnce({
++              ...input,
++              modelSelection: { instanceId: requested.instanceId, model: fallbackModel },
++            }),
++          ),
++        ),
++      ),
++    );
++  });
++
+   // ---------------------------------------------------------------------------
+   // TextGeneration service methods
+   // ---------------------------------------------------------------------------
+@@ -410,10 +483,22 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
+       };
+     });
+ 
++  const generateStructured: NonNullable<
++    TextGeneration.TextGeneration["Service"]["generateStructured"]
++  > = (input) =>
++    runClaudeJson({
++      operation: "generateStructured",
++      cwd: "",
++      prompt: input.prompt,
++      outputSchemaJson: input.outputSchema,
++      modelSelection: input.modelSelection,
++    });
++
+   return {
+     generateCommitMessage,
+     generatePrContent,
+     generateBranchName,
+     generateThreadTitle,
++    generateStructured,
+   } satisfies TextGeneration.TextGeneration["Service"];
+ });

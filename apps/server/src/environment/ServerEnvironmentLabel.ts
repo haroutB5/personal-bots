@@ -1,5 +1,4 @@
-import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Config from "effect/Config";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -152,7 +151,7 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
 });
 
 const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (platform === "darwin") {
     return yield* runFriendlyLabelCommand({
       probe: "macos-computer-name",
@@ -183,23 +182,12 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
-  // An explicit label names the environment in pairing and T3 Connect lists,
-  // so it wins over every machine-name probe.
-  const configured = yield* Config.String("T3CODE_ENVIRONMENT_LABEL").pipe(
-    Config.option,
-    Effect.map((value) => normalizeLabel(Option.getOrUndefined(value))),
-    Effect.orElseSucceed(() => null),
-  );
-  if (configured) {
-    return configured;
-  }
-
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;
   }
 
-  const hostname = normalizeLabel(yield* HostProcessHostname);
+  const hostname = normalizeLabel(yield* HostProcess.Hostname);
   if (hostname) {
     return hostname;
   }

@@ -1,0 +1,338 @@
+diff --git a/apps/server/src/usage/UsageService.test.ts b/apps/server/src/usage/UsageService.test.ts
+index f7286a11b60d9fecf6ee70db52f6b9c1fda20c19..241420fa52c10643043079380375ca90f4f5a735 100644
+--- a/apps/server/src/usage/UsageService.test.ts
++++ b/apps/server/src/usage/UsageService.test.ts
+@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
+ import * as NodeSqlite from "node:sqlite";
+ 
+ import { assert, describe, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import { mergeUsage } from "@t3tools/shared/usageMerge";
+ import {
+@@ -26,11 +26,13 @@ import * as Layer from "effect/Layer";
+ import * as Scheduler from "effect/Scheduler";
+ import * as Schema from "effect/Schema";
+ import * as TestClock from "effect/testing/TestClock";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ 
+ import * as ServerConfig from "../config.ts";
+ import * as ServerSettings from "../serverSettings.ts";
+ import * as UsageService from "./UsageService.ts";
++import { makeSliceYield } from "./sliceYield.ts";
++import { decodeScanCacheText, encodeScanCache } from "./usageScanCache.ts";
+ 
+ const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+ const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+@@ -49,6 +51,30 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
+   })}\n`;
+ }
+ 
++/** A DeepSeek transcript line: Claude format, model `deepseek-flash`, no cost, no requestId. */
++function deepseekLine(input: {
++  readonly id: number;
++  readonly output: number;
++  readonly at?: string;
++  readonly input?: number;
++  readonly cached?: number;
++}): string {
++  return `${JSON.stringify({
++    type: "assistant",
++    timestamp: input.at ?? "2026-08-01T10:00:00Z",
++    sessionId: "deepseek-session-1",
++    message: {
++      id: `msg_ds_${input.id}`,
++      model: "deepseek-flash",
++      usage: {
++        input_tokens: input.input ?? 0,
++        cache_read_input_tokens: input.cached ?? 0,
++        output_tokens: input.output,
++      },
++    },
++  })}\n`;
++}
++
+ const WINDOW: UsageSummaryInput = {
+   timeZone: "UTC",
+   sinceDay: UsageDay.make("2026-07-31"),
+@@ -71,6 +97,10 @@ const setup = Effect.gen(function* () {
+       providers: {
+         claudeAgent: { homePath: NodePath.join(home, "claude") },
+         codex: { homePath: NodePath.join(home, "codex") },
++        // The default DeepSeek slot always exists; without a homePath it would
++        // resolve to the machine's own ~/.claude-t3-deepseek, so pin it to the
++        // throwaway root (the directory itself is created per test).
++        deepseek: { homePath: NodePath.join(home, "deepseek") },
+       },
+     },
+   };
+@@ -376,6 +406,58 @@ describe("UsageService", () => {
+       }).pipe(Effect.scoped),
+   );
+ 
++  it.live("counts the app-owned OpenCode 2 store, where Go turns are recorded", () =>
++    Effect.gen(function* () {
++      const { settings, home } = yield* setup;
++      const summary = yield* Effect.gen(function* () {
++        const { stateDir } = yield* ServerConfig.ServerConfig;
++        const root = NodePath.join(stateDir, "opencode-v2", "data", "opencode");
++        const row = yield* encodeUnknownJson({
++          model: { id: "deepseek-v4.1-flash", providerID: "opencode-go" },
++          time: { created: Date.parse("2026-08-01T10:00:00Z") },
++          tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 20, write: 0 } },
++        });
++        yield* Effect.promise(async () => {
++          await NodeFSP.mkdir(root, { recursive: true });
++          const db = new NodeSqlite.DatabaseSync(NodePath.join(root, "opencode.db"));
++          try {
++            db.exec(
++              "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
++            );
++            db.prepare(
++              "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
++            ).run(
++              "msg_go_1",
++              "ses_1",
++              "assistant",
++              1,
++              Date.parse("2026-08-01T10:00:00Z"),
++              Date.parse("2026-08-01T10:00:00Z"),
++              row,
++            );
++          } finally {
++            db.close();
++          }
++        });
++        return yield* (yield* UsageService.make).readSummary(WINDOW);
++      }).pipe(Effect.provide(serviceLayers({ prefix: "usage-service-opencode2", home, settings })));
++      const bucket = summary.buckets.find((entry) => entry.provider === "opencode");
++      assert.isDefined(bucket);
++      assert.strictEqual(bucket?.totals.outputTokens, 7);
++      assert.strictEqual(bucket?.totals.cachedInputTokens, 20);
++      assert.strictEqual(
++        summary.sources.find(
++          (source) =>
++            source.fingerprint.provider === "opencode" &&
++            source.fingerprint.resolvedHomePath.endsWith(
++              NodePath.join("opencode-v2", "data", "opencode"),
++            ),
++        )?.status,
++        "ok",
++      );
++    }).pipe(Effect.scoped),
++  );
++
+   it.live("counts aliased OpenCode and Antigravity directories once", () =>
+     Effect.gen(function* () {
+       const { settings, home } = yield* setup;
+@@ -787,6 +869,106 @@ describe("UsageService", () => {
+       }).pipe(Effect.scoped),
+   );
+ 
++  it.live(
++    "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
++    () =>
++      Effect.gen(function* () {
++        const { home, settings } = yield* setup;
++        const sessions = NodePath.join(home, "codex", "sessions");
++        const rollout = (sessionId: string, outputTokens: number) =>
++          [
++            { type: "session_meta", payload: { id: sessionId } },
++            { type: "turn_context", payload: { model: "gpt-6-astra" } },
++            {
++              type: "event_msg",
++              payload: {
++                type: "thread_settings_applied",
++                thread_settings: { service_tier: "ultrafast" },
++              },
++            },
++            {
++              type: "event_msg",
++              timestamp: "2026-08-01T10:00:00Z",
++              payload: {
++                type: "token_count",
++                info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
++              },
++            },
++          ]
++            .map((line) => encodeUnknownJsonString(line))
++            .join("\n") + "\n";
++        const live = NodePath.join(sessions, "live.jsonl");
++        const deleted = NodePath.join(sessions, "deleted.jsonl");
++        yield* Effect.promise(async () => {
++          await NodeFSP.mkdir(sessions, { recursive: true });
++          await NodeFSP.writeFile(live, rollout("live", 10));
++          await NodeFSP.writeFile(deleted, rollout("deleted", 20));
++        });
++
++        yield* Effect.gen(function* () {
++          const { stateDir } = yield* ServerConfig.ServerConfig;
++          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
++          const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
++          yield* (yield* UsageService.make).readSummary(WINDOW);
++
++          // Rewrite the cache as a v4 server left it: every Codex record at
++          // speed 0 (standard), and no tier in the reducer state.
++          const legacy = yield* Effect.promise(async () => {
++            // This server writes the line format; a v4 server wrote one document.
++            const decoded = await decodeScanCacheText(
++              await NodeFSP.readFile(cachePath, "utf8"),
++              makeSliceYield(0),
++            );
++            const document = {
++              ...encodeScanCache(decoded?.cache ?? new Map()),
++              sources: (decoded?.document as { sources?: unknown } | undefined)?.sources,
++            } as unknown as {
++              files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
++            };
++            for (const file of Object.values(document.files)) {
++              file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
++              delete file.cs.speed;
++            }
++            const text = encodeUnknownJsonString({ ...document, version: 4 });
++            await NodeFSP.writeFile(legacyPath, text);
++            await NodeFSP.rm(cachePath);
++            await NodeFSP.rm(deleted);
++            return text;
++          });
++
++          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
++          // The live rollout re-parses at the ultrafast rate (10 x 6); the
++          // deleted one keeps its saved v4 usage at the standard rate (20 x 1).
++          assert.strictEqual(totalOutputTokens(summary), 30);
++          assert.strictEqual(
++            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
++            80,
++          );
++          // A v4 server sharing this state directory still finds its own cache.
++          assert.strictEqual(
++            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
++            legacy,
++          );
++        }).pipe(
++          Effect.provide(
++            serviceLayers({
++              prefix: "usage-service-v4-upgrade-test",
++              home,
++              settings,
++              ratesDocument: {
++                "gpt-6-astra": {
++                  input_cost_per_token: 0,
++                  output_cost_per_token: 1,
++                  input_cost_per_token_ultrafast: 0,
++                  output_cost_per_token_ultrafast: 6,
++                },
++              },
++            }),
++          ),
++        );
++      }).pipe(Effect.scoped),
++  );
++
+   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
+     Effect.gen(function* () {
+       const { transcript, settings, home } = yield* setup;
+@@ -1094,4 +1276,101 @@ describe("UsageService", () => {
+       );
+     }).pipe(Effect.scoped),
+   );
++
++  it.live("scans the DeepSeek home as its own provider kind, priced at the published rates", () =>
++    Effect.gen(function* () {
++      const { settings, home } = yield* setup;
++      const deepseekDir = NodePath.join(home, "deepseek", "projects", "proj");
++      yield* Effect.promise(() => NodeFSP.mkdir(deepseekDir, { recursive: true }));
++      yield* Effect.promise(() =>
++        NodeFSP.writeFile(
++          NodePath.join(deepseekDir, "session.jsonl"),
++          // One turn with a cache split at off-peak (Friday noon UTC), one
++          // without inside a peak window (Friday 02:00 UTC, 01:00-04:00 is
++          // peak): cached input at the cache-hit rate, the rest at the
++          // cache-miss and output rates, peak at double.
++          deepseekLine({
++            id: 1,
++            at: "2026-07-31T12:00:00Z",
++            input: 1_000_000,
++            cached: 1_000_000,
++            output: 1_000_000,
++          }) +
++            deepseekLine({
++              id: 2,
++              at: "2026-07-31T02:00:00Z",
++              input: 1_000_000,
++              output: 1_000_000,
++            }),
++        ),
++      );
++      const service = yield* UsageService.make.pipe(
++        Effect.provide(serviceLayers({ prefix: "usage-service-deepseek-scan", home, settings })),
++      );
++      const summary = yield* service.readSummary(WINDOW);
++      const bucket = summary.buckets.find((entry) => entry.provider === "deepseek");
++      assert.ok(bucket !== undefined, "a deepseek bucket");
++      assert.strictEqual(bucket.model, "deepseek-flash");
++      assert.strictEqual(bucket.costSource, "modelPriced");
++      assert.strictEqual(bucket.records, 2);
++      assert.strictEqual(bucket.totals.uncachedInputTokens, 2_000_000);
++      assert.strictEqual(bucket.totals.cachedInputTokens, 1_000_000);
++      assert.strictEqual(bucket.totals.outputTokens, 2_000_000);
++      // Off-peak split: 0.15 + 0.003 + 0.6. Peak without: 0.3 + 1.2.
++      assert.closeTo(bucket.costUsd, 0.15 + 0.003 + 0.6 + 0.3 + 1.2, 1e-9);
++      const source = summary.sources.find((entry) => entry.fingerprint.provider === "deepseek");
++      assert.strictEqual(source?.status, "ok");
++      assert.strictEqual(source?.scannedFiles, 1);
++    }).pipe(Effect.scoped),
++  );
++
++  it.live("reads DeepSeek spend from the home all-time, de-duplicated, or null", () =>
++    Effect.gen(function* () {
++      const { settings, home } = yield* setup;
++      const deepseekDir = NodePath.join(home, "deepseek", "projects", "proj");
++      yield* Effect.promise(() => NodeFSP.mkdir(deepseekDir, { recursive: true }));
++      const firstLine = deepseekLine({
++        id: 1,
++        at: "2026-10-08T09:00:00Z",
++        input: 1_000_000,
++        cached: 1_000_000,
++        output: 1_000_000,
++      });
++      const secondLine = deepseekLine({
++        id: 2,
++        at: "2026-10-09T09:00:00Z",
++        input: 1_000_000,
++        output: 0,
++      });
++      yield* Effect.promise(() =>
++        NodeFSP.writeFile(
++          NodePath.join(deepseekDir, "a.jsonl"),
++          // The same message once per content block (real transcripts repeat
++          // it), plus a line that is not JSON at all.
++          firstLine + firstLine + "not json\n" + secondLine,
++        ),
++      );
++      yield* Effect.promise(() =>
++        // A resumed session copies the earlier message into a second file.
++        NodeFSP.writeFile(NodePath.join(deepseekDir, "b.jsonl"), firstLine),
++      );
++      const service = yield* UsageService.make.pipe(
++        Effect.provide(serviceLayers({ prefix: "usage-service-deepseek-spend", home, settings })),
++      );
++
++      const spend = yield* service.readDeepSeekSpend(deepseekDir);
++      assert.ok(spend !== null, "a spend figure");
++      assert.strictEqual(spend.records, 2);
++      // Both turns sit at 09:00 UTC on weekdays, inside the 06:00-10:00 peak
++      // window: 0.3 + 0.006 + 1.2 for the split turn, 0.3 for the plain input.
++      assert.closeTo(spend.costUsd, 0.3 + 0.006 + 1.2 + 0.3, 1e-9);
++      assert.strictEqual(spend.since, "2026-10-08T09:00:00.000Z");
++
++      // Nothing to price answers null; never an invented figure.
++      const emptyDir = NodePath.join(home, "deepseek-empty", "projects");
++      yield* Effect.promise(() => NodeFSP.mkdir(emptyDir, { recursive: true }));
++      assert.isNull(yield* service.readDeepSeekSpend(emptyDir));
++      assert.isNull(yield* service.readDeepSeekSpend(NodePath.join(home, "no-such-dir")));
++    }).pipe(Effect.scoped),
++  );
+ });

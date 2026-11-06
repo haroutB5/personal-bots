@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.test.ts b/apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.test.ts
+index a4ed1653a962f1a3c1ae5251714f1e5cfc9b28e6..5039e70fb989707b78225418a1359bb3032e3685 100644
+--- a/apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.test.ts
++++ b/apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.test.ts
+@@ -1,7 +1,7 @@
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { runMigrations } from "../Migrations.ts";
+ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";

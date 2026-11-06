@@ -1,0 +1,18 @@
+diff --git a/apps/server/src/checkpointing/Utils.ts b/apps/server/src/checkpointing/Utils.ts
+index adc089f624a8c623e242706eb05456b48eb1efcf..c21fc8e17d3d59dc5c6fdb67bb192a2123d93078 100644
+--- a/apps/server/src/checkpointing/Utils.ts
++++ b/apps/server/src/checkpointing/Utils.ts
+@@ -1,11 +1,11 @@
+-import * as Encoding from "effect/Encoding";
++import * as Base64Url from "effect/encoding/Base64Url";
+ import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
+ 
+ const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
+ 
+ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
+   return CheckpointRef.make(
+-    `${CHECKPOINT_REFS_PREFIX}/${Encoding.encodeBase64Url(threadId)}/turn/${turnCount}`,
++    `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(threadId)}/turn/${turnCount}`,
+   );
+ }
+ 

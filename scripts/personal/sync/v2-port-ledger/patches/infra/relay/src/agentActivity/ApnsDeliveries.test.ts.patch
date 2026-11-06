@@ -1,0 +1,18 @@
+diff --git a/infra/relay/src/agentActivity/ApnsDeliveries.test.ts b/infra/relay/src/agentActivity/ApnsDeliveries.test.ts
+index e98c2b639598985e94a35aa51c1a5675cb9ba927..481bdf652b6a8ba73598de6eeacaeacd8f882c47 100644
+--- a/infra/relay/src/agentActivity/ApnsDeliveries.test.ts
++++ b/infra/relay/src/agentActivity/ApnsDeliveries.test.ts
+@@ -14,12 +14,7 @@ import * as Redacted from "effect/Redacted";
+ import * as References from "effect/References";
+ import * as Stream from "effect/Stream";
+ import * as TestClock from "effect/testing/TestClock";
+-import {
+-  FetchHttpClient,
+-  HttpClient,
+-  HttpClientRequest,
+-  HttpClientResponse,
+-} from "effect/unstable/http";
++import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ 
+ import {
+   makeApnsDeliveryJobPayload,

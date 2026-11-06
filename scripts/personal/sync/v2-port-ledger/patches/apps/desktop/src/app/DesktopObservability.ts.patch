@@ -1,0 +1,13 @@
+diff --git a/apps/desktop/src/app/DesktopObservability.ts b/apps/desktop/src/app/DesktopObservability.ts
+index ce8233e5661236532f97a0c5cae9022aba28cbdd..d9aca8f4a74ffcca38b9324f9379883931bc696e 100644
+--- a/apps/desktop/src/app/DesktopObservability.ts
++++ b/apps/desktop/src/app/DesktopObservability.ts
+@@ -26,7 +26,7 @@ import * as Scope from "effect/Scope";
+ import * as Semaphore from "effect/Semaphore";
+ import * as SynchronizedRef from "effect/SynchronizedRef";
+ import * as Tracer from "effect/Tracer";
+-import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/unstable/observability";
++import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/observability";
+ 
+ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+ 

@@ -1,0 +1,268 @@
+--- /dev/null
++++ b/apps/server/src/personal/engine/PersonalEngineV1.reads.test.ts
+@@ -0,0 +1,264 @@
++import { ThreadId } from "@t3tools/contracts";
++import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
++import { describe, expect, it } from "@effect/vitest";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
++import * as Stream from "effect/Stream";
++import * as SqlClient from "effect/sql/SqlClient";
++
++import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
++import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
++import {
++  ThreadBackgroundLivenessService,
++  make as makeThreadBackgroundLiveness,
++} from "../../orchestration/ThreadBackgroundLiveness.ts";
++import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
++import { runMigrations } from "../../persistence/Migrations.ts";
++import { PersonalEngine } from "./PersonalEngine.ts";
++import { PersonalEngineV1Live } from "./PersonalEngineV1Live.ts";
++
++const CHAT = ThreadId.make("reads-chat");
++const OTHER = ThreadId.make("reads-other");
++
++const layer = PersonalEngineV1Live.pipe(
++  Layer.provide(
++    Layer.succeed(OrchestrationEngineService, { streamDomainEvents: Stream.empty } as never),
++  ),
++  Layer.provide(Layer.succeed(ProjectionSnapshotQuery, {} as never)),
++  Layer.provide(Layer.succeed(ProjectionThreadMessageRepository, {} as never)),
++  Layer.provide(Layer.succeed(ThreadBackgroundLivenessService, makeThreadBackgroundLiveness())),
++  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
++);
++
++const activity = (input: {
++  readonly id: string;
++  readonly threadId: ThreadId;
++  readonly kind: string;
++  readonly summary?: string;
++  readonly payloadJson?: string;
++  readonly at: string;
++  readonly sequence: number;
++}) =>
++  Effect.gen(function* () {
++    const sql = yield* SqlClient.SqlClient;
++    yield* sql`
++      INSERT INTO projection_thread_activities
++        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
++      VALUES (${input.id}, ${input.threadId}, NULL, 'tool', ${input.kind}, ${input.summary ?? ""},
++        ${input.payloadJson ?? "{}"}, ${input.sequence}, ${input.at})
++    `;
++  });
++
++describe("PersonalEngineV1 projection reads", () => {
++  it.effect("reads the newest context size and ignores other chats", () =>
++    Effect.gen(function* () {
++      yield* runMigrations();
++      const engine = yield* PersonalEngine;
++      expect(yield* engine.latestContextTokens(CHAT)).toBeNull();
++      yield* activity({
++        id: "a1",
++        threadId: CHAT,
++        kind: "context-window.updated",
++        payloadJson: '{ "usedTokens": 1200 }',
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 1,
++      });
++      yield* activity({
++        id: "a2",
++        threadId: CHAT,
++        kind: "context-window.updated",
++        payloadJson: '{ "usedTokens": 4800 }',
++        at: "2026-11-05T11:00:00.000Z",
++        sequence: 2,
++      });
++      yield* activity({
++        id: "a3",
++        threadId: OTHER,
++        kind: "context-window.updated",
++        payloadJson: '{ "usedTokens": 99 }',
++        at: "2026-11-05T12:00:00.000Z",
++        sequence: 3,
++      });
++      expect(yield* engine.latestContextTokens(CHAT)).toBe(4800);
++    }).pipe(Effect.provide(layer)),
++  );
++
++  it.effect("reports a compaction only when it happened after the given time", () =>
++    Effect.gen(function* () {
++      yield* runMigrations();
++      const engine = yield* PersonalEngine;
++      yield* activity({
++        id: "c1",
++        threadId: CHAT,
++        kind: "context-compaction",
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 1,
++      });
++      expect(
++        yield* engine.compactedSince({ threadId: CHAT, since: "2026-11-05T09:00:00.000Z" }),
++      ).toBe(true);
++      expect(
++        yield* engine.compactedSince({ threadId: CHAT, since: "2026-11-05T10:00:00.000Z" }),
++      ).toBe(false);
++    }).pipe(Effect.provide(layer)),
++  );
++
++  it.effect("matches web tools by item type or by a needle in the step text", () =>
++    Effect.gen(function* () {
++      yield* runMigrations();
++      const engine = yield* PersonalEngine;
++      expect(yield* engine.threadUsedWeb({ threadId: CHAT, needles: ["browser"] })).toBe(false);
++      yield* activity({
++        id: "t1",
++        threadId: CHAT,
++        kind: "tool.completed",
++        summary: "Read file",
++        payloadJson: '{ "itemType": "command_execution", "title": "cat notes.md" }',
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 1,
++      });
++      expect(yield* engine.threadUsedWeb({ threadId: CHAT, needles: ["browser"] })).toBe(false);
++      yield* activity({
++        id: "t2",
++        threadId: CHAT,
++        kind: "tool.completed",
++        summary: "Shared Browser open",
++        payloadJson: '{ "itemType": "mcp_tool_call" }',
++        at: "2026-11-05T10:01:00.000Z",
++        sequence: 2,
++      });
++      expect(yield* engine.threadUsedWeb({ threadId: CHAT, needles: ["browser"] })).toBe(true);
++      yield* activity({
++        id: "t3",
++        threadId: OTHER,
++        kind: "tool.completed",
++        payloadJson: '{ "itemType": "web_search" }',
++        at: "2026-11-05T10:02:00.000Z",
++        sequence: 3,
++      });
++      expect(yield* engine.threadUsedWeb({ threadId: OTHER, needles: [] })).toBe(false);
++      expect(yield* engine.threadUsedWeb({ threadId: OTHER, needles: ["x"] })).toBe(true);
++    }).pipe(Effect.provide(layer)),
++  );
++
++  it.effect("lists tool steps since a time with the text the origin rule reads", () =>
++    Effect.gen(function* () {
++      yield* runMigrations();
++      const engine = yield* PersonalEngine;
++      yield* activity({
++        id: "s1",
++        threadId: CHAT,
++        kind: "tool.completed",
++        summary: "Fetch",
++        payloadJson:
++          '{ "itemType": "mcp_tool_call", "title": "web_fetch", "detail": "https://example.com" }',
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 1,
++      });
++      yield* activity({
++        id: "s2",
++        threadId: CHAT,
++        kind: "tool.completed",
++        summary: "Old step",
++        at: "2026-11-05T08:00:00.000Z",
++        sequence: 2,
++      });
++      yield* activity({
++        id: "s3",
++        threadId: CHAT,
++        kind: "task.progress",
++        at: "2026-11-05T10:05:00.000Z",
++        sequence: 3,
++      });
++      const steps = yield* engine.toolStepsSince({
++        threadId: CHAT,
++        since: "2026-11-05T09:00:00.000Z",
++        limit: 10,
++      });
++      expect(steps).toEqual([
++        { id: "s1", itemType: "mcp_tool_call", text: "Fetch web_fetch https://example.com" },
++      ]);
++      expect(
++        yield* engine.toolStepsSince({
++          threadId: CHAT,
++          since: "2026-11-05T07:00:00.000Z",
++          limit: 0,
++        }),
++      ).toEqual([]);
++    }).pipe(Effect.provide(layer)),
++  );
++
++  it.effect("returns the requested activities of one chat with parsed payloads", () =>
++    Effect.gen(function* () {
++      yield* runMigrations();
++      const engine = yield* PersonalEngine;
++      yield* activity({
++        id: "p1",
++        threadId: CHAT,
++        kind: "tool.completed",
++        payloadJson: '{ "detail": "full text" }',
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 1,
++      });
++      yield* activity({
++        id: "p2",
++        threadId: OTHER,
++        kind: "tool.completed",
++        payloadJson: '{ "detail": "elsewhere" }',
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 2,
++      });
++      expect(yield* engine.activitiesByIds({ threadId: CHAT, ids: [] })).toEqual([]);
++      expect(yield* engine.activitiesByIds({ threadId: CHAT, ids: ["p1", "p2"] })).toEqual([
++        { id: "p1", kind: "tool.completed", payload: { detail: "full text" } },
++      ]);
++    }).pipe(Effect.provide(layer)),
++  );
++
++  it.effect("snapshots the newest reasoning and tool step of running chats only", () =>
++    Effect.gen(function* () {
++      yield* runMigrations();
++      const engine = yield* PersonalEngine;
++      const sql = yield* SqlClient.SqlClient;
++      for (const thread of [CHAT, OTHER]) {
++        yield* sql`
++          INSERT INTO projection_threads (thread_id, project_id, title, latest_turn_id, created_at, updated_at)
++          VALUES (${thread}, 'p', 't', 'turn-1', '2026-11-05T09:00:00.000Z', '2026-11-05T09:00:00.000Z')
++        `;
++      }
++      yield* sql`
++        INSERT INTO projection_thread_sessions (thread_id, status, updated_at)
++        VALUES (${CHAT}, 'running', '2026-11-05T10:00:00.000Z'), (${OTHER}, 'idle', '2026-11-05T10:00:00.000Z')
++      `;
++      yield* activity({
++        id: "w1",
++        threadId: CHAT,
++        kind: "tool.completed",
++        summary: "Searched the repo",
++        payloadJson: '{ "title": "Grep" }',
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 1,
++      });
++      yield* activity({
++        id: "w2",
++        threadId: OTHER,
++        kind: "tool.completed",
++        summary: "Not running",
++        at: "2026-11-05T10:00:00.000Z",
++        sequence: 2,
++      });
++      expect(yield* engine.workingSnapshot([])).toEqual([]);
++      expect(yield* engine.workingSnapshot([CHAT, OTHER])).toEqual([
++        {
++          threadId: CHAT,
++          turnId: "turn-1",
++          reasoningText: null,
++          reasoningAt: null,
++          toolTitle: "Grep",
++          toolSummary: "Searched the repo",
++          toolAt: "2026-11-05T10:00:00.000Z",
++        },
++      ]);
++    }).pipe(Effect.provide(layer)),
++  );
++});
++

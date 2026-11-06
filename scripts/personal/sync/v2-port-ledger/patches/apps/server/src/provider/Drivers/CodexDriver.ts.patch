@@ -1,0 +1,76 @@
+diff --git a/apps/server/src/provider/Drivers/CodexDriver.ts b/apps/server/src/provider/Drivers/CodexDriver.ts
+index 15ee69264c139bf569c016ee4fb41bcdb94e88cc..f18bb441e35988c5bdfa5943bc8515a185038385 100644
+--- a/apps/server/src/provider/Drivers/CodexDriver.ts
++++ b/apps/server/src/provider/Drivers/CodexDriver.ts
+@@ -22,13 +22,13 @@
+  * @module provider/Drivers/CodexDriver
+  */
+ import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { HttpClient } from "effect/unstable/http";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient } from "effect/http";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+@@ -49,6 +49,7 @@ import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+ import * as ModelManifest from "../ModelManifest.ts";
+ import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
++import { runCodexSmokeTest } from "../providerSmokeTest.ts";
+ import { withInstanceIdentity } from "./instanceIdentity.ts";
+ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+ import {
+@@ -221,11 +222,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+           ),
+         checkProvider,
+-        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
++        enrichSnapshot: ({ settings, snapshot, publishSnapshot, refreshLatestVersion }) =>
+           resolveMaintenance().pipe(
+             Effect.flatMap((maintenanceCapabilities) =>
+               enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
++                forceLatestVersionRefresh: refreshLatestVersion === true,
+               }),
+             ),
+             Effect.provideService(HttpClient.HttpClient, httpClient),
+@@ -348,8 +350,24 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+                 }
+               }),
+             ),
++            Effect.map((outcome) => ({ outcome })),
+           );
+ 
++      // Same binary, home and launch args as the adapter's app-server sessions.
++      const smokeTest: NonNullable<ProviderInstance["smokeTest"]> = ({ model }) =>
++        runCodexSmokeTest({
++          instanceId,
++          binaryPath: effectiveConfig.binaryPath,
++          homePath: effectiveConfig.homePath,
++          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
++          environment: processEnv,
++          model,
++        }).pipe(
++          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
++          Effect.provideService(FileSystem.FileSystem, fileSystem),
++          Effect.provideService(Path.Path, pathService),
++        );
++
+       return {
+         instanceId,
+         driverKind: DRIVER_KIND,
+@@ -362,6 +380,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+         consumeResetCredit,
+         adapter,
+         textGeneration,
++        smokeTest,
+       } satisfies ProviderInstance;
+     }),
+ };

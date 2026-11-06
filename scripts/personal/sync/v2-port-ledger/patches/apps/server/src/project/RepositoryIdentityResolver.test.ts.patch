@@ -1,0 +1,215 @@
+diff --git a/apps/server/src/project/RepositoryIdentityResolver.test.ts b/apps/server/src/project/RepositoryIdentityResolver.test.ts
+index 58f199b834e2585d907fe31e2c0283645d2bf0f7..a91e21ba67383a5df621b3d99ef677cab66a40a8 100644
+--- a/apps/server/src/project/RepositoryIdentityResolver.test.ts
++++ b/apps/server/src/project/RepositoryIdentityResolver.test.ts
+@@ -1,6 +1,6 @@
+ // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+ import * as NodeFS from "node:fs";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { SourceControlProviderError } from "@t3tools/contracts";
+ import { expect, it } from "@effect/vitest";
+ import * as Duration from "effect/Duration";
+@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import { TestClock } from "effect/testing";
+ 
+ import * as ProcessRunner from "../processRunner.ts";
+@@ -128,7 +128,10 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
+   });
+ 
+-  it.effect("retries Git root discovery after the negative TTL", () => {
++  // Upstream caches a failed root lookup for the negative TTL. Bots keeps its
++  // own rule (see "retries a root lookup git could not answer"): a lookup git
++  // could not answer is never cached, so the next resolve asks git again.
++  it.effect("retries Git root discovery on the next resolve after a git failure", () => {
+     const calls: Array<ReadonlyArray<string>> = [];
+     let rootAttempts = 0;
+     const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+@@ -161,9 +164,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+     return Effect.gen(function* () {
+       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+       expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
+-      expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
+ 
+-      yield* TestClock.adjust(Duration.minutes(1));
+       const recovered = yield* resolver.resolve("/repo/packages/web");
+       expect(recovered?.rootPath).toBe("/repo");
+       expect(calls).toEqual([
+@@ -174,6 +175,171 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
+   });
+ 
++  /**
++   * A workspace root that is not a repository used to re-spawn
++   * `git rev-parse` on every resolve, because a `null` root was cached for
++   * `Duration.zero`. With three non-repo roots in the projection that made
++   * `GET /api/orchestration/shell` cost 1-2.4 s on every call. Exit 128 is
++   * git's definitive "no repository here", so it is cached like any other
++   * negative answer; the transient-failure retry above (exit 1) is unchanged.
++   */
++  const notARepositoryRunner = (calls: Array<ReadonlyArray<string>>) =>
++    Layer.succeed(ProcessRunner.ProcessRunner, {
++      run: (input) =>
++        Effect.sync(() => {
++          calls.push(input.args);
++          return {
++            stdout: "",
++            stderr: "fatal: not a git repository (or any of the parent directories): .git",
++            code: ChildProcessSpawner.ExitCode(128),
++            timedOut: false,
++            stdoutTruncated: false,
++            stderrTruncated: false,
++            stdoutInvalidUtf8: false,
++            stderrInvalidUtf8: false,
++          };
++        }),
++    });
++
++  it.effect("caches a non-repository root until the not-a-repository TTL expires", () => {
++    const calls: Array<ReadonlyArray<string>> = [];
++    const resolverLayer = Layer.effect(
++      RepositoryIdentityResolver.RepositoryIdentityResolver,
++      RepositoryIdentityResolver.make({
++        notARepositoryCacheTtl: Duration.millis(50),
++        positiveCacheTtl: Duration.seconds(1),
++      }),
++    ).pipe(Layer.provide(notARepositoryRunner(calls)));
++
++    return Effect.gen(function* () {
++      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
++
++      for (const _attempt of [1, 2, 3]) {
++        expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
++      }
++      expect(calls).toEqual([["-C", "/not-a-repo", "rev-parse", "--show-toplevel"]]);
++
++      yield* TestClock.adjust(Duration.millis(120));
++      expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
++      expect(calls).toHaveLength(2);
++    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
++  });
++
++  /**
++   * The default this server actually runs with. A non-repository workspace root
++   * used to be re-tested every minute forever, which on Windows is 2-4 process
++   * creations a minute per root and was most of the idle CPU the 2026-09-16
++   * host audit measured. Nothing but a `git init` can change the answer, so it
++   * is trusted for far longer than the ordinary negative TTL — and `refresh`
++   * still bypasses it, which is how a freshly created repo is picked up at once.
++   */
++  it.effect("does not re-shell git at a non-repository minute after minute", () => {
++    const calls: Array<ReadonlyArray<string>> = [];
++    const resolverLayer = Layer.effect(
++      RepositoryIdentityResolver.RepositoryIdentityResolver,
++      RepositoryIdentityResolver.make(),
++    ).pipe(Layer.provide(notARepositoryRunner(calls)));
++
++    return Effect.gen(function* () {
++      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
++      expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
++
++      for (const _minute of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
++        yield* TestClock.adjust(Duration.minutes(1));
++        expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
++      }
++      expect(calls).toHaveLength(1);
++
++      // An explicit refresh is the escape hatch, and does not wait for the TTL.
++      expect(yield* resolver.resolve("/not-a-repo", { refresh: true })).toBeNull();
++      expect(calls).toHaveLength(2);
++
++      yield* TestClock.adjust(Duration.minutes(21));
++      expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
++      expect(calls).toHaveLength(3);
++    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
++  });
++
++  /**
++   * The settlement / pull-request sweeps resolve every project root once a
++   * minute. With the positive TTL equal to that period every sweep missed and
++   * re-spawned `git rev-parse` + `git remote -v` for a repository root: a
++   * git pair every idle minute (appreview 2026-09-22, pass 3 P3).
++   */
++  it.effect("does not re-shell git for a repository on every one-minute sweep", () => {
++    const calls: Array<ReadonlyArray<string>> = [];
++    const repositoryRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
++      run: (input) =>
++        Effect.sync(() => {
++          calls.push(input.args);
++          return {
++            stdout: input.args.includes("rev-parse")
++              ? "/repo\n"
++              : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
++            stderr: "",
++            code: ChildProcessSpawner.ExitCode(0),
++            timedOut: false,
++            stdoutTruncated: false,
++            stderrTruncated: false,
++            stdoutInvalidUtf8: false,
++            stderrInvalidUtf8: false,
++          };
++        }),
++    });
++    const resolverLayer = Layer.effect(
++      RepositoryIdentityResolver.RepositoryIdentityResolver,
++      RepositoryIdentityResolver.make(),
++    ).pipe(Layer.provide(repositoryRunner));
++
++    return Effect.gen(function* () {
++      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
++      expect((yield* resolver.resolve("/repo"))?.canonicalKey).toBe("github.com/t3tools/t3code");
++      expect(calls).toHaveLength(2);
++
++      for (const _minute of [1, 2, 3, 4]) {
++        yield* TestClock.adjust(Duration.minutes(1));
++        expect((yield* resolver.resolve("/repo"))?.canonicalKey).toBe("github.com/t3tools/t3code");
++      }
++      expect(calls).toHaveLength(2);
++
++      // Remote URLs still refresh on their own, one TTL (15 minutes) later.
++      yield* TestClock.adjust(Duration.minutes(11));
++      yield* resolver.resolve("/repo");
++      expect(calls).toHaveLength(4);
++    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
++  });
++
++  it.effect("retries a root lookup git could not answer", () => {
++    const calls: Array<ReadonlyArray<string>> = [];
++    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
++      run: (input) =>
++        Effect.sync(() => {
++          calls.push(input.args);
++          return {
++            stdout: "",
++            stderr: "",
++            code: ChildProcessSpawner.ExitCode(1),
++            timedOut: true,
++            stdoutTruncated: false,
++            stderrTruncated: false,
++            stdoutInvalidUtf8: false,
++            stderrInvalidUtf8: false,
++          };
++        }),
++    });
++    const resolverLayer = Layer.effect(
++      RepositoryIdentityResolver.RepositoryIdentityResolver,
++      RepositoryIdentityResolver.make({ negativeCacheTtl: Duration.minutes(5) }),
++    ).pipe(Layer.provide(processRunner));
++
++    return Effect.gen(function* () {
++      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
++      expect(yield* resolver.resolve("/timing-out")).toBeNull();
++      expect(yield* resolver.resolve("/timing-out")).toBeNull();
++      expect(calls).toHaveLength(2);
++    }).pipe(Effect.provide(resolverLayer));
++  });
++
+   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
+     Effect.gen(function* () {
+       const fileSystem = yield* FileSystem.FileSystem;

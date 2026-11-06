@@ -13,14 +13,12 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { withStallJob } from "../observability/stallJobs.ts";
-import { botUsageTotalTokens } from "../usage/botUsage.ts";
+import { botUsageTotalTokens, type BotUsageCell } from "../usage/botUsage.ts";
 import { providerSessionHistoryEnabled } from "../usage/providerSessions.ts";
-import * as UsageService from "../usage/UsageService.ts";
 import {
   buildSessionOwners,
   computeTokenUsageWindows,
   dayInZone,
-  tokenUsageWindowRanges,
   type ChatSessionRow,
 } from "./botTokenUsage.ts";
 import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
@@ -72,7 +70,6 @@ interface ZoneEntry {
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;
-  const usage = yield* UsageService.UsageService;
 
   const zones = new Map<string, ZoneEntry>();
 
@@ -130,12 +127,12 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const startedAtMs = yield* Clock.currentTimeMillis;
       const today = dayInZone(startedAtMs, timeZone);
-      const month = tokenUsageWindowRanges(today).find((range) => range.id === "month")!;
 
-      const scan = yield* usage.readSessionUsage({
-        timeZone,
-        sinceDay: month.sinceDay,
-        untilDay: today,
+      // B1 stub: UsageService.readSessionUsage returns in C14.
+      const scan = yield* Effect.succeed({
+        cells: [] as ReadonlyArray<BotUsageCell>,
+        scannedFiles: 0,
+        scanDurationMs: 0,
       });
       // The chats are read after the scan, so a chat that started while it ran is mapped.
       const chats = yield* readChatSessions;

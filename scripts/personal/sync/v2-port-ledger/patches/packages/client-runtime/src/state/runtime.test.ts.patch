@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/runtime.test.ts b/packages/client-runtime/src/state/runtime.test.ts
+index d04f313d26e5b00a1aa28253aa54ff98afb954fc..8dc3cac3c3f7a2fca43b79b6186c83ca421208e7 100644
+--- a/packages/client-runtime/src/state/runtime.test.ts
++++ b/packages/client-runtime/src/state/runtime.test.ts
+@@ -12,7 +12,7 @@ import * as Queue from "effect/Queue";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+ import * as SubscriptionRef from "effect/SubscriptionRef";
+-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+ 
+ import {
+   AVAILABLE_CONNECTION_STATE,

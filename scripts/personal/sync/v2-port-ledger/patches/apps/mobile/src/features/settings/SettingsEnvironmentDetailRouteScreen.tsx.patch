@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx b/apps/mobile/src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx
+index be334da900ab2c1b9029642299dea1be72ce84a9..c2698c4b92c31570d403238ad17c6195e0beb801 100644
+--- a/apps/mobile/src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx
++++ b/apps/mobile/src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx
+@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
+ import type { StaticScreenProps } from "@react-navigation/native";
+ import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
+ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useEffect, useRef, useState } from "react";
+ import { Alert, View } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";

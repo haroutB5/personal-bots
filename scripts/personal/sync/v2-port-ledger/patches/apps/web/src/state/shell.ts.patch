@@ -1,0 +1,28 @@
+diff --git a/apps/web/src/state/shell.ts b/apps/web/src/state/shell.ts
+index e8f61209ae6451363a826f58239b0173374d8dda..4201a48bff678136d1efb41b8fe0172e7ac3757f 100644
+--- a/apps/web/src/state/shell.ts
++++ b/apps/web/src/state/shell.ts
+@@ -14,15 +14,21 @@ import {
+ } from "@t3tools/client-runtime/state/connections";
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import { environmentCatalog } from "../connection/catalog";
+ import { connectionAtomRuntime } from "../connection/runtime";
+ import { isHostedStaticApp } from "../hostedPairing";
++import { withLazyThreadShells } from "./lazyThreadShells";
+ 
+ export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntime);
+ export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
+-export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
++/** The shell as the server sent it (slim: no idle archived bot chats). */
++export const environmentBaseSnapshotAtom = createEnvironmentSnapshotAtom(
++  environmentShell.stateAtom,
++);
++/** The shell plus the archived bot chats a mounted screen asked for (lazyThreadShells.ts). */
++export const environmentSnapshotAtom = withLazyThreadShells(environmentBaseSnapshotAtom);
+ 
+ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
+   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));

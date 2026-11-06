@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/lib/diffFileContents.test.ts b/apps/web/src/lib/diffFileContents.test.ts
+index 203ff37c888659380546f3509371db8a8470a89b..7bee138c1a406c740570be67b979e1440bd5eda9 100644
+--- a/apps/web/src/lib/diffFileContents.test.ts
++++ b/apps/web/src/lib/diffFileContents.test.ts
+@@ -1,7 +1,7 @@
+ import type { FileDiffMetadata } from "@pierre/diffs";
+ import { EnvironmentId, type ReviewDiffFileContentsResult } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { describe, expect, it, vi } from "vite-plus/test";
+ 
+ import { createGitDiffFileContentsLoader } from "./diffFileContents";

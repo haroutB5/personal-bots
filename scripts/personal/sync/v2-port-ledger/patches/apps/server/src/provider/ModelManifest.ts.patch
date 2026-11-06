@@ -1,0 +1,27 @@
+diff --git a/apps/server/src/provider/ModelManifest.ts b/apps/server/src/provider/ModelManifest.ts
+index d1af1086e75058b2c1d9e0407149bc94c93f3b4d..a16f2dd882c3ed87a8897c26c48a4488f119e914 100644
+--- a/apps/server/src/provider/ModelManifest.ts
++++ b/apps/server/src/provider/ModelManifest.ts
+@@ -28,7 +28,7 @@ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Semaphore from "effect/Semaphore";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ 
+ import { ServerConfig } from "../config.ts";
+ import * as ServerSettings from "../serverSettings.ts";
+@@ -274,7 +274,12 @@ export function applyManifestDefault(
+           (model) =>
+             !model.isCustom && codexModelFamily(model.slug) === codexModelFamily(requestedSlug),
+         )?.slug
+-      : undefined);
++      : driverKind === "antigravity"
++        ? models.find(
++            (model) =>
++              !model.isCustom && model.slug === requestedSlug.replace(/-(?:low|medium|high)$/u, ""),
++          )?.slug
++        : undefined);
+   if (slug === undefined) return models;
+   const previous = models.find((model) => model.isDefault && model.slug !== slug);
+   if (!previous) return models;

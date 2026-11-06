@@ -1,0 +1,15 @@
+diff --git a/packages/client-runtime/src/state/session.ts b/packages/client-runtime/src/state/session.ts
+index 15848d95d96536381e5234146a8c8e505222a76c..fbf3403415d4677e25ead3a0fa146b3d09a9cafa 100644
+--- a/packages/client-runtime/src/state/session.ts
++++ b/packages/client-runtime/src/state/session.ts
+@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import * as Stream from "effect/Stream";
+ import * as SubscriptionRef from "effect/SubscriptionRef";
+-import type { HttpClient } from "effect/unstable/http";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import type { HttpClient } from "effect/http";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+ import { EnvironmentRegistry } from "../connection/registry.ts";

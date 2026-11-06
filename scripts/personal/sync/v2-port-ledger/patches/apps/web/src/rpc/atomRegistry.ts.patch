@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/rpc/atomRegistry.ts b/apps/web/src/rpc/atomRegistry.ts
+index c9ac7ef82bacdb3c511b639e3ebe3de79dfcbaa3..f78b6343f954f2f7ecdc43e6052096afefd545f5 100644
+--- a/apps/web/src/rpc/atomRegistry.ts
++++ b/apps/web/src/rpc/atomRegistry.ts
+@@ -1,5 +1,5 @@
+ import { RegistryContext } from "@effect/atom-react";
+-import { AtomRegistry } from "effect/unstable/reactivity";
++import { AtomRegistry } from "effect/reactivity";
+ import { createElement } from "react";
+ 
+ export const appAtomRegistry = AtomRegistry.make();

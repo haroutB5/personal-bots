@@ -1,0 +1,13 @@
+diff --git a/packages/contracts/src/pullRequest.ts b/packages/contracts/src/pullRequest.ts
+index 3470aaa7a5c7d6e75e64d0d138b0325d7a8e7ee4..156626de1192e1ae086882049523c90bc4b0d823 100644
+--- a/packages/contracts/src/pullRequest.ts
++++ b/packages/contracts/src/pullRequest.ts
+@@ -1,6 +1,6 @@
+ import * as Schema from "effect/Schema";
+-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
+-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
+ 
+ import {
+   IsoDateTime,

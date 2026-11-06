@@ -1,0 +1,90 @@
+diff --git a/apps/server/src/serverRuntimeStartup.ts b/apps/server/src/serverRuntimeStartup.ts
+index 138dbcedfa8506ce6e57ab6754a783c545625638..c057687193e25e97b84c2b75cb9dadf4d23efee4 100644
+--- a/apps/server/src/serverRuntimeStartup.ts
++++ b/apps/server/src/serverRuntimeStartup.ts
+@@ -19,7 +19,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+ import * as Cause from "effect/Cause";
+ import * as Console from "effect/Console";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -44,6 +44,9 @@ import * as ServerSettings from "./serverSettings.ts";
+ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
++import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
++import { botModelSelectionForThread } from "./personal/botModelSelection.ts";
++import { continuationSystemInstructions } from "./personal/continuationInstructions.ts";
+ import * as ProviderService from "./provider/Services/ProviderService.ts";
+ import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
+ import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+@@ -51,10 +54,10 @@ import { forkParked } from "./serverActivation.ts";
+ import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+ import {
+-  formatHeadlessServeOutput,
+   formatHostForUrl,
+   isWildcardHost,
+-  issueHeadlessServeAccessInfo,
++  prepareHeadlessServeOutput,
++  shouldPrintStartupToken,
+ } from "./startupAccess.ts";
+ 
+ export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
+@@ -484,6 +487,9 @@ export const reconcileProviderSessions = Effect.gen(function* () {
+   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+   const providerService = yield* ProviderService.ProviderService;
+   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
++  // Optional: a build without the personal stack still continues its turns,
++  // it just has no bot persona to restore.
++  const personalBots = yield* Effect.serviceOption(PersonalBotRepository.PersonalBotRepository);
+   const settings = yield* ServerSettings.ServerSettingsService;
+   const restartSettings = yield* settings.getSettings.pipe(
+     Effect.asSome,
+@@ -700,12 +706,29 @@ export const reconcileProviderSessions = Effect.gen(function* () {
+               });
+             }
+             const capabilities = yield* providerService.getCapabilities(providerInstanceId);
++            // Without this a bot chat resumed after a restart answers as the
++            // raw model: the persona is set when a session starts, and this
++            // turn is continuing on a session that started after the restart.
++            const systemInstructions = Option.isSome(personalBots)
++              ? yield* continuationSystemInstructions(personalBots.value, thread.id)
++              : undefined;
++            // Same for the bot's model options: without them the continued
++            // turn runs at the provider's default reasoning effort.
++            const modelSelection = Option.isSome(personalBots)
++              ? yield* botModelSelectionForThread(
++                  personalBots.value,
++                  thread.id,
++                  thread.modelSelection,
++                )
++              : undefined;
+             yield* providerService.sendTurn({
+               threadId: thread.id,
++              ...(modelSelection !== undefined ? { modelSelection } : {}),
+               ...(capabilities.promptlessTurnContinuation === true
+                 ? { continuation: true }
+                 : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
+               interactionMode: thread.interactionMode,
++              ...(systemInstructions !== undefined ? { systemInstructions } : {}),
+             });
+           });
+           const continuationExit = yield* Effect.exit(continuation);
+@@ -1019,11 +1042,8 @@ export const make = (options?: StartupOptions) =>
+             Effect.ignoreCause({ log: true }),
+           );
+           if (serverConfig.startupPresentation === "headless") {
+-            const accessInfo = yield* issueHeadlessServeAccessInfo();
+-            yield* runStartupPhase(
+-              "headless.output",
+-              Console.log(formatHeadlessServeOutput(accessInfo)),
+-            );
++            const output = yield* prepareHeadlessServeOutput(shouldPrintStartupToken());
++            yield* runStartupPhase("headless.output", Console.log(output));
+           } else {
+             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
+             if (serverConfig.mode !== "desktop") {

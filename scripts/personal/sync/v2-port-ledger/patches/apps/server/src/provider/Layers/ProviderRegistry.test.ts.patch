@@ -1,0 +1,447 @@
+diff --git a/apps/server/src/provider/Layers/ProviderRegistry.test.ts b/apps/server/src/provider/Layers/ProviderRegistry.test.ts
+index 0970ea88748b3394f496b5dd8645e60c6df5dd0f..7cc3445c86c47bb3293731b5f380f61c4727e942 100644
+--- a/apps/server/src/provider/Layers/ProviderRegistry.test.ts
++++ b/apps/server/src/provider/Layers/ProviderRegistry.test.ts
+@@ -1,7 +1,7 @@
+ import { CodexInstallation } from "../CodexInstallation.ts";
+ import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+ import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { describe, it, assert } from "@effect/vitest";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+@@ -31,8 +31,8 @@ import {
+   type ServerSettings as ContractServerSettings,
+ } from "@t3tools/contracts";
+ import * as PlatformError from "effect/PlatformError";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient, HttpClientResponse } from "effect/http";
++import { ChildProcessSpawner } from "effect/process";
+ import { deepMerge } from "@t3tools/shared/Struct";
+ import { createModelCapabilities } from "@t3tools/shared/model";
+ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+@@ -41,6 +41,8 @@ import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from ".
+ import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+ import { AntigravityInstallation } from "../AntigravityInstallation.ts";
++import { ProviderCatalog } from "../catalog/ProviderCatalog.ts";
++import { CatalogInstaller } from "../catalog/installer.ts";
+ import * as ModelManifest from "../ModelManifest.ts";
+ import { applyProviderCompatibility } from "../providerCompatibility.ts";
+ import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
+@@ -54,6 +56,7 @@ import {
+ } from "./ProviderRegistry.ts";
+ import * as ServerConfig from "../../config.ts";
+ import * as ServerSettingsModule from "../../serverSettings.ts";
++import * as UsageService from "../../usage/UsageService.ts";
+ import {
+   readProviderStatusCache,
+   resolveProviderStatusCachePath,
+@@ -265,7 +268,13 @@ function failingSpawnerLayer(description: string) {
+   );
+ }
+ 
+-function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
++/**
++ * A spawner that hands back a process which never exits, so the probe hangs on
++ * its `initialize` request. `spawned` completes as soon as that handle exists:
++ * the probe reaches it through a real PATH walk, which the test's virtual clock
++ * cannot wait for.
++ */
++function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>, spawned: Deferred.Deferred<void>) {
+   return Layer.succeed(
+     ChildProcessSpawner.ChildProcessSpawner,
+     ChildProcessSpawner.make(() =>
+@@ -284,6 +293,7 @@ function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
+           getOutputFd: () => Stream.empty,
+         });
+         yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
++        yield* Deferred.succeed(spawned, void 0);
+         return handle;
+       }),
+     ),
+@@ -569,12 +579,18 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+       it.effect("closes the app-server probe scope when provider status times out", () =>
+         Effect.gen(function* () {
+           const killCalls = yield* Ref.make(0);
++          const spawned = yield* Deferred.make<void>();
+           const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
+-            Effect.provide(hangingScopedSpawnerLayer(killCalls)),
++            Effect.provide(hangingScopedSpawnerLayer(killCalls, spawned)),
+             Effect.forkChild,
+           );
+ 
+-          yield* Effect.yieldNow;
++          // The timeout is measured on the test clock, but the probe reaches
++          // its spawn through real async work (resolving the Codex path). Move
++          // the clock only once the app-server handle exists, or the probe is
++          // interrupted before it has anything to close and the kill is never
++          // expected. The scope itself is what this test checks.
++          yield* Deferred.await(spawned);
+           yield* TestClock.adjust("11 seconds");
+           yield* Effect.yieldNow;
+ 
+@@ -1100,6 +1116,88 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+             ),
+           ),
+         );
++
++        it.effect("seeds a restarted provider with its cached usage, same account only", () =>
++          Effect.gen(function* () {
++            const config = yield* ServerConfig.ServerConfig;
++            const filePath = yield* resolveProviderStatusCachePath({
++              cacheDir: config.providerStatusCacheDir,
++              instanceId: cachedProvider.instanceId,
++            });
++            const usageLimits = {
++              checkedAt: "2026-09-04T18:53:00.000Z",
++              windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 60 }],
++            } as const;
++            const account = { groupKey: "codex:home:/home/dev/.codex" };
++
++            for (const [cachedAccount, expectedSeeds] of [
++              [account, [usageLimits]],
++              [{ groupKey: "codex:home:/home/other/.codex" }, []],
++            ] as const) {
++              yield* writeProviderStatusCache({
++                filePath,
++                provider: { ...cachedProvider, continuation: cachedAccount, usageLimits },
++              });
++              const seeds: Array<ServerProvider["usageLimits"]> = [];
++              const instance = {
++                instanceId: cachedProvider.instanceId,
++                driverKind: cachedProvider.driver,
++                continuationIdentity: {
++                  driverKind: cachedProvider.driver,
++                  continuationKey: account.groupKey,
++                },
++                displayName: undefined,
++                enabled: true,
++                snapshot: {
++                  resolveMaintenance: () =>
++                    Effect.succeed(
++                      makeManualOnlyProviderMaintenanceCapabilities({
++                        provider: cachedProvider.driver,
++                        packageName: null,
++                      }),
++                    ),
++                  getSnapshot: Effect.succeed({ ...pendingProvider, continuation: account }),
++                  refresh: Effect.succeed({ ...pendingProvider, continuation: account }),
++                  streamChanges: Stream.empty,
++                  applyUsageLimits: () => Effect.void,
++                  seedUsageLimits: (limits) =>
++                    Effect.sync(() => {
++                      seeds.push(limits);
++                    }),
++                },
++                adapter: {} as ProviderInstance["adapter"],
++                textGeneration: {} as ProviderInstance["textGeneration"],
++              } satisfies ProviderInstance;
++              const instanceRegistryLayer = Layer.succeed(
++                ProviderInstanceRegistry.ProviderInstanceRegistry,
++                {
++                  getInstance: (id) =>
++                    Effect.succeed(id === instance.instanceId ? instance : undefined),
++                  listInstances: Effect.succeed([instance]),
++                  listUnavailable: Effect.succeed([]),
++                  streamChanges: Stream.empty,
++                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
++                },
++              );
++
++              yield* ProviderRegistry.ProviderRegistry.pipe(
++                Effect.provide(ProviderRegistryLive.pipe(Layer.provide(instanceRegistryLayer))),
++                Effect.scoped,
++              );
++              assert.deepStrictEqual<ReadonlyArray<unknown>>(
++                seeds,
++                expectedSeeds,
++                cachedAccount.groupKey,
++              );
++            }
++          }).pipe(
++            Effect.provide(
++              ServerConfig.layerTest(process.cwd(), {
++                prefix: "t3-usage-seed-cache-",
++              }).pipe(Layer.provideMerge(NodeServices.layer)),
++            ),
++          ),
++        );
+       });
+ 
+       describe("Antigravity model inventories", () => {
+@@ -1449,6 +1547,188 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+         }),
+       );
+ 
++      it.effect(
++        "publishes live setup capabilities at startup without probes or stream events",
++        () =>
++          Effect.gen(function* () {
++            const codexDriver = ProviderDriverKind.make("codex");
++            const codexInstanceId = ProviderInstanceId.make("codex");
++            const initialProvider = {
++              instanceId: codexInstanceId,
++              driver: codexDriver,
++              status: "warning",
++              enabled: true,
++              installed: false,
++              auth: { status: "unknown" },
++              checkedAt: "2026-06-10T00:00:00.000Z",
++              version: null,
++              message: "Checking Codex provider status.",
++              models: [],
++              slashCommands: [],
++              skills: [],
++            } as const satisfies ServerProvider;
++            const refreshCalls = yield* Ref.make(0);
++            const instance = {
++              instanceId: codexInstanceId,
++              driverKind: codexDriver,
++              continuationIdentity: {
++                driverKind: codexDriver,
++                continuationKey: "codex:instance:codex",
++              },
++              displayName: undefined,
++              enabled: true,
++              smokeTest: () => Effect.void,
++              auth: {
++                start: () => Effect.die("not used"),
++                complete: () => Effect.die("not used"),
++                cancel: () => Effect.die("not used"),
++                logout: () => Effect.die("not used"),
++                subscribe: () => Stream.empty,
++                openOnLaptop: () => Effect.void,
++              },
++              snapshot: {
++                resolveMaintenance: () =>
++                  Effect.succeed(
++                    makeManualOnlyProviderMaintenanceCapabilities({
++                      provider: codexDriver,
++                      packageName: null,
++                    }),
++                  ),
++                getSnapshot: Effect.succeed(initialProvider),
++                refresh: Ref.update(refreshCalls, (count) => count + 1).pipe(
++                  Effect.andThen(Effect.never),
++                ),
++                streamChanges: Stream.empty,
++                applyUsageLimits: () => Effect.void,
++              },
++              adapter: {} as ProviderInstance["adapter"],
++              textGeneration: {} as ProviderInstance["textGeneration"],
++            } satisfies ProviderInstance;
++            const instanceRegistryLayer = Layer.succeed(
++              ProviderInstanceRegistry.ProviderInstanceRegistry,
++              {
++                getInstance: (instanceId) =>
++                  Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
++                listInstances: Effect.succeed([instance]),
++                listUnavailable: Effect.succeed([]),
++                streamChanges: Stream.empty,
++                subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
++              },
++            );
++            const scope = yield* Scope.make();
++            yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
++            const runtimeServices = yield* Layer.build(
++              ProviderRegistryLive.pipe(
++                Layer.provideMerge(instanceRegistryLayer),
++                Layer.provideMerge(
++                  ServerConfig.layerTest(process.cwd(), {
++                    prefix: "t3-provider-registry-background-refresh-",
++                  }),
++                ),
++                Layer.provideMerge(NodeServices.layer),
++              ),
++            ).pipe(Scope.provide(scope));
++            yield* Effect.gen(function* () {
++              const registry = yield* ProviderRegistry.ProviderRegistry;
++              const providers = yield* registry.getProviders;
++              assert.deepStrictEqual(providers[0]?.setup, {
++                canAuthenticate: false,
++                canInstall: false,
++                canRemove: false,
++                canTest: true,
++                canOpenOnLaptop: true,
++              });
++              assert.strictEqual(yield* Ref.get(refreshCalls), 0);
++            }).pipe(Effect.provide(runtimeServices));
++          }),
++      );
++
++      it.effect("uses the uncached refresh only when the caller asks for it", () =>
++        Effect.gen(function* () {
++          const codexDriver = ProviderDriverKind.make("codex");
++          const codexInstanceId = ProviderInstanceId.make("codex");
++          const provider = {
++            instanceId: codexInstanceId,
++            driver: codexDriver,
++            status: "ready",
++            enabled: true,
++            installed: true,
++            auth: { status: "authenticated" },
++            checkedAt: "2026-10-17T00:00:00.000Z",
++            version: "1.0.0",
++            models: [],
++            slashCommands: [],
++            skills: [],
++          } as const satisfies ServerProvider;
++          const refreshed = { ...provider, checkedAt: "2026-10-17T00:01:00.000Z" };
++          const cachedCalls = yield* Ref.make(0);
++          const latestCalls = yield* Ref.make(0);
++          const instance = {
++            instanceId: codexInstanceId,
++            driverKind: codexDriver,
++            continuationIdentity: {
++              driverKind: codexDriver,
++              continuationKey: "codex:instance:codex",
++            },
++            displayName: undefined,
++            enabled: true,
++            snapshot: {
++              resolveMaintenance: () =>
++                Effect.succeed(
++                  makeManualOnlyProviderMaintenanceCapabilities({
++                    provider: codexDriver,
++                    packageName: null,
++                  }),
++                ),
++              getSnapshot: Effect.succeed(provider),
++              refresh: Ref.update(cachedCalls, (count) => count + 1).pipe(Effect.as(refreshed)),
++              refreshLatest: Ref.update(latestCalls, (count) => count + 1).pipe(
++                Effect.as(refreshed),
++              ),
++              streamChanges: Stream.empty,
++              applyUsageLimits: () => Effect.void,
++            },
++            adapter: {} as ProviderInstance["adapter"],
++            textGeneration: {} as ProviderInstance["textGeneration"],
++          } satisfies ProviderInstance;
++          const instanceRegistryLayer = Layer.succeed(
++            ProviderInstanceRegistry.ProviderInstanceRegistry,
++            {
++              getInstance: (id) => Effect.succeed(id === codexInstanceId ? instance : undefined),
++              listInstances: Effect.succeed([instance]),
++              listUnavailable: Effect.succeed([]),
++              streamChanges: Stream.empty,
++              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
++            },
++          );
++          const scope = yield* Scope.make();
++          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
++          const runtimeServices = yield* Layer.build(
++            ProviderRegistryLive.pipe(
++              Layer.provideMerge(instanceRegistryLayer),
++              Layer.provideMerge(
++                ServerConfig.layerTest(process.cwd(), {
++                  prefix: "t3-provider-registry-refresh-latest-",
++                }),
++              ),
++              Layer.provideMerge(NodeServices.layer),
++            ),
++          ).pipe(Scope.provide(scope));
++          yield* Effect.gen(function* () {
++            const registry = yield* ProviderRegistry.ProviderRegistry;
++            // The fallback re-check, usage re-check and maintenance flows call
++            // without the flag: the cached path, never the fresh lookup.
++            yield* registry.refreshInstance(codexInstanceId);
++            assert.strictEqual(yield* Ref.get(cachedCalls), 1);
++            assert.strictEqual(yield* Ref.get(latestCalls), 0);
++            // Only the settings card's manual Refresh passes the flag.
++            yield* registry.refreshInstance(codexInstanceId, { refreshLatestVersion: true });
++            assert.strictEqual(yield* Ref.get(cachedCalls), 1);
++            assert.strictEqual(yield* Ref.get(latestCalls), 1);
++          }).pipe(Effect.provide(runtimeServices));
++        }),
++      );
++
+       it.effect("deduplicates cwd probes and clears snapshots when an instance rebuilds", () =>
+         Effect.gen(function* () {
+           const driver = ProviderDriverKind.make("codex");
+@@ -2374,6 +2654,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+           const providerRegistryLayer = ProviderRegistryLive.pipe(
+             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+             Layer.provideMerge(AntigravityInstallation.layer),
++            Layer.provideMerge(ProviderCatalog.layer),
++            Layer.provideMerge(CatalogInstaller.layer),
+             Layer.provideMerge(
+               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+             ),
+@@ -2391,6 +2673,9 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+             ),
+             Layer.provideMerge(ModelManifest.layerTest),
+             Layer.provideMerge(ResetCreditCoordinator.layerTest),
++            // The DeepSeek driver's probe prices its own transcripts, so the
++            // built-in drivers need the usage service here.
++            Layer.provideMerge(UsageService.layerTest),
+             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+             // NO spawner mock — `ChildProcessSpawner` is supplied by the
+@@ -2473,6 +2758,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+           const providerRegistryLayer = ProviderRegistryLive.pipe(
+             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+             Layer.provideMerge(AntigravityInstallation.layer),
++            Layer.provideMerge(ProviderCatalog.layer),
++            Layer.provideMerge(CatalogInstaller.layer),
+             Layer.provideMerge(
+               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+             ),
+@@ -2490,6 +2777,9 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+             ),
+             Layer.provideMerge(ModelManifest.layerTest),
+             Layer.provideMerge(ResetCreditCoordinator.layerTest),
++            // The DeepSeek driver's probe prices its own transcripts, so the
++            // built-in drivers need the usage service here.
++            Layer.provideMerge(UsageService.layerTest),
+             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
+               ChildProcessSpawner.make((command) => {
+@@ -2589,6 +2879,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+           const providerRegistryLayer = ProviderRegistryLive.pipe(
+             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+             Layer.provideMerge(AntigravityInstallation.layer),
++            Layer.provideMerge(ProviderCatalog.layer),
++            Layer.provideMerge(CatalogInstaller.layer),
+             Layer.provideMerge(
+               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+             ),
+@@ -2606,6 +2898,9 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+             ),
+             Layer.provideMerge(ModelManifest.layerTest),
+             Layer.provideMerge(ResetCreditCoordinator.layerTest),
++            // The DeepSeek driver's probe prices its own transcripts, so the
++            // built-in drivers need the usage service here.
++            Layer.provideMerge(UsageService.layerTest),
+             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+             Layer.provideMerge(NodeServices.layer),
+             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+@@ -2651,6 +2946,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+             const providerRegistryLayer = ProviderRegistryLive.pipe(
+               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+               Layer.provideMerge(AntigravityInstallation.layer),
++              Layer.provideMerge(ProviderCatalog.layer),
++              Layer.provideMerge(CatalogInstaller.layer),
+               Layer.provideMerge(
+                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+               ),
+@@ -2668,6 +2965,9 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+               ),
+               Layer.provideMerge(ModelManifest.layerTest),
+               Layer.provideMerge(ResetCreditCoordinator.layerTest),
++              // The DeepSeek driver's probe prices its own transcripts, so the
++              // built-in drivers need the usage service here.
++              Layer.provideMerge(UsageService.layerTest),
+               Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+               Layer.provideMerge(
+@@ -2713,6 +3013,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+                 "claudeAgent",
+                 "codex",
+                 "cursor",
++                "deepseek",
+                 "grok",
+                 "opencode",
+               ]);

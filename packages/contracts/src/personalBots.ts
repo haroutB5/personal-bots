@@ -264,7 +264,7 @@ export const PersonalBot = Schema.Struct({
    * The bot form's "Allow voice calls": whether this bot's owner chats offer
    * the call button. On for the CTO only at launch, off for every other bot
    * and for a new one. Optional on the wire like the fields above; read it
-   * through {@link botAllowsVoiceCalls}.
+   * through {@link botTakesVoiceCalls}.
    */
   allowVoiceCalls: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,

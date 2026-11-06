@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx b/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
+index 8809c429c824bcd6003170a42fd7a3991b0284f2..293841e9571f21f0381b123046e395f3a3dce2a0 100644
+--- a/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
++++ b/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
+@@ -4,7 +4,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
+ import * as Notifications from "expo-notifications";
+ import { useNavigation } from "@react-navigation/native";
+ import * as Effect from "effect/Effect";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+ import { Alert, AppState, Linking, Platform } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";

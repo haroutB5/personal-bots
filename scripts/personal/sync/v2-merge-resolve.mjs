@@ -325,6 +325,7 @@ export const targetFor = ({
   registry,
   backport,
   superseded = null,
+  supersededCreated = null,
 }) => {
   if (backport) {
     return {
@@ -336,6 +337,9 @@ export const targetFor = ({
     };
   }
   if (superseded !== null) {
+    if (supersededCreated !== null && supersededCreatedBlocksDrop(supersededCreated)) {
+      return null;
+    }
     return {
       target: "B1",
       status: "dropped",
@@ -391,7 +395,7 @@ export const targetFor = ({
  * `broken` is only consulted for add/add, where our file is still a candidate
  * to keep.
  */
-export const planFor = ({ status, path, seam, broken, apply = false }) => {
+export const planFor = ({ status, seam, broken, apply = false }) => {
   if (seam) {
     return apply ? { action: "take-upstream", kind: null } : { action: "leave-seam", kind: null };
   }
@@ -523,6 +527,233 @@ const addedFilePatch = (repo, ours, path) => {
     .map((line) => `+${line}`)
     .join("\n");
   return `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${result.stdout.split("\n").length - 1} @@\n${body}`;
+};
+
+/**
+ * H.4 check 1, closure. A parked file may not keep a live importer. `importers`
+ * maps a parked path to the files that import it; a seam may import a personal
+ * module because its one registration line is the seam.
+ */
+export const closureErrors = ({ parkedPaths, importers, seams = SEAM_FILES }) => {
+  const parked = new Set(parkedPaths);
+  const errors = [];
+  for (const target of parked) {
+    for (const importer of importers.get(target) ?? []) {
+      if (parked.has(importer) || seams.includes(importer)) continue;
+      errors.push(`${importer} imports parked ${target}`);
+    }
+  }
+  return errors;
+};
+
+/** Every export a parked hunk removes, from its `-` lines. */
+export const removedExportNames = (patch) => {
+  const names = new Set();
+  for (const line of patch.split("\n")) {
+    if (!line.startsWith("-") || line.startsWith("---")) continue;
+    const declared = line.match(
+      /^-\s*export\s+(?:declare\s+)?(?:const|let|function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/,
+    );
+    if (declared) names.add(declared[1]);
+    const listed = line.match(/^-\s*export\s*\{([^}]*)\}/);
+    if (listed) {
+      for (const part of listed[1].split(",")) {
+        const name = part
+          .trim()
+          .split(/\s+as\s+/)
+          .pop();
+        if (name) names.add(name);
+      }
+    }
+  }
+  return [...names];
+};
+
+/**
+ * H.4 check 2, strip detector. A removed export may not leave a live caller
+ * outside the parked set.
+ */
+export const stripErrors = ({ removed, sources, parkedPaths }) => {
+  const parked = new Set(parkedPaths);
+  const errors = [];
+  for (const [name, definingPath] of removed) {
+    const pattern = new RegExp(`\\b${name}\\b`);
+    for (const [path, source] of sources) {
+      if (path === definingPath || parked.has(path) || SEAM_FILES.includes(path)) continue;
+      if (pattern.test(source))
+        errors.push(`${name} is stripped at ${definingPath} but ${path} still reads it`);
+    }
+  }
+  return errors;
+};
+
+/**
+ * H.4 check 3, clean-merge hunks. A U file that merged clean and still differs
+ * from U carries one of our hunks; it must be a ledger row or a seam.
+ */
+export const cleanMergeHunkErrors = ({
+  changedPaths,
+  upstreamFiles,
+  parkedPaths,
+  seams = SEAM_FILES,
+}) => {
+  const parked = new Set(parkedPaths);
+  return changedPaths.filter(
+    (path) => upstreamFiles.has(path) && !parked.has(path) && !seams.includes(path),
+  );
+};
+
+/**
+ * H.4 check 4, superseded-created files. A file the superseded commit created
+ * may drop only when U carries the path or no live importer remains.
+ */
+export const supersededCreatedBlocksDrop = ({ created, upstreamHas, liveImporters }) =>
+  created && !upstreamHas && liveImporters.length > 0;
+
+const exportedNamesOnRemovedLines = (diff) => {
+  const names = new Set();
+  for (const line of diff.split("\n")) {
+    if (!line.startsWith("-") || line.startsWith("---")) continue;
+    const declared = line.match(
+      /^-\s*(?:export\s+)?(?:const|let|function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/,
+    );
+    if (declared) names.add(declared[1]);
+    const listed = line.match(/^-\s*export\s*\{([^}]*)\}/);
+    if (listed) {
+      for (const part of listed[1].split(",")) {
+        const name = part
+          .trim()
+          .split(/\s+as\s+/)
+          .pop();
+        if (name) names.add(name);
+      }
+    }
+  }
+  return [...names];
+};
+
+/**
+ * H.4 check 5, seam types. A seam diff may add lines but may not remove or
+ * change a name a U test reads. A private local that no test names may go.
+ */
+export const seamTypeErrors = ({ path, diff, sources }) => {
+  const tests = [...sources].filter(
+    ([testPath]) =>
+      testPath !== path && /(\.test\.tsx?$|\.integration\.ts$|\/integration\/)/.test(testPath),
+  );
+  const errors = [];
+  for (const name of exportedNamesOnRemovedLines(diff)) {
+    const pattern = new RegExp(`\\b${name}\\b`);
+    const reader = tests.find(([, source]) => pattern.test(source));
+    if (reader !== undefined) errors.push(`${path} changes ${name}, which ${reader[0]} reads`);
+  }
+  return errors;
+};
+
+/** Source text of the merged tree (tracked plus lever-added untracked files). */
+export const readMergedSources = (repo) => {
+  const listed = git(repo, [
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "*.ts",
+    "*.tsx",
+  ]);
+  const sources = new Map();
+  for (const path of listed.split("\n")) {
+    if (!path) continue;
+    if (
+      !/^(apps\/server\/src\/|apps\/server\/integration\/|packages\/contracts\/src\/|packages\/shared\/src\/|scripts\/personal\/)/.test(
+        path,
+      )
+    ) {
+      continue;
+    }
+    let text;
+    try {
+      text = NodeFS.readFileSync(NodePath.join(repo, path), "utf8");
+    } catch {
+      continue;
+    }
+    if (text.includes("<<<<<<<")) continue;
+    sources.set(path, text);
+  }
+  return sources;
+};
+
+/** Reverse import edges for the merged tree. */
+export const importersByTarget = (sources) => {
+  const files = new Set(sources.keys());
+  const importers = new Map();
+  for (const [path, source] of sources) {
+    for (const spec of importsIn(source)) {
+      if (!spec.startsWith(".") && !spec.startsWith("@t3tools/contracts/")) continue;
+      const target = resolveImportTarget(path, spec, files);
+      if (target === null) continue;
+      const list = importers.get(target) ?? [];
+      if (!list.includes(path)) list.push(path);
+      importers.set(target, list);
+    }
+  }
+  return importers;
+};
+
+/** Live importers of one path at a ref (check 4, before the result tree exists). */
+const liveImportersAt = ({ repo, ref, path, tree }) => {
+  const base = NodePath.basename(path).replace(/\.tsx?$/, "");
+  const matches = tryGit(repo, ["grep", "-l", "-F", base, ref, "--", "*.ts", "*.tsx"]);
+  if (!matches.ok) return [];
+  const importers = [];
+  for (const match of matches.stdout.split("\n")) {
+    const colon = match.indexOf(":");
+    if (colon === -1) continue;
+    const importer = match.slice(colon + 1);
+    if (importer === path) continue;
+    const source = tryGit(repo, ["show", `${ref}:${importer}`]);
+    if (!source.ok) continue;
+    const resolves = importsIn(source.stdout).some(
+      (spec) =>
+        (spec.startsWith(".") || spec.startsWith("@t3tools/contracts/")) &&
+        resolveImportTarget(importer, spec, tree) === path,
+    );
+    if (resolves) importers.push(importer);
+  }
+  return importers;
+};
+
+/** Runs checks 1, 2, 3 and 5 against the applied tree. */
+export const h4CheckErrors = ({ repo, theirs, theirsTree, rows, ledger }) => {
+  const sources = readMergedSources(repo);
+  const parkedPaths = rows.map((row) => row.path);
+  const importers = importersByTarget(sources);
+  const errors = [...closureErrors({ parkedPaths, importers })];
+  const removed = new Map();
+  for (const row of rows) {
+    const patchPath = NodePath.join(ledger, "patches", `${row.path}.patch`);
+    let patch = "";
+    try {
+      patch = NodeFS.readFileSync(patchPath, "utf8");
+    } catch {
+      continue;
+    }
+    for (const name of removedExportNames(patch)) removed.set(name, row.path);
+  }
+  errors.push(...stripErrors({ removed, sources, parkedPaths }));
+  const changed = tryGit(repo, ["diff", "--cached", "--name-only", theirs])
+    .stdout.split("\n")
+    .filter(Boolean);
+  errors.push(
+    ...cleanMergeHunkErrors({ changedPaths: changed, upstreamFiles: theirsTree, parkedPaths }).map(
+      (path) => `${path} merged clean from U but still carries our hunk`,
+    ),
+  );
+  for (const path of SEAM_FILES) {
+    const diff = tryGit(repo, ["diff", "--cached", theirs, "--", path]).stdout;
+    if (diff.length === 0) continue;
+    errors.push(...seamTypeErrors({ path, diff, sources }));
+  }
+  return errors;
 };
 
 const parseArgs = (argv) => {
@@ -701,6 +932,19 @@ const main = () => {
       kind === "added-broken"
         ? null
         : supersededBy({ origin, baseTree, oursTree, commits: supersededCommits });
+    const supersededCreated =
+      superseded === null
+        ? null
+        : (() => {
+            const created = !baseTree.has(origin) && oursTree.has(origin);
+            return {
+              created,
+              upstreamHas: upstreamTree.has(origin),
+              liveImporters: created
+                ? liveImportersAt({ repo, ref: oursSha, path: origin, tree: oursTree })
+                : [],
+            };
+          })();
     const assignment = targetFor({
       path: entry.path,
       origin,
@@ -708,6 +952,7 @@ const main = () => {
       registry,
       backport,
       superseded,
+      supersededCreated,
     });
     if (assignment === null) {
       unmatched.push(entry.path);
@@ -844,6 +1089,15 @@ const main = () => {
     resultTree.set(path, meta.split(" ")[1]);
   }
   const relocated = renamedIntoV2(oursTree, resultTree);
+  const h4 = apply
+    ? h4CheckErrors({
+        repo,
+        theirs: theirsSha,
+        theirsTree: upstreamTree,
+        rows,
+        ledger,
+      })
+    : [];
 
   const rowsSorted = [...rows].sort((left, right) => left.path.localeCompare(right.path));
   NodeFS.mkdirSync(NodePath.join(ledger, "patches"), { recursive: true });
@@ -920,6 +1174,8 @@ const main = () => {
     console.log(`    ${rule}: ${byRule[rule] ?? 0}`);
   }
   console.log(`  open at B1: ${openAtB1}`);
+  console.log(`  h.4 checks: ${h4.length}`);
+  for (const error of h4) console.log(`    ${error}`);
   console.log(`  unmatched: ${unmatched.length}`);
   for (const path of unmatched) console.log(`    ${path}`);
   console.log(`  empty patches: ${zeroHunk.length}`);
@@ -944,7 +1200,8 @@ const main = () => {
     remainingNonSeam.length > 0 ||
     unmatched.length > 0 ||
     zeroHunk.length > 0 ||
-    originFailures.length > 0;
+    originFailures.length > 0 ||
+    h4.length > 0;
   if (remainingNonSeam.length > 0) {
     console.error("v2-merge-resolve: non-seam conflicts remain:");
     for (const entry of remainingNonSeam) console.error(`  ${entry.xy} ${entry.path}`);
@@ -963,6 +1220,10 @@ const main = () => {
       console.error(`  ${failure.path} (${failure.candidates.length} candidates)`);
       for (const candidate of failure.candidates) console.error(`    ${candidate}`);
     }
+  }
+  if (h4.length > 0) {
+    console.error("v2-merge-resolve: H.4 checks failed:");
+    for (const error of h4) console.error(`  ${error}`);
   }
   process.exit(failed ? 1 : 0);
 };

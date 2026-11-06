@@ -1,0 +1,35 @@
+diff --git a/apps/web/src/routes/_chat.index.tsx b/apps/web/src/routes/_chat.index.tsx
+index 61e9e7a2e3a28d017b6d69e8970237c8a3ded809..d9ad59c336ce639bdfd82ba6471d17533711d6cc 100644
+--- a/apps/web/src/routes/_chat.index.tsx
++++ b/apps/web/src/routes/_chat.index.tsx
+@@ -1,6 +1,6 @@
+ import { RefreshIcon } from "~/components/ui/refresh-icon";
+ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+-import { createFileRoute, Link } from "@tanstack/react-router";
++import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+ import { LinkIcon, PlusIcon } from "lucide-react";
+ import { useEffect, useMemo, useRef, useState } from "react";
+ 
+@@ -21,6 +21,7 @@ import {
+ import { useEnvironments } from "../state/environments";
+ import { APP_DISPLAY_NAME } from "~/branding";
+ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
++import { readDeveloperView } from "~/features/personal/personalMode";
+ 
+ function ChatIndexRouteView() {
+   const { authGateState } = Route.useRouteContext();
+@@ -111,6 +112,14 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
+ }
+ 
+ export const Route = createFileRoute("/_chat/")({
++  // A paired environment opens on the personal Bots shell. Developer view
++  // (chosen from personal Settings) keeps `/` on the upstream workspace for
++  // the rest of the session.
++  beforeLoad: ({ context }) => {
++    if (context.authGateState.status === "authenticated" && !readDeveloperView()) {
++      throw redirect({ to: "/bots", replace: true });
++    }
++  },
+   component: ChatIndexRouteView,
+ });
+ 

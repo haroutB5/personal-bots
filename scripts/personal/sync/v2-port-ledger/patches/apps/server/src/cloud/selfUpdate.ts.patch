@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/cloud/selfUpdate.ts b/apps/server/src/cloud/selfUpdate.ts
+index 6a6d3d92d5b1f34d88b6ba28de9cddfc95b0d5d1..47c4949de739213a65f753ffd9549b869ee3d8f8 100644
+--- a/apps/server/src/cloud/selfUpdate.ts
++++ b/apps/server/src/cloud/selfUpdate.ts
+@@ -18,7 +18,7 @@ import * as Ref from "effect/Ref";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+-import { HttpClient } from "effect/unstable/http";
++import { HttpClient } from "effect/http";
+ 
+ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
+ 

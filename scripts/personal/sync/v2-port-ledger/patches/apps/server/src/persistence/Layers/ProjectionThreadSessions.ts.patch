@@ -1,0 +1,44 @@
+diff --git a/apps/server/src/persistence/Layers/ProjectionThreadSessions.ts b/apps/server/src/persistence/Layers/ProjectionThreadSessions.ts
+index dcb750983a003c5fb30864f771c28b10d3b2cd2d..eea3bd7bc2c7bf3773bad2f0c13d75870df15717 100644
+--- a/apps/server/src/persistence/Layers/ProjectionThreadSessions.ts
++++ b/apps/server/src/persistence/Layers/ProjectionThreadSessions.ts
+@@ -1,5 +1,5 @@
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ 
+@@ -28,6 +28,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
+           runtime_mode,
+           active_turn_id,
+           last_error,
++          provider_retry_json,
+           updated_at
+         )
+         VALUES (
+@@ -38,6 +39,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
+           ${row.runtimeMode},
+           ${row.activeTurnId},
+           ${row.lastError},
++          ${row.providerRetry ?? null},
+           ${row.updatedAt}
+         )
+         ON CONFLICT (thread_id)
+@@ -48,6 +50,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
+           runtime_mode = excluded.runtime_mode,
+           active_turn_id = excluded.active_turn_id,
+           last_error = excluded.last_error,
++          provider_retry_json = excluded.provider_retry_json,
+           updated_at = excluded.updated_at
+       `,
+   });
+@@ -65,6 +68,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
+           runtime_mode AS "runtimeMode",
+           active_turn_id AS "activeTurnId",
+           last_error AS "lastError",
++          provider_retry_json AS "providerRetry",
+           updated_at AS "updatedAt"
+         FROM projection_thread_sessions
+         WHERE thread_id = ${threadId}

@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/auth/EnvironmentAuthAdmin.test.ts b/apps/server/src/auth/EnvironmentAuthAdmin.test.ts
+index d8a0e3048c5127a045bc5126f10d9d38ce31409e..b1413a569a97192e16a636b9abe96170e5efe58c 100644
+--- a/apps/server/src/auth/EnvironmentAuthAdmin.test.ts
++++ b/apps/server/src/auth/EnvironmentAuthAdmin.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";

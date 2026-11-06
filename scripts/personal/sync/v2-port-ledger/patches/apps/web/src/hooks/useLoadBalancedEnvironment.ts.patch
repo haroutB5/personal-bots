@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/hooks/useLoadBalancedEnvironment.ts b/apps/web/src/hooks/useLoadBalancedEnvironment.ts
+index 701ee04706ebcac139925bb17f3ba90ac25b7a48..f3c77425e737a468c747cca7060962b41d15c61d 100644
+--- a/apps/web/src/hooks/useLoadBalancedEnvironment.ts
++++ b/apps/web/src/hooks/useLoadBalancedEnvironment.ts
+@@ -1,7 +1,7 @@
+ import { RegistryContext, useAtomValue } from "@effect/atom-react";
+ import { chooseLoadBalancedEnvironment } from "@t3tools/client-runtime/load-balancing";
+ import type { EnvironmentId } from "@t3tools/contracts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useCallback, useContext, useMemo } from "react";
+ 
+ import { serverEnvironment } from "../state/server";

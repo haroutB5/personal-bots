@@ -1,0 +1,19 @@
+diff --git a/apps/web/src/components/ui/popover.tsx b/apps/web/src/components/ui/popover.tsx
+index 5954f3d731d3890ef79d88eeaf706b3646121906..c8cdb76fc859e15d742747b336df377880972121 100644
+--- a/apps/web/src/components/ui/popover.tsx
++++ b/apps/web/src/components/ui/popover.tsx
+@@ -1,12 +1,13 @@
+ "use client";
+ 
++import { withBackClose } from "~/components/ui/back-closing-root";
+ import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+ 
+ import { cn } from "~/lib/utils";
+ 
+ const PopoverCreateHandle = PopoverPrimitive.createHandle;
+ 
+-const Popover = PopoverPrimitive.Root;
++const Popover = withBackClose(PopoverPrimitive.Root);
+ 
+ function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trigger.Props) {
+   return (

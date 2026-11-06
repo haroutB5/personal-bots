@@ -31,7 +31,7 @@ import {
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../../auth/http.ts";
-import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
+import { serveUntilSessionRevoked } from "../auth/sessionRevocationClose.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 import { InputLine } from "./inputLine.ts";
 import { runViewerFrames } from "./viewerFlow.ts";
@@ -85,7 +85,7 @@ export const authenticatePersonalRoute = (requiredScope: AuthEnvironmentScope) =
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "media").pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
         failEnvironmentAuthInvalid(
           EnvironmentAuth.serverAuthCredentialReason(error),

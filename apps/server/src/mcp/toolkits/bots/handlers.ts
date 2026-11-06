@@ -245,7 +245,7 @@ const make = Effect.gen(function* () {
   const callerBot = Effect.fn("BotsToolkit.callerBot")(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("bots");
     const link = yield* botRepository
-      .getThreadLink({ threadId: scope.threadId })
+      .getThreadLink({ threadId: McpInvocationContext.requireMcpThread(scope).threadId })
       .pipe(Effect.mapError(() => toolError("Could not look up this thread's bot.")));
     if (Option.isNone(link)) {
       return yield* toolError("This thread does not belong to a personal bot.");
@@ -254,7 +254,7 @@ const make = Effect.gen(function* () {
       .getBotById({ botId: link.value.botId })
       .pipe(Effect.mapError(() => toolError("Could not look up this thread's bot.")));
     return {
-      threadId: scope.threadId,
+      threadId: McpInvocationContext.requireMcpThread(scope).threadId,
       botId: link.value.botId,
       botName: Option.isSome(bot) ? bot.value.name : "Bot",
       team: Option.isSome(bot) ? botTeam(bot.value) : DEFAULT_PERSONAL_BOT_TEAM,

@@ -1,0 +1,15 @@
+diff --git a/apps/server/src/vcs/VcsDriverRegistry.test.ts b/apps/server/src/vcs/VcsDriverRegistry.test.ts
+index 0ad2450eb1922bbf20a1936e3bcadb30879ea161..96ac694977680c0a794a006012a71e549fe260b6 100644
+--- a/apps/server/src/vcs/VcsDriverRegistry.test.ts
++++ b/apps/server/src/vcs/VcsDriverRegistry.test.ts
+@@ -1,8 +1,8 @@
+ import { assert, it, describe } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import * as VcsProcess from "./VcsProcess.ts";
+ import * as VcsProjectConfig from "./VcsProjectConfig.ts";

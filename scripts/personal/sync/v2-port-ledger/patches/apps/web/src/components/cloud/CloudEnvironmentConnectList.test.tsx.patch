@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/cloud/CloudEnvironmentConnectList.test.tsx b/apps/web/src/components/cloud/CloudEnvironmentConnectList.test.tsx
+index 157861f1eaa62632938ad742ef2953b91f7c18bc..f473c10a2b4910fc7d360b1b94c457ada342d427 100644
+--- a/apps/web/src/components/cloud/CloudEnvironmentConnectList.test.tsx
++++ b/apps/web/src/components/cloud/CloudEnvironmentConnectList.test.tsx
+@@ -2,7 +2,7 @@ import type { Discovery } from "@t3tools/client-runtime/relay";
+ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+ import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { act, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+ import { create, type ReactTestRenderer } from "react-test-renderer";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

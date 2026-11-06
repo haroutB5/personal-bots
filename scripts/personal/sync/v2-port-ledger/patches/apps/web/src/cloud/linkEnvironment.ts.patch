@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/cloud/linkEnvironment.ts b/apps/web/src/cloud/linkEnvironment.ts
+index f88e7863969d412e82cb69a90d98dd8606a74cb9..66a6600eefb9daec54bcf21ff7b515038cec3705 100644
+--- a/apps/web/src/cloud/linkEnvironment.ts
++++ b/apps/web/src/cloud/linkEnvironment.ts
+@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { HttpClient } from "effect/unstable/http";
++import { HttpClient } from "effect/http";
+ import {
+   EnvironmentCloudEndpointUnavailableError,
+   type EnvironmentCloudLinkStateResult,

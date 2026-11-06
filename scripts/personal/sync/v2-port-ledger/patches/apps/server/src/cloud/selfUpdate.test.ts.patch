@@ -1,0 +1,21 @@
+diff --git a/apps/server/src/cloud/selfUpdate.test.ts b/apps/server/src/cloud/selfUpdate.test.ts
+index 05c96c95c2df4760caf5660e3dc1786407506306..650fde9d1088493d4d22807380ecfffb45431e2d 100644
+--- a/apps/server/src/cloud/selfUpdate.test.ts
++++ b/apps/server/src/cloud/selfUpdate.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
+ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+@@ -8,8 +8,8 @@ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Fiber from "effect/Fiber";
+ import * as Path from "effect/Path";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import { HttpClient, HttpClientResponse } from "effect/http";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ import * as ServerConfig from "../config.ts";
+ import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";

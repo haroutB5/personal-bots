@@ -1,0 +1,313 @@
+diff --git a/apps/server/src/provider/makeManagedServerProvider.ts b/apps/server/src/provider/makeManagedServerProvider.ts
+index 119c577474c8d56acd41922588cc14da8ebef522..9bf3b56831b3b199560c8d75c1c6b4e7bade3ea0 100644
+--- a/apps/server/src/provider/makeManagedServerProvider.ts
++++ b/apps/server/src/provider/makeManagedServerProvider.ts
+@@ -4,6 +4,9 @@ import {
+   ServerSettingsError,
+ } from "@t3tools/contracts";
+ import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
++import { usageResetSinceReading } from "@t3tools/shared/usageLimits";
++import * as Cause from "effect/Cause";
++import * as Clock from "effect/Clock";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+ import * as Equal from "effect/Equal";
+@@ -17,7 +20,12 @@ import * as Semaphore from "effect/Semaphore";
+ 
+ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+ import { ServerSettingsService } from "../serverSettings.ts";
+-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
++import { probeBackoffInterval, usageAwareWait } from "./probeBackoff.ts";
++import {
++  applyUsageLimitsUpdate,
++  resolveUsageLimitsAfterProbe,
++  seedUsageLimits,
++} from "./providerUsageLimits.ts";
+ import type { ServerProviderShape } from "./Services/ServerProvider.ts";
+ 
+ interface ProviderSnapshotState {
+@@ -36,6 +44,30 @@ function withUsageLimits(
+   return usageLimits ? { ...rest, usageLimits } : rest;
+ }
+ 
++/**
++ * `Effect.ignoreCause({ log: true })` that keeps interruptions out of the log.
++ * A shared cached computation (e.g. the maintenance-capabilities cache) can
++ * hand a later caller the exit of an interrupted run, and that stored exit
++ * arrives as an ordinary failure whose cause is interrupts only. Logging it
++ * puts a synthetic `InterruptError: All fibers interrupted without error`
++ * line with a stack in the startup log, which the release smoke counts as an
++ * error (1.66.22 rolled back on two such lines under load). Genuine failures
++ * and defects still log exactly as `ignoreCause({ log: true })` did, and
++ * interruption still ends the fiber the same way; only the logging of an
++ * interrupts-only cause is skipped.
++ */
++const ignoreCauseWithoutInterruptNoise = <A, E, R>(
++  self: Effect.Effect<A, E, R>,
++): Effect.Effect<void, never, R> =>
++  Effect.matchCauseEffect(self, {
++    onFailure: (cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.log(cause)),
++    onSuccess: () => Effect.void,
++  });
++
++/** The usage reset times a snapshot reports, as one comparable string. */
++const resetTimesKey = (snapshot: ServerProvider): string =>
++  snapshot.usageLimits?.windows.map((window) => window.resetsAt ?? "").join("|") ?? "";
++
+ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
+   Settings,
+ >(input: {
+@@ -50,6 +82,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+     readonly snapshot: ServerProvider;
+     readonly getSnapshot: Effect.Effect<ServerProvider>;
+     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
++    /** A manual Refresh: bypass the registry version cache for this enrichment. */
++    readonly refreshLatestVersion?: boolean;
+   }) => Effect.Effect<void>;
+   readonly refreshInterval?: Duration.Input;
+   readonly refreshOnInterval?: boolean;
+@@ -74,6 +108,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+   });
+   const settingsRef = yield* Ref.make(initialSettings);
+   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
++  // How many probes in a row have come back unable to read usage. Drives the
++  // gap before the next one; see probeBackoff.ts.
++  const usageFailureStreakRef = yield* Ref.make(0);
+   const scope = yield* Effect.scope;
+ 
+   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
+@@ -102,6 +139,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+     settings: Settings,
+     snapshot: ServerProvider,
+     generation: number,
++    options?: { readonly refreshLatestVersion?: boolean },
+   ) {
+     const previousFiber = yield* Ref.getAndSet(enrichmentFiberRef, null);
+     if (previousFiber) {
+@@ -118,15 +156,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+         snapshot,
+         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+         publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
++        ...(options?.refreshLatestVersion === true ? { refreshLatestVersion: true } : {}),
+       })
+-      .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
++      .pipe(ignoreCauseWithoutInterruptNoise, Effect.forkIn(scope));
+ 
+     yield* Ref.set(enrichmentFiberRef, fiber);
+   });
+ 
+   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
+     nextSettings: Settings,
+-    options?: { readonly forceRefresh?: boolean },
++    options?: {
++      readonly forceRefresh?: boolean;
++      readonly refreshLatestVersion?: boolean;
++    },
+   ) {
+     const forceRefresh = options?.forceRefresh === true;
+     const previousSettings = yield* Ref.get(settingsRef);
+@@ -146,11 +188,27 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+         enrichmentGeneration: nextGeneration,
+       });
+       yield* Ref.set(settingsRef, nextSettings);
+-      yield* restartSnapshotEnrichment(nextSettings, state.snapshot, nextGeneration);
++      yield* restartSnapshotEnrichment(nextSettings, state.snapshot, nextGeneration, {
++        refreshLatestVersion: options?.refreshLatestVersion === true,
++      });
+       return state.snapshot;
+     }
+ 
+     const probedSnapshot = yield* input.checkProvider;
++    // A probe that could not read usage widens the gap before the next one;
++    // the first that can read it goes straight back to the configured
++    // interval. Every probe counts, including a manual refresh, so a pull to
++    // refresh that succeeds also clears a backoff the loop built up.
++    const usageProbeFailed = probedSnapshot.usageLimits?.unavailable?.reason === "probeFailed";
++    const failureStreak = yield* Ref.updateAndGet(usageFailureStreakRef, (streak) =>
++      usageProbeFailed ? streak + 1 : 0,
++    );
++    if (usageProbeFailed) {
++      yield* Effect.logInfo("provider usage read failed; backing off the next probe", {
++        instanceId: probedSnapshot.instanceId,
++        consecutiveFailures: failureStreak,
++      });
++    }
+     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
+       snapshotStateRef,
+       (state) => {
+@@ -162,6 +220,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+           resolveUsageLimitsAfterProbe({
+             published: state.snapshot.usageLimits,
+             probed: probedSnapshot.usageLimits,
++            context: {
++              checkedAt: probedSnapshot.checkedAt,
++              message: probedSnapshot.message,
++              enabled: probedSnapshot.enabled,
++              installed: probedSnapshot.installed,
++            },
+           }),
+         );
+         return [
+@@ -172,11 +236,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+     );
+     yield* Ref.set(settingsRef, nextSettings);
+     yield* PubSub.publish(changesPubSub, nextSnapshot);
+-    yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
++    yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration, {
++      refreshLatestVersion: options?.refreshLatestVersion === true,
++    });
+     return nextSnapshot;
+   });
+-  const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
+-    refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
++  const applySnapshot = (
++    nextSettings: Settings,
++    options?: { readonly forceRefresh?: boolean; readonly refreshLatestVersion?: boolean },
++  ) => refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+ 
+   /**
+    * Runtime usage updates arrive between probes. They patch only
+@@ -204,9 +272,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+       }
+     });
+ 
+-  const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
++  const refreshSnapshot = Effect.fn("refreshSnapshot")(function* (options?: {
++    readonly refreshLatestVersion?: boolean;
++  }) {
+     const nextSettings = yield* input.getSettings;
+-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
++    return yield* applySnapshot(nextSettings, {
++      forceRefresh: true,
++      refreshLatestVersion: options?.refreshLatestVersion === true,
++    });
+   });
+ 
+   const hasProviderStatusDemand = Effect.gen(function* () {
+@@ -245,49 +318,99 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
+     );
+   }
+ 
++  // A reading that moves a usage reset changes when the loop should wake, so
++  // the loop re-plans its sleep (without probing) when the reset times differ
++  // from the ones it planned with. Subscribed here, before the first probe
++  // can publish.
++  const plannedResetsRef = yield* Ref.make(resetTimesKey(initialSnapshot));
++  const resetTimeChanges = yield* PubSub.subscribe(changesPubSub);
++  yield* Stream.fromSubscription(resetTimeChanges).pipe(
++    Stream.runForEach((snapshot) =>
++      Effect.gen(function* () {
++        if (resetTimesKey(snapshot) === (yield* Ref.get(plannedResetsRef))) return;
++        yield* Queue.offer(refreshIntervalChanges, undefined);
++      }),
++    ),
++    Effect.forkScoped,
++  );
++
+   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
+     Effect.asVoid(applySnapshot(nextSettings)),
+   ).pipe(Effect.forkScoped);
+ 
+   yield* Effect.forever(
+-    getRefreshInterval.pipe(
+-      Effect.flatMap((refreshInterval) =>
+-        // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
+-        Effect.raceFirst(
+-          Effect.sleep(
+-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
+-              ? "60 seconds"
+-              : refreshInterval,
+-          ).pipe(Effect.as(true)),
+-          Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
+-        ).pipe(
+-          Effect.flatMap((intervalElapsed) =>
+-            input.refreshOnInterval !== false &&
+-            intervalElapsed &&
+-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
+-              ? hasProviderStatusDemand.pipe(
+-                  Effect.flatMap((shouldRefresh) =>
+-                    shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
+-                  ),
+-                )
+-              : Effect.void,
+-          ),
+-        ),
+-      ),
+-      Effect.ignoreCause({ log: true }),
+-    ),
++    Effect.gen(function* () {
++      // Read per iteration, so a settings change and the current failure
++      // streak both take effect on the very next wait.
++      const configuredInterval = yield* getRefreshInterval;
++      const refreshInterval = probeBackoffInterval(
++        configuredInterval,
++        yield* Ref.get(usageFailureStreakRef),
++      );
++      const enabled = Duration.toMillis(refreshInterval) > 0;
++      // Wake just after the next usage window resets when that comes first,
++      // so the new window is read then rather than up to one interval later.
++      const planned = (yield* Ref.get(snapshotStateRef)).snapshot;
++      yield* Ref.set(plannedResetsRef, resetTimesKey(planned));
++      const wait = usageAwareWait(
++        enabled ? refreshInterval : Duration.seconds(60),
++        planned.usageLimits,
++        yield* Clock.currentTimeMillis,
++      );
++      // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
++      const intervalElapsed = yield* Effect.raceFirst(
++        Effect.sleep(wait).pipe(Effect.as(true)),
++        Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
++      );
++      if (input.refreshOnInterval === false || !intervalElapsed || !enabled) return;
++      // A reading older than a reset is wrong for everyone who opens the app
++      // next, so it is read again with or without a viewer. One read per
++      // reset: a successful read is newer than the reset, and a failing one
++      // is held to the backed-off interval like any other probe.
++      const resetSinceReading = usageResetSinceReading(
++        (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits,
++        yield* Clock.currentTimeMillis,
++      );
++      if (resetSinceReading || (yield* hasProviderStatusDemand)) {
++        yield* Effect.asVoid(refreshSnapshot());
++      }
++    }).pipe(ignoreCauseWithoutInterruptNoise),
+   ).pipe(Effect.forkScoped);
+ 
+   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
+-    Effect.ignoreCause({ log: true }),
++    ignoreCauseWithoutInterruptNoise,
+     Effect.forkScoped,
+   );
+ 
++  // Boot hands over the reading persisted before the restart. Like a runtime
++  // update it leaves the enrichment generation alone.
++  const applyUsageLimitsSeed: NonNullable<ServerProviderShape["seedUsageLimits"]> = (seed) =>
++    Effect.gen(function* () {
++      const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
++        const usageLimits = seedUsageLimits({ published: state.snapshot.usageLimits, seed });
++        if (usageLimits === state.snapshot.usageLimits) {
++          return [null, state] as const;
++        }
++        const snapshot = withUsageLimits(state.snapshot, usageLimits);
++        return [snapshot, { ...state, snapshot }] as const;
++      });
++      if (snapshotToPublish !== null) {
++        yield* PubSub.publish(changesPubSub, snapshotToPublish);
++      }
++    });
++
+   return {
+     resolveMaintenance: input.resolveMaintenance,
+     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
++    // Only the settings card's manual Refresh asks for the uncached registry
++    // lookup; every internal caller of `refresh` keeps the 1 h cache.
++    refreshLatest: refreshSnapshot({ refreshLatestVersion: true }).pipe(
++      Effect.tapError(Effect.logError),
++      Effect.orDie,
++    ),
+     applyUsageLimits,
++    seedUsageLimits: applyUsageLimitsSeed,
+     get streamChanges() {
+       return Stream.fromPubSub(changesPubSub);
+     },

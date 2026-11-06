@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/use-remote-environment-registry.ts b/apps/mobile/src/state/use-remote-environment-registry.ts
+index ce309f5b06fd938f4cac2206b4059cb83fea776e..f34ff3da09fd75090f328593cb667e5a5dea1d9f 100644
+--- a/apps/mobile/src/state/use-remote-environment-registry.ts
++++ b/apps/mobile/src/state/use-remote-environment-registry.ts
+@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
+ import { useNavigation } from "@react-navigation/native";
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useCallback, useMemo } from "react";
+ import { Alert } from "react-native";
+ 

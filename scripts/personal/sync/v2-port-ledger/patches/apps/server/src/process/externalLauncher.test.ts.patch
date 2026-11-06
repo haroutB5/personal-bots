@@ -1,0 +1,40 @@
+diff --git a/apps/server/src/process/externalLauncher.test.ts b/apps/server/src/process/externalLauncher.test.ts
+index aab4d78f4d7145d4b889ec5c2583bfdd7b7c6684..73d5a6add4ee2e16196000baeed44bbcde837004 100644
+--- a/apps/server/src/process/externalLauncher.test.ts
++++ b/apps/server/src/process/externalLauncher.test.ts
+@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
+ import * as NodeFS from "node:fs";
+ import * as NodeOS from "node:os";
+ import * as NodePath from "node:path";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as ConfigProvider from "effect/ConfigProvider";
+ import * as Effect from "effect/Effect";
+@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+ import * as TestClock from "effect/testing/TestClock";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+@@ -329,7 +329,7 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
+       "Bypass",
+       "-EncodedCommand",
+     ]);
+-    const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
++    const encodedCommand = String(spawned.args[spawned.args.length - 1] ?? "");
+     const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
+     // explorer.exe expects `/select,"<path>"` with only the path quoted;
+     // PowerShell 5.1's Start-Process passes the argument string verbatim.
+@@ -477,7 +477,7 @@ it.effect.skipIf(windowsHost)(
+       // The reveal routes through interop PowerShell so Explorer receives its
+       // raw `/select,"<path>"` switch even for spaced paths.
+       assert.equal(spawned.command, "powershell.exe");
+-      const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
++      const encodedCommand = String(spawned.args[spawned.args.length - 1] ?? "");
+       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
+       assert.equal(
+         decodedCommand,

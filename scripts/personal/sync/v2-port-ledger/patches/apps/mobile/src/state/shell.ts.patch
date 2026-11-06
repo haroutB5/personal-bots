@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/shell.ts b/apps/mobile/src/state/shell.ts
+index e20209c7cd8154c16db039d7278a309f70e3c9ef..66ab299e28f454324d15ff8ad2ba1cd3748c0992 100644
+--- a/apps/mobile/src/state/shell.ts
++++ b/apps/mobile/src/state/shell.ts
+@@ -8,7 +8,7 @@ import {
+ import { useAtomValue } from "@effect/atom-react";
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import { environmentCatalog } from "../connection/catalog";
+ import { connectionAtomRuntime } from "../connection/runtime";

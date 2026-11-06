@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/state/use-atom-query-runner.ts b/apps/web/src/state/use-atom-query-runner.ts
+index 691b1f43cb87b019509ce96f1374010d03e8fd0b..d90caee210a8d1b3060fa006190e75fa62fa268f 100644
+--- a/apps/web/src/state/use-atom-query-runner.ts
++++ b/apps/web/src/state/use-atom-query-runner.ts
+@@ -4,7 +4,7 @@ import {
+   type AtomQueryOptions,
+   type AtomCommandResult,
+ } from "@t3tools/client-runtime/state/runtime";
+-import { AsyncResult, type Atom } from "effect/unstable/reactivity";
++import { AsyncResult, type Atom } from "effect/reactivity";
+ import { useCallback, useContext } from "react";
+ 
+ export function useAtomQueryRunner<T, A, E>(

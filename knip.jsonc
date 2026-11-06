@@ -4,18 +4,76 @@
   "rules": { "types": "off", "nsTypes": "off" },
   // These executables are supplied by the OS or installed separately from npm.
   "ignoreBinaries": ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
+  // personal-bots fork: B1 keeps our pre-v2 code and tooling out of U's knip
+  // graph. The personal app has file-based routes that the merged config no
+  // longer traces, and the release tooling runs by path. The ratchet PR after
+  // E1 wires our surfaces back into knip. U code is not ignored.
+  "ignore": [
+    "apps/hbots-mobile/**",
+    "apps/server/scripts/linux-boot-smoke.ts",
+    "apps/server/scripts/secrets-roundtrip.ts",
+    "apps/server/src/cli/secrets.ts",
+    "apps/server/src/mcp/advertisedTools.ts",
+    "apps/server/src/mcp/toolkits/desktop/handlers.ts",
+    "apps/server/src/perf-linux-helper.ts",
+    "apps/server/src/persistence/Migrations/063_DropUnusedV1Projections.ts",
+    "apps/server/src/persistence/reconcileV2PreviewMigration.ts",
+    "apps/server/src/provider/environmentNames.ts",
+    "apps/server/src/provider/personalBotContextLimits.ts",
+    "apps/server/src/provider/userMessageDelivery.ts",
+    "apps/server/src/usage/opencodeRowsWorker.ts",
+    "apps/server/src/usage/sliceYield.ts",
+    "apps/web/src/components/ui/back-closing-root.tsx",
+    "apps/web/src/features/personal/**",
+    "apps/web/src/routes/_personal*.tsx",
+    "apps/web/src/state/threadFullText.ts",
+    "packages/contracts/src/personal*.ts",
+    "packages/contracts/src/providerCatalog.ts",
+    "packages/personal-client/src/noDom.type-test.ts",
+    "scripts/personal/**",
+    "scripts/voice-bundle-stats.mjs",
+  ],
   "workspaces": {
     ".": {
       // Keep vendored reference repositories outside the root project.
       "project": ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
-      "entry": [".github/scripts/thread-transfer-report.cjs"],
+      // The oxlint plugin's tests load platform-node through vite-plus, not an import.
+      "ignoreDependencies": ["@effect/platform-node"],
+      "entry": [
+        // CodeRabbit loads its configuration by filename.
+        ".coderabbit.config.ts",
+        ".github/scripts/thread-transfer-report.cjs",
+      ],
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
-      // worktree setup (from t3.json) run directly.
-      "entry": ["knip-schemas.ts", "mobile-native-client.ts", "setup-worktree.ts"],
+      // worktree setup (from t3.json) run directly. release-desktop.yml bundles the
+      // Windows verify script with esbuild through a path knip does not trace,
+      // electron-builder loads the macOS signer and the Linux afterPack hook by path, and mobile-e2e.ts runs
+      // agent-device's CLI by path, and mobile-behavior.ts spawns its runner by path.
+      // release-desktop.yml runs the desktop launch check through xvfb-run, which knip
+      // does not trace.
+      "entry": [
+        // These fixture scripts are injected into a browser page by path.
+        "fixtures/*/*.js",
+        "knip-schemas.ts",
+        "linux-after-pack.ts",
+        "mobile-behavior/run.ts",
+        "mobile-native-client.ts",
+        "setup-worktree.ts",
+        "sign-macos.ts",
+        "prepare-server-compile-cache.cjs",
+        "smoke-desktop-app.ts",
+        "verify-windows-desktop-artifact.ts",
+      ],
+      "ignoreDependencies": ["agent-device", "esbuild"],
+      // The `t3` npm package's files: copied into the package, never imported.
+      // knip-schemas.test.ts writes a throwaway project to .knip-test-*, which a
+      // knip run beside it in check:changed must not report.
+      "ignore": ["npm-launcher/**", ".knip-test-*/**"],
+      "ignoreIssues": { "personal/**": ["exports"] },
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
@@ -23,14 +81,53 @@
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
-        "scripts/evaluate-thread-titles.ts",
-        "scripts/measure-pr-preview.ts",
+        "scripts/fetch-expo-schema.ts",
+        "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
+        "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
+        // graphqlgen reads its config.
+        "graphql.config.ts",
       ],
+      // The generated operations export every selection's class.
+      "ignoreIssues": {
+        "**/*.graphql.ts": ["exports", "types", "namespaceMembers"],
+        // personal-bots fork: these files predate U's exports check. The ratchet
+        // PR after E1 trims the exports it finds unused. U files keep the rule.
+        "src/personal/**": ["exports"],
+        "src/mcp/**": ["exports"],
+        "src/cli/secrets.ts": ["exports"],
+        "src/perf-linux-helper.ts": ["exports"],
+        "src/httpEarlyRequestHold.ts": ["exports"],
+        "src/observability/StallRecorder.ts": ["exports"],
+        "src/observability/asyncConsoleFile.ts": ["exports"],
+        "src/persistence/Migrations/069_PersonalBotTeams.ts": ["exports"],
+        "src/persistence/Migrations/113_LinuxPathRewrite.ts": ["exports"],
+        "src/persistence/Migrations/114_LinuxInstructionPaths.ts": ["exports"],
+        "src/persistence/sqliteCheckpointWorker.ts": ["exports"],
+        "src/provider/Drivers/DeepSeekBalance.ts": ["exports"],
+        "src/provider/Layers/claudeProcessSpawner.ts": ["exports"],
+        "src/provider/botProcessPriority.ts": ["exports"],
+        "src/provider/openDefaultBrowser.ts": ["exports"],
+        "src/provider/opencodeBotIsolation.ts": ["exports"],
+        "src/provider/processTree.ts": ["exports"],
+        "src/provider/resetCreditConfirmation.ts": ["exports"],
+        "src/usage/opencodeRowsWorker.ts": ["exports"],
+        "src/usage/sliceYield.ts": ["exports"],
+        "src/workspace/HostFilePaths.ts": ["exports"],
+      },
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
-      "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web"],
+      // Native and disk-loaded provider packages stay external to the bundle; the
+      // CLI archive and desktop sidecar stage them from this manifest.
+      "ignore": ["src/personal/**"],
+      "ignoreDependencies": [
+        "@effect/platform-node-shared",
+        "@t3tools/web",
+        "@napi-rs/keyring",
+        "ffi-rs",
+        "transcribe-cpp",
+      ],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
@@ -42,6 +139,7 @@
         "src/snapShot/SnapShotAccessibilityWorker.ts!",
         "src/boot.ts!",
         "src/compileCache.ts!",
+        "src/serverCompileCache.ts!",
         "src/main.ts!",
         "src/preload.ts!",
         "src/preview-pick-preload.ts!",
@@ -56,27 +154,48 @@
     "apps/web": {
       // Vitest loads this through the per-file @vitest-environment directive.
       "ignoreDependencies": ["jsdom"],
-      // Worktree setup (scripts/setup-worktree.ts) runs this directly. The
-      // generators run by hand (node scripts/generate-*.ts), and the Remotion
-      // Studio/CLI entry (`remotion:studio`, `remotion:render`) is loaded by the
-      // remotion binary.
+      // Worktree setup (scripts/setup-worktree.ts) runs this directly, evidence
+      // fixtures run under node, the generators run by hand, and Remotion loads
+      // its Studio entry through the remotion binary.
       "entry": [
         "scripts/warm-dep-cache.ts",
+        "test/fixtures/**/*.mjs",
         "scripts/generate-*.ts",
         "src/features/personal/avatarRemotion/index.ts",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
-      "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+      "ignoreIssues": {
+        "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        // personal-bots fork: personal screens and helpers are product surfaces
+        // whose exports the ratchet PR after E1 trims. U files keep the rule.
+        "src/features/personal/**": ["exports"],
+        "src/routes/_personal*.tsx": ["exports"],
+        "src/cloud/managedAuthBoot.ts": ["exports"],
+        "src/components/settings/providerApiKeys.ts": ["exports"],
+        "src/connection/browserWakeups.ts": ["exports"],
+        "src/environments/primary/auth.ts": ["exports"],
+        "src/lib/chunkLoadRecovery.ts": ["exports"],
+        "src/lib/overlayBack.ts": ["exports"],
+        "src/observability/traceGzip.ts": ["exports"],
+        "src/state/lazyThreadShells.ts": ["exports"],
+        "vite/routePreload.ts": ["exports"],
+      },
+    },
+    "apps/marketing": {
+      // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
+      "ignoreDependencies": ["@astrojs/check"],
     },
     "apps/mobile": {
-      // Expo loads plugins by string; Metro embeds the browser entry in the native WebView.
+      // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.
       "entry": [
         "index.ts!",
+        "fingerprint.config.js",
         "plugins/*.cjs",
         "scripts/generate-device-stream.mts",
         "src/features/devices/device-stream.browser.ts!",
+        "src/features/browser/preview-stream.browser.ts!",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [
@@ -85,12 +204,30 @@
         "@t3tools/mobile-terminal-native",
       ],
     },
-    "apps/mobile/modules/t3-markdown-text": {
+    "apps/mobile/modules/t3-highlights": {
+      // Nitrogen discovers HybridObject specifications by filename.
+      "entry": ["src/*.nitro.ts!"],
+    },
+    "apps/mobile/modules/t3-source-text": {
       // React Native codegen discovers component specifications by filename.
       "entry": ["src/*NativeComponent.ts!"],
     },
+    "infra/task-cache": {
+      "ignore": ["vendor/**"],
+      // The bootstrap and Vite+ hook are loaded by shell/package configuration.
+      "entry": [
+        "alchemy.run.ts!",
+        "scripts/install.ts",
+        "scripts/install-ci.ts",
+        "src/runHook.ts",
+        "src/flush.ts",
+        "src/nativeRunHook.js",
+        "src/preload.mjs",
+      ],
+    },
     "infra/relay": {
-      "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!"],
+      // Alchemy loads src/worker.ts as the Worker entry and reads its default export.
+      "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!", "src/worker.ts!"],
     },
     "packages/*": {
       // These workspace packages are private to this monorepo.
@@ -106,6 +243,28 @@
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
       "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+    },
+    "packages/source-control-github": {
+      // graphqlgen reads its config; the generated operations export every selection's class.
+      "entry": ["graphql.config.ts", "scripts/measure-pr-preview.ts"],
+      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
+    },
+    "packages/contracts": {
+      // personal-bots fork: the personal wire is read through dynamic maps.
+      "ignoreIssues": {
+        "src/personal*.ts": ["exports"],
+        "src/providerCatalog.ts": ["exports"],
+      },
+    },
+    "packages/shared": {
+      // personal-bots fork: Linux and SQLite worker knobs are read through the environment.
+      "ignoreIssues": {
+        "src/nodeSqliteWorker.ts": ["exports"],
+        "src/stallContext.ts": ["exports"],
+      },
+    },
+    "packages/personal-client": {
+      "ignoreIssues": { "src/noDom.type-test.ts": ["exports"] },
     },
   },
 }

@@ -1,0 +1,13 @@
+diff --git a/apps/server/integration/providerService.integration.test.ts b/apps/server/integration/providerService.integration.test.ts
+index 0d041b36ecb8a01505b13c5f9298b5cafbe36f84..e9cb116c65fa2e553f243ac8ec6ae20850a4cb29 100644
+--- a/apps/server/integration/providerService.integration.test.ts
++++ b/apps/server/integration/providerService.integration.test.ts
+@@ -1,7 +1,7 @@
+ import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+ import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it, assert } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

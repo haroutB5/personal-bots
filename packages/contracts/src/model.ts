@@ -27,6 +27,8 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
   options: Schema.Array(ProviderOptionChoice),
   currentValue: Schema.optional(TrimmedNonEmptyString),
   promptInjectedValues: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Marks the reasoning control when its id is an agent's own, such as an ACP `thought_level`. */
+  role: Schema.optional(Schema.Literal("reasoning")),
 });
 export type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
 
@@ -52,17 +54,6 @@ export const ProviderOptionSelection = Schema.Struct({
 });
 export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
 
-/**
- * Legacy on-disk shape for provider option selections, kept readable by the
- * decoder so we can tolerate stored data written before the v3 array shape.
- *
- * Persisted historically as `{ effort: "max", fastMode: true, ... }` inside
- * `modelSelection.options`. Migration 026 rewrites stored rows to the
- * canonical array shape, but we still see the legacy form in:
- *   - `settings.json` files from older client builds,
- *   - SQLite databases that have not yet run migration 026,
- *   - any future regression that re-introduces the legacy shape.
- */
 const LegacyProviderOptionSelectionsObject = Schema.Record(Schema.String, Schema.Unknown);
 
 const ProviderOptionSelectionsFromLegacyObject = LegacyProviderOptionSelectionsObject.pipe(
@@ -75,18 +66,6 @@ const ProviderOptionSelectionsFromLegacyObject = LegacyProviderOptionSelectionsO
   ),
 );
 
-/**
- * Schema for the `options` field of every `ModelSelection` variant.
- *
- * Accepts both:
- *   - the canonical array shape `Array<{ id, value }>` (preferred), and
- *   - the legacy object shape `Record<string, string | boolean | …>` from
- *     pre-migration data.
- *
- * Always normalizes to the canonical array on decode and re-encodes as the
- * canonical array, so any legacy storage gets cleaned up the next time the
- * containing record is written back.
- */
 export const ProviderOptionSelections = Schema.Union([
   Schema.Array(ProviderOptionSelection),
   ProviderOptionSelectionsFromLegacyObject,
@@ -106,8 +85,6 @@ function coerceLegacyOptionsObjectToArray(
     } else if (typeof rawValue === "boolean") {
       entries.push({ id, value: rawValue });
     }
-    // Drop anything else (numbers, null, nested objects/arrays) to match the
-    // permissive normalization performed by migration 026.
   }
   return entries;
 }
@@ -127,11 +104,6 @@ export const ModelCapabilities = Schema.Struct({
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
-/**
- * A user-authored custom model. `name` and `capabilities` are optional so a
- * bare slug keeps its driver-default presentation; when `capabilities` is
- * set, its descriptors replace the driver default in the model picker.
- */
 export const CustomModelEntry = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: Schema.optional(TrimmedNonEmptyString),
@@ -139,7 +111,6 @@ export const CustomModelEntry = Schema.Struct({
 });
 export type CustomModelEntry = typeof CustomModelEntry.Type;
 
-/** On-disk custom model setting: the legacy bare slug, or a full entry. */
 export const CustomModelSetting = Schema.Union([Schema.String, CustomModelEntry]);
 export type CustomModelSetting = typeof CustomModelSetting.Type;
 
@@ -147,59 +118,16 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
+const KIRO_DRIVER_KIND = ProviderDriverKind.make("kiro");
+const MUSE_DRIVER_KIND = ProviderDriverKind.make("muse");
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
+const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
-const DEEPSEEK_DRIVER_KIND = ProviderDriverKind.make("deepseek");
-
-/** Canonical DeepSeek Flash model id (DeepSeek-V4.1-Flash). */
-export const DEEPSEEK_FLASH_MODEL = "deepseek-flash";
-/** Documented legacy Flash aliases that route to V4.1-Flash at Flash price. */
-export const DEEPSEEK_FLASH_ALIASES: ReadonlyArray<string> = ["deepseek-v4-flash", "vision-exp"];
-
-/**
- * Agent modes a DeepSeek bot may run in on the DeepSeek Harness (dsh) engine.
- *
- * dsh's own presets (`standard`, `ptc`, `minimal`, `cordis`) live only in its
- * web profile, so the ACP launch patch reproduces the three that make sense
- * for a chat bot as extra rows. `cordis` (dsh's "Creator") is deliberately
- * absent: it authors and installs dsh plugin bundles, a self-modifying
- * harness. "both" is absent too (twice the base prompt, no benefit).
- *
- * The mode is pinned to a chat's session: resuming a Standard session under
- * the Code overlay fails at DeepSeek's API (deferred tools), so a mode change
- * applies to new chats and fresh sessions only.
- */
-export const DEEPSEEK_DSH_AGENT_MODES = [
-  { value: "standard", label: "Standard" },
-  { value: "code", label: "Code" },
-  { value: "minimal", label: "Minimal" },
-] as const;
-
-export type DeepSeekDshAgentMode = (typeof DEEPSEEK_DSH_AGENT_MODES)[number]["value"];
-
-/** The agent mode a session runs when nothing else is chosen. */
-export const DEEPSEEK_DEFAULT_AGENT_MODE: DeepSeekDshAgentMode = "standard";
-
-/**
- * Model-selection option id carrying a DeepSeek bot's agent mode, alongside
- * `effort` and `contextWindow`. Only the dsh engine offers the descriptor.
- */
-export const DEEPSEEK_AGENT_MODE_OPTION_ID = "agentMode";
-
-/** Engines a DeepSeek instance can run its bots on. */
-export const DEEPSEEK_ENGINES = [
-  { value: "dsh", label: "DeepSeek Harness (dsh)" },
-  { value: "claude-code", label: "Claude Code" },
-] as const;
-
-export type DeepSeekEngine = (typeof DEEPSEEK_ENGINES)[number]["value"];
 
 export const DEFAULT_MODEL = "gpt-6-astra";
 
-/**
- * Codex default-model preference, most preferred first. The provider snapshot
- * marks the first of these present in the live `model/list` response as
- * default; when none are available, Codex's own `isDefault` flag wins.
- */
+/** First model present in model/list wins; otherwise use Codex's isDefault. */
 export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
   DEFAULT_MODEL,
   "gpt-5.6-sol",
@@ -210,24 +138,26 @@ export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-6-luna";
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
+/** Let Muse pick the account's default model. Never send this ID to Muse. */
+export const MUSE_DEFAULT_MODEL = "default";
+
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
-  [CLAUDE_DRIVER_KIND]: "claude-fable-5-1",
+  [CLAUDE_DRIVER_KIND]: "claude-opus-5-5",
   [CURSOR_DRIVER_KIND]: "auto",
-  // Product slug, not an ACP model id. The Grok adapter treats it as "the session's current model".
+  // Product slug meaning the current session model, never an ACP model id.
   [GROK_DRIVER_KIND]: "grok-build",
+  [FX_DRIVER_KIND]: "default",
+  // Keeps the Kiro session's current model; real models come from its `model` config option.
+  [KIRO_DRIVER_KIND]: "default",
+  [MUSE_DRIVER_KIND]: MUSE_DEFAULT_MODEL,
+  [ACP_REGISTRY_DRIVER_KIND]: "default",
+  // "default" defers to the user's own Pi settings.json model selection.
+  [PI_DRIVER_KIND]: "default",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
-  [DEEPSEEK_DRIVER_KIND]: DEEPSEEK_FLASH_MODEL,
 };
 
-/**
- * Where a Claude background text job retries once when the default model
- * (Haiku 5.5) fails or is refused: the Haiku before it.
- */
-export const CLAUDE_TEXT_GENERATION_FALLBACK_MODEL = "claude-haiku-4-5";
-
-/** Per-provider text generation model defaults. */
 export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   Record<ProviderDriverKind, string>
 > = {
@@ -235,8 +165,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-5-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
-  [DEEPSEEK_DRIVER_KIND]: DEEPSEEK_FLASH_MODEL,
+  [OPENCODE_DRIVER_KIND]: "opencode/big-pickle",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -263,14 +192,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5": "claude-opus-4-5",
   },
   [OPENCODE_DRIVER_KIND]: {},
-  [DEEPSEEK_DRIVER_KIND]: {
-    "deepseek-v4-flash": DEEPSEEK_FLASH_MODEL,
-    "vision-exp": DEEPSEEK_FLASH_MODEL,
-    flash: DEEPSEEK_FLASH_MODEL,
-  },
 };
-
-// ── Provider display names ────────────────────────────────────────────
 
 export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("antigravity")]: "Antigravity",
@@ -278,6 +200,10 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
+  [FX_DRIVER_KIND]: "fx",
+  [KIRO_DRIVER_KIND]: "Kiro",
+  [MUSE_DRIVER_KIND]: "Muse Code",
+  [ACP_REGISTRY_DRIVER_KIND]: "ACP Registry",
+  [PI_DRIVER_KIND]: "Pi",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
-  [DEEPSEEK_DRIVER_KIND]: "DeepSeek",
 };

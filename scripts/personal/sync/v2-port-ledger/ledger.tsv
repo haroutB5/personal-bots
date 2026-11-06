@@ -1,0 +1,925 @@
+path	origin	kind	ourLines	targetPR	status	reason
+apps/desktop/src/app/DesktopApp.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/app/DesktopAssets.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/app/DesktopConnectionCatalogStore.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/app/DesktopLinuxUrlHandler.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/app/DesktopObservability.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/app/DesktopObservability.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/backend/DesktopBackendConfiguration.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/backend/DesktopBackendConfiguration.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/backend/DesktopLocalEnvironmentAuth.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/backend/DesktopServerExposure.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/backend/DesktopServerExposure.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/ipc/methods/window.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/main.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/preview/BrowserImport/ChromiumKeys.module.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/preview/BrowserImport/Sources.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/preview/BrowserSession.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/preview/BrowserSession.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/settings/DesktopAppSettings.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/settings/DesktopAppSettings.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/settings/DesktopClientSettings.diagnostics.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/settings/DesktopClientSettings.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/settings/DesktopClientSettings.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/settings/DesktopSavedEnvironments.test.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/shell/DesktopShellEnvironment.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/shell/DesktopShellEnvironment.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/snapShot/DesktopSnapShot.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/snapShot/DesktopSnapShot.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/ssh/DesktopSshEnvironment.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/ssh/DesktopSshEnvironment.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/ssh/DesktopSshPasswordPrompts.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/ssh/DesktopSshPasswordPrompts.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/updates/updatesTestHarness.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/desktop/src/wsl/DesktopWslEnvironment.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/components/ComposerEditor.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/cloud/connectOnboarding.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/cloud/dpop.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/cloud/dpop.ts		content	10	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/cloud/linkEnvironment.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/cloud/managedRelayLayer.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/cloud/managedRelayState.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/connection/ConnectionEnvironmentRow.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/files/sourceHighlightingState.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/files/sourceHighlightingState.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/review/reviewState.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/settings/SettingsKeyboardRouteScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/settings/SettingsProjectGroupingRouteScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/settings/SettingsThreadsRouteScreen.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/settings/appearance/AppearancePreferencesProvider.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/showcase/ShowcaseCaptureCoordinator.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/threads/NewTaskDraftScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/threads/NewTaskRouteScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/threads/markdownCodeHighlightState.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/threads/use-thread-list-v2-shelf-preferences.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/features/usage/usageProviders.ts		content	4	D1	open	deepseek usage literal; D1 checks mobile switches
+apps/mobile/src/lib/hot-swappable-atom-runtime.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/acknowledged-thread-messages.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/assets.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/composer-attachment-uploads.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/device.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/entities.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/pending-thread-creation.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/preferences.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/projectClones.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/queries.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/query.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/question-attachments.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/session.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/shell.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/thread-order.test.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/thread-order.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/threadOutboxDelivery.test.ts	apps/mobile/src/state/use-thread-outbox-drain.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/threads.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/usage.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/use-atom-query-runner.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/use-composer-drafts.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/use-remote-environment-registry.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/use-selected-thread-requests.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/use-thread-outbox-drain.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/use-thread-pr.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/mobile/src/state/use-vcs-action-state.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/integration/OrchestrationEngineHarness.integration.ts		modify-delete	8	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/integration/orchestrationEngine.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/integration/orphanedProviderSessionStartup.integration.test.ts		modify-delete	15	C4	open	a turn resumed after restart keeps the bot's instructions and model
+apps/server/integration/providerService.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/package.json		content	5	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+apps/server/scripts/acp-mock-agent.ts		content	544	C8	open	ACP mock for steer and busy-refusal tests
+apps/server/scripts/cli.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/scripts/measure-pr-preview.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/assets/AssetAccess.test.ts		content	202	C12	open	follows apps/server/src/assets/AssetAccess.ts
+apps/server/src/assets/AssetAccess.ts		content	102	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/assets/AttachmentUpload.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/assets/GitHubMediaFetch.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/assets/NativeAppIconResolver.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/assets/NativeAppIconResolver.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/EnvironmentAuth.test.ts		content	56	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/EnvironmentAuth.ts		content	20	C11	open	cb26088ef4 slides direct phone sessions and names renewal outcomes; the rest of our diff is the Effect 4.1 codemod
+apps/server/src/auth/EnvironmentAuthAdmin.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/EnvironmentAuthPolicy.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/PairingGrantStore.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/PairingGrantStore.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/ServerSecretStore.test.ts		content	182	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/auth/ServerSecretStore.ts		content	253	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/auth/SessionStore.test.ts		content	225	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/SessionStore.ts		content	189	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/WsRpcGroupComposition.test.ts		added-broken	50	B1	dropped	U composes one WsRpcGroup; the split groups this test covered are gone
+apps/server/src/auth/dpop.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/http.test.ts		content	560	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/http.ts		content	124	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/replayMarkers.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/sessionRevocationClose.test.ts		added-broken	165	C11	open	session revoke close is parked at B1; C11 ports it
+apps/server/src/auth/sessionRevocationClose.ts		added-broken	93	C11	open	session revoke close is parked at B1; C11 ports it
+apps/server/src/auth/utils.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/bin.test.ts		modify-delete	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/bin.ts		content	16	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/bootstrap.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/checkpointing/CheckpointDiffQuery.test.ts		content	5	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/checkpointing/CheckpointStore.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/checkpointing/Utils.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/app.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/auth.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/config.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/config.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/connect.test.ts		content	24	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/connect.ts		content	34	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/pair.test.ts		content	76	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/pair.ts		content	65	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/project.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/server.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/service.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/service.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/serviceLauncher.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cli/theme.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/CliState.test.ts		content	3	C11	open	462ae5a35d pair --connect and environment label override cases
+apps/server/src/cloud/CliTokenManager.test.ts		content	75	B1	dropped	only upstream commits (#N) on our side, each present in U
+apps/server/src/cloud/CliTokenManager.ts		content	21	B1	dropped	only upstream commits (#N) on our side, each present in U
+apps/server/src/cloud/ManagedEndpointRuntime.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/ManagedEndpointRuntime.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/config.ts		content	3	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/environmentKeys.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/http.test.ts		content	45	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/http.ts		content	27	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/pinnedRuntime.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/pinnedRuntime.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/selfUpdate.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/selfUpdate.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/cloud/traceRelayRequest.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/desktopUpdate/DesktopAppUpdate.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/device/AgentDeviceTarget.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/device/DeviceHubProxy.test.ts		content	42	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/device/DeviceHubProxy.ts		content	32	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/device/DeviceMultiHost.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/device/DeviceService.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/device/DeviceService.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/device/LocalDeviceHost.test.ts		content	63	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/device/LocalDeviceHost.ts		content	12	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/device/SshDeviceHost.test.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/device/SshDeviceHost.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/device/localSshDeviceHost.test.ts		content	10	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/environment/RemoteOpenTargets.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/environment/RemoteOpenTargets.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/environment/ServerEnvironment.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/environment/ServerEnvironment.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/environment/ServerEnvironmentLabel.test.ts		modify-delete	24	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/environment/ServerEnvironmentLabel.ts		content	12	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/environment/ServerEnvironmentMachine.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/environmentTheme.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/git/GitManager.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/git/GitManager.ts		content	21	B1	dropped	only upstream commits (#N) on our side, each present in U
+apps/server/src/git/GitWorkflowService.ts		content	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/server/src/http.test.ts		content	20	C12	open	c1a7c4bd14 cases for the browser credential store deny list and pinned host file reads
+apps/server/src/mcp/McpDeviceToolkit.test.ts		content	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/mcp/McpHttpServer.test.ts		content	206	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/McpProviderSession.ts		modify-delete	54	C5	open	hook file listed in Appendix A
+apps/server/src/mcp/McpSecretGuard.ts		content	1	C13	open	advertisedMcpTool stripped at B1; C13 restores the compact schema
+apps/server/src/mcp/McpSessionRegistry.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/mcp/McpSessionRegistry.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/mcp/PreviewAutomationBroker.test.ts		content	225	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/PreviewAutomationBroker.ts		content	44	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/advertisedJsonSchema.test.ts		content	52	B1	dropped	U ed44f251d8 (#25423) carries the compact advertised schema
+apps/server/src/mcp/advertisedJsonSchema.ts		content	122	B1	dropped	U ed44f251d8 (#25423) carries the compact advertised schema
+apps/server/src/mcp/toolkits/bots/handlers.test.ts		added-broken	2014	C13	open	Appendix B, added outside personal; C13 owns the toolkit line
+apps/server/src/mcp/toolkits/bots/leadBots.test.ts		added-broken	1989	C13	open	Appendix B, added outside personal; C13 owns the toolkit line
+apps/server/src/mcp/toolkits/device/tools.ts		content	4	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/preview/handlers.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/mcp/toolkits/preview/handlers.ts		content	13	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/preview/tools.test.ts		content	103	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/preview/tools.ts		content	76	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/pullRequests/handlers.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/mcp/toolkits/pullRequests/handlers.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/mcp/toolkits/pullRequests/tools.ts		content	12	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/observability/HeapSnapshot.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/observability/Observability.ts	apps/server/src/observability/Layers/Observability.ts	content	19	C10	open	area C10
+apps/server/src/observability/RpcInstrumentation.test.ts		modify-delete	42	C10	open	area C10
+apps/server/src/observability/RpcInstrumentation.ts		content	2	C10	open	area C10
+apps/server/src/orchestration-v2/ThreadPullRequestService.ts	apps/server/src/orchestration/ThreadPullRequestReactor.ts	content	7	C1-C3	open	area C1-C3
+apps/server/src/orchestration/ActivityPayloadProjection.test.ts		modify-delete	52	C10	open	test of an Appendix A hook file
+apps/server/src/orchestration/ActivityPayloadProjection.ts		modify-delete	15	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/CheckpointReactor.test.ts		modify-delete	2	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/orchestration/Layers/CheckpointReactor.ts		modify-delete	15	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts		modify-delete	279	C1	open	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/Layers/OrchestrationEngine.ts		modify-delete	7	B1	dropped	Appendix A class DROP, v1 artefact
+apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts		modify-delete	1	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts		modify-delete	567	C1	open	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/Layers/ProjectionPipeline.ts		modify-delete	56	B1	dropped	Appendix A class DROP, v1 artefact
+apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts		modify-delete	27	C3	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts		modify-delete	1852	C4+C10	open	test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ProviderCommandReactor.ts		modify-delete	844	C4+C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.activity.test.ts		modify-delete	100	C10	open	test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts		modify-delete	630	C10	open	test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts		modify-delete	208	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts		modify-delete	38	C10	open	test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts		modify-delete	45	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Normalizer.attachments.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/PullRequestSyncReactor.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/PullRequestSyncReactor.ts		modify-delete	7	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Services/ProjectionSnapshotQuery.ts		modify-delete	4	C3	open	hook file listed in Appendix A
+apps/server/src/orchestration/Services/ProviderCommandReactor.ts		modify-delete	23	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/ThreadBackgroundLiveness.ts		modify-delete	8	C2	open	hook file listed in Appendix A
+apps/server/src/orchestration/ThreadPullRequestReactor.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/ThreadSettlementReactor.test.ts		modify-delete	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/ThreadSettlementReactor.ts		modify-delete	7	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/decider.active-order.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.autoSettleSet.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.delete.test.ts		modify-delete	67	C1	open	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/decider.import.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.pinned.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.projectScripts.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.projectThreadEnvMode.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.pullRequests.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.questionAttachments.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.settled.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.snoozed.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.titleRegeneration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.ts		modify-delete	75	C1	open	hook file listed in Appendix A
+apps/server/src/orchestration/decider.turnDiffComplete.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/orchestration/decider.userInputDismiss.test.ts		modify-delete	62	C1	open	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/decider.userMessageAppend.test.ts		modify-delete	87	C1	open	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/http.ts		modify-delete	17	C3	open	hook file listed in Appendix A
+apps/server/src/orchestration/messageContext.test.ts		modify-delete	49	C2	open	assistant notice carries message context; C2 postNotice
+apps/server/src/orchestration/replacedSessions.test.ts		added-broken	154	C1	open	U deleted v1 orchestration; the session replacement mark returns with the v2 ingestion port (C1)
+apps/server/src/orchestration/replacedSessions.ts		added-broken	103	C1	open	U deleted v1 orchestration; the session replacement mark returns with the v2 ingestion port (C1)
+apps/server/src/orchestration/toolResultMedia.test.ts		added-broken	59	C10	open	U deleted v1 orchestration; tool-result media stripping returns with the v2 event store (C10)
+apps/server/src/orchestration/toolResultMedia.ts		added-broken	96	C10	open	U deleted v1 orchestration; tool-result media stripping returns with the v2 event store (C10)
+apps/server/src/persistence/AuthSessions.ts		content	40	C10	open	area C10
+apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/OrchestrationEventStore.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionPendingApprovals.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionProjects.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionRepositories.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionState.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionThreadActivities.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionThreadActivities.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionThreadMessages.ts		modify-delete	79	C10	open	area C10
+apps/server/src/persistence/Layers/ProjectionThreadProposedPlans.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionThreadSessions.ts		modify-delete	6	C10	open	area C10
+apps/server/src/persistence/Layers/ProjectionThreads.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/ProjectionTurns.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Layers/Sqlite.test.ts		modify-delete	177	C10	open	area C10
+apps/server/src/persistence/Layers/Sqlite.ts		modify-delete	123	C10	open	area C10
+apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Migrations/035_ProjectionThreadTitleRegeneration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Migrations/040_ProjectionProjectFaviconPath.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/Migrations/047_ProjectionProjectIcon.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/ProjectionThreadPullRequests.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/persistence/ProviderSessionRuntime.test.ts		added-broken	90	C10	open	area C10
+apps/server/src/persistence/Services/ProjectionThreadMessages.ts		modify-delete	25	C10	open	area C10
+apps/server/src/persistence/Services/ProjectionThreadSessions.ts		modify-delete	5	C10	open	area C10
+apps/server/src/personal/PersonalBotRepository.chatExtras.test.ts		added-broken	447	C10	open	personal persistence layer (C10)
+apps/server/src/personal/PersonalBotRepository.groupPresence.test.ts		added-broken	189	C10	open	personal persistence layer (C10)
+apps/server/src/personal/PersonalBotRepository.test.ts		added-broken	670	C10	open	personal persistence layer (C10)
+apps/server/src/personal/PersonalBotRepository.unread.test.ts		added-broken	258	C10	open	personal persistence layer (C10)
+apps/server/src/personal/PersonalBotService.test.ts		added-broken	1143	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broken	206	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	open	per-bot token usage (C14)
+apps/server/src/personal/PersonalChatResumeService.test.ts		added-broken	675	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/PersonalFiles.test.ts		added-broken	299	C10	open	personal persistence layer (C10)
+apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	open	provider fallback port (C9)
+apps/server/src/personal/PersonalTaskChatArchiveService.test.ts		added-broken	727	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/PersonalTurnRetryService.test.ts		added-broken	557	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/agentContextBudget.test.ts		added-broken	74	C4	open	runtime instructions (C4)
+apps/server/src/personal/browser/BrowserLease.test.ts		added-broken	735	C13	open	shared browser leases (C13)
+apps/server/src/personal/browser/PersonalBrowser.brave.test.ts		added-broken	282	C13	open	shared browser leases (C13)
+apps/server/src/personal/browser/PersonalBrowser.test.ts		added-broken	5354	C13	open	shared browser leases (C13)
+apps/server/src/personal/browser/PersonalBrowserProtectionRepository.test.ts		added-broken	47	C13	open	shared browser leases (C13)
+apps/server/src/personal/bulkPersonalChats.test.ts		added-broken	276	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/bulkPersonalItems.test.ts		added-broken	204	C2	open	v2 reads (C2)
+apps/server/src/personal/connections/credentialStore.test.ts		added-broken	95	C12	open	G14 park; sealed credential names return with C12
+apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.test.ts		added-broken	379	D1	open	G2 park; DeepSeek balance watcher (D1)
+apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts		added-broken	306	D1	open	DeepSeek balance watcher (D1)
+apps/server/src/personal/deepseek/deepSeekBalanceAlert.test.ts		added-broken	179	D1	open	G6 park; DeepSeek balance alert (D1)
+apps/server/src/personal/deepseek/deepSeekBalanceAlert.ts		added-broken	145	D1	open	G6 park; DeepSeek balance alert (D1)
+apps/server/src/personal/engine/PersonalEngineV1.reads.test.ts		added-broken	265	C2	open	v2 reads (C2)
+apps/server/src/personal/engine/PersonalEngineV1.test.ts		added-broken	1165	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/engine/PersonalEngineV1Live.ts		added-broken	854	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/engine/PersonalProvidersV1.test.ts		added-broken	323	C9	open	provider port types (C9)
+apps/server/src/personal/engine/PersonalProvidersV1Live.ts		added-broken	195	C9	open	provider port types (C9)
+apps/server/src/personal/groups/PersonalGroupService.test.ts		added-broken	2724	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/leadBots/leadBotGeminiEffort.test.ts		added-broken	62	C8	open	Antigravity effort (C8)
+apps/server/src/personal/memory/PersonalMemoryService.apps.test.ts		added-broken	769	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/PersonalMemoryService.listPage.test.ts		added-broken	166	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/PersonalMemoryService.replace.test.ts		added-broken	1428	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/PersonalMemoryService.test.ts		added-broken	614	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/PersonalMemoryTidyService.auto.test.ts		added-broken	692	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/PersonalMemoryTidyService.rescope.test.ts		added-broken	246	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/PersonalMemoryTidyService.test.ts		added-broken	1741	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/memoryEvidence.test.ts		added-broken	268	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/memoryReplay.measure.test.ts		added-broken	337	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/memory/tidyUpgrade.measure.test.ts		added-broken	100	C2	open	memory reads move to v2 (C2)
+apps/server/src/personal/personalBotInstructions.test.ts		added-broken	170	C4	open	runtime instructions (C4)
+apps/server/src/personal/personalChatTitles.test.ts		added-broken	458	C2	open	title writes through EventSinkV2 (C2)
+apps/server/src/personal/personalShellSlim.test.ts		added-broken	121	C3	open	shell slim on the v1 shell (C3)
+apps/server/src/personal/personalThreadLinkRepair.test.ts		added-broken	161	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/providerHooks/claudeQueryOptions.test.ts		added-broken	84	C5	open	G6 park; Claude query options (C5)
+apps/server/src/personal/providerHooks/claudeQueryOptions.ts		added-broken	207	C5	open	G6 park; Claude query options (C5)
+apps/server/src/personal/push/PersonalPushService.test.ts		added-broken	2197	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts		added-broken	622	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/routines/PersonalRoutineService.test.ts		added-broken	1753	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/secrets/PersonalSecretService.test.ts		added-broken	2583	C12	open	sealed secrets (C12)
+apps/server/src/personal/taskTitleBackfill.test.ts		added-broken	409	C4	open	title seed (C4)
+apps/server/src/personal/tasks/PersonalTaskRepository.notify.test.ts		added-broken	130	C10	open	personal persistence layer (C10)
+apps/server/src/personal/tasks/PersonalTaskService.test.ts		added-broken	5487	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/tasks/taskProviderBoundary.test.ts		added-broken	1073	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/tasks/taskProviderChain.test.ts		added-broken	586	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/test/personalReadsTestLayer.ts		added-broken	33	C2	open	v2 reads test layer (C2)
+apps/server/src/personal/threadTextPreviews.test.ts		added-broken	177	C3	open	text previews on the v1 shell (C3)
+apps/server/src/personal/threadTextPreviews.ts		added-broken	188	B1	done	B1 stub serves the snapshot; C2 moves previews to v2
+apps/server/src/personal/turnContext/PersonalTurnContext.ts		added-broken	285	C4	open	turn context on v2 (C4)
+apps/server/src/personal/voiceCalls/PersonalVoiceCallService.test.ts		added-broken	1586	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/voiceCalls/PersonalVoiceCallSummaryService.test.ts		added-broken	1049	C1	open	v2 verbs and events (C1)
+apps/server/src/personal/workingProgress.test.ts		added-broken	169	C2	open	v2 reads (C2)
+apps/server/src/preview/PortScanner.ss.test.ts		added-broken	98	C15	open	G2 park; PortScanner row is C15
+apps/server/src/preview/PortScanner.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/preview/PortScanner.ts		content	72	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/process/externalLauncher.test.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/process/externalLauncher.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/process/spawnImageWarmup.test.ts		added-broken	278	C15	open	G14 park; image warmup off-loop (C15)
+apps/server/src/process/spawnImageWarmup.ts		added-broken	363	C15	open	G14 park; image warmup off-loop (C15)
+apps/server/src/processRunner.test.ts		content	28	B1	dropped	follows apps/server/src/processRunner.ts
+apps/server/src/processRunner.ts		content	19	B1	dropped	only upstream commits (#N) on our side, each present in U
+apps/server/src/project/AgentSessionImporter.test.ts		content	10	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/project/AgentSessionImporter.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/project/AgentSessionScanner.test.ts		content	2	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/project/AgentSessionScanner.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/project/NewProject.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/project/ProjectSetupScriptRunner.test.ts		content	1	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/project/RepositoryIdentityResolver.test.ts		content	171	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/project/RepositoryIdentityResolver.ts		content	70	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/provider/AntigravityAuth.test.ts		content	231	C5-C9	open	area C5-C9
+apps/server/src/provider/AntigravityAuth.ts		content	78	C5-C9	open	area C5-C9
+apps/server/src/provider/AntigravityInstallation.test.ts		content	72	C5-C9	open	area C5-C9
+apps/server/src/provider/AntigravityInstallation.ts		content	106	C5-C9	open	area C5-C9
+apps/server/src/provider/AntigravityProvider.test.ts	apps/server/src/provider/Layers/AntigravityProvider.test.ts	content	145	C5-C9	open	area C5-C9
+apps/server/src/provider/AntigravityProvider.ts	apps/server/src/provider/Layers/AntigravityProvider.ts	content	61	C5-C9	open	area C5-C9
+apps/server/src/provider/ClaudeModelCatalog.test.ts		content	133	C5-C9	open	area C5-C9
+apps/server/src/provider/ClaudeModelCatalog.ts		content	129	C5-C9	open	area C5-C9
+apps/server/src/provider/ClaudeProvider.ts	apps/server/src/provider/Layers/ClaudeProvider.ts	content	84	C5-C9	open	area C5-C9
+apps/server/src/provider/CodexChatGptAuth.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/CodexChatGptAuth.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/CodexChatGptHandoff.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/CodexChatGptModels.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/CodexDeveloperInstructions.ts		content	68	C5-C9	open	area C5-C9
+apps/server/src/provider/CodexInstallation.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/CodexInstallation.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/CodexManagedRuntime.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/CodexProvider.test.ts		content	1	C6	open	G14 took MERGE_HEAD; our Codex test hunk returns with C6
+apps/server/src/provider/CodexProvider.ts	apps/server/src/provider/Layers/CodexProvider.ts	content	31	C5-C9	open	area C5-C9
+apps/server/src/provider/DeepSeekModelCatalog.test.ts		added-broken	89	D1	open	G6 park; DeepSeek model catalog (D1)
+apps/server/src/provider/DeepSeekModelCatalog.ts		added-broken	233	D1	open	G6 park; DeepSeek model catalog (D1)
+apps/server/src/provider/Drivers/AntigravityDriver.test.ts		content	58	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/AntigravityDriver.ts		content	134	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/ClaudeDriver.ts		content	154	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/ClaudeExecutable.ts		content	5	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/ClaudeModelDiscovery.test.ts		added-broken	19	C5-C9	open	G2 park; follows ClaudeModelDiscovery.ts
+apps/server/src/provider/Drivers/ClaudeModelDiscovery.ts		added-broken	176	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/ClaudeSkills.test.ts		content	54	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/ClaudeSkills.ts		content	22	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/CodexDriver.test.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Drivers/CodexDriver.ts		content	23	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/CodexHomeLayout.ts		content	4	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/server/src/provider/Drivers/CodexManagedProvider.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Drivers/CursorDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Drivers/CursorDriver.ts		modify-delete	10	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/DeepSeekDriver.test.ts		added-broken	265	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/DeepSeekDriver.ts		added-broken	456	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/DeepSeekEngine.test.ts		added-broken	43	D1	open	G6 park; DeepSeek engine (D1)
+apps/server/src/provider/Drivers/DeepSeekEngine.ts		added-broken	41	D1	open	G6 park; DeepSeek engine (D1)
+apps/server/src/provider/Drivers/DeepSeekEnvironment.test.ts		added-broken	248	D1	open	G2 park; DeepSeek environment (D1)
+apps/server/src/provider/Drivers/DeepSeekEnvironment.ts		added-broken	228	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/GrokDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Drivers/GrokDriver.ts		modify-delete	10	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/OpenCodeDriver.ts		modify-delete	83	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/RegistryAcpDriver.test.ts		added-broken	258	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/RegistryAcpDriver.ts		added-broken	398	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/RegistryAcpLocalProof.test.ts		added-broken	196	C5-C9	open	area C5-C9
+apps/server/src/provider/EventNdjsonLogger.test.ts	apps/server/src/provider/Layers/EventNdjsonLogger.test.ts	content	217	C5-C9	open	area C5-C9
+apps/server/src/provider/EventNdjsonLogger.ts	apps/server/src/provider/Layers/EventNdjsonLogger.ts	content	289	C5-C9	open	area C5-C9
+apps/server/src/provider/GrokProvider.test.ts	apps/server/src/provider/Layers/GrokProvider.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Layers/AntigravityAdapter.test.ts		modify-delete	314	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/AntigravityAdapter.ts		modify-delete	183	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ClaudeAdapter.botDeny.test.ts		added-broken	205	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ClaudeAdapter.test.ts		modify-delete	1630	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ClaudeAdapter.ts		modify-delete	551	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ClaudeCapabilitiesProbe.test.ts		modify-delete	55	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CodexAdapter.test.ts		modify-delete	430	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CodexAdapter.ts		modify-delete	150	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Layers/CodexSessionRuntime.test.ts		modify-delete	128	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CodexSessionRuntime.ts		modify-delete	148	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CodexTurnSteer.integration.test.ts		added-broken	157	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CursorAdapter.test.ts		modify-delete	42	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CursorAdapter.ts		modify-delete	16	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CursorProvider.test.ts		modify-delete	15	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CursorProvider.ts		modify-delete	9	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/DeepSeekAdapter.test.ts		added-broken	627	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/DeepSeekAdapter.ts		added-broken	236	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/DeepSeekDshAdapter.test.ts		added-broken	1001	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/DeepSeekDshAdapter.ts		added-broken	1724	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/DeepSeekProvider.ts		added-broken	545	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/GrokAdapter.test.ts		modify-delete	48	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/GrokAdapter.ts		modify-delete	16	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/NativeAcpAdapter.test.ts		added-broken	826	C5-C9	open	G2 park; follows NativeAcpAdapter.ts
+apps/server/src/provider/Layers/NativeAcpAdapter.ts		added-broken	1261	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/NativeAcpSteerHandoff.test.ts		added-broken	141	C5-C9	open	G2 park; ACP steer handoff
+apps/server/src/provider/Layers/NativeAcpStopRetry.test.ts		added-broken	86	C5-C9	open	G2 park; ACP stop retry
+apps/server/src/provider/Layers/OpenCodeAdapter.test.ts		modify-delete	668	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/OpenCodeAdapter.ts		modify-delete	269	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/OpenCodeProvider.test.ts		modify-delete	44	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts		modify-delete	264	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderInstanceRegistryLive.ts		modify-delete	43	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderRegistry.test.ts		modify-delete	307	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderService.test.ts		modify-delete	662	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderService.ts		modify-delete	250	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderSessionDirectory.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/Layers/ProviderSessionReaper.test.ts		modify-delete	3	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderSessionReaper.ts		modify-delete	2	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/RegistryAcpAdapter.test.ts		added-broken	317	C8	open	G2 park; ACP registry adapter (C8)
+apps/server/src/provider/Layers/RegistryAcpAdapter.ts		added-broken	69	C8	open	G6 park; ACP registry adapter (C8)
+apps/server/src/provider/Layers/antigravityUsageLimits.test.ts		added-broken	465	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/antigravityUsageLimits.ts		added-broken	489	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/codexLaunchArgs.test.ts		modify-delete	22	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/openCodeUsageLimits.ts		modify-delete	11	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/resetCreditCoordinator.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/ModelManifest.test.ts		content	24	C5-C9	open	area C5-C9
+apps/server/src/provider/ModelManifest.ts		content	7	C5-C9	open	area C5-C9
+apps/server/src/provider/ProviderAuthService.test.ts	apps/server/src/provider/Layers/ProviderAuthService.test.ts	content	28	C9	open	provider auth test follows the C9 port
+apps/server/src/provider/ProviderDriver.ts		modify-delete	26	C5-C9	open	area C5-C9
+apps/server/src/provider/ProviderInstanceEnvironment.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/ProviderRegistry.ts	apps/server/src/provider/Layers/ProviderRegistry.ts	content	108	C5-C9	open	area C5-C9
+apps/server/src/provider/RuntimeInstructions.ts		modify-delete	14	C5-C9	open	area C5-C9
+apps/server/src/provider/Services/ProviderAdapter.ts		modify-delete	39	C5-C9	open	area C5-C9
+apps/server/src/provider/Services/ProviderRegistry.ts		modify-delete	32	C5-C9	open	area C5-C9
+apps/server/src/provider/Services/ProviderService.ts		modify-delete	12	C5-C9	open	area C5-C9
+apps/server/src/provider/Services/ServerProvider.ts		modify-delete	21	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AcpCoreRuntimeEvents.ts		modify-delete	30	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/acp/AcpNativeLogging.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/acp/AcpNativeLogging.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/acp/AcpRuntimeModel.test.ts		modify-delete	148	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AcpRuntimeModel.ts		modify-delete	64	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AcpSessionRuntime.ts		modify-delete	60	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AntigravityAcpSupport.test.ts		content	308	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AntigravityAcpSupport.ts		content	136	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/CursorAcpCliProbe.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/acp/CursorAcpSupport.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/acp/DshAcpSupport.test.ts		added-broken	682	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/DshAcpSupport.ts		added-broken	1049	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/GrokAcpCliProbe.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/acp/XAiAcpExtension.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/antigravityAuthSupport.test.ts		content	192	C5-C9	open	area C5-C9
+apps/server/src/provider/antigravityAuthSupport.ts		content	95	C5-C9	open	area C5-C9
+apps/server/src/provider/antigravityRelease.ts		content	42	C5-C9	open	area C5-C9
+apps/server/src/provider/botPluginSkillDiagnostics.test.ts		added-broken	201	C6	open	G6 park; Codex plugin skill roots (C6)
+apps/server/src/provider/botPluginSkillDiagnostics.ts		added-broken	162	C6	open	G6 park; Codex plugin skill roots (C6)
+apps/server/src/provider/botPluginSkillRoots.ts		added-broken	91	C5-C9	open	area C5-C9
+apps/server/src/provider/botProcessPriority.spawnSites.test.ts		added-broken	193	C5-C9	open	area C5-C9
+apps/server/src/provider/builtInDrivers.ts		content	7	C5-C9	open	area C5-C9
+apps/server/src/provider/builtInProviderCatalog.ts		content	1	C5-C9	open	area C5-C9
+apps/server/src/provider/catalog/INTEGRATION.md		added-broken	110	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/ProviderCatalog.test.ts		added-broken	476	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/ProviderCatalog.ts		added-broken	465	C5-C9	open	area C5-C9
+apps/server/src/provider/catalog/acpSmoke.test.ts		added-broken	93	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/acpSmoke.ts		added-broken	112	C5-C9	open	area C5-C9
+apps/server/src/provider/catalog/archive.test.ts		added-broken	328	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/archive.ts		added-broken	465	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/archiveFixtures.ts		added-broken	143	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/catalogLive.test.ts		added-broken	143	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/entries.test.ts		added-broken	264	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/entries.ts		added-broken	322	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/errors.ts		added-broken	96	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/fixtures/registry-2026-10-20.json		added-broken	1270	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/index.ts		added-broken	17	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/installer.test.ts		added-broken	1061	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/installer.ts		added-broken	1299	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/launch.ts		added-broken	149	C5-C9	open	area C5-C9
+apps/server/src/provider/catalog/overlay.ts		added-broken	96	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/plan.ts		added-broken	218	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/provider-catalog-overlay.json		added-broken	69	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/registry.test.ts		added-broken	370	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/registry.ts		added-broken	297	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/registryAuth.ts		added-broken	116	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/registryModels.ts		added-broken	73	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/registryProbe.ts		added-broken	310	C5-C9	open	area C5-C9
+apps/server/src/provider/catalog/transport.test.ts		added-broken	291	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/catalog/transport.ts		added-broken	244	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/claudeResetCredits.test.ts	apps/server/src/provider/Layers/claudeResetCredits.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/claudeUsageLimits.test.ts	apps/server/src/provider/Layers/claudeUsageLimits.test.ts	content	55	C5-C9	open	area C5-C9
+apps/server/src/provider/claudeUsageLimits.ts	apps/server/src/provider/Layers/claudeUsageLimits.ts	content	23	C5-C9	open	area C5-C9
+apps/server/src/provider/codexLaunchArgs.ts	apps/server/src/provider/Layers/codexLaunchArgs.ts	content	80	C5-C9	open	area C5-C9
+apps/server/src/provider/codexUsageLimits.test.ts	apps/server/src/provider/Layers/codexUsageLimits.test.ts	content	33	C5-C9	open	area C5-C9
+apps/server/src/provider/codexUsageLimits.ts	apps/server/src/provider/Layers/codexUsageLimits.ts	content	31	C5-C9	open	area C5-C9
+apps/server/src/provider/dshUsageLedger.test.ts		added-broken	254	D1	open	G6 park; DeepSeek usage ledger (D1)
+apps/server/src/provider/dshUsageLedger.ts		added-broken	349	D1	open	G6 park; DeepSeek usage ledger (D1)
+apps/server/src/provider/model-manifest.json		content	65	C5-C9	open	area C5-C9
+apps/server/src/provider/opencode2.live.test.ts		added-broken	197	C7	open	G2 park; live OpenCode 2 probe
+apps/server/src/provider/opencode2.test.ts		added-broken	214	C5-C9	open	area C5-C9
+apps/server/src/provider/opencode2.ts		added-broken	641	C5-C9	open	area C5-C9
+apps/server/src/provider/opencodeRuntime.environment.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/opencodeRuntime.inventory.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/provider/opencodeRuntime.ts		modify-delete	3	C5-C9	open	area C5-C9
+apps/server/src/provider/probeBackoff.test.ts		added-broken	72	C9	open	G6 park; managed provider backoff (C9)
+apps/server/src/provider/probeBackoff.ts		added-broken	62	C9	open	G6 park; managed provider backoff (C9)
+apps/server/src/provider/providerCompatibility.test.ts		content	13	C5-C9	open	area C5-C9
+apps/server/src/provider/providerInstallation.test.ts		content	268	C5-C9	open	area C5-C9
+apps/server/src/provider/providerInstallation.ts		content	188	C5-C9	open	area C5-C9
+apps/server/src/provider/providerMaintenance.test.ts		modify-delete	113	C5-C9	open	area C5-C9
+apps/server/src/provider/providerMaintenance.ts		modify-delete	67	C5-C9	open	area C5-C9
+apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C5-C9	open	area C5-C9
+apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C5-C9	open	area C5-C9
+apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	open	G2 park; smokeCheck returns with C9
+apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	open	area C5-C9
+apps/server/src/provider/providerStatusCache.test.ts		content	90	C5-C9	open	area C5-C9
+apps/server/src/provider/providerStatusCache.ts		content	58	C5-C9	open	area C5-C9
+apps/server/src/provider/secretEventRedaction.test.ts		added-broken	128	C12	open	G6 park; log redaction (C12)
+apps/server/src/provider/secretEventRedaction.ts		added-broken	130	C12	open	G6 park; log redaction (C12)
+apps/server/src/provider/testUtils/providerRegistryMock.ts		content	1	C5-C9	open	area C5-C9
+apps/server/src/provider/userInputAttachments.test.ts		content	7	C5-C9	open	area C5-C9
+apps/server/src/pullRequest/GitHubPullRequestCli.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/pullRequest/GitLabPullRequestCli.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/pullRequest/PullRequestReadCache.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/pullRequest/PullRequestReadCache.ts		content	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/pullRequest/PullRequestService.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/pullRequest/githubStackActions.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/pullRequest/linkedThreads.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/relay/AgentAwarenessRelay.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/relay/AgentAwarenessRelay.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/resourceTelemetry/NativeTelemetryClient.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/server.test.ts		modify-delete	1734	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/serverLogger.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/serverLogger.ts		content	15	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/serverRuntimeStartup.reconcile.test.ts		modify-delete	4	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/serverRuntimeStartup.test.ts		content	6	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/serverRuntimeStartup.ts		content	28	C4	open	a turn resumed after restart keeps the bot's instructions and model
+apps/server/src/serverRuntimeStartup.worktreeSetup.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/serverRuntimeState.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/serverSettings.test.ts		content	176	C9	open	typed provider secrets, Gemini effort defaults
+apps/server/src/serverSettings.ts		content	86	C9	open	typed provider secrets, Gemini effort defaults
+apps/server/src/serviceLauncher.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/sourceControl/GitHubCli.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/sourceControl/GitHubSourceControlProvider.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/sourceControl/SourceControlDiscovery.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/sourceControl/SourceControlRepositoryService.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/startupAccess.test.ts		content	82	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/startupAccess.ts		content	44	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/storageCleanup.ts		content	2	C10	open	withStallJob wrap
+apps/server/src/telemetry/AnalyticsService.test.ts		content	87	B1	dropped	only upstream commits (#N) on our side, each present in U
+apps/server/src/telemetry/AnalyticsService.ts		content	106	B1	dropped	only upstream commits (#N) on our side, each present in U
+apps/server/src/telemetry/Identify.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/telemetry/Identify.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/terminal/Manager.test.ts		content	6	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/terminal/Manager.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/terminal/OutputProtocol.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/textGeneration/ClaudeTextGeneration.test.ts		content	274	C5	open	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/textGeneration/ClaudeTextGeneration.ts		content	91	C5	open	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/textGeneration/CodexTextGeneration.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/textGeneration/CursorTextGeneration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/textGeneration/CursorTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/textGeneration/DeepSeekTextGeneration.ts		added-broken	98	D1	open	G6 park; DeepSeek text generation (D1)
+apps/server/src/textGeneration/GrokTextGeneration.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/textGeneration/GrokTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/textGeneration/OpenCode2TextGeneration.ts		added-broken	259	C7	open	OpenCode 2 text generation
+apps/server/src/textGeneration/TextGeneration.ts		content	17	C5	open	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/usage-transcript-worker.ts		added-broken	25	C14	open	G14 park; usage transcript worker (C14)
+apps/server/src/usage/UsageLimitSources.ts		content	30	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/UsageService.sessionUsage.test.ts		added-broken	398	C14	open	G2 park; UsageService row is C14
+apps/server/src/usage/UsageService.test.ts		content	281	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/UsageService.ts		content	399	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/antigravityUsageReader.test.ts		added-broken	301	C8	open	test of an Appendix A hook file
+apps/server/src/usage/antigravityUsageReader.ts		modify-delete	75	C8	open	hook file listed in Appendix A
+apps/server/src/usage/botUsage.test.ts		added-broken	354	B1	done	G8 restored the test at B1 against U's UsageRecord; the reader returns in C14
+apps/server/src/usage/botUsage.ts		added-broken	246	B1	done	G8 restored the file at B1 against U's UsageRecord; readSessionUsage returns in C14
+apps/server/src/usage/cliproxyApi.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/usage/cliproxyApi.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/usage/cursorUsageReader.ts		modify-delete	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/server/src/usage/opencodeUsageReader.test.ts		added-broken	142	C7	open	test of an Appendix A hook file
+apps/server/src/usage/opencodeUsageReader.ts		modify-delete	129	C7	open	hook file listed in Appendix A
+apps/server/src/usage/usageAggregation.test.ts		content	3	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/server/src/usage/usagePricing.test.ts		content	163	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usagePricing.ts		content	226	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageScanCache.test.ts		content	104	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageScanCache.ts		content	230	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageTranscriptReader.test.ts		content	163	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageTranscriptReader.ts		content	32	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageTranscriptWorkerClient.ts		added-broken	78	C14	open	G14 park; usage transcript worker (C14)
+apps/server/src/usage/usageTranscripts.test.ts		modify-delete	24	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/server/src/usage/usageTranscripts.ts		modify-delete	69	C9+D6	open	hook file listed in Appendix A
+apps/server/src/vcs/GitVcsDriver.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/vcs/GitVcsDriverCore.test.ts		content	9	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/vcs/GitVcsDriverCore.ts		content	42	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/vcs/VcsDriverRegistry.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/vcs/VcsProcess.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/vcs/VcsProvisioningService.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/vcs/VcsStatusBroadcaster.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/vcs/gitSpawnExecutable.test.ts		added-broken	26	C15	open	G2 park; shell PATH walk (C15)
+apps/server/src/workspace/WorkspaceFileSystem.test.ts		content	195	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/workspace/WorkspaceFileSystem.ts		content	151	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/workspace/WorkspaceSearchIndex.test.ts		content	68	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/server/src/workspace/WorkspaceSearchIndex.ts		content	21	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/server/test/ActivityPayloadProjection.test.ts		modify-delete	15	C10	open	test of an Appendix A hook file
+apps/server/vite.config.ts		content	8	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+apps/web/package.json		content	8	phase 4	open	area phase 4
+apps/web/public/manifest.webmanifest		content	20	phase 4	open	area phase 4
+apps/web/src/AppRoot.tsx		content	30	phase 4	open	area phase 4
+apps/web/src/assets/assetUrls.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/authBootstrap.test.ts		content	64	phase 4	open	area phase 4
+apps/web/src/branding.test.ts		modify-delete	14	phase 4	open	area phase 4
+apps/web/src/browser/browserRecordingUpload.test.ts		added-broken	85	phase 4	open	area phase 4
+apps/web/src/browser/browserRecordingUpload.ts		modify-delete	3	phase 4	open	area phase 4
+apps/web/src/browser/openFileInPreview.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/cloud/dpop.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/cloud/linkEnvironment.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/cloud/managedRelayLayer.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/cloud/managedRelayState.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/cloud/primaryCloudLinkState.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/ChatMarkdown.test.tsx		modify-delete	78	phase 4	open	area phase 4
+apps/web/src/components/ChatMarkdown.tsx		content	119	phase 4	open	area phase 4
+apps/web/src/components/ChatMarkdown.workspace-images.test.tsx		modify-delete	36	phase 4	open	area phase 4
+apps/web/src/components/ChatView.logic.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/ChatView.logic.ts		content	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/web/src/components/ChatView.tsx		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/ComposerPromptEditorTiptap.tsx		content	4	phase 4	open	area phase 4
+apps/web/src/components/ConfirmDialogHost.tsx		content	52	phase 4	open	area phase 4
+apps/web/src/components/ProviderUpdateEnvironmentRows.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/ProviderUpdateLaunchNotification.logic.test.ts		content	21	phase 4	open	area phase 4
+apps/web/src/components/ServerUpdateAction.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/Sidebar.logic.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/ThreadNotificationCoordinator.test.tsx		modify-delete	14	phase 4	open	area phase 4
+apps/web/src/components/ThreadNotificationCoordinator.tsx		content	10	phase 4	open	area phase 4
+apps/web/src/components/ThreadRouteView.tsx		content	17	phase 4	open	area phase 4
+apps/web/src/components/chat/ChatComposer.tsx		content	9	phase 4	open	area phase 4
+apps/web/src/components/chat/MessagesTimeline.logic.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/chat/MessagesTimeline.tsx		content	29	phase 4	open	area phase 4
+apps/web/src/components/chat/ModelPickerContent.tsx		content	21	phase 4	open	area phase 4
+apps/web/src/components/chat/composerPromptHistory.test.ts		content	10	phase 4	open	area phase 4
+apps/web/src/components/chat/composerPromptHistory.ts		content	6	phase 4	open	area phase 4
+apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/cloud/CloudEnvironmentConnectList.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/cloud/ConnectOnboardingDialog.tsx		content	57	phase 4	open	area phase 4
+apps/web/src/components/diffs/useReviewFilePatches.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/files/projectFilesQueryState.test.tsx		content	61	phase 4	open	area phase 4
+apps/web/src/components/files/projectFilesQueryState.ts		content	7	phase 4	open	area phase 4
+apps/web/src/components/files/useFileSaveCoordinator.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/onboarding/FirstRunGate.tsx		content	14	phase 4	open	area phase 4
+apps/web/src/components/preview/PreviewAutomationHosts.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/preview/PreviewAutomationHosts.tsx		modify-delete	7	phase 4	open	area phase 4
+apps/web/src/components/preview/addBrowserSurface.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/preview/closePreviewSession.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/preview/previewAutomationRequestConsumer.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/projectScriptEditor.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/pullRequest/usePullRequestFilesViewed.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/settings/ConnectionsSettings.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/settings/ProjectSettingsPanel.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/settings/ProviderInstanceCard.tsx		content	75	phase 4	open	area phase 4
+apps/web/src/components/settings/ProviderSettingsForm.test.ts		content	8	phase 4	open	area phase 4
+apps/web/src/components/settings/ProviderSettingsPanel.environment.test.tsx		modify-delete	1	phase 4	open	area phase 4
+apps/web/src/components/settings/ProviderSettingsPanel.tsx		content	1	phase 4	open	area phase 4
+apps/web/src/components/settings/SettingsScopeContext.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/settings/providerDriverMeta.ts		content	8	phase 4	open	area phase 4
+apps/web/src/components/settings/providerStatus.ts		content	14	phase 4	open	area phase 4
+apps/web/src/components/sidebar/SidebarChrome.tsx		content	9	phase 4	open	area phase 4
+apps/web/src/components/ui/alert-dialog.tsx		content	2	phase 4	open	area phase 4
+apps/web/src/components/ui/dialog.tsx		content	2	phase 4	open	area phase 4
+apps/web/src/components/ui/menu.tsx		content	2	phase 4	open	area phase 4
+apps/web/src/components/ui/popover.tsx		content	2	phase 4	open	area phase 4
+apps/web/src/components/ui/sheet.tsx		content	20	phase 4	open	area phase 4
+apps/web/src/components/usage/UsageLimits.tsx		content	51	phase 4	open	area phase 4
+apps/web/src/components/usage/UsageLimitsPooled.tsx		content	4	phase 4	open	area phase 4
+apps/web/src/components/usage/UsagePage.refresh.test.tsx		modify-delete	1	phase 4	open	area phase 4
+apps/web/src/components/usage/UsagePriceOverrides.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/usage/usageProviders.ts		content	4	phase 4	open	area phase 4
+apps/web/src/connection/platform.ts		content	12	phase 4	open	area phase 4
+apps/web/src/connection/runtime.ts		content	13	phase 4	open	area phase 4
+apps/web/src/connection/storage.test.ts		content	199	phase 4	open	area phase 4
+apps/web/src/connection/storage.ts		content	227	phase 4	open	area phase 4
+apps/web/src/environments/primary/httpLayer.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/environments/primary/index.ts		content	1	phase 4	open	area phase 4
+apps/web/src/environments/primary/sessionState.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/features/personal/bootstrapRecovery.test.ts		added-broken	179	phase 4	open	area phase 4
+apps/web/src/hooks/showThreadUndoNotice.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/hooks/useLoadBalancedEnvironment.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/hooks/useLocalStorage.ts		content	8	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/web/src/hooks/useTheme.test.ts		modify-delete	57	phase 4	open	area phase 4
+apps/web/src/lib/assistantCitationNavigation.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/lib/attachmentUploadQueue.test.ts		content	190	phase 4	open	area phase 4
+apps/web/src/lib/attachmentUploadQueue.ts		content	103	phase 4	open	area phase 4
+apps/web/src/lib/chunkReloadGuard.ts		content	14	phase 4	open	area phase 4
+apps/web/src/lib/contextWindow.test.ts		content	14	phase 4	open	area phase 4
+apps/web/src/lib/diffFileContents.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/lib/imageCompression.test.ts		content	78	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/web/src/lib/imageCompression.ts		content	60	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+apps/web/src/lib/runtime.ts		content	5	phase 4	open	area phase 4
+apps/web/src/lib/syntaxHighlighting.ts		content	20	phase 4	open	area phase 4
+apps/web/src/lib/utils.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/main.tsx		content	73	phase 4	open	area phase 4
+apps/web/src/observability/clientTracing.ts		content	4	phase 4	open	area phase 4
+apps/web/src/onboarding/useProjectScans.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/previewStateStore.ts		content	23	phase 4	open	area phase 4
+apps/web/src/routeTree.gen.ts		content	592	phase 4	open	area phase 4
+apps/web/src/routes/__root.tsx		content	201	phase 4	open	area phase 4
+apps/web/src/routes/_chat.index.tsx		content	10	phase 4	open	area phase 4
+apps/web/src/rpc/atomRegistry.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/session-logic.command-output.test.ts		modify-delete	34	phase 4	open	area phase 4
+apps/web/src/session-logic.ts		content	35	phase 4	open	area phase 4
+apps/web/src/state/desktopNetworkAccess.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/desktopSshHosts.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/desktopWslState.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/device.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/entities.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/projectClones.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/pullRequests.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/queries.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/query.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/session.ts		content	60	phase 4	open	area phase 4
+apps/web/src/state/shell.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/shell.ts		content	8	phase 4	open	area phase 4
+apps/web/src/state/sourceControlActions.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/threads.ts		content	17	phase 4	open	area phase 4
+apps/web/src/state/usage.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/state/use-atom-query-runner.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/test/environmentHttpTest.ts		content	4	phase 4	open	area phase 4
+apps/web/vite.config.ts		content	68	phase 4	open	area phase 4
+docs/internals/connection-runtime.md		content	13	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+evals/thread-titles/run.ts	apps/server/scripts/evaluate-thread-titles.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/agentActivity/ApnsClient.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/agentActivity/ApnsClient.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/agentActivity/ApnsDeliveries.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/agentActivity/ApnsDeliveryQueue.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/agentActivity/DeliveryAttempts.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/agentActivity/FcmClient.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/agentActivity/FcmDeliveries.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/environments/EnvironmentConnector.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/environments/EnvironmentCredentials.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/environments/EnvironmentPublishSignatures.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/environments/EnvironmentPublishSignatures.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/environments/ManagedEndpointProvider.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/environments/ManagedEndpointProvider.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/http/Api.test.ts		content	8	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/http/Api.ts		content	9	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/observability.test.ts		modify-delete	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/observability.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+infra/relay/src/worker.ts		content	6	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+knip.jsonc		content	9	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+oxlint-plugin-t3code/index.ts		content	2	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+oxlint-plugin-t3code/rules/no-unscoped-has.test.ts		content	124	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+oxlint-plugin-t3code/rules/no-unscoped-has.ts		content	179	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+package.json		content	4	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+packages/client-runtime/src/connection/errors.test.ts		content	33	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/client-runtime/src/connection/errors.ts		content	14	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/client-runtime/src/connection/registry.test.ts		content	40	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/client-runtime/src/connection/resolver.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/connection/supervisor.test.ts		content	352	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/connection/supervisor.ts		content	173	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/connection/wakeups.ts		content	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/client-runtime/src/errors/transport.test.ts		content	15	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/client-runtime/src/errors/transport.ts		content	10	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/client-runtime/src/operations/commands.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/operations/commands.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/pendingRequests.test.ts		modify-delete	69	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/pendingRequests.ts		modify-delete	39	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/platform/persistence.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/relay/managedRelayState.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/rpc/client.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/rpc/session.test.ts		content	45	B1	dropped	5d4d140d05 is upstream #15563, present in U; the rest is the Effect 4.1 codemod
+packages/client-runtime/src/rpc/session.ts		content	12	C16	open	027fdb6d28 omitProviderWorkspaceData; the bots surfaces drop 82% of the provider boot snapshot
+packages/client-runtime/src/state/archivedThreads.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/archivedThreads.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/assets.test.ts		content	31	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/assets.ts		content	22	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/deviceHubAccess.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/entities.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/environmentHttpAuth.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/environmentHttpAuth.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/filesystem.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/orchestration.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/preview.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/projectCommands.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/review.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/runtime.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/server.ts		content	22	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/session.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/shell-sync.test.ts		content	96	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/shell.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/shell.ts		content	9	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/shellSnapshotHttp.ts		content	52	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/sourceControl.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/terminal.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/threadCommands.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/threadCommands.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/threadDetail.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/threadReducer.test.ts		modify-delete	42	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threadReducer.ts		modify-delete	9	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threadSearch.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/threadShell.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/threadSnapshotHttp.ts		content	63	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threads-atoms.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/client-runtime/src/state/threads-sync.test.ts		content	20	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/client-runtime/src/state/threads.ts		content	12	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/work-log/presentation.ts		content	9	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/contracts/src/assets.ts		content	26	C12	open	landed-PR retarget (Appendix H.4): C12
+packages/contracts/src/baseSchemas.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/contracts/src/device.ts		content	3	C15	open	landed-PR retarget (Appendix H.4): C15
+packages/contracts/src/environmentHttp.ts		content	38	C11	open	landed-PR retarget (Appendix H.4): C11
+packages/contracts/src/model.ts		content	59	D1	open	landed-PR retarget (Appendix H.4): D1
+packages/contracts/src/orchestration.test.ts		modify-delete	79	D1	open	landed-PR retarget (Appendix H.4): D1
+packages/contracts/src/orchestration.ts		modify-delete	121	D1	open	landed-PR retarget (Appendix H.4): D1
+packages/contracts/src/personalV1Wire.test.ts		added-broken	36	C3	open	v1 wire shim (C3)
+packages/contracts/src/previewAutomation.ts		content	253	C13	open	landed-PR retarget (Appendix H.4): C13
+packages/contracts/src/provider.test.ts		content	6	C5	open	landed-PR retarget (Appendix H.4): C5
+packages/contracts/src/provider.ts		content	71	C5	open	landed-PR retarget (Appendix H.4): C5
+packages/contracts/src/providerRuntime.ts		content	26	C9	open	landed-PR retarget (Appendix H.4): C9
+packages/contracts/src/providerSetup.ts		content	33	C9	open	landed-PR retarget (Appendix H.4): C9
+packages/contracts/src/providerUsageLimits.ts		content	115	C14	open	landed-PR retarget (Appendix H.4): C14
+packages/contracts/src/pullRequest.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/contracts/src/relay.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/contracts/src/server.ts		content	82	C9	open	landed-PR retarget (Appendix H.4): C9
+packages/contracts/src/settings.test.ts		content	13	C9	open	landed-PR retarget (Appendix H.4): C9
+packages/contracts/src/settings.ts		content	88	D1	open	landed-PR retarget (Appendix H.4): D1
+packages/contracts/src/usage.ts		content	4	C14	open	landed-PR retarget (Appendix H.4): C14
+packages/effect-acp/src/client.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/effect-acp/src/protocol.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/effect-acp/src/rpc.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/effect-codex-app-server/src/client.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/effect-codex-app-server/src/client.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-core/src/server/auth.ts	apps/server/src/provider/Services/ProviderAuthService.ts	content	12	C5-C9	open	area C5-C9
+packages/provider-core/src/server/managedProvider.test.ts	apps/server/src/provider/makeManagedServerProvider.test.ts	content	521	C5-C9	open	area C5-C9
+packages/provider-core/src/server/managedProvider.ts	apps/server/src/provider/makeManagedServerProvider.ts	content	159	C5-C9	open	area C5-C9
+packages/provider-core/src/server/providerAuthFlow.test.ts	apps/server/src/provider/ProviderAuthFlow.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-core/src/server/providerAuthFlow.ts	apps/server/src/provider/ProviderAuthFlow.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-core/src/server/snapshotProbe.test.ts	apps/server/src/provider/providerSnapshot.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-core/src/server/snapshotProbe.ts	apps/server/src/provider/providerSnapshot.ts	content	4	C5-C9	open	area C5-C9
+packages/provider-core/src/server/usageLimits.test.ts	apps/server/src/provider/providerUsageLimits.test.ts	content	172	C14	open	follows packages/shared/src/usageLimits.ts
+packages/provider-core/src/server/usageLimits.ts	apps/server/src/provider/providerUsageLimits.ts	content	105	C5-C9	open	area C5-C9
+packages/provider-cursor/src/server/usageLimits.ts	apps/server/src/provider/Layers/cursorUsageLimits.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-grok/src/server/acpSupport.ts	apps/server/src/provider/acp/GrokAcpSupport.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-grok/src/server/skills.test.ts	apps/server/src/provider/Drivers/GrokSkills.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-grok/src/server/skills.ts	apps/server/src/provider/Drivers/GrokSkills.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-grok/src/server/status.ts	apps/server/src/provider/Layers/GrokProvider.ts	content	5	C5-C9	open	area C5-C9
+packages/provider-grok/src/server/usageLimits.ts	apps/server/src/provider/Layers/grokUsageLimits.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/provider-opencode/src/server/textGeneration.test.ts	apps/server/src/textGeneration/OpenCodeTextGeneration.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/shared/package.json		content	25	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+packages/shared/src/DrainableWorker.test.ts		content	77	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/shared/src/DrainableWorker.ts		content	33	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/shared/src/KeyedCoalescingWorker.ts		content	11	B1	dropped	every commit on our side is an upstream cherry-pick U already has
+packages/shared/src/crypto.ts		modify-delete	181	B1	dropped	superseded by 4cabfdaab7; U's Effect 4.1 bump provides SecureRandom
+packages/shared/src/dpop.ts		content	6	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/shared/src/httpObservability.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/shared/src/nodeServices.ts		modify-delete	16	B1	dropped	superseded by 4cabfdaab7; U imports @effect/platform-node/NodeServices
+packages/shared/src/nodeSqliteClient.test.ts		content	82	B1	dropped	only upstream commits (#N) on our side, each present in U
+packages/shared/src/nodeSqliteClient.ts		content	218	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/observability.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/shared/src/observability.ts		content	49	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/otelEnvironment.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/shared/src/relayClient.test.ts		content	58	B1	dropped	only upstream commits (#N) on our side, each present in U
+packages/shared/src/relayClient.ts		content	12	B1	dropped	only upstream commits (#N) on our side, each present in U
+packages/shared/src/relayTracing.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/shared/src/schemaJson.ts		content	33	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/shared/src/shell.test.ts		content	161	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/shell.ts		content	163	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/usageLimits.test.ts		content	36	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+packages/shared/src/usageLimits.ts		content	55	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+packages/source-control-azure-devops/src/server/AzureDevOpsCli.test.ts	apps/server/src/sourceControl/AzureDevOpsCli.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/source-control-bitbucket/src/server/BitbucketApi.test.ts	apps/server/src/sourceControl/BitbucketApi.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/ssh/src/command.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/ssh/src/config.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/ssh/src/runnerProcess.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/ssh/src/tunnel.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+packages/tailscale/src/tailscale.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+pnpm-lock.yaml		content	7641	B1	done	take upstream, then pnpm install --lockfile-only after the manifests
+pnpm-workspace.yaml		content	87	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+scripts/build-desktop-artifact.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/build-npm-platform-packages.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/build-npm-platform-packages.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/dev-runner.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/export-brand-icons.ts		content	22	phase 4	open	WebP splash and small favicon
+scripts/lib/brand-assets.test.ts		modify-delete	8	phase 4	open	WebP splash and small favicon
+scripts/lib/cli-external-packages.test.ts		content	2	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+scripts/merge-update-manifests.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/mobile-native-client.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/mobile-native-static-check.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/notify-discord-release.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/notify-discord-release.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/resolve-nightly-release.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/resolve-previous-release-tag.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/smoke-cli-archive.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/sync-reference-repos.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+scripts/update-release-package-versions.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+vite.config.ts		content	83	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides

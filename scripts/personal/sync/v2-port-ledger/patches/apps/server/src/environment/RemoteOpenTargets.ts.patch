@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/environment/RemoteOpenTargets.ts b/apps/server/src/environment/RemoteOpenTargets.ts
+index c0cd658a28c7f5a26850df7961ff3d6b86d6ffc3..e0acfaee2f48be3a83955edc92379de5b410e3be 100644
+--- a/apps/server/src/environment/RemoteOpenTargets.ts
++++ b/apps/server/src/environment/RemoteOpenTargets.ts
+@@ -15,7 +15,7 @@ import { readTailscaleStatus } from "@t3tools/tailscale";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ const SSH_PORT = 22;
+ 

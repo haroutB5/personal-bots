@@ -1,0 +1,15 @@
+diff --git a/apps/server/src/persistence/Layers/ProjectionRepositories.test.ts b/apps/server/src/persistence/Layers/ProjectionRepositories.test.ts
+index 4be65bd5650c56382b96294ab3f4639b483c26a3..8388ea438f411df61d6eccbc3e04b3e91e9b53fc 100644
+--- a/apps/server/src/persistence/Layers/ProjectionRepositories.test.ts
++++ b/apps/server/src/persistence/Layers/ProjectionRepositories.test.ts
+@@ -9,8 +9,8 @@ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as Statement from "effect/unstable/sql/Statement";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as Statement from "effect/sql/Statement";
+ 
+ import { SqlitePersistenceMemory } from "./Sqlite.ts";
+ import { ProjectionProjectRepositoryLive } from "./ProjectionProjects.ts";

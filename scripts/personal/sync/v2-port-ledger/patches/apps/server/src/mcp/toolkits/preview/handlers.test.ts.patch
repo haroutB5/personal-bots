@@ -1,0 +1,11 @@
+diff --git a/apps/server/src/mcp/toolkits/preview/handlers.test.ts b/apps/server/src/mcp/toolkits/preview/handlers.test.ts
+index a2a88e14fcefa0bcfe47ca19ea71ecfb3c024d0c..5a9679e4513fbf0c19de57f809faa8e9b3175064 100644
+--- a/apps/server/src/mcp/toolkits/preview/handlers.test.ts
++++ b/apps/server/src/mcp/toolkits/preview/handlers.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { ThreadId } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

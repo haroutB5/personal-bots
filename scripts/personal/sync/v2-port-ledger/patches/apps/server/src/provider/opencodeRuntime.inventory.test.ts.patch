@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/provider/opencodeRuntime.inventory.test.ts b/apps/server/src/provider/opencodeRuntime.inventory.test.ts
+index 4613a8bd6082c5b2a39a58769490f25f22b322e6..4788bb49e9e81230e0818b37bb3a1818060be22b 100644
+--- a/apps/server/src/provider/opencodeRuntime.inventory.test.ts
++++ b/apps/server/src/provider/opencodeRuntime.inventory.test.ts
+@@ -1,6 +1,6 @@
+ import * as NodeAssert from "node:assert/strict";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
+ import { it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";

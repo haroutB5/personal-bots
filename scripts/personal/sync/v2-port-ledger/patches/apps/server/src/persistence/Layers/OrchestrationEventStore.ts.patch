@@ -1,0 +1,15 @@
+diff --git a/apps/server/src/persistence/Layers/OrchestrationEventStore.ts b/apps/server/src/persistence/Layers/OrchestrationEventStore.ts
+index d995e81422d046b2785a88cd0c678d5e1c6e5a98..580bc496c2cafbc894f57a080c8976bb48656cd8 100644
+--- a/apps/server/src/persistence/Layers/OrchestrationEventStore.ts
++++ b/apps/server/src/persistence/Layers/OrchestrationEventStore.ts
+@@ -12,8 +12,8 @@ import {
+   ProjectIconOverride,
+   ThreadId,
+ } from "@t3tools/contracts";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";

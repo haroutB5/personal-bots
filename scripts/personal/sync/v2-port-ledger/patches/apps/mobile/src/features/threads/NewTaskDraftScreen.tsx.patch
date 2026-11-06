@@ -1,0 +1,12 @@
+diff --git a/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx b/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx
+index 0772705645f253a343d44aa7bb826e36a6e97358..7a60fcf10bedd49150dc2e0ce906710079547966 100644
+--- a/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx
++++ b/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx
+@@ -1,6 +1,6 @@
+ import { useAtomValue } from "@effect/atom-react";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
+ import {
+   nextPastedTextFileName,

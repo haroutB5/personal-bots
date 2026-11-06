@@ -1,0 +1,19 @@
+diff --git a/scripts/build-npm-platform-packages.test.ts b/scripts/build-npm-platform-packages.test.ts
+index 5fc0d859fc3d37d7b636f32c0aa2b404bcda3f6f..c49874b7311938c298bfbf255564f6679b36e4df 100644
+--- a/scripts/build-npm-platform-packages.test.ts
++++ b/scripts/build-npm-platform-packages.test.ts
+@@ -1,12 +1,12 @@
+ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import {
+   buildNpmPlatformPackages,

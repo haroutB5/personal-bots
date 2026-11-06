@@ -1,0 +1,230 @@
+diff --git a/apps/server/src/usage/usagePricing.test.ts b/apps/server/src/usage/usagePricing.test.ts
+index db4f68c2cb42f5ef89342418c84e90959ec11a2e..d358cf25172d5efb97c053b85ae4c2757868f405 100644
+--- a/apps/server/src/usage/usagePricing.test.ts
++++ b/apps/server/src/usage/usagePricing.test.ts
+@@ -1,10 +1,15 @@
+ import { describe, expect, it } from "@effect/vitest";
+ 
+ import { cursorRateModel } from "./cursorUsageReader.ts";
++import type { UsageSpeed } from "./usageTranscripts.ts";
+ import {
+   cacheSavingsUsd,
+   createOverrideRateTable,
++  GEMINI_38_FLASH_RATES,
++  GEMINI_4_ARGON_RATES,
++  isDeepSeekPeakTime,
+   lookupRate,
++  normalizeGeminiModel,
+   parseRateTable,
+   priceUsage,
+ } from "./usagePricing.ts";
+@@ -15,6 +20,9 @@ const rate = (input: number, cacheRead?: number) => ({
+   ...(cacheRead === undefined ? {} : { cache_read_input_token_cost: cacheRead }),
+ });
+ 
++/** Wednesday 2026-10-14 12:00 UTC: a weekday outside every peak window. */
++const OFF_PEAK_MS = Date.parse("2026-10-14T12:00:00Z");
++
+ describe("usage pricing", () => {
+   const totals = {
+     uncachedInputTokens: 1_000_000,
+@@ -23,11 +31,17 @@ describe("usage pricing", () => {
+     outputTokens: 1_000_000,
+     reasoningTokens: 500_000,
+   };
+-  const record = (model: string, reportedCostUsd: number | null = null, fast = false) => ({
++  const record = (
++    model: string,
++    reportedCostUsd: number | null = null,
++    speed: UsageSpeed = "standard",
++  ) => ({
++    provider: "claude" as const,
+     model,
++    timestampMs: OFF_PEAK_MS,
+     totals,
+     reportedCostUsd,
+-    fast,
++    speed,
+   });
+ 
+   it("uses custom token rates ahead of public and provider-reported costs", () => {
+@@ -70,6 +84,82 @@ describe("usage pricing", () => {
+     });
+   });
+ 
++  it("prices every DeepSeek turn at the published Flash rates, cache split or not", () => {
++    const deepseekRecord = (overrides: Partial<typeof totals> = {}) => ({
++      provider: "deepseek" as const,
++      model: "deepseek-flash",
++      timestampMs: OFF_PEAK_MS,
++      totals: { ...totals, ...overrides },
++      reportedCostUsd: null,
++      speed: "standard" as const,
++    });
++
++    // A cache split at off-peak: cached input at the cache-hit rate
++    // ($0.003/M), the rest at the cache-miss ($0.15/M) and output ($0.60/M)
++    // rates. DeepSeek publishes no separate cache-write price, so writes bill
++    // as misses.
++    const split = priceUsage(new Map(), deepseekRecord());
++    expect(split.costSource).toBe("modelPriced");
++    expect(split.costUsd).toBeCloseTo(0.15 + 0.003 + 0.15 + 0.6, 10);
++    expect(cacheSavingsUsd(new Map(), deepseekRecord())).toBeCloseTo(0.15 - 0.003, 10);
++
++    // No cache split (no cached tokens recorded): every input token at the
++    // cache-miss rate.
++    const noSplit = priceUsage(
++      new Map(),
++      deepseekRecord({ cachedInputTokens: 0, cacheCreationTokens: 0 }),
++    );
++    expect(noSplit.costUsd).toBeCloseTo(0.15 + 0.6, 10);
++    expect(cacheSavingsUsd(new Map(), deepseekRecord({ cachedInputTokens: 0 }))).toBe(0);
++
++    // DeepSeek never reads the LiteLLM table: a table that knows its model
++    // string, a table that does not, and no table at all price identically.
++    const known = parseRateTable({ "deepseek-flash": rate(1) });
++    expect(priceUsage(known, deepseekRecord()).costUsd).toBeCloseTo(split.costUsd, 10);
++  });
++
++  it("doubles DeepSeek's Flash rates inside the peak windows, priced by record timestamp", () => {
++    const deepseekRecord = (timestampMs: number) => ({
++      provider: "deepseek" as const,
++      model: "deepseek-flash",
++      timestampMs,
++      totals,
++      reportedCostUsd: null,
++      speed: "standard" as const,
++    });
++
++    // Peak is 01:00-04:00 and 06:00-10:00 UTC, Monday-Friday; every boundary
++    // instant: 01:00 and 06:00 enter peak, 04:00 and 10:00 leave it.
++    const cases: ReadonlyArray<[number, boolean]> = [
++      [Date.parse("2026-10-14T00:59:59.999Z"), false],
++      [Date.parse("2026-10-14T01:00:00Z"), true],
++      [Date.parse("2026-10-14T03:59:59.999Z"), true],
++      [Date.parse("2026-10-14T04:00:00Z"), false],
++      [Date.parse("2026-10-14T05:59:59.999Z"), false],
++      [Date.parse("2026-10-14T06:00:00Z"), true],
++      [Date.parse("2026-10-14T09:59:59.999Z"), true],
++      [Date.parse("2026-10-14T10:00:00Z"), false],
++      [OFF_PEAK_MS, false],
++      // Weekends are off-peak in full.
++      [Date.parse("2026-10-17T02:00:00Z"), false],
++      [Date.parse("2026-10-18T08:00:00Z"), false],
++    ];
++    for (const [timestampMs, isPeak] of cases) {
++      expect(isDeepSeekPeakTime(timestampMs)).toBe(isPeak);
++    }
++
++    const offPeak = deepseekRecord(OFF_PEAK_MS);
++    const peak = deepseekRecord(Date.parse("2026-10-14T06:00:00Z"));
++    expect(priceUsage(new Map(), peak).costUsd).toBeCloseTo(
++      priceUsage(new Map(), offPeak).costUsd * 2,
++      10,
++    );
++    expect(cacheSavingsUsd(new Map(), peak)).toBeCloseTo(
++      cacheSavingsUsd(new Map(), offPeak) * 2,
++      10,
++    );
++  });
++
+   it("prices unknown models offline and uses input prices for omitted cache rates", () => {
+     const table = parseRateTable({});
+     const overrides = createOverrideRateTable({
+@@ -117,20 +207,46 @@ describe("usage pricing", () => {
+     const overrides = createOverrideRateTable({
+       "claude-opus-5-5": { inputCostPerMillionTokens: 4, outputCostPerMillionTokens: 20 },
+     });
+-    const cost = (model: string, fast: boolean, custom?: typeof overrides) =>
+-      priceUsage(table, record(model, null, fast), custom).costUsd;
++    const cost = (model: string, speed: UsageSpeed, custom?: typeof overrides) =>
++      priceUsage(table, record(model, null, speed), custom).costUsd;
+ 
+-    expect(cost("claude-opus-5-5", true)).toBeCloseTo(2 * cost("claude-opus-5-5", false));
+-    expect(cacheSavingsUsd(table, record("claude-opus-5-5", null, true))).toBeCloseTo(
++    expect(cost("claude-opus-5-5", "fast")).toBeCloseTo(2 * cost("claude-opus-5-5", "standard"));
++    expect(cacheSavingsUsd(table, record("claude-opus-5-5", null, "fast"))).toBeCloseTo(
+       2 * cacheSavingsUsd(table, record("claude-opus-5-5")),
+     );
+     // No published fast tier, and custom prices, both stay at the standard rate.
+-    expect(cost("claude-fable-5-1", true)).toBe(cost("claude-fable-5-1", false));
+-    expect(cost("claude-opus-5-5", true, overrides)).toBe(
+-      cost("claude-opus-5-5", false, overrides),
++    expect(cost("claude-fable-5-1", "fast")).toBe(cost("claude-fable-5-1", "standard"));
++    expect(cost("claude-opus-5-5", "fast", overrides)).toBe(
++      cost("claude-opus-5-5", "standard", overrides),
+     );
+   });
+ 
++  it("prices Codex priority and ultrafast requests at their published tier rates", () => {
++    const table = parseRateTable({
++      "gpt-6-astra": {
++        ...rate(1e-5, 1e-6),
++        input_cost_per_token_priority: 2e-5,
++        output_cost_per_token_priority: 1e-4,
++        cache_read_input_token_cost_priority: 2e-6,
++        input_cost_per_token_ultrafast: 6e-5,
++        output_cost_per_token_ultrafast: 3e-4,
++        // No ultrafast cache rate: keeps the standard 10:1 input-to-cache ratio.
++      },
++      "gpt-6-sol": rate(2e-6, 2e-7),
++    });
++    const cost = (model: string, speed: UsageSpeed) =>
++      priceUsage(table, record(model, null, speed)).costUsd;
++    const standard = cost("gpt-6-astra", "standard");
++
++    expect(cost("gpt-6-astra", "fast")).toBeCloseTo(2 * standard);
++    expect(cost("gpt-6-astra", "ultrafast")).toBeCloseTo(6 * standard);
++    expect(cacheSavingsUsd(table, record("gpt-6-astra", null, "ultrafast"))).toBeCloseTo(
++      6 * cacheSavingsUsd(table, record("gpt-6-astra")),
++    );
++    // A tier the model does not publish bills at the standard rate.
++    expect(cost("gpt-6-sol", "ultrafast")).toBe(cost("gpt-6-sol", "standard"));
++  });
++
+   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {
+     const canonical = ["claude-fable-5", rate(1e-5, 1e-6)] as const;
+     const deepInfra = ["deepinfra/anthropic/claude-fable-5", rate(1e-5)] as const;
+@@ -179,4 +295,42 @@ describe("usage pricing", () => {
+     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
+     expect(lookupRate(table, "example-model")).toBeNull();
+   });
++
++  it("normalizes and prices Gemini models at published rates", () => {
++    expect(normalizeGeminiModel("gemini-3.8-flash-high")).toBe("gemini-3.8-flash");
++    expect(normalizeGeminiModel("gemini-3.8-flash-medium")).toBe("gemini-3.8-flash");
++    expect(normalizeGeminiModel("gemini-3.8-flash-low")).toBe("gemini-3.8-flash");
++    expect(normalizeGeminiModel("gemini-3.8-flash-n")).toBe("gemini-3.8-flash");
++    expect(normalizeGeminiModel("gemini-4-argon-high")).toBe("gemini-4-argon");
++
++    const emptyTable = new Map();
++    expect(lookupRate(emptyTable, "gemini-3.8-flash")).toEqual(GEMINI_38_FLASH_RATES);
++    expect(lookupRate(emptyTable, "gemini-3.8-flash-high")).toEqual(GEMINI_38_FLASH_RATES);
++    expect(lookupRate(emptyTable, "gemini-3.8-flash-n")).toEqual(GEMINI_38_FLASH_RATES);
++    expect(lookupRate(emptyTable, "gemini-4-argon")).toEqual(GEMINI_4_ARGON_RATES);
++    expect(lookupRate(emptyTable, "gemini-4-argon-high")).toEqual(GEMINI_4_ARGON_RATES);
++    expect(lookupRate(emptyTable, "antigravity-unknown")).toBeNull();
++
++    const agyRecord = (model: string, overrides: Partial<typeof totals> = {}) => ({
++      provider: "antigravity" as const,
++      model,
++      rateModel: normalizeGeminiModel(model),
++      timestampMs: OFF_PEAK_MS,
++      totals: { ...totals, ...overrides },
++      reportedCostUsd: null,
++      speed: "standard" as const,
++    });
++
++    const flashPrice = priceUsage(emptyTable, agyRecord("gemini-3.8-flash-high"));
++    expect(flashPrice.costSource).toBe("modelPriced");
++    expect(flashPrice.costUsd).toBeCloseTo(0.75 + 0.075 + 0.75 + 3.75, 10);
++    expect(cacheSavingsUsd(emptyTable, agyRecord("gemini-3.8-flash-high"))).toBeCloseTo(
++      0.75 - 0.075,
++      10,
++    );
++
++    const argonPrice = priceUsage(emptyTable, agyRecord("gemini-4-argon"));
++    expect(argonPrice.costSource).toBe("modelPriced");
++    expect(argonPrice.costUsd).toBeCloseTo(2.0 + 0.1 + 2.0 + 10.0, 10);
++  });
+ });

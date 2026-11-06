@@ -1,0 +1,12 @@
+diff --git a/packages/shared/src/httpObservability.ts b/packages/shared/src/httpObservability.ts
+index 82ce0500396ff3955b24038816294d2c19cd6aec..5b1712b76ff74a077fd75c0b5c090882cdc3402b 100644
+--- a/packages/shared/src/httpObservability.ts
++++ b/packages/shared/src/httpObservability.ts
+@@ -1,6 +1,6 @@
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as Headers from "effect/unstable/http/Headers";
++import * as Headers from "effect/http/Headers";
+ 
+ export const httpHeaderRedactionLayer = Layer.effect(
+   Headers.CurrentRedactedNames,

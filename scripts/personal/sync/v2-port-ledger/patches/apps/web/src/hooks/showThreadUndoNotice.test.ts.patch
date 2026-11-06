@@ -1,0 +1,10 @@
+diff --git a/apps/web/src/hooks/showThreadUndoNotice.test.ts b/apps/web/src/hooks/showThreadUndoNotice.test.ts
+index aceb70c21d9c2e5059af2de52530f02fea462f81..74b0fed5ea49fb0f37b5922803d1fe4add435f57 100644
+--- a/apps/web/src/hooks/showThreadUndoNotice.test.ts
++++ b/apps/web/src/hooks/showThreadUndoNotice.test.ts
+@@ -1,4 +1,4 @@
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import * as Cause from "effect/Cause";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+ 

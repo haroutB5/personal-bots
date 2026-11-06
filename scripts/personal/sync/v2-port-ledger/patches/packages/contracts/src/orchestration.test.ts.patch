@@ -1,0 +1,112 @@
+diff --git a/packages/contracts/src/orchestration.test.ts b/packages/contracts/src/orchestration.test.ts
+index 7c7bade4502e26d1cb2c722b5af42cc3271cd3fd..31bfb1dc0dccddc5e4c25ed65d38bb6f379867e5 100644
+--- a/packages/contracts/src/orchestration.test.ts
++++ b/packages/contracts/src/orchestration.test.ts
+@@ -8,6 +8,7 @@ import {
+   ProjectIconOverride,
+   DEFAULT_PROVIDER_INTERACTION_MODE,
+   DEFAULT_RUNTIME_MODE,
++  DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES,
+   type ChatImageAttachment,
+   ClientOrchestrationCommand,
+   ModelSelection,
+@@ -35,7 +36,9 @@ import {
+   ThreadTurnStartRequestedPayload,
+   SnapShotAccessibility,
+   isProviderSendTurnSupportedImageMimeType,
++  imageByteLimitForModel,
+   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
++  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+ } from "./orchestration.ts";
+ import { ProviderInstanceId } from "./providerInstance.ts";
+ 
+@@ -84,6 +87,36 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", ()
+   }),
+ );
+ 
++it("caps an attachment image by the model the turn runs on", () => {
++  // The DeepSeek Harness validates an inline image with one regex over the
++  // whole base64 payload and overflows V8's regexp stack above ~4.47 M
++  // characters, so a DeepSeek model gets a payload far under the wire cap
++  // (HANDOFF-16645). Everything else keeps the wire cap.
++  for (const deepseek of [
++    "deepseek-flash",
++    "deepseek-v4-flash",
++    "vision-exp",
++    "DeepSeek-Flash",
++    "deepseek-flash[1m]",
++    " deepseek-flash ",
++  ]) {
++    assert.strictEqual(imageByteLimitForModel(deepseek), DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES);
++  }
++  for (const other of [
++    "claude-sonnet-5-5",
++    "gpt-6.1-sol",
++    "deepseek-v4-pro",
++    "deepseek",
++    "",
++    "  ",
++    null,
++    undefined,
++  ]) {
++    assert.strictEqual(imageByteLimitForModel(other), PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
++  }
++  assert.isBelow(DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
++});
++
+ it.effect("decodes a dispatch error before its bootstrap thread was created", () =>
+   Effect.gen(function* () {
+     const error = yield* decodeDispatchCommandError({
+@@ -268,6 +301,52 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
+   }),
+ );
+ 
++it.effect("decodes thread.turn.start followUp, absent meaning steer", () =>
++  Effect.gen(function* () {
++    const base = {
++      type: "thread.turn.start",
++      commandId: "cmd-turn-followup",
++      threadId: "thread-1",
++      message: {
++        messageId: "msg-followup",
++        role: "user",
++        text: "hello",
++        attachments: [],
++      },
++      createdAt: "2026-01-01T00:00:00.000Z",
++    };
++    const plain = yield* decodeThreadTurnStartCommand(base);
++    assert.strictEqual(plain.followUp, undefined);
++    const queued = yield* decodeThreadTurnStartCommand({ ...base, followUp: "queue" });
++    assert.strictEqual(queued.followUp, "queue");
++    const steered = yield* decodeThreadTurnStartCommand({ ...base, followUp: "steer" });
++    assert.strictEqual(steered.followUp, "steer");
++    const fromClient = yield* decodeClientOrchestrationCommand({
++      ...base,
++      followUp: "queue",
++      runtimeMode: "full-access",
++      interactionMode: "default",
++    });
++    if (fromClient.type !== "thread.turn.start") {
++      assert.fail(`Expected thread.turn.start, received ${fromClient.type}.`);
++    }
++    assert.strictEqual(fromClient.followUp, "queue");
++    const payload = yield* decodeThreadTurnStartRequestedPayload({
++      threadId: "thread-1",
++      messageId: "msg-followup",
++      createdAt: "2026-01-01T00:00:00.000Z",
++    });
++    assert.strictEqual(payload.followUp, undefined);
++    const queuedPayload = yield* decodeThreadTurnStartRequestedPayload({
++      threadId: "thread-1",
++      messageId: "msg-followup",
++      followUp: "queue",
++      createdAt: "2026-01-01T00:00:00.000Z",
++    });
++    assert.strictEqual(queuedPayload.followUp, "queue");
++  }),
++);
++
+ it.effect("accepts inline images, uploaded images, and uploaded files from clients", () =>
+   Effect.gen(function* () {
+     const command = yield* decodeClientOrchestrationCommand({

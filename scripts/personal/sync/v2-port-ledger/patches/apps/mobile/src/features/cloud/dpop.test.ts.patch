@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/cloud/dpop.test.ts b/apps/mobile/src/features/cloud/dpop.test.ts
+index 8945d148ee943e1ce6ed1f76bcdb01693e53ccfc..55ff4bd08c66cafdcaa0eb3c6b6d92f98805c996 100644
+--- a/apps/mobile/src/features/cloud/dpop.test.ts
++++ b/apps/mobile/src/features/cloud/dpop.test.ts
+@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
+ 
+ import { vi } from "vite-plus/test";
+ import { describe, expect, it } from "@effect/vitest";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import { verifyDpopProof } from "@t3tools/shared/dpop";
+ 

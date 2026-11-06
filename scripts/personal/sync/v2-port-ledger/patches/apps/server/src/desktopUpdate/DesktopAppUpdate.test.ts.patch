@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts b/apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts
+index ea89f45e6dd8d1d3bf57cfe0e9339f54a79a09e6..49596ffb2f590f69d7fbf9822d3906883976edd2 100644
+--- a/apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts
++++ b/apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import type { DesktopUpdateState, DesktopUpdateStatusReport } from "@t3tools/contracts";
+ import * as Deferred from "effect/Deferred";

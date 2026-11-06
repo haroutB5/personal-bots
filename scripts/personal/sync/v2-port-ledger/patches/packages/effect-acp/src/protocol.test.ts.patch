@@ -1,0 +1,17 @@
+diff --git a/packages/effect-acp/src/protocol.test.ts b/packages/effect-acp/src/protocol.test.ts
+index cef04ffcd498875f5e3b62084ed488f849fb3dcc..f6ec29da6e3724f22bc2c9c003981efb7b36b825 100644
+--- a/packages/effect-acp/src/protocol.test.ts
++++ b/packages/effect-acp/src/protocol.test.ts
+@@ -7,10 +7,10 @@ import * as Queue from "effect/Queue";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+ import * as Ref from "effect/Ref";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import { it, assert } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ 
+ import * as AcpSchema from "./_generated/schema.gen.ts";
+ import * as AcpProtocol from "./protocol.ts";

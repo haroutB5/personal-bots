@@ -1,5 +1,4 @@
 import {
-  CommandId,
   ComposerContextId,
   MessageId,
   type OrchestrationMessageContext,
@@ -10,7 +9,7 @@ import {
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "@t3tools/shared/crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -122,7 +121,7 @@ export const make = Effect.gen(function* () {
   const personalEngine = yield* PersonalEngine.PersonalEngine;
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   // Optional so this reactor stays testable alone; the server always has it.
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
   const modelFallback = yield* Effect.serviceOption(PersonalModelFallback.PersonalModelFallback);
@@ -264,7 +263,7 @@ export const make = Effect.gen(function* () {
       nowMs: now,
       consecutiveResumes: counted[0]?.consecutive ?? 0,
     });
-    const resumeId = yield* crypto.randomUUIDv4;
+    const resumeId = yield* crypto.uuidV4().pipe(Effect.orDie);
     const status: ResumeStatus = decision.kind === "schedule" ? "scheduled" : "notice_only";
     const inserted = yield* sql<{ readonly resumeId: string }>`
       INSERT INTO personal_chat_resumes (

@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/project/ProjectSetupScriptRunner.test.ts b/apps/server/src/project/ProjectSetupScriptRunner.test.ts
+index 69c553a4deaf49fd001295d191747fc2c53c4c10..3d3f00c4290930e4bf8c6eeaecc4b8621c3459cd 100644
+--- a/apps/server/src/project/ProjectSetupScriptRunner.test.ts
++++ b/apps/server/src/project/ProjectSetupScriptRunner.test.ts
+@@ -29,6 +29,7 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
+ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
+   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+     getUserInputActivity: () => Effect.die("unused"),
++    getPendingInputActivities: () => Effect.succeed([]),
+     listActivitiesByKind: () => Effect.die("unused"),
+     getCommandReadModel: () => Effect.die("unused"),
+     getSnapshot: () => Effect.die("unused"),

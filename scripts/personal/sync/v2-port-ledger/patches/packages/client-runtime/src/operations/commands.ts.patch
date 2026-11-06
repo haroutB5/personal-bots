@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/operations/commands.ts b/packages/client-runtime/src/operations/commands.ts
+index a08adba22949847f254ae6308fe1262d479f41d8..fd2de6ac60a68c3d5ce9f47bed38d2a0b6e2fbdc 100644
+--- a/packages/client-runtime/src/operations/commands.ts
++++ b/packages/client-runtime/src/operations/commands.ts
+@@ -3,7 +3,7 @@ import {
+   ORCHESTRATION_WS_METHODS,
+   type ClientOrchestrationCommand,
+ } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ 

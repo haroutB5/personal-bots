@@ -1,0 +1,123 @@
+diff --git a/apps/web/src/components/usage/UsageLimits.tsx b/apps/web/src/components/usage/UsageLimits.tsx
+index 585bd6ccf100cfe23072e462d616a4f05f8a8542..e7130294735122babe26d30ba6b75c5827ff37e1 100644
+--- a/apps/web/src/components/usage/UsageLimits.tsx
++++ b/apps/web/src/components/usage/UsageLimits.tsx
+@@ -8,6 +8,7 @@ import {
+   UsageProviderKind,
+ } from "@t3tools/contracts";
+ import { useAtomValue } from "@effect/atom-react";
++import * as Cause from "effect/Cause";
+ import {
+   elapsedShare,
+   formatDuration,
+@@ -15,7 +16,12 @@ import {
+   type LimitPace,
+   paceOf,
+   remainingPercent,
++  windowAsOf,
+ } from "@t3tools/shared/usageLimits";
++import {
++  useHiddenUsageProviders,
++  usePersonalEnvironmentId,
++} from "~/features/personal/usePersonalBots";
+ import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
+ import { Fragment, type ReactNode, useState } from "react";
+ 
+@@ -47,7 +53,13 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
+ /** The series colour the cost chart uses for this driver, so the two views read as one. */
+ export function barColor(driver: ServerProvider["driver"]): string {
+   const kind: UsageProviderKind | undefined =
+-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : undefined;
++    driver === "codex"
++      ? "codex"
++      : driver === "claudeAgent"
++        ? "claude"
++        : driver === "antigravity"
++          ? "antigravity"
++          : undefined;
+   return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
+ }
+ 
+@@ -88,7 +100,7 @@ function WindowBar({
+   readonly now: number;
+ }) {
+   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+-  const remaining = remainingPercent(window);
++  const remaining = remainingPercent(windowAsOf(window, now));
+   const elapsed = elapsedShare(window, now);
+   // The fill is quota left, so the even-spending mark is the time left.
+   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+@@ -179,7 +191,7 @@ export function LimitWindows({
+             <span className="flex min-w-0 items-center gap-2 text-xs">
+               <span className="truncate text-muted-foreground">{window.label}</span>
+               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
+-                {remainingPercent(window)}% left
++                {remainingPercent(windowAsOf(window, now))}% left
+               </span>
+             </span>
+             <WindowBar color={color} window={window} now={now} />
+@@ -201,6 +213,17 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
+   alreadyRedeemed: "That credit was already redeemed.",
+ };
+ 
++/**
++ * What to say when a redeem fails. The server's typed error (for example a
++ * `UsageLimitSourceError`) sits inside the command's `Cause`, not on it.
++ */
++export function resetCreditFailureText(cause: Cause.Cause<unknown>): string {
++  const error = Cause.hasInterruptsOnly(cause) ? undefined : Cause.squash(cause);
++  return error instanceof Error && error.message.trim().length > 0
++    ? error.message
++    : "Could not use the reset credit.";
++}
++
+ /** Everything a redeem needs: where to send it and what to say afterwards. */
+ export function useResetCredit(
+   environmentId: EnvironmentId,
+@@ -221,11 +244,7 @@ export function useResetCredit(
+       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+       return;
+     }
+-    setStatus(
+-      "error" in result.cause && result.cause.error instanceof Error
+-        ? result.cause.error.message
+-        : "Could not use the reset credit.",
+-    );
++    setStatus(resetCreditFailureText(result.cause));
+   };
+ 
+   return { confirming, setConfirming, busy, status, redeem };
+@@ -329,9 +348,29 @@ export function UsageLimitsSection({
+   readonly cursorPrompt?: ReactNode;
+ }) {
+   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+-  const selected =
+-    selectedEnvironmentIds === null
+-      ? presentations
+-      : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
++  // Providers the owner turned "Show usage" off for (phone Settings >
++  // Providers) are left out here too. The setting lives on the bots server.
++  const personalEnvironmentId = usePersonalEnvironmentId();
++  const hidden = useHiddenUsageProviders(personalEnvironmentId);
++  const selected = new Map(
++    [...presentations]
++      .filter(([id]) => selectedEnvironmentIds === null || selectedEnvironmentIds.has(id))
++      .map(([id, presentation]): [EnvironmentId, typeof presentation] => {
++        const config = presentation.serverConfig;
++        if (id !== personalEnvironmentId || hidden.size === 0 || config === null) {
++          return [id, presentation];
++        }
++        return [
++          id,
++          {
++            ...presentation,
++            serverConfig: {
++              ...config,
++              providers: config.providers.filter((provider) => !hidden.has(provider.instanceId)),
++            },
++          },
++        ];
++      }),
++  );
+   return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
+ }

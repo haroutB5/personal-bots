@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/environments/primary/index.ts b/apps/web/src/environments/primary/index.ts
+index 7f8668d20d4abba0a725d45bb9752a3f6aff940a..40f91f94ec449ff80da5bc26c5d0ea858c1df80f 100644
+--- a/apps/web/src/environments/primary/index.ts
++++ b/apps/web/src/environments/primary/index.ts
+@@ -8,6 +8,7 @@ export {
+ export {
+   createServerPairingCredential,
+   isPrimaryEnvironmentPairingCredentialRejectedError,
++  isPrimaryEnvironmentRequestError,
+   peekPairingTokenFromUrl,
+   PrimaryEnvironmentPairingCredentialRejectedError,
+   PrimaryEnvironmentRequestError,

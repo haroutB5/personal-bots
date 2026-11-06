@@ -5,7 +5,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalConnectionApprovalService from "../connections/approvalService.ts";
 import * as PersonalConnectionService from "../connections/service.ts";
-import { PersonalProvidersV1Live } from "../engine/PersonalProvidersV1Live.ts";
+import { PersonalProvidersV2Live } from "../engine/PersonalProvidersV2Live.ts";
 import * as PersonalLeadBots from "../leadBots/PersonalLeadBotService.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "../memory/PersonalMemoryTidyService.ts";
@@ -52,7 +52,7 @@ export type PersonalWsServices = Effect.Success<ReturnType<typeof makePersonalWs
 
 /** The per-chat prewarm debounce outlives one connection, like the services above. */
 export const makePersonalWsSessionPrewarmer = makePersonalSessionPrewarmer().pipe(
-  Effect.provide(PersonalProvidersV1Live),
+  Effect.provide(PersonalProvidersV2Live),
 );
 
 /** The exact service instances the ws handlers must share with the server. */

@@ -245,11 +245,8 @@ describe("PersonalConnectionService", () => {
 
       // The point of a leak assertion is to serialize whatever shape the value
       // actually has, including an error and a log record no schema describes.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(list)).not.toContain(TOKEN);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain(TOKEN);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(messages)).not.toContain(TOKEN);
       expect(list.connections[0]).not.toHaveProperty("credentialRef");
     }).pipe(

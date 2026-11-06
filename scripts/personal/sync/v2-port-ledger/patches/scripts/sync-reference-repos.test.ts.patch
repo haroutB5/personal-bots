@@ -1,0 +1,19 @@
+diff --git a/scripts/sync-reference-repos.test.ts b/scripts/sync-reference-repos.test.ts
+index e3189936352cbc2102066f3b56bc10fb23d0c6f5..25152fb7452345a0f2384d8cd4e2605dac632086 100644
+--- a/scripts/sync-reference-repos.test.ts
++++ b/scripts/sync-reference-repos.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import { referenceRepos } from "./lib/reference-repos.ts";
+ import {

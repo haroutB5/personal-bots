@@ -1,0 +1,42 @@
+diff --git a/apps/server/src/textGeneration/TextGeneration.ts b/apps/server/src/textGeneration/TextGeneration.ts
+index 37634cea7e4e510e21fac585e5d08510b9d51e2e..d8586808161ee4dc231d3a8d39515111bce4df09 100644
+--- a/apps/server/src/textGeneration/TextGeneration.ts
++++ b/apps/server/src/textGeneration/TextGeneration.ts
+@@ -1,6 +1,7 @@
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
++import type * as Schema from "effect/Schema";
+ import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+ import { TextGenerationError } from "@t3tools/contracts";
+ 
+@@ -75,6 +76,14 @@ export interface ThreadTitleGenerationResult {
+   needsRefinement?: boolean | undefined;
+ }
+ 
++/** A free-form prompt answered as JSON matching `outputSchema` (personal memory tidy-up). */
++export interface StructuredGenerationInput<S extends Schema.Top> {
++  prompt: string;
++  outputSchema: S;
++  /** What model and provider to use for generation. */
++  modelSelection: ModelSelection;
++}
++
+ /**
+  * TextGeneration - Service tag for commit and change request text generation.
+  */
+@@ -106,6 +115,14 @@ export class TextGeneration extends Context.Service<
+     readonly generateThreadTitle: (
+       input: ThreadTitleGenerationInput,
+     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
++
++    /**
++     * Answer a self-contained prompt as structured JSON, with no tools and no
++     * checkout. Optional: only the Claude driver offers it (personal fork).
++     */
++    readonly generateStructured?: <S extends Schema.Top>(
++      input: StructuredGenerationInput<S>,
++    ) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
+   }
+ >()("t3/textGeneration/TextGeneration") {}
+ 

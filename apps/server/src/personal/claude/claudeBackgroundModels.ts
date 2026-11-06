@@ -1,11 +1,21 @@
-import {
-  CLAUDE_TEXT_GENERATION_FALLBACK_MODEL,
-  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
-  ProviderDriverKind,
-} from "@t3tools/contracts";
+import { DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER, ProviderDriverKind } from "@t3tools/contracts";
 import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 
-import { parseClaudeModelSlug } from "../../provider/ClaudeModelCatalog.ts";
+/** Vendored from HEAD contracts model.ts 228; U removed it. Owner C5. */
+const CLAUDE_TEXT_GENERATION_FALLBACK_MODEL = "claude-haiku-4-5";
+/** Vendored slug check from HEAD ClaudeModelCatalog.ts 42-61. Owner C5. */
+const CLAUDE_MODEL_SLUG = /^claude-(opus|sonnet|haiku|fable)-(\d+(?:-\d+)*)$/;
+type ClaudeModelSlug = {
+  readonly family: "opus" | "sonnet" | "haiku" | "fable";
+  readonly version: ReadonlyArray<number>;
+};
+const parseClaudeModelSlug = (slug: string): ClaudeModelSlug | undefined => {
+  const match = CLAUDE_MODEL_SLUG.exec(slug);
+  if (!match?.[1] || !match[2]) return undefined;
+  const parts = match[2].split("-");
+  if (parts.some((part) => part.length === 8)) return undefined;
+  return { family: match[1] as ClaudeModelSlug["family"], version: parts.map(Number) };
+};
 
 /**
  * Small, fast Claude work runs on Haiku 5.5 (1.66.5), each piece with its own

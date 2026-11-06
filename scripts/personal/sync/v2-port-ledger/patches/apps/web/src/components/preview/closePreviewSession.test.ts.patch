@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/preview/closePreviewSession.test.ts b/apps/web/src/components/preview/closePreviewSession.test.ts
+index d61d2975a2759367be62a9b603893e11ee5e61e1..1df3e22702aa34d05949d1462ff230e3aed9d09d 100644
+--- a/apps/web/src/components/preview/closePreviewSession.test.ts
++++ b/apps/web/src/components/preview/closePreviewSession.test.ts
+@@ -4,7 +4,7 @@ import type {
+   ScopedThreadRef,
+ } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+ 
+ import {

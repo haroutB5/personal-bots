@@ -1,0 +1,22 @@
+diff --git a/apps/server/src/sourceControl/SourceControlDiscovery.test.ts b/apps/server/src/sourceControl/SourceControlDiscovery.test.ts
+index 820b9a76c9a2a437a4289560a9b5319657c98b06..a824301863426690d69517bf9dc08e0efb3cb932 100644
+--- a/apps/server/src/sourceControl/SourceControlDiscovery.test.ts
++++ b/apps/server/src/sourceControl/SourceControlDiscovery.test.ts
+@@ -1,5 +1,5 @@
+ import { assert, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import type * as Context from "effect/Context";
+ import * as FileSystem from "effect/FileSystem";
+@@ -7,8 +7,8 @@ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { ChildProcessSpawner } from "effect/unstable/process";
+-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { ChildProcessSpawner } from "effect/process";
++import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+ import { VcsProcessSpawnError } from "@t3tools/contracts";
+ 
+ import * as ServerConfig from "../config.ts";

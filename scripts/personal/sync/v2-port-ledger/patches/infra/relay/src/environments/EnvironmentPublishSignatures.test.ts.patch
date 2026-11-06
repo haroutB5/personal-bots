@@ -1,0 +1,11 @@
+diff --git a/infra/relay/src/environments/EnvironmentPublishSignatures.test.ts b/infra/relay/src/environments/EnvironmentPublishSignatures.test.ts
+index f61c5a27d5bcac0075df540b513bd69c5b5ff296..cf047d7cbed07eaf3c3a7f73d22bc03e608db9b7 100644
+--- a/infra/relay/src/environments/EnvironmentPublishSignatures.test.ts
++++ b/infra/relay/src/environments/EnvironmentPublishSignatures.test.ts
+@@ -1,5 +1,5 @@
+ import * as NodeCrypto from "node:crypto";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import type {
+   RelayAgentActivityPublishProofPayload,
+   RelayAgentActivityPublishRequest,

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/acp/AcpNativeLogging.ts b/apps/server/src/provider/acp/AcpNativeLogging.ts
+index 6d1bf6209d5da1a9c180da5710746eae175d50bc..ac3b1505e2375ec77da16d2bedcca709b415d50f 100644
+--- a/apps/server/src/provider/acp/AcpNativeLogging.ts
++++ b/apps/server/src/provider/acp/AcpNativeLogging.ts
+@@ -1,7 +1,7 @@
+ import type { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+ import { causeErrorTag, errorTag } from "@t3tools/shared/observability";
+ import * as Cause from "effect/Cause";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import type * as EffectAcpProtocol from "effect-acp/protocol";

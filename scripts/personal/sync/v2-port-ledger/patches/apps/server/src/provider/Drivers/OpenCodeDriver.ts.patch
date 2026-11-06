@@ -1,0 +1,152 @@
+diff --git a/apps/server/src/provider/Drivers/OpenCodeDriver.ts b/apps/server/src/provider/Drivers/OpenCodeDriver.ts
+index 0d874b9ceba8123e3ca0ce99900b6d0089695452..62f2fade60ae4c1ba8ca581f548f03f35302bc02 100644
+--- a/apps/server/src/provider/Drivers/OpenCodeDriver.ts
++++ b/apps/server/src/provider/Drivers/OpenCodeDriver.ts
+@@ -13,13 +13,13 @@
+  * @module provider/Drivers/OpenCodeDriver
+  */
+ import { OpenCodeSettings, ProviderDriverKind } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { HttpClient } from "effect/unstable/http";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient } from "effect/http";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
+ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+@@ -45,6 +45,10 @@ import {
+ } from "../ProviderDriver.ts";
+ import { withInstanceIdentity } from "./instanceIdentity.ts";
+ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
++import { ensurePersonalBotOpenCodeHome } from "../opencodeBotIsolation.ts";
++import { runOpenCodeSmokeTest } from "../providerSmokeTest.ts";
++import { makeOpenCode2Instance } from "../opencode2.ts";
++import { parseGenericCliVersion } from "../providerSnapshot.ts";
+ import {
+   enrichProviderSnapshotWithVersionAdvisory,
+   makeCachedProviderMaintenanceResolution,
+@@ -121,6 +125,44 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
+         continuationGroupKey: continuationIdentity.continuationKey,
+       });
+       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
++      // The v2 CLI serves a different API. Keep v1's SDK path intact and use
++      // the versioned ACP protocol for local v2 sessions.
++      const binaryVersion =
++        effectiveConfig.enabled && !effectiveConfig.serverUrl.trim()
++          ? yield* openCodeRuntime
++              .runOpenCodeCommand({
++                binaryPath: effectiveConfig.binaryPath,
++                args: ["--version"],
++                environment: processEnv,
++              })
++              .pipe(
++                Effect.timeout("10 seconds"),
++                Effect.map((result) =>
++                  result.code === 0 ? parseGenericCliVersion(result.stdout) : null,
++                ),
++                Effect.orElseSucceed(() => null),
++              )
++          : null;
++      if (binaryVersion && Number(binaryVersion.split(".")[0]) >= 2) {
++        return yield* makeOpenCode2Instance({
++          instanceId,
++          displayName,
++          accentColor,
++          config: effectiveConfig,
++          environment: processEnv,
++          version: binaryVersion,
++        }).pipe(
++          Effect.mapError(
++            (cause) =>
++              new ProviderDriverError({
++                driver: DRIVER_KIND,
++                instanceId,
++                detail: "Could not prepare the OpenCode 2 provider.",
++                cause,
++              }),
++          ),
++        );
++      }
+       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+           binaryPath: effectiveConfig.binaryPath,
+@@ -132,10 +174,23 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
+         ),
+       );
+ 
++      // Personal bots run under this app-owned config home. Without it their
++      // sessions refuse to start; every other thread is unaffected.
++      const personalBotConfigHome = yield* ensurePersonalBotOpenCodeHome(
++        serverConfig.stateDir,
++      ).pipe(
++        Effect.catch((cause) =>
++          Effect.logWarning(
++            "Could not prepare the OpenCode bots config home; OpenCode bots will not start.",
++            { cause },
++          ).pipe(Effect.as(undefined)),
++        ),
++      );
+       const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
+         instanceId,
+         environment: processEnv,
+         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
++        ...(personalBotConfigHome !== undefined ? { personalBotConfigHome } : {}),
+       });
+       const serverOwner = yield* OpenCodeServerOwner.make({
+         binaryPath: effectiveConfig.binaryPath,
+@@ -234,11 +289,12 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
+           initialSnapshot: (settings) =>
+             makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+           checkProvider,
+-          enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
++          enrichSnapshot: ({ settings, snapshot, publishSnapshot, refreshLatestVersion }) =>
+             resolveMaintenance().pipe(
+               Effect.flatMap((maintenanceCapabilities) =>
+                 enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+                   enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
++                  forceLatestVersionRefresh: refreshLatestVersion === true,
+                 }),
+               ),
+               Effect.provideService(HttpClient.HttpClient, httpClient),
+@@ -257,6 +313,28 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
+         ),
+       );
+ 
++      // Same binary, environment and bot isolation as a personal-bot session.
++      const smokeTest: NonNullable<ProviderInstance["smokeTest"]> = ({ model }) =>
++        personalBotConfigHome === undefined
++          ? Effect.fail(
++              new ProviderDriverError({
++                driver: DRIVER_KIND,
++                instanceId,
++                detail: "OpenCode could not prepare the bots' private settings folder.",
++              }),
++            )
++          : runOpenCodeSmokeTest({
++              instanceId,
++              binaryPath: effectiveConfig.binaryPath,
++              environment: processEnv,
++              configHome: personalBotConfigHome,
++              model,
++            }).pipe(
++              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
++              Effect.provideService(FileSystem.FileSystem, fileSystem),
++              Effect.provideService(Path.Path, pathService),
++            );
++
+       return {
+         instanceId,
+         driverKind: DRIVER_KIND,
+@@ -265,6 +343,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
+         accentColor,
+         enabled,
+         snapshot,
++        smokeTest,
+         snapshotForCwd: (cwd) =>
+           !effectiveConfig.enabled
+             ? snapshot.getSnapshot

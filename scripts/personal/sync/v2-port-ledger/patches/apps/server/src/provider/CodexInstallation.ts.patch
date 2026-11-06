@@ -1,0 +1,24 @@
+diff --git a/apps/server/src/provider/CodexInstallation.ts b/apps/server/src/provider/CodexInstallation.ts
+index 4beec81770a67ceb3100dc3a7b0583a5c25702cf..4c932d4a206f4863c74685acfa4202be86ba8249 100644
+--- a/apps/server/src/provider/CodexInstallation.ts
++++ b/apps/server/src/provider/CodexInstallation.ts
+@@ -9,7 +9,7 @@ import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
+ import * as Clock from "effect/Clock";
+ import * as Cause from "effect/Cause";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+ import * as Fiber from "effect/Fiber";
+@@ -22,8 +22,8 @@ import * as Scope from "effect/Scope";
+ import * as Semaphore from "effect/Semaphore";
+ import * as Stream from "effect/Stream";
+ import * as SubscriptionRef from "effect/SubscriptionRef";
+-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import * as NodeCrypto from "node:crypto";
+ import { ServerConfig } from "../config.ts";
+ import { BUNDLED_MODEL_MANIFEST, ModelManifest } from "./ModelManifest.ts";

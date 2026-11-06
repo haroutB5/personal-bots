@@ -1,13 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - same node access as PersonalGroupService.ts.
 // Deciding that a member's turn has ended, relaying its words, and the sweep.
-import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { CommandId, PersonalGroupId, ThreadId } from "@t3tools/contracts";
+import { PersonalGroupId, ThreadId } from "@t3tools/contracts";
 import type { PersonalSessionView } from "../engine/PersonalEngine.ts";
-import { toPersonalSessionView } from "../engine/PersonalEngineV1Live.ts";
+import { toPersonalSessionView } from "../engine/PersonalEngineV2Live.ts";
 import { classifyProviderError, providerWaitPause } from "../tasks/PersonalTaskService.ts";
 import { GROUP_LIMIT_RESUME_BUSY_WAIT_MS, GROUP_RESUMED_NOTICE_TEXT } from "./groupLimitResumes.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";

@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/assets/assetUrls.ts b/apps/web/src/assets/assetUrls.ts
+index 89a864f76d419427c65824e9431f4a9e02c66c18..593eaf6c0730a092b2eb39dc29c6d2409ccb9477 100644
+--- a/apps/web/src/assets/assetUrls.ts
++++ b/apps/web/src/assets/assetUrls.ts
+@@ -7,7 +7,7 @@ import {
+ } from "@t3tools/client-runtime/state/assets";
+ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+ import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useCallback, useMemo } from "react";
+ 
+ import { assetEnvironment } from "~/state/assets";

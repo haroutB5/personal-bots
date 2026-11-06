@@ -1,0 +1,20 @@
+diff --git a/apps/web/src/components/ui/menu.tsx b/apps/web/src/components/ui/menu.tsx
+index a8687dcdbc7dea58cfcab273ecd18e4470203a41..61e1125aeee31eccd5a423dc3d44abfa0ba783b5 100644
+--- a/apps/web/src/components/ui/menu.tsx
++++ b/apps/web/src/components/ui/menu.tsx
+@@ -1,5 +1,6 @@
+ "use client";
+ 
++import { withBackClose } from "~/components/ui/back-closing-root";
+ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+ import { CheckIcon, ChevronRightIcon } from "lucide-react";
+ import type * as React from "react";
+@@ -7,7 +8,7 @@ import type * as React from "react";
+ import { cn } from "~/lib/utils";
+ import { buttonVariants } from "./button";
+ 
+-const Menu = MenuPrimitive.Root;
++const Menu = withBackClose(MenuPrimitive.Root);
+ 
+ function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
+   return (

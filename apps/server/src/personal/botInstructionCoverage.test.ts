@@ -1,4 +1,3 @@
-﻿// @effect-diagnostics-next-line nodeBuiltinImport:off - locates this repo's own source tree for static analysis.
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 

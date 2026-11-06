@@ -1,0 +1,26 @@
+diff --git a/infra/relay/src/environments/EnvironmentConnector.ts b/infra/relay/src/environments/EnvironmentConnector.ts
+index 9201f814661e68ef043488cd9b34f430804449fb..e0dfc9163f06e59ff2705693aa52f6e848ea16b8 100644
+--- a/infra/relay/src/environments/EnvironmentConnector.ts
++++ b/infra/relay/src/environments/EnvironmentConnector.ts
+@@ -28,7 +28,7 @@ import {
+ } from "@t3tools/shared/relayJwt";
+ import { stableStringify } from "@t3tools/shared/relaySigning";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+@@ -36,9 +36,9 @@ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Redacted from "effect/Redacted";
+ import * as Schema from "effect/Schema";
+-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+-import * as HttpClient from "effect/unstable/http/HttpClient";
+-import * as HttpClientError from "effect/unstable/http/HttpClientError";
++import * as FetchHttpClient from "effect/http/FetchHttpClient";
++import * as HttpClient from "effect/http/HttpClient";
++import * as HttpClientError from "effect/http/HttpClientError";
+ 
+ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
+ import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";

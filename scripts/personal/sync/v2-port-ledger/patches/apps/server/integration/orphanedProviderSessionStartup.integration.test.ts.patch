@@ -1,0 +1,69 @@
+diff --git a/apps/server/integration/orphanedProviderSessionStartup.integration.test.ts b/apps/server/integration/orphanedProviderSessionStartup.integration.test.ts
+index b483a3f99f8ebc9498f68d021fd79495ba0c22fb..26f95b2864a334626528942b17df41aa83012286 100644
+--- a/apps/server/integration/orphanedProviderSessionStartup.integration.test.ts
++++ b/apps/server/integration/orphanedProviderSessionStartup.integration.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   CommandId,
+   DEFAULT_PROVIDER_INTERACTION_MODE,
+@@ -19,9 +19,9 @@ import * as Exit from "effect/Exit";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Stream from "effect/Stream";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import { HttpServer } from "effect/unstable/http";
+-import * as NetAddress from "effect/unstable/net/NetAddress";
++import * as SqlClient from "effect/sql/SqlClient";
++import { HttpServer } from "effect/http";
++import * as NetAddress from "effect/net/NetAddress";
+ 
+ import * as EnvironmentAuth from "../src/auth/EnvironmentAuth.ts";
+ import * as ServiceLauncherClient from "../src/cloud/serviceLauncherClient.ts";
+@@ -35,6 +35,8 @@ import * as ProjectionSnapshotQuery from "../src/orchestration/Services/Projecti
+ import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
+ import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
+ import * as ExternalLauncher from "../src/process/externalLauncher.ts";
++import * as PersonalBotRepository from "../src/personal/PersonalBotRepository.ts";
++import { personalBotSystemInstructions } from "../src/personal/personalBotInstructions.ts";
+ import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
+ import * as ProviderService from "../src/provider/Services/ProviderService.ts";
+ import * as ProviderSessionDirectory from "../src/provider/Services/ProviderSessionDirectory.ts";
+@@ -50,6 +52,8 @@ const providerInstanceId = ProviderInstanceId.make("codex");
+ const projectId = ProjectId.make("project-startup-orphan");
+ const threadId = ThreadId.make("thread-startup-orphan");
+ const stoppedBindingThreadId = ThreadId.make("thread-startup-orphan-stopped-binding");
++/** The bot whose chat the interrupted turn belongs to. */
++const RESUMED_BOT = { name: "Planner", title: "Planner", instructions: "Plan carefully." };
+ const resumeCursor = { schemaVersion: 1, sessionId: "provider-session-before-restart" };
+ const stoppedBindingResumeCursor = {
+   schemaVersion: 1,
+@@ -114,6 +118,7 @@ const startupDependencies = Layer.mergeAll(
+   Layer.succeed(ProviderService.ProviderService, {
+     startSession: () => Effect.die("unused"),
+     sendTurn: () => Effect.die("unused"),
++    validateTurn: () => Effect.die("unused"),
+     compactThread: () => Effect.die("unused"),
+     interruptTurn: () => Effect.die("unused"),
+     respondToRequest: () => Effect.die("unused"),
+@@ -457,6 +462,11 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
+                 Effect.as({ threadId, turnId: TurnId.make("continued-turn") }),
+               ),
+           }),
++          // A bot chat: the continuation must carry the bot's persona, or the
++          // resumed turn answers as the raw model instead of as the bot.
++          Effect.provideService(PersonalBotRepository.PersonalBotRepository, {
++            getInstructionsForThread: () => Effect.succeed(Option.some(RESUMED_BOT)),
++          } as unknown as PersonalBotRepository.PersonalBotRepository["Service"]),
+           Effect.provide(
+             ServerSettings.layerTest({
+               continueThreadsAfterServerUpdate: restart === "opt-in desktop restart",
+@@ -471,6 +481,7 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
+           threadId,
+           continuation: true,
+           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
++          systemInstructions: personalBotSystemInstructions(RESUMED_BOT),
+         });
+       }).pipe(
+         Effect.provide(

@@ -1,0 +1,11 @@
+diff --git a/apps/desktop/src/ssh/DesktopSshEnvironment.test.ts b/apps/desktop/src/ssh/DesktopSshEnvironment.test.ts
+index 1fe2b86aae7b96e41f87675748497a49501047d1..f06843174fbcd8ebbe504f3914d14a6485ca481e 100644
+--- a/apps/desktop/src/ssh/DesktopSshEnvironment.test.ts
++++ b/apps/desktop/src/ssh/DesktopSshEnvironment.test.ts
+@@ -1,5 +1,5 @@
+ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as NetService from "@t3tools/shared/Net";
+ import { SshPasswordPromptError } from "@t3tools/ssh/errors";

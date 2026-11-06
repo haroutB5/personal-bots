@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/platform/persistence.test.ts b/packages/client-runtime/src/platform/persistence.test.ts
+index 3e856e8479760bea28f70e03cb6f00939e1be68a..64b5b3be227ae58ef773589ba606f8cfeeb6065e 100644
+--- a/packages/client-runtime/src/platform/persistence.test.ts
++++ b/packages/client-runtime/src/platform/persistence.test.ts
+@@ -7,7 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
+ import * as Arr from "effect/Array";
+ import * as Effect from "effect/Effect";
+ import * as Schema from "effect/Schema";
+-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary";
++import * as Arbitrary from "effect/Arbitrary";
+ 
+ import { encodeShellSnapshotForCache } from "./persistence.ts";
+ 

@@ -1,0 +1,17 @@
+diff --git a/packages/contracts/src/provider.test.ts b/packages/contracts/src/provider.test.ts
+index 2c25977b7ed4b79c56b0f7c472f5c1a2277d757a..ac32b907398d2a48904bfe7543de45a9885017ef 100644
+--- a/packages/contracts/src/provider.test.ts
++++ b/packages/contracts/src/provider.test.ts
+@@ -49,6 +49,12 @@ describe("ProviderSessionStartInput", () => {
+     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
+   });
+ 
++  it("carries the personal-bot flag only when a producer sets it", () => {
++    const base = { threadId: "thread-1", provider: "codex", runtimeMode: "full-access" };
++    expect(decodeProviderSessionStartInput(base).personalBot).toBeUndefined();
++    expect(decodeProviderSessionStartInput({ ...base, personalBot: true }).personalBot).toBe(true);
++  });
++
+   it("rejects payloads without runtime mode", () => {
+     expect(() =>
+       decodeProviderSessionStartInput({

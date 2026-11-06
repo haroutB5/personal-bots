@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/decider.projectThreadEnvMode.test.ts b/apps/server/src/orchestration/decider.projectThreadEnvMode.test.ts
+index fd15d8f263dd8b4883ec9c8684699048d99d5983..fee2189091e09117fb081f1e6889797f0054e49c 100644
+--- a/apps/server/src/orchestration/decider.projectThreadEnvMode.test.ts
++++ b/apps/server/src/orchestration/decider.projectThreadEnvMode.test.ts
+@@ -8,7 +8,7 @@ import {
+ } from "@t3tools/contracts";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ 
+ import { decideOrchestrationCommand } from "./decider.ts";
+ import { createEmptyReadModel, projectEvent } from "./projector.ts";

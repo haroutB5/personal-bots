@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts b/apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts
+index deca59c48b90ba67b005d659b7690c0b81e891b3..64419ad9cd1d21dcc4fe66baf3915541e8d33204 100644
+--- a/apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts
++++ b/apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts
+@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import * as GitLabCli from "./GitLabCli.ts";
+ import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";

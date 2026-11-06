@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/settings/appearance/AppearancePreferencesProvider.tsx b/apps/mobile/src/features/settings/appearance/AppearancePreferencesProvider.tsx
+index 5e0426daaa0b0dd782df4a5b185a59d4d83a1e1d..023236dde460725e2c40fcac46f208329459bc0c 100644
+--- a/apps/mobile/src/features/settings/appearance/AppearancePreferencesProvider.tsx
++++ b/apps/mobile/src/features/settings/appearance/AppearancePreferencesProvider.tsx
+@@ -13,7 +13,7 @@ import {
+ import { AppState, Appearance, Platform, useColorScheme } from "react-native";
+ 
+ import { useAtomSet, useAtomValue } from "@effect/atom-react";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ 
+ import { ScopedTheme, ScopedVariables, Uniwind } from "uniwind";
+ 

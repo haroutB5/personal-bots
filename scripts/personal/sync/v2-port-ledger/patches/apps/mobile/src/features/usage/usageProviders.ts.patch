@@ -1,0 +1,28 @@
+diff --git a/apps/mobile/src/features/usage/usageProviders.ts b/apps/mobile/src/features/usage/usageProviders.ts
+index 45a94ddae1f7dd606c060c9a7f1a101f2a2a4b81..1ccbcd44c6accfbdc3d379b835c93a6b1957c2ca 100644
+--- a/apps/mobile/src/features/usage/usageProviders.ts
++++ b/apps/mobile/src/features/usage/usageProviders.ts
+@@ -12,6 +12,7 @@ export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
+   "cursor",
+   "opencode",
+   "antigravity",
++  "deepseek",
+ ];
+ 
+ export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
+@@ -21,6 +22,7 @@ export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
+   cursor: "Cursor",
+   opencode: "OpenCode",
+   antigravity: "Antigravity",
++  deepseek: "DeepSeek",
+ };
+ 
+ /**
+@@ -36,5 +38,7 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
+     cursor: "#8b8b8b",
+     opencode: "#5b9bbd",
+     antigravity: "#8c7bd1",
++    // DeepSeek's brand blue reads on both backgrounds.
++    deepseek: "#4d6bfe",
+   };
+ }

@@ -1,0 +1,11 @@
+diff --git a/apps/mobile/src/state/question-attachments.ts b/apps/mobile/src/state/question-attachments.ts
+index 313e39b31f9983d54fedfe53fc2c5c5a7bc39964..6d3dd5aba4cdaf486187126f2931421fee73fb4c 100644
+--- a/apps/mobile/src/state/question-attachments.ts
++++ b/apps/mobile/src/state/question-attachments.ts
+@@ -1,5 +1,5 @@
+ import type { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { appAtomRegistry } from "./atom-registry";
+ 
+ export function questionAttachmentDraftPrefix(

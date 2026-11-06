@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/ProviderAuthFlow.ts b/apps/server/src/provider/ProviderAuthFlow.ts
+index f69de4b6bc3700637aa184d53cf67dab590bd32c..3bb40d9b930892d0d3e959b937edfbad9cfa29b9 100644
+--- a/apps/server/src/provider/ProviderAuthFlow.ts
++++ b/apps/server/src/provider/ProviderAuthFlow.ts
+@@ -10,7 +10,7 @@ import * as Cause from "effect/Cause";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+ import * as Clock from "effect/Clock";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as Deferred from "effect/Deferred";

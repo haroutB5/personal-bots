@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/environment/ServerEnvironmentMachine.test.ts b/apps/server/src/environment/ServerEnvironmentMachine.test.ts
+index 2ae0989227de5acdfeed6b1271f7794f2de244e0..509cab5973bdecfd09c4ee62b8de45cb7bae73ec 100644
+--- a/apps/server/src/environment/ServerEnvironmentMachine.test.ts
++++ b/apps/server/src/environment/ServerEnvironmentMachine.test.ts
+@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as PlatformError from "effect/PlatformError";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import { vi } from "vite-plus/test";
+ 

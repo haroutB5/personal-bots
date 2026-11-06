@@ -1,0 +1,773 @@
+diff --git a/apps/server/src/provider/Layers/OpenCodeAdapter.test.ts b/apps/server/src/provider/Layers/OpenCodeAdapter.test.ts
+index 40d034089ae95f23e89aee92bcc045f5c5d7cbbd..c0d3ed1be5e070408bb1bf30b7e3dd7c934e335e 100644
+--- a/apps/server/src/provider/Layers/OpenCodeAdapter.test.ts
++++ b/apps/server/src/provider/Layers/OpenCodeAdapter.test.ts
+@@ -1,10 +1,10 @@
+ import * as NodeAssert from "node:assert/strict";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import * as Cause from "effect/Cause";
+ import * as Clock from "effect/Clock";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+@@ -27,13 +27,16 @@ import type {
+ 
+ import {
+   ApprovalRequestId,
++  EnvironmentId,
+   OpenCodeSettings,
+   ProviderDriverKind,
+   ProviderInstanceId,
++  type ProviderRuntimeEvent,
+   ThreadId,
+ } from "@t3tools/contracts";
+ import { createModelSelection } from "@t3tools/shared/model";
+ import { ServerConfig } from "../../config.ts";
++import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+ import { ServerSettingsService } from "../../serverSettings.ts";
+ import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+ import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+@@ -136,8 +139,23 @@ const runtimeMock = {
+     questionListImplementation: null as (() => Promise<Array<QuestionRequest>>) | null,
+     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
+     forkCalls: [] as Array<{ sessionID: string; directory?: string; messageID?: string }>,
++    connectInputs: [] as Array<{
++      serverUrl: string | null | undefined;
++      environment: NodeJS.ProcessEnv | undefined;
++    }>,
++    mcpAddCalls: [] as Array<unknown>,
++    // The model catalog `provider.list` answers with; null makes the call fail.
++    providerCatalog: null as Array<{
++      id: string;
++      models: Record<string, { limit?: { context: number; output: number } }>;
++    }> | null,
++    providerListCalls: 0,
+   },
+   reset() {
++    this.state.providerCatalog = null;
++    this.state.providerListCalls = 0;
++    this.state.connectInputs.length = 0;
++    this.state.mcpAddCalls.length = 0;
+     this.state.startCalls.length = 0;
+     this.state.sessionCreateUrls.length = 0;
+     this.state.sessionCreateInputs.length = 0;
+@@ -219,9 +237,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+         isRunning: Effect.succeed(true),
+       };
+     }),
+-  connectToOpenCodeServer: ({ serverUrl, serverPassword }) =>
++  connectToOpenCodeServer: ({ serverUrl, serverPassword, environment }) =>
+     Effect.gen(function* () {
+-      const url = serverUrl ?? "http://127.0.0.1:4301";
++      runtimeMock.state.connectInputs.push({ serverUrl, environment });
++      const url = serverUrl || "http://127.0.0.1:4301";
+       // Always register a finalizer so the closeCalls/closeError probes fire;
+       // production attaches none for external servers.
+       yield* Effect.addFinalizer(() =>
+@@ -248,6 +267,17 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+           data: [{ name: "review", source: "command", hints: ["$ARGUMENTS"] }],
+         }),
+       },
++      provider: {
++        list: async () => {
++          runtimeMock.state.providerListCalls += 1;
++          if (!runtimeMock.state.providerCatalog) {
++            throw new Error("provider.list unavailable");
++          }
++          return {
++            data: { all: runtimeMock.state.providerCatalog, default: {}, connected: [] },
++          };
++        },
++      },
+       session: {
+         create: async (input: Record<string, unknown>) => {
+           runtimeMock.state.sessionCreateUrls.push(baseUrl);
+@@ -504,6 +534,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+           };
+         },
+       },
++      mcp: {
++        add: async (input: unknown) => {
++          runtimeMock.state.mcpAddCalls.push(input);
++          return { data: {} };
++        },
++      },
+       permission: {
+         list: async () => {
+           runtimeMock.state.permissionListCalls += 1;
+@@ -621,6 +657,31 @@ beforeEach(() => {
+   runtimeMock.reset();
+ });
+ 
++// Personal bots only ever run on a server the adapter spawns itself.
++const localOpenCodeSettings = Schema.decodeSync(OpenCodeSettings)({ binaryPath: "fake-opencode" });
++const BOT_CONFIG_HOME = "C:/state/opencode-bots";
++const BOT_MODEL = "opencode/muse-spark-1.3-contributor-free";
++
++const botMcpSession = (threadId: ThreadId): McpProviderSession.McpProviderSessionConfig => ({
++  environmentId: EnvironmentId.make("env-test"),
++  threadId,
++  providerSessionId: "provider-session-test",
++  providerInstanceId: ProviderInstanceId.make("opencode"),
++  endpoint: "http://127.0.0.1:5000/mcp",
++  authorizationHeader: "Bearer thread-token",
++  capabilities: new Set(["bots", "personal", "preview"]),
++  personalSecretEnvironment: { PB_SECRET_GITHUB_TOKEN: "s3cret" },
++});
++
++const withMcpSession = (config: McpProviderSession.McpProviderSessionConfig) =>
++  Effect.acquireRelease(
++    Effect.sync(() => McpProviderSession.setMcpProviderSession(config)),
++    () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(config.threadId)),
++  );
++
++const retryOf = (event: ProviderRuntimeEvent) =>
++  event.type === "session.state.changed" ? event.payload.retry : undefined;
++
+ const advanceTestClock = (ms: number) =>
+   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+ 
+@@ -688,6 +749,364 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+     }),
+   );
+ 
++  it.effect("starts a bot on an isolated server with its secrets and only the app's MCP", () =>
++    Effect.gen(function* () {
++      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
++        personalBotConfigHome: BOT_CONFIG_HOME,
++        environment: { PATH: "p", XDG_CONFIG_HOME: "C:/owner/config" },
++      });
++      const threadId = asThreadId("thread-opencode-bot-start");
++      yield* withMcpSession(botMcpSession(threadId));
++
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId,
++        runtimeMode: "full-access",
++        personalBot: true,
++        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
++      });
++
++      const env = runtimeMock.state.connectInputs[0]?.environment ?? {};
++      NodeAssert.equal(env.XDG_CONFIG_HOME, BOT_CONFIG_HOME);
++      NodeAssert.equal(env.T3_OWNER_XDG_CONFIG_HOME, "C:/owner/config");
++      NodeAssert.equal(env.PB_SECRET_GITHUB_TOKEN, "s3cret");
++      NodeAssert.equal(env.OPENCODE_DISABLE_CLAUDE_CODE, "1");
++      NodeAssert.equal(env.OPENCODE_DISABLE_EXTERNAL_SKILLS, "1");
++      NodeAssert.match(
++        env.OPENCODE_CONFIG_CONTENT ?? "",
++        /"small_model":"opencode\/muse-spark-1\.3-contributor-free"/,
++      );
++      NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, [
++        {
++          name: "t3-code",
++          config: {
++            type: "remote",
++            url: "http://127.0.0.1:5000/mcp",
++            headers: { Authorization: "Bearer thread-token" },
++            oauth: false,
++          },
++        },
++      ]);
++
++      yield* adapter.stopSession(threadId);
++    }).pipe(Effect.scoped),
++  );
++
++  it.effect("keeps a non-bot session on the owner's own OpenCode config", () =>
++    Effect.gen(function* () {
++      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
++        personalBotConfigHome: BOT_CONFIG_HOME,
++        environment: { PATH: "p", XDG_CONFIG_HOME: "C:/owner/config" },
++      });
++      const threadId = asThreadId("thread-opencode-plain-start");
++
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId,
++        runtimeMode: "full-access",
++      });
++
++      const env = runtimeMock.state.connectInputs[0]?.environment ?? {};
++      NodeAssert.equal(env.XDG_CONFIG_HOME, "C:/owner/config");
++      NodeAssert.equal(env.OPENCODE_DISABLE_CLAUDE_CODE, undefined);
++      NodeAssert.equal(env.T3_OWNER_XDG_CONFIG_HOME, undefined);
++      NodeAssert.equal(env.PB_SECRET_GITHUB_TOKEN, undefined);
++
++      yield* adapter.stopSession(threadId);
++    }).pipe(Effect.scoped),
++  );
++
++  it.effect("appends deny rules for secrets and database writes to a bot's session only", () =>
++    Effect.gen(function* () {
++      const serverConfig = yield* ServerConfig;
++      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
++        personalBotConfigHome: BOT_CONFIG_HOME,
++        environment: { PATH: "p" },
++      });
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId: asThreadId("thread-opencode-bot-deny"),
++        runtimeMode: "full-access",
++        personalBot: true,
++      });
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId: asThreadId("thread-opencode-plain-deny"),
++        runtimeMode: "full-access",
++      });
++
++      const [botInput, plainInput] = runtimeMock.state.sessionCreateInputs;
++      const botRules = (botInput?.permission ?? []) as Array<{
++        permission: string;
++        pattern: string;
++        action: string;
++      }>;
++      const plainRules = (plainInput?.permission ?? []) as Array<{ action: string }>;
++      // The mode's own rules come first; the denies are last, so they win.
++      const denies = botRules.filter((rule) => rule.action === "deny");
++      NodeAssert.ok(denies.length > 0);
++      NodeAssert.deepEqual(botRules.slice(-denies.length), denies);
++      NodeAssert.deepEqual(botRules.slice(0, 2), [
++        { permission: "*", pattern: "*", action: "allow" },
++        { permission: "external_directory", pattern: "*", action: "allow" },
++      ]);
++      const has = (permission: string, pattern: string) =>
++        denies.some((rule) => rule.permission === permission && rule.pattern === pattern);
++      const forward = (value: string) => value.replaceAll("\\", "/");
++      for (const permission of ["read", "edit"]) {
++        NodeAssert.ok(has(permission, `${forward(serverConfig.secretsDir)}/*`));
++      }
++      // The database is write-denied only, and the logs have no rule.
++      NodeAssert.ok(has("edit", forward(serverConfig.dbPath)));
++      NodeAssert.ok(has("edit", `${forward(serverConfig.dbPath)}-wal`));
++      NodeAssert.ok(!has("read", forward(serverConfig.dbPath)));
++      NodeAssert.ok(!has("read", `${forward(serverConfig.logsDir)}/*`));
++      NodeAssert.ok(!has("edit", `${forward(serverConfig.logsDir)}/*`));
++      NodeAssert.ok(has("external_directory", `${forward(serverConfig.secretsDir)}/*`));
++      NodeAssert.ok(has("bash", `*${forward(serverConfig.secretsDir)}*`));
++      // A normal thread keeps exactly the mode's rules.
++      NodeAssert.equal(plainRules.filter((rule) => rule.action === "deny").length, 0);
++
++      yield* adapter.stopSession(asThreadId("thread-opencode-bot-deny"));
++      yield* adapter.stopSession(asThreadId("thread-opencode-plain-deny"));
++    }).pipe(Effect.scoped),
++  );
++
++  it.effect("re-asserts a bot's deny rules when a session is resumed", () =>
++    Effect.gen(function* () {
++      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
++        personalBotConfigHome: BOT_CONFIG_HOME,
++        environment: { PATH: "p" },
++      });
++      const threadId = asThreadId("thread-opencode-bot-deny-resume");
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId,
++        runtimeMode: "full-access",
++        personalBot: true,
++        resumeCursor: { schemaVersion: 1, sessionId: "ses_bot_deny" },
++      });
++
++      NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
++      const rules = (runtimeMock.state.sessionUpdateCalls[0]?.permission ?? []) as Array<{
++        action: string;
++      }>;
++      NodeAssert.equal(rules.at(-1)?.action, "deny");
++
++      yield* adapter.stopSession(threadId);
++    }).pipe(Effect.scoped),
++  );
++
++  it.effect("refuses a bot on an external server or without its isolation home", () =>
++    Effect.gen(function* () {
++      const external = yield* OpenCodeAdapter;
++      const externalExit = yield* Effect.exit(
++        external.startSession({
++          provider: ProviderDriverKind.make("opencode"),
++          threadId: asThreadId("thread-opencode-bot-external"),
++          runtimeMode: "full-access",
++          personalBot: true,
++        }),
++      );
++      NodeAssert.ok(Exit.isFailure(externalExit));
++      NodeAssert.match(
++        String((Cause.squash(externalExit.cause) as { issue?: string }).issue),
++        /external OpenCode server/,
++      );
++
++      const unisolated = yield* makeOpenCodeAdapter(localOpenCodeSettings);
++      const unisolatedExit = yield* Effect.exit(
++        unisolated.startSession({
++          provider: ProviderDriverKind.make("opencode"),
++          threadId: asThreadId("thread-opencode-bot-no-home"),
++          runtimeMode: "full-access",
++          personalBot: true,
++        }),
++      );
++      NodeAssert.ok(Exit.isFailure(unisolatedExit));
++      // Neither attempt ever reached a server.
++      NodeAssert.deepEqual(runtimeMock.state.connectInputs, []);
++    }).pipe(Effect.scoped),
++  );
++
++  it.effect("sends a bot's instructions with every prompt and keeps it on built-in agents", () =>
++    Effect.gen(function* () {
++      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
++        personalBotConfigHome: BOT_CONFIG_HOME,
++      });
++      const startThread = asThreadId("thread-opencode-bot-start-instructions");
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId: startThread,
++        runtimeMode: "full-access",
++        personalBot: true,
++        systemInstructions: "You are Ada.",
++      });
++      // A turn without its own instructions (e.g. a continuation) uses the start's.
++      yield* adapter.sendTurn({
++        threadId: startThread,
++        input: "hello",
++        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL, [
++          { id: "agent", value: "ms" },
++        ]),
++      });
++      const first = runtimeMock.state.promptCalls[0] as { system: string; agent?: string };
++      NodeAssert.match(first.system, /<bot_instructions>You are Ada\.<\/bot_instructions>/);
++      NodeAssert.match(first.system, /<runtime_info>/);
++      NodeAssert.equal(first.agent, undefined);
++
++      const turnThread = asThreadId("thread-opencode-bot-turn-instructions");
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId: turnThread,
++        runtimeMode: "full-access",
++        personalBot: true,
++        systemInstructions: "You are Ada.",
++      });
++      yield* adapter.sendTurn({
++        threadId: turnThread,
++        input: "plan it",
++        systemInstructions: "You are Ada.\n\nKeep it short.",
++        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL, [
++          { id: "agent", value: "plan" },
++        ]),
++      });
++      const second = runtimeMock.state.promptCalls[1] as { system: string; agent?: string };
++      NodeAssert.match(second.system, /Keep it short\./);
++      NodeAssert.equal(second.agent, "plan");
++
++      yield* adapter.stopSession(startThread);
++      yield* adapter.stopSession(turnThread);
++    }).pipe(Effect.scoped),
++  );
++
++  // Fork pin against upstream 0b83045d0 "feat(providers): expose native slash
++  // commands across clients (#11519)". `session.command` attaches no per-prompt
++  // system addendum, which is where a personal bot's persona rides, and its
++  // catalog is not limited to PERSONAL_BOT_OPENCODE_AGENTS. A bot turn starting
++  // with "/" therefore stays on the prompt path. Do not flatten this on a sync.
++  //
++  // The non-bot half is the positive control, in this test rather than a
++  // neighbouring one so the pin cannot pass vacuously: if a future sync drops
++  // the native command path entirely (or renames the mock's commandCalls), the
++  // "commandCalls.length === 0" half would still be green on its own. Both
++  // halves send byte-identical text, so the session's `personalBot` flag is the
++  // only difference that can explain the two outcomes.
++  it.effect("keeps a bot's slash text on the prompt path with its instructions", () =>
++    Effect.gen(function* () {
++      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
++        personalBotConfigHome: BOT_CONFIG_HOME,
++      });
++      const slashText = "/review main\nfocus on authentication";
++      const threadId = asThreadId("thread-opencode-bot-slash-command");
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId,
++        runtimeMode: "full-access",
++        personalBot: true,
++        systemInstructions: "You are Ada.",
++      });
++      yield* adapter.sendTurn({
++        threadId,
++        input: slashText,
++        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
++      });
++
++      NodeAssert.equal(runtimeMock.state.commandCalls.length, 0);
++      const prompt = runtimeMock.state.promptCalls[0] as { parts: unknown; system: string };
++      NodeAssert.deepEqual(prompt.parts, [{ type: "text", text: slashText }]);
++      NodeAssert.match(prompt.system, /<bot_instructions>You are Ada\.<\/bot_instructions>/);
++
++      const ownerThreadId = asThreadId("thread-opencode-owner-slash-command");
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId: ownerThreadId,
++        runtimeMode: "full-access",
++      });
++      yield* adapter.sendTurn({
++        threadId: ownerThreadId,
++        input: slashText,
++        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
++      });
++
++      // Upstream's behaviour, untouched for the owner's own threads.
++      NodeAssert.equal(runtimeMock.state.commandCalls.length, 1);
++      NodeAssert.equal(runtimeMock.state.commandCalls[0]?.command, "review");
++      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
++
++      yield* adapter.stopSession(ownerThreadId);
++      yield* adapter.stopSession(threadId);
++    }).pipe(Effect.scoped),
++  );
++
++  it.effect("puts OpenCode's retry wait on the session and clears it when work resumes", () =>
++    Effect.gen(function* () {
++      const adapter = yield* OpenCodeAdapter;
++      const threadId = asThreadId("thread-opencode-retry-wait");
++      const sessionID = "http://127.0.0.1:9999/session";
++      const emitEvent = makeOpenCodeEventQueue();
++      const statesFiber = yield* adapter.streamEvents.pipe(
++        Stream.filter(
++          (event) => event.threadId === threadId && event.type === "session.state.changed",
++        ),
++        Stream.take(3),
++        Stream.runCollect,
++        Effect.forkChild,
++      );
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("opencode"),
++        threadId,
++        runtimeMode: "full-access",
++      });
++      const send = yield* adapter
++        .sendTurn({
++          threadId,
++          input: "hi",
++          modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
++        })
++        .pipe(Effect.forkChild);
++      emitEvent({
++        id: "evt-retry-busy-1",
++        type: "session.status",
++        properties: { sessionID, status: { type: "busy" } },
++      });
++      yield* Fiber.join(send);
++
++      const next = Date.parse("2026-09-15T10:47:16.000Z");
++      emitEvent({
++        id: "evt-retry-1",
++        type: "session.status",
++        properties: {
++          sessionID,
++          status: { type: "retry", attempt: 1, message: "Rate limit exceeded", next },
++        },
++      });
++      emitEvent({
++        id: "evt-retry-2",
++        type: "session.status",
++        properties: {
++          sessionID,
++          status: { type: "retry", attempt: 2, message: "502 Bad Gateway", next },
++        },
++      });
++      emitEvent({
++        id: "evt-retry-busy-2",
++        type: "session.status",
++        properties: { sessionID, status: { type: "busy" } },
++      });
++
++      const states = Array.from(yield* Fiber.join(statesFiber).pipe(Effect.timeout("2 seconds")));
++      NodeAssert.deepEqual(
++        states.map((event) => retryOf(event)?.kind),
++        ["rate_limited", "retrying", undefined],
++      );
++      NodeAssert.equal(retryOf(states[0]!)?.retryAt, "2026-09-15T10:47:16.000Z");
++      NodeAssert.equal(retryOf(states[0]!)?.attempt, 1);
++
++      yield* adapter.stopSession(threadId);
++    }),
++  );
++
+   it.effect("fails startup when the OpenCode event stream does not connect", () =>
+     Effect.gen(function* () {
+       const adapter = yield* OpenCodeAdapter;
+@@ -2814,6 +3233,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+       const terminalUuidRelease = yield* Deferred.make<void>();
+       let blockFirstStepWrite = true;
+       let blockNextUuid = false;
++      let armOnFirstIdle = true;
+       const nodeCrypto = yield* Crypto.Crypto;
+       const gatedCrypto = {
+         ...nodeCrypto,
+@@ -2837,6 +3257,18 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+                 Effect.andThen(Deferred.await(firstStepWriteRelease)),
+               );
+             }
++            // The step now emits its own context event, which draws an id first.
++            // Gate the id of the terminal event: arm once the first idle is logged,
++            // which is after that step has been handled.
++            const status = (
++              record as {
++                event?: { payload?: { properties?: { status?: { type?: unknown } } } };
++              }
++            ).event?.payload?.properties?.status?.type;
++            if (armOnFirstIdle && eventType === "session.status" && status === "idle") {
++              armOnFirstIdle = false;
++              blockNextUuid = true;
++            }
+             return Effect.void;
+           },
+           close: () => Effect.void,
+@@ -2910,7 +3342,6 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+         },
+       });
+       yield* Deferred.await(firstStepWriteStarted);
+-      blockNextUuid = true;
+       firstIdle.resolve({
+         id: "evt-token-handoff-first-idle",
+         type: "session.status",
+@@ -7330,6 +7761,238 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+     }).pipe(Effect.scoped),
+   );
+ 
++  // Context meter (thread.token-usage.updated); the block keeps its helpers local.
++  {
++    const sessionID = "http://127.0.0.1:9999/session";
++    const stepFinish = (
++      id: string,
++      messageID: string,
++      tokens: {
++        input: number;
++        output: number;
++        reasoning: number;
++        cache: { read: number; write: number };
++      },
++    ) => ({
++      type: "message.part.updated",
++      properties: {
++        sessionID,
++        part: { id, messageID, sessionID, type: "step-finish", reason: "stop", cost: 0, tokens },
++      },
++    });
++
++    const runTurn = (
++      threadId: ThreadId,
++      script: (input: {
++        readonly enqueue: (event: unknown) => void;
++        readonly promptMessageId: string;
++      }) => void,
++    ) =>
++      Effect.gen(function* () {
++        const adapter = yield* OpenCodeAdapter;
++        const enqueue = makeOpenCodeEventQueue();
++        yield* adapter.startSession({
++          provider: ProviderDriverKind.make("opencode"),
++          threadId,
++          runtimeMode: "full-access",
++        });
++        const eventsFiber = yield* adapter.streamEvents.pipe(
++          Stream.filter((event) => event.threadId === threadId),
++          Stream.takeUntil((event) => event.type === "turn.completed"),
++          Stream.runCollect,
++          Effect.forkChild,
++        );
++        yield* adapter.sendTurn({
++          threadId,
++          input: "Work through several steps",
++          modelSelection: createModelSelection(
++            ProviderInstanceId.make("opencode"),
++            "opencode/kimi-k3",
++          ),
++        });
++        const promptMessageId = (runtimeMock.state.promptCalls.at(-1) as { messageID: string })
++          .messageID;
++        script({ enqueue, promptMessageId });
++        enqueue({ type: "session.status", properties: { sessionID, status: { type: "idle" } } });
++        const events = yield* Fiber.join(eventsFiber);
++        yield* adapter.stopSession(threadId);
++        return Array.from(events);
++      });
++
++    it.effect("emits the latest step's prompt size with the catalog's context limit", () =>
++      Effect.gen(function* () {
++        runtimeMock.state.providerCatalog = [
++          {
++            id: "opencode",
++            models: { "kimi-k3": { limit: { context: 262_144, output: 32_000 } } },
++          },
++        ];
++        const events = yield* runTurn(asThreadId("thread-opencode-context-meter"), (turn) => {
++          turn.enqueue({
++            type: "message.updated",
++            properties: {
++              sessionID,
++              info: { id: "assistant-ctx", role: "assistant", parentID: turn.promptMessageId },
++            },
++          });
++          turn.enqueue(
++            stepFinish("step-ctx-1", "assistant-ctx", {
++              input: 1_200,
++              output: 80,
++              reasoning: 20,
++              cache: { read: 30_000, write: 500 },
++            }),
++          );
++          const second = stepFinish("step-ctx-2", "assistant-ctx", {
++            input: 300,
++            output: 150,
++            reasoning: 0,
++            cache: { read: 31_700, write: 0 },
++          });
++          turn.enqueue(second);
++          // OpenCode repeats part updates; a repeat must not move the meter again.
++          turn.enqueue(second);
++        });
++
++        const usages = events.flatMap((event) =>
++          event.type === "thread.token-usage.updated" ? [event.payload.usage] : [],
++        );
++        NodeAssert.deepStrictEqual(usages, [
++          {
++            usedTokens: 31_700,
++            lastUsedTokens: 31_700,
++            totalProcessedTokens: 31_800,
++            inputTokens: 31_700,
++            cachedInputTokens: 30_000,
++            outputTokens: 100,
++            reasoningOutputTokens: 20,
++            maxTokens: 262_144,
++          },
++          {
++            usedTokens: 32_000,
++            lastUsedTokens: 32_000,
++            totalProcessedTokens: 63_950,
++            inputTokens: 32_000,
++            cachedInputTokens: 31_700,
++            outputTokens: 150,
++            maxTokens: 262_144,
++          },
++        ]);
++        // The catalog is read once for the session and model, not once per step.
++        NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
++        const completed = events.find((event) => event.type === "turn.completed");
++        NodeAssert.equal(completed?.payload.tokenUsage?.usageStatus, "complete");
++      }),
++    );
++
++    it.effect("leaves the maximum out when the catalog has no limit, and skips empty steps", () =>
++      Effect.gen(function* () {
++        // The catalog answers but lists no limit for the model.
++        runtimeMock.state.providerCatalog = [{ id: "opencode", models: { "kimi-k3": {} } }];
++        const events = yield* runTurn(asThreadId("thread-opencode-context-no-limit"), (turn) => {
++          turn.enqueue({
++            type: "message.updated",
++            properties: {
++              sessionID,
++              info: { id: "assistant-own", role: "assistant", parentID: turn.promptMessageId },
++            },
++          });
++          // Another conversation's step must not move this chat's number.
++          turn.enqueue({
++            type: "message.updated",
++            properties: {
++              sessionID,
++              info: { id: "assistant-other", role: "assistant", parentID: "msg_other_prompt" },
++            },
++          });
++          turn.enqueue(
++            stepFinish("step-other", "assistant-other", {
++              input: 9_000,
++              output: 10,
++              reasoning: 0,
++              cache: { read: 0, write: 0 },
++            }),
++          );
++          // A step that reports no prompt tokens is no data.
++          turn.enqueue(
++            stepFinish("step-empty", "assistant-own", {
++              input: 0,
++              output: 12,
++              reasoning: 0,
++              cache: { read: 0, write: 0 },
++            }),
++          );
++          turn.enqueue(
++            stepFinish("step-own", "assistant-own", {
++              input: 700,
++              output: 30,
++              reasoning: 0,
++              cache: { read: 4_300, write: 0 },
++            }),
++          );
++        });
++
++        const usages = events.flatMap((event) =>
++          event.type === "thread.token-usage.updated" ? [event.payload.usage] : [],
++        );
++        NodeAssert.deepStrictEqual(usages, [
++          {
++            usedTokens: 5_000,
++            lastUsedTokens: 5_000,
++            totalProcessedTokens: 5_042,
++            inputTokens: 5_000,
++            cachedInputTokens: 4_300,
++            outputTokens: 30,
++          },
++        ]);
++      }),
++    );
++
++    it.effect("still reports the used count when the model catalog cannot be read", () =>
++      Effect.gen(function* () {
++        runtimeMock.state.providerCatalog = null;
++        const events = yield* runTurn(asThreadId("thread-opencode-context-no-catalog"), (turn) => {
++          turn.enqueue({
++            type: "message.updated",
++            properties: {
++              sessionID,
++              info: { id: "assistant-nc", role: "assistant", parentID: turn.promptMessageId },
++            },
++          });
++          turn.enqueue(
++            stepFinish("step-nc-1", "assistant-nc", {
++              input: 800,
++              output: 0,
++              reasoning: 0,
++              cache: { read: 0, write: 0 },
++            }),
++          );
++          turn.enqueue(
++            stepFinish("step-nc-2", "assistant-nc", {
++              input: 900,
++              output: 0,
++              reasoning: 0,
++              cache: { read: 0, write: 0 },
++            }),
++          );
++        });
++
++        const usages = events.flatMap((event) =>
++          event.type === "thread.token-usage.updated" ? [event.payload.usage] : [],
++        );
++        NodeAssert.deepStrictEqual(
++          usages.map((usage) => [usage.usedTokens, usage.maxTokens]),
++          [
++            [800, undefined],
++            [900, undefined],
++          ],
++        );
++        // A failed lookup is remembered for the session instead of retried per step.
++        NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
++      }),
++    );
++  }
++
+   it.effect("keeps completed text edits and clears removed parts across reconnects", () =>
+     Effect.gen(function* () {
+       const adapter = yield* OpenCodeAdapter;

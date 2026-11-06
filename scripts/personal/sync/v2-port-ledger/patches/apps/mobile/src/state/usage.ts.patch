@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/usage.ts b/apps/mobile/src/state/usage.ts
+index c5895d353fef7a33fc843c5de70aa95d9068a8a2..a2e7589aadb62613f0c30f8d5d928a616db56b56 100644
+--- a/apps/mobile/src/state/usage.ts
++++ b/apps/mobile/src/state/usage.ts
+@@ -19,7 +19,7 @@ import {
+ import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
+ import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useCallback, useMemo } from "react";
+ 
+ import { appAtomRegistry } from "./atom-registry";

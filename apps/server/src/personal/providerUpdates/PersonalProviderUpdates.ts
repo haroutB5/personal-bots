@@ -25,13 +25,13 @@
  *
  * @module personal/providerUpdates/PersonalProviderUpdates
  */
+import type { PersonalServerProvider as ServerProvider } from "../engine/PersonalProviders.ts";
 import {
   PersonalBotsError,
   type OrchestrationThreadShell,
   type PersonalBot,
   type ProviderInstanceId,
   type ProviderSession,
-  type ServerProvider,
   type ServerProviderSmokeCheck,
   type ThreadId,
 } from "@t3tools/contracts";

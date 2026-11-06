@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/project/NewProject.test.ts b/apps/server/src/project/NewProject.test.ts
+index 3286aa784c29a62db1062d1e9808d149ed2c477e..5533f977f1da972649c535d83ca87820c4338617 100644
+--- a/apps/server/src/project/NewProject.test.ts
++++ b/apps/server/src/project/NewProject.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

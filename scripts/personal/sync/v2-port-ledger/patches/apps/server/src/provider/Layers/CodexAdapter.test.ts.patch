@@ -1,0 +1,514 @@
+diff --git a/apps/server/src/provider/Layers/CodexAdapter.test.ts b/apps/server/src/provider/Layers/CodexAdapter.test.ts
+index 9aff859521fc1258c16dc77bf7990b1449364872..206fa4e10fc9b8b8565323ab25f993a29f2baac2 100644
+--- a/apps/server/src/provider/Layers/CodexAdapter.test.ts
++++ b/apps/server/src/provider/Layers/CodexAdapter.test.ts
+@@ -7,6 +7,7 @@ import {
+   ApprovalRequestId,
+   CodexSettings,
+   EventId,
++  MessageId,
+   ProviderDriverKind,
+   ProviderInstanceId,
+   ProviderItemId,
+@@ -19,7 +20,7 @@ import {
+   TurnId,
+ } from "@t3tools/contracts";
+ import { createModelSelection } from "@t3tools/shared/model";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it, vi } from "@effect/vitest";
+ 
+ import * as Context from "effect/Context";
+@@ -27,6 +28,7 @@ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+ import * as Fiber from "effect/Fiber";
+ import * as Layer from "effect/Layer";
++import * as Logger from "effect/Logger";
+ import * as Option from "effect/Option";
+ import * as Queue from "effect/Queue";
+ import * as Schema from "effect/Schema";
+@@ -36,6 +38,7 @@ import * as TestClock from "effect/testing/TestClock";
+ import * as CodexErrors from "effect-codex-app-server/errors";
+ 
+ import { ServerConfig } from "../../config.ts";
++import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+ import { ServerSettingsService } from "../../serverSettings.ts";
+ import { ProviderAdapterValidationError } from "../Errors.ts";
+ import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
+@@ -49,6 +52,16 @@ import {
+ import { makeCodexAdapter } from "./CodexAdapter.ts";
+ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+ 
++// A stand-in for the owner's ~/.codex/skills: one user skill and a bundled one.
++const ownerSkillsRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "codex-owner-skills-"));
++for (const skill of ["wrangler", NodePath.join(".system", "imagegen")]) {
++  NodeFS.mkdirSync(NodePath.join(ownerSkillsRoot, skill), { recursive: true });
++  NodeFS.writeFileSync(NodePath.join(ownerSkillsRoot, skill, "SKILL.md"), "---\nname: x\n---\n");
++}
++const ownerSkillArg = `skills.config=[{path=${JSON.stringify(
++  NodePath.join(ownerSkillsRoot, "wrangler", "SKILL.md"),
++)},enabled=false}]`;
++
+ // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
+ class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
+   "t3/provider/Layers/CodexAdapter.test/CodexAdapter",
+@@ -59,6 +72,17 @@ const asTurnId = (value: string): TurnId => TurnId.make(value);
+ const asEventId = (value: string): EventId => EventId.make(value);
+ const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
+ 
++/** Every WARN with its structured fields, so a test can count and name them. */
++const captureWarnLines = () => {
++  const lines: Array<{ readonly text: string; readonly fields: Record<string, unknown> }> = [];
++  const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
++    if (logLevel !== "Warn") return;
++    const [text, fields] = Array.isArray(message) ? message : [message, {}];
++    lines.push({ text: String(text), fields: (fields ?? {}) as Record<string, unknown> });
++  });
++  return { lines, layer: Logger.layer([sink], { mergeWithExisting: false }) };
++};
++
+ class FakeCodexRuntime implements CodexSessionRuntimeShape {
+   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
+   private readonly now = "2026-01-01T00:00:00.000Z";
+@@ -238,6 +262,7 @@ const validationLayer = it.layer(
+       const codexConfig = decodeCodexSettings({});
+       return yield* makeCodexAdapter(codexConfig, {
+         makeRuntime: validationRuntimeFactory.factory,
++        ownerSkillRoots: [ownerSkillsRoot, NodePath.join(ownerSkillsRoot, "missing")],
+       });
+     }),
+   ).pipe(
+@@ -298,6 +323,374 @@ validationLayer("CodexAdapterLive validation", (it) => {
+       });
+     }),
+   );
++
++  // Not a feature: a record that a Codex bot has no path deny. A permission
++  // profile would be ignored beside the legacy `sandbox` value thread/start
++  // sends (measured on 0.160.1), and a profile alone stops the Windows backend
++  // from starting the thread. A full-access bot is `danger-full-access`.
++  it.effect("adds no permission profile for personal bots and keeps full access", () =>
++    Effect.gen(function* () {
++      validationRuntimeFactory.factory.mockClear();
++      const adapter = yield* CodexAdapter;
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("codex"),
++        threadId: asThreadId("thread-personal-bot-codex-no-profile"),
++        runtimeMode: "full-access",
++        personalBot: true,
++      });
++      const options = validationRuntimeFactory.factory.mock.calls[0]?.[0];
++      NodeAssert.equal(options?.runtimeMode, "full-access");
++      NodeAssert.ok(
++        (options?.appServerArgs ?? []).every((arg) => !/permissions|sandbox/.test(arg)),
++      );
++    }),
++  );
++
++  it.effect("turns off connectors, plugins, memories and owner skills for personal bots", () =>
++    Effect.gen(function* () {
++      validationRuntimeFactory.factory.mockClear();
++      const adapter = yield* CodexAdapter;
++      const threadId = asThreadId("thread-personal-bot-codex");
++      McpProviderSession.setMcpProviderSession({
++        environmentId: "env-test" as McpProviderSession.McpProviderSessionConfig["environmentId"],
++        threadId,
++        providerSessionId: "mcp-session-test",
++        providerInstanceId: ProviderInstanceId.make("codex"),
++        endpoint: "http://127.0.0.1:9999/mcp",
++        authorizationHeader: "Bearer test-token",
++        capabilities: new Set(["preview", "personal"]),
++      });
++
++      yield* adapter
++        .startSession({
++          provider: ProviderDriverKind.make("codex"),
++          threadId,
++          runtimeMode: "full-access",
++          personalBot: true,
++        })
++        .pipe(
++          Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
++        );
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("codex"),
++        threadId: asThreadId("thread-personal-bot-codex-no-mcp"),
++        runtimeMode: "full-access",
++        personalBot: true,
++      });
++
++      const [withMcp, withoutMcp] = validationRuntimeFactory.factory.mock.calls.map(
++        ([options]) => options,
++      );
++      NodeAssert.deepStrictEqual(withMcp?.appServerArgs, [
++        "-c",
++        "mcp_servers.t3-code.url=http://127.0.0.1:9999/mcp",
++        "-c",
++        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
++        "-c",
++        "features.apps=false",
++        "-c",
++        "features.plugins=false",
++        "-c",
++        "features.memories=false",
++        "-c",
++        ownerSkillArg,
++        "-c",
++        "tool_output_token_limit=3000",
++      ]);
++      NodeAssert.deepStrictEqual(withoutMcp?.appServerArgs, [
++        "-c",
++        "features.apps=false",
++        "-c",
++        "features.plugins=false",
++        "-c",
++        "features.memories=false",
++        "-c",
++        ownerSkillArg,
++        "-c",
++        "tool_output_token_limit=3000",
++      ]);
++    }),
++  );
++
++  it.effect("caps a bot's tool output at about 12k chars; kill switch off", () =>
++    Effect.gen(function* () {
++      validationRuntimeFactory.factory.mockClear();
++      const adapter = yield* CodexAdapter;
++      const capArgs = (argv: ReadonlyArray<string> | undefined) =>
++        (argv ?? []).filter((arg) => arg.startsWith("tool_output_token_limit="));
++      const start = (threadId: string, personalBot: boolean) =>
++        adapter.startSession({
++          provider: ProviderDriverKind.make("codex"),
++          threadId: asThreadId(threadId),
++          runtimeMode: "full-access",
++          ...(personalBot ? { personalBot: true } : {}),
++        });
++      const withEnv = <A, E, R>(value: string, effect: Effect.Effect<A, E, R>) => {
++        const previous = process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP;
++        return Effect.sync(() => {
++          process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP = value;
++        }).pipe(
++          Effect.andThen(effect),
++          Effect.ensuring(
++            Effect.sync(() => {
++              if (previous === undefined) delete process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP;
++              else process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP = previous;
++            }),
++          ),
++        );
++      };
++
++      yield* start("thread-codex-cap-bot", true);
++      yield* start("thread-codex-cap-plain", false);
++      yield* withEnv("off", start("thread-codex-cap-off", true));
++      yield* withEnv("40000", start("thread-codex-cap-custom", true));
++
++      const [bot, plain, off, custom] = validationRuntimeFactory.factory.mock.calls.map(
++        ([options]) => options.appServerArgs,
++      );
++      NodeAssert.deepStrictEqual(capArgs(bot), ["tool_output_token_limit=3000"]);
++      NodeAssert.deepStrictEqual(capArgs(plain), []);
++      NodeAssert.deepStrictEqual(capArgs(off), []);
++      NodeAssert.deepStrictEqual(capArgs(custom), ["tool_output_token_limit=10000"]);
++    }),
++  );
++
++  it.effect("compacts a bot's task or routine chat at 150k tokens; kill switch off", () =>
++    Effect.gen(function* () {
++      validationRuntimeFactory.factory.mockClear();
++      const adapter = yield* CodexAdapter;
++      const compactArgs = (argv: ReadonlyArray<string> | undefined) =>
++        (argv ?? []).filter((arg) => arg.startsWith("model_auto_compact_token_limit="));
++      const start = (
++        threadId: string,
++        input: { personalBot?: boolean; personalTaskChat?: boolean },
++      ) =>
++        adapter.startSession({
++          provider: ProviderDriverKind.make("codex"),
++          threadId: asThreadId(threadId),
++          runtimeMode: "full-access",
++          ...input,
++        });
++
++      yield* start("thread-codex-task-chat", { personalBot: true, personalTaskChat: true });
++      yield* start("thread-codex-owner-chat", { personalBot: true });
++      yield* start("thread-codex-plain-task", { personalTaskChat: true });
++      const previous = process.env.PERSONAL_TASK_AUTO_COMPACT;
++      process.env.PERSONAL_TASK_AUTO_COMPACT = "off";
++      yield* start("thread-codex-task-off", { personalBot: true, personalTaskChat: true }).pipe(
++        Effect.ensuring(
++          Effect.sync(() => {
++            if (previous === undefined) delete process.env.PERSONAL_TASK_AUTO_COMPACT;
++            else process.env.PERSONAL_TASK_AUTO_COMPACT = previous;
++          }),
++        ),
++      );
++
++      const [task, owner, plain, off] = validationRuntimeFactory.factory.mock.calls.map(
++        ([options]) => options.appServerArgs,
++      );
++      NodeAssert.deepStrictEqual(compactArgs(task), ["model_auto_compact_token_limit=150000"]);
++      NodeAssert.deepStrictEqual(compactArgs(owner), []);
++      NodeAssert.deepStrictEqual(compactArgs(plain), []);
++      NodeAssert.deepStrictEqual(compactArgs(off), []);
++    }),
++  );
++
++  it.effect("leaves normal Codex sessions with only the t3-code overrides", () =>
++    Effect.gen(function* () {
++      validationRuntimeFactory.factory.mockClear();
++      const adapter = yield* CodexAdapter;
++      const threadId = asThreadId("thread-normal-codex");
++      McpProviderSession.setMcpProviderSession({
++        environmentId: "env-test" as McpProviderSession.McpProviderSessionConfig["environmentId"],
++        threadId,
++        providerSessionId: "mcp-session-test",
++        providerInstanceId: ProviderInstanceId.make("codex"),
++        endpoint: "http://127.0.0.1:9999/mcp",
++        authorizationHeader: "Bearer test-token",
++        capabilities: new Set(["preview"]),
++      });
++
++      yield* adapter
++        .startSession({
++          provider: ProviderDriverKind.make("codex"),
++          threadId,
++          runtimeMode: "full-access",
++        })
++        .pipe(
++          Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
++        );
++
++      NodeAssert.deepStrictEqual(
++        validationRuntimeFactory.factory.mock.calls[0]?.[0].appServerArgs,
++        [
++          "-c",
++          "mcp_servers.t3-code.url=http://127.0.0.1:9999/mcp",
++          "-c",
++          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
++        ],
++      );
++    }),
++  );
++});
++
++const botSkillsRuntimeFactory = makeRuntimeFactory();
++const botSkillsLayer = it.layer(
++  Layer.effect(
++    CodexAdapter,
++    Effect.gen(function* () {
++      const codexConfig = decodeCodexSettings({});
++      return yield* makeCodexAdapter(codexConfig, {
++        makeRuntime: botSkillsRuntimeFactory.factory,
++      });
++    }),
++  ).pipe(
++    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "codex-bot-skills-" })),
++    Layer.provideMerge(ServerSettingsService.layerTest()),
++    Layer.provideMerge(providerSessionDirectoryTestLayer),
++    Layer.provideMerge(NodeServices.layer),
++  ),
++);
++
++const botSkillsOffRuntimeFactory = makeRuntimeFactory();
++const botSkillsOffLayer = it.layer(
++  Layer.effect(
++    CodexAdapter,
++    Effect.gen(function* () {
++      const codexConfig = decodeCodexSettings({});
++      return yield* makeCodexAdapter(codexConfig, {
++        makeRuntime: botSkillsOffRuntimeFactory.factory,
++        environment: { ...process.env, PERSONAL_BOT_CODEX_SKILLS: "off" },
++      });
++    }),
++  ).pipe(
++    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "codex-bot-skills-off-" })),
++    Layer.provideMerge(ServerSettingsService.layerTest()),
++    Layer.provideMerge(providerSessionDirectoryTestLayer),
++    Layer.provideMerge(NodeServices.layer),
++  ),
++);
++
++/** A bot plugin folder as hbots installs it: a manifest naming `.claude/skills`. */
++const writeBotPlugin = (baseDir: string, plugin: string) => {
++  const pluginDir = NodePath.join(baseDir, "bot-plugins", plugin);
++  const skillsDir = NodePath.join(pluginDir, ".claude", "skills");
++  NodeFS.mkdirSync(NodePath.join(pluginDir, ".claude-plugin"), { recursive: true });
++  NodeFS.mkdirSync(NodePath.join(skillsDir, "agent-browser"), { recursive: true });
++  NodeFS.writeFileSync(
++    NodePath.join(pluginDir, ".claude-plugin", "plugin.json"),
++    JSON.stringify({ name: plugin, version: "1.0.0", skills: "./.claude/skills/" }),
++  );
++  NodeFS.writeFileSync(
++    NodePath.join(skillsDir, "agent-browser", "SKILL.md"),
++    "---\nname: agent-browser\n---\n\nProbe.\n",
++  );
++  return skillsDir;
++};
++
++const startBotSession = (threadId: string, botId: string | undefined) =>
++  Effect.gen(function* () {
++    const adapter = yield* CodexAdapter;
++    yield* adapter.startSession({
++      provider: ProviderDriverKind.make("codex"),
++      threadId: asThreadId(threadId),
++      runtimeMode: "full-access",
++      personalBot: true,
++      ...(botId === undefined ? {} : { personalBotId: botId }),
++    });
++  });
++
++botSkillsLayer("CodexAdapterLive bot plugin skills", (it) => {
++  it.effect("gives a Codex bot its own and the shared plugin skills, and no other bot's", () =>
++    Effect.gen(function* () {
++      botSkillsRuntimeFactory.factory.mockClear();
++      const config = yield* ServerConfig;
++      const shared = writeBotPlugin(config.baseDir, "_shared");
++      const own = writeBotPlugin(config.baseDir, "bot-one");
++      const other = writeBotPlugin(config.baseDir, "bot-two");
++
++      yield* startBotSession("thread-bot-skills-one", "bot-one");
++      yield* startBotSession("thread-bot-skills-two", "bot-two");
++      // A bot id with no plugin folder of its own still gets the shared one.
++      yield* startBotSession("thread-bot-skills-unknown", "bot-three");
++      // A session that names no bot id at all gets the shared folder only.
++      yield* startBotSession("thread-bot-skills-anonymous", undefined);
++
++      const options = botSkillsRuntimeFactory.factory.mock.calls.map(([value]) => value);
++      NodeAssert.deepStrictEqual(options[0]?.extraSkillRoots, [shared, own]);
++      NodeAssert.deepStrictEqual(options[1]?.extraSkillRoots, [shared, other]);
++      NodeAssert.deepStrictEqual(options[2]?.extraSkillRoots, [shared]);
++      NodeAssert.deepStrictEqual(options[3]?.extraSkillRoots, [shared]);
++      NodeAssert.ok(!(options[0]?.extraSkillRoots ?? []).includes(other));
++      NodeAssert.ok(!(options[1]?.extraSkillRoots ?? []).includes(own));
++      // The owner's own skill roots stay off, as before.
++      NodeAssert.ok(
++        (options[0]?.appServerArgs ?? []).some((arg) => arg.startsWith("skills.config=[")),
++      );
++    }),
++  );
++
++  it.effect("warns once for the skill a bot's plugin folder cannot load", () => {
++    const logs = captureWarnLines();
++    return Effect.gen(function* () {
++      botSkillsRuntimeFactory.factory.mockClear();
++      const config = yield* ServerConfig;
++      writeBotPlugin(config.baseDir, "_shared");
++      const own = writeBotPlugin(config.baseDir, "bot-one");
++      // A UTF-8 BOM is exactly what Codex refuses: its parser reports the
++      // frontmatter as missing and the skill disappears from the catalogue.
++      NodeFS.writeFileSync(
++        NodePath.join(own, "agent-browser", "SKILL.md"),
++        "\uFEFF---\nname: agent-browser\n---\n\nProbe.\n",
++      );
++
++      yield* startBotSession("thread-bot-skills-bom", "bot-one");
++
++      const warnings = logs.lines.filter((line) => line.text === "bot plugin skill failed to load");
++      NodeAssert.equal(warnings.length, 1);
++      NodeAssert.equal(warnings[0]?.fields.botId, "bot-one");
++      NodeAssert.equal(warnings[0]?.fields.path, NodePath.join(own, "agent-browser", "SKILL.md"));
++      NodeAssert.match(String(warnings[0]?.fields.reason), /UTF-8 BOM/);
++    }).pipe(Effect.provide(logs.layer));
++  });
++
++  it.effect("leaves a normal Codex session without extra skill roots", () =>
++    Effect.gen(function* () {
++      botSkillsRuntimeFactory.factory.mockClear();
++      const adapter = yield* CodexAdapter;
++      const threadId = asThreadId("thread-bot-skills-normal");
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("codex"),
++        threadId,
++        runtimeMode: "full-access",
++      });
++      const options = botSkillsRuntimeFactory.factory.mock.calls[0]?.[0];
++      NodeAssert.equal(options?.extraSkillRoots, undefined);
++      NodeAssert.ok(
++        !(options?.appServerArgs ?? []).some((arg) => arg.startsWith("skills.config=[")),
++      );
++    }),
++  );
++});
++
++botSkillsOffLayer("CodexAdapterLive bot plugin skills kill switch", (it) => {
++  it.effect("restores a Codex bot with no skills at all", () =>
++    Effect.gen(function* () {
++      botSkillsOffRuntimeFactory.factory.mockClear();
++      const config = yield* ServerConfig;
++      writeBotPlugin(config.baseDir, "_shared");
++      writeBotPlugin(config.baseDir, "bot-one");
++
++      yield* startBotSession("thread-bot-skills-off", "bot-one");
++
++      const options = botSkillsOffRuntimeFactory.factory.mock.calls[0]?.[0];
++      NodeAssert.equal(options?.extraSkillRoots, undefined);
++      // The owner's skills are still turned off.
++      NodeAssert.ok(
++        (options?.appServerArgs ?? []).some((arg) => arg.startsWith("skills.config=[")),
++      );
++    }),
++  );
+ });
+ 
+ const sessionRuntimeFactory = makeRuntimeFactory();
+@@ -448,6 +841,37 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+     }),
+   );
+ 
++  it.effect("passes the send's followUp and message id through to the runtime", () =>
++    Effect.gen(function* () {
++      const adapter = yield* CodexAdapter;
++      const threadId = asThreadId("thread-follow-up");
++      yield* adapter.startSession({
++        provider: ProviderDriverKind.make("codex"),
++        threadId,
++        runtimeMode: "full-access",
++      });
++      const runtime = sessionRuntimeFactory.lastRuntime;
++      NodeAssert.ok(runtime);
++      runtime.sendTurnImpl.mockClear();
++
++      yield* Effect.ignore(
++        adapter.sendTurn({
++          threadId,
++          input: "steer me",
++          messageId: MessageId.make("message-steer-adapter"),
++          followUp: "queue",
++          attachments: [],
++        }),
++      );
++
++      // The runtime decides steer vs its own turn from these two fields.
++      const input = runtime.sendTurnImpl.mock.calls[0]?.[0];
++      NodeAssert.ok(input);
++      NodeAssert.equal(input.followUp, "queue");
++      NodeAssert.equal(input.clientUserMessageId, "message-steer-adapter");
++    }),
++  );
++
+   it.effect("passes image attachments to Codex by path instead of base64", () =>
+     Effect.gen(function* () {
+       const adapter = yield* CodexAdapter;
+@@ -1319,7 +1743,8 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+         return;
+       }
+       NodeAssert.equal(firstEvent.value.payload.itemType, "mcp_tool_call");
+-      NodeAssert.equal(firstEvent.value.payload.title, "t3-code · preview_status");
++      // Plain words for the step, not "t3-code · preview_status" (Harout, 16 Oct).
++      NodeAssert.equal(firstEvent.value.payload.title, "Checking the browser");
+       NodeAssert.deepStrictEqual(firstEvent.value.payload.data, {
+         completedAtMs: 1_778_000_000_000,
+         threadId: "thread-1",
+@@ -1630,7 +2055,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+         }
+         NodeAssert.equal(firstEvent.value.payload.status, item.status);
+         if (item.id.startsWith("failed-computer")) {
+-          NodeAssert.equal(firstEvent.value.payload.title, "computer-use · click");
++          // A failed computer-use call has no plain computer-use line, so the
++          // shared label falls back to the tool name in words ("Click").
++          NodeAssert.equal(firstEvent.value.payload.title, "Click");
+           const sourceKey = firstEvent.value.payload.toolSource?.key;
+           NodeAssert.equal(sourceKey?.length, 512);
+           if (sourceKey) longAppSourceKeys.push(sourceKey);

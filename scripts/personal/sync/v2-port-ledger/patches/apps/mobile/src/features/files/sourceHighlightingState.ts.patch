@@ -1,0 +1,12 @@
+diff --git a/apps/mobile/src/features/files/sourceHighlightingState.ts b/apps/mobile/src/features/files/sourceHighlightingState.ts
+index 43363115bc84ce109122f49fbdcdf9ae6c09e82a..4f591bc6e6222daf165f36ae743c0ad5f4718388 100644
+--- a/apps/mobile/src/features/files/sourceHighlightingState.ts
++++ b/apps/mobile/src/features/files/sourceHighlightingState.ts
+@@ -1,6 +1,6 @@
+ import * as Data from "effect/Data";
+ import * as Effect from "effect/Effect";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import {
+   highlightSourceFile,

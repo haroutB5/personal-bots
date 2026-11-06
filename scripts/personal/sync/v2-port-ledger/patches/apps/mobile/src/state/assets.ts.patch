@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/assets.ts b/apps/mobile/src/state/assets.ts
+index d6fefe2b8f86ada7e6befd1686b094317b87bc0b..f96d65f6602367cc68421f5cc282c1fba281bb41 100644
+--- a/apps/mobile/src/state/assets.ts
++++ b/apps/mobile/src/state/assets.ts
+@@ -11,7 +11,7 @@ import {
+ } from "@t3tools/client-runtime/state/assets";
+ import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useCallback } from "react";
+ 
+ import { environmentCatalog } from "../connection/catalog";

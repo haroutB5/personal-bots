@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts b/apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts
+index af3a95c32c784047640e58e266cf161751473408..8cde319236b878f923b8dd4f61accdd124cb9301 100644
+--- a/apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts
++++ b/apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts
+@@ -6,7 +6,7 @@ import {
+   PreviewTabId,
+   ThreadId,
+ } from "@t3tools/contracts";
+-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+ import { describe, expect, it, vi } from "vite-plus/test";
+ 
+ import {

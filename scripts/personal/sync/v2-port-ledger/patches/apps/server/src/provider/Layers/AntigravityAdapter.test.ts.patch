@@ -1,0 +1,366 @@
+diff --git a/apps/server/src/provider/Layers/AntigravityAdapter.test.ts b/apps/server/src/provider/Layers/AntigravityAdapter.test.ts
+index cd245570d1ad65e1665a75202c6f7d8b99eb74ff..970992f0bf972f1b04c215e804e3157b5a3f47bd 100644
+--- a/apps/server/src/provider/Layers/AntigravityAdapter.test.ts
++++ b/apps/server/src/provider/Layers/AntigravityAdapter.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import {
+   AntigravitySettings,
+@@ -8,7 +8,7 @@ import {
+   type ProviderRuntimeEvent,
+ } from "@t3tools/contracts";
+ import * as Deferred from "effect/Deferred";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+ import * as Fiber from "effect/Fiber";
+@@ -18,7 +18,7 @@ import * as Path from "effect/Path";
+ import * as Queue from "effect/Queue";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import * as AcpErrors from "effect-acp/errors";
+ import type * as AcpSchema from "effect-acp/schema";
+ 
+@@ -31,7 +31,12 @@ import {
+   parseSessionUpdateEvent,
+   type AcpToolCallState,
+ } from "../acp/AcpRuntimeModel.ts";
+-import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
++import {
++  antigravityQuotaNotice,
++  antigravityTrailingQuotaNotice,
++  makeAntigravityAdapter,
++  type AntigravityAdapterOptions,
++} from "./AntigravityAdapter.ts";
+ 
+ const instanceId = ProviderInstanceId.make("antigravity-test");
+ const threadId = ThreadId.make("antigravity-thread");
+@@ -487,6 +492,37 @@ it.layer(layer)("AntigravityAdapter", (it) => {
+     }),
+   );
+ 
++  it.effect("reports the context window from native usage updates on the active turn", () =>
++    Effect.gen(function* () {
++      const h = yield* makeHarness();
++      yield* h.adapter.startSession({
++        threadId,
++        cwd: process.cwd(),
++        runtimeMode: "approval-required",
++      });
++      const sending = yield* h.adapter
++        .sendTurn({ threadId, input: "Summarise the repo" })
++        .pipe(Effect.forkChild);
++      const prompt = yield* h.nextPrompt;
++      yield* h.emitNative({
++        _tag: "UsageUpdated",
++        usedTokens: 12_000,
++        maxTokens: 1_000_000,
++        rawPayload: {},
++      });
++      yield* h.emitNative({ _tag: "UsageUpdated", usedTokens: 18_500, rawPayload: {} });
++      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
++      const result = yield* Fiber.join(sending);
++      yield* h.waitForEvent((event) => event.type === "turn.completed");
++      const usages = h.seen.filter((event) => event.type === "thread.token-usage.updated");
++      expect(usages.map((event) => event.payload.usage)).toEqual([
++        { usedTokens: 12_000, lastUsedTokens: 12_000, maxTokens: 1_000_000 },
++        { usedTokens: 18_500, lastUsedTokens: 18_500 },
++      ]);
++      expect(usages.every((event) => event.turnId === result.turnId)).toBe(true);
++    }),
++  );
++
+   it.effect("does not auto-approve a remaining native request in full access", () =>
+     Effect.gen(function* () {
+       const h = yield* makeHarness();
+@@ -589,6 +625,32 @@ it.layer(layer)("AntigravityAdapter", (it) => {
+     }),
+   );
+ 
++  it.effect("sends the bot's persona with every prompt", () =>
++    Effect.gen(function* () {
++      // 1.66.73: Antigravity bots get their name, instructions and app rules
++      // in the same text block as the runtime notes, on every turn.
++      const h = yield* makeHarness({ holdCancel: true });
++      yield* h.adapter.startSession({
++        threadId,
++        cwd: process.cwd(),
++        runtimeMode: "approval-required",
++      });
++      yield* h.adapter
++        .sendTurn({ threadId, input: "Who are you?", systemInstructions: "You are CTO." })
++        .pipe(Effect.forkChild);
++      const prompt = yield* h.nextPrompt;
++      expect(prompt.content).toEqual([
++        { type: "text", text: "Who are you?" },
++        {
++          type: "text",
++          text: expect.stringMatching(
++            /Antigravity harness[\s\S]*<bot_instructions>You are CTO\.<\/bot_instructions>$/,
++          ),
++        },
++      ]);
++    }),
++  );
++
+   it.effect("waits for native cancellation before a steer changes the model", () =>
+     Effect.gen(function* () {
+       const h = yield* makeHarness({ holdCancel: true });
+@@ -1330,4 +1392,252 @@ it.layer(layer)("AntigravityAdapter", (it) => {
+       expect(active.launches).toHaveLength(0);
+     }),
+   );
++  it.effect(
++    "suppresses client cancellation text on steer or interrupt while preserving real errors",
++    () =>
++      Effect.gen(function* () {
++        const h = yield* makeHarness({ holdCancel: true });
++        yield* h.adapter.startSession({
++          threadId,
++          cwd: process.cwd(),
++          runtimeMode: "approval-required",
++        });
++
++        const first = yield* h.adapter
++          .sendTurn({ threadId, input: "Working on task" })
++          .pipe(Effect.forkChild);
++        yield* h.nextPrompt;
++
++        const second = yield* h.adapter
++          .sendTurn({ threadId, input: "Steering prompt" })
++          .pipe(Effect.forkChild);
++        expect(yield* h.nextCancellation).toBe(1);
++
++        yield* h.emitNative({
++          _tag: "ContentDelta",
++          text: "The request was cancelled by the client.",
++          rawPayload: {},
++        });
++        yield* Deferred.succeed(h.cancelRelease, undefined);
++
++        const replacement = yield* h.nextPrompt;
++        yield* h.emitNative({
++          _tag: "ContentDelta",
++          text: "Continuing with new instructions.",
++          rawPayload: {},
++        });
++        yield* Deferred.succeed(replacement.result, { stopReason: "end_turn" });
++
++        yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
++
++        const deltas = h.seen.filter(
++          (event): event is Extract<ProviderRuntimeEvent, { type: "content.delta" }> =>
++            event.type === "content.delta",
++        );
++        const deltaTexts = deltas.map((d) => d.payload.delta);
++        expect(deltaTexts).toContain("Continuing with new instructions.");
++        expect(deltaTexts.some((text) => /cancelled by the client/i.test(text))).toBe(false);
++
++        const turnCompleted = yield* h.waitForEvent((event) => event.type === "turn.completed");
++        expect(turnCompleted.payload.errorMessage).toBeUndefined();
++      }),
++  );
++
++  it.effect("publishes real prompt failures with an error message", () =>
++    Effect.gen(function* () {
++      const h = yield* makeHarness();
++      yield* h.adapter.startSession({
++        threadId,
++        cwd: process.cwd(),
++        runtimeMode: "approval-required",
++      });
++      const turn = yield* h.adapter
++        .sendTurn({ threadId, input: "Failing prompt" })
++        .pipe(Effect.forkChild);
++      const prompt = yield* h.nextPrompt;
++      yield* Deferred.fail(
++        prompt.result,
++        AcpErrors.AcpRequestError.internalError(
++          "Model service returned HTTP 500 internal server error.",
++        ),
++      );
++      const exit = yield* Fiber.await(turn);
++      expect(Exit.isFailure(exit)).toBe(true);
++      const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
++      expect(completed.payload.state).toBe("failed");
++      expect(completed.payload.errorMessage).toContain("Model service returned HTTP 500");
++    }),
++  );
++
++  it("reads the quota notice and its reset, and nothing else", () => {
++    const now = Date.parse("2026-10-20T23:00:00.000Z");
++    expect(
++      antigravityQuotaNotice(
++        "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 3 hours, 15 minutes.",
++        now,
++      ),
++    ).toEqual({ resetIn: "3 hours, 15 minutes", retryAt: "2026-10-21T02:15:00.000Z" });
++    expect(
++      antigravityQuotaNotice(
++        "You have reached your current quota for this period. Your limit will reset in 45 minutes.",
++        now,
++      )?.retryAt,
++    ).toBe("2026-10-20T23:45:00.000Z");
++    expect(
++      antigravityQuotaNotice(
++        "You have reached your current quota for this period. Your limit will reset in a while.",
++        now,
++      ),
++    ).toEqual({ resetIn: "a while", retryAt: undefined });
++    expect(
++      antigravityQuotaNotice(
++        "Here is the fix. Earlier it said: You have reached your current quota for this period. Your limit will reset in 3 hours.",
++        now,
++      ),
++    ).toBeNull();
++    expect(antigravityQuotaNotice("Done.", now)).toBeNull();
++  });
++
++  it.effect(
++    "a quota notice after the bot already worked still fails the turn as rate limited",
++    () =>
++      Effect.gen(function* () {
++        const h = yield* makeHarness();
++        yield* h.adapter.startSession({
++          threadId,
++          cwd: process.cwd(),
++          runtimeMode: "approval-required",
++        });
++        const turn = yield* h.adapter
++          .sendTurn({ threadId, input: "Ship the release" })
++          .pipe(Effect.forkChild);
++        const prompt = yield* h.nextPrompt;
++        yield* h.emitNative({
++          _tag: "ContentDelta",
++          text: "I'll read the handbook first.",
++          rawPayload: {},
++        });
++        yield* h.emitNative({
++          _tag: "ToolCallUpdated",
++          toolCall: {
++            toolCallId: "command-1",
++            kind: "execute",
++            status: "completed",
++            data: {
++              rawInput: { CommandLine: "cat HANDBOOK.md", Cwd: "/tmp" },
++              rawOutput: { combinedOutput: "rules\n", exitCode: 0 },
++            },
++          },
++          rawPayload: {},
++        });
++        yield* h.emitNative({
++          _tag: "ContentDelta",
++          text: "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 5 days, 2 hours.",
++          rawPayload: {},
++        });
++        yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
++        yield* Fiber.await(turn);
++        const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
++        expect(completed.payload.state).toBe("failed");
++        expect(completed.payload.errorMessage).toBe(
++          "Antigravity usage limit reached. It resets in 5 days, 2 hours.",
++        );
++        expect(completed.payload.retry?.kind).toBe("rate_limited");
++      }),
++  );
++
++  it("finds the notice at the end of the latest reply, and not quoted mid-answer", () => {
++    const now = Date.parse("2026-10-21T18:36:00.000Z");
++    const notice =
++      "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 5 days, 2 hours.";
++    expect(antigravityTrailingQuotaNotice(notice, now)?.resetIn).toBe("5 days, 2 hours");
++    expect(
++      antigravityTrailingQuotaNotice(`Checking the release files now.${notice}`, now)?.retryAt,
++    ).toBe("2026-10-26T20:36:00.000Z");
++    expect(
++      antigravityTrailingQuotaNotice(`${notice}\n\nSo I switched models and carried on.`, now),
++    ).toBeNull();
++    expect(antigravityTrailingQuotaNotice("All done.", now)).toBeNull();
++  });
++
++  it.effect("a quota notice reply fails the turn as rate limited with its reset", () =>
++    Effect.gen(function* () {
++      const h = yield* makeHarness();
++      yield* h.adapter.startSession({
++        threadId,
++        cwd: process.cwd(),
++        runtimeMode: "approval-required",
++      });
++      const turn = yield* h.adapter
++        .sendTurn({ threadId, input: "Keep going" })
++        .pipe(Effect.forkChild);
++      const prompt = yield* h.nextPrompt;
++      yield* h.emitNative({
++        _tag: "ContentDelta",
++        text: "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 3 hours, 15 minutes.",
++        rawPayload: {},
++      });
++      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
++      yield* Fiber.await(turn);
++      const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
++      expect(completed.payload.state).toBe("failed");
++      expect(completed.payload.errorMessage).toBe(
++        "Antigravity usage limit reached. It resets in 3 hours, 15 minutes.",
++      );
++      expect(completed.payload.retry?.kind).toBe("rate_limited");
++      expect(completed.payload.retry?.retryAt).toBeDefined();
++    }),
++  );
++
++  it.effect("keeps cancellation wording in a reply when nothing is being cancelled", () =>
++    Effect.gen(function* () {
++      const h = yield* makeHarness();
++      yield* h.adapter.startSession({
++        threadId,
++        cwd: process.cwd(),
++        runtimeMode: "approval-required",
++      });
++      const turn = yield* h.adapter
++        .sendTurn({ threadId, input: "What does that error mean?" })
++        .pipe(Effect.forkChild);
++      const prompt = yield* h.nextPrompt;
++      yield* h.emitNative({
++        _tag: "ContentDelta",
++        text: "The request was cancelled by the client.",
++        rawPayload: {},
++      });
++      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
++      yield* Fiber.join(turn);
++      const deltaTexts = h.seen
++        .filter(
++          (event): event is Extract<ProviderRuntimeEvent, { type: "content.delta" }> =>
++            event.type === "content.delta",
++        )
++        .map((d) => d.payload.delta);
++      expect(deltaTexts).toContain("The request was cancelled by the client.");
++    }),
++  );
++
++  it.effect("reports a real failure that mentions client cancellation as failed", () =>
++    Effect.gen(function* () {
++      const h = yield* makeHarness();
++      yield* h.adapter.startSession({
++        threadId,
++        cwd: process.cwd(),
++        runtimeMode: "approval-required",
++      });
++      const turn = yield* h.adapter
++        .sendTurn({ threadId, input: "Failing prompt" })
++        .pipe(Effect.forkChild);
++      const prompt = yield* h.nextPrompt;
++      yield* Deferred.fail(
++        prompt.result,
++        AcpErrors.AcpRequestError.internalError("The request was cancelled by the client."),
++      );
++      yield* Fiber.await(turn);
++      const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
++      expect(completed.payload.state).toBe("failed");
++      expect(completed.payload.errorMessage).toContain("cancelled by the client");
++    }),
++  );
+ });

@@ -1,0 +1,126 @@
+diff --git a/apps/server/src/preview/PortScanner.ts b/apps/server/src/preview/PortScanner.ts
+index 9eee1a3e215ee4df873f0c407bc9af4e1bb77e1b..5dad70fab3f3b307da1053da86c1566005b0c7fc 100644
+--- a/apps/server/src/preview/PortScanner.ts
++++ b/apps/server/src/preview/PortScanner.ts
+@@ -3,9 +3,9 @@
+  *
+  * macOS/Linux: parses `lsof -iTCP -sTCP:LISTEN -P -n -F pcn` (-F output is a
+  * stable line-prefixed field format; this is the only `lsof` flag set we rely
+- * on).
++ * on). Linux without lsof (Arch's base install) parses `ss -ltnpH` next.
+  *
+- * Windows / lsof missing: checks a curated list of common dev ports through
++ * Windows / neither tool: checks a curated list of common dev ports through
+  * the shared Net service.
+  *
+  * Listening ports are published only after a bounded HTTP(S) probe finds a
+@@ -36,9 +36,10 @@ import * as Ref from "effect/Ref";
+ import * as Schedule from "effect/Schedule";
+ import * as Scope from "effect/Scope";
+ import * as Semaphore from "effect/Semaphore";
+-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
++import { FetchHttpClient, HttpClient } from "effect/http";
+ 
+ import * as ProcessRunner from "../processRunner.ts";
++import { withStallJob } from "../observability/stallJobs.ts";
+ 
+ export class PortDiscovery extends Context.Service<
+   PortDiscovery,
+@@ -239,6 +240,46 @@ const parsePortFromLsofName = (name: string): number | null => {
+   return port;
+ };
+ 
++/**
++ * `ss -ltnp` listeners, the Linux fallback when `lsof` is not installed (Arch's
++ * base install has no lsof, and the shared laptop is Arch now).
++ *
++ * One line per listener:
++ * `LISTEN 0 511 127.0.0.1:5173 0.0.0.0:* users:(("node",pid=1234,fd=20))`
++ * The process column is missing when `ss` cannot read another user's sockets;
++ * such a listener is still real, it just has no pid to attribute.
++ */
++export function parseSsOutput(
++  raw: string,
++  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
++): ReadonlyArray<DiscoveredLocalServer> {
++  const seen = new Map<number, DiscoveredLocalServer>();
++  for (const line of raw.split(/\r?\n/g)) {
++    const fields = line.trim().split(/\s+/);
++    if (fields.length < 4 || !/^LISTEN$/i.test(fields[0] ?? "")) continue;
++    const local = fields[3] ?? "";
++    const lastColon = local.lastIndexOf(":");
++    if (lastColon < 0) continue;
++    if (!LSOF_LOCAL_HOST_TOKENS.has(local.slice(0, lastColon))) continue;
++    const port = Number.parseInt(local.slice(lastColon + 1), 10);
++    if (!Number.isFinite(port) || port <= 0 || port >= 65536) continue;
++    if (seen.has(port)) continue;
++    const processColumn = fields.slice(5).join(" ");
++    const pidMatch = /pid=(\d+)/.exec(processColumn);
++    const nameMatch = /\("([^"]+)"/.exec(processColumn);
++    const pid = pidMatch === null ? null : Number(pidMatch[1]);
++    seen.set(port, {
++      host: "localhost",
++      port,
++      url: `http://localhost:${port}`,
++      processName: nameMatch?.[1] ?? null,
++      pid: pid !== null && Number.isInteger(pid) && pid > 0 ? pid : null,
++      terminal: pid === null ? null : (terminalByProcessId.get(pid) ?? null),
++    });
++  }
++  return Array.from(seen.values()).toSorted((a, b) => a.port - b.port);
++}
++
+ const parseWindowsListenerOutput = (
+   raw: string,
+   terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
+@@ -471,7 +512,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
+   });
+ 
+   const recoverProcessProbeFailure =
+-    (probe: "lsof" | "windows-listeners") => (error: ProcessRunner.ProcessRunError) =>
++    (probe: "lsof" | "ss" | "windows-listeners") => (error: ProcessRunner.ProcessRunError) =>
+       Effect.logDebug("preview port process probe failed; falling back to common-port probes", {
+         cause: error,
+         probe,
+@@ -533,6 +574,30 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
+         }),
+       );
+     if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
++
++    // Arch (the shared laptop) has no `lsof` in its base install. `ss` comes
++    // with iproute2, which every Arch install has, and answers the same
++    // question with the pid and process name attached.
++    const recoverSsProbeFailure = recoverProcessProbeFailure("ss");
++    const ssResult = yield* processRunner
++      .run({
++        command: "ss",
++        args: ["-ltnpH"],
++        timeout: Duration.millis(LSOF_TIMEOUT_MS),
++        maxOutputBytes: 1024 * 1024,
++        outputMode: "truncate",
++      })
++      .pipe(
++        Effect.map((result) => parseSsOutput(result.stdout, terminalByProcessId)),
++        Effect.catchTags({
++          ProcessSpawnError: recoverSsProbeFailure,
++          ProcessStdinError: recoverSsProbeFailure,
++          ProcessOutputLimitError: recoverSsProbeFailure,
++          ProcessReadError: recoverSsProbeFailure,
++          ProcessTimeoutError: recoverSsProbeFailure,
++        }),
++      );
++    if (ssResult !== null) return yield* probeWebServers(ssResult, configuredUrls);
+     return yield* probeWebServers(yield* probeCommonPorts(), configuredUrls);
+   });
+ 
+@@ -581,7 +646,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
+   // Single layer-scoped polling fiber. Ticks skip the scan and its span when no
+   // client is currently retained, so the cost is one Ref.get every POLL_INTERVAL.
+   const pollIfRetained = Ref.get(stateRef).pipe(
+-    Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
++    Effect.flatMap((state) =>
++      state.retainCount > 0 ? pollTick().pipe(withStallJob("job:port-scan")) : Effect.void,
++    ),
+   );
+   yield* Effect.forkScoped(pollIfRetained.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+ 

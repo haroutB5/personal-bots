@@ -1,0 +1,53 @@
+diff --git a/apps/web/src/connection/platform.ts b/apps/web/src/connection/platform.ts
+index edd15c8df3eb9aad1a489792b7fed47467b6af12..dcf4baf3fe101b9ed9c6016ef0a6d184ca5db788 100644
+--- a/apps/web/src/connection/platform.ts
++++ b/apps/web/src/connection/platform.ts
+@@ -40,7 +40,7 @@ import * as Option from "effect/Option";
+ import * as Queue from "effect/Queue";
+ import * as Ref from "effect/Ref";
+ import * as Stream from "effect/Stream";
+-import { FetchHttpClient } from "effect/unstable/http";
++import { FetchHttpClient } from "effect/http";
+ 
+ import { APP_VERSION } from "../branding";
+ import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
+@@ -61,6 +61,7 @@ import {
+ } from "./desktopLocal";
+ import { connectionStorageLayer } from "./storage";
+ import { clientPresentationMetadata } from "./clientMetadata";
++import { subscribeBrowserWakeups } from "./browserWakeups";
+ 
+ let nextObservedRpcRequestId = 0;
+ 
+@@ -93,21 +94,17 @@ const connectivityLayer = Connectivity.layer({
+ 
+ const wakeupsLayer = Wakeups.layer({
+   changes: Stream.merge(
+-    Stream.callback<"application-active">((queue) =>
++    Stream.callback<Wakeups.ConnectionWakeup>((queue) =>
+       Effect.acquireRelease(
+-        Effect.sync(() => {
+-          const listener = () => {
+-            if (document.visibilityState === "visible") {
+-              Queue.offerUnsafe(queue, "application-active");
+-            }
+-          };
+-          document.addEventListener("visibilitychange", listener);
+-          return listener;
+-        }),
+-        (listener) =>
+-          Effect.sync(() => {
+-            document.removeEventListener("visibilitychange", listener);
+-          }),
++        Effect.sync(() =>
++          subscribeBrowserWakeups(
++            (reason) => {
++              Queue.offerUnsafe(queue, reason);
++            },
++            window.desktopBridge === undefined && window.matchMedia("(pointer: coarse)").matches,
++          ),
++        ),
++        (unsubscribe) => Effect.sync(unsubscribe),
+       ).pipe(Effect.asVoid),
+     ),
+     managedRelayAccountChanges(appAtomRegistry).pipe(

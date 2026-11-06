@@ -1,0 +1,34 @@
+diff --git a/apps/server/src/serverRuntimeStartup.reconcile.test.ts b/apps/server/src/serverRuntimeStartup.reconcile.test.ts
+index 050650b11515b8c2f09d8db63fd4561cbdc1dc34..a4ea12f5965af2376425a440c4d8d055f33b3aa6 100644
+--- a/apps/server/src/serverRuntimeStartup.reconcile.test.ts
++++ b/apps/server/src/serverRuntimeStartup.reconcile.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   type OrchestrationCommand,
+   type OrchestrationSessionStatus,
+@@ -58,6 +58,7 @@ const makeProviderService = (liveThreadIds: ReadonlyArray<ThreadId> = []) =>
+   ({
+     startSession: () => Effect.die("unused"),
+     sendTurn: () => Effect.die("unused"),
++    validateTurn: () => Effect.die("unused"),
+     compactThread: () => Effect.die("unused"),
+     interruptTurn: () => Effect.die("unused"),
+     respondToRequest: () => Effect.die("unused"),
+@@ -75,6 +76,7 @@ const makeProviderService = (liveThreadIds: ReadonlyArray<ThreadId> = []) =>
+ const queryWithThreads = (threads: ReadonlyArray<ReturnType<typeof makeThread>>) =>
+   ({
+     getUserInputActivity: () => Effect.die("unused"),
++    getPendingInputActivities: () => Effect.succeed([]),
+     getCommandReadModel: () => Effect.succeed({ threads } as never),
+   }) as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
+ 
+@@ -690,6 +692,7 @@ it.effect("does not fail startup when the live provider session inventory cannot
+   return ServerRuntimeStartup.reconcileProviderSessions.pipe(
+     Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+       getUserInputActivity: () => Effect.die("unused"),
++      getPendingInputActivities: () => Effect.succeed([]),
+       getCommandReadModel: () =>
+         Effect.sync(() => {
+           queried = true;

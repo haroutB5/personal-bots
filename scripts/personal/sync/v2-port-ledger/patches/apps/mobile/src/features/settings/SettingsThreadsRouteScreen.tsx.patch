@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/settings/SettingsThreadsRouteScreen.tsx b/apps/mobile/src/features/settings/SettingsThreadsRouteScreen.tsx
+index e209ab0b6ce559c46ac064378f342f56aeda2d27..0c95b7a2912c1e6f0b815778e4ca4859d77bbc64 100644
+--- a/apps/mobile/src/features/settings/SettingsThreadsRouteScreen.tsx
++++ b/apps/mobile/src/features/settings/SettingsThreadsRouteScreen.tsx
+@@ -1,7 +1,7 @@
+ import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
+ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+ import { useAtomSet, useAtomValue } from "@effect/atom-react";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useRef, useState } from "react";
+ import { Pressable, View } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";

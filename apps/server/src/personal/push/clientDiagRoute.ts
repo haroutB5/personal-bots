@@ -46,7 +46,7 @@ const reply = (status: number, body: string) =>
 const authState = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  return yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+  return yield* serverAuth.authenticateWebSocketUpgrade(request, "media").pipe(
     Effect.map((session) =>
       session.scopes.includes(AuthOrchestrationReadScope) ? "signed-in" : "no-scope",
     ),
@@ -252,7 +252,6 @@ export const makePersonalClientDiagRouteLayer = (options: ClientDiagRouteOptions
           if (refusalsLogged < CLIENT_DIAG_MAX_REFUSALS_LOGGED_PER_MINUTE) {
             refusalsLogged += 1;
             // Fixed words only: nothing the caller sent reaches this line.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off - a log line built from literals.
             yield* record(JSON.stringify({ event: "refused", reason, status, auth }));
           }
           return reply(status, body);

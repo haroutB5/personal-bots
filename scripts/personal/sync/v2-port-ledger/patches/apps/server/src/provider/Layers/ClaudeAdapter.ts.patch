@@ -1,0 +1,1021 @@
+diff --git a/apps/server/src/provider/Layers/ClaudeAdapter.ts b/apps/server/src/provider/Layers/ClaudeAdapter.ts
+index e4b4bea1d02fc876f80860b36e4db4c09a28ec68..949f498c8d3bf3882eb06d8aa0a7ad8bcd6015f3 100644
+--- a/apps/server/src/provider/Layers/ClaudeAdapter.ts
++++ b/apps/server/src/provider/Layers/ClaudeAdapter.ts
+@@ -8,6 +8,8 @@
+  * @module ClaudeAdapterLive
+  */
+ 
++import * as NodeFs from "node:fs";
++import * as NodePath from "node:path";
+ import * as NodeUtil from "node:util";
+ import {
+   type CanUseTool,
+@@ -27,7 +29,22 @@ import {
+ } from "@anthropic-ai/claude-agent-sdk";
+ import { parseCliArgs } from "@t3tools/shared/cliArgs";
+ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
++import { installClaudeSdkWarningFilter } from "./claudeSdkWarnings.ts";
+ import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
++import {
++  type ClaudeProcessHandle,
++  claudeSdkSpawnDisabled,
++  liveClaudeProcessPid,
++  makeClaudeProcessHandle,
++  makeRecordingClaudeSpawner,
++} from "./claudeProcessSpawner.ts";
++import { warmSpawnImage } from "../../process/spawnImageWarmup.ts";
++import { claudeApiRetryInfo, claudeRateLimitRejectionInfo } from "./claudeRetryInfo.ts";
++import { terminateDescendants } from "../processTree.ts";
++import {
++  isMissingProviderConversationText,
++  missingProviderConversationLine,
++} from "../missingProviderConversation.ts";
+ import {
+   ApprovalRequestId,
+   classifyTaskAgentKind,
+@@ -38,8 +55,10 @@ import {
+   type ProviderApprovalDecision,
+   ProviderDriverKind,
+   ProviderInstanceId,
++  type MessageId,
+   type ModelSelection,
+   ProviderItemId,
++  type ProviderRetryInfo,
+   type ProviderRuntimeEvent,
+   type ProviderRuntimeTurnStatus,
+   type ProviderSendTurnInput,
+@@ -72,7 +91,7 @@ import {
+ } from "@t3tools/shared/claudeCompaction";
+ import { HostProcessIsExecutable } from "@t3tools/shared/hostProcess";
+ import * as Cause from "effect/Cause";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -84,7 +103,7 @@ import * as Queue from "effect/Queue";
+ import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import { resolveAttachmentPath } from "../../attachmentStore.ts";
+ import { ServerConfig } from "../../config.ts";
+@@ -93,10 +112,14 @@ import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+ import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+ import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
+ import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
++import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
++import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
++import { personalClaudeQueryOptions } from "../../personal/providerHooks/claudeQueryOptions.ts";
++import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
+ import {
+   BUNDLED_CLAUDE_MODEL_CATALOG,
+   type ClaudeModelCatalog,
++  claudeCatalogHasModel,
+   getClaudeCatalogModelCapabilities,
+   isClaudeCatalogUltracodeEffort,
+   normalizeClaudeCatalogEffort,
+@@ -224,6 +247,10 @@ const remapClaudeForkTurnBoundaries = (
+   return remapped.some((id) => id === null) ? undefined : remapped;
+ };
+ 
++// The SDK warns on every bypassPermissions session start that canUseTool will
++// not be invoked; we keep the callback on purpose (see claudeSdkWarnings).
++installClaudeSdkWarningFilter();
++
+ const PROVIDER = ProviderDriverKind.make("claudeAgent");
+ type ClaudeTextStreamKind = Extract<
+   RuntimeContentStreamKind,
+@@ -267,6 +294,14 @@ interface ClaudeTurnState {
+    * steered instead (the queued message continues the same turn).
+    */
+   readonly synthetic?: boolean;
++  /**
++   * Whether the CLI has started this turn's prompt (stamped with the turn id),
++   * per its command_lifecycle frames. False from the send until then; unset
++   * for synthetic turns, which sent no prompt. See handleResultMessage.
++   */
++  promptStarted?: boolean;
++  /** A result held back because it came before the prompt started. */
++  heldResult?: SDKMessage | undefined;
+   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
+   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
+   readonly capturedProposedPlanKeys: Set<string>;
+@@ -276,6 +311,8 @@ interface ClaudeTurnState {
+   nextSyntheticAssistantBlockIndex: number;
+   authenticationFailureMessage: string | undefined;
+   rejectedRateLimitTypes: Set<string>;
++  /** The reported wait of each window in `rejectedRateLimitTypes`, for the failed turn. */
++  readonly rejectedRateLimitRetries: Map<string, ProviderRetryInfo>;
+   latestAssistantRateLimited: boolean;
+   emittedThinkingText: boolean;
+   readonly thinkingSnapshotIds: Set<string>;
+@@ -409,6 +446,8 @@ function rememberPendingTaskEntry(
+ 
+ interface ClaudeSessionContext {
+   session: ProviderSession;
++  /** The CLI process this session spawned (unset when the SDK spawned it). */
++  readonly process?: ClaudeProcessHandle;
+   startInput: Parameters<ClaudeAdapterShape["startSession"]>[0];
+   readonly turnStartMessageIds: Array<string | null>;
+   readonly promptQueue: Queue.Queue<PromptQueueItem>;
+@@ -421,6 +460,13 @@ interface ClaudeSessionContext {
+    * effort override inherit this. */
+   currentEffort: string | undefined;
+   resumeSessionId: string | undefined;
++  /**
++   * Set when Claude Code reports that the conversation this session resumed
++   * does not exist ("No conversation found with session ID"). The session can
++   * never run a turn, so sendTurn fails with that line and the caller starts
++   * a fresh session instead.
++   */
++  missingConversation?: string;
+   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+   /** Completed turn ids, reported by readThread and trimmed on rollback.
+@@ -462,6 +508,18 @@ interface ClaudeSessionContext {
+   lastThreadStartedId: string | undefined;
+   /** Limits already announced for the running turn, keyed `window:resetsAt`. */
+   announcedUsageLimits: { turnId: string; keys: Set<string> } | undefined;
++  /**
++   * The CLI reports each prompt's queued/started/completed lifecycle
++   * (`msg_lifecycle_v1` on system/init, or a command_lifecycle frame seen).
++   */
++  messageLifecycle: boolean;
++  /**
++   * Owner messages sent but not yet taken in, keyed by the uuid their SDK
++   * user message was stamped with (a turn's own id, or a fresh one for a
++   * steer). Cleared when the CLI reports the prompt started (or a reply names
++   * it), or when it will never run.
++   */
++  readonly undeliveredMessages: Map<string, MessageId>;
+   /** Resolved by completeTurn while Stop waits for Claude to abort the turn. */
+   interruptedTurnSettled: Deferred.Deferred<void> | undefined;
+   stopped: boolean;
+@@ -671,6 +729,32 @@ function describeClaudeUsageLimit(
+   }limit resets${wait ? ` in ${wait}` : ""}.`;
+ }
+ 
++/**
++ * The wait a turn that failed on a usage limit ends with: the window that
++ * resets last, since the turn cannot run before every blocking window has
++ * reset. A limit seen only in the reply text carries no reset time.
++ */
++export function usageLimitRetryForFailedTurn(turn: {
++  readonly rejectedRateLimitTypes: ReadonlySet<string>;
++  readonly rejectedRateLimitRetries: ReadonlyMap<string, ProviderRetryInfo>;
++  readonly latestAssistantRateLimited: boolean;
++}): { readonly retry?: ProviderRetryInfo } {
++  if (turn.rejectedRateLimitTypes.size === 0 && !turn.latestAssistantRateLimited) return {};
++  let latest: ProviderRetryInfo | undefined;
++  for (const type of turn.rejectedRateLimitTypes) {
++    const info = turn.rejectedRateLimitRetries.get(type);
++    if (info === undefined) continue;
++    if (
++      latest === undefined ||
++      (info.retryAt !== undefined &&
++        (latest.retryAt === undefined || Date.parse(info.retryAt) > Date.parse(latest.retryAt)))
++    ) {
++      latest = info;
++    }
++  }
++  return { retry: latest ?? { kind: "rate_limited" } };
++}
++
+ function formatClaudeUsageLimitWait(waitMs: number): string {
+   const totalMinutes = Math.ceil(waitMs / 60_000);
+   const hours = Math.floor(totalMinutes / 60);
+@@ -1528,7 +1612,20 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
+   return `${toolName}: ${serialized.slice(0, 397)}...`;
+ }
+ 
+-function titleForTool(itemType: CanonicalItemType): string {
++/**
++ * The step's display title. An MCP tool step says what the bot is doing
++ * ("Opening clubspark.com") from {@link mcpToolStepLabel}; every other kind
++ * keeps its own plain word. Arguments never reach the title.
++ */
++function titleForTool(
++  itemType: CanonicalItemType,
++  toolName?: string,
++  input?: Record<string, unknown>,
++): string {
++  if (itemType === "mcp_tool_call" && toolName !== undefined) {
++    const label = mcpToolStepLabel({ tool: toolName, arguments: input });
++    if (label !== undefined) return label;
++  }
+   switch (itemType) {
+     case "command_execution":
+       return "Command run";
+@@ -1561,6 +1658,26 @@ const CLAUDE_SETTING_SOURCES = [
+   "local",
+ ] as const satisfies ReadonlyArray<SettingSource>;
+ 
++/**
++ * Per-bot plugin folders live at `<baseDir>/bot-plugins/<botId>/`.
++ */
++export const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
++/**
++ * Skills every bot gets (`<baseDir>/bot-plugins/_shared/`). The leading
++ * underscore keeps it out of the bot id pattern, so no bot can claim it.
++ */
++export const PERSONAL_BOT_SHARED_PLUGIN = "_shared";
++// Bot ids are UUIDs; anything else never becomes a path segment.
++export const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
++/**
++ * Defaults for normal (non-bot) threads; the user's own environment wins.
++ * Since CLI 2.1.268 TodoWrite is offered only on older models, which leaves
++ * the plan panel empty on newer ones; this turns it back on.
++ */
++export const CLAUDE_THREAD_DEFAULT_ENVIRONMENT = {
++  CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
++} as const;
++
+ function buildPromptText(
+   input: ProviderSendTurnInput,
+   boundInstanceId: ProviderInstanceId,
+@@ -1987,6 +2104,55 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
+   });
+ }
+ 
++/** system/init lists `msg_lifecycle_v1` when the CLI reports each prompt's lifecycle. */
++function sdkAdvertisesMessageLifecycle(message: unknown): boolean {
++  const capabilities = (message as { capabilities?: unknown }).capabilities;
++  return Array.isArray(capabilities) && capabilities.includes("msg_lifecycle_v1");
++}
++
++const MAX_PLUGIN_ERRORS_SHOWN = 4;
++
++/**
++ * The warning row for system/init `plugin_errors` (SDK 0.3.283), or null when
++ * every plugin loaded. `plugins` is the compact form for the server log.
++ */
++export function pluginLoadWarning(
++  pluginErrors: unknown,
++): { readonly text: string; readonly plugins: ReadonlyArray<string> } | null {
++  if (!Array.isArray(pluginErrors) || pluginErrors.length === 0) return null;
++  const rows = pluginErrors.flatMap((entry) => {
++    const row = entry as { plugin?: unknown; type?: unknown; message?: unknown } | null;
++    if (row === null || typeof row !== "object") return [];
++    const plugin = typeof row.plugin === "string" && row.plugin.length > 0 ? row.plugin : "plugin";
++    const type = typeof row.type === "string" && row.type.length > 0 ? row.type : "generic-error";
++    const message = typeof row.message === "string" ? row.message.trim().slice(0, 200) : "";
++    return [{ plugin, type, message }];
++  });
++  if (rows.length === 0) return null;
++  const shown = rows
++    .slice(0, MAX_PLUGIN_ERRORS_SHOWN)
++    .map((row) => `${row.plugin} (${row.type})${row.message.length > 0 ? `: ${row.message}` : ""}`);
++  const more =
++    rows.length > MAX_PLUGIN_ERRORS_SHOWN
++      ? ` and ${rows.length - MAX_PLUGIN_ERRORS_SHOWN} more`
++      : "";
++  return {
++    text: `A plugin did not load: ${shown.join("; ")}${more}`,
++    plugins: rows.map((row) => `${row.plugin} (${row.type})`),
++  };
++}
++
++/** The state a command_lifecycle frame reports for the prompt `uuid`, or null for another command. */
++function commandLifecycleState(message: unknown, uuid: string): string | null {
++  const frame = message as { command_uuid?: unknown; state?: unknown };
++  return frame.command_uuid === uuid && typeof frame.state === "string" ? frame.state : null;
++}
++
++/** A result from a command that never reached the model. */
++function sdkResultRanNoTurns(message: unknown): boolean {
++  return (message as { num_turns?: unknown }).num_turns === 0;
++}
++
+ function sdkMessageType(value: unknown): string | undefined {
+   if (!value || typeof value !== "object") {
+     return undefined;
+@@ -2110,6 +2276,28 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+   const path = yield* Path.Path;
+   const serverConfig = yield* ServerConfig;
+   const crypto = yield* Crypto.Crypto;
++  /** The folder when it holds a Claude plugin manifest. */
++  const pluginDirWithManifest = (pluginDir: string) =>
++    fileSystem.exists(path.join(pluginDir, ".claude-plugin", "plugin.json")).pipe(
++      Effect.orElseSucceed(() => false),
++      Effect.map((hasManifest) => (hasManifest ? pluginDir : undefined)),
++    );
++  /**
++   * The shared plugin folder (`<baseDir>/bot-plugins/_shared`), then the bot's
++   * own (`<baseDir>/bot-plugins/<botId>`), each only when it has a manifest.
++   */
++  const resolvePersonalBotPluginDirs = (botId: string | undefined) =>
++    Effect.gen(function* () {
++      const pluginsRoot = path.join(serverConfig.baseDir, PERSONAL_BOT_PLUGINS_DIR);
++      const shared = yield* pluginDirWithManifest(
++        path.join(pluginsRoot, PERSONAL_BOT_SHARED_PLUGIN),
++      );
++      const own =
++        botId === undefined || !PERSONAL_BOT_ID_PATTERN.test(botId)
++          ? undefined
++          : yield* pluginDirWithManifest(path.join(pluginsRoot, botId));
++      return [shared, own].filter((dir): dir is string => dir !== undefined);
++    });
+   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
+     Effect.provideService(Path.Path, path),
+@@ -2864,6 +3052,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+           : {}),
+         ...(errorMessage ? { errorMessage } : {}),
+         tokenUsage: normalizeClaudeTurnTokenUsage(result, turnState.hasSubagents, status),
++        // The limit's reset rides on the failed turn: the limit notice itself
++        // is output, which clears the session's earlier "rate limited" wait.
++        ...(status === "failed" ? usageLimitRetryForFailedTurn(turnState) : {}),
+       },
+       providerRefs: nativeProviderRefs(context),
+     });
+@@ -3010,7 +3201,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         let nextTool: ToolInFlight = {
+           ...tool,
+           itemType,
+-          title: titleForTool(itemType),
++          title: titleForTool(itemType, tool.toolName, parsedInput ?? tool.input),
+           partialInputJson,
+           ...(parsedInput ? { input: parsedInput } : {}),
+           ...(detail ? { detail } : {}),
+@@ -3137,7 +3328,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         itemId,
+         itemType,
+         toolName,
+-        title: titleForTool(itemType),
++        title: titleForTool(itemType, toolName, toolInput),
+         detail,
+         input: toolInput,
+         partialInputJson: "",
+@@ -3441,6 +3632,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         nextSyntheticAssistantBlockIndex: -1,
+         authenticationFailureMessage: undefined,
+         rejectedRateLimitTypes: new Set(),
++        rejectedRateLimitRetries: new Map(),
+         latestAssistantRateLimited: false,
+         emittedThinkingText: false,
+         thinkingSnapshotIds: new Set(),
+@@ -3541,6 +3733,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+     }
+ 
+     const turn = context.turnState;
++    // A result that ran no model turn before this turn's prompt has even
++    // started belongs to another command: Claude Code replays a background
++    // task's notice when a session resumes and closes it with an empty
++    // `num_turns: 0` result. Taken as this turn's end it closed a routine's
++    // task in a second with no result, while the real reply ran on in an
++    // orphan turn (26 Sep, 08:20). The prompt's own result follows its start.
++    if (
++      turn !== undefined &&
++      turn.promptStarted === false &&
++      context.messageLifecycle &&
++      sdkResultRanNoTurns(message)
++    ) {
++      turn.heldResult = message;
++      yield* Effect.logInfo("claude.result.before-prompt-started", {
++        threadId: context.session.threadId,
++        turnId: turn.turnId,
++        subtype: message.subtype,
++      });
++      return;
++    }
+     if (turn && isResultForOtherTurn(message, turn)) {
+       // Completing here would end the user's turn before its prompt runs. A
+       // `/compact` would then compact with no turn open and leave the thread
+@@ -3559,6 +3771,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         ? "Claude usage limit reached. Send the message again once the limit resets."
+         : undefined);
+     const { status, errorMessage } = resultOutcome(message, failureHint);
++    if (
++      status === "failed" &&
++      errorMessage !== undefined &&
++      isMissingProviderConversationText(errorMessage)
++    ) {
++      context.missingConversation = errorMessage;
++    }
+ 
+     if (status === "failed") {
+       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
+@@ -3681,7 +3900,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+     }
+ 
+     switch (message.subtype) {
+-      case "init":
++      case "init": {
++        if (sdkAdvertisesMessageLifecycle(message)) context.messageLifecycle = true;
+         yield* offerRuntimeEvent({
+           ...base,
+           type: "session.configured",
+@@ -3689,7 +3909,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+             config: message as Record<string, unknown>,
+           },
+         });
++        // SDK 0.3.283: a plugin that failed to load (or loaded without one of its
++        // components) is listed here. A bot whose plugin silently did not load
++        // would otherwise just lack its skills; show it as a warning row.
++        const pluginNotice = pluginLoadWarning(message.plugin_errors);
++        if (pluginNotice !== null) {
++          yield* Effect.logWarning("claude.plugin.load-errors", {
++            threadId: context.session.threadId,
++            plugins: pluginNotice.plugins,
++          });
++          yield* emitRuntimeWarning(context, pluginNotice.text, message.plugin_errors);
++        }
+         return;
++      }
+       case "status":
+         yield* offerRuntimeEvent({
+           ...base,
+@@ -3971,13 +4203,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         // Transport-level retry heartbeat. Surfacing each attempt as a
+         // warning row spammed the work log (10 rows during a 502 storm);
+         // the terminal result/error path reports the actual failure. Keep
+-        // the session visibly alive instead.
++        // the session visibly alive instead, carrying the wait (a 429 can
++        // hold the turn for hours) so the thread does not just say Working.
+         yield* offerRuntimeEvent({
+           ...base,
+           type: "session.state.changed",
+           payload: {
+             state: "running",
+             reason: `api_retry:${message.attempt}/${message.max_retries}`,
++            retry: claudeApiRetryInfo(message, base.createdAt),
+           },
+         });
+         return;
+@@ -4181,13 +4415,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         // Current blocking evidence is independent of whether its warning has
+         // already been shown. A recovery can omit or advance the reset time;
+         // its window type remains stable without clearing another window.
+-        if (blocked) context.turnState.rejectedRateLimitTypes.add(limitType);
+-        else if (
++        if (blocked) {
++          context.turnState.rejectedRateLimitTypes.add(limitType);
++          context.turnState.rejectedRateLimitRetries.set(
++            limitType,
++            claudeRateLimitRejectionInfo(rateLimitInfo),
++          );
++        } else if (
+           rateLimitInfo.status === "allowed" ||
+           rateLimitInfo.status === "allowed_warning" ||
+           overageAllowed
+         ) {
+           context.turnState.rejectedRateLimitTypes.delete(limitType);
++          context.turnState.rejectedRateLimitRetries.delete(limitType);
+         }
+       }
+       if (blocked && context.turnState !== undefined) {
+@@ -4209,11 +4449,76 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+           );
+           yield* emitRuntimeWarning(context, notice, rateLimitInfo);
+         }
++        // The parked turn waits on this window: put its reset on the session
++        // so the thread reads "Rate limited", not "Working".
++        yield* offerRuntimeEvent({
++          ...base,
++          type: "session.state.changed",
++          payload: {
++            state: "running",
++            reason: `rate_limit:${limitType}`,
++            retry: claudeRateLimitRejectionInfo(rateLimitInfo),
++          },
++        });
+       }
+       return;
+     }
+   });
+ 
++  const emitUserMessageDelivered = Effect.fnUntraced(function* (
++    context: ClaudeSessionContext,
++    uuid: string,
++  ) {
++    const messageId = context.undeliveredMessages.get(uuid);
++    if (messageId === undefined) return;
++    context.undeliveredMessages.delete(uuid);
++    const stamp = yield* makeEventStamp();
++    const turnId = context.turnState?.turnId;
++    yield* offerRuntimeEvent({
++      type: "user-message.delivered",
++      eventId: stamp.eventId,
++      provider: PROVIDER,
++      createdAt: stamp.createdAt,
++      threadId: context.session.threadId,
++      ...(turnId !== undefined ? { turnId } : {}),
++      payload: { messageId },
++    });
++  });
++
++  /**
++   * An owner message is taken in when the CLI drains it into a turn: a new
++   * turn, or folded into the running one at its next step. `started` says so;
++   * `completed` covers a fold whose `started` never came. A message that will
++   * never run (cancelled, discarded, refused) just stops being tracked.
++   */
++  const settleUndeliveredMessage = Effect.fnUntraced(function* (
++    context: ClaudeSessionContext,
++    frame: unknown,
++  ) {
++    const { command_uuid: uuid, state } = frame as { command_uuid?: unknown; state?: unknown };
++    if (typeof uuid !== "string" || !context.undeliveredMessages.has(uuid)) return;
++    if (state === "started" || state === "completed") {
++      yield* emitUserMessageDelivered(context, uuid);
++    } else if (state === "cancelled" || state === "discarded" || state === "refused") {
++      context.undeliveredMessages.delete(uuid);
++    }
++  });
++
++  /** A reply naming the send it answers proves the model has it (CLIs without lifecycle frames). */
++  const deliverAnsweredMessages = Effect.fnUntraced(function* (
++    context: ClaudeSessionContext,
++    message: unknown,
++  ) {
++    if (context.undeliveredMessages.size === 0) return;
++    const frame = message as { user_message_uuid?: unknown; user_message_uuids?: unknown };
++    const uuids = Array.isArray(frame.user_message_uuids)
++      ? frame.user_message_uuids
++      : [frame.user_message_uuid];
++    for (const uuid of uuids) {
++      if (typeof uuid === "string") yield* emitUserMessageDelivered(context, uuid);
++    }
++  });
++
+   const handleSdkMessage = Effect.fn("handleSdkMessage")(function* (
+     context: ClaudeSessionContext,
+     message: SDKMessage,
+@@ -4221,11 +4526,31 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+     yield* logNativeSdkMessage(context, message);
+     yield* ensureThreadId(context, message);
+ 
+-    // Wire-only command bookkeeping has no user-facing T3 lifecycle.
++    // Wire-only command bookkeeping has no user-facing T3 lifecycle; it only
++    // says when the running turn's own prompt has started.
+     if (sdkMessageType(message) === "command_lifecycle") {
++      context.messageLifecycle = true;
++      yield* settleUndeliveredMessage(context, message);
++      const turn = context.turnState;
++      const state = turn === undefined ? null : commandLifecycleState(message, turn.turnId);
++      if (turn === undefined || state === null) return;
++      if (state === "started") {
++        turn.promptStarted = true;
++      } else if ((state === "completed" || state === "cancelled") && turn.heldResult) {
++        // The prompt ended without a result of its own: the held one closes
++        // the turn rather than leave it running forever.
++        const held = turn.heldResult;
++        turn.heldResult = undefined;
++        turn.promptStarted = true;
++        yield* handleResultMessage(context, held);
++      }
+       return;
+     }
+ 
++    if (message.type === "assistant" || message.type === "stream_event") {
++      yield* deliverAnsweredMessages(context, message);
++    }
++
+     switch (message.type) {
+       case "stream_event":
+         yield* handleStreamEvent(context, message);
+@@ -4315,7 +4640,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         const failures = exit.cause.reasons.flatMap((reason) =>
+           Cause.isFailReason(reason) ? [reason.error] : [],
+         );
+-        const message = failures[0]?.detail ?? "Claude runtime stream failed.";
++        // The CLI of a resume whose conversation is gone exits right after its error result, and the
++        // stream then fails: that is the same failure, so it carries the same words (the app renews
++        // the session on them), not a generic stream error that reads as a new one.
++        const message =
++          context.missingConversation ?? failures[0]?.detail ?? "Claude runtime stream failed.";
+         yield* emitRuntimeError(context, message, {
+           failureCount: failures.length,
+           failureTags: failures.map((failure) => failure._tag),
+@@ -4333,12 +4662,29 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+ 
+   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
+     context: ClaudeSessionContext,
+-    options?: { readonly emitExitEvent?: boolean },
++    options?: { readonly emitExitEvent?: boolean; readonly terminateProcesses?: boolean },
+   ) {
+     if (context.stopped) return;
+ 
++    // Before the CLI goes: once it exits, the commands it started lose their
++    // parent link and can no longer be found from its PID.
++    const cliPid =
++      options?.terminateProcesses === true ? liveClaudeProcessPid(context.process) : undefined;
++    if (cliPid !== undefined) {
++      const ended = yield* terminateDescendants(cliPid);
++      yield* Effect.logInfo("claude.session.processes-terminated", {
++        threadId: context.session.threadId,
++        cliPid,
++        found: ended.found.map((entry) => `${entry.pid}:${entry.name}`).join(","),
++        killed: ended.killed.join(","),
++        snapshotFailed: ended.snapshotFailed,
++      });
++    }
++
+     // Schedule process termination before any cleanup that can wait on the
+     // provider. The SDK closes stdin, then escalates from SIGTERM to SIGKILL.
++    // The exit that follows is on purpose: the process handle says so, so the log does not warn.
++    if (context.process !== undefined) context.process.stopRequested = true;
+     yield* Effect.try({
+       try: () => context.query.close(),
+       catch: (cause) =>
+@@ -4489,7 +4835,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+       const startedAt = yield* nowIso;
+       const resumeState = readClaudeResumeState(input.resumeCursor);
+       const threadId = input.threadId;
+-      const existingResumeSessionId = resumeState?.resume;
++      // A session that never ran a turn never wrote a transcript, so Claude
++      // Code cannot resume it ("No conversation found"): a prewarmed chat the
++      // owner left without sending. Only this adapter writes turnCount, so a
++      // cursor from elsewhere (an imported session) still resumes.
++      const neverRanTurn =
++        resumeState?.turnCount === 0 &&
++        resumeState.resumeSessionAt === undefined &&
++        (resumeState.turnStartMessageIds?.length ?? 0) === 0;
++      const existingResumeSessionId = neverRanTurn ? undefined : resumeState?.resume;
+       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
+       const sessionId = existingResumeSessionId ?? newSessionId;
+ 
+@@ -4949,7 +5303,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         effort,
+         modelSelection?.model,
+       );
++      // An approval-required thread asks for "default" explicitly: with no mode
++      // sent, the CLI (2.1.2xx) starts a session in auto mode.
+       const runtimeModeToPermission: Record<string, PermissionMode> = {
++        "approval-required": "default",
+         "auto-accept-edits": "acceptEdits",
+         auto: "auto",
+         "full-access": "bypassPermissions",
+@@ -4962,19 +5319,68 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
+           ? "bypassPermissions"
+           : runtimeModeToPermission[input.runtimeMode]);
++      const personalBot = input.personalBot === true;
++      // A bot's own plugin folder (skills, commands) loads explicitly: it is
++      // unaffected by the empty settingSources below, so the machine owner's
++      // user-level plugins stay out while this bot keeps its extras.
++      const botPluginDirs = personalBot
++        ? yield* resolvePersonalBotPluginDirs(input.personalBotId)
++        : [];
++      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
++      const personalClaude = personalClaudeQueryOptions({
++        personalBot,
++        personalTaskChat: input.personalTaskChat === true,
++        model: modelSelection?.model,
++        modelCatalog,
++        configuredAutoCompactWindow: claudeSettings.autoCompactWindow,
++        protectedPaths: serverConfig,
++        pluginDirs: botPluginDirs,
++        hasMcpSession: mcpSession !== undefined,
++      });
++      // The CLI loads these skills itself and drops an unparsable one in
++      // silence (a UTF-8 BOM does it), so name each one that cannot load.
++      if (personalClaude.logPluginSkillProblems) {
++        yield* logPersonalBotPluginSkillProblems({
++          baseDir: serverConfig.baseDir,
++          botId: input.personalBotId,
++        }).pipe(
++          Effect.provideService(FileSystem.FileSystem, fileSystem),
++          Effect.provideService(Path.Path, path),
++        );
++      }
+       const settings = {
+         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
+         ...(fastMode ? { fastMode: true } : {}),
+         ...(ultracode ? { ultracode: true } : {}),
+-        ...(claudeSettings.autoCompactWindow
+-          ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
+-          : {}),
++        ...personalClaude.settings,
+       };
++      const settingSources: Array<SettingSource> = personalClaude.settingSources
++        ? [...personalClaude.settingSources]
++        : [...CLAUDE_SETTING_SOURCES];
+       if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
+         extraArgs["thinking-display"] = "summarized";
+       }
+-      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
++      // The bearer token rides in the child's environment, not in --mcp-config on
++      // its command line (see claudeMcpAuthorization).
++      const mcpAuthorization = mcpSession
++        ? McpProviderSession.claudeMcpAuthorization(mcpSession)
++        : undefined;
++      const sessionEnvironment: NodeJS.ProcessEnv = {
++        ...McpProviderSession.withProviderSessionEnvironment(claudeEnvironment, mcpSession),
++        ...mcpAuthorization?.environment,
++      };
++      const mcpServers: ClaudeQueryOptions["mcpServers"] = mcpSession
++        ? {
++            "t3-code": {
++              type: "http",
++              url: mcpSession.endpoint,
++              headers: {
++                Authorization: mcpAuthorization!.header,
++              },
++            },
++          }
++        : personalClaude.mcpServers;
+       // The attachments dir grant lets the agent Read/copy pasted images at
+       // the paths ProviderService injects into the turn text, without an
+       // approval prompt. It is a leaf directory holding only attachment
+@@ -4983,7 +5389,39 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         ...(input.cwd ? [input.cwd] : []),
+         serverConfig.attachmentsDir,
+       ];
++      // Remembers the CLI's PID so a deleted chat can end the commands it ran.
++      const processHandle = claudeSdkSpawnDisabled() ? undefined : makeClaudeProcessHandle();
+       const queryOptions: ClaudeQueryOptions = {
++        ...(processHandle !== undefined
++          ? {
++              spawnClaudeCodeProcess: makeRecordingClaudeSpawner(
++                processHandle,
++                (detail) => {
++                  const missing = missingProviderConversationLine(detail.stderrTail);
++                  const exitedContext = sessions.get(threadId);
++                  if (missing !== undefined && exitedContext?.process === processHandle) {
++                    exitedContext.missingConversation ??= missing;
++                  }
++                  runFork(
++                    detail.requested
++                      ? Effect.logInfo("claude.process.stopped", {
++                          threadId,
++                          code: detail.code,
++                          signal: detail.signal,
++                        })
++                      : Effect.logWarning("claude.process.exited-abnormally", {
++                          threadId,
++                          code: detail.code,
++                          signal: detail.signal,
++                          stderrTail: detail.stderrTail.slice(-2_000),
++                        }),
++                  );
++                },
++                undefined,
++                { threadId, provider: "claudeAgent" },
++              ),
++            }
++          : {}),
+         ...(input.cwd ? { cwd: input.cwd } : {}),
+         ...(apiModelId ? { model: apiModelId } : {}),
+         pathToClaudeCodeExecutable: claudeBinaryPath,
+@@ -4991,9 +5429,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+           type: "preset",
+           preset: "claude_code",
+           // Model and effort can change after this session-level prompt is set.
+-          append: buildRuntimeInstructions({ harness: "Claude Code" }),
++          // A personal bot's instructions ride along in their own block.
++          append: withBotInstructions(
++            buildRuntimeInstructions({ harness: "Claude Code" }),
++            input.systemInstructions,
++          ),
++          // Claude Code records the prompt once per conversation by default,
++          // so an edited bot would keep its old instructions in existing
++          // chats until compaction. Bots render it fresh on every request.
++          ...(personalClaude.systemPrompt ?? {}),
+         },
+-        settingSources: [...CLAUDE_SETTING_SOURCES],
++        settingSources,
++        ...(personalClaude.disallowedTools === undefined
++          ? {}
++          : { disallowedTools: personalClaude.disallowedTools }),
++        // A whole-file Read of a large text file is refused before it runs; see
++        // PERSONAL_BOT_READ_GUARD_HOOK. Off with PERSONAL_READ_LARGE_GUARD=off.
++        ...(personalClaude.hooks === undefined ? {} : { hooks: personalClaude.hooks }),
+         // `ultracode` is a Claude Code setting, not an API effort level. It is
+         // normalized to `xhigh` above and paired with `settings.ultracode`.
+         ...(effectiveEffort
+@@ -5020,22 +5472,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         canUseTool,
+         onUserDialog,
+         supportedDialogKinds: ["resume_return"],
+-        env: McpProviderSession.withAgentDeviceEnvironment(claudeEnvironment, mcpSession),
++        env:
++          personalClaude.env === undefined
++            ? { ...CLAUDE_THREAD_DEFAULT_ENVIRONMENT, ...sessionEnvironment }
++            : { ...sessionEnvironment, ...personalClaude.env },
+         additionalDirectories,
+         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
+-        ...(mcpSession
+-          ? {
+-              mcpServers: {
+-                "t3-code": {
+-                  type: "http",
+-                  url: mcpSession.endpoint,
+-                  headers: {
+-                    Authorization: mcpSession.authorizationHeader,
+-                  },
+-                },
+-              },
+-            }
+-          : {}),
++        ...(mcpServers ? { mcpServers } : {}),
++        ...(personalClaude.strictMcpConfig ? { strictMcpConfig: true } : {}),
++        ...(personalClaude.plugins === undefined ? {} : { plugins: personalClaude.plugins }),
++        ...(personalClaude.agents === undefined ? {} : { agents: personalClaude.agents }),
+       };
+ 
+       yield* Effect.annotateCurrentSpan({
+@@ -5051,18 +5497,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         "claude.query.cwd": input.cwd ?? "",
+         "claude.query.model": apiModelId ?? "",
+         "claude.query.effort": effectiveEffort ?? "",
++        "claude.query.explore_model": personalClaude.exploreModel ?? "",
+         "claude.query.permission_mode": permissionMode ?? "",
+         "claude.query.allow_dangerously_skip_permissions": permissionMode === "bypassPermissions",
+         "claude.query.resume": existingResumeSessionId ?? "",
+         "claude.query.session_id": newSessionId ?? "",
+         "claude.query.include_partial_messages": true,
+         "claude.query.additional_directories": additionalDirectories,
+-        "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
++        "claude.query.setting_sources": settingSources,
++        "claude.query.personal_bot": personalBot,
++        "claude.query.plugins": personalClaude.pluginDirs,
+         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
+         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
+         "claude.query.path_to_executable": claudeBinaryPath,
+       });
+ 
++      // The SDK spawns the CLI synchronously inside createQuery; a CLI Windows
++      // has not checked yet is started once on a worker first (spawnImageWarmup).
++      yield* warmSpawnImage(claudeBinaryPath);
+       const queryRuntime = yield* Effect.try({
+         try: () =>
+           createQuery({
+@@ -5102,6 +5554,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+ 
+       const context: ClaudeSessionContext = {
+         session,
++        ...(processHandle !== undefined ? { process: processHandle } : {}),
+         startInput: input,
+         turnStartMessageIds: resumeState?.turnStartMessageIds
+           ? [...resumeState.turnStartMessageIds]
+@@ -5131,6 +5584,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         lastAssistantUuid: resumeState?.resumeSessionAt,
+         lastThreadStartedId: undefined,
+         announcedUsageLimits: undefined,
++        messageLifecycle: false,
++        undeliveredMessages: new Map(),
+         interruptedTurnSettled: undefined,
+         stopped: false,
+       };
+@@ -5211,8 +5666,35 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+     },
+   );
+ 
++  const missingConversationError = (line: string) =>
++    new ProviderAdapterRequestError({
++      provider: PROVIDER,
++      method: "turn/start",
++      detail: line,
++    });
++
++  /**
++   * A control request that fails because the CLI exited. When it exited on a
++   * missing conversation, that is the real reason: say so, so the caller can
++   * start a fresh session. The CLI's result or stderr can land just after the
++   * control request's rejection, so wait briefly for the session to settle.
++   */
++  const explainControlFailure = (context: ClaudeSessionContext, error: ProviderAdapterError) =>
++    Effect.gen(function* () {
++      for (let waited = 0; waited < 2_000; waited += 50) {
++        if (context.missingConversation !== undefined || context.stopped) break;
++        yield* Effect.sleep("50 millis");
++      }
++      return yield* context.missingConversation !== undefined
++        ? Effect.fail(missingConversationError(context.missingConversation))
++        : Effect.fail(error);
++    });
++
+   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+     const context = yield* requireSession(input.threadId);
++    if (context.missingConversation !== undefined) {
++      return yield* missingConversationError(context.missingConversation);
++    }
+     const modelCatalog = yield* modelCatalogEffect;
+     const selectedModel =
+       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId
+@@ -5242,7 +5724,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         yield* Effect.tryPromise({
+           try: () => context.query.setModel(apiModelId),
+           catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
+-        });
++        }).pipe(Effect.catch((error) => explainControlFailure(context, error)));
+         context.currentApiModelId = apiModelId;
+       }
+       context.session = {
+@@ -5267,12 +5749,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+       yield* Effect.tryPromise({
+         try: () => context.query.setPermissionMode("plan"),
+         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+-      });
++      }).pipe(Effect.catch((error) => explainControlFailure(context, error)));
+     } else if (input.interactionMode === "default") {
+       yield* Effect.tryPromise({
+         try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
+         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+-      });
++      }).pipe(Effect.catch((error) => explainControlFailure(context, error)));
+     }
+ 
+     const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
+@@ -5280,6 +5762,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+       const turnState: ClaudeTurnState = {
+         turnId,
+         startedAt: yield* nowIso,
++        promptStarted: false,
+         assistantTextBlocks: new Map(),
+         assistantTextBlockOrder: [],
+         capturedProposedPlanKeys: new Set(),
+@@ -5289,6 +5772,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+         nextSyntheticAssistantBlockIndex: -1,
+         authenticationFailureMessage: undefined,
+         rejectedRateLimitTypes: new Set(),
++        rejectedRateLimitRetries: new Map(),
+         latestAssistantRateLimited: false,
+         emittedThinkingText: false,
+         thinkingSnapshotIds: new Set(),
+@@ -5343,11 +5827,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+ 
+     if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);
+     yield* updateResumeCursor(context);
++    // Every owner message carries a uuid so the CLI reports when it drains
++    // (command_lifecycle). A turn's own prompt uses the turn id; a steer gets
++    // its own, which never enters turnStartMessageIds.
++    const promptUuid =
++      steeringTurnState === null
++        ? (turnId as string)
++        : input.messageId !== undefined
++          ? yield* randomUUIDv4
++          : undefined;
++    if (promptUuid !== undefined && input.messageId !== undefined) {
++      context.undeliveredMessages.set(promptUuid, input.messageId);
++    }
+     yield* Queue.offer(context.promptQueue, {
+       type: "message",
+       message:
+-        steeringTurnState === null
+-          ? { ...message, uuid: turnId as NonNullable<SDKUserMessage["uuid"]> }
++        promptUuid !== undefined
++          ? { ...message, uuid: promptUuid as NonNullable<SDKUserMessage["uuid"]> }
+           : message,
+     }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
+ 
+@@ -5477,9 +5973,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+             };
+             if (options?.getSessionMessages)
+               return options.getSessionMessages(historySessionId, readOptions);
+-            if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
+-              return getSessionMessages(historySessionId, readOptions);
+-            }
++            // Always read through the worker process. The SDK helper parses the
++            // whole session JSONL, and in-process that parse (JSON.parse over
++            // every transcript line) runs on the server's event loop - the
++            // "Claude history scan on the main thread" the 12 Oct stall review
++            // flagged (claudeHistoryWorker-*.mjs frames, seconds on a long
++            // session). The child gets the same environment, so it resolves the
++            // same Claude home; only the reading and parsing moved off this
++            // thread. Rollback and fork are the only callers.
+             return decodeSessionMessages(
+               await runScopedHistoryCommand("getSessionMessages", readOptions, historySessionId),
+             );
+@@ -5536,9 +6037,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+                 upToMessageId: rollbackAt,
+               };
+               if (options?.forkSession) return options.forkSession(sessionId, forkOptions);
+-              if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
+-                return forkSession(sessionId, forkOptions);
+-              }
++              // The worker process, like the history read above: forking rewrites
++              // the whole transcript, and doing that on the server's loop is the
++              // same main-thread scan by another name.
+               return decodeHistoryFork(await runScopedHistoryCommand("forkSession", forkOptions));
+             },
+             catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+@@ -5615,10 +6116,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+   });
+ 
+   const stopSession: ClaudeAdapterShape["stopSession"] = Effect.fn("stopSession")(
+-    function* (threadId) {
++    function* (threadId, stopOptions) {
+       const context = yield* requireSession(threadId);
+       yield* stopSessionInternal(context, {
+         emitExitEvent: true,
++        ...(stopOptions?.terminateProcesses === true ? { terminateProcesses: true } : {}),
+       });
+     },
+   );
+@@ -5664,6 +6166,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
+     provider: PROVIDER,
+     capabilities: {
+       sessionModelSwitch: "in-session",
++      // Reported from the CLI's command_lifecycle "started" for the message.
++      userMessageDelivery: "adapter",
+     },
+     compaction: { type: "slash-command", command: "/compact" },
+     startSession,

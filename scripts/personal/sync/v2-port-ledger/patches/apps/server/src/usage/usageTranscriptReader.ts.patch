@@ -1,0 +1,96 @@
+diff --git a/apps/server/src/usage/usageTranscriptReader.ts b/apps/server/src/usage/usageTranscriptReader.ts
+index faa68699077776ca6ec3eaa1d96103cb1821933d..2230466f02443398f62aa4496d17716e33966f7d 100644
+--- a/apps/server/src/usage/usageTranscriptReader.ts
++++ b/apps/server/src/usage/usageTranscriptReader.ts
+@@ -22,6 +22,7 @@ import * as NodeStringDecoder from "node:string_decoder";
+ import type { UsageProviderKind } from "@t3tools/contracts";
+ 
+ import { createTranscriptJsonReader } from "../project/AgentSessionJson.ts";
++import { readDeepSeekOnWorker } from "./usageTranscriptWorkerClient.ts";
+ 
+ import {
+   initialCodexScanState,
+@@ -30,6 +31,8 @@ import {
+   parseClaudeRecord,
+   parseCodexLine,
+   parseCodexRecord,
++  parseDeepSeekLine,
++  parseDeepSeekRecord,
+   parseGrokLine,
+   parseGrokRecord,
+   type CodexScanState,
+@@ -108,6 +111,7 @@ const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
+       id: true,
+       session_id: true,
+       model: true,
++      thread_settings: { service_tier: true },
+       forked_from_id: true,
+       source: { subagent: { thread_spawn: { parent_thread_id: true } } },
+       info: { last_token_usage: true },
+@@ -245,15 +249,35 @@ async function guardMatches(
+  * still match, so only appended lines are read; otherwise the whole file is
+  * re-parsed from the start and `resumed` reports `false`.
+  *
+- * Codex carries the active model on `turn_context` lines that hold no usage of
+- * their own, so those still have to pass through the reducer to keep model
+- * attribution correct.
++ * Codex carries the active model on `turn_context` lines and the service tier
++ * on `thread_settings_applied` lines. Neither holds usage of its own, but both
++ * still have to pass through the reducer to keep attribution and pricing
++ * correct.
+  */
+ export async function readTranscriptRecords(
+   filePath: string,
+   provider: UsageProviderKind,
+   resumeFrom?: TranscriptParsePosition,
+   options?: { readonly streamingThresholdBytes?: number },
++): Promise<TranscriptParseResult | null> {
++  if (provider === "deepseek" && process.env.T3CODE_DEEPSEEK_SCAN_WORKER !== "off") {
++    try {
++      return await readDeepSeekOnWorker(filePath, resumeFrom, options);
++    } catch {
++      // An unavailable worker must not turn previously readable usage into
++      // an empty cached result. Use the original reader for this call.
++      return readTranscriptRecordsInline(filePath, provider, resumeFrom, options);
++    }
++  }
++  return readTranscriptRecordsInline(filePath, provider, resumeFrom, options);
++}
++
++/** The same byte reader on the worker and on the kill-switch path. */
++export async function readTranscriptRecordsInline(
++  filePath: string,
++  provider: UsageProviderKind,
++  resumeFrom?: TranscriptParsePosition,
++  options?: { readonly streamingThresholdBytes?: number },
+ ): Promise<TranscriptParseResult | null> {
+   const streamingThresholdBytes = options?.streamingThresholdBytes ?? STREAMING_THRESHOLD_BYTES;
+   let handle: NodeFSP.FileHandle;
+@@ -283,6 +307,7 @@ export async function readTranscriptRecords(
+         if (
+           !mightCarryUsage(line, provider) &&
+           !line.includes('"turn_context"') &&
++          !line.includes('"thread_settings_applied"') &&
+           !line.includes('"session_meta"')
+         ) {
+           return;
+@@ -296,7 +321,7 @@ export async function readTranscriptRecords(
+         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
+         return;
+       }
+-      const record = parseClaudeLine(line);
++      const record = provider === "deepseek" ? parseDeepSeekLine(line) : parseClaudeLine(line);
+       if (record !== null) out.push(record);
+     };
+ 
+@@ -346,7 +371,9 @@ export async function readTranscriptRecords(
+           const record =
+             provider === "codex"
+               ? parseCodexRecord(projected, state)
+-              : parseClaudeRecord(projected);
++              : provider === "deepseek"
++                ? parseDeepSeekRecord(projected)
++                : parseClaudeRecord(projected);
+           if (record !== null) out.push(record);
+         }
+       } else if (pendingBytes > 0) {

@@ -1,0 +1,22 @@
+diff --git a/apps/mobile/src/state/use-thread-outbox-drain.test.ts b/apps/mobile/src/state/use-thread-outbox-drain.test.ts
+index 67b340f42042b66b9ed9188edc2dce173cc38d38..c5125fa85beef1f153f34056093de6b07d024868 100644
+--- a/apps/mobile/src/state/use-thread-outbox-drain.test.ts
++++ b/apps/mobile/src/state/use-thread-outbox-drain.test.ts
+@@ -85,7 +85,7 @@ vi.mock("./entities", () => ({
+ }));
+ 
+ vi.mock("./server", async () => {
+-  const { Atom } = await import("effect/unstable/reactivity");
++  const { Atom } = await import("effect/reactivity");
+   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
+ });
+ 
+@@ -98,7 +98,7 @@ vi.mock("./use-atom-command", () => ({
+ }));
+ 
+ vi.mock("./use-thread-outbox", async () => {
+-  const { Atom } = await import("effect/unstable/reactivity");
++  const { Atom } = await import("effect/reactivity");
+   return {
+     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
+     useThreadOutboxMessages: () => ({}),

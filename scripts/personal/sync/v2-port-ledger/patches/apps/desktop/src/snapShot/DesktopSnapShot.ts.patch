@@ -1,0 +1,26 @@
+diff --git a/apps/desktop/src/snapShot/DesktopSnapShot.ts b/apps/desktop/src/snapShot/DesktopSnapShot.ts
+index 7ee4557569300532e40b93c8fbc763e42677b0a7..b1e217cd86e691dbdc483e20c09854da4fb9c29b 100644
+--- a/apps/desktop/src/snapShot/DesktopSnapShot.ts
++++ b/apps/desktop/src/snapShot/DesktopSnapShot.ts
+@@ -22,10 +22,10 @@ import {
+ } from "@t3tools/contracts";
+ import * as Clock from "effect/Clock";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+@@ -1657,7 +1657,7 @@ export const make = Effect.gen(function* () {
+         const png = yield* fileSystem.readFile(path.join(captureDirectory, `${id}.png`));
+         return {
+           ...metadata,
+-          dataUrl: `data:image/png;base64,${Encoding.encodeBase64(png)}`,
++          dataUrl: `data:image/png;base64,${Base64.encode(png)}`,
+         };
+       }).pipe(
+         Effect.mapError(

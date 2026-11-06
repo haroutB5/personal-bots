@@ -1,0 +1,33 @@
+diff --git a/apps/web/src/components/ThreadNotificationCoordinator.tsx b/apps/web/src/components/ThreadNotificationCoordinator.tsx
+index c4494f866ccb832fae757157966e91b0d72494cb..91985acdf46e2f3cb9727ddb584204695fa610b3 100644
+--- a/apps/web/src/components/ThreadNotificationCoordinator.tsx
++++ b/apps/web/src/components/ThreadNotificationCoordinator.tsx
+@@ -10,6 +10,7 @@ import {
+ } from "lucide-react";
+ import { useCallback, useEffect, useRef } from "react";
+ 
++import { isPersonalPath } from "../features/personal/personalMode";
+ import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+ import { useEnvironments } from "../state/environments";
+ import { environmentShell } from "../state/shell";
+@@ -136,7 +137,10 @@ function EnvironmentNotifications({
+           : completion !== null && (prior.completion === null || completion > prior.completion)
+             ? "completion"
+             : null;
+-      if (!kind) continue;
++      // The Bots app notifies through its own server push (public/sw.js), and
++      // these alerts open upstream coding routes, not a bot chat. Stay quiet
++      // while the personal shell is on screen; Developer view keeps them.
++      if (!kind || inPersonalShell()) continue;
+       const title =
+         kind === "completion"
+           ? "Thread completed"
+@@ -226,3 +230,8 @@ function EnvironmentNotifications({
+ 
+   return null;
+ }
++
++function inPersonalShell(): boolean {
++  const pathname = typeof window === "undefined" ? undefined : window.location?.pathname;
++  return typeof pathname === "string" && isPersonalPath(pathname);
++}

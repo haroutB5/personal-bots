@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/queries.ts b/apps/mobile/src/state/queries.ts
+index a1e95702054c55a4fd2a471f3b21d40f55df4047..60e511bccae6caaae35c11f89046fe9a5d465f52 100644
+--- a/apps/mobile/src/state/queries.ts
++++ b/apps/mobile/src/state/queries.ts
+@@ -16,7 +16,7 @@ import {
+ import { useAtomValue } from "@effect/atom-react";
+ import * as Cause from "effect/Cause";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useCallback, useEffect, useMemo, useState } from "react";
+ 
+ import { appAtomRegistry } from "./atom-registry";

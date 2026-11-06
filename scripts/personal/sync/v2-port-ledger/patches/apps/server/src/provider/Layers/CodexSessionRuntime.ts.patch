@@ -1,0 +1,308 @@
+diff --git a/apps/server/src/provider/Layers/CodexSessionRuntime.ts b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
+index f30baf011e8af779e11a4d098fa5c1a5749bc0db..a484712ecc2a2cc2f3b5a30784acf1ad672b6f14 100644
+--- a/apps/server/src/provider/Layers/CodexSessionRuntime.ts
++++ b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
+@@ -15,12 +15,13 @@ import {
+   type ProviderUserInputAnswers,
+   RuntimeMode,
+   type ServerProviderModel,
++  type ThreadTurnFollowUp,
+   ThreadId,
+   TurnId,
+ } from "@t3tools/contracts";
+ import { resolveSpawnCommand } from "@t3tools/shared/shell";
+ import { normalizeModelSlug } from "@t3tools/shared/model";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -28,16 +29,19 @@ import * as Exit from "effect/Exit";
+ import * as Layer from "effect/Layer";
+ import * as Queue from "effect/Queue";
+ import * as Ref from "effect/Ref";
++import * as Result from "effect/Result";
+ import * as Schema from "effect/Schema";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import * as CodexClient from "effect-codex-app-server/client";
+ import * as CodexErrors from "effect-codex-app-server/errors";
+ import * as CodexRpc from "effect-codex-app-server/rpc";
+ import * as EffectCodexSchema from "effect-codex-app-server/schema";
+ 
+ import { buildCodexInitializeParams } from "./CodexProvider.ts";
++import { lowerBotProcessPriorityEffect } from "../botProcessPriority.ts";
++import { forgetBotProviderProcess, registerBotProviderProcess } from "../botProviderProcesses.ts";
+ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+ import { expandHomePath } from "../../pathExpansion.ts";
+ import {
+@@ -46,6 +50,7 @@ import {
+   type T3CodeToolAvailability,
+ } from "../CodexDeveloperInstructions.ts";
+ const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
++const decodeV2TurnSteerResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerResponse);
+ 
+ const PROVIDER = ProviderDriverKind.make("codex");
+ 
+@@ -183,6 +188,12 @@ export interface CodexSessionRuntimeOptions {
+   readonly serviceTier?: CodexServiceTier | undefined;
+   readonly resumeCursor?: CodexResumeCursor;
+   readonly appServerArgs?: ReadonlyArray<string>;
++  /**
++   * Skill folders this session adds to Codex's own roots: a personal bot's
++   * own and the shared plugin skills. Named to the app-server before the
++   * thread opens, so its catalogue has them.
++   */
++  readonly extraSkillRoots?: ReadonlyArray<string>;
+   /** The provider's model list; supplies the display name for runtime info. */
+   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
+   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
+@@ -199,6 +210,16 @@ export interface CodexSessionRuntimeSendTurnInput {
+   readonly serviceTier?: CodexServiceTier | undefined;
+   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
+   readonly interactionMode?: ProviderInteractionMode;
++  /** Per-thread bot instructions (personal bot persona); omitted for ordinary threads. */
++  readonly systemInstructions?: string;
++  /**
++   * How the send behaves while a turn is already running: "steer" (or absent)
++   * folds it into the running turn via `turn/steer`; "queue" never steers and
++   * starts (or queues) a turn of its own.
++   */
++  readonly followUp?: ThreadTurnFollowUp;
++  /** The owner's message this send carries, for the steer's client id. */
++  readonly clientUserMessageId?: string;
+ }
+ 
+ export interface CodexThreadTurnSnapshot {
+@@ -236,6 +257,8 @@ export interface CodexSessionRuntimeShape {
+   ) => Effect.Effect<void, CodexSessionRuntimeError>;
+   readonly events: Stream.Stream<ProviderEvent, never>;
+   readonly close: Effect.Effect<void>;
++  /** The app-server process's PID while it runs (what its commands descend from). */
++  readonly processId?: Effect.Effect<number | undefined>;
+ }
+ 
+ export type CodexSessionRuntimeError =
+@@ -592,6 +615,7 @@ function buildCodexTurnInstructions(input: {
+   readonly modelName?: string;
+   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
++  readonly systemInstructions?: string;
+ }): Pick<CodexTurnStartParamsWithCollaborationMode, "collaborationMode" | "additionalContext"> {
+   if (input.interactionMode === undefined) {
+     return {};
+@@ -610,6 +634,7 @@ function buildCodexTurnInstructions(input: {
+     additionalContext: buildCodexAdditionalContext(
+       { model, modelName: input.modelName, reasoningEffort },
+       input.browserToolsAvailable ?? true,
++      input.systemInstructions,
+     ),
+   };
+ }
+@@ -618,6 +643,27 @@ function buildCodexTurnInstructions(input: {
+ const SKILL_MENTION_PATTERN =
+   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+ 
++/** The turn's user input items: prompt text (skill aliases canonicalised) plus image attachments. */
++export function buildTurnUserInput(input: {
++  readonly prompt?: string;
++  readonly attachments?: ReadonlyArray<{
++    readonly type: "localImage";
++    readonly path: string;
++  }>;
++}): Array<EffectCodexSchema.V2TurnStartParams__UserInput> {
++  const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
++  if (input.prompt) {
++    turnInput.push({
++      type: "text",
++      text: input.prompt.replace(SKILL_MENTION_PATTERN, "$1$$$2"),
++    });
++  }
++  for (const attachment of input.attachments ?? []) {
++    turnInput.push(attachment);
++  }
++  return turnInput;
++}
++
+ export function buildTurnStartParams(input: {
+   readonly threadId: string;
+   readonly runtimeMode: RuntimeMode;
+@@ -634,20 +680,13 @@ export function buildTurnStartParams(input: {
+   readonly interactionMode?: ProviderInteractionMode;
+   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
+   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
++  /** Per-thread bot instructions (personal bot persona); omitted for ordinary threads. */
++  readonly systemInstructions?: string;
+ }): Effect.Effect<
+   CodexTurnStartParamsWithCollaborationMode,
+   CodexErrors.CodexAppServerProtocolParseError
+ > {
+-  const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
+-  if (input.prompt) {
+-    turnInput.push({
+-      type: "text",
+-      text: input.prompt.replace(SKILL_MENTION_PATTERN, "$1$$$2"),
+-    });
+-  }
+-  for (const attachment of input.attachments ?? []) {
+-    turnInput.push(attachment);
+-  }
++  const turnInput = buildTurnUserInput(input);
+ 
+   const config = runtimeModeToThreadConfig(input.runtimeMode);
+   const turnInstructions = buildCodexTurnInstructions({
+@@ -656,6 +695,7 @@ export function buildTurnStartParams(input: {
+     ...(input.modelName ? { modelName: input.modelName } : {}),
+     ...(input.effort ? { effort: input.effort } : {}),
+     browserToolsAvailable: input.browserToolsAvailable ?? true,
++    ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
+   });
+ 
+   return decodeCodexTurnStartParamsWithCollaborationMode({
+@@ -732,6 +772,38 @@ interface CodexThreadOpenClient {
+   >;
+ }
+ 
++type CodexSkillRootsClient = Pick<CodexClient.CodexAppServerClient["Service"], "request">;
++
++/**
++ * Names the session's extra skill roots to Codex.
++ *
++ * Codex reads the owner's `~/.codex/skills` and `~/.agents/skills`, which a
++ * personal bot turns off, and has no config key for another root. The
++ * app-server's own `skills/extraRoots/set` (in-memory, per process, replacing
++ * the previous list) is the only way to give a bot its own plugin skills, the
++ * ones Claude and DeepSeek bots already load.
++ *
++ * A refusal is logged, never fatal: the bot then sees what it saw before this
++ * existed, no skills at all, and the session still runs.
++ */
++export const registerCodexExtraSkillRoots = (
++  client: CodexSkillRootsClient,
++  extraRoots: ReadonlyArray<string> | undefined,
++): Effect.Effect<void> => {
++  if (extraRoots === undefined || extraRoots.length === 0) return Effect.void;
++  const roots = [...extraRoots];
++  return client.request("skills/extraRoots/set", { extraRoots: roots }).pipe(
++    Effect.tap(() => Effect.logInfo("Codex extra skill roots registered", { extraRoots: roots })),
++    Effect.asVoid,
++    Effect.catch((cause) =>
++      Effect.logWarning(
++        "Codex refused this bot's own skill roots; its plugin skills will be missing.",
++        { extraRoots: roots, cause },
++      ),
++    ),
++  );
++};
++
+ export const openCodexThread = (input: {
+   readonly client: CodexThreadOpenClient;
+   readonly threadId: ThreadId;
+@@ -1356,6 +1428,15 @@ export const makeCodexSessionRuntime = (
+             }),
+         ),
+       );
++    yield* lowerBotProcessPriorityEffect(Number(child.pid), "codex");
++    // The app-server carries no session id on its command line, so the
++    // Performance tab groups the bot by this PID (botProviderProcesses).
++    const codexPid = Number(child.pid);
++    registerBotProviderProcess({
++      threadId: options.threadId,
++      provider: "codex",
++      pid: codexPid,
++    });
+ 
+     const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
+       Layer.build,
+@@ -2482,6 +2563,7 @@ export const makeCodexSessionRuntime = (
+       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
+       yield* client.request("initialize", buildCodexInitializeParams());
+       yield* client.notify("initialized", undefined);
++      yield* registerCodexExtraSkillRoots(client, options.extraSkillRoots);
+ 
+       const requestedModel = normalizeCodexModelSlug(options.model);
+ 
+@@ -2535,7 +2617,8 @@ export const makeCodexSessionRuntime = (
+           Effect.logError("Failed to emit Codex session closed event.", { cause }),
+         ),
+       );
+-      yield* Scope.close(runtimeScope, Exit.void);
++      yield* Scope.close(runtimeScope as Scope.Closeable, Exit.void);
++      forgetBotProviderProcess(options.threadId, codexPid);
+       yield* Queue.shutdown(serverNotifications);
+       yield* Queue.shutdown(events);
+     });
+@@ -2564,6 +2647,53 @@ export const makeCodexSessionRuntime = (
+           );
+           const models = options.models ? yield* options.models : [];
+           const modelName = models.find((model) => model.slug === normalizedModel)?.name;
++          // Harout's send behaviour (1.66.28): a message sent while a turn is
++          // running is steered into it by default. turn/steer is refused when
++          // the turn just ended, or cannot take same-turn steering (/review,
++          // manual /compact): fall through to turn/start so the message is
++          // never lost. "queue" never steers and takes the turn/start path.
++          const activeTurnId = (yield* Ref.get(sessionRef)).activeTurnId;
++          if (input.followUp !== "queue" && activeTurnId !== undefined) {
++            const steered = yield* Effect.result(
++              client.raw.request("turn/steer", {
++                threadId: providerThreadId,
++                expectedTurnId: activeTurnId,
++                input: buildTurnUserInput({
++                  ...(input.input ? { prompt: input.input } : {}),
++                  ...(input.attachments ? { attachments: input.attachments } : {}),
++                }),
++                ...(input.clientUserMessageId !== undefined
++                  ? { clientUserMessageId: input.clientUserMessageId }
++                  : {}),
++              }),
++            );
++            if (Result.isSuccess(steered)) {
++              // The steer landed in the turn that was already running. A
++              // response this build cannot decode is logged, not treated as a
++              // failure: the message was taken in and must not be sent twice.
++              yield* decodeV2TurnSteerResponse(steered.success).pipe(
++                Effect.catch((cause) =>
++                  Effect.logWarning("Codex steered a turn but returned an unknown response", {
++                    threadId: options.threadId,
++                    cause,
++                  }),
++                ),
++              );
++              const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
++              return {
++                threadId: options.threadId,
++                turnId: activeTurnId,
++                ...(resumedProviderThreadId
++                  ? { resumeCursor: { threadId: resumedProviderThreadId } }
++                  : {}),
++              } satisfies ProviderTurnStartResult;
++            }
++            yield* Effect.logInfo("Codex refused turn/steer; starting a new turn instead", {
++              threadId: options.threadId,
++              activeTurnId,
++              error: steered.failure,
++            });
++          }
+           const params = yield* buildTurnStartParams({
+             threadId: providerThreadId,
+             runtimeMode: options.runtimeMode,
+@@ -2574,6 +2704,7 @@ export const makeCodexSessionRuntime = (
+             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+             ...(input.effort ? { effort: input.effort } : {}),
+             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
++            ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
+             // Derived from the session's own credential rather than the
+             // setting, so the prompt describes the tools this turn actually
+             // has even if the setting changed after the session started.
+@@ -2736,5 +2867,9 @@ export const makeCodexSessionRuntime = (
+         }),
+       events: Stream.fromQueue(events),
+       close,
++      processId: child.isRunning.pipe(
++        Effect.map((running) => (running ? Number(child.pid) : undefined)),
++        Effect.orElseSucceed(() => undefined),
++      ),
+     } satisfies CodexSessionRuntimeShape;
+   });

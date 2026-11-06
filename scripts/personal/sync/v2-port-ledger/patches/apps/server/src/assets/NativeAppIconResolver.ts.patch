@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/assets/NativeAppIconResolver.ts b/apps/server/src/assets/NativeAppIconResolver.ts
+index 34299f95142fea0414baf66acd68d2399724de68..b883f625d33d34ef634efe3256788cfaf1a926aa 100644
+--- a/apps/server/src/assets/NativeAppIconResolver.ts
++++ b/apps/server/src/assets/NativeAppIconResolver.ts
+@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Semaphore from "effect/Semaphore";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ 
+ import * as ServerConfig from "../config.ts";

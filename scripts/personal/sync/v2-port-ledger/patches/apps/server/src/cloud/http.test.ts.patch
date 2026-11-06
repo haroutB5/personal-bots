@@ -1,0 +1,83 @@
+diff --git a/apps/server/src/cloud/http.test.ts b/apps/server/src/cloud/http.test.ts
+index 1d6b78e56cefc44037ad1564be85efa4df66c253..026465cca24966dde87018096bde72e479dadf6d 100644
+--- a/apps/server/src/cloud/http.test.ts
++++ b/apps/server/src/cloud/http.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Deferred from "effect/Deferred";
+ import * as Duration from "effect/Duration";
+@@ -18,7 +18,7 @@ import {
+   HttpClientResponse,
+   HttpServerRequest,
+   type HttpClientRequest,
+-} from "effect/unstable/http";
++} from "effect/http";
+ 
+ import { DESKTOP_UPDATE_RESTART_MARKER_FILE, EnvironmentId } from "@t3tools/contracts";
+ import { RelayClientTracer } from "@t3tools/shared/relayTracing";
+@@ -42,6 +42,7 @@ import {
+ } from "@t3tools/contracts/relay";
+ import {
+   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
++  CLOUD_ENDPOINT_HTTP_BASE_URL,
+   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+   CLOUD_LINKED_USER_ID,
+   decodeConfirmedOrigin,
+@@ -54,6 +55,7 @@ import {
+   isSupportedLinkProviderKind,
+   linkProofScopes,
+   pendingServiceUpdateExists,
++  persistRelayEndpoint,
+   parseManagedEndpointLocalOrigin,
+   reconcileDesiredCloudLink,
+   reconcileDesiredCloudLinkIfStillDesired,
+@@ -1232,6 +1234,47 @@ describe("releaseManagedTunnelOnShutdown", () => {
+   });
+ });
+ 
++describe("persistRelayEndpoint", () => {
++  it.effect("keeps the tunnel origin for managed links and drops it for manual ones", () => {
++    const values = new Map<string, Uint8Array>();
++    const store: ServerSecretStore.ServerSecretStore["Service"] = {
++      get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
++      set: (name, value) =>
++        Effect.sync(() => {
++          values.set(name, value);
++        }),
++      create: unusedSecretStoreOperation,
++      getOrCreateRandom: unusedSecretStoreOperation,
++      remove: (name) =>
++        Effect.sync(() => {
++          values.delete(name);
++        }),
++    };
++    const stored = () => {
++      const bytes = values.get(CLOUD_ENDPOINT_HTTP_BASE_URL);
++      return bytes === undefined ? null : new TextDecoder().decode(bytes);
++    };
++
++    return Effect.gen(function* () {
++      yield* persistRelayEndpoint(store, {
++        httpBaseUrl: "https://bots-abc.t3.example",
++        wsBaseUrl: "wss://bots-abc.t3.example",
++        providerKind: "cloudflare_tunnel",
++      });
++      expect(stored()).toBe("https://bots-abc.t3.example");
++
++      // A publish-only relink reports the local origin as a manual endpoint;
++      // advertising that as the public URL would hand out an unreachable link.
++      yield* persistRelayEndpoint(store, {
++        httpBaseUrl: "http://127.0.0.1:3773",
++        wsBaseUrl: "ws://127.0.0.1:3773",
++        providerKind: "manual",
++      });
++      expect(stored()).toBeNull();
++    });
++  });
++});
++
+ describe("link proof provider kinds", () => {
+   const proofRequest = (
+     providerKind: RelayLinkProofRequest["endpoint"]["providerKind"],

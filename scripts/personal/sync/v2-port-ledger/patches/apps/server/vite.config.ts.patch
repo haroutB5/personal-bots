@@ -1,0 +1,20 @@
+diff --git a/apps/server/vite.config.ts b/apps/server/vite.config.ts
+index bcb0208d9c8679cbab05ced427af61381ae5cfa4..8eb7783bd8dd8c030e46697f4fc61ef4610bfeb4 100644
+--- a/apps/server/vite.config.ts
++++ b/apps/server/vite.config.ts
+@@ -78,7 +78,14 @@ export default mergeConfig(
+     pack: {
+       // The executable embeds one entry; the history worker becomes a hidden
+       // subcommand there instead of a sibling script.
+-      entry: packExecutable ? ["src/bin.ts"] : ["src/bin.ts", "src/claude-history-worker.ts"],
++      entry: packExecutable
++        ? ["src/bin.ts"]
++        : [
++            "src/bin.ts",
++            "src/claude-history-worker.ts",
++            "src/usage-transcript-worker.ts",
++            "src/perf-linux-helper.ts",
++          ],
+       outDir: packExecutable ? "dist-exe" : "dist",
+       sourcemap: !packExecutable,
+       clean: true,

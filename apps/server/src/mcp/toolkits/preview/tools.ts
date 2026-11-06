@@ -1,27 +1,23 @@
 import {
+  BrowserNavigationTarget,
+  OrchestratorMcpFailure,
   ToolActivityIcon,
-  PreviewAutomationClickInput,
-  PreviewAutomationCloseTabInput,
-  PreviewAutomationCloseTabResult,
-  PreviewAutomationDragInput,
+  PreviewAutomationActInput,
+  PreviewAutomationDialogInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
-  PreviewAutomationHistoryInput,
-  PreviewAutomationHoverInput,
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
-  PreviewAutomationPressInput,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
-  PreviewAutomationScrollInput,
+  PreviewAutomationSelectResult,
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
-  PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -31,36 +27,35 @@ import { Tool, Toolkit } from "effect/ai";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
   PreviewAutomationBroker.PreviewAutomationBroker,
 ];
 
+const PreviewToolFailure = Schema.Union([PreviewAutomationError, OrchestratorMcpFailure]);
+
 const presentationFields = { toolIcon: Schema.optional(ToolActivityIcon) };
 
-const PreviewActionResult = Schema.Struct(presentationFields).annotate({
-  description: "The preview action completed successfully.",
-});
+const PreviewActionResult = Schema.Struct(presentationFields);
 
-/** Drives the real browser and can destroy page state. */
 const browserTool = <T extends Tool.Any>(tool: T): T =>
   tool.annotate(Tool.OpenWorld, true).annotate(Tool.Destructive, true) as T;
 
-/** Same open-world browser access, but the action does not destroy page state. */
 const safeBrowserTool = <T extends Tool.Any>(tool: T): T =>
   tool.annotate(Tool.OpenWorld, true).annotate(Tool.Destructive, false) as T;
 
-/** A safe browser action that only observes, so it is also repeatable. */
 const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
   safeBrowserTool(tool).annotate(Tool.Readonly, true).annotate(Tool.Idempotent, true) as T;
 
 const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report a tab's URL, title, visibility, loading state, viewport mode and CSS-pixel size.",
+    "Report preview tab state: owner, pending dialog, URL, title, loading, viewport, and size. `tabs` lists this thread's tabs. `profiles` lists logins for `preview_open`. Read any listed tab. Act only on your tab, or an unclaimed tab with no human in control.",
   parameters: PreviewAutomationTabTargetInput,
   success: PreviewAutomationStatus,
-  failure: PreviewAutomationError,
+  failure: PreviewToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "Get preview status")
@@ -68,26 +63,43 @@ const PreviewStatusTool = Tool.make("preview_status", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+// `url` already covers websites, so open only adds the dev-server target.
+const EnvironmentPortTarget = BrowserNavigationTarget.members[1];
+
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Open a browser tab for this thread and show the inline preview. open=false keeps it in the background. Reuses your current tab unless tabId or reuseExistingTab=false says otherwise.",
-    parameters: PreviewAutomationOpenInput,
+      "Open a preview tab in this thread and show it. For a dev server, pass `target` instead of `url`. `open=false` keeps it in the background. Reuses your current tab unless `tabId` or `reuseExistingTab=false` says otherwise. Parallel subagents in one session must each use `reuseExistingTab=false`, then their own returned `tabId`.",
+    parameters: PreviewAutomationOpenInput.mapFields(
+      (fields) => ({ ...fields, target: Schema.optional(EnvironmentPortTarget) }),
+      { unsafePreserveChecks: true },
+    ),
     success: PreviewAutomationStatus,
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),
 );
 
+const PreviewDialogTool = browserTool(
+  Tool.make("preview_dialog", {
+    description:
+      "Accept or dismiss the dialog `preview_status` reports. Pass `promptText` to accept a prompt. Needs your own tab, or an unclaimed one. Desktop hosts may not support this.",
+    parameters: PreviewAutomationDialogInput,
+    success: PreviewAutomationStatus,
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Resolve browser dialog"),
+);
+
 const PreviewNavigateTool = safeBrowserTool(
   Tool.make("preview_navigate", {
     description:
-      "Navigate a tab. Pass url for a website, or target:{kind:'environment-port',port} for a dev server. Exactly one of url or target.",
+      "Navigate the chosen tab. Pass `url` for a website, or `target:{kind:'environment-port',port}` for a dev server. Exactly one of `url` and `target`.",
     parameters: PreviewAutomationNavigateInput,
     success: PreviewAutomationStatus,
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Navigate browser preview"),
 );
@@ -95,10 +107,10 @@ const PreviewNavigateTool = safeBrowserTool(
 const PreviewResizeTool = safeBrowserTool(
   Tool.make("preview_resize", {
     description:
-      "Resize a tab: {mode:'fill'}, {mode:'freeform',width,height}, or {mode:'preset',preset,orientation}. Changes CSS size only, not the user agent.",
+      "Resize the chosen tab: {mode:'fill'}, {mode:'freeform',width,height}, or {mode:'preset',preset,orientation}. Changes CSS size only, not the user agent.",
     parameters: PreviewAutomationResizeInput,
     success: Schema.Struct({ ...PreviewAutomationResizeResult.fields, ...presentationFields }),
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   })
     .annotate(Tool.Title, "Resize browser viewport")
@@ -108,171 +120,93 @@ const PreviewResizeTool = safeBrowserTool(
 const PreviewSetAppearanceTool = safeBrowserTool(
   Tool.make("preview_set_appearance", {
     description:
-      "Dark/light mode for a browser tab (prefers-color-scheme): 'dark', 'light' or 'system' (clears).",
+      "Set `prefers-color-scheme` for the chosen tab: 'dark', 'light', or 'system' to clear the override.",
     parameters: PreviewAutomationSetColorSchemeInput,
     success: Schema.Struct({
       ...PreviewAutomationSetColorSchemeResult.fields,
       ...presentationFields,
     }),
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   })
     .annotate(Tool.Title, "Set preview appearance")
     .annotate(Tool.Idempotent, true),
 );
 
-export const PreviewSnapshotTool = readonlyBrowserTool(
+// Not read-only: save=true writes the screenshot to disk.
+export const PreviewSnapshotTool = safeBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Returns page state, semantic elements, diagnostics, action history and a PNG screenshot. Text is capped near 20 KB and lists what it omits; use preview_evaluate to read more. includeImage=false gives text only. save=true also writes the PNG and returns screenshotPath; with includeImage=false it returns only url and screenshotPath. Embed the path in your reply as ![alt](screenshotPath): this is the only way to show the user a screenshot.",
+      "Use it only when the current request asks for browser work, including checking an edit in the browser. Never use it unasked to verify your own edit, or to repeat a snapshot from an earlier turn. Works on a tab the user is driving. Returns page state, elements, diagnostics, and screenshot size. Target one element with `locator='aria-ref=<ref>'` from `accessibilityTree`, even in frames. Refs die on navigation, a new snapshot, or handoff. Text caps near 20 KB; on your own or an unclaimed tab, `preview_evaluate` reads more. To show a screenshot when asked: `save=true`, then embed ![alt](screenshotPath).",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
         Schema.Boolean.annotate({
-          description: "Include the PNG. Default true.",
+          description: "Default false. True only to see the page.",
         }),
       ),
       save: Schema.optional(
         Schema.Boolean.annotate({
-          description:
-            "Write the PNG to disk and return its absolute path as screenshotPath. Default false.",
+          description: "Write PNG, return `screenshotPath`.",
         }),
       ),
     }),
     success: PreviewAutomationSnapshot,
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Inspect browser page"),
 );
 
-const PreviewClickTool = browserTool(
-  Tool.make("preview_click", {
+const PreviewActTool = browserTool(
+  Tool.make("preview_act", {
     description:
-      "Click one target. Prefer a locator; selector takes legacy CSS; x and y go together. button (left, right, middle), clicks (1 to 3; 2 is a double click) and modifiers work with a locator and with x/y. A right click fires the page's contextmenu event; the browser's own menu is not shown. A Control-click or middle-click on a link opens a background tab the preview tools cannot drive: open that address with preview_open or preview_navigate. In a tab where a saved login was filled, only plain left clicks by x/y work. If the click opens a native dialog it fails at once saying so, and the dialog stays open until answered.",
-    parameters: PreviewAutomationClickInput,
-    success: PreviewActionResult,
-    failure: PreviewAutomationError,
+      "Act on the chosen tab. Target with `locator='aria-ref=<ref>'` from `preview_snapshot`; `x` and `y` go together. `timeoutMs` defaults to 15000. click: `button`, `clickCount` 1 to 3. type: literal `text`, `clear=true` replaces it. hover: shows menus or tooltips. select: `values` in one native <select>, by value or label; for a custom dropdown, click it open, then click the option. drag: `source` onto `target`. upload: absolute `paths` answer the file picker `preview_status` reports, [] cancels it, or a `locator` sets an <input type=file>. press: one `key`, such as 'Enter', with `modifiers`, to the focused element; click a field first to focus it. scroll: the tab, or one container with a locator; positive `deltaY` scrolls down, positive `deltaX` right.",
+    parameters: PreviewAutomationActInput,
+    success: Schema.Union([
+      Schema.Struct({ ...PreviewAutomationSelectResult.fields, ...presentationFields }),
+      PreviewActionResult,
+    ]),
+    failure: PreviewToolFailure,
     dependencies,
-  }).annotate(Tool.Title, "Click preview page"),
+  }).annotate(Tool.Title, "Act in preview page"),
 );
 
-const PreviewHoverTool = safeBrowserTool(
-  Tool.make("preview_hover", {
-    description:
-      "Move the pointer onto one target without clicking, for hover menus and tooltips. Give a locator (selector takes legacy CSS) or x and y together. The pointer stays there: take a preview_snapshot to see what appeared. In a tab where a saved login was filled, only x/y works.",
-    parameters: PreviewAutomationHoverInput,
-    success: PreviewActionResult,
-    failure: PreviewAutomationError,
-    dependencies,
-  }).annotate(Tool.Title, "Hover over preview page"),
-);
-
-const PreviewDragTool = browserTool(
-  Tool.make("preview_drag", {
-    description:
-      "Press on one place, move to another and let go: drag and drop, sliders, reordering. Give fromLocator and toLocator, or fromX, fromY, toX and toY together; do not mix. The button is always released, even if the move fails. Dragging files from the computer into a page is not available. In a tab where a saved login was filled, only x/y works.",
-    parameters: PreviewAutomationDragInput,
-    success: PreviewActionResult,
-    failure: PreviewAutomationError,
-    dependencies,
-  }).annotate(Tool.Title, "Drag on preview page"),
-);
-
-// Upload is deliberately absent: no tool here sends a file from this computer to a website
-// (Harout's CTO, 1.66.6). A page's own file chooser stays closed to bots.
-const PreviewHistoryTool = browserTool(
-  Tool.make("preview_history", {
-    description:
-      "Go back or forward one step in the tab's history, or reload. Returns the tab's status once the page settles. Fails at once when there is no earlier or later page. A reload or a step that moves the tab to a site other than the sensitive site this chat has read needs the same approval as preview_navigate. Disabled in a tab where a saved login was filled: open a new tab instead.",
-    parameters: PreviewAutomationHistoryInput,
-    success: PreviewAutomationStatus,
-    failure: PreviewAutomationError,
-    dependencies,
-  }).annotate(Tool.Title, "Go back, forward or reload"),
-);
-
-const PreviewCloseTabTool = browserTool(
-  Tool.make("preview_close_tab", {
-    description:
-      "Close one of your own tabs by tabId (required; the current tab is never closed by default). Other tabs stay open and the result lists them. Fails while the user is controlling the browser, and for another chat's tab. Use close_browser to shut the whole browser.",
-    parameters: PreviewAutomationCloseTabInput,
-    success: Schema.Struct({ ...PreviewAutomationCloseTabResult.fields, ...presentationFields }),
-    failure: PreviewAutomationError,
-    dependencies,
-  }).annotate(Tool.Title, "Close browser tab"),
-);
-
-const PreviewTypeTool = browserTool(
-  Tool.make("preview_type", {
-    description:
-      "Insert literal text into one input. Prefer a locator; clear=true replaces existing text.",
-    parameters: PreviewAutomationTypeInput,
-    success: PreviewActionResult,
-    failure: PreviewAutomationError,
-    dependencies,
-  }).annotate(Tool.Title, "Type into preview page"),
-);
-
-const PreviewPressTool = browserTool(
-  Tool.make("preview_press", {
-    description:
-      "Press one key, e.g. {key:'Enter'} or {key:'a',modifiers:['Meta']}. With a native dialog open (alert, confirm, prompt, leave-page), Enter answers OK and Escape answers Cancel; for a prompt, preview_type sets the answer first. Never OK a destructive confirm on your own judgement: hand it to the user with request_browser_help.",
-    parameters: PreviewAutomationPressInput,
-    success: PreviewActionResult,
-    failure: PreviewAutomationError,
-    dependencies,
-  }).annotate(Tool.Title, "Press key in preview page"),
-);
-
-const PreviewScrollTool = safeBrowserTool(
-  Tool.make("preview_scroll", {
-    description: "Scroll the viewport, or a container given by locator or selector.",
-    parameters: PreviewAutomationScrollInput,
-    success: PreviewActionResult,
-    failure: PreviewAutomationError,
-    dependencies,
-  }).annotate(Tool.Title, "Scroll preview page"),
-);
-
-/**
- * MCP `structuredContent` must be a JSON object, and Claude Code rejects the
- * whole result when it is not. Wrapping keeps arrays, strings, numbers, and
- * null valid instead of failing only for non-object expressions.
- */
+/** Wrap non-objects: MCP requires object structuredContent, and Claude Code rejects invalid results entirely. */
 export const PreviewEvaluateResult = Schema.Struct({
   ...presentationFields,
   value: Schema.Unknown.annotate({
     description: "The JSON-serializable value the expression produced, or null.",
   }),
-}).annotate({ description: "The evaluated expression result." });
+});
 
 const PreviewEvaluateTool = browserTool(
   Tool.make("preview_evaluate", {
     description:
-      "Evaluate JavaScript in the page. Returns {value}, a serializable result up to 64 KB; the expression may mutate page state. After the user takes the browser and hands it back, it is refused until a preview_snapshot has succeeded, because a script can click, type or submit.",
+      "Run JavaScript in the page. It can change page state. Returns `{value}`, up to 64 KB. Needs your tab, or an unclaimed one. To read a tab the user drives, use `preview_snapshot`. Page tools reached here: read data only, never create, save, or display. Show results with `html_render`.",
     parameters: PreviewAutomationEvaluateInput,
     success: PreviewEvaluateResult,
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Evaluate JavaScript in preview"),
 );
 
 const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
-    description: "Wait until all given locator, selector, text and URL conditions match.",
+    description:
+      "Wait until all given locator, selector, text, and URL conditions match in the chosen tab.",
     parameters: PreviewAutomationWaitForInput,
     success: PreviewActionResult,
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Wait for preview page condition"),
 );
 
 const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
-    description: "Start recording a browser tab. Stop it with preview_recording_stop.",
+    description: "Start recording the chosen tab.",
     parameters: PreviewAutomationTabTargetInput,
     success: Schema.Struct({ ...PreviewAutomationRecordingStatus.fields, ...presentationFields }),
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Start browser recording"),
 );
@@ -280,29 +214,23 @@ const PreviewRecordingStartTool = safeBrowserTool(
 const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
     description:
-      "Stop recording and transfer the compressed recording (up to 50 MiB) to an evidence file in this agent's environment. Returns its local path.",
+      "Stop recording the chosen tab. Returns a local path to the recording file (max 50 MiB).",
     parameters: PreviewAutomationTabTargetInput,
     success: Schema.Struct({ ...PreviewAutomationRecordingArtifact.fields, ...presentationFields }),
-    failure: PreviewAutomationError,
+    failure: PreviewToolFailure,
     dependencies: [...dependencies, FileSystem.FileSystem, ServerConfig.ServerConfig],
   }).annotate(Tool.Title, "Stop browser recording"),
 );
 
 export const PreviewToolkit = Toolkit.make(
+  PreviewDialogTool,
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,
   PreviewSnapshotTool,
-  PreviewClickTool,
-  PreviewHoverTool,
-  PreviewDragTool,
-  PreviewHistoryTool,
-  PreviewCloseTabTool,
-  PreviewTypeTool,
-  PreviewPressTool,
-  PreviewScrollTool,
+  PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,
@@ -310,19 +238,13 @@ export const PreviewToolkit = Toolkit.make(
 );
 
 export const PreviewStandardToolkit = Toolkit.make(
+  PreviewDialogTool,
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,
-  PreviewClickTool,
-  PreviewHoverTool,
-  PreviewDragTool,
-  PreviewHistoryTool,
-  PreviewCloseTabTool,
-  PreviewTypeTool,
-  PreviewPressTool,
-  PreviewScrollTool,
+  PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,

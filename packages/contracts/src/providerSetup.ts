@@ -8,28 +8,11 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { ProviderCatalogId, ProviderInstallFailure } from "./providerCatalog.ts";
 
 export const ProviderSetupInput = Schema.Struct({
   instanceId: ProviderInstanceId,
 });
 export type ProviderSetupInput = typeof ProviderSetupInput.Type;
-
-export const CodexAuthCallbackInput = Schema.Struct({
-  authorizationUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  returnUrl: Schema.String.check(Schema.isMaxLength(4_096)),
-  environmentId: EnvironmentId,
-  instanceId: ProviderInstanceId,
-  flowId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-});
-export type CodexAuthCallbackInput = typeof CodexAuthCallbackInput.Type;
-export const CodexAuthCallbackState = Schema.Union([
-  Schema.Struct({ phase: Schema.Literal("ready") }),
-  Schema.Struct({
-    phase: Schema.Literal("finished"),
-    callbackUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  }),
-]);
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
@@ -42,8 +25,6 @@ export const ProviderAuthMethod = Schema.Struct({
 });
 export type ProviderAuthMethod = typeof ProviderAuthMethod.Type;
 
-// These describe client interactions, not OAuth grant types. The provider
-// adapter remains responsible for credentials, callbacks, and refresh.
 export const ProviderAuthInteraction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("browser"),
@@ -133,8 +114,7 @@ export const ProviderAuthState = Schema.Struct({
   authorizationUrl: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
-  // Newer servers may add method types, interactions, or owners; older
-  // clients drop what they cannot decode instead of rejecting the state.
+  // Drop unknown auth methods rather than rejecting the entire state.
   methods: Schema.optionalKey(
     ForwardCompatibleArray(ProviderAuthMethod).check(Schema.isMaxLength(32)),
   ),
@@ -158,34 +138,26 @@ export type ProviderAuthCancelInput = typeof ProviderAuthCancelInput.Type;
 
 const ByteCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
-export const ProviderInstallPhase = Schema.Literals([
-  "idle",
-  "resolving",
-  "downloading",
-  "extracting",
-  "verifying",
-  "starting",
-  "succeeded",
-  "failed",
-  "cancelled",
-]);
-export type ProviderInstallPhase = typeof ProviderInstallPhase.Type;
-
 export const ProviderInstallState = Schema.Struct({
   driver: ProviderDriverKind,
-  catalogId: Schema.optionalKey(Schema.NullOr(ProviderCatalogId)),
   operationId: Schema.NullOr(SetupOperationId),
-  phase: ProviderInstallPhase,
+  phase: Schema.Literals([
+    "idle",
+    "downloading",
+    "extracting",
+    "verifying",
+    "succeeded",
+    "failed",
+    "cancelled",
+  ]),
   downloadedBytes: ByteCount,
   totalBytes: Schema.NullOr(ByteCount),
   version: Schema.NullOr(TrimmedNonEmptyString),
   installedVersion: Schema.NullOr(TrimmedNonEmptyString),
-  previousVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   executablePath: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   source: Schema.optionalKey(Schema.NullOr(Schema.Literals(["managed", "local"]))),
   canRemove: Schema.Boolean,
   message: Schema.NullOr(Schema.String),
-  failure: Schema.optionalKey(Schema.NullOr(ProviderInstallFailure)),
 });
 export type ProviderInstallState = typeof ProviderInstallState.Type;
 
@@ -210,22 +182,6 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
   }
 }
 
-/** Run the one-message test now; the verdict arrives on the provider's `smokeCheck`. */
-export const ProviderTestRunInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  /** Defaults to the provider's default model. */
-  model: Schema.optionalKey(TrimmedNonEmptyString),
-});
-export type ProviderTestRunInput = typeof ProviderTestRunInput.Type;
-
-/** Open the sign-in link of a running flow in the laptop's default browser. */
-export const ProviderAuthOpenOnLaptopInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  flowId: SetupOperationId,
-});
-export type ProviderAuthOpenOnLaptopInput = typeof ProviderAuthOpenOnLaptopInput.Type;
-
-// A selected registration is reused on the primary without copying refresh ownership.
 export const ChatGptReconnectProfile = Schema.Struct({
   clientId: Schema.String.check(Schema.isPattern(/^oaiapp_[\w-]+$/u)),
   subject: Schema.optionalKey(Schema.String),

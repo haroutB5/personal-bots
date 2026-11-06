@@ -1,0 +1,686 @@
+diff --git a/apps/server/src/usage/UsageService.ts b/apps/server/src/usage/UsageService.ts
+index 9e8cda9960eacf8fad4842516a8d1a0059affb4e..db717850f8e67ba80823f0626d56d9f8d4ba2ee0 100644
+--- a/apps/server/src/usage/UsageService.ts
++++ b/apps/server/src/usage/UsageService.ts
+@@ -8,7 +8,9 @@
+  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
+  * scans only reparse files that changed, and a file that merely grew resumes
+  * from its cached parse position so only the appended bytes are read.
+- * SQLite readers query live databases each scan so WAL writes remain visible.
++ * OpenCode's SQLite reader queries the live database each scan so WAL writes
++ * remain visible. Antigravity databases are memoised in memory while the
++ * database and its WAL keep the same `(size, mtime, ctime)`.
+  *
+  * @module UsageService
+  */
+@@ -17,8 +19,10 @@ import * as NodeOS from "node:os";
+ import {
+   ClaudeSettings,
+   CodexSettings,
++  DeepSeekSettings,
+   type ProviderInstanceConfig,
+   ProviderInstanceId,
++  type ServerProviderSpend,
+   USAGE_CONTRACT_VERSION,
+   type ServerSettings as ServerSettingsValue,
+   type UsageProviderKind,
+@@ -32,7 +36,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
+ import * as Cause from "effect/Cause";
+ import * as Clock from "effect/Clock";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -42,29 +46,40 @@ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Semaphore from "effect/Semaphore";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ 
+ import { ServerConfig } from "../config.ts";
+ import { expandHomePath } from "../pathExpansion.ts";
+ import * as ServerSettings from "../serverSettings.ts";
+ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
++import { resolveDeepSeekHomePath } from "../provider/Drivers/DeepSeekEnvironment.ts";
++import { DSH_HOME_DIR_NAME, resolveDeepSeekEngine } from "../provider/Drivers/DeepSeekEngine.ts";
+ import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+ import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+ import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
+-import { readAntigravityUsage } from "./antigravityUsageReader.ts";
++import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
+ import { readCursorAccountUsage } from "./cursorUsageReader.ts";
+ import { UsageAggregator } from "./usageAggregation.ts";
+-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
++import { UsageBotAggregator, type BotUsageCell } from "./botUsage.ts";
++import { makeSliceYield } from "./sliceYield.ts";
++import {
++  createOverrideRateTable,
++  parseRateTable,
++  priceUsage,
++  type RateTable,
++} from "./usagePricing.ts";
+ import {
+   listTranscriptFiles,
+   readDirectoryVolumeId,
+   readTranscriptRecords,
+ } from "./usageTranscriptReader.ts";
+ import {
+-  decodeScanCache,
++  decodeScanCacheText,
+   dedupeWithinFile,
+-  encodeScanCache,
++  encodeScanCacheLines,
++  LEGACY_SCAN_CACHE_FILE_NAME,
+   pruneScanCache,
++  SCAN_CACHE_FILE_NAME,
+   type ScanCache,
+ } from "./usageScanCache.ts";
+ import type { UsageRecord } from "./usageTranscripts.ts";
+@@ -90,6 +105,7 @@ const CACHE_RETENTION_DAYS = 90;
+ 
+ const decodeCodexSettings = Schema.decodeOption(CodexSettings);
+ const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
++const decodeDeepSeekSettings = Schema.decodeOption(DeepSeekSettings);
+ 
+ /** On-disk shape of the rate snapshot. */
+ const RatesCacheFile = Schema.Struct({
+@@ -103,11 +119,10 @@ const encodeRatesCache = Schema.encodeEffect(
+   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
+ );
+ 
+-/** The scan cache is narrowed by hand in `usageScanCache`, so JSON is enough here. */
+-const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
+-const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
+-const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+-const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
++/** Codex events have no id of their own, so the summary keys them by their JSON content. */
++const encodeUsageRecordKey = Schema.encodeSync(
++  Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>),
++);
+ const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
+ const decodeCachedSources = Schema.decodeUnknownOption(
+   Schema.Struct({ sources: Schema.Record(Schema.String, CachedSource) }),
+@@ -119,9 +134,52 @@ export class UsageService extends Context.Service<
+     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+     /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
+     readonly refreshRates: Effect.Effect<UsagePricing>;
++    /**
++     * Tokens per `(day, session, provider, model)` over a day window, from the
++     * same transcripts and per-file cache as `readSummary`, for attributing
++     * sessions to bots, each cell with its API price estimate (same rates and
++     * custom prices as the usage page). Claude, Codex, OpenCode and DeepSeek
++     * only; never touches Cursor's network or Antigravity. Time sliced, so a
++     * cold scan does not hold the event loop.
++     */
++    readonly readSessionUsage: (
++      input: SessionUsageInput,
++    ) => Effect.Effect<SessionUsageResult, UsageReadError>;
++    /**
++     * The API-price value of every DeepSeek turn the transcripts under
++     * `projectsDir` still hold, at DeepSeek's published Flash rates, for the
++     * balance surfaces that show it beside what is left. All-time and never
++     * failing: null when there are no records to price, so a caller never
++     * invents a figure.
++     */
++    readonly readDeepSeekSpend: (
++      projectsDir: string,
++    ) => Effect.Effect<ServerProviderSpend | null, never>;
+   }
+ >()("t3/usage/UsageService") {}
+ 
++export interface SessionUsageInput {
++  readonly timeZone: string;
++  readonly sinceDay: string;
++  readonly untilDay: string;
++}
++
++export interface SessionUsageResult {
++  readonly cells: readonly BotUsageCell[];
++  readonly scannedFiles: number;
++  readonly scanDurationMs: number;
++}
++
++/** Providers whose chats a personal bot runs; the rest are not attributable. */
++const SESSION_USAGE_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set([
++  "claude",
++  "codex",
++  "opencode",
++  "deepseek",
++  "antigravity",
++  "grok",
++]);
++
+ const EMPTY_PRICING: UsagePricing = {
+   status: "unavailable",
+   source: LITELLM_RATES_URL,
+@@ -146,6 +204,8 @@ export const layerTest = Layer.succeed(
+         scanDurationMs: 0,
+       }),
+     refreshRates: Effect.succeed(EMPTY_PRICING),
++    readSessionUsage: () => Effect.succeed({ cells: [], scannedFiles: 0, scanDurationMs: 0 }),
++    readDeepSeekSpend: () => Effect.succeed(null),
+   }),
+ );
+ 
+@@ -160,6 +220,7 @@ export const make = Effect.gen(function* () {
+   const platform = yield* HostProcessPlatform;
+ 
+   const fileCache: ScanCache = new Map();
++  const antigravityCache = makeAntigravityUsageCache();
+   const sourceCache = new Map<string, typeof CachedSource.Type>();
+   let cacheDirty = false;
+   const isWithinDirectory = (filePath: string, dir: string) => {
+@@ -168,7 +229,8 @@ export const make = Effect.gen(function* () {
+   };
+ 
+   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
+-  const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
++  const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
++  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+   let rates: RateTable = new Map();
+   let ratesFetchedAtMs: number | null = null;
+   let ratesStatus: UsagePricing["status"] = "unavailable";
+@@ -268,7 +330,9 @@ export const make = Effect.gen(function* () {
+       fileName?: string;
+     }> = [];
+     const seen = new Set<string>();
+-    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
++    // Harness-ledger directories, collected while the instances are walked.
++    const dshLedgerDirectories = new Set<string>();
++    for (const driver of ["claudeAgent", "codex", "grok", "deepseek"] as const) {
+       // Disabled accounts still have history. Explicit default slots replace
+       // the legacy settings, just as they do in the provider registry.
+       const instances: Array<
+@@ -307,12 +371,27 @@ export const make = Effect.gen(function* () {
+           home = configured
+             ? expandHomePath(configured)
+             : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
++        } else if (driver === "deepseek") {
++          // DeepSeek sessions run the Claude Agent SDK against their own
++          // isolated config home, so their transcripts are Claude-format
++          // `projects` JSONL exactly like Claude Code's. On the harness engine
++          // the same instance's turns live in the adapter's own ledger instead
++          // (see `provider/dshUsageLedger.ts`), scoped to the data root.
++          const decoded = decodeDeepSeekSettings(instance.config ?? {});
++          if (Option.isNone(decoded)) continue;
++          home = yield* resolveDeepSeekHomePath(decoded.value, environment);
++          if (resolveDeepSeekEngine(decoded.value, environment) === "dsh") {
++            dshLedgerDirectories.add(path.resolve(config.baseDir, DSH_HOME_DIR_NAME, "usage"));
++          }
+         } else {
+           home = expandHomePath(
+             environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
+           );
+         }
+-        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
++        const directory = path.resolve(
++          home,
++          provider === "claude" || provider === "deepseek" ? "projects" : "sessions",
++        );
+         const sourceKey = provider + "\0" + directory;
+         const previous = sourceCache.get(sourceKey);
+         // Keep canonical paths and source fingerprints stable after root cleanup,
+@@ -350,6 +429,20 @@ export const make = Effect.gen(function* () {
+         });
+       }
+     }
++    // The DeepSeek Harness's ledger, as a second `deepseek` source: its lines
++    // are already in this scanner's Claude shape.
++    for (const ledgerDirectory of dshLedgerDirectories) {
++      const key = `deepseek\0${ledgerDirectory}`;
++      if (seen.has(key)) continue;
++      seen.add(key);
++      dirs.push({
++        provider: "deepseek",
++        dir: yield* fileSystem
++          .realPath(ledgerDirectory)
++          .pipe(Effect.orElseSucceed(() => ledgerDirectory)),
++        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(ledgerDirectory)),
++      });
++    }
+     return dirs;
+   });
+ 
+@@ -362,13 +455,23 @@ export const make = Effect.gen(function* () {
+    */
+   const ensureScanCacheLoaded = yield* Effect.cached(
+     Effect.gen(function* () {
+-      const document = yield* fileSystem.readFileString(scanCachePath).pipe(
+-        Effect.flatMap((raw) => decodeScanCacheFile(raw)),
+-        Effect.catchCause(() => Effect.succeed(null)),
+-      );
+-      if (document === null) return;
+-      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+-      const sources = decodeCachedSources(document);
++      const readText = (filePath: string) =>
++        fileSystem.readFileString(filePath).pipe(Effect.catchCause(() => Effect.succeed(null)));
++      // Decoded a file at a time, yielding to the event loop in between.
++      const readCache = Effect.fnUntraced(function* (filePath: string) {
++        const text = yield* readText(filePath);
++        if (text === null) return null;
++        return yield* Effect.promise(() => decodeScanCacheText(text, makeSliceYield()));
++      });
++      let decoded = yield* readCache(scanCachePath);
++      if (decoded === null) {
++        decoded = yield* readCache(legacyScanCachePath);
++        // Write the migrated cache to its own file on the next scan.
++        cacheDirty = decoded !== null;
++      }
++      if (decoded === null) return;
++      for (const [path, entry] of decoded.cache) fileCache.set(path, entry);
++      const sources = decodeCachedSources(decoded.document);
+       if (Option.isSome(sources)) {
+         for (const [key, source] of Object.entries(sources.value.sources))
+           sourceCache.set(key, source);
+@@ -376,20 +479,31 @@ export const make = Effect.gen(function* () {
+     }),
+   );
+ 
++  // One write at a time: two scans finishing together must not interleave their
++  // writes into one file.
++  const persistLock = yield* Semaphore.make(1);
++
+   const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
+     if (!cacheDirty) return;
+-    // Cleared only after the write lands, so a failed persist is retried on
+-    // the next scan instead of leaving disk permanently stale.
+-    yield* encodeScanCacheFile({
+-      ...encodeScanCache(fileCache),
+-      sources: Object.fromEntries(sourceCache),
+-    }).pipe(
+-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+-      Effect.map(() => {
++    yield* persistLock.withPermit(
++      Effect.gen(function* () {
++        if (!cacheDirty) return;
++        // Cleared before the slow part: encoding yields to the event loop, and
++        // a scan that changes the cache meanwhile marks it dirty again. A
++        // failed write sets it back, so the next scan retries.
+         cacheDirty = false;
+-      }),
+-      // A cache we cannot write is a slower next start, not a failed read.
+-      Effect.ignoreCause,
++        const serialized = yield* Effect.promise(() =>
++          encodeScanCacheLines(fileCache, Object.fromEntries(sourceCache), makeSliceYield()),
++        );
++        yield* fileSystem.writeFileString(scanCachePath, serialized);
++      }).pipe(
++        // A cache we cannot write is a slower next start, not a failed read.
++        Effect.catchCause(() =>
++          Effect.sync(() => {
++            cacheDirty = true;
++          }),
++        ),
++      ),
+     );
+   });
+ 
+@@ -458,6 +572,84 @@ export const make = Effect.gen(function* () {
+       return tailRecords.length === 0 ? records : [...records, ...tailRecords];
+     });
+ 
++  const emptyRateTable: RateTable = new Map();
++
++  /**
++   * The API-price value of every DeepSeek turn the transcripts under
++   * `projectsDir` still hold, at DeepSeek's published Flash rates.
++   *
++   * All-time, not windowed: the figure is paired with a prepaid balance, so it
++   * covers every record we hold, from the first one. One pass over the same
++   * per-file cache as the scans, with records de-duplicated exactly as the
++   * aggregator does (a message is counted once across every file), so the
++   * figure agrees with the DeepSeek buckets the usage page shows for the same
++   * period. The cache's retained records of already-cleaned-up transcripts
++   * still count, as they do for the scans.
++   *
++   * Null when nothing is there to price, so callers never invent a figure.
++   * Never fails: the probe it feeds must not lose a balance over a scan hiccup.
++   */
++  const readDeepSeekSpend = Effect.fn("UsageService.readDeepSeekSpend")(function* (
++    projectsDir: string,
++  ) {
++    yield* ensureScanCacheLoaded;
++    // Only for custom prices; with settings unreadable the published rates
++    // still price every record.
++    const settings = yield* readSettings.pipe(Effect.catchCause(() => Effect.succeed(null)));
++    const overrides =
++      settings === null ? undefined : createOverrideRateTable(settings.usagePriceOverrides);
++
++    const files = yield* Effect.promise(() => listTranscriptFiles(projectsDir, 0));
++    const livePaths = new Set(files.map((file) => file.path));
++    const retained: Array<{ readonly path: string; readonly records: readonly UsageRecord[] }> = [];
++    for (const [filePath, entry] of fileCache) {
++      if (entry.provider !== "deepseek") continue;
++      if (livePaths.has(filePath) || !isWithinDirectory(filePath, projectsDir)) continue;
++      retained.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
++    }
++
++    const seen = new Set<string>();
++    let costUsd = 0;
++    let records = 0;
++    let sinceMs: number | null = null;
++    const collect = (record: UsageRecord) => {
++      if (record.dedupeKey !== null) {
++        if (seen.has(record.dedupeKey)) return;
++        seen.add(record.dedupeKey);
++      }
++      // DeepSeek prices by provider kind, so the table is empty on purpose.
++      costUsd += priceUsage(emptyRateTable, record, overrides).costUsd;
++      records += 1;
++      if (sinceMs === null || record.timestampMs < sinceMs) sinceMs = record.timestampMs;
++    };
++    const spendSlice = makeSliceYield();
++    const sliceSpend = process.env.T3CODE_DEEPSEEK_PRICING_FAST !== "off";
++    for (const file of files) {
++      const fileRecords = yield* readFileRecords(file.path, file.size, file.mtimeMs, "deepseek");
++      for (let index = 0; index < fileRecords.length; index += 1) {
++        collect(fileRecords[index]!);
++        if (sliceSpend && (index & 63) === 0 && spendSlice.due()) {
++          yield* Effect.promise(spendSlice.yieldNow);
++        }
++      }
++    }
++    for (const file of retained) {
++      for (let index = 0; index < file.records.length; index += 1) {
++        collect(file.records[index]!);
++        if (sliceSpend && (index & 63) === 0 && spendSlice.due()) {
++          yield* Effect.promise(spendSlice.yieldNow);
++        }
++      }
++    }
++
++    if (records === 0 || sinceMs === null) return null;
++    return {
++      costUsd,
++      since: DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
++      records,
++    } satisfies ServerProviderSpend;
++  });
++
+   /** One provider directory's walk and parse, before rates are involved. */
+   interface ScannedDir {
+     readonly provider: UsageProviderKind;
+@@ -473,10 +665,28 @@ export const make = Effect.gen(function* () {
+       | null;
+   }
+ 
+-  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
++  /** A comma list from the environment, else the defaults, as canonical paths. */
++  const envRoots = Effect.fnUntraced(function* (key: string, defaults: readonly string[]) {
++    const roots = hostEnvironment[key]
++      ?.split(",")
++      .map((value) => value.trim())
++      .filter(Boolean);
++    const canonical = new Set<string>();
++    for (const root of roots?.length ? roots : defaults) {
++      const resolved = path.resolve(expandHomePath(root));
++      canonical.add(
++        yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
++      );
++    }
++    return [...canonical];
++  });
++
++  /** The Claude, Codex, Grok and DeepSeek transcript directories, parsed (or served from the file cache). */
++  const collectTranscriptDirs = Effect.fn("UsageService.collectTranscriptDirs")(function* (
+     windowStartMs: number,
+     settings: ServerSettingsValue,
+     retentionCutoffMs: number,
++    providers?: ReadonlySet<UsageProviderKind>,
+   ) {
+     // The home resolvers ask for `Path` themselves; satisfy them from the
+     // instance we already hold so the scan stays context-free.
+@@ -485,6 +695,7 @@ export const make = Effect.gen(function* () {
+     );
+     const scanned: ScannedDir[] = [];
+     for (const { provider, dir, volumeId, fileName } of dirs) {
++      if (providers !== undefined && !providers.has(provider)) continue;
+       const exists = yield* fileSystem
+         .exists(dir)
+         .pipe(Effect.catchCause(() => Effect.succeed(false)));
+@@ -502,30 +713,42 @@ export const make = Effect.gen(function* () {
+       }
+       scanned.push({ provider, dir, volumeId, files: parsedFiles });
+     }
++    return scanned;
++  });
+ 
++  const collectOpenCodeDirs = Effect.fn("UsageService.collectOpenCodeDirs")(function* (
++    windowStartMs: number,
++  ) {
++    const scanned: ScannedDir[] = [];
+     const home = NodeOS.homedir();
+-    const envRoots = Effect.fnUntraced(function* (key: string, defaults: readonly string[]) {
+-      const roots = hostEnvironment[key]
+-        ?.split(",")
+-        .map((value) => value.trim())
+-        .filter(Boolean);
+-      const canonical = new Set<string>();
+-      for (const root of roots?.length ? roots : defaults) {
+-        const resolved = path.resolve(expandHomePath(root));
+-        canonical.add(
+-          yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
+-        );
+-      }
+-      return [...canonical];
+-    });
+     const dataHome = hostEnvironment["XDG_DATA_HOME"]?.trim();
+-    for (const dir of yield* envRoots("OPENCODE_DATA_DIR", [
++    // The app runs OpenCode 2 with its own XDG roots so bots never touch the
++    // owner's store; its database is where Go (and Zen) turns are recorded.
++    const openCode2Root = path.join(config.stateDir, "opencode-v2", "data", "opencode");
++    const openCode2Exists = yield* fileSystem
++      .exists(openCode2Root)
++      .pipe(Effect.catchCause(() => Effect.succeed(false)));
++    const openCodeRoots = yield* envRoots("OPENCODE_DATA_DIR", [
+       path.join(
+         dataHome && path.isAbsolute(dataHome) ? dataHome : path.join(home, ".local", "share"),
+         "opencode",
+       ),
+-    ])) {
++    ]);
++    if (openCode2Exists) {
++      // Counts even when OPENCODE_DATA_DIR names only the owner's store.
++      const canonical = yield* fileSystem
++        .realPath(openCode2Root)
++        .pipe(Effect.orElseSucceed(() => openCode2Root));
++      if (!openCodeRoots.includes(canonical)) openCodeRoots.push(canonical);
++    }
++    for (const dir of openCodeRoots) {
+       const result = yield* Effect.promise(() => readOpenCodeUsage(dir, windowStartMs));
++      // Numbers only. Once per scan; nothing when the cap skipped nothing.
++      if (result.skippedRows > 0) {
++        yield* Effect.logInfo("opencode usage skipped oversized message rows", {
++          skippedRows: result.skippedRows,
++        });
++      }
+       scanned.push({
+         provider: "opencode",
+         dir,
+@@ -535,6 +758,15 @@ export const make = Effect.gen(function* () {
+         ...(result.error ? { message: "Some OpenCode history could not be read." } : {}),
+       });
+     }
++    return scanned;
++  });
++
++  const collectAntigravityDirs = Effect.fn("UsageService.collectAntigravityDirs")(function* (
++    windowStartMs: number,
++    settings: ServerSettingsValue,
++  ) {
++    const scanned: ScannedDir[] = [];
++    const home = NodeOS.homedir();
+     const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
+       ...["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"].map((name) =>
+         path.join(home, ".gemini", name),
+@@ -573,7 +805,7 @@ export const make = Effect.gen(function* () {
+       antigravityDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
+     }
+     const antigravity = yield* Effect.promise(() =>
+-      readAntigravityUsage([...antigravityDirs], windowStartMs),
++      readAntigravityUsage([...antigravityDirs], windowStartMs, antigravityCache),
+     );
+     for (const dir of antigravityDirs) {
+       const exists = yield* fileSystem
+@@ -591,6 +823,20 @@ export const make = Effect.gen(function* () {
+         ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
+       });
+     }
++    return scanned;
++  });
++
++  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
++    windowStartMs: number,
++    settings: ServerSettingsValue,
++    retentionCutoffMs: number,
++  ) {
++    const scanned: ScannedDir[] = [
++      ...(yield* collectTranscriptDirs(windowStartMs, settings, retentionCutoffMs)),
++      ...(yield* collectOpenCodeDirs(windowStartMs)),
++      ...(yield* collectAntigravityDirs(windowStartMs, settings)),
++    ];
++    const home = NodeOS.homedir();
+     const cursorUserHome =
+       (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
+     const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
+@@ -672,6 +918,33 @@ export const make = Effect.gen(function* () {
+     return scanned;
+   });
+ 
++  /**
++   * A directory's live files plus the saved records of transcripts since
++   * cleaned up. Cleanup may remove transcripts, but the usage we already saved
++   * still contributes to this source, so it keeps the normal aggregation and
++   * dedupe path.
++   */
++  const withRetainedFiles = (
++    provider: UsageProviderKind,
++    dir: string,
++    files: ScannedDir["files"],
++    retentionCutoffMs: number,
++  ) => {
++    const retainedFiles = [...(files ?? [])];
++    const livePaths = new Set(retainedFiles.map((file) => file.path));
++    for (const [filePath, entry] of fileCache) {
++      if (
++        entry.provider !== provider ||
++        entry.mtimeMs < retentionCutoffMs ||
++        livePaths.has(filePath) ||
++        !isWithinDirectory(filePath, dir)
++      )
++        continue;
++      retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
++    }
++    return retainedFiles;
++  };
++
+   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
+     input: UsageSummaryInput,
+     settings: ServerSettingsValue,
+@@ -753,20 +1026,7 @@ export const make = Effect.gen(function* () {
+       action,
+       hostId: sourceHostId,
+     } of scannedDirs) {
+-      const retainedFiles = [...(files ?? [])];
+-      const livePaths = new Set(retainedFiles.map((file) => file.path));
+-      // Cleanup may remove transcripts, but the usage we already saved still
+-      // contributes to this source. Keep the normal aggregation and dedupe path.
+-      for (const [filePath, entry] of fileCache) {
+-        if (
+-          entry.provider !== provider ||
+-          entry.mtimeMs < retentionCutoffMs ||
+-          livePaths.has(filePath) ||
+-          !isWithinDirectory(filePath, dir)
+-        )
+-          continue;
+-        retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+-      }
++      const retainedFiles = withRetainedFiles(provider, dir, files, retentionCutoffMs);
+       let scannedFiles = 0;
+       let skippedFiles = 0;
+       // Distinct per directory. Buckets carry per-cell session counts, but a
+@@ -892,7 +1152,80 @@ export const make = Effect.gen(function* () {
+     return yield* Deferred.await(deferred);
+   });
+ 
+-  return { readSummary, refreshRates } as const;
++  const toSessionUsageDayMs = (day: string): number | null => {
++    const parsed = DateTime.make(`${day}T00:00:00Z`);
++    return Option.isNone(parsed) ? null : DateTime.toEpochMillis(parsed.value);
++  };
++
++  const scanSessionUsage = Effect.fn("UsageService.scanSessionUsage")(function* (
++    input: SessionUsageInput,
++  ) {
++    const sinceMs = toSessionUsageDayMs(input.sinceDay);
++    const untilMs = toSessionUsageDayMs(input.untilDay);
++    if (sinceMs === null || untilMs === null || sinceMs > untilMs) {
++      return yield* new UsageReadError({
++        reason: "invalidWindow",
++        detail: `Session usage window '${input.sinceDay}'..'${input.untilDay}' is not valid`,
++      });
++    }
++    const settings = yield* readSettings;
++    const startedAtMs = yield* Clock.currentTimeMillis;
++    yield* ensureScanCacheLoaded;
++
++    // The rate table is needed once records are folded; a failed fetch leaves
++    // the cached table (or none, and then every record reads as unpriced).
++    yield* ensureRates(false);
++
++    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
++    const scannedDirs = [
++      ...(yield* collectTranscriptDirs(
++        sinceMs - MTIME_SLACK_MS,
++        settings,
++        retentionCutoffMs,
++        SESSION_USAGE_PROVIDERS,
++      )),
++      ...(yield* collectOpenCodeDirs(sinceMs - MTIME_SLACK_MS)),
++      ...(yield* collectAntigravityDirs(sinceMs - MTIME_SLACK_MS, settings)),
++    ];
++
++    const aggregator = new UsageBotAggregator({
++      timeZone: input.timeZone,
++      sinceDay: input.sinceDay,
++      untilDay: input.untilDay,
++      rates,
++      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
++    });
++    const slice = makeSliceYield();
++    let scannedFiles = 0;
++    let fed = 0;
++    for (const { provider, dir, files } of scannedDirs) {
++      for (const file of withRetainedFiles(provider, dir, files, retentionCutoffMs)) {
++        if (file.records.length === 0) continue;
++        scannedFiles += 1;
++        const scope = aggregator.beginFile();
++        for (const record of file.records) {
++          scope.add(record);
++          fed += 1;
++          if (fed % 64 === 0 && slice.due()) yield* Effect.promise(slice.yieldNow);
++        }
++      }
++    }
++
++    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
++    if (pruned > 0) cacheDirty = true;
++    yield* persistScanCache();
++
++    const finishedAtMs = yield* Clock.currentTimeMillis;
++    return {
++      cells: aggregator.finish(),
++      scannedFiles,
++      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
++    } satisfies SessionUsageResult;
++  });
++
++  const readSessionUsage = scanSessionUsage;
++
++  return { readSummary, refreshRates, readSessionUsage, readDeepSeekSpend } as const;
+ });
+ 
+ export const layer = Layer.effect(UsageService, make);

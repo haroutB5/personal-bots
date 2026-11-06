@@ -1,0 +1,166 @@
+diff --git a/apps/server/src/provider/acp/AcpRuntimeModel.test.ts b/apps/server/src/provider/acp/AcpRuntimeModel.test.ts
+index b5ee1708a902a48c135f0f06029fff249af2c665..1eecfc0ed8db186796f51fc908333e707f63f7d7 100644
+--- a/apps/server/src/provider/acp/AcpRuntimeModel.test.ts
++++ b/apps/server/src/provider/acp/AcpRuntimeModel.test.ts
+@@ -258,6 +258,115 @@ describe("AcpRuntimeModel", () => {
+     }
+   });
+ 
++  it("labels an MCP tool call in plain words from its model-facing name", () => {
++    // The DeepSeek Harness sends the MCP name as the ACP title (`dsh-mcp-client`
++    // builds `mcp__<server>__<rawName>`) and the arguments as `rawInput`.
++    const notification = {
++      sessionId: "session-1",
++      update: {
++        sessionUpdate: "tool_call",
++        toolCallId: "tool-mcp-1",
++        title: "mcp__t3-code__preview_navigate",
++        kind: "other",
++        status: "in_progress",
++        rawInput: { url: "https://www.clubspark.uk/booking/42?token=abc123#top" },
++      },
++    } satisfies EffectAcpSchema.SessionNotification;
++
++    const { events } = parseSessionUpdateEvent(notification);
++    const event = events[0];
++    if (event?._tag !== "ToolCallUpdated") {
++      throw new Error("expected a ToolCallUpdated event");
++    }
++
++    expect(event.toolCall.title).toBe("Opening clubspark.uk");
++    // Hostname only: the path, query and fragment never reach the step line
++    // (the tool call's own `data.rawInput` record keeps the arguments, as on
++    // every other provider, for the expanded step).
++    const shown = `${event.toolCall.title ?? ""}\n${event.toolCall.detail ?? ""}`;
++    expect(shown).not.toContain("abc123");
++    expect(shown).not.toContain("booking/42");
++  });
++
++  it("humanises an MCP name from a server with no hand-written line", () => {
++    const { events } = parseSessionUpdateEvent({
++      sessionId: "session-1",
++      update: {
++        sessionUpdate: "tool_call",
++        toolCallId: "tool-mcp-2",
++        title: "mcp__github__fetch_pr",
++        kind: "other",
++        status: "in_progress",
++      },
++    } satisfies EffectAcpSchema.SessionNotification);
++    const event = events[0];
++    if (event?._tag !== "ToolCallUpdated") {
++      throw new Error("expected a ToolCallUpdated event");
++    }
++
++    expect(event.toolCall.title).toBe("Fetch PR");
++  });
++
++  it("keeps a provider's own plain title for its built-in tools", () => {
++    const { events } = parseSessionUpdateEvent({
++      sessionId: "session-1",
++      update: {
++        sessionUpdate: "tool_call",
++        toolCallId: "tool-builtin-1",
++        title: "Running start_subagent",
++        kind: "other",
++        status: "in_progress",
++        rawInput: {},
++      },
++    } satisfies EffectAcpSchema.SessionNotification);
++    const event = events[0];
++    if (event?._tag !== "ToolCallUpdated") {
++      throw new Error("expected a ToolCallUpdated event");
++    }
++
++    expect(event.toolCall.title).toBe("Running start_subagent");
++  });
++
++  it("keeps the announced title when the result update names nothing", () => {
++    // dsh sends the MCP name on `tool_call` and a title-less `tool_call_update`
++    // on completion. The update's own derived fallback ("Tool") used to replace
++    // the real title on merge, so every finished step read "Tool".
++    const created = parseSessionUpdateEvent({
++      sessionId: "session-1",
++      update: {
++        sessionUpdate: "tool_call",
++        toolCallId: "tool-mcp-1",
++        title: "mcp__t3-code__preview_navigate",
++        kind: "other",
++        status: "in_progress",
++        rawInput: { url: "https://www.clubspark.uk/booking/42" },
++      },
++    } satisfies EffectAcpSchema.SessionNotification);
++    const updated = parseSessionUpdateEvent({
++      sessionId: "session-1",
++      update: {
++        sessionUpdate: "tool_call_update",
++        toolCallId: "tool-mcp-1",
++        status: "completed",
++        content: [{ type: "content", content: { type: "text", text: "Page opened" } }],
++      },
++    } satisfies EffectAcpSchema.SessionNotification);
++
++    const createdEvent = created.events[0];
++    const updatedEvent = updated.events[0];
++    if (createdEvent?._tag !== "ToolCallUpdated" || updatedEvent?._tag !== "ToolCallUpdated") {
++      throw new Error("expected two ToolCallUpdated events");
++    }
++
++    expect(updatedEvent.toolCall.title).toBeUndefined();
++    expect(mergeToolCallState(createdEvent.toolCall, updatedEvent.toolCall)).toMatchObject({
++      toolCallId: "tool-mcp-1",
++      status: "completed",
++      title: "Opening clubspark.uk",
++      detail: "Page opened",
++    });
++  });
++
+   it("trims padded current mode updates before emitting a mode change", () => {
+     const result = parseSessionUpdateEvent({
+       sessionId: "session-1",
+@@ -276,6 +385,45 @@ describe("AcpRuntimeModel", () => {
+     ]);
+   });
+ 
++  it("projects ACP usage updates as the context in use and its window", () => {
++    const notification = {
++      sessionId: "session-1",
++      update: { sessionUpdate: "usage_update", used: 53_000, size: 200_000 },
++    } satisfies EffectAcpSchema.SessionNotification;
++
++    expect(parseSessionUpdateEvent(notification).events).toEqual([
++      { _tag: "UsageUpdated", usedTokens: 53_000, maxTokens: 200_000, rawPayload: notification },
++    ]);
++  });
++
++  it("caps usage at the window, and drops a window size that is not positive", () => {
++    const over = parseSessionUpdateEvent({
++      sessionId: "session-1",
++      update: { sessionUpdate: "usage_update", used: 210_000, size: 200_000 },
++    } satisfies EffectAcpSchema.SessionNotification);
++    expect(over.events[0]).toMatchObject({
++      _tag: "UsageUpdated",
++      usedTokens: 200_000,
++      maxTokens: 200_000,
++    });
++
++    const noWindow = parseSessionUpdateEvent({
++      sessionId: "session-1",
++      update: { sessionUpdate: "usage_update", used: 4_200, size: 0 },
++    } satisfies EffectAcpSchema.SessionNotification);
++    expect(noWindow.events).toHaveLength(1);
++    expect(noWindow.events[0]).toMatchObject({ _tag: "UsageUpdated", usedTokens: 4_200 });
++    expect(noWindow.events[0]).not.toHaveProperty("maxTokens");
++  });
++
++  it("ignores a usage update whose used count is not a usable number", () => {
++    const result = parseSessionUpdateEvent({
++      sessionId: "session-1",
++      update: { sessionUpdate: "usage_update", used: -1, size: 200_000 },
++    } satisfies EffectAcpSchema.SessionNotification);
++    expect(result.events).toEqual([]);
++  });
++
+   it("projects typed ACP plan and content updates", () => {
+     const planResult = parseSessionUpdateEvent({
+       sessionId: "session-1",

@@ -1,0 +1,354 @@
+diff --git a/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts b/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
+index 2584a7578200415e2f11e38d0e3544897b296865..0c4741396b888bbef265e3bec9e55b2ebfd490bc 100644
+--- a/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
++++ b/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
+@@ -4,6 +4,7 @@ import {
+   MessageId,
+   type OrchestrationEvent,
+   OrchestrationProposedPlanId,
++  type OrchestrationSessionProviderRetry,
+   CheckpointRef,
+   classifyTaskAgentKind,
+   EventId,
+@@ -22,7 +23,7 @@ import {
+ import * as Cache from "effect/Cache";
+ import * as Cause from "effect/Cause";
+ import * as Clock from "effect/Clock";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+@@ -33,6 +34,7 @@ import * as Stream from "effect/Stream";
+ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+ import { formatTokens } from "@t3tools/shared/usageFormat";
+ 
++import { consumeReplacedSessionExit } from "../replacedSessions.ts";
+ import { ProviderService } from "../../provider/Services/ProviderService.ts";
+ import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+ import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+@@ -52,10 +54,14 @@ import {
+   type ProviderRuntimeIngestionShape,
+ } from "../Services/ProviderRuntimeIngestion.ts";
+ import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
++import { stripToolResultMedia } from "../toolResultMedia.ts";
+ import { forkParked } from "../../serverActivation.ts";
+ import { ServerSettingsService } from "../../serverSettings.ts";
+ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+ import { canReplaceThreadTitle } from "../threadTitles.ts";
++import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
++import { uniqueAutomaticTitle, withChatTitleLock } from "../../personal/personalChatTitles.ts";
++import { personalProviderTitleAllowed } from "../../personal/personalThreadTitles.ts";
+ 
+ const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
+ // Suffixed, not prefixed: `clearTurnStateForSession` sweeps by thread prefix.
+@@ -188,6 +194,14 @@ function truncateDetail(value: string, limit = 180): string {
+   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+ }
+ 
++/**
++ * The row label for a `runtime.warning` whose adapter-supplied message is
++ * empty. The activity summary must be at least one character or the event store
++ * rejects the whole event (measured 15 Oct 2026 on a real-CLI prompt larger than
++ * the auto-compact window: the CLI's own notice arrived with an empty body).
++ */
++const RUNTIME_WARNING_FALLBACK = "Runtime warning";
++
+ function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
+   const trimmed = planMarkdown?.trim();
+   if (!trimmed) {
+@@ -599,7 +613,33 @@ export function runtimeEventToActivities(
+       ];
+     }
+ 
++    case "user-message.delivered": {
++      // The chat's "Read" status under the owner's latest message. Not work.
++      // One row per thread, replaced by each delivery (the activity upserts by
++      // id): the status only ever reads the newest one, and a row per message
++      // rode along in every thread snapshot for the life of the chat (ten
++      // messages added ~2 KB and pushed the transfer-budget scenario over).
++      return [
++        {
++          id: EventId.make(`user-message-delivered:${event.threadId}`),
++          createdAt: event.createdAt,
++          tone: "info",
++          kind: "user-message.delivered",
++          summary: "Message read",
++          payload: { messageId: event.payload.messageId },
++          turnId: toTurnId(event.turnId) ?? null,
++          ...maybeSequence,
++        },
++      ];
++    }
++
+     case "runtime.warning": {
++      // A CLI notification can arrive with no text at all (measured 15 Oct on a
++      // prompt over the auto-compact window: the CLI's own notice had an empty
++      // body). The activity's summary must be non-empty or the whole event is
++      // rejected by the event store and the row is lost with a WARN, so an empty
++      // message falls back to the generic word.
++      const summary = truncateDetail(event.payload.message, 120) || RUNTIME_WARNING_FALLBACK;
+       return [
+         {
+           id: event.eventId,
+@@ -608,9 +648,9 @@ export function runtimeEventToActivities(
+           kind: "runtime.warning",
+           // Use the adapter-supplied message as the row label so the work log
+           // shows what the warning was about, not a generic "Runtime warning".
+-          summary: truncateDetail(event.payload.message, 120),
++          summary,
+           payload: {
+-            message: truncateDetail(event.payload.message),
++            message: truncateDetail(event.payload.message) || RUNTIME_WARNING_FALLBACK,
+             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+           },
+           turnId: toTurnId(event.turnId) ?? null,
+@@ -989,7 +1029,11 @@ export function runtimeEventToActivities(
+             ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
+             ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
+             ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
+-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
++            // Full payload, minus inline base64 media (image Read results,
++            // preview snapshots): see stripToolResultMedia.
++            ...(event.payload.data !== undefined
++              ? { data: stripToolResultMedia(event.payload.data) }
++              : {}),
+             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
+             ...(event.payload.parentToolUseId
+               ? { parentToolUseId: event.payload.parentToolUseId }
+@@ -1053,6 +1097,7 @@ const make = Effect.gen(function* () {
+   const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
+   const serverSettingsService = yield* ServerSettingsService;
+   const checkpointStore = yield* CheckpointStore.CheckpointStore;
++  const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
+   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
+     crypto.randomUUIDv4.pipe(
+       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
+@@ -1137,6 +1182,41 @@ const make = Effect.gen(function* () {
+       .pipe(Effect.map(Option.getOrUndefined));
+   });
+ 
++  /**
++   * Whether a provider-reported session title may replace the thread's title.
++   * Personal bot threads follow personalProviderTitleAllowed (never task,
++   * routine or group chats; a user-started chat's placeholder or seed at most
++   * once). Every other thread keeps upstream's rule. A failed lookup leaves
++   * the title alone.
++   */
++  const providerTitleMayRename = Effect.fn("providerTitleMayRename")(
++    function* (
++      threadId: ThreadId,
++      title: string,
++      titleState: Parameters<typeof personalProviderTitleAllowed>[0]["titleState"],
++    ) {
++      const link = yield* personalBots.getThreadLink({ threadId });
++      if (Option.isNone(link)) return canReplaceThreadTitle(title);
++      const messages = yield* projectionThreadMessages.listByThreadId({ threadId });
++      return personalProviderTitleAllowed({
++        title,
++        titleState,
++        userMessageIds: messages
++          .filter((message) => message.role === "user")
++          .map((message) => message.messageId),
++      });
++    },
++    (effect, threadId) =>
++      effect.pipe(
++        Effect.catchCause((cause) =>
++          Effect.logWarning("provider title guard lookup failed; keeping the thread title", {
++            threadId,
++            cause: Cause.pretty(cause),
++          }).pipe(Effect.as(false)),
++        ),
++      ),
++  );
++
+   const getThreadMessageById = Effect.fn("getThreadMessageById")(function* (
+     threadId: ThreadId,
+     messageId: MessageId,
+@@ -1830,7 +1910,63 @@ const make = Effect.gen(function* () {
+             Option.isSome(pendingTurnStart)
+           : false;
+ 
++      // A turn.started replayed under a new event id after its own turn
++      // finished (a late or duplicated delivery) must not set the chat running
++      // again: nothing would end it. Narrow on purpose: it needs no active turn,
++      // no turn start pending on the server (a new turn that reuses the id is
++      // always asked for first), and a turn row of that id that already ended.
++      const replayedTurnStart =
++        event.type === "turn.started" &&
++        activeTurnId === null &&
++        eventTurnId !== undefined &&
++        Option.isNone(pendingTurnStart)
++          ? yield* projectionTurnRepository
++              .getByTurnId({ threadId: thread.id, turnId: eventTurnId })
++              .pipe(
++                Effect.map(
++                  Option.exists(
++                    (turn) =>
++                      turn.state === "completed" ||
++                      turn.state === "error" ||
++                      turn.state === "interrupted",
++                  ),
++                ),
++                Effect.orElseSucceed(() => false),
++              )
++          : false;
++      if (replayedTurnStart) {
++        yield* Effect.logDebug("provider runtime ingestion ignored a replayed turn.started", {
++          threadId: thread.id,
++          turnId: eventTurnId,
++        });
++      }
++
++      // The exit of a session the thread has since moved off: a bot chat that
++      // follows its bot to another provider stops the old session after the
++      // thread already points at the new one. That exit says nothing about the
++      // new session, and as a "stopped" state it ended the task, routine or
++      // group turn that caused the move. An event that names no instance is
++      // compared by driver.
++      // On the same instance the two cannot be told apart by name: the reactor
++      // marks the stop it makes for a fresh session, and the first exit that
++      // follows is that session's (see replacedSessions.ts).
++      const replacedSessionExit =
++        event.type === "session.exited" &&
++        thread.session != null &&
++        ((event.providerInstanceId !== undefined && thread.session.providerInstanceId != null
++          ? event.providerInstanceId !== thread.session.providerInstanceId
++          : event.provider !== thread.session.providerName) ||
++          consumeReplacedSessionExit({
++            threadId: thread.id,
++            provider: event.provider,
++            instanceId: event.providerInstanceId,
++            eventAtMs: Date.parse(event.createdAt),
++          }));
++
+       const shouldApplyThreadLifecycle = (() => {
++        if (replacedSessionExit) {
++          return false;
++        }
+         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
+           return true;
+         }
+@@ -1841,7 +1977,10 @@ const make = Effect.gen(function* () {
+           case "thread.started":
+             return true;
+           case "turn.started":
+-            return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
++            return (
++              (!conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart) &&
++              !replayedTurnStart
++            );
+           case "turn.completed":
+           case "turn.aborted":
+             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
+@@ -1881,7 +2020,9 @@ const make = Effect.gen(function* () {
+             case "turn.started":
+               return "running";
+             case "session.exited":
+-              return "stopped";
++              // A failed turn's process usually exits right after it: keep
++              // the error, or the chat reads "Idle" over an unanswered message.
++              return thread.session?.status === "error" ? "error" : "stopped";
+             case "turn.aborted":
+               return "interrupted";
+             case "turn.completed":
+@@ -1915,6 +2056,17 @@ const make = Effect.gen(function* () {
+               : status === "ready" || status === "interrupted"
+                 ? null
+                 : (thread.session?.lastError ?? null);
++        // The adapter's wait (rate limit / retry) rides on the session. A
++        // rate-limited turn that then fails keeps it, so the error state can
++        // still say when the limit resets; anything else moving the thread on
++        // clears it.
++        const providerRetry: OrchestrationSessionProviderRetry | undefined =
++          (event.type === "session.state.changed" || event.type === "turn.completed") &&
++          event.payload.retry !== undefined
++            ? { ...event.payload.retry, provider: event.provider, observedAt: now }
++            : event.type === "turn.completed" && status === "error"
++              ? (thread.session?.providerRetry ?? undefined)
++              : undefined;
+ 
+         if (shouldApplyThreadLifecycle) {
+           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
+@@ -1951,6 +2103,7 @@ const make = Effect.gen(function* () {
+               runtimeMode: thread.session?.runtimeMode ?? "full-access",
+               activeTurnId: nextActiveTurnId,
+               lastError,
++              ...(providerRetry !== undefined ? { providerRetry } : {}),
+               updatedAt: now,
+             },
+             createdAt: now,
+@@ -1958,6 +2111,33 @@ const make = Effect.gen(function* () {
+         }
+       }
+ 
++      // Output after a retry means the provider got through: clear the wait
++      // now instead of leaving "Rate limited" up until the turn ends.
++      if (
++        event.type === "content.delta" &&
++        thread.session?.providerRetry != null &&
++        thread.session.status === "running"
++      ) {
++        yield* orchestrationEngine.dispatch({
++          type: "thread.session.set",
++          commandId: yield* providerCommandId(event, "thread-session-retry-cleared"),
++          threadId: thread.id,
++          session: {
++            threadId: thread.id,
++            status: "running",
++            providerName: event.provider,
++            ...(event.providerInstanceId !== undefined
++              ? { providerInstanceId: event.providerInstanceId }
++              : {}),
++            runtimeMode: thread.session.runtimeMode,
++            activeTurnId: thread.session.activeTurnId,
++            lastError: thread.session.lastError,
++            updatedAt: now,
++          },
++          createdAt: now,
++        });
++      }
++
+       const assistantDelta =
+         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
+           ? event.payload.delta
+@@ -2459,16 +2639,28 @@ const make = Effect.gen(function* () {
+       }
+ 
+       if (event.type === "thread.metadata.updated" && event.payload.name) {
+-        if (thread.titleState?.source !== "manual" && canReplaceThreadTitle(thread.title)) {
+-          yield* orchestrationEngine.dispatch({
+-            type: "thread.title.generate.complete",
+-            commandId: yield* providerCommandId(event, "thread-meta-update"),
+-            threadId: thread.id,
+-            title: event.payload.name,
+-            expectedTitle: thread.title,
+-            expectedVersion: thread.titleState?.version ?? null,
+-            needsRefinement: false,
+-          });
++        if (
++          thread.titleState?.source !== "manual" &&
++          (yield* providerTitleMayRename(thread.id, thread.title, thread.titleState))
++        ) {
++          // A bot's open chats have unique names: a taken provider title gets a number.
++          yield* withChatTitleLock(
++            Effect.gen(function* () {
++              const title = yield* uniqueAutomaticTitle(personalBots, {
++                threadId: thread.id,
++                title: event.payload.name!,
++              });
++              yield* orchestrationEngine.dispatch({
++                type: "thread.title.generate.complete",
++                commandId: yield* providerCommandId(event, "thread-meta-update"),
++                threadId: thread.id,
++                title,
++                expectedTitle: thread.title,
++                expectedVersion: thread.titleState?.version ?? null,
++                needsRefinement: false,
++              });
++            }),
++          );
+         }
+       }
+ 

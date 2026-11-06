@@ -25,6 +25,7 @@ import { secretRedactor } from "../../../personal/secrets/secretRedaction.ts";
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { PersonalToolkitHandlersLive } from "./handlers.ts";
 import { PersonalToolkit } from "./tools.ts";
+import { mcpThreadScope } from "../../../personal/testing/mcpThreadScope.ts";
 
 const VALUE = "vercel_pat_Zx9Qk2LmN4pR7sT0uV3wY6aB8cD1eF5g";
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -114,14 +115,17 @@ function call(options: {
       .pipe(Stream.unwrap, Stream.runCollect);
   }).pipe(
     Effect.provide(layer),
-    Effect.provideService(McpInvocationContext, {
-      environmentId: EnvironmentId.make("env"),
-      threadId: ThreadId.make("thread"),
-      providerSessionId: "session",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      capabilities: new Set(options.capability === false ? [] : ["personal" as const]),
-      issuedAt: 1,
-    }),
+    Effect.provideService(
+      McpInvocationContext,
+      mcpThreadScope({
+        environmentId: EnvironmentId.make("env"),
+        threadId: ThreadId.make("thread"),
+        providerSessionId: "session",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(options.capability === false ? [] : ["personal" as const]),
+        issuedAt: 1,
+      }),
+    ),
   );
 }
 

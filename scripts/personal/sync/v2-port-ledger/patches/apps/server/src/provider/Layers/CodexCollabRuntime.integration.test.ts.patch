@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts b/apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts
+index 5405169926f52390cf630f6c5e13d39e14731630..ef5708c41e380617d6f2c5d3cea455ca90aa036f 100644
+--- a/apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts
++++ b/apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts
+@@ -12,7 +12,7 @@ import * as NodeFS from "node:fs";
+ import * as NodeOS from "node:os";
+ import * as NodePath from "node:path";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3tools/contracts";
+ import * as Deferred from "effect/Deferred";

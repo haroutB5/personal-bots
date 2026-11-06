@@ -1,0 +1,23 @@
+diff --git a/apps/server/src/usage/usageAggregation.test.ts b/apps/server/src/usage/usageAggregation.test.ts
+index 75435de08ff7782f723a2a985256bb0ddc4285a2..7ae0712c12ba66e78ca94e96417f1ca519dbf6d0 100644
+--- a/apps/server/src/usage/usageAggregation.test.ts
++++ b/apps/server/src/usage/usageAggregation.test.ts
+@@ -12,7 +12,8 @@ const rates: RateTable = new Map([
+       outputCostPerToken: 5e-5,
+       cacheReadCostPerToken: 1e-6,
+       cacheCreationCostPerToken: 1.25e-5,
+-      fastMultiplier: 1,
++      fast: null,
++      ultrafast: null,
+     },
+   ],
+ ]);
+@@ -32,7 +33,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
+       reasoningTokens: 0,
+     },
+     reportedCostUsd: null,
+-    fast: false,
++    speed: "standard",
+     dedupeKey: null,
+     ...overrides,
+   };

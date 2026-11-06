@@ -1,0 +1,73 @@
+diff --git a/apps/server/src/provider/Layers/CodexProvider.ts b/apps/server/src/provider/Layers/CodexProvider.ts
+index 72ca3fd74f0d18036005f7f85741b20ea7d77b9b..7ed6b1d8b2499d3b179db895735e8902dc6974f7 100644
+--- a/apps/server/src/provider/Layers/CodexProvider.ts
++++ b/apps/server/src/provider/Layers/CodexProvider.ts
+@@ -7,8 +7,8 @@ import * as Result from "effect/Result";
+ import * as Schema from "effect/Schema";
+ import * as Scope from "effect/Scope";
+ import * as Types from "effect/Types";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import * as CodexClient from "effect-codex-app-server/client";
+ import * as CodexSchema from "effect-codex-app-server/schema";
+ import * as CodexErrors from "effect-codex-app-server/errors";
+@@ -296,6 +296,31 @@ function appendCustomCodexModels(
+   return customEntries.length === 0 ? models : [...models, ...customEntries];
+ }
+ 
++/**
++ * Codex answers `skills/list` with the skills it loaded and the `errors` it hit
++ * while parsing a `SKILL.md` (a UTF-8 BOM is one). Nothing read that array, so
++ * a broken skill was invisible in the server log. One WARN per refused file,
++ * in the same words the bot plugin check uses.
++ *
++ * Exported for its test: it is the only part of the probe that can be driven
++ * without a real app-server.
++ */
++export const logCodexSkillsListErrors = (
++  response: CodexSchema.V2SkillsListResponse,
++): Effect.Effect<void> =>
++  Effect.forEach(
++    response.data.flatMap((entry) =>
++      entry.errors.map((error) => ({ cwd: entry.cwd, path: error.path, reason: error.message })),
++    ),
++    (error) =>
++      Effect.logWarning("Codex skill failed to load", {
++        cwd: error.cwd,
++        path: error.path,
++        reason: error.reason,
++      }),
++    { discard: true },
++  );
++
+ function parseCodexSkillsListResponse(
+   response: CodexSchema.V2SkillsListResponse,
+   cwd: string,
+@@ -476,6 +501,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
+     { concurrency: "unbounded" },
+   );
+ 
++  yield* logCodexSkillsListErrors(skillsResponse);
++
+   return {
+     account: accountResponse,
+     ...(rateLimits ? { rateLimits } : {}),
+@@ -496,6 +523,7 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
+ }) {
+   const { client } = yield* withCodexAppServerClient(input);
+   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
++  yield* logCodexSkillsListErrors(skillsResponse);
+   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+ });
+ 
+@@ -680,7 +708,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
+         ? makeUnavailableUsageLimits({
+             checkedAt,
+             reason: "probeFailed",
+-            ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
++            message: snapshot.rateLimits?.failure ?? "Codex did not return its usage",
+           })
+         : codexRateLimitsToLimits({
+             snapshot: snapshot.rateLimits.snapshot,

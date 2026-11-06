@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/environmentHttpAuth.test.ts b/packages/client-runtime/src/state/environmentHttpAuth.test.ts
+index 51e2f3c920600de51fa54ba77b8c636fc7cec23a..cbf1e1f4e39d16e2fd46be6f4d42b602b07ff69e 100644
+--- a/packages/client-runtime/src/state/environmentHttpAuth.test.ts
++++ b/packages/client-runtime/src/state/environmentHttpAuth.test.ts
+@@ -14,7 +14,7 @@ import * as Fiber from "effect/Fiber";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import { TestClock } from "effect/testing";
+-import type { HttpClient } from "effect/unstable/http";
++import type { HttpClient } from "effect/http";
+ 
+ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+ import {

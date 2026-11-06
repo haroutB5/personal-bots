@@ -1,0 +1,31 @@
+diff --git a/apps/server/src/provider/providerCompatibility.test.ts b/apps/server/src/provider/providerCompatibility.test.ts
+index 3a43356d2caf489943516fee81ac8922462f0ce0..1fc3844467777bfcfc317d994435895067214fe7 100644
+--- a/apps/server/src/provider/providerCompatibility.test.ts
++++ b/apps/server/src/provider/providerCompatibility.test.ts
+@@ -1,6 +1,6 @@
+ import { assert, describe, it } from "@effect/vitest";
+ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Deferred from "effect/Deferred";
+ import * as Fiber from "effect/Fiber";
+ import * as Effect from "effect/Effect";
+@@ -54,6 +54,18 @@ const provider: ServerProvider = {
+ describe("provider compatibility", () => {
+   it("bundles a compatibility policy for every built-in harness", () => {
+     for (const builtIn of BUILT_IN_DRIVERS) {
++      // Registry instances run unrelated agents. Their version numbers cannot
++      // share a harness-wide semver policy; installation checks ACP initialize.
++      if (builtIn.driverKind === "registry") {
++        assert.isUndefined(
++          resolveProviderCompatibility(
++            ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
++            builtIn.driverKind,
++            null,
++          ),
++        );
++        continue;
++      }
+       assert.isDefined(
+         resolveProviderCompatibility(
+           ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,

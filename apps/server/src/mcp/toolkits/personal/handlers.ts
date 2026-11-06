@@ -273,7 +273,7 @@ const make = Effect.gen(function* () {
   // that owns this thread.
   const requireBotThread = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("personal");
-    const botId = yield* memory.botForThread(scope.threadId);
+    const botId = yield* memory.botForThread(McpInvocationContext.requireMcpThread(scope).threadId);
     if (Option.isNone(botId)) {
       return yield* refuse("These tools are available only in a personal bot chat.");
     }
@@ -370,9 +370,11 @@ const make = Effect.gen(function* () {
    */
   const researchGate = Effect.fn("personal.researchAccess")(function* (name: string) {
     const { scope, botId } = yield* requireBotThread;
-    yield* refuseWhileCarryingSensitiveData(scope.threadId);
+    yield* refuseWhileCarryingSensitiveData(McpInvocationContext.requireMcpThread(scope).threadId);
     // The server uses these keys itself, so a brokered key counts as much as an env one.
-    const saved = yield* sessions.secretsForThread(scope.threadId);
+    const saved = yield* sessions.secretsForThread(
+      McpInvocationContext.requireMcpThread(scope).threadId,
+    );
     return { key: saved.find((entry) => entry.name === name)?.value || undefined, scope: botId };
   });
 
@@ -558,11 +560,16 @@ const make = Effect.gen(function* () {
     secret_request: (input) =>
       Effect.gen(function* () {
         const { scope } = yield* requireBotThread;
-        yield* refuseWhileCarryingSensitiveData(scope.threadId, secretRequestClosedMessage);
+        yield* refuseWhileCarryingSensitiveData(
+          McpInvocationContext.requireMcpThread(scope).threadId,
+          secretRequestClosedMessage,
+        );
         if (!secretBrokerEnabled()) {
           return yield* refuse("The secret broker is switched off on this server.");
         }
-        const saved = yield* sessions.secretsForThread(scope.threadId);
+        const saved = yield* sessions.secretsForThread(
+          McpInvocationContext.requireMcpThread(scope).threadId,
+        );
         const startedAt = yield* Clock.currentTimeMillis;
         const outcome = yield* Effect.tryPromise({
           // The signal is the fiber's: interrupting the turn aborts the request.
@@ -590,7 +597,7 @@ const make = Effect.gen(function* () {
           Effect.tapError((error) =>
             Effect.flatMap(Clock.currentTimeMillis, (finishedAt) =>
               Effect.logInfo("personal secret broker refused or failed", {
-                threadId: scope.threadId,
+                threadId: McpInvocationContext.requireMcpThread(scope).threadId,
                 reason: error.reason,
                 ms: finishedAt - startedAt,
               }),
@@ -598,7 +605,7 @@ const make = Effect.gen(function* () {
           ),
         );
         yield* Effect.logInfo("personal secret broker call", {
-          threadId: scope.threadId,
+          threadId: McpInvocationContext.requireMcpThread(scope).threadId,
           origin: outcome.origin,
           method: input.method,
           status: outcome.status,
@@ -686,7 +693,9 @@ const make = Effect.gen(function* () {
         // Derived from the call itself, so a retried tool call dedupes.
         const routineId = PersonalRoutineId.make(
           `routine-${NodeCrypto.createHash("sha256")
-            .update(`${scope.threadId}\n${encodeCreateRoutineInput(input)}`)
+            .update(
+              `${McpInvocationContext.requireMcpThread(scope).threadId}\n${encodeCreateRoutineInput(input)}`,
+            )
             .digest("hex")
             .slice(0, 24)}`,
         );
@@ -700,7 +709,7 @@ const make = Effect.gen(function* () {
             ...(input.timeZone === undefined ? {} : { timeZone: input.timeZone }),
             missedPolicy: input.missedRuns === "skip" ? "skip" : "coalesce",
             // The chat that asked for it: each run comes back here unless opted out.
-            threadId: scope.threadId,
+            threadId: McpInvocationContext.requireMcpThread(scope).threadId,
             newChatEachRun: input.newChatEachRun === true,
             ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
           })
@@ -710,7 +719,7 @@ const make = Effect.gen(function* () {
         const nextRunLocal = formatNextRun(nextRunUtc, routine.timeZone);
         return {
           routineId: routine.routineId,
-          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}. ${routineRunsIn(routine, scope.threadId)}${notifyModeNote(routine)}`,
+          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}. ${routineRunsIn(routine, McpInvocationContext.requireMcpThread(scope).threadId)}${notifyModeNote(routine)}`,
           timeZone: routine.timeZone,
           nextRunLocal,
           nextRunUtc,
@@ -733,7 +742,9 @@ const make = Effect.gen(function* () {
             enabled: routine.enabled,
             newChatEachRun: opensNewChat(routine),
             notifyMode: routine.notifyMode ?? "always",
-            runsInThisChat: !opensNewChat(routine) && routine.threadId === scope.threadId,
+            runsInThisChat:
+              !opensNewChat(routine) &&
+              routine.threadId === McpInvocationContext.requireMcpThread(scope).threadId,
             prompt: routine.prompt,
             nextRunLocal: routine.enabled
               ? formatNextRun(
@@ -800,7 +811,9 @@ const make = Effect.gen(function* () {
         }
         return routineChangeResult(
           routine,
-          input.newChatEachRun === undefined ? undefined : scope.threadId,
+          input.newChatEachRun === undefined
+            ? undefined
+            : McpInvocationContext.requireMcpThread(scope).threadId,
         );
       }),
     set_routine_enabled: (input) =>
@@ -881,7 +894,12 @@ const make = Effect.gen(function* () {
             `Not saved: ${unknown.map((app) => `'${app}'`).join(", ")} ${unknown.length === 1 ? "is" : "are"} not a registered app. Valid apps: ${PERSONAL_MEMORY_APPS.map((app) => app.slug).join(", ")}. Leave apps out for a rule that applies everywhere.`,
           );
         }
-        if (input.kind === "note") return yield* saveNote(input, invocation.threadId, botId);
+        if (input.kind === "note")
+          return yield* saveNote(
+            input,
+            McpInvocationContext.requireMcpThread(invocation).threadId,
+            botId,
+          );
         const userRequest = input.userRequest;
         if (userRequest === undefined) {
           return yield* refuse(
@@ -896,7 +914,11 @@ const make = Effect.gen(function* () {
               Effect.mapError(() => refuse("Could not read the bot.")),
             );
         const sensitiveOrigins =
-          explicit || !autoSave ? [] : yield* browser.sensitiveExposure(invocation.threadId);
+          explicit || !autoSave
+            ? []
+            : yield* browser.sensitiveExposure(
+                McpInvocationContext.requireMcpThread(invocation).threadId,
+              );
         const refusal = saveMemoryRefusal({
           userRequest,
           autoSave,
@@ -911,13 +933,19 @@ const make = Effect.gen(function* () {
             replaced: [],
             similar: [],
             status: "refused" as const,
-            note: yield* refusedForSensitiveSite("save_memory", invocation.threadId, refusal),
+            note: yield* refusedForSensitiveSite(
+              "save_memory",
+              McpInvocationContext.requireMcpThread(invocation).threadId,
+              refusal,
+            ),
           };
         }
         // The quoted words must be the owner's own, word for word, in this chat.
         // This only decides whether the bot may ask at all: memory other bots
         // see changes only when the owner taps Save on the card.
-        const owner = yield* memory.ownerMessages(invocation.threadId);
+        const owner = yield* memory.ownerMessages(
+          McpInvocationContext.requireMcpThread(invocation).threadId,
+        );
         const source = owner.texts.find((text) => quoteInMessage(userRequest, text));
         if (source === undefined) {
           return yield* refuse(
@@ -946,7 +974,9 @@ const make = Effect.gen(function* () {
         const exposed =
           sensitiveOrigins.length > 0
             ? sensitiveOrigins
-            : yield* browser.sensitiveExposure(invocation.threadId);
+            : yield* browser.sensitiveExposure(
+                McpInvocationContext.requireMcpThread(invocation).threadId,
+              );
         if (exposed.length > 0) {
           return {
             memoryId: "",
@@ -957,7 +987,7 @@ const make = Effect.gen(function* () {
             status: "refused" as const,
             note: yield* refusedForSensitiveSite(
               "save_memory",
-              invocation.threadId,
+              McpInvocationContext.requireMcpThread(invocation).threadId,
               `Not saved: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so nothing from it is saved to memory, not even for yourself. Ask the user to repeat it in a new chat.`,
             ),
           };
@@ -982,7 +1012,9 @@ const make = Effect.gen(function* () {
               "Not saved: a rule is saved only from a message the user typed in this chat, and this turn was not started by one (a task, a routine or another bot). Put it in your result, or ask the user to say it in this chat.",
             );
           }
-          const origin = yield* memory.noteOrigin(invocation.threadId);
+          const origin = yield* memory.noteOrigin(
+            McpInvocationContext.requireMcpThread(invocation).threadId,
+          );
           // A page read at any point in this chat can steer what a bot writes later, so once the
           // chat has had web or browser activity the rule is held to the message that started this
           // turn, and held closely; an older message of the owner's no longer counts.
@@ -1020,7 +1052,7 @@ const make = Effect.gen(function* () {
               kind: "preference",
               content: input.content,
               source: botRuleSource(botId, webSeen),
-              originThreadId: invocation.threadId,
+              originThreadId: McpInvocationContext.requireMcpThread(invocation).threadId,
               originMessageId: owner.messageIds?.[owner.texts.indexOf(source)] ?? origin.messageId,
               apps: input.apps ?? null,
               replaces: replaceIds,
@@ -1030,13 +1062,13 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError((error) => refuse(error.message)));
           if (entry.created === true) {
             yield* noteLine({
-              threadId: invocation.threadId,
+              threadId: McpInvocationContext.requireMcpThread(invocation).threadId,
               line: noteChangedLine("saved", entry.content, "rule"),
               memoryId: entry.memoryId,
               undo: "archive",
             });
           }
-          yield* replacedLines(invocation.threadId, entry);
+          yield* replacedLines(McpInvocationContext.requireMcpThread(invocation).threadId, entry);
           return {
             memoryId: PersonalMemoryService.memoryRef(entry),
             scope: entry.scope,
@@ -1052,7 +1084,7 @@ const make = Effect.gen(function* () {
           .propose({
             action: "save",
             botId,
-            threadId: inChat ? invocation.threadId : null,
+            threadId: inChat ? McpInvocationContext.requireMcpThread(invocation).threadId : null,
             kind: input.kind,
             scope,
             scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
@@ -1087,9 +1119,16 @@ const make = Effect.gen(function* () {
           return yield* refuse("Task summaries are removed from the Memory screen, not by a bot.");
         }
         if (target.kind === "note") {
-          return yield* forgetNote(target, invocation.threadId, botId, input.userRequest);
+          return yield* forgetNote(
+            target,
+            McpInvocationContext.requireMcpThread(invocation).threadId,
+            botId,
+            input.userRequest,
+          );
         }
-        const owner = yield* memory.ownerMessages(invocation.threadId);
+        const owner = yield* memory.ownerMessages(
+          McpInvocationContext.requireMcpThread(invocation).threadId,
+        );
         const userRequest = input.userRequest;
         const source =
           userRequest === undefined
@@ -1103,14 +1142,16 @@ const make = Effect.gen(function* () {
         // A rule changes only on the owner's tap, even the bot's own: the
         // forget is a card. Nothing changes from a chat that had a sensitive
         // site open, not even as a card.
-        const exposed = yield* browser.sensitiveExposure(invocation.threadId);
+        const exposed = yield* browser.sensitiveExposure(
+          McpInvocationContext.requireMcpThread(invocation).threadId,
+        );
         if (exposed.length > 0) {
           return {
             memoryId: PersonalMemoryService.memoryRef(target),
             content: target.content,
             summary: yield* refusedForSensitiveSite(
               "forget_memory",
-              invocation.threadId,
+              McpInvocationContext.requireMcpThread(invocation).threadId,
               `Not forgotten: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory cannot be changed from it. Ask the user to do it in a new chat or on the Memory screen.`,
             ),
           };
@@ -1126,7 +1167,9 @@ const make = Effect.gen(function* () {
           // "forget it" about one thing and be about another), and after web or browser use it must
           // come from the message that started this turn.
           const quote = userRequest ?? "";
-          const origin = yield* memory.noteOrigin(invocation.threadId);
+          const origin = yield* memory.noteOrigin(
+            McpInvocationContext.requireMcpThread(invocation).threadId,
+          );
           if (
             (origin.readWeb || origin.threadReadWeb) &&
             !quoteInMessage(quote, owner.current!.text)
@@ -1149,7 +1192,7 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError((error) => refuse(error.message)));
           yield* noteLine({
-            threadId: invocation.threadId,
+            threadId: McpInvocationContext.requireMcpThread(invocation).threadId,
             line: noteChangedLine("forgot", entry.content, "rule"),
             memoryId: entry.memoryId,
             undo: "restore",
@@ -1165,7 +1208,7 @@ const make = Effect.gen(function* () {
           .propose({
             action: "forget",
             botId,
-            threadId: inChat ? invocation.threadId : null,
+            threadId: inChat ? McpInvocationContext.requireMcpThread(invocation).threadId : null,
             target,
             reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
           })

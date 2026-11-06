@@ -1,0 +1,23 @@
+diff --git a/apps/server/src/persistence/Services/ProjectionThreadSessions.ts b/apps/server/src/persistence/Services/ProjectionThreadSessions.ts
+index 7cecac33eb6a720e4171174cd149f9fbadfe6540..abca0f10e94f713e27d2bc901caed02edf3f9407 100644
+--- a/apps/server/src/persistence/Services/ProjectionThreadSessions.ts
++++ b/apps/server/src/persistence/Services/ProjectionThreadSessions.ts
+@@ -9,6 +9,7 @@
+ import {
+   RuntimeMode,
+   IsoDateTime,
++  OrchestrationSessionProviderRetry,
+   OrchestrationSessionStatus,
+   ProviderInstanceId,
+   ThreadId,
+@@ -29,6 +30,10 @@ export const ProjectionThreadSession = Schema.Struct({
+   runtimeMode: RuntimeMode,
+   activeTurnId: Schema.NullOr(TurnId),
+   lastError: Schema.NullOr(Schema.String),
++  /** `provider_retry_json`; optional so writers that predate it stay valid. */
++  providerRetry: Schema.optional(
++    Schema.NullOr(Schema.fromJsonString(OrchestrationSessionProviderRetry)),
++  ),
+   updatedAt: IsoDateTime,
+ });
+ export type ProjectionThreadSession = typeof ProjectionThreadSession.Type;

@@ -1,0 +1,298 @@
+diff --git a/apps/server/src/provider/Layers/ProviderRegistry.ts b/apps/server/src/provider/Layers/ProviderRegistry.ts
+index 063d3712c589021d816a7adbe55cd37a44dbc663..6850998ebff7877dc9c62e00d5472892339db66f 100644
+--- a/apps/server/src/provider/Layers/ProviderRegistry.ts
++++ b/apps/server/src/provider/Layers/ProviderRegistry.ts
+@@ -27,6 +27,7 @@ import {
+   ProviderDriverKind,
+   type ProviderInstanceId,
+   type ServerProvider,
++  type ServerProviderSmokeCheck,
+   type ServerProviderUpdateState,
+ } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+@@ -44,14 +45,19 @@ import * as ModelManifest from "../ModelManifest.ts";
+ import { applyProviderCompatibility } from "../providerCompatibility.ts";
+ import { ServerConfig } from "../../config.ts";
+ import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+-import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
+ import {
++  ProviderRegistry,
++  type ProviderMaintenanceActionStateInput,
++  type ProviderRegistryShape,
++} from "../Services/ProviderRegistry.ts";
++import {
++  cachedUsageLimitsToSeed,
+   hydrateCachedProvider,
+   isCachedProviderCorrelated,
+   orderProviderSnapshots,
+   readProviderStatusCache,
+   resolveProviderStatusCachePath,
+-  writeProviderStatusCache,
++  makeSerializedProviderStatusCacheWriter,
+ } from "../providerStatusCache.ts";
+ import type { ProviderInstance } from "../ProviderDriver.ts";
+ import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+@@ -282,6 +288,9 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
+   driverKind: instance.driverKind,
+   getSnapshot: instance.snapshot.getSnapshot,
+   refresh: instance.snapshot.refresh,
++  ...(instance.snapshot.refreshLatest === undefined
++    ? {}
++    : { refreshLatest: instance.snapshot.refreshLatest }),
+   streamChanges: instance.snapshot.streamChanges,
+ });
+ 
+@@ -322,7 +331,7 @@ export const ProviderRegistryLive = Layer.effect(
+ 
+     const cachedProviders = yield* Effect.forEach(
+       bootSources,
+-      (source) =>
++      (source, index) =>
+         Effect.gen(function* () {
+           // One cache file per configured instance. For the default
+           // instance of a built-in kind the path equals `<kind>.json` —
+@@ -357,7 +366,17 @@ export const ProviderRegistryLive = Layer.effect(
+                   cachedDriver: cachedProvider.driver ?? null,
+                 }).pipe(Effect.as(undefined as ServerProvider | undefined));
+               }
+-              return Effect.succeed(hydrateCachedProvider(correlation));
++              // The last good usage reading goes to the provider itself, not
++              // just this list: the pending snapshot merged in below would
++              // drop it here, and only the provider's own state survives a
++              // first probe that fails to read usage.
++              const usageSeed = cachedUsageLimitsToSeed(correlation);
++              const seedProvider = bootInstances[index]?.snapshot.seedUsageLimits;
++              return (
++                usageSeed !== undefined && seedProvider !== undefined
++                  ? seedProvider(usageSeed)
++                  : Effect.void
++              ).pipe(Effect.as(hydrateCachedProvider(correlation)));
+             }),
+           );
+         }),
+@@ -386,7 +405,13 @@ export const ProviderRegistryLive = Layer.effect(
+       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
+     >(new Map());
+     const maintenanceActionStatesRef = yield* Ref.make<
+-      ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
++      ReadonlyMap<
++        ProviderInstanceId,
++        {
++          readonly update?: ServerProviderUpdateState | undefined;
++          readonly smokeCheck?: ServerProviderSmokeCheck | undefined;
++        }
++      >
+     >(new Map());
+ 
+     // Live-source registry — the dynamic counterpart to the boot-time
+@@ -399,6 +424,7 @@ export const ProviderRegistryLive = Layer.effect(
+     // Serialize `syncLiveSources` so a rapid burst of reconciles doesn't
+     // interleave two passes clobbering each other's fiber bookkeeping.
+     const syncSemaphore = yield* Semaphore.make(1);
++    const writeCache = yield* makeSerializedProviderStatusCacheWriter();
+ 
+     const getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>> = Ref.get(
+       liveSubsRef,
+@@ -417,12 +443,16 @@ export const ProviderRegistryLive = Layer.effect(
+           cacheDir: config.providerStatusCacheDir,
+           instanceId: key,
+         }).pipe(Effect.provideService(Path.Path, path));
+-        const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
+-        yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
++        // The smoke check is re-projected from personal state on boot; a cached
++        // copy would show a stale verdict before that.
++        const {
++          workspaceSnapshots: _workspaceSnapshots,
++          smokeCheck: _smokeCheck,
++          ...machineProvider
++        } = provider;
++        yield* writeCache({ filePath, provider: machineProvider }).pipe(
+           Effect.provideService(FileSystem.FileSystem, fileSystem),
+           Effect.provideService(Path.Path, path),
+-          Effect.tapError(Effect.logError),
+-          Effect.ignore,
+         );
+       });
+ 
+@@ -430,14 +460,34 @@ export const ProviderRegistryLive = Layer.effect(
+       provider: ServerProvider,
+     ) {
+       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
+-      const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
+-      if (!updateState) {
+-        const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
+-        return providerWithoutUpdateState;
+-      }
++      const actions = maintenanceActionStates.get(provider.instanceId);
++      const live = (yield* Ref.get(liveSubsRef)).get(provider.instanceId);
++      const {
++        updateState: _updateState,
++        smokeCheck: _smokeCheck,
++        ...providerWithoutActionState
++      } = provider;
++      // What the phone's provider page may offer: the one-message test when the
++      // driver has one, Remove where the app owns the installation, and the
++      // sign-in link on the laptop when the sign-in flow can open it.
++      const canTest = live?.smokeTest !== undefined;
++      const canOpenOnLaptop = live?.auth?.openOnLaptop !== undefined;
++      const canRemove = provider.setup?.canInstall === true;
++      const setup =
++        provider.setup !== undefined || canTest || canOpenOnLaptop
++          ? {
++              canAuthenticate: provider.setup?.canAuthenticate ?? false,
++              canInstall: provider.setup?.canInstall ?? false,
++              canRemove,
++              canTest,
++              canOpenOnLaptop,
++            }
++          : undefined;
+       return {
+-        ...provider,
+-        updateState,
++        ...providerWithoutActionState,
++        ...(setup !== undefined ? { setup } : {}),
++        ...(actions?.update ? { updateState: actions.update } : {}),
++        ...(actions?.smokeCheck ? { smokeCheck: actions.smokeCheck } : {}),
+       };
+     });
+ 
+@@ -524,18 +574,17 @@ export const ProviderRegistryLive = Layer.effect(
+     });
+ 
+     const setProviderMaintenanceActionState = Effect.fn("setProviderMaintenanceActionState")(
+-      function* (input: {
+-        readonly instanceId: ProviderInstanceId;
+-        readonly action: "update";
+-        readonly state: ServerProviderUpdateState | null;
+-      }) {
++      function* (input: ProviderMaintenanceActionStateInput) {
+         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
+           const previousActions = previous.get(input.instanceId);
+           const nextActions = { ...previousActions };
+-          if (input.state === null || input.state.status === "idle") {
+-            delete nextActions[input.action];
++          if (input.action === "smokeCheck") {
++            if (input.state === null) delete nextActions.smokeCheck;
++            else nextActions.smokeCheck = input.state;
++          } else if (input.state === null || input.state.status === "idle") {
++            delete nextActions.update;
+           } else {
+-            nextActions[input.action] = input.state;
++            nextActions.update = input.state;
+           }
+ 
+           const next = new Map(previous);
+@@ -564,8 +613,13 @@ export const ProviderRegistryLive = Layer.effect(
+ 
+     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
+       providerSource: ProviderSnapshotSource,
++      options?: { readonly refreshLatestVersion?: boolean },
+     ) {
+-      return yield* providerSource.refresh.pipe(
++      const refresh =
++        options?.refreshLatestVersion === true && providerSource.refreshLatest !== undefined
++          ? providerSource.refreshLatest
++          : providerSource.refresh;
++      return yield* refresh.pipe(
+         Effect.flatMap((nextProvider) =>
+           correlateSnapshotWithSource(providerSource, nextProvider).pipe(
+             Effect.flatMap(syncProvider),
+@@ -574,17 +628,22 @@ export const ProviderRegistryLive = Layer.effect(
+       );
+     });
+ 
+-    const refreshAll = Effect.fn("refreshAll")(function* () {
++    const refreshAll = Effect.fn("refreshAll")(function* (options?: {
++      readonly refreshLatestVersion?: boolean;
++    }) {
+       const sources = yield* getLiveSources;
+-      return yield* Effect.forEach(sources, (source) => refreshOneSource(source), {
++      return yield* Effect.forEach(sources, (source) => refreshOneSource(source, options), {
+         concurrency: "unbounded",
+         discard: true,
+       }).pipe(Effect.andThen(Ref.get(providersRef)));
+     });
+ 
+-    const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
++    const refresh = Effect.fn("refresh")(function* (
++      provider?: ProviderDriverKind,
++      options?: { readonly refreshLatestVersion?: boolean },
++    ) {
+       if (provider === undefined) {
+-        return yield* refreshAll();
++        return yield* refreshAll(options);
+       }
+       // Kind-scoped refreshes target the default instance for that driver.
+       const defaultInstanceId = defaultInstanceIdForDriver(provider);
+@@ -595,18 +654,19 @@ export const ProviderRegistryLive = Layer.effect(
+       if (!providerSource) {
+         return yield* Ref.get(providersRef);
+       }
+-      return yield* refreshOneSource(providerSource);
++      return yield* refreshOneSource(providerSource, options);
+     });
+ 
+     const refreshInstance = Effect.fn("refreshInstance")(function* (
+       instanceId: ProviderInstanceId,
++      options?: { readonly refreshLatestVersion?: boolean },
+     ) {
+       const sources = yield* getLiveSources;
+       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
+       if (!providerSource) {
+         return yield* Ref.get(providersRef);
+       }
+-      return yield* refreshOneSource(providerSource);
++      return yield* refreshOneSource(providerSource, options);
+     });
+ 
+     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
+@@ -703,6 +763,10 @@ export const ProviderRegistryLive = Layer.effect(
+           }
+         }
+ 
++        // Capabilities must be available before either a snapshot or a stream
++        // event is projected, including drivers that never publish after boot.
++        yield* Ref.set(liveSubsRef, nextByInstance);
++
+         // Fork long-lived subscriptions to each new/rebuilt instance's
+         // change stream before reading its current snapshot. If the
+         // driver's own initial probe finishes during this sync, either
+@@ -736,12 +800,6 @@ export const ProviderRegistryLive = Layer.effect(
+           replace: true,
+         });
+ 
+-        const nextSubs = new Map(carriedOver);
+-        for (const [instanceId, instance] of newlyAdded) {
+-          nextSubs.set(instanceId, instance);
+-        }
+-        yield* Ref.set(liveSubsRef, nextSubs);
+-
+         // Drop aggregator state for instances that have disappeared —
+         // otherwise the UI would keep rendering ghosts.
+         const [previousProviders, providers] = yield* Ref.modify(
+@@ -940,12 +998,21 @@ export const ProviderRegistryLive = Layer.effect(
+ 
+     return {
+       getProviders: Ref.get(providersRef),
+-      refresh: (provider?: ProviderDriverKind) =>
+-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+-      refreshInstance: (instanceId: ProviderInstanceId) =>
+-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
++      refresh: (
++        provider?: ProviderDriverKind,
++        options?: { readonly refreshLatestVersion?: boolean },
++      ) => refresh(provider, options).pipe(Effect.catchCause(recoverRefreshFailure)),
++      refreshInstance: (
++        instanceId: ProviderInstanceId,
++        options?: { readonly refreshLatestVersion?: boolean },
++      ) => refreshInstance(instanceId, options).pipe(Effect.catchCause(recoverRefreshFailure)),
+       refreshWorkspaceSnapshot: (input) =>
+         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
++      invalidateUsage: (instanceId: ProviderInstanceId) =>
++        instanceRegistry.getInstance(instanceId).pipe(
++          Effect.flatMap((instance) => instance?.invalidateUsage ?? Effect.void),
++          Effect.asVoid,
++        ),
+       getProviderMaintenanceCapabilitiesForInstance,
+       setProviderMaintenanceActionState,
+       get streamChanges() {

@@ -1,0 +1,19 @@
+diff --git a/apps/server/src/provider/Layers/GrokProvider.test.ts b/apps/server/src/provider/Layers/GrokProvider.test.ts
+index a51b124aadf50f72ad3f4dbded408eae7e137d0c..08209cca28089461f47d1bb388c80daeb73eff24 100644
+--- a/apps/server/src/provider/Layers/GrokProvider.test.ts
++++ b/apps/server/src/provider/Layers/GrokProvider.test.ts
+@@ -2,12 +2,12 @@
+ import * as NodePath from "node:path";
+ import * as NodeURL from "node:url";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Schema from "effect/Schema";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ import { GrokSettings } from "@t3tools/contracts";
+ 
+ import {

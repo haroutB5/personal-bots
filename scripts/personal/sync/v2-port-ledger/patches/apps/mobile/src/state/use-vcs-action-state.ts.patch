@@ -1,0 +1,12 @@
+diff --git a/apps/mobile/src/state/use-vcs-action-state.ts b/apps/mobile/src/state/use-vcs-action-state.ts
+index e169005a07fa121d5c6b5a5b365be39af77219c6..318d38cd19804c33f790f6a2b062cf05719406fc 100644
+--- a/apps/mobile/src/state/use-vcs-action-state.ts
++++ b/apps/mobile/src/state/use-vcs-action-state.ts
+@@ -1,6 +1,6 @@
+ import { useAtomValue } from "@effect/atom-react";
+ import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useCallback, useEffect, useRef, useState } from "react";
+ 
+ import { appAtomRegistry } from "./atom-registry";

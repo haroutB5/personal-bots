@@ -1,0 +1,141 @@
+diff --git a/apps/server/src/mcp/PreviewAutomationBroker.ts b/apps/server/src/mcp/PreviewAutomationBroker.ts
+index 65e3064f49a5b52e0d2b7f100fd165ea6664594a..b116924fe4bdf5a0c53f35736c8719e381a4f949 100644
+--- a/apps/server/src/mcp/PreviewAutomationBroker.ts
++++ b/apps/server/src/mcp/PreviewAutomationBroker.ts
+@@ -27,7 +27,7 @@ import {
+ } from "@t3tools/contracts";
+ import * as Context from "effect/Context";
+ import type * as Cause from "effect/Cause";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+@@ -39,6 +39,8 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
+ 
+ import * as McpInvocationContext from "./McpInvocationContext.ts";
+ 
++const HOST_RESPONSE_GRACE_MS = 1_000;
++
+ export interface PreviewAutomationInvokeInput {
+   readonly scope: McpInvocationContext.McpInvocationScope;
+   readonly operation: PreviewAutomationOperation;
+@@ -72,6 +74,7 @@ interface ClientConnection {
+   readonly connectionId: string;
+   readonly environmentId: PreviewAutomationHost["environmentId"];
+   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
++  readonly kind: "desktop" | "server";
+   readonly focused: boolean;
+   readonly liveTabs: NonNullable<PreviewAutomationHostFocus["liveTabs"]>;
+   readonly focusOrder: number;
+@@ -196,12 +199,17 @@ function remoteDetailKind(detail: unknown): RemoteDetailKind {
+ const classifyResponseError = (
+   context: PreviewAutomationRequestErrorContext,
+   error: NonNullable<PreviewAutomationResponse["error"]>,
++  trustedHost = false,
+ ): PreviewAutomationError => {
+   const remoteDiagnostics = {
+     remoteTag: error._tag,
+     remoteMessageLength: error.message.length,
+     ...(error.detail === undefined ? {} : { remoteDetailKind: remoteDetailKind(error.detail) }),
+     cause: error,
++    // Only the in-process server browser's own words reach the model: it says
++    // what happened (a dialog it is holding open, a stalled page) in text it
++    // wrote and redacted itself.
++    ...(trustedHost && error.message.length > 0 ? { hostMessage: error.message } : {}),
+   };
+   switch (error._tag) {
+     case "PreviewAutomationRecordingDesktopUpdateRequiredError":
+@@ -376,6 +384,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+       connectionId,
+       environmentId: host.environmentId,
+       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
++      kind: host.kind ?? "desktop",
+       focused: false,
+       liveTabs: [],
+       focusOrder: 0,
+@@ -455,7 +464,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+       }
+       const next = new Map(current.pending);
+       next.delete(response.requestId);
+-      return [entry, { ...current, pending: next }] as const;
++      const trustedHost = current.clients.get(entry.context.clientId)?.kind === "server";
++      return [
++        { ...entry, trustedHost },
++        { ...current, pending: next },
++      ] as const;
+     });
+     if (!pending) return;
+     if (response.ok) {
+@@ -464,7 +477,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+       yield* Deferred.fail(
+         pending.deferred,
+         response.error
+-          ? classifyResponseError(pending.context, response.error)
++          ? classifyResponseError(pending.context, response.error, pending.trustedHost)
+           : new PreviewAutomationMalformedResponseError(pending.context),
+       );
+     }
+@@ -495,6 +508,21 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+       // operation is not silently moved to a newer client: the caller gets a
+       // capability failure and can deliberately start a fresh provider
+       // session. A dead lease is pruned above and may fail over.
++      const eligibleHosts = hasLiveAssignment
++        ? []
++        : Array.from(current.clients.values()).filter(
++            (host) =>
++              host.environmentId === input.scope.environmentId &&
++              supportsOperation(host, input.operation),
++          );
++      // The in-process server browser ranks above every desktop host unless
++      // one of them is focused (the user is looking at a desktop preview).
++      // Desktop hosts keep their historical order among themselves.
++      const focusedDesktopExists = eligibleHosts.some(
++        (host) => host.kind === "desktop" && host.focused,
++      );
++      const serverRank = (host: ClientConnection) =>
++        host.kind === "server" ? (focusedDesktopExists ? -1 : 1) : 0;
+       const ownsTargetTab = (host: ClientConnection, visibleOnly = false) =>
+         host.liveTabs.some(
+           (tab) =>
+@@ -507,19 +535,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+           ? assignedConnection
+           : hasLiveAssignment
+             ? undefined
+-            : Array.from(current.clients.values())
+-                .filter(
+-                  (host) =>
+-                    host.environmentId === input.scope.environmentId &&
+-                    supportsOperation(host, input.operation),
+-                )
+-                .sort(
+-                  (left, right) =>
+-                    Number(ownsTargetTab(right, true)) - Number(ownsTargetTab(left, true)) ||
+-                    Number(ownsTargetTab(right)) - Number(ownsTargetTab(left)) ||
+-                    Number(right.focused) - Number(left.focused) ||
+-                    right.focusOrder - left.focusOrder,
+-                )[0];
++            : eligibleHosts.sort(
++                (left, right) =>
++                  serverRank(right) - serverRank(left) ||
++                  Number(ownsTargetTab(right, true)) - Number(ownsTargetTab(left, true)) ||
++                  Number(ownsTargetTab(right)) - Number(ownsTargetTab(left)) ||
++                  Number(right.focused) - Number(left.focused) ||
++                  right.focusOrder - left.focusOrder,
++              )[0];
+       if (!connection) {
+         if (!hasLiveAssignment) assignments.delete(assignmentKey);
+         return [undefined, { ...current, assignments }] as const;
+@@ -610,7 +633,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+         }
+         return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
+       }
+-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
++      // The browser starts its operation timer after delivery. Allow its timeout
++      // response to arrive before treating the entire host as unresponsive.
++      const responseTimeoutMs =
++        input.updateCurrentTab === false ? timeoutMs : timeoutMs + HOST_RESPONSE_GRACE_MS;
++      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(responseTimeoutMs));
+       return yield* Option.match(result, {
+         onNone: () =>
+           Effect.gen(function* () {

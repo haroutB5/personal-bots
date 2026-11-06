@@ -1,0 +1,17 @@
+diff --git a/infra/relay/src/agentActivity/ApnsClient.test.ts b/infra/relay/src/agentActivity/ApnsClient.test.ts
+index 6c54600e0543b71309d33efe7e828cc033d716dd..6c06690d5e241b64b6d81d12098a77e2feebba3b 100644
+--- a/infra/relay/src/agentActivity/ApnsClient.test.ts
++++ b/infra/relay/src/agentActivity/ApnsClient.test.ts
+@@ -11,9 +11,9 @@ import * as Layer from "effect/Layer";
+ import * as Redacted from "effect/Redacted";
+ import * as Schema from "effect/Schema";
+ import * as TestClock from "effect/testing/TestClock";
+-import * as HttpClient from "effect/unstable/http/HttpClient";
+-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
++import * as HttpClient from "effect/http/HttpClient";
++import * as HttpClientError from "effect/http/HttpClientError";
++import * as HttpClientResponse from "effect/http/HttpClientResponse";
+ 
+ import type { ApnsCredentials } from "../Config.ts";
+ import * as ApnsClient from "./ApnsClient.ts";

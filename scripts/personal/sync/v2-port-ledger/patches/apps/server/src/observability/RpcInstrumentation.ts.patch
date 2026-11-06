@@ -1,0 +1,20 @@
+diff --git a/apps/server/src/observability/RpcInstrumentation.ts b/apps/server/src/observability/RpcInstrumentation.ts
+index edbd705b3ee47171d7a4c700596f78e61cc33438..29582e0bce259cd47f3511f09cf808fa019956e0 100644
+--- a/apps/server/src/observability/RpcInstrumentation.ts
++++ b/apps/server/src/observability/RpcInstrumentation.ts
+@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
+ 
+ import { outcomeFromExit } from "./Attributes.ts";
+ import { metricAttributes, rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
++import { withStallJob } from "./stallJobs.ts";
+ 
+ const RPC_SPAN_PREFIX = "ws.rpc";
+ const DEFAULT_RPC_SPAN_ATTRIBUTES = {
+@@ -92,6 +93,7 @@ export const observeRpcEffect = <A, E, R>(
+   traceAttributes?: Readonly<Record<string, unknown>>,
+ ): Effect.Effect<A, E, R> => {
+   const instrumented = effect.pipe(
++    withStallJob(`rpc:${method}`),
+     withMetrics({
+       counter: rpcRequestsTotal,
+       timer: rpcRequestDuration,

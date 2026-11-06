@@ -1,0 +1,18 @@
+diff --git a/apps/server/src/project/AgentSessionScanner.test.ts b/apps/server/src/project/AgentSessionScanner.test.ts
+index 2dde0643ed60c5053af4a24b2305cf81ed3fc832..c9dc080cdaedd22fd1b3032e83ebf31106128ac0 100644
+--- a/apps/server/src/project/AgentSessionScanner.test.ts
++++ b/apps/server/src/project/AgentSessionScanner.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as NodeOS from "node:os";
+ import { describe, expect, it } from "@effect/vitest";
+ import {
+@@ -38,6 +38,7 @@ const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<
+   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+     getCommandReadModel: () => Effect.die("unused"),
+     getUserInputActivity: () => Effect.die("unused"),
++    getPendingInputActivities: () => Effect.succeed([]),
+     listActivitiesByKind: () => Effect.die("unused"),
+     getSnapshot: () => Effect.die("unused"),
+     getShellSnapshot: () =>

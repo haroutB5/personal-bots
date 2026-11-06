@@ -1,0 +1,30 @@
+diff --git a/packages/client-runtime/src/state/terminal.ts b/packages/client-runtime/src/state/terminal.ts
+index 3bc2bca78f0f11cfc44394996ef15640346e00e2..ad24d5c08087b1a9421a731b4dbb7ee5dab1e7ab 100644
+--- a/packages/client-runtime/src/state/terminal.ts
++++ b/packages/client-runtime/src/state/terminal.ts
+@@ -1,6 +1,6 @@
+ import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
+ import * as Stream from "effect/Stream";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import {
+   createAtomCommandScheduler,
+@@ -42,7 +42,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
+       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
+         Stream.suspend(() =>
+           subscribe(WS_METHODS.terminalAttach, input).pipe(
+-            Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent),
++            Stream.scan(() => nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent),
+           ),
+         ),
+     }),
+@@ -54,7 +54,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
+       label: "environment-data:terminal:metadata",
+       subscribe: (_input: null) =>
+         subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
+-          Stream.scan([] as ReadonlyArray<TerminalSummary>, applyTerminalMetadataStreamEvent),
++          Stream.scan(() => [] as ReadonlyArray<TerminalSummary>, applyTerminalMetadataStreamEvent),
+         ),
+     }),
+     open: createEnvironmentRpcCommand(runtime, {

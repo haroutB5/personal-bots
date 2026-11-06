@@ -1,0 +1,37 @@
+diff --git a/apps/server/src/provider/Layers/codexLaunchArgs.test.ts b/apps/server/src/provider/Layers/codexLaunchArgs.test.ts
+index 115ac28eaf94586f4580ca6eece0789dbe6772d9..495ba6ab40e7ba748c8a62e4f6a3c805340a8ebc 100644
+--- a/apps/server/src/provider/Layers/codexLaunchArgs.test.ts
++++ b/apps/server/src/provider/Layers/codexLaunchArgs.test.ts
+@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
+ import {
+   codexAppServerArgs,
+   codexExecLaunchArgs,
++  personalBotCodexSkillsSwitchOn,
+   resolveCodexLaunchArgs,
+ } from "./codexLaunchArgs.ts";
+ 
+@@ -57,3 +58,24 @@ describe("codexExecLaunchArgs", () => {
+     ]);
+   });
+ });
++
++describe("personalBotCodexSkillsSwitchOn", () => {
++  it("is on when the switch is unset or empty", () => {
++    NodeAssert.equal(personalBotCodexSkillsSwitchOn({}), true);
++    NodeAssert.equal(personalBotCodexSkillsSwitchOn({ PERSONAL_BOT_CODEX_SKILLS: "  " }), true);
++  });
++
++  it("is off for every off value, whatever its case or spacing", () => {
++    for (const value of ["off", " OFF ", "0", "false", "No", "disabled"]) {
++      NodeAssert.equal(
++        personalBotCodexSkillsSwitchOn({ PERSONAL_BOT_CODEX_SKILLS: value }),
++        false,
++        value,
++      );
++    }
++  });
++
++  it("is on for any other value", () => {
++    NodeAssert.equal(personalBotCodexSkillsSwitchOn({ PERSONAL_BOT_CODEX_SKILLS: "on" }), true);
++  });
++});

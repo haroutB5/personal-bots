@@ -6,7 +6,13 @@ import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 const { test } = NodeTest;
 
-import { checkLedgerText, LEDGER_HEADER, missingPatches, openAtErrors } from "./ledger-check.mjs";
+import {
+  checkLedgerText,
+  landedTargetErrors,
+  LEDGER_HEADER,
+  missingPatches,
+  openAtErrors,
+} from "./ledger-check.mjs";
 
 const header = LEDGER_HEADER.join("\t");
 const row = (columns) => columns.join("\t");
@@ -133,4 +139,30 @@ test("--no-open-at B1 reports a row B1 left open and accepts a closed one", () =
   NodeAssert.deepEqual(openAtErrors(rows, "C2"), [
     "line 5: apps/server/src/d.ts is open at C2; a merge row must be closed there",
   ]);
+});
+
+test("a row that targets a landed PR fails, a landed row that closed passes", () => {
+  const text = [
+    header,
+    row(["apps/server/src/a.ts", "", "content", "1", "3a", "open", ""]),
+    row(["apps/server/src/b.ts", "", "content", "1", "A10", "done", "landed with A10"]),
+  ].join("\n");
+
+  const { rows } = checkLedgerText(text);
+  const errors = landedTargetErrors(rows);
+  NodeAssert.equal(errors.length, 2);
+  NodeAssert.match(errors[0], /targets 3a, which already landed/);
+  NodeAssert.match(errors[1], /targets A10, which already landed/);
+});
+
+test("a later PR target, including a combined one, passes the landed rule", () => {
+  const text = [
+    header,
+    row(["apps/server/src/a.ts", "", "content", "1", "C14", "open", ""]),
+    row(["apps/server/src/b.ts", "", "content", "1", "C4+C10", "open", ""]),
+    row(["apps/server/src/c.ts", "", "content", "1", "phase 4", "open", ""]),
+  ].join("\n");
+
+  const { rows } = checkLedgerText(text);
+  NodeAssert.deepEqual(landedTargetErrors(rows), []);
 });

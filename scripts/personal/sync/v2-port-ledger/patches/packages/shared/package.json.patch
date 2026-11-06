@@ -1,0 +1,72 @@
+diff --git a/packages/shared/package.json b/packages/shared/package.json
+index 4e04912a5d418d04abdec1ea5a470ff4b803955e..067ef6c6db17b333e0e911b65fffb0433566e78a 100644
+--- a/packages/shared/package.json
++++ b/packages/shared/package.json
+@@ -3,6 +3,10 @@
+   "private": true,
+   "type": "module",
+   "exports": {
++    "./deepseekPeak": {
++      "types": "./src/deepseekPeak.ts",
++      "import": "./src/deepseekPeak.ts"
++    },
+     "./legacyCliLauncher": {
+       "types": "./src/legacyCliLauncher.ts",
+       "import": "./src/legacyCliLauncher.ts"
+@@ -315,6 +319,10 @@
+       "types": "./src/usageLimits.ts",
+       "import": "./src/usageLimits.ts"
+     },
++    "./turnFailure": {
++      "types": "./src/turnFailure.ts",
++      "import": "./src/turnFailure.ts"
++    },
+     "./desktopAppControl": {
+       "types": "./src/desktopAppControl.ts",
+       "import": "./src/desktopAppControl.ts"
+@@ -331,6 +339,14 @@
+       "types": "./src/nodeSqliteClient.ts",
+       "import": "./src/nodeSqliteClient.ts"
+     },
++    "./nodeSqliteWorker": {
++      "types": "./src/nodeSqliteWorker.ts",
++      "import": "./src/nodeSqliteWorker.ts"
++    },
++    "./stallContext": {
++      "types": "./src/stallContext.ts",
++      "import": "./src/stallContext.ts"
++    },
+     "./hostClassification": {
+       "types": "./src/hostClassification.ts",
+       "import": "./src/hostClassification.ts"
+@@ -358,6 +374,14 @@
+     "./codexAuthHandoff": {
+       "types": "./src/codexAuthHandoff.ts",
+       "import": "./src/codexAuthHandoff.ts"
++    },
++    "./crypto": {
++      "types": "./src/crypto.ts",
++      "import": "./src/crypto.ts"
++    },
++    "./nodeServices": {
++      "types": "./src/nodeServices.ts",
++      "import": "./src/nodeServices.ts"
+     }
+   },
+   "scripts": {
+@@ -365,6 +389,7 @@
+     "test": "vp test run --config ../../vite.config.ts --dir ."
+   },
+   "dependencies": {
++    "@effect/platform-node": "catalog:",
+     "@noble/curves": "catalog:",
+     "@noble/hashes": "catalog:",
+     "@t3tools/contracts": "workspace:*",
+@@ -373,7 +398,6 @@
+     "yaml": "catalog:"
+   },
+   "devDependencies": {
+-    "@effect/platform-node": "catalog:",
+     "@effect/vitest": "catalog:",
+     "@types/node": "catalog:",
+     "vite-plus": "catalog:"

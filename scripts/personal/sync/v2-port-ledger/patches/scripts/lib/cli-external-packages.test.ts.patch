@@ -1,0 +1,21 @@
+diff --git a/scripts/lib/cli-external-packages.test.ts b/scripts/lib/cli-external-packages.test.ts
+index 5168e770a11449072020fb1546972ee68603b71b..92a8428ca185d0e7afc6adb3fbe4a969b9c07cf3 100644
+--- a/scripts/lib/cli-external-packages.test.ts
++++ b/scripts/lib/cli-external-packages.test.ts
+@@ -1,6 +1,6 @@
+ import * as NodeURL from "node:url";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+@@ -83,7 +83,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
+   it("selects every external root declared by the server", () => {
+     assert.deepStrictEqual(
+       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
+-      ["@ff-labs/fff-node", "@napi-rs/keyring", "node-pty"],
++      ["@ff-labs/fff-node", "@napi-rs/keyring", "node-pty", "playwright-core"],
+     );
+   });
+ });

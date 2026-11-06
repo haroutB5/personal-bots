@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/decider.autoSettleSet.test.ts b/apps/server/src/orchestration/decider.autoSettleSet.test.ts
+index 99657069cc74c40180a4c136458deadd49769e1c..cd2f62adf2d62e2f3618649deb1e57dccb282c11 100644
+--- a/apps/server/src/orchestration/decider.autoSettleSet.test.ts
++++ b/apps/server/src/orchestration/decider.autoSettleSet.test.ts
+@@ -5,7 +5,7 @@ import {
+   ThreadId,
+   type OrchestrationReadModel,
+ } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ 

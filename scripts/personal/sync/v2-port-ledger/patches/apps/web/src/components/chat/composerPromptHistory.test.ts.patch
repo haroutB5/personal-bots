@@ -1,0 +1,25 @@
+diff --git a/apps/web/src/components/chat/composerPromptHistory.test.ts b/apps/web/src/components/chat/composerPromptHistory.test.ts
+index b3752cf7dbeb303cc70299865d705c8dd4c8d4a7..88159f472b0706d81f5f9809755162f9d820817c 100644
+--- a/apps/web/src/components/chat/composerPromptHistory.test.ts
++++ b/apps/web/src/components/chat/composerPromptHistory.test.ts
+@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
+ import { buildPlanImplementationPrompt } from "../../proposedPlan";
+ import {
+   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
++  ownerVisibleText,
+   buildComposerPromptHistoryEntries,
+   recallableComposerPrompt,
+   stepComposerPromptHistory,
+@@ -190,3 +191,12 @@ describe("stepComposerPromptHistory", () => {
+     expect(step?.prompt).toBe("first");
+   });
+ });
++
++describe("ownerVisibleText", () => {
++  it("hides the placeholder sent for an attachment-only message, and nothing else", () => {
++    expect(ownerVisibleText(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe("");
++    expect(ownerVisibleText(`  ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}\n`)).toBe("");
++    expect(ownerVisibleText("   ")).toBe("");
++    expect(ownerVisibleText("Look at this")).toBe("Look at this");
++  });
++});

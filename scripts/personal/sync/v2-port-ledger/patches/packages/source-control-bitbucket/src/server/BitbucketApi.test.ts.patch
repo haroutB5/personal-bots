@@ -1,0 +1,25 @@
+diff --git a/apps/server/src/sourceControl/BitbucketApi.test.ts b/apps/server/src/sourceControl/BitbucketApi.test.ts
+index 83965a38b21cf04b56d0157b1be7b8945aa79b43..7543a0bf97a4daf5ab33048dc0d8bb1dba067bfa 100644
+--- a/apps/server/src/sourceControl/BitbucketApi.test.ts
++++ b/apps/server/src/sourceControl/BitbucketApi.test.ts
+@@ -1,5 +1,5 @@
+ import { assert, it, vi } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as ConfigProvider from "effect/ConfigProvider";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+@@ -7,12 +7,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as TestClock from "effect/testing/TestClock";
+-import {
+-  HttpClient,
+-  HttpClientError,
+-  HttpClientRequest,
+-  HttpClientResponse,
+-} from "effect/unstable/http";
++import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
+ 
+ import { GitCommandError } from "@t3tools/contracts";
+ import * as BitbucketApi from "./BitbucketApi.ts";

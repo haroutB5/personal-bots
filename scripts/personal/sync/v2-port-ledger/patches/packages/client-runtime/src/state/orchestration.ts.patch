@@ -1,0 +1,11 @@
+diff --git a/packages/client-runtime/src/state/orchestration.ts b/packages/client-runtime/src/state/orchestration.ts
+index ba80275bffb359538d0e667316dbd72048b72e96..8dd2d1aca086f95001455ca1efa96a483f68aef0 100644
+--- a/packages/client-runtime/src/state/orchestration.ts
++++ b/packages/client-runtime/src/state/orchestration.ts
+@@ -1,5 +1,5 @@
+ import { ORCHESTRATION_WS_METHODS } from "@t3tools/contracts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+ import type { EnvironmentRegistry } from "../connection/registry.ts";

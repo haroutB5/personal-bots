@@ -1,0 +1,12 @@
+diff --git a/apps/desktop/src/preview/BrowserImport/ChromiumKeys.module.test.ts b/apps/desktop/src/preview/BrowserImport/ChromiumKeys.module.test.ts
+index 0420e755d92be0b4f525e20b9116cd0aa924773c..890d9e2715865e2a9e038ea3f26e4febfd78152f 100644
+--- a/apps/desktop/src/preview/BrowserImport/ChromiumKeys.module.test.ts
++++ b/apps/desktop/src/preview/BrowserImport/ChromiumKeys.module.test.ts
+@@ -1,6 +1,6 @@
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import { vi } from "vite-plus/test";
+ 
+ vi.mock("@napi-rs/keyring", () => {

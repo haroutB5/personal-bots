@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/cloud/traceRelayRequest.ts b/apps/server/src/cloud/traceRelayRequest.ts
+index 1481b891224d97e80f8b746126cd13b1640a1dac..a2b52742bf6fd38e2b4d7e72be6a2b9df5bb112c 100644
+--- a/apps/server/src/cloud/traceRelayRequest.ts
++++ b/apps/server/src/cloud/traceRelayRequest.ts
+@@ -1,7 +1,7 @@
+ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+-import { HttpServerRequest, HttpTraceContext } from "effect/unstable/http";
++import { HttpServerRequest, HttpTraceContext } from "effect/http";
+ 
+ export const traceRelayRequest = <A, E, R>(
+   effect: Effect.Effect<A, E, R>,

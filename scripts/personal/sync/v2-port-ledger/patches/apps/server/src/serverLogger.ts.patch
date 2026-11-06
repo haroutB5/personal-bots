@@ -1,0 +1,40 @@
+diff --git a/apps/server/src/serverLogger.ts b/apps/server/src/serverLogger.ts
+index 6d19907c20caed31afc61457a7856d6fd254fac6..c8064a937eeaf86a70e5094a322b539478ca4b3b 100644
+--- a/apps/server/src/serverLogger.ts
++++ b/apps/server/src/serverLogger.ts
+@@ -3,10 +3,12 @@ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Logger from "effect/Logger";
+ import * as References from "effect/References";
+-import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
+-import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
++import * as OtlpExporter from "effect/observability/OtlpExporter";
++import * as OtlpLogger from "effect/observability/OtlpLogger";
+ 
+ import { otlpResource, ServerConfig } from "./config.ts";
++import { downgradeExpectedRefusals } from "./expectedToolRefusals.ts";
++import { redactSecretsInLogs } from "./personal/secrets/secretLogRedaction.ts";
+ 
+ export const ServerLoggerLive = Effect.gen(function* () {
+   const config = yield* ServerConfig;
+@@ -36,9 +38,18 @@ export const ServerLoggerLive = Effect.gen(function* () {
+   // in favor of the log-based events this logger emits:
+   // https://opentelemetry.io/blog/2026/deprecating-span-events/
+   const loggerLayer = Logger.layer(
++    // A bot tool's refusal is an answer, not a fault: it is logged at INFO (expectedToolRefusals.ts).
++    // Every sink is wrapped, not just the console: the tracer logger puts each
++    // message on a span (server.trace.ndjson) and the OTLP logger exports it.
+     otlpLogger === undefined
+-      ? [Logger.consolePretty(), Logger.tracerLogger]
+-      : [Logger.consolePretty(), otlpLogger],
++      ? [
++          redactSecretsInLogs(downgradeExpectedRefusals(Logger.consolePretty())),
++          redactSecretsInLogs(Logger.tracerLogger),
++        ]
++      : [
++          redactSecretsInLogs(downgradeExpectedRefusals(Logger.consolePretty())),
++          otlpLogger.pipe(Effect.map((logger) => redactSecretsInLogs(logger))),
++        ],
+     { mergeWithExisting: false },
+   ).pipe(
+     Layer.provide(OtlpExporter.layerFlusher),

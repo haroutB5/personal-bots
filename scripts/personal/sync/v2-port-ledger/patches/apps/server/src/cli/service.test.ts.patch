@@ -1,0 +1,27 @@
+diff --git a/apps/server/src/cli/service.test.ts b/apps/server/src/cli/service.test.ts
+index 74c2489e7b12a11b8a2a1412fc199cc5799d05a2..a2be5ed4ca1f384fa1edaa7f638003339f513955 100644
+--- a/apps/server/src/cli/service.test.ts
++++ b/apps/server/src/cli/service.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, expect, it } from "@effect/vitest";
+ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+ import * as NetService from "@t3tools/shared/Net";
+@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Terminal from "effect/Terminal";
+-import { Command } from "effect/unstable/cli";
++import { Command } from "effect/cli";
+ import { afterEach, vi } from "vite-plus/test";
+ 
+ import packageJson from "../../package.json" with { type: "json" };
+@@ -235,6 +235,7 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
+     const terminal = Terminal.make({
+       columns: Effect.succeed(80),
+       rows: Effect.succeed(24),
++      size: Effect.never,
+       readInput: Effect.die("Onboarding must not prompt to replace a newer service."),
+       readLine: Effect.die("Onboarding must not prompt to replace a newer service."),
+       display: () => Effect.die("Onboarding must not prompt to replace a newer service."),

@@ -1,0 +1,13 @@
+diff --git a/apps/desktop/src/snapShot/DesktopSnapShot.test.ts b/apps/desktop/src/snapShot/DesktopSnapShot.test.ts
+index 205a72a55265a6ce4346c1956afe520cf654d557..911eacec611fb4dbd72b3de61e5bab48b70e9443 100644
+--- a/apps/desktop/src/snapShot/DesktopSnapShot.test.ts
++++ b/apps/desktop/src/snapShot/DesktopSnapShot.test.ts
+@@ -6,7 +6,7 @@ import {
+   type ClientSettings,
+   type DesktopSnapShotEvent,
+ } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Fiber from "effect/Fiber";
+ import * as FileSystem from "effect/FileSystem";

@@ -1,0 +1,88 @@
+diff --git a/apps/server/src/orchestration/decider.userInputDismiss.test.ts b/apps/server/src/orchestration/decider.userInputDismiss.test.ts
+index a61da0ca78b3d88130e0b79560eff7ae6e4d0589..0af428f6b937ab3a186a1143ddf282691a299770 100644
+--- a/apps/server/src/orchestration/decider.userInputDismiss.test.ts
++++ b/apps/server/src/orchestration/decider.userInputDismiss.test.ts
+@@ -1,6 +1,7 @@
+ import {
+   CommandId,
+   EventId,
++  MessageId,
+   ProjectId,
+   ProviderInstanceId,
+   ThreadId,
+@@ -8,7 +9,7 @@ import {
+   type OrchestrationReadModel,
+   type OrchestrationThreadActivity,
+ } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ 
+@@ -107,6 +108,66 @@ it.layer(NodeServices.layer)("user input dismiss decider", (it) => {
+     }),
+   );
+ 
++  it.effect("supersedes message-mode questions on an inbound turn and leaves callbacks open", () =>
++    Effect.gen(function* () {
++      const asyncRequest = makeRequest("message");
++      const nativeRequest = {
++        ...makeRequest(undefined),
++        id: EventId.make("native"),
++        payload: {
++          requestId: "native",
++          questions: [{ id: "0", header: "Q", question: "Continue?", options: [] }],
++        },
++      };
++      const secondRequest = {
++        ...asyncRequest,
++        id: EventId.make("second-question"),
++        payload: {
++          requestId: "second-question",
++          responseMode: "message",
++          questions: [{ id: "0", header: "Q", question: "Continue?", options: [] }],
++        },
++      };
++      const result = yield* decideOrchestrationCommand({
++        command: {
++          type: "thread.turn.start",
++          commandId: CommandId.make("inbound"),
++          threadId,
++          createdAt: NOW,
++          runtimeMode: "full-access",
++          interactionMode: "default",
++          message: {
++            messageId: MessageId.make("inbound"),
++            role: "user",
++            text: "Continue",
++            attachments: [],
++          },
++        },
++        readModel: makeReadModel([]),
++        pendingInputActivities: [asyncRequest, secondRequest, nativeRequest],
++      });
++      const events = Array.isArray(result) ? result : [result];
++      expect(events.map((event) => event.type)).toEqual([
++        "thread.activity-appended",
++        "thread.activity-appended",
++        "thread.message-sent",
++        "thread.turn-start-requested",
++      ]);
++      expect(events[0]?.payload).toMatchObject({
++        activity: {
++          kind: "user-input.resolved",
++          payload: { requestId, responseMode: "superseded" },
++        },
++      });
++      expect(events[1]?.payload).toMatchObject({
++        activity: {
++          kind: "user-input.resolved",
++          payload: { requestId: "second-question", responseMode: "superseded" },
++        },
++      });
++    }),
++  );
++
+   it.effect("rejects dismissing a native callback question", () =>
+     Effect.gen(function* () {
+       const request = makeRequest(undefined);

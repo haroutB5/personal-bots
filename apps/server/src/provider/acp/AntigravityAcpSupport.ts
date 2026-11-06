@@ -5,9 +5,9 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderSendTurnInput,
   type RuntimeMode,
-  type ProviderOptionSelections,
 } from "@t3tools/contracts";
-import * as Crypto from "@t3tools/shared/crypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,64 +16,131 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   | "authMethodId"
+  | "authenticateEagerly"
   | "cancelBehavior"
   | "clientCapabilities"
-  | "isAllowedConfigOptionValue"
-  | "isConfigOptionCurrentValueMatching"
+  | "clientInfo"
   | "onStderr"
   | "resumeMethod"
+  | "sessionMeta"
   | "transformSessionUpdate"
   | "transformStdout"
 > {
-  /** Device CLI environment supplied for this provider session. */
-  readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-  /**
-   * Advertise `fs.readTextFile` and `fs.writeTextFile`. The agent then routes
-   * workspace reads and writes through T3, which turns each edit into a
-   * `session/request_permission` with the file content, instead of writing
-   * through its own tools. Chat sessions turn this on. Setup, probe, and text
-   * generation helpers leave it off so they never touch a workspace.
-   */
-  readonly clientFileSystem?: boolean;
-  /** ACP `authenticate` method id. Defaults to the personal Google account flow. */
+  /** Serve `fs/read_text_file` for runtimes whose native reader is not qualified. */
+  readonly clientFileReads?: boolean;
+  /** The installed version, known before `initialize`; it picks the file reader and client name. */
+  readonly runtimeVersion?: string | null;
+  /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
+  readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
 }
 
-/** Normal launches reject browser login; only the auth flow supplies `onAuthorizationUrl`. */
+function parseAntigravityVersion(version: string | null | undefined) {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+  return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<number>) {
+  for (let index = 0; index < 3; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
+ * 1.4.2 through 1.4.5 create or overwrite skills/system/run-workflow/SKILL.md in the workspace
+ * unless `run_workflow` is disabled. Older builds offer the tool and leave the file alone.
+ */
+function antigravityWritesRunWorkflowSkill(version: string | null | undefined): boolean {
+  const parsed = parseAntigravityVersion(version);
+  return (
+    parsed !== undefined &&
+    compareVersions(parsed, [1, 4, 2]) >= 0 &&
+    compareVersions(parsed, [1, 4, 5]) <= 0
+  );
+}
+
+/**
+ * Releases T3 qualified for native range reads and linked video. On 1.4.5 the client-read path
+ * sends a whole file to serve one line, and the native reader keeps diff edits.
+ */
+export function isQualifiedAntigravityRelease(version: string | null | undefined): boolean {
+  return version?.trim() === "1.4.5";
+}
+
+// `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
+const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
+
+/**
+ * 1.4.5 appends `systemPrompt.append` to its system instructions on new, load and resume, and
+ * keeps none of it between processes, so every activation sends it again.
+ */
+export const antigravityAppendsSystemPrompt = (
+  initializeResult: EffectAcpSchema.InitializeResponse,
+) => isQualifiedAntigravityRelease(initializeResult.agentInfo?.version);
+
+export function antigravitySessionMeta(
+  initializeResult: EffectAcpSchema.InitializeResponse,
+  systemPromptAppend?: string,
+): EffectAcpSchema.NewSessionRequest["_meta"] | undefined {
+  const antigravity = {
+    ...(antigravityWritesRunWorkflowSkill(initializeResult.agentInfo?.version)
+      ? { disabledTools: ["run_workflow"] }
+      : {}),
+    ...(systemPromptAppend !== undefined && antigravityAppendsSystemPrompt(initializeResult)
+      ? { systemPrompt: { append: systemPromptAppend } }
+      : {}),
+  };
+  return Object.keys(antigravity).length === 0 ? undefined : { antigravity };
+}
+
+/** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
+export function antigravityClientInfo(version: string | null | undefined) {
+  const parsed = parseAntigravityVersion(version);
+  return parsed !== undefined && compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0
+    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
+    : { name: "zed", version: "0.0.0" };
+}
+
 export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(function* (
   input: AntigravityAcpRuntimeInput,
 ): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  SecureRandom.SecureRandom | Scope.Scope
 > {
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
       authMethodId: input.authMethod ?? "oauth-personal",
+      authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
-      isAllowedConfigOptionValue: isAntigravityAllowedConfigOptionValue,
-      isConfigOptionCurrentValueMatching: isAntigravityConfigOptionCurrentValueMatching,
+      clientInfo: antigravityClientInfo(input.runtimeVersion),
+      sessionMeta: (initializeResult) =>
+        antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
       clientCapabilities: {
+        // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.
         fs: {
-          readTextFile: input.clientFileSystem === true,
-          writeTextFile: input.clientFileSystem === true,
+          readTextFile:
+            input.clientFileReads === true && !isQualifiedAntigravityRelease(input.runtimeVersion),
+          writeTextFile: false,
         },
         terminal: false,
       },
@@ -93,77 +160,6 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
 });
 
-export function parseAntigravityModel(model: string | null | undefined): {
-  readonly family: string | undefined;
-  readonly effort: "low" | "medium" | "high" | undefined;
-} {
-  if (!model) return { family: undefined, effort: undefined };
-  const match = model.match(/^(gemini-(?:4-argon|3\.8-flash))(?:-(low|medium|high))?$/u);
-  if (!match) return { family: model, effort: undefined };
-  return {
-    family: match[1],
-    effort: match[2] as "low" | "medium" | "high" | undefined,
-  };
-}
-
-export function currentAntigravityModel(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-): string | undefined {
-  const model = configOptions.find((option) => option.id === "model");
-  if (model?.type !== "select" || !model.currentValue) return undefined;
-  const thinking = configOptions.find((option) => option.id === "thinking_level");
-  const effort =
-    thinking?.type === "select" &&
-    (thinking.currentValue === "low" ||
-      thinking.currentValue === "medium" ||
-      thinking.currentValue === "high")
-      ? thinking.currentValue
-      : undefined;
-  return effort ? `${model.currentValue}-${effort}` : model.currentValue;
-}
-
-export function matchesAntigravityModelSelection(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-  targetModel: string,
-): boolean {
-  const parsed = parseAntigravityModel(targetModel);
-  const modelOption = configOptions.find((option) => option.id === "model");
-  if (modelOption?.type !== "select" || modelOption.currentValue !== parsed.family) {
-    return false;
-  }
-  if (parsed.effort) {
-    const thinkingOption = configOptions.find((option) => option.id === "thinking_level");
-    return thinkingOption?.type === "select" && thinkingOption.currentValue === parsed.effort;
-  }
-  return true;
-}
-
-export function isAntigravityAllowedConfigOptionValue(
-  configOption: EffectAcpSchema.SessionConfigOption,
-  value: string,
-): boolean {
-  if (configOption.id === "model") {
-    const options = antigravityModelOptions([configOption]);
-    return options.some((opt) => opt.value === value);
-  }
-  return false;
-}
-
-export function isAntigravityConfigOptionCurrentValueMatching(
-  configOption: EffectAcpSchema.SessionConfigOption,
-  value: string | boolean,
-  allConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-): boolean {
-  if (configOption.id === "model" && typeof value === "string") {
-    const parsed = parseAntigravityModel(value);
-    if (parsed.effort) {
-      return currentAntigravityModel(allConfigOptions) === value;
-    }
-    return configOption.type === "select" && configOption.currentValue === value;
-  }
-  return false;
-}
-
 export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   switch (runtimeMode) {
     case "full-access":
@@ -176,69 +172,64 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
+/** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
+export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
+  switch (modeId) {
+    case "yolo":
+      return "full-access";
+    case "auto_edit":
+      return "auto-accept-edits";
+    case "default":
+      return "approval-required";
+    default:
+      return undefined;
+  }
+}
+
 export function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
   const model = configOptions.find((option) => option.id === "model");
   if (model?.type !== "select") return [];
-  const entries = model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
-  // Runtime 1.4 groups these native IDs into a family in configOptions.
-  // setModel still accepts the concrete IDs and validates account availability.
-  return entries.flatMap((entry) =>
-    /^gemini-(?:4-argon|3\.8-flash)$/u.test(entry.value)
-      ? [
-          entry,
-          ...["low", "medium", "high"].map((effort) => ({
-            ...entry,
-            value: `${entry.value}-${effort}`,
-          })),
-        ]
-      : [entry],
-  );
+  return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
+}
+
+/** Runtime 1.4 reports thinking as its own option; 1.3 encoded it in the model ID. */
+export function antigravityThinkingConfig(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+) {
+  const option = configOptions?.find((candidate) => candidate.category === "thought_level");
+  return option?.type === "select" ? option : undefined;
 }
 
 /**
- * Resolves the model a turn should run on. A saved selection is reapplied
- * as-is. The provider default alias resolves to `defaultModel` when the
- * account offers it, so T3 can pick a newer model than the one Google marks
- * current. Otherwise the agent's current selection stands.
+ * Runtime 1.4 lists `gemini-3.8-flash` where 1.3 listed `gemini-3.8-flash-high`. The agent
+ * still accepts the old IDs, so pass them through; the current model may have no thinking option.
  */
-export function resolveAntigravityModel(input: {
+function legacyAntigravityFamily(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  model: string,
+) {
+  return antigravityModelOptions(configOptions)
+    .map((option) => option.value)
+    .filter((family) => model.startsWith(`${family}-`))
+    .toSorted((left, right) => right.length - left.length)[0];
+}
+
+function resolveAntigravityModel(input: {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly model: string | null | undefined;
   readonly defaultModel?: string | undefined;
-  readonly options?: ProviderOptionSelections | undefined;
 }): string | undefined {
   const modelConfig = input.configOptions.find((option) => option.id === "model");
-  const current =
-    currentAntigravityModel(input.configOptions) ??
-    (modelConfig?.type === "select" ? modelConfig.currentValue : undefined);
-  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) {
-    const parsed = parseAntigravityModel(input.model);
-    const rawEffort = input.options?.find((option) => option.id === "effort")?.value;
-    const isExplicitEffort = rawEffort === "low" || rawEffort === "medium" || rawEffort === "high";
-    const isDefaultEffort = rawEffort === "default" || rawEffort === "";
-    if (parsed.family && (isExplicitEffort || isDefaultEffort || parsed.effort)) {
-      const targetEffort = isExplicitEffort
-        ? rawEffort
-        : isDefaultEffort
-          ? undefined
-          : parsed.effort;
-      return targetEffort ? `${parsed.family}-${targetEffort}` : parsed.family;
-    }
-    return input.model;
-  }
+  const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
+  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) return input.model;
   const options = antigravityModelOptions(input.configOptions);
-  const normalizedDefault = input.defaultModel
-    ? parseAntigravityModel(input.defaultModel).family
-    : undefined;
-  if (input.defaultModel && options.some((option) => option.value === input.defaultModel)) {
-    return input.defaultModel;
-  }
-  if (normalizedDefault && options.some((option) => option.value === normalizedDefault)) {
-    return normalizedDefault;
-  }
-  return current;
+  return input.defaultModel &&
+    (options.some((option) => option.value === input.defaultModel) ||
+      legacyAntigravityFamily(input.configOptions, input.defaultModel) !== undefined)
+    ? input.defaultModel
+    : current;
 }
 
 /** Never replace a saved selection with the default returned by a cold resume. */
@@ -246,31 +237,32 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
   function* <E>(input: {
     readonly runtime: Pick<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
-      "getConfigOptions" | "setModel"
+      "getConfigOptions" | "setModel" | "setConfigOption"
     >;
     readonly model: string | null | undefined;
-    readonly options?: ProviderOptionSelections | undefined;
-    /** Model to select for the provider default alias. See `resolveAntigravityModel`. */
     readonly defaultModel?: string | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
     const configOptions = yield* input.runtime.getConfigOptions;
     const modelConfig = configOptions.find((option) => option.id === "model");
-    const current =
-      currentAntigravityModel(configOptions) ??
-      (modelConfig?.type === "select" ? modelConfig.currentValue : undefined);
+    const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
     const resolved = resolveAntigravityModel({
       configOptions,
       model: input.model,
-      options: input.options,
       defaultModel: input.defaultModel,
     });
-    // The default alias never sends an internal ID. It selects the manifest
-    // default when that differs from the agent's current model, and otherwise
-    // leaves the agent's choice alone.
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
     if (resolved === undefined || (!explicit && resolved === current)) return current;
     const options = antigravityModelOptions(configOptions);
+    const legacyFamily = options.some((option) => option.value === resolved)
+      ? undefined
+      : legacyAntigravityFamily(configOptions, resolved);
+    if (legacyFamily !== undefined) {
+      yield* input.runtime
+        .setConfigOption("model", resolved, { allowUnlistedValue: true })
+        .pipe(Effect.mapError(input.mapError));
+      return legacyFamily;
+    }
     if (!options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(
         input.mapError(
@@ -281,22 +273,11 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       );
     }
     yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
-    const updatedOptions = yield* input.runtime.getConfigOptions;
-    if (!matchesAntigravityModelSelection(updatedOptions, resolved)) {
-      return yield* Effect.fail(
-        input.mapError(
-          EffectAcpErrors.AcpRequestError.invalidParams(
-            `Antigravity model selection '${resolved}' could not be confirmed by the runtime.`,
-          ),
-        ),
-      );
-    }
     return resolved;
   },
 );
 
 const IMAGE_MIME_TYPES = new Set(["image/bmp", "image/jpeg", "image/png", "image/webp"]);
-// Formats the bundled SDK's Audio type accepts. Anything else is rejected up front.
 const AUDIO_MIME_TYPES = new Set([
   "audio/aac",
   "audio/flac",
@@ -311,6 +292,18 @@ const AUDIO_MIME_TYPES = new Set([
   "audio/webm",
 ]);
 const ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+// The agent inlines linked video bytes into one model request, so keep it under the inline limit.
+const ANTIGRAVITY_MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Only Gemini takes video. The evidence is the session's resolved model, so an account default
+ * counts once the agent reports it; opaque ids such as `agy-model` need a Gemini display name.
+ */
+function antigravityModelAcceptsVideo(
+  model: { readonly id: string; readonly name: string | undefined } | undefined,
+): boolean {
+  return model !== undefined && (/^gemini-/i.test(model.id) || /^gemini\b/i.test(model.name ?? ""));
+}
 const TEXT_MIME_TYPES = new Set([
   "application/json",
   "application/ld+json",
@@ -373,15 +366,16 @@ const TEXT_FILE_EXTENSIONS = new Set([
 const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = PROVIDER_SEND_TURN_MAX_FILE_BYTES;
 
-/**
- * Sends supported uploads as native ACP content. Other files, and native
- * candidates over their limits, reach the agent through the saved path
- * ProviderService puts in the text block.
- */
 export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(function* (input: {
   readonly input: ProviderSendTurnInput["input"];
   readonly attachments: ProviderSendTurnInput["attachments"];
-  readonly attachmentsDir: string;
+  readonly resolveAttachmentPath: (
+    attachment: NonNullable<ProviderSendTurnInput["attachments"]>[number],
+  ) => string | null;
+  readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
+  /** Linked video needs a runtime whose `resource_link` handling is qualified and a Gemini model. */
+  readonly agentVersion?: string | undefined;
+  readonly currentModel?: { readonly id: string; readonly name: string | undefined } | undefined;
 }): Effect.fn.Return<
   ReadonlyArray<EffectAcpSchema.ContentBlock>,
   EffectAcpErrors.AcpError,
@@ -389,6 +383,8 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // The agent runs on this host.
+  const platform = yield* HostProcess.Platform;
   const blocks: Array<EffectAcpSchema.ContentBlock> = [];
   const text = input.input?.trim();
   if (text) blocks.push({ type: "text", text });
@@ -399,29 +395,34 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       attachment.type === "file" &&
       "source" in attachment &&
       attachment.source?._tag === "pasted-text";
-    // ProviderService has already put the file path in the text block. Keep a
-    // folded clipboard paste lazy so the agent can search or sample it rather
-    // than paying to embed the entire resource in context immediately.
+    // The text already carries the path; keep folded pastes lazy so agents can search without embedding the whole file.
     const mimeType = attachment.mimeType.toLowerCase().split(";", 1)[0] ?? "";
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);
     const pdf = attachment.type === "file" && mimeType === "application/pdf";
+    const video =
+      attachment.type === "file" &&
+      mimeType === "video/mp4" &&
+      isQualifiedAntigravityRelease(input.agentVersion) &&
+      // The agent turns a file URI into a path with unquote(urlparse(uri).path), which drops
+      // Windows drives and UNC hosts. Keep the saved path there until Google fixes it.
+      platform !== "win32" &&
+      antigravityModelAcceptsVideo(input.currentModel);
     const textFile =
       attachment.type === "file" &&
       (mimeType.startsWith("text/") ||
         TEXT_MIME_TYPES.has(mimeType) ||
         TEXT_FILE_EXTENSIONS.has(path.extname(attachment.name).toLowerCase()));
     const isPathOnly =
-      attachment.type === "file" && (isPastedText || (!audio && !pdf && !textFile));
-    if (attachment.type === "image" && !image) {
-      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Antigravity does not support '${attachment.name}' (${attachment.mimeType}). Attach a BMP, JPEG, PNG, WebP, PDF, audio, or text file.`,
-      );
-    }
-    const attachmentPath = resolveAttachmentPath({
-      attachmentsDir: input.attachmentsDir,
-      attachment,
-    });
+      (attachment.type === "image" && (!image || input.promptCapabilities?.image !== true)) ||
+      (attachment.type === "file" &&
+        (isPastedText ||
+          (audio
+            ? input.promptCapabilities?.audio !== true
+            : pdf || textFile
+              ? input.promptCapabilities?.embeddedContext !== true
+              : !video)));
+    const attachmentPath = input.resolveAttachmentPath(attachment);
     if (!attachmentPath) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
         `Invalid attachment '${attachment.name}'.`,
@@ -449,7 +450,9 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
         ? ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES
         : pdf
           ? MAX_TOTAL_ATTACHMENT_BYTES
-          : ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES;
+          : video
+            ? ANTIGRAVITY_MAX_VIDEO_ATTACHMENT_BYTES
+            : ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES;
     if (
       attachment.type === "file" &&
       (size > limit || totalBytes + size > MAX_TOTAL_ATTACHMENT_BYTES)
@@ -468,8 +471,8 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
         EffectAcpErrors.AcpRequestError.invalidParams(`Invalid attachment '${attachment.name}'.`),
       ),
     );
-    if (pdf) {
-      blocks.push({ type: "resource_link", uri, name: attachment.name, mimeType });
+    if (pdf || video) {
+      blocks.push({ type: "resource_link", uri, name: attachment.name, mimeType, size });
       continue;
     }
     const bytes = yield* fileSystem.stream(attachmentPath, { bytesToRead: limit + 1 }).pipe(
