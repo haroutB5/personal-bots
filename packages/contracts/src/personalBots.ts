@@ -14,7 +14,7 @@ import {
   ModelSelection,
   OrchestrationMessageRole,
   OrchestrationThreadShell,
-} from "./orchestration.ts";
+} from "./personalV1Wire.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { VoiceCallSettings, VoiceCallSettingsInput } from "./personalVoiceCallSettings.ts";
 import { UsageProviderKind } from "./usage.ts";

@@ -1,6 +1,6 @@
 import type { OrchestrationMessageContext } from "./composerContext.ts";
 import { ComposerContextId } from "./composerContext.ts";
-import type { ThreadTurnFollowUp } from "./orchestration.ts";
+import type { ThreadTurnFollowUp } from "./personalV1Wire.ts";
 
 /**
  * How an owner's message was meant to land on a thread that was already
