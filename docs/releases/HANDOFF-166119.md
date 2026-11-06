@@ -35,4 +35,21 @@ Binary only. The previous release is `0b3f30841a` (1.66.118). No migration ran.
 
 - Parity `--require-done A6,A7,A8,A9,A10,A11,A12,A13,A14,A15,A16 --android-ref release-candidate/hbots-166119` exit 0.
 - The personal contract diff against `0b3f30841a` is empty.
+- All 18 RC gates exit 0 at the evidence commit.
 - The gate table and logs are in `/home/harout/Claude/AI/dev-team/qa/hbots-166119-rc/REPORT.md`.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=ef0f74fdcddd87882213ac5a3dbd6cbe44a45758 release=ef0f74fdcddd json-sha256=f8ec75ba4d2043123c68668065c54eff439e16107f8df5bbb6a21d9391b86820 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
