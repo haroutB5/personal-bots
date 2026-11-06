@@ -178,6 +178,8 @@ export type NativePersonalRuntime =
 
 export interface NativePersonal {
   readonly environmentId: EnvironmentId;
+  /** The label this phone gave at pairing; Settings > This phone shows it. */
+  readonly deviceLabel: string;
   readonly httpBaseUrl: string;
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
@@ -538,6 +540,7 @@ export function createNativePersonal(
 
   return {
     environmentId,
+    deviceLabel: stored.label,
     httpBaseUrl: stored.httpBaseUrl,
     runtime,
     client,

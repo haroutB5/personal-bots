@@ -27,7 +27,6 @@ import { RemovedBotsScreen } from "../teams/RemovedBotsScreen";
 import { TeamScreen } from "../teams/TeamScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
-import { UpdateSettings } from "../UpdateSettings";
 import { BotsScreen } from "./BotsScreen";
 import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
@@ -37,6 +36,8 @@ import { ChatScreen } from "../screens/ChatScreen";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
 import { ComputerScreen } from "../computer/ComputerScreen";
 import { SettingsScreen } from "../settings/SettingsScreen";
+import { ThisPhoneScreen } from "../settings/ThisPhoneScreen";
+import { DevicesScreen } from "../settings/DevicesScreen";
 import { NotificationsScreen } from "../settings/NotificationsScreen";
 import { AddProviderScreen } from "../settings/AddProviderScreen";
 import { CatalogProviderScreen } from "../settings/CatalogProviderScreen";
@@ -83,6 +84,7 @@ export type RootStackParamList = {
   SettingsProvider: { readonly instanceId: string };
   SettingsProviderCatalog: { readonly catalogId: string };
   ThisPhone: undefined;
+  SettingsDevices: undefined;
   Memory: undefined;
   Passwords: undefined;
   ApiKeys: undefined;
@@ -140,13 +142,13 @@ function HeaderScreen({
   );
 }
 
-function ThisPhoneScreen({
+function ThisPhoneRoute({
   navigation,
   props,
 }: NativeStackScreenProps<RootStackParamList, "ThisPhone"> & { readonly props: AppShellProps }) {
   return (
-    <UpdateSettings
-      title="This phone"
+    <ThisPhoneScreen
+      native={props.native}
       installedVersion={props.installedVersion}
       snapshot={props.update}
       latest={props.latest}
@@ -154,6 +156,7 @@ function ThisPhoneScreen({
       onCheckNow={props.onCheckNow}
       onInstall={props.onInstall}
       onOpenPermission={props.onOpenPermission}
+      onOpenDevices={() => navigation.navigate("SettingsDevices")}
       onSignOut={props.onSignOut}
     />
   );
@@ -502,7 +505,12 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           )}
         </Stack.Screen>
         <Stack.Screen name="ThisPhone">
-          {(screenProps) => <ThisPhoneScreen {...screenProps} props={props} />}
+          {(screenProps) => <ThisPhoneRoute {...screenProps} props={props} />}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsDevices">
+          {({ navigation }) => (
+            <DevicesScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
         </Stack.Screen>
         <Stack.Screen name="Stop">
           {({ navigation }) => (
