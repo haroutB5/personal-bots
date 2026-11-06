@@ -1,6 +1,15 @@
-import type { PersonalBot, PersonalGroup, PersonalGroupRound } from "@t3tools/contracts";
+import type {
+  OrchestrationMessage,
+  OrchestrationProposedPlan,
+  OrchestrationThreadActivity,
+  PersonalBot,
+  PersonalGroup,
+  PersonalGroupRound,
+} from "@t3tools/contracts";
 
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
+import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
+import type { ConversationItem } from "@hbots/personal-client/conversation/conversationModel";
 import {
   activeGroupMembers,
   groupLastActivityMs,
@@ -89,6 +98,24 @@ export function groupChatsSections(input: {
     groups: newestFirst(input.groups),
     archived: newestFirst(input.archivedGroups),
   };
+}
+
+/**
+ * The group transcript rows before feed cards are placed on them. The group
+ * flag is what turns a bot's message into a speaker row and a system activity
+ * into a centred line, so it never depends on the caller remembering it.
+ */
+export function groupFeedItems(input: {
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly proposedPlans: ReadonlyArray<OrchestrationProposedPlan>;
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+}): ConversationItem[] {
+  return buildChatFeed({
+    messages: input.messages,
+    proposedPlans: input.proposedPlans,
+    activities: input.activities,
+    groups: true,
+  });
 }
 
 export type GroupScreenState =

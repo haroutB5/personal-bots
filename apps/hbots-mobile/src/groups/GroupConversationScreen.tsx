@@ -39,10 +39,11 @@ import {
   roundForGroup,
 } from "@hbots/personal-client/conversation/groupModel";
 import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
-import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { MessageList } from "../chat/MessageList";
+import { useChatCards } from "../chat/useChatCards";
+import { useNow } from "../chat/useNow";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
@@ -51,7 +52,12 @@ import { GroupComposer } from "./GroupComposer";
 import { GroupDeleteSheet } from "./GroupDeleteSheet";
 import { GroupRoundCard, GroupVoteCard } from "./GroupCards";
 import { GroupSettingsSheet } from "./GroupSettingsSheet";
-import { groupComposerMode, groupMenuActions, groupScreenState } from "./groupScreenModel";
+import {
+  groupComposerMode,
+  groupFeedItems,
+  groupMenuActions,
+  groupScreenState,
+} from "./groupScreenModel";
 
 function failureText(result: { readonly _tag: string }, fallback: string): string | null {
   if (result._tag === "Success") return null;
@@ -125,14 +131,29 @@ export function GroupConversationScreen({
     () =>
       thread === null
         ? []
-        : buildChatFeed({
+        : groupFeedItems({
             messages: thread.messages,
             proposedPlans: thread.proposedPlans,
             activities: thread.activities,
-            groups: true,
           }),
     [thread],
   );
+
+  const now = useNow();
+  const providers = native.useProviders();
+  const cards = useChatCards({
+    native,
+    chat,
+    environmentId,
+    threadId: threadId ?? "",
+    activities: thread?.activities ?? [],
+    items,
+    bots,
+    botName: group?.name ?? "Group",
+    providers,
+    nowMs: now,
+    onOpenChat,
+  });
 
   const page = Option.getOrNull(view.state.page);
   const loadEarlierAvailable = page?.hasMore === true;
@@ -365,7 +386,8 @@ export function GroupConversationScreen({
           <MessageList
             native={native}
             chat={chat}
-            items={items}
+            cardContext={cards.context}
+            items={cards.items}
             pending={[]}
             queued={[]}
             botName={group.name}

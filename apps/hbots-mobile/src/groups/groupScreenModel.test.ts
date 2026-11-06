@@ -1,10 +1,17 @@
-import type { PersonalBot, PersonalGroup, PersonalGroupRound } from "@t3tools/contracts";
+import type {
+  OrchestrationMessage,
+  PersonalBot,
+  PersonalGroup,
+  PersonalGroupRound,
+} from "@t3tools/contracts";
+import { NO_CHAT_CARDS, placeChatCards } from "@hbots/personal-client/conversation/feedCards";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   groupChatsSections,
   groupComposerMode,
+  groupFeedItems,
   groupMembersError,
   groupMenuActions,
   groupNameError,
@@ -153,6 +160,39 @@ describe("groupChatsSections", () => {
     });
     expect(sections.groups.map((row) => row.groupId)).toEqual(["newer", "older"]);
     expect(sections.archived.map((row) => row.groupId)).toEqual(["archived"]);
+  });
+});
+
+describe("groupFeedItems", () => {
+  it("builds the group transcript and keeps feed cards at the moment they happened", () => {
+    const message = {
+      id: "message-1",
+      role: "assistant",
+      text: "Morning all",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-11-05T19:58:00.000Z",
+      updatedAt: "2026-11-05T19:58:00.000Z",
+    } as unknown as OrchestrationMessage;
+    const items = groupFeedItems({
+      messages: [message],
+      proposedPlans: [],
+      activities: [],
+    });
+    const placed = placeChatCards(items, {
+      ...NO_CHAT_CARDS,
+      secrets: [
+        {
+          kind: "provided",
+          requestId: "request-1",
+          createdAtMs: Date.parse("2026-11-05T19:59:00.000Z"),
+          name: "API key",
+          label: "Launch key",
+        },
+      ],
+    });
+    expect(placed.map((item) => item.kind)).toEqual(["divider", "message", "secret"]);
+    expect(placed.at(-1)?.id).toBe("secret:request-1");
   });
 });
 

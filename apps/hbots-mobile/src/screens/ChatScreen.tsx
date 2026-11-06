@@ -66,6 +66,7 @@ import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
 import { MessageList } from "../chat/MessageList";
 import type { MessageListHandle } from "../chat/MessageList";
 import { useChatCards } from "../chat/useChatCards";
+import { useNow } from "../chat/useNow";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
@@ -986,15 +987,6 @@ function syntheticLink(
     createdAt: shell.createdAt as never,
     archivedAt: shell.archivedAt as never,
   };
-}
-
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
 }
 
 function stateDotStyle(state: string) {
