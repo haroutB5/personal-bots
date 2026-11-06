@@ -37,6 +37,7 @@ import {
   providerPriceLine,
   providerScreenModel,
   providerSourceLine,
+  providerTestLine,
   versionLine,
 } from "./providerScreenModel";
 import { InstallConfirmSheet, ProviderConfirmSheet, RemapSheet } from "./ProviderSheets";
@@ -499,10 +500,11 @@ export function ProviderScreen({
         <Section label="Test">
           <Row
             title="Send a test message"
-            hint="Asks for one word and checks the answer"
+            hint={providerTestLine(snapshot) ?? "Asks for one word and checks the answer"}
             right={
               <TextButton
-                label="Test"
+                label={busy === "test" ? "Testing…" : "Test"}
+                disabled={busy !== null}
                 onPress={() => {
                   void run(
                     "test",

@@ -7,6 +7,7 @@ import {
   modelsShown,
   providerScreenModel,
   providerSourceLine,
+  providerTestLine,
   versionLine,
 } from "./providerScreenModel";
 
@@ -68,6 +69,50 @@ describe("providerScreenModel", () => {
     ] as unknown as ServerProvider["models"];
     expect(modelsShown(models, false).map((entry) => entry.slug)).toEqual(["a", "b", "c"]);
     expect(modelsShown(models, true)).toHaveLength(4);
+  });
+});
+
+describe("providerTestLine", () => {
+  const smoke = (status: "passed" | "failed") =>
+    provider({
+      smokeCheck: {
+        status,
+        version: "1.2.3",
+        checkedAt: "2026-11-06T10:00:00.000Z",
+        message: null,
+        manual: true,
+        ...(status === "passed" ? { durationMs: 400 } : {}),
+      },
+    } as Partial<ServerProvider>);
+
+  it("shows a passed test under the button", () => {
+    const line = providerTestLine(smoke("passed"), new Date("2026-11-06T10:30:00.000Z"));
+    expect(line).toContain("Passed");
+    expect(line).toContain("0.4 s");
+  });
+
+  it("shows a failed test under the button", () => {
+    expect(providerTestLine(smoke("failed"), new Date("2026-11-06T10:30:00.000Z"))).toContain(
+      "Failed",
+    );
+  });
+
+  it("says nothing before the first test or for an older version", () => {
+    expect(providerTestLine(provider())).toBeNull();
+    expect(
+      providerTestLine(
+        provider({
+          version: "1.2.4",
+          smokeCheck: {
+            status: "passed",
+            version: "1.2.3",
+            checkedAt: "2026-11-06T10:00:00.000Z",
+            message: null,
+            manual: true,
+          },
+        } as Partial<ServerProvider>),
+      ),
+    ).toBeNull();
   });
 });
 

@@ -9,10 +9,12 @@ import {
 } from "@t3tools/contracts";
 import {
   botsUsingProvider,
+  currentSmoke,
   providerRow,
   type ProviderRow,
   type ProviderRowActionKind,
 } from "@hbots/personal-client/settings/providerRows";
+import { testLine } from "@hbots/personal-client/settings/providerPageModel";
 
 export type ProviderScreenTone = "ready" | "setup" | "review" | "error";
 
@@ -79,6 +81,11 @@ export function providerScreenModel(input: {
 
 export function providerActionIntent(row: ProviderRow): ProviderRowActionKind | null {
   return row.action?.kind ?? null;
+}
+
+/** The last test message result, shown under the Test button whether it passed or failed. */
+export function providerTestLine(snapshot: ServerProvider, now: Date = new Date()): string | null {
+  return testLine(currentSmoke(snapshot), now);
 }
 
 export function modelsShown(
