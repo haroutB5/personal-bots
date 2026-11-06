@@ -16,9 +16,14 @@ export const MERGED_PRS: readonly string[] = [
   "A15",
   "A16",
   "A17",
+  "A18",
 ];
 export const DONE_ITEMS: readonly string[] = [
   "screen:routes/pair.tsx#pair",
+  "screen:routes/_personal.bots_.settings_.devices.tsx#bots-settings-devices",
+  "setting:PersonalSettingsScreen.tsx#plugins-devices",
+  "rpc:personalDevicesList",
+  "rpc:personalDevicesRevoke",
   "rpc:personalBotsList",
   "screen:routes/_personal.tsx#personal",
   "action:PersonalShell.tsx#edge-swipe-back",

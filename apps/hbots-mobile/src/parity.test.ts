@@ -320,6 +320,7 @@ describe("Android parity ratchet", () => {
       "A15",
       "A16",
       "A17",
+      "A18",
     ]);
   });
 
@@ -378,5 +379,16 @@ describe("Android parity ratchet", () => {
 
   it("claims the A17 pairing screen", () => {
     expect(DONE_ITEMS).toContain("screen:routes/pair.tsx#pair");
+  });
+
+  it("claims the A18 device list and its two calls", () => {
+    for (const item of [
+      "screen:routes/_personal.bots_.settings_.devices.tsx#bots-settings-devices",
+      "setting:PersonalSettingsScreen.tsx#plugins-devices",
+      "rpc:personalDevicesList",
+      "rpc:personalDevicesRevoke",
+    ]) {
+      expect(DONE_ITEMS).toContain(item);
+    }
   });
 });
