@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { classifyFailure } from "./failure";
+import { AuthPhoneClientScopes } from "@t3tools/contracts";
+
+import { classifyFailure, DpopRequiredError } from "./failure";
+import { failureFor } from "./onboarding/model";
 import { decodeTicket, openSocketUrl, pair } from "./pairing";
 import type { StoredSession } from "./session";
 
@@ -91,6 +94,7 @@ describe("pair", () => {
     expect(session).toMatchObject({
       environmentId: "env-1",
       label: "Harout's laptop",
+      deviceLabel: "Find X9 Pro",
       accessToken: "tok-1",
       authMethod: "dpop",
       httpBaseUrl: BASE,
@@ -99,8 +103,27 @@ describe("pair", () => {
       String(target).endsWith("/oauth/token"),
     );
     expect(exchange?.[1]?.headers).toMatchObject({ dpop: "test-proof" });
-    expect(String(exchange?.[1]?.body)).toContain("client_label=Find+X9+Pro");
-    expect(String(exchange?.[1]?.body)).toContain("client_device_type=mobile");
+    const exchangeBody = new URLSearchParams(String(exchange?.[1]?.body));
+    expect(exchangeBody.get("client_label")).toBe("Find X9 Pro");
+    expect(exchangeBody.get("client_device_type")).toBe("mobile");
+    expect(exchangeBody.get("scope")).toBe(AuthPhoneClientScopes.join(" "));
+  });
+
+  it("refuses a Bearer answer instead of downgrading the phone session", async () => {
+    routeFetch({
+      "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
+      "/oauth/token": () => json(200, { ...TOKEN, token_type: "Bearer" }),
+    });
+    const failure = await pair(
+      {
+        httpBaseUrl: BASE,
+        wsBaseUrl: "wss://relay.example.test/",
+        credential: "one-time",
+      },
+      "Find X9 Pro",
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(DpopRequiredError);
+    expect(failureFor(failure)).toBe("not-secure");
   });
 
   it("reports a spent link as signed out", async () => {

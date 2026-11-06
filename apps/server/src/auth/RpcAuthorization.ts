@@ -1,6 +1,7 @@
 import {
   type DeviceListInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -252,8 +253,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalPushReportForeground]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushInApp]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushAckInApp]: AuthOrchestrationReadScope,
-  [WS_METHODS.personalDevicesList]: AuthOrchestrationReadScope,
-  [WS_METHODS.personalDevicesRevoke]: AuthOrchestrationOperateScope,
+  // Same scopes as the HTTP twins, GET /api/auth/clients and revokeClient.
+  [WS_METHODS.personalDevicesList]: AuthAccessReadScope,
+  [WS_METHODS.personalDevicesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.projectCloneStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectCloneCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectCloneRetry]: AuthOrchestrationOperateScope,

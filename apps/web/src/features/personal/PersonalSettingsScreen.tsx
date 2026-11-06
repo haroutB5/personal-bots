@@ -3,6 +3,7 @@ import { cloneElement, useMemo, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthPhoneClientScopes,
   formatPersonalChatArchiveAfterDuration,
   parsePersonalChatArchiveAfterDuration,
   personalChatArchiveAfterDurationLabel,
@@ -447,7 +448,9 @@ function PairPhoneRow({ environmentId }: { readonly environmentId: string | null
     setCreating(true);
     setError(null);
     try {
-      const credential = await createServerPairingCredential();
+      const credential = await createServerPairingCredential({
+        scopes: [...AuthPhoneClientScopes],
+      });
       const url = setPairingTokenOnUrl(
         new URL("/pair", window.location.origin),
         credential.credential,

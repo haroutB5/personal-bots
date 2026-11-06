@@ -540,7 +540,7 @@ export function createNativePersonal(
 
   return {
     environmentId,
-    deviceLabel: stored.label,
+    deviceLabel: stored.deviceLabel ?? stored.label,
     httpBaseUrl: stored.httpBaseUrl,
     runtime,
     client,

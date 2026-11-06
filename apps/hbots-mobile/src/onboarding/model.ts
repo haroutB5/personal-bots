@@ -1,4 +1,4 @@
-import { RequestFailure } from "../failure";
+import { DpopRequiredError, RequestFailure } from "../failure";
 import { parsePairingLink, type PairingTarget } from "../pairingLink";
 import type { ServerIdentity } from "../pairing";
 
@@ -7,6 +7,7 @@ export type PairFailure =
   | "used"
   | "unreachable"
   | "not-hbots"
+  | "not-secure"
   | "app-too-old"
   | "camera-denied";
 
@@ -77,6 +78,11 @@ export const failureCopy: Record<
     help: "Scan the code from hbots Settings.",
     action: "Scan again",
   },
+  "not-secure": {
+    headline: "Pairing failed",
+    help: "Your laptop did not secure this phone's session. Update hbots on your laptop, then make a new code.",
+    action: "Try again",
+  },
   "app-too-old": {
     headline: "Update hbots first",
     help: "Your laptop runs a newer hbots.",
@@ -94,6 +100,9 @@ function checkLink(link: PairingTarget): PairingState {
 }
 
 export function failureFor(cause: unknown): PairFailure {
+  if (cause instanceof DpopRequiredError) {
+    return "not-secure";
+  }
   if (!(cause instanceof RequestFailure)) {
     return "unreachable";
   }

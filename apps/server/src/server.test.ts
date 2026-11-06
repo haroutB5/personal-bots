@@ -9,6 +9,8 @@ import {
   type DeviceServiceState,
   LOCAL_DEVICE_HOST_ID,
   AuthAccessTokenType,
+  AuthPhoneClientScopes,
+  AuthSessionId,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -2132,6 +2134,16 @@ const getWsServerUrl = (
       baseUrl,
       yield* getAuthenticatedSessionCookieHeader(options?.credential),
     );
+  });
+
+const wsUrlForBearerToken = (token: string) =>
+  Effect.gen(function* () {
+    const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(ticketResponse.status, 200);
+    const { ticket } = (yield* ticketResponse.json) as { readonly ticket: string };
+    return `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
   });
 
 // Mirrors NodeHttpServer.layerTest, which does not expose server options,
@@ -5701,6 +5713,143 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readWriteBody.requiredScope, "access:write");
       assert.equal(writeListResponse.status, 403);
       assert.equal(writeListBody.requiredScope, "access:read");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("refuses device RPCs to a session without access scopes", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const session = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read orchestration:operate",
+      });
+      assert.equal(session.response.status, 200);
+      const token = session.body.access_token ?? "";
+
+      const listError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(yield* wsUrlForBearerToken(token), (client) =>
+            client[WS_METHODS.personalDevicesList]({}),
+          ),
+        ),
+      );
+      assert.equal(listError._tag, "EnvironmentAuthorizationError");
+      if (listError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(listError.requiredScope, "access:read");
+      }
+
+      const revokeError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(yield* wsUrlForBearerToken(token), (client) =>
+            client[WS_METHODS.personalDevicesRevoke]({
+              sessionId: AuthSessionId.make("another-session"),
+            }),
+          ),
+        ),
+      );
+      assert.equal(revokeError._tag, "EnvironmentAuthorizationError");
+      if (revokeError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(revokeError.requiredScope, "access:write");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("allows a phone-scoped session to list and revoke devices", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const issueSession = (scopes: readonly string[], label?: string) =>
+        Effect.gen(function* () {
+          const pairing = yield* HttpClient.post("/api/auth/pairing-token", {
+            headers: { cookie: ownerCookie },
+            body: yield* HttpBody.json({ scopes: [...scopes] }),
+          });
+          assert.equal(pairing.status, 200);
+          const { credential } = (yield* pairing.json) as { readonly credential: string };
+          const exchanged = yield* exchangeAccessToken(credential, {
+            scope: scopes.join(" "),
+            ...(label ? { clientMetadata: { label } } : {}),
+          });
+          assert.equal(exchanged.response.status, 200);
+          return exchanged.body.access_token ?? "";
+        });
+      const phoneToken = yield* issueSession(AuthPhoneClientScopes);
+      yield* issueSession(["orchestration:read"], "Second session");
+
+      const before = yield* Effect.scoped(
+        withWsRpcClient(yield* wsUrlForBearerToken(phoneToken), (client) =>
+          client[WS_METHODS.personalDevicesList]({}),
+        ),
+      );
+      assert.equal(
+        before.devices.filter((device) => device.relationship === "this-device").length,
+        1,
+      );
+      const otherDevice = before.devices.find((device) => device.label === "Second session");
+      assert.isDefined(otherDevice);
+
+      const revoked = yield* Effect.scoped(
+        withWsRpcClient(yield* wsUrlForBearerToken(phoneToken), (client) =>
+          client[WS_METHODS.personalDevicesRevoke]({
+            sessionId: AuthSessionId.make(otherDevice?.sessionId ?? ""),
+          }),
+        ),
+      );
+      assert.equal(revoked.revoked, true);
+
+      const after = yield* Effect.scoped(
+        withWsRpcClient(yield* wsUrlForBearerToken(phoneToken), (client) =>
+          client[WS_METHODS.personalDevicesList]({}),
+        ),
+      );
+      assert.notInclude(
+        after.devices.map((device) => device.sessionId),
+        otherDevice?.sessionId,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps this device out of its own revoke path", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairing = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({ scopes: [...AuthPhoneClientScopes] }),
+      });
+      assert.equal(pairing.status, 200);
+      const { credential } = (yield* pairing.json) as { readonly credential: string };
+      const phone = yield* exchangeAccessToken(credential, {
+        scope: AuthPhoneClientScopes.join(" "),
+      });
+      assert.equal(phone.response.status, 200);
+      const phoneToken = phone.body.access_token ?? "";
+
+      const before = yield* Effect.scoped(
+        withWsRpcClient(yield* wsUrlForBearerToken(phoneToken), (client) =>
+          client[WS_METHODS.personalDevicesList]({}),
+        ),
+      );
+      const own = before.devices.find((device) => device.relationship === "this-device");
+      assert.isDefined(own);
+
+      const revoked = yield* Effect.scoped(
+        withWsRpcClient(yield* wsUrlForBearerToken(phoneToken), (client) =>
+          client[WS_METHODS.personalDevicesRevoke]({
+            sessionId: AuthSessionId.make(own?.sessionId ?? ""),
+          }),
+        ),
+      );
+      assert.equal(revoked.revoked, false);
+
+      const after = yield* Effect.scoped(
+        withWsRpcClient(yield* wsUrlForBearerToken(phoneToken), (client) =>
+          client[WS_METHODS.personalDevicesList]({}),
+        ),
+      );
+      assert.equal(
+        after.devices.filter((device) => device.relationship === "this-device").length,
+        1,
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

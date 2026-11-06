@@ -6,7 +6,10 @@ export type { SessionAuthMethod } from "./sessionAuth";
 
 export interface StoredSession {
   readonly environmentId: string;
+  /** The server's own name, shown when describing the laptop. */
   readonly label: string;
+  /** The name this phone chose. Missing on sessions paired before it was stored. */
+  readonly deviceLabel?: string;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
   readonly accessToken: string;

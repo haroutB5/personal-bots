@@ -1,6 +1,6 @@
 import {
   AuthAccessTokenResult,
-  AuthStandardClientScopes,
+  AuthPhoneClientScopes,
   AuthWebSocketTicketResult,
   ExecutionEnvironmentDescriptor,
   environmentShortId,
@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 import { authorizationHeaders } from "./authorizedRequest";
 import { createDpopProof } from "./dpop";
-import { assertSameEnvironment } from "./failure";
+import { assertSameEnvironment, DpopRequiredError } from "./failure";
 import { requestJson } from "./http";
 import type { PairingTarget } from "./pairingLink";
 import type { StoredSession } from "./session";
@@ -99,24 +99,25 @@ export async function pair(target: PairingTarget, deviceLabel: string): Promise<
         subject_token: target.credential,
         subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
         requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-        scope: AuthStandardClientScopes.join(" "),
+        scope: AuthPhoneClientScopes.join(" "),
         client_label: label,
         client_device_type: "mobile",
         client_os: "android",
       }).toString(),
     }),
   );
-  if (token.token_type !== "DPoP" && token.token_type !== "Bearer") {
-    throw new Error("The server issued a session this app cannot use.");
+  if (token.token_type !== "DPoP") {
+    throw new DpopRequiredError();
   }
   const now = Date.now();
   return {
     environmentId: descriptor.environmentId,
     label: descriptor.label,
+    deviceLabel: label,
     httpBaseUrl: target.httpBaseUrl,
     wsBaseUrl: target.wsBaseUrl,
     accessToken: token.access_token,
-    authMethod: token.token_type === "DPoP" ? "dpop" : "bearer",
+    authMethod: "dpop",
     scope: token.scope,
     expiresAt: now + token.expires_in * 1000,
     pairedAt: now,

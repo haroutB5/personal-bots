@@ -1,4 +1,6 @@
 import {
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -39,6 +41,11 @@ describe("RPC authorization scopes", () => {
       AuthRelayReadScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
+  });
+
+  it("gates the device RPCs on the same access scopes as their HTTP twins", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.personalDevicesList)).toBe(AuthAccessReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.personalDevicesRevoke)).toBe(AuthAccessWriteScope);
   });
 
   it("requires permission to operate on a thread before uploading feedback", () => {

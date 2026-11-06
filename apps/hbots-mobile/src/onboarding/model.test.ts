@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { RequestFailure } from "../failure";
+import { DpopRequiredError, RequestFailure } from "../failure";
 import type { ServerIdentity } from "../pairing";
 import type { PairingTarget } from "../pairingLink";
 import { failureCopy, failureFor, reducePairing, type PairingState } from "./model";
@@ -118,5 +118,9 @@ describe("pairing failures", () => {
 
   it("reads a non-json answer as not an hbots server", () => {
     expect(failureFor(new RequestFailure({ kind: "not-json" }))).toBe("not-hbots");
+  });
+
+  it("refuses a Bearer pairing answer instead of calling it unreachable", () => {
+    expect(failureFor(new DpopRequiredError())).toBe("not-secure");
   });
 });
