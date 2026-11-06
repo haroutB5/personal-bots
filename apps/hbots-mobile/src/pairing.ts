@@ -13,6 +13,7 @@ import { assertSameEnvironment, DpopRequiredError } from "./failure";
 import { requestJson } from "./http";
 import type { PairingTarget } from "./pairingLink";
 import type { StoredSession } from "./session";
+import { revokeRemoteSession } from "./signOut";
 
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
 const decodeToken = Schema.decodeUnknownSync(AuthAccessTokenResult);
@@ -106,20 +107,22 @@ export async function pair(target: PairingTarget, deviceLabel: string): Promise<
       }).toString(),
     }),
   );
-  if (token.token_type !== "DPoP") {
-    throw new DpopRequiredError();
-  }
   const now = Date.now();
-  return {
+  const issued: StoredSession = {
     environmentId: descriptor.environmentId,
     label: descriptor.label,
     deviceLabel: label,
     httpBaseUrl: target.httpBaseUrl,
     wsBaseUrl: target.wsBaseUrl,
     accessToken: token.access_token,
-    authMethod: "dpop",
+    authMethod: token.token_type === "DPoP" ? "dpop" : "bearer",
     scope: token.scope,
     expiresAt: now + token.expires_in * 1000,
     pairedAt: now,
   };
+  if (token.token_type !== "DPoP") {
+    await revokeRemoteSession(issued);
+    throw new DpopRequiredError();
+  }
+  return issued;
 }

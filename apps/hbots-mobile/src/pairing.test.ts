@@ -109,10 +109,11 @@ describe("pair", () => {
     expect(exchangeBody.get("scope")).toBe(AuthPhoneClientScopes.join(" "));
   });
 
-  it("refuses a Bearer answer instead of downgrading the phone session", async () => {
-    routeFetch({
+  it("refuses a Bearer answer and revokes that session", async () => {
+    const fetchSpy = routeFetch({
       "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
       "/oauth/token": () => json(200, { ...TOKEN, token_type: "Bearer" }),
+      "/api/auth/session/revoke": () => json(200, { revoked: true }),
     });
     const failure = await pair(
       {
@@ -124,6 +125,12 @@ describe("pair", () => {
     ).catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(DpopRequiredError);
     expect(failureFor(failure)).toBe("not-secure");
+
+    const revoke = fetchSpy.mock.calls.find(([target]) =>
+      String(target).endsWith("/api/auth/session/revoke"),
+    );
+    expect(revoke?.[1]?.method).toBe("POST");
+    expect(revoke?.[1]?.headers).toMatchObject({ authorization: "Bearer tok-1" });
   });
 
   it("reports a spent link as signed out", async () => {

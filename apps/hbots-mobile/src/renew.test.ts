@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { classifyFailure } from "./failure";
+import { classifyFailure, DpopRequiredError } from "./failure";
 import { renewSession } from "./renew";
 import type { StoredSession } from "./session";
 
@@ -73,6 +73,19 @@ describe("renewSession", () => {
     });
     expect(renewed.accessToken).toBe("new-token");
     expect(renewed.authMethod).toBe("dpop");
+  });
+
+  it("refuses a Bearer answer for a bound session", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, tokenBody("new-token", 2_592_000))),
+    );
+
+    const failure = await renewSession({ ...SESSION, authMethod: "dpop" }, 10_000).catch(
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toBeInstanceOf(DpopRequiredError);
   });
 
   it("keeps the same token when the server says it is not due yet", async () => {
