@@ -97,46 +97,10 @@ import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { PersonalProvidersV1ChainLive } from "./personal/engine/PersonalProvidersV1Live.ts";
-import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
-import * as PersonalBotService from "./personal/PersonalBotService.ts";
-import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
-import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
-import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
-import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
-import * as PersonalVoiceCallSummaryService from "./personal/voiceCalls/PersonalVoiceCallSummaryService.ts";
-import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
-import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
-import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
-import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
-import * as PersonalConnectionService from "./personal/connections/service.ts";
-import * as WhatsAppSendLog from "./personal/connections/whatsapp/sendLog.ts";
-import * as WhatsAppSession from "./personal/connections/whatsapp/session.ts";
-import * as PersonalLoginRepository from "./personal/secrets/PersonalLoginRepository.ts";
 import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess.ts";
 // personal browser
-import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
-import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
-import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
 import { personalHttpRoutesLayer } from "./personal/http/routes.ts";
-import * as PersonalBrowserLeaseRepository from "./personal/browser/PersonalBrowserLeaseRepository.ts";
-import * as PersonalBrowserProtectionRepository from "./personal/browser/PersonalBrowserProtectionRepository.ts";
-import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
-import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
-import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
-import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
-import * as DeepSeekBalanceWatcher from "./personal/deepseek/DeepSeekBalanceWatcher.ts";
-import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
-import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
-import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
-import * as PersonalThreadLinkRepair from "./personal/personalThreadLinkRepair.ts";
-import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
-import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
-import * as PersonalModelFallback from "./personal/PersonalModelFallbackService.ts";
-import * as PersonalBotTokenUsage from "./personal/PersonalBotTokenUsageService.ts";
-import * as PersonalTaskChatArchive from "./personal/PersonalTaskChatArchiveService.ts";
-import * as PersonalReleaseNotices from "./personal/releaseNotices/PersonalReleaseNoticeService.ts";
-import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
-import { logPersonalSchedulersAtBoot } from "./personal/schedulersSwitch.ts";
+import { PersonalRuntimeLayerLive } from "./personal/PersonalLayerLive.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -548,150 +512,6 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
-// Seeds the default personal bots once providers are ready. Runs at server
-// startup (after migrations and the provider registry are built, via layer
-// dependencies) and never fails startup: `personalBots.list` re-seeds lazily
-// if this run finds no provider or fails.
-const PersonalBotsSeedLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const personalBots = yield* PersonalBotService.PersonalBotService;
-    const seeded = yield* personalBots.seedDefaultsIfNeeded;
-    if (seeded.length > 0) {
-      yield* Effect.logInfo("Personal bots seeded default bots.", { count: seeded.length });
-    }
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Personal bots startup seeding failed; list calls retry lazily.", {
-        cause,
-      }),
-    ),
-  ),
-);
-
-// Starts the personal task dispatcher. The domain-event subscription is taken
-// now, while its consumer and the lease/backoff sweep park on ServerActivation
-// (provided above this layer), so no turn starts before the provider reactors.
-const PersonalTasksDispatcherLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const personalTasks = yield* PersonalTaskService.PersonalTaskService;
-    // One WARN at boot when T3CODE_PERSONAL_SCHEDULERS=off (restored test copies only).
-    yield* logPersonalSchedulersAtBoot();
-    yield* personalTasks.start();
-  }),
-);
-
-// The group round loop. Same shape as the task dispatcher and the same
-// reason for the shape: the domain-event subscription is taken now so no
-// relay is missed, while its consumer and the 30s sweep park on
-// ServerActivation so no member turn starts before the provider reactors.
-const PersonalGroupsDispatcherLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const personalGroups = yield* PersonalGroupService.PersonalGroupService;
-    yield* personalGroups.start();
-  }),
-);
-
-// Routine catch-up (startup + every 30s), task-summary memory and the push
-// sender. All park on ServerActivation like the task dispatcher.
-const PersonalReactorsLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* (yield* PersonalRoutineService.PersonalRoutineService).start();
-    yield* (yield* PersonalMemoryService.PersonalMemoryService).start();
-    yield* (yield* PersonalMemoryTidy.PersonalMemoryTidy).start();
-    yield* (yield* PersonalPushService.PersonalPushService).start();
-    yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
-    // Sets up the Updates bot and its nightly 04:00 update run (the routine service runs it).
-    yield* (yield* PersonalClaudeCodeReview.PersonalClaudeCodeReview).start();
-    // Re-runs a bot reply that died on a transient provider fault. Subscribes
-    // here so it never misses the turn-start it has to track.
-    yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
-    // Continues a bot chat stopped by a usage limit once it resets.
-    yield* (yield* PersonalChatResume.PersonalChatResume).start();
-    // Moves a bot that hit its provider's usage limit to its fallback model, and
-    // back once the limit has reset and the bot is idle (PERSONAL_MODEL_FALLBACK=off disables).
-    yield* (yield* PersonalModelFallback.PersonalModelFallback).start();
-    // Cancels lead-bot confirm cards nobody answered in 15 minutes and tells their lead.
-    yield* (yield* PersonalLeadBots.PersonalLeadBotService).start();
-    // Archives finished delegated-task chats after 48 idle hours (startup + every 5 min).
-    yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
-    // Posts the release waiter's "landed / rolled back" notice into the chat
-    // that asked for the release (startup + every 5s; notify-release.ps1).
-    yield* (yield* PersonalReleaseNotices.PersonalReleaseNotices).start();
-    // Writes the one-line summary onto finished call cards: the boot sweep
-    // doubles as the backfill, then it looks every 30 s (Harout, 16 Oct).
-    yield* (yield* PersonalVoiceCallSummaryService.PersonalVoiceCallSummaryService).start();
-    // One-off: names old task/routine chats still on "New chat" after their
-    // task, once the server is up. Marker in personal_meta; never blocks start.
-    yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
-    // Additive boot repair: a pending turn-start row left by the last process
-    // can never be consumed (no provider session is running at boot), and one
-    // would otherwise stay "pending" with no turn id for good (QA 1.66.28).
-    yield* forkParked(StrandedTurnStarts.clearStrandedTurnStartsSafely);
-    // A chat creation interrupted between its thread and its bot link (a worker
-    // statement is an interruption point) leaves an intent row behind; link it
-    // now instead of leaving a chat no bot lists (QA 1.66.70).
-    yield* forkParked(PersonalThreadLinkRepair.repairPersonalThreadLinksSafely);
-    // Tells the owner before a DeepSeek account runs dry: after each finished
-    // DeepSeek turn (debounced) and on a light half-hour sweep. Silent while no
-    // enabled DeepSeek instance has a key.
-    yield* (yield* DeepSeekBalanceWatcher.DeepSeekBalanceWatcher).start();
-  }),
-);
-
-// Every personal service, consumers first (each step feeds requirements
-// opened by earlier steps). SqlClient, orchestration and providers come from
-// the runtime layers the whole group is merged above.
-const PersonalLayerLive = PersonalReactorsLive.pipe(
-  // Consumes the push service below and the provider/orchestration runtime.
-  // The balance watcher rides the same step: it needs the instance key from
-  // settings, the provider's own balance reader, and the warned flag in
-  // personal_meta, all of which the rest of this chain provides.
-  Layer.provideMerge(Layer.merge(PersonalProviderUpdates.layer, DeepSeekBalanceWatcher.layer)),
-  // Consumes the routine service and the bot service/repository below.
-  Layer.provideMerge(PersonalClaudeCodeReview.layer),
-  Layer.provideMerge(PersonalTurnRetry.layer),
-  Layer.provideMerge(PersonalChatResume.layer),
-  Layer.provideMerge(PersonalTaskChatArchive.layer),
-  // Per-bot token totals for the Team screen; reads the usage scan and the chat tables.
-  Layer.provideMerge(PersonalBotTokenUsage.layer),
-  Layer.provideMerge(PersonalReleaseNotices.layer),
-  // Team leads create, edit and remove bots on their own team; consumes the
-  // bot, task and routine services below and the push service just below.
-  Layer.provideMerge(PersonalLeadBots.layer),
-  Layer.provideMerge(
-    PersonalPushService.layer.pipe(
-      Layer.provide(PersonalPushService.transportLive),
-      Layer.provide(ServerSecretStore.layer),
-    ),
-  ),
-  Layer.provideMerge(PersonalMemoryService.layer),
-  Layer.provideMerge(PersonalMemoryTidy.layer.pipe(Layer.provide(PersonalMemoryTidy.judgeLayer))),
-  Layer.provideMerge(PersonalRoutineService.layer),
-  Layer.provideMerge(PersonalTasksDispatcherLive),
-  Layer.provideMerge(PersonalTaskService.layerLive),
-  // The task service and the chat resume ask it what to do about a usage limit.
-  Layer.provideMerge(PersonalModelFallback.layer),
-  // Groups consume the bot service and repository below them, exactly as the
-  // task service does, so they sit above both and below the seed.
-  Layer.provideMerge(PersonalGroupsDispatcherLive),
-  Layer.provideMerge(PersonalGroupService.layerLive),
-  Layer.provideMerge(PersonalBotsSeedLive),
-  Layer.provideMerge(PersonalBotService.layer),
-  // The provider port rides the repository step: the chain is at its step limit.
-  Layer.provideMerge(
-    PersonalBotRepository.layer.pipe(Layer.provideMerge(PersonalProvidersV1ChainLive)),
-  ),
-);
-
-// The personal group with the voice-call workers provided to it, as ONE step:
-// the reactors in the group start the summary worker at boot (Harout, 16 Oct),
-// and the chain below is at its 20-step limit. The sample service rides along:
-// it is reached only from Settings, but it is built from the same broker path.
-const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
-  Layer.provideMerge(PersonalVoiceCallSummaryService.layerLive),
-  Layer.provideMerge(PersonalVoiceSampleService.layerLive),
-);
-
 const ProviderCatalogBootRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const catalog = yield* ProviderCatalog;
@@ -732,55 +552,9 @@ const ProviderInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
-  Layer.provideMerge(PersonalLoginRequestService.layerLive),
+  Layer.provideMerge(PersonalRuntimeLayerLive),
+  Layer.provideMerge(ProviderCatalogBootRefreshLive),
 )
-  .pipe(
-    // The approval service is shared: the owner answers a card over RPC while
-    // the gateway asked for it over MCP, and both read the same rows.
-    Layer.provideMerge(PersonalConnectionApprovalService.layerLive),
-    Layer.provideMerge(PersonalConnectionService.layerLive),
-    // WhatsApp is a browser-session connection, so its adapter is built from the
-    // shared browser and a persisted send ledger rather than from a token. Merged
-    // as one step because a single pipe accepts at most 20; both still resolve
-    // their own requirements from the steps below.
-    Layer.provideMerge(Layer.mergeAll(WhatsAppSession.layer, WhatsAppSendLog.layer)),
-    // Voice calls ride this step: they read the shared browser (the
-    // sensitive-site guard on a memory lookup), memory and the bot records,
-    // all provided by steps below. Placed before the browser's own step
-    // because in this chain a later step feeds the earlier ones. Merged with
-    // the logins layer in one step: a pipe takes at most 20.
-    Layer.provideMerge(
-      Layer.mergeAll(PersonalLoginService.layerLive, PersonalVoiceCallService.layerLive),
-    ),
-    // personal browser: the service needs the lease (-> its repository ->
-    // SqlClient), PreviewManager and PersonalBotRepository, all provided by
-    // later steps below.
-    // The user's real PC sits beside the browser (one step: the pipe is full).
-    // It needs the orchestration engine (turn ends free it) from later steps.
-    Layer.provideMerge(Layer.mergeAll(PersonalBrowser.layer, PersonalDesktop.layer)),
-    Layer.provideMerge(PersonalBrowserLease.layer),
-    Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
-    Layer.provideMerge(PersonalBrowserProtectionRepository.layer),
-    // The browser's egress guard reads which saved logins are sensitive sites.
-    Layer.provideMerge(PersonalLoginRepository.layer),
-    // Personal bots. Order matters: each step's output feeds requirements
-    // opened by EARLIER steps, so consumers come first — the seed needs the
-    // service, the service needs the repository, the repository needs SqlClient
-    // (provided by PersistenceLayerLive further below). Tasks come first: they
-    // consume the bot service and repository. Secrets consume tasks, so they
-    // come before them.
-    Layer.provideMerge(PersonalTasksDispatcherLive),
-    Layer.provideMerge(PersonalGroupsDispatcherLive),
-    Layer.provideMerge(PersonalSecretService.layerLive),
-    Layer.provideMerge(PersonalTaskService.layerLive),
-    Layer.provideMerge(PersonalGroupService.layerLive),
-    Layer.provideMerge(PersonalBotsSeedLive),
-    Layer.provideMerge(PersonalBotService.layer),
-    Layer.provideMerge(PersonalBotRepository.layer),
-    // consume the bot service and repository.
-    Layer.provideMerge(PersonalLayerWithCallSummaryLive),
-    Layer.provideMerge(ProviderCatalogBootRefreshLive),
-  )
   .pipe(
     Layer.provideMerge(ProviderInstallationRefreshLive),
     Layer.provideMerge(ReplayMarkers.layer),
