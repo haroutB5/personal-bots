@@ -1,45 +1,20 @@
 {
-  "note": "Appendix B census at L2, minus the callers ported in A2, A3, A5, A6a, A6b and A7. Direct entries are found by the import and table detectors; indirect entries reach v1 through another personal module and carry the reason.",
+  "note": "Appendix B census after A8, minus the callers ported in A2 to A8. Direct entries are found by the import and table detectors; indirect entries reach v1 through another personal module and carry the reason. The extras outside the three V1Live files are named in qa/hbots-v2-port-A6b-A8/REPORT.md.",
   "files": [
-    "apps/server/src/mcp/toolkits/personal/handlers.ts",
     "apps/server/src/personal/PersonalBotRepository.ts",
     "apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts",
     "apps/server/src/personal/engine/PersonalEngineV1Live.ts",
     "apps/server/src/personal/engine/PersonalProjectionRelationsV1Live.ts",
     "apps/server/src/personal/engine/PersonalProvidersV1Live.ts",
-    "apps/server/src/personal/groups/PersonalGroupService.ts",
-    "apps/server/src/personal/groups/groupCore.ts",
-    "apps/server/src/personal/groups/groupManagement.ts",
-    "apps/server/src/personal/groups/groupMessaging.ts",
-    "apps/server/src/personal/groups/groupSettling.ts",
-    "apps/server/src/personal/groups/groupTurns.ts",
-    "apps/server/src/personal/memory/memoryNotice.ts",
     "apps/server/src/personal/performance/botAttribution.ts",
-    "apps/server/src/personal/push/clientDiagRoute.ts",
-    "apps/server/src/personal/push/sentPushesRoute.ts",
-    "apps/server/src/personal/routines/hookRoutes.ts",
     "apps/server/src/personal/secrets/PersonalSessionAccess.ts",
-    "apps/server/src/personal/tasks/PersonalTaskService.ts",
-    "apps/server/src/personal/tasks/taskCore.ts",
-    "apps/server/src/personal/tasks/taskDispatch.ts",
-    "apps/server/src/personal/tasks/taskLifecycle.ts",
-    "apps/server/src/personal/tasks/taskSettling.ts",
-    "apps/server/src/personal/tasks/taskSteering.ts",
-    "apps/server/src/personal/tasks/taskWaiting.ts",
     "apps/server/src/personal/threadTextPreviews.ts",
     "packages/contracts/src/personalBots.ts",
     "packages/contracts/src/personalFollowUp.ts"
   ],
   "indirectReasons": {
-    "apps/server/src/personal/groups/groupManagement.ts": "part of PersonalGroupService, which subscribes to v1 domain events",
-    "apps/server/src/personal/groups/groupMessaging.ts": "part of PersonalGroupService, which subscribes to v1 domain events",
-    "apps/server/src/personal/groups/groupSettling.ts": "part of PersonalGroupService, which subscribes to v1 domain events",
-    "apps/server/src/personal/groups/groupTurns.ts": "part of PersonalGroupService, which subscribes to v1 domain events",
+    "apps/server/src/personal/PersonalBotRepository.ts": "builds the PersonalProjectionRelationsV1Live layer until B1 swaps it for V2Live",
     "apps/server/src/personal/performance/botAttribution.ts": "reaches v1 through PersonalBotRepository types",
-    "apps/server/src/personal/secrets/PersonalSessionAccess.ts": "reaches v1 through PersonalBotRepository",
-    "apps/server/src/personal/tasks/taskDispatch.ts": "reaches v1 through TaskCore's snapshot query",
-    "apps/server/src/personal/tasks/taskLifecycle.ts": "reaches v1 through TaskCore's snapshot query",
-    "apps/server/src/personal/tasks/taskSteering.ts": "reaches v1 through TaskCore's snapshot query",
-    "apps/server/src/personal/tasks/taskWaiting.ts": "reaches v1 through TaskCore's snapshot query"
+    "apps/server/src/personal/secrets/PersonalSessionAccess.ts": "reaches v1 through PersonalBotRepository"
   }
 }
