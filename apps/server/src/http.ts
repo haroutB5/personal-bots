@@ -48,7 +48,7 @@ import {
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
-import { findRetainedReleaseAsset, isBuildAssetPath } from "./personal/retainedReleaseAssets.ts";
+import { findRetainedReleaseAsset, isBuildAssetPath } from "./assets/retainedReleaseAssets.ts";
 import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
@@ -642,7 +642,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
 
     let opened = yield* openStaticFile(filePath);
     // Build assets never fall back to the SPA shell: an older client's chunk is
-    // served from a retained release, otherwise 404 (see retainedReleaseAssets.ts).
+    // served from a retained release, otherwise 404 (see assets/retainedReleaseAssets.ts).
     const assetRequestPath = staticRelativePath.replaceAll("\\", "/");
     let fromRetainedRelease = false;
     if (!opened && isBuildAssetPath(assetRequestPath)) {

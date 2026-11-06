@@ -117,30 +117,14 @@ import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess
 import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
-import { personalDesktopStreamRouteLayer } from "./personal/desktop/routes.ts";
+import { personalHttpRoutesLayer } from "./personal/http/routes.ts";
 import * as PersonalBrowserLeaseRepository from "./personal/browser/PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./personal/browser/PersonalBrowserProtectionRepository.ts";
-import * as PersonalBrowserHost from "./personal/browser/ServerBrowserHost.ts";
-import {
-  personalBrowserFilesRouteLayer,
-  personalBrowserStreamRouteLayer,
-} from "./personal/browser/routes.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
-import {
-  personalRoutineHookMethodRouteLayer,
-  personalRoutineHookRouteLayer,
-} from "./personal/routines/hookRoutes.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import * as DeepSeekBalanceWatcher from "./personal/deepseek/DeepSeekBalanceWatcher.ts";
-import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
-import { personalPushSentRouteLayer } from "./personal/push/sentPushesRoute.ts";
-import { personalUpdateStatusRouteLayer } from "./personal/updateStatus/updateStatusRoute.ts";
-import { personalClientCompatRouteLayer } from "./personal/clientCompat/clientCompatRoute.ts";
-import { personalAndroidApkRouteLayer } from "./personal/androidUpdates/androidApkRoute.ts";
-import { personalPerformanceStreamRouteLayer } from "./personal/performance/routes.ts";
-import { personalSystemSummaryRouteLayer } from "./personal/performance/systemSummaryRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
@@ -916,32 +900,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     providerCatalogIconRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,
-    // personal browser (routes + in-process preview automation host; the host
-    // shares the single PreviewAutomationBroker provided below)
-    personalBrowserStreamRouteLayer,
-    personalBrowserFilesRouteLayer,
-    // The PC's live view (Computer > Desktop): view only, frames while watched.
-    personalDesktopStreamRouteLayer,
-    // Open, allowlisted and rate limited: notification-tap diagnostics (see clientDiagRoute.ts).
-    personalClientDiagRouteLayer,
-    // Signed-in only: pushes sent to this device, for taps iOS drops (see sentPushesRoute.ts).
-    personalPushSentRouteLayer,
-    // Signed-in only: where a release is, for the Bots page's status line (see updateStatusRoute.ts).
-    personalUpdateStatusRouteLayer,
-    // Open: the Android version handshake, before a client holds a credential.
-    personalClientCompatRouteLayer,
-    // Bearer only: the current APK for the phone's self-updater (see androidApkRoute.ts).
-    personalAndroidApkRouteLayer,
-    // Signed-in only: the Performance tab's SSE feed; samples only while watched
-    // (see personal/performance/routes.ts).
-    personalPerformanceStreamRouteLayer,
-    // Signed-in only: CPU, RAM and disk for the Bots page header line; never
-    // starts the sampler (see personal/performance/systemSummaryRoute.ts).
-    personalSystemSummaryRouteLayer,
-    // Unauthenticated by necessity; the URL token is the whole credential.
-    personalRoutineHookRouteLayer,
-    personalRoutineHookMethodRouteLayer,
-    PersonalBrowserHost.layer,
+    personalHttpRoutesLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
