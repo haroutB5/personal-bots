@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -172,6 +172,7 @@ export function Field({
   help,
   error,
   editable = true,
+  inputRef,
 }: {
   readonly label: string;
   readonly value: string;
@@ -186,6 +187,7 @@ export function Field({
   readonly help?: string;
   readonly error?: string | null;
   readonly editable?: boolean;
+  readonly inputRef?: Ref<TextInput>;
 }) {
   return (
     <View style={styles.field}>
@@ -193,6 +195,7 @@ export function Field({
         {label}
       </Text>
       <TextInput
+        ref={inputRef}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}

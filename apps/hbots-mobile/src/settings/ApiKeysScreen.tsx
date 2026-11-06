@@ -9,7 +9,7 @@ import {
   secretAccessStateOf,
   type SecretAccessState,
 } from "@hbots/personal-client/settings/secretAccess";
-import { useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -18,10 +18,9 @@ import { useSecretDraft } from "../platform/useSecretDraft";
 import { useSecureScreen } from "../platform/secureScreen";
 import { ScreenHeader } from "../shell/ScreenHeader";
 import { tokens } from "../shell/tokens";
+import { apiKeyFormProblem, type ApiKeyFormProblem } from "./apiKeyForm";
 import { buildApiKeyInput } from "./secretHandling";
 import { Field, PrimaryButton, TextButton } from "./SettingsUi";
-
-const NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 export function ApiKeysScreen({
   native,
@@ -53,30 +52,41 @@ export function ApiKeysScreen({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [addProblem, setAddProblem] = useState<ApiKeyFormProblem | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [accessProblem, setAccessProblem] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const nameRef = useRef<TextInput>(null);
+  const valueRef = useRef<TextInput>(null);
+  const addressRef = useRef<TextInput>(null);
+  const accessAddressRef = useRef<TextInput>(null);
 
   const rows = secrets.data?.secrets ?? [];
 
+  const focusProblem = (problem: ApiKeyFormProblem) => {
+    if (problem.field === "name") nameRef.current?.focus();
+    else if (problem.field === "value") valueRef.current?.focus();
+    else addressRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (addError !== null) scrollRef.current?.scrollToEnd({ animated: true });
+  }, [addError]);
+
+  useEffect(() => {
+    if (accessError !== null) scrollRef.current?.scrollToEnd({ animated: true });
+  }, [accessError]);
+
   const save = async () => {
-    setError(null);
-    if (name.trim().length === 0) {
-      setError("Give the key a name.");
-      return;
-    }
-    if (!NAME_PATTERN.test(name)) {
-      setError(
-        "Use capitals, digits and underscores, starting with a letter: OPENWEATHER_API_KEY.",
-      );
-      return;
-    }
-    if (value.trim().length === 0) {
-      setError("Paste the key's value.");
-      return;
-    }
-    const problem = secretAccessProblem(access);
+    setAddError(null);
+    const problem = apiKeyFormProblem({ name, value, access });
     if (problem !== null) {
-      setError(problem);
+      setAddProblem(problem);
+      focusProblem(problem);
       return;
     }
+    setAddProblem(null);
     setBusy(true);
     const result = await create({
       environmentId,
@@ -91,7 +101,7 @@ export function ApiKeysScreen({
       setAccess(initialSecretAccess());
       setNotice("Key saved.");
     } else {
-      setError(failure);
+      setAddError(failure);
     }
     setBusy(false);
   };
@@ -99,9 +109,12 @@ export function ApiKeysScreen({
   const saveAccess = async (secret: PersonalSecretSummary) => {
     const problem = secretAccessProblem(expandedAccess);
     if (problem !== null) {
-      setError(problem);
+      setAccessProblem(problem);
+      accessAddressRef.current?.focus();
       return;
     }
+    setAccessProblem(null);
+    setAccessError(null);
     setBusy(true);
     const choice = secretAccessChoice(expandedAccess);
     const result = await setMode({
@@ -118,7 +131,7 @@ export function ApiKeysScreen({
       setExpanded(null);
       setNotice("Access saved.");
     } else {
-      setError(failure);
+      setAccessError(failure);
     }
     setBusy(false);
   };
@@ -131,6 +144,7 @@ export function ApiKeysScreen({
         right={<TextButton label="Add API key" onPress={() => setAdding(true)} disabled={adding} />}
       />
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]}
         keyboardShouldPersistTaps="handled"
       >
@@ -222,13 +236,33 @@ export function ApiKeysScreen({
                   </View>
                   {isOpen ? (
                     <View style={styles.accessPanel}>
-                      <SecretAccessFields state={expandedAccess} onChange={setExpandedAccess} />
+                      <SecretAccessFields
+                        state={expandedAccess}
+                        onChange={(next) => {
+                          setExpandedAccess(next);
+                          setAccessProblem(null);
+                        }}
+                        problem={accessProblem}
+                        inputRef={accessAddressRef}
+                      />
                       <Text style={styles.meta} maxFontSizeMultiplier={1.4}>
                         Applies to new sessions; a session that is already running may still hold
                         the key as an environment variable.
                       </Text>
+                      {accessError === null ? null : (
+                        <Text style={styles.error} accessibilityRole="alert">
+                          {accessError}
+                        </Text>
+                      )}
                       <View style={styles.formButtons}>
-                        <TextButton label="Cancel" onPress={() => setExpanded(null)} />
+                        <TextButton
+                          label="Cancel"
+                          onPress={() => {
+                            setExpanded(null);
+                            setAccessProblem(null);
+                            setAccessError(null);
+                          }}
+                        />
                         <PrimaryButton
                           label={busy ? "Saving…" : "Save access"}
                           onPress={() => void saveAccess(secret)}
@@ -251,10 +285,15 @@ export function ApiKeysScreen({
             <Field
               label="Name"
               value={name}
-              onChangeText={(next) => setName(next.toUpperCase())}
+              onChangeText={(next) => {
+                setName(next.toUpperCase());
+                if (addProblem?.field === "name") setAddProblem(null);
+              }}
               placeholder="OPENWEATHER_API_KEY"
               autoCapitalize="characters"
               autoComplete="off"
+              inputRef={nameRef}
+              error={addProblem?.field === "name" ? addProblem.message : null}
               help={`Bots ask for this key by name ({{secret:${name.length > 0 ? name : "NAME"}}}), so it has to match the name the bot looks for.`}
             />
             <Field
@@ -267,20 +306,39 @@ export function ApiKeysScreen({
             <Field
               label="Value"
               value={value}
-              onChangeText={setValue}
+              onChangeText={(next) => {
+                setValue(next);
+                if (addProblem?.field === "value") setAddProblem(null);
+              }}
               secure
               autoCapitalize="none"
               autoComplete="off"
+              inputRef={valueRef}
+              error={addProblem?.field === "value" ? addProblem.message : null}
               help="Saved on your computer and never shown in a chat."
             />
-            <SecretAccessFields state={access} onChange={setAccess} />
+            <SecretAccessFields
+              state={access}
+              onChange={(next) => {
+                setAccess(next);
+                if (addProblem?.field === "access") setAddProblem(null);
+              }}
+              problem={addProblem?.field === "access" ? addProblem.message : null}
+              inputRef={addressRef}
+            />
+            {addError === null ? null : (
+              <Text style={styles.formError} accessibilityRole="alert">
+                {addError}
+              </Text>
+            )}
             <View style={styles.formButtons}>
               <TextButton
                 label="Cancel"
                 onPress={() => {
                   clearValue();
                   setAdding(false);
-                  setError(null);
+                  setAddProblem(null);
+                  setAddError(null);
                 }}
               />
               <PrimaryButton
@@ -299,9 +357,13 @@ export function ApiKeysScreen({
 function SecretAccessFields({
   state,
   onChange,
+  problem = null,
+  inputRef,
 }: {
   readonly state: SecretAccessState;
   readonly onChange: (state: SecretAccessState) => void;
+  readonly problem?: string | null;
+  readonly inputRef?: Ref<TextInput>;
 }) {
   const [advanced, setAdvanced] = useState(
     state.placement.header.length > 0 ||
@@ -341,7 +403,13 @@ function SecretAccessFields({
           <Text style={styles.fieldLabel} maxFontSizeMultiplier={1.4}>
             Allowed address
           </Text>
+          {problem === null ? null : (
+            <Text style={styles.fieldError} accessibilityRole="alert">
+              {problem}
+            </Text>
+          )}
           <TextInput
+            ref={inputRef}
             value={state.originsText}
             onChangeText={(originsText) => onChange({ ...state, originsText })}
             placeholder="https://api.vercel.com"
@@ -444,6 +512,8 @@ const styles = StyleSheet.create({
   intro: { color: tokens.textSecondary, fontSize: 13, lineHeight: 19 },
   meta: { color: tokens.textTertiary, fontSize: 12, lineHeight: 17 },
   error: { color: tokens.danger, fontSize: 13, lineHeight: 18 },
+  formError: { color: tokens.danger, fontSize: 13, lineHeight: 18, paddingHorizontal: 16 },
+  fieldError: { color: tokens.danger, fontSize: 12, lineHeight: 17 },
   notice: { color: tokens.working, fontSize: 13, lineHeight: 18 },
   empty: { gap: 8, paddingVertical: 16 },
   emptyTitle: { color: tokens.text, fontSize: 17, fontWeight: "600" },
