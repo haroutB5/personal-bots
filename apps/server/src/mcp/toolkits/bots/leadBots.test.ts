@@ -29,6 +29,7 @@ import {
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
 } from "../../../persistence/Services/ProjectionThreadMessages.ts";
+import { PersonalEngineV1Live } from "../../../personal/engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "../../../personal/PersonalBotService.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
@@ -136,6 +137,14 @@ const claudeProvider = {
   ],
 } as unknown as ServerProvider;
 
+/**
+ * The bot service exports the engine. Tests give it one over the harness fakes
+ * so message reads see what the test seeds, not the in-memory SQLite.
+ */
+const BotServiceLive = PersonalBotService.layerRequiringEngine.pipe(
+  Layer.provideMerge(PersonalEngineV1Live),
+);
+
 const makeLayer = (harness: Harness) =>
   PersonalSecretService.layerLive.pipe(
     Layer.provideMerge(Layer.mock(PersonalBrowser.PersonalBrowser)({})),
@@ -152,7 +161,7 @@ const makeLayer = (harness: Harness) =>
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(PersonalGroupService.layerLive),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(BotServiceLive),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -204,7 +213,16 @@ const makeLayer = (harness: Harness) =>
     Layer.provideMerge(
       Layer.succeed(ProjectionThreadMessageRepository, {
         listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-          Effect.succeed(harness.messages.get(threadId) ?? []),
+          Effect.sync(() =>
+            (harness.messages.get(threadId) ?? []).map((message) => ({
+              ...message,
+              threadId,
+              turnId: null,
+              isStreaming: false,
+              createdAt: "2026-09-13T00:00:00.000Z",
+              updatedAt: "2026-09-13T00:00:00.000Z",
+            })),
+          ),
       } as unknown as ProjectionThreadMessageRepositoryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-lead-bots-test-" })),

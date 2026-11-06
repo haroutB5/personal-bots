@@ -31,9 +31,9 @@ import {
   sharesSubject,
 } from "../../../personal/memory/memoryRule.ts";
 import { noteChangedLine, writeNoteNotice } from "../../../personal/memory/memoryNotice.ts";
-import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { PersonalEngine } from "../../../personal/engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
-import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
+import { PersonalProviders } from "../../../personal/engine/PersonalProviders.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
 import {
@@ -214,10 +214,10 @@ const make = Effect.gen(function* () {
   const research = createResearchClient(undefined, {
     onEvent: (event) => void runFork(logResearch(event)),
   });
-  const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
+  const engine = yield* Effect.serviceOption(PersonalEngine);
   // The same published snapshots the Bots home header reads. Read-only: this
   // never refreshes or probes a provider, so usage_status adds no fetch path.
-  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const personalProviders = yield* Effect.serviceOption(PersonalProviders);
   // Tests give the broker a resolver, an address rule and a private CA; the server runs with none.
   const brokerConfig = yield* Effect.serviceOption(SecretBrokerConfig);
 
@@ -1181,11 +1181,11 @@ const make = Effect.gen(function* () {
     usage_status: () =>
       Effect.gen(function* () {
         yield* requireBotThread;
-        if (Option.isNone(providerRegistry)) {
+        if (Option.isNone(personalProviders)) {
           return yield* refuse("Usage data is not available on this server.");
         }
         const [providers, allBots] = yield* Effect.all([
-          providerRegistry.value.getProviders,
+          personalProviders.value.listProviders().pipe(Effect.orDie),
           liveBots,
         ]);
         const readAt = DateTime.formatIso(yield* DateTime.now);

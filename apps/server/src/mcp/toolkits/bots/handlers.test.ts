@@ -31,6 +31,7 @@ import {
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
 } from "../../../persistence/Services/ProjectionThreadMessages.ts";
+import { PersonalEngineV1Live } from "../../../personal/engine/PersonalEngineV1Live.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import {
   makeSensitiveExposureStore,
@@ -70,6 +71,7 @@ const botId = (key: string) => PersonalBotId.make(`bot-${key}`);
 
 interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
+  readonly liveThreads: Set<string>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly loginUses: Array<{ readonly threadId: string; readonly labelOrOrigin: string }>;
   readonly browserHelpRequests: Array<{
@@ -101,6 +103,14 @@ const browserStatus = (harness: Harness): PersonalBrowserStatus => ({
   lastAgent: null,
   viewers: 0,
 });
+
+/**
+ * The bot service exports the engine. Tests give it one over the harness fakes
+ * so message reads see what the test seeds, not the in-memory SQLite.
+ */
+const BotServiceLive = PersonalBotService.layerRequiringEngine.pipe(
+  Layer.provideMerge(PersonalEngineV1Live),
+);
 
 const makeLayer = (harness: Harness) =>
   PersonalSecretService.layerLive.pipe(
@@ -165,7 +175,7 @@ const makeLayer = (harness: Harness) =>
     // `layerLive` brings its own repository and message reader over the same
     // in-memory SQLite, so it reads back what it wrote.
     Layer.provideMerge(PersonalGroupService.layerLive),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(BotServiceLive),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -174,6 +184,8 @@ const makeLayer = (harness: Harness) =>
         dispatch: (command: OrchestrationCommand) =>
           Effect.sync(() => {
             harness.dispatched.push(command);
+            if (command.type === "thread.create") harness.liveThreads.add(command.threadId);
+            if (command.type === "thread.delete") harness.liveThreads.delete(command.threadId);
             return { sequence: harness.dispatched.length };
           }),
         subscribeDomainEvents: Effect.succeed(Stream.never),
@@ -193,16 +205,88 @@ const makeLayer = (harness: Harness) =>
         getThreadShellById: (threadId: ThreadId) =>
           Effect.sync(() => {
             const session = harness.sessions.get(threadId);
-            return session === undefined
+            return session === undefined && !harness.liveThreads.has(threadId)
               ? Option.none()
-              : Option.some({ id: threadId, session, latestTurn: null });
+              : Option.some({ id: threadId, session: session ?? null, latestTurn: null });
           }),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(
       Layer.succeed(ProjectionThreadMessageRepository, {
         listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-          Effect.sync(() => harness.messages.get(threadId) ?? []),
+          Effect.sync(() =>
+            (harness.messages.get(threadId) ?? []).map((message) => ({
+              ...message,
+              threadId,
+              turnId: null,
+              isStreaming: false,
+              createdAt: "2026-09-13T00:00:00.000Z",
+              updatedAt: "2026-09-13T00:00:00.000Z",
+            })),
+          ),
+        getByMessageId: ({ messageId }: { readonly messageId: MessageId }) =>
+          Effect.sync(() => {
+            for (const [threadId, list] of harness.messages) {
+              const found = list.find((message) => message.messageId === messageId);
+              if (found !== undefined) {
+                return Option.some({
+                  ...found,
+                  threadId,
+                  turnId: null,
+                  isStreaming: false,
+                  createdAt: "2026-09-13T00:00:00.000Z",
+                  updatedAt: "2026-09-13T00:00:00.000Z",
+                });
+              }
+            }
+            return Option.none();
+          }),
+        getLatestAssistantMessageForTurn: ({
+          threadId,
+        }: {
+          readonly threadId: ThreadId;
+          readonly turnId: TurnId;
+        }) =>
+          Effect.sync(() => {
+            const found = (harness.messages.get(threadId) ?? []).findLast(
+              (message) => message.role === "assistant",
+            );
+            return found === undefined
+              ? Option.none()
+              : Option.some({
+                  ...found,
+                  threadId,
+                  turnId: null,
+                  isStreaming: false,
+                  createdAt: "2026-09-13T00:00:00.000Z",
+                  updatedAt: "2026-09-13T00:00:00.000Z",
+                });
+          }),
+        getLatestAssistantMessageAfter: ({
+          threadId,
+          afterMessageId,
+        }: {
+          readonly threadId: ThreadId;
+          readonly afterCreatedAt: string;
+          readonly afterMessageId: MessageId;
+        }) =>
+          Effect.sync(() => {
+            const list = harness.messages.get(threadId) ?? [];
+            const anchor = list.findIndex((message) => message.messageId === afterMessageId);
+            const found = list
+              .slice(anchor + 1)
+              .findLast((message) => message.role === "assistant");
+            return found === undefined
+              ? Option.none()
+              : Option.some({
+                  ...found,
+                  threadId,
+                  turnId: null,
+                  isStreaming: false,
+                  createdAt: "2026-09-13T00:00:00.000Z",
+                  updatedAt: "2026-09-13T00:00:00.000Z",
+                });
+          }),
       } as unknown as ProjectionThreadMessageRepositoryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-bots-toolkit-test-" })),
@@ -278,6 +362,7 @@ const withHarness = <A, E>(
 ) => {
   const harness: Harness = {
     dispatched: [],
+    liveThreads: new Set(),
     sessions: new Map(),
     loginUses: [],
     browserHelpRequests: [],

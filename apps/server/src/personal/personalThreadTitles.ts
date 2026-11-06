@@ -6,7 +6,7 @@ export const PERSONAL_THREAD_TITLE = "New chat";
 /** The orchestrator's placeholder for any thread it made itself. */
 export const PERSONAL_DEFAULT_THREAD_TITLE = "New thread";
 
-const PERSONAL_TASK_MESSAGE_ID_PREFIX = "personal-task-";
+export const PERSONAL_TASK_MESSAGE_ID_PREFIX = "personal-task-";
 
 /**
  * The user message that starts a task attempt's turn (tasks and routines).

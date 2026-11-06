@@ -16,7 +16,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 
-import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { PersonalEngine } from "../../../personal/engine/PersonalEngine.ts";
 import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { MEMORY_AUTO_APPLY_ENV } from "../../../personal/memory/memoryAutoApply.ts";
@@ -231,12 +231,8 @@ function saveMemory(input: {
     ),
     Layer.provide(Layer.mock(PersonalSessionAccess)({})),
     Layer.provide(
-      Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
-        dispatch: (command) =>
-          Effect.sync(() => {
-            notices(command);
-            return { sequence: 1 };
-          }),
+      Layer.mock(PersonalEngine)({
+        postNotice: (input) => Effect.sync(() => notices(input)),
       }),
     ),
   );
@@ -832,12 +828,10 @@ describe("Fable follow-up (1.60.21): tool texts match how memory reaches bots", 
 
 /** The chat line a direct note change posts: its text and its marker. */
 const noticeOf = (notices: ReturnType<typeof vi.fn>) => {
-  const delta = notices.mock.calls
-    .map((call) => call[0])
-    .find((command) => command.type === "thread.message.assistant.delta");
-  return delta === undefined
+  const posted = notices.mock.calls.map((call) => call[0])[0];
+  return posted === undefined
     ? undefined
-    : { text: delta.delta as string, payload: delta.context.records[0].payload, delta };
+    : { text: posted.text as string, payload: posted.context.records[0].payload, delta: posted };
 };
 
 describe("1.60.22: notes save directly at every reach, with a chat line and Undo", () => {
@@ -1737,10 +1731,9 @@ describe("1.66.7: a save into an entry that already exists still shows what it a
   const noticesOf = (notices: ReturnType<typeof vi.fn>) =>
     notices.mock.calls
       .map((call) => call[0])
-      .filter((command) => command.type === "thread.message.assistant.delta")
-      .map((delta) => ({
-        text: delta.delta as string,
-        payload: delta.context.records[0].payload as {
+      .map((posted) => ({
+        text: posted.text as string,
+        payload: posted.context.records[0].payload as {
           memoryId: string;
           undo: string;
           replacedBy?: string;

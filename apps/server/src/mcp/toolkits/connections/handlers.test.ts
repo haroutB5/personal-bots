@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersonalEngine } from "../../../personal/engine/PersonalEngine.ts";
 import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.ts";
 import * as CreateApp from "../../../personal/connections/createApp/service.ts";
 import * as Gateway from "../../../personal/connections/gateway.ts";
@@ -102,10 +102,10 @@ const run = (input: {
     // Present but unused here: these tests are about connection_call.
     Layer.provide(Layer.mock(CreateApp.PersonalCreateAppService)({})),
     Layer.provide(
-      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+      Layer.mock(PersonalEngine)({
         // By default no running turn in this chat: the card can still be
         // raised, the bot just is not resumed automatically.
-        getThreadShellById: () =>
+        getThread: () =>
           Effect.succeed(
             input.liveTurn === true
               ? Option.some({ session: { activeTurnId: "turn-1" }, latestTurn: null } as never)

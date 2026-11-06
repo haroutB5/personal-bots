@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersonalEngine } from "../../../personal/engine/PersonalEngine.ts";
 import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.ts";
 import {
   buildCreateAppPlan,
@@ -128,8 +128,8 @@ const harness = (createApp: Partial<CreateApp.PersonalCreateAppService["Service"
     ),
     Layer.provide(Layer.mock(PersonalTaskService.PersonalTaskService)({})),
     Layer.provide(
-      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-        getThreadShellById: () => Effect.succeedNone,
+      Layer.mock(PersonalEngine)({
+        getThread: () => Effect.succeedNone,
       }),
     ),
     Layer.provide(

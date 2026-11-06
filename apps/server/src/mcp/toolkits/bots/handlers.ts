@@ -21,9 +21,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProjectionThreadMessageRepository } from "../../../persistence/Services/ProjectionThreadMessages.ts";
-import { isPersonalTaskMessageId } from "../../../personal/personalThreadTitles.ts";
+import { PersonalEngine } from "../../../personal/engine/PersonalEngine.ts";
+import { PERSONAL_TASK_MESSAGE_ID_PREFIX } from "../../../personal/personalThreadTitles.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
@@ -228,8 +227,7 @@ const make = Effect.gen(function* () {
   const secrets = yield* PersonalSecretService.PersonalSecretService;
   const logins = yield* PersonalLoginService.PersonalLoginService;
   const loginRequests = yield* PersonalLoginRequestService.PersonalLoginRequestService;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const threadMessages = yield* ProjectionThreadMessageRepository;
+  const engine = yield* PersonalEngine;
   const browser = yield* PersonalBrowser.PersonalBrowser;
   const groups = yield* PersonalGroupService.PersonalGroupService;
   const leadBots = yield* PersonalLeadBotService.PersonalLeadBotService;
@@ -274,12 +272,10 @@ const make = Effect.gen(function* () {
   const latestOwnerMessage = Effect.fn("BotsToolkit.latestOwnerMessage")(function* (
     threadId: ThreadId,
   ) {
-    const messages = yield* threadMessages
-      .listByThreadId({ threadId })
+    const latest = yield* engine
+      .latestUserMessage({ threadId, excludeIdPrefix: PERSONAL_TASK_MESSAGE_ID_PREFIX })
       .pipe(Effect.mapError(() => toolError("Could not read this chat's messages.")));
-    return messages.findLast(
-      (message) => message.role === "user" && !isPersonalTaskMessageId(message.messageId),
-    );
+    return Option.getOrUndefined(latest);
   });
 
   const ownerNamedBot = Effect.fn("BotsToolkit.ownerNamedBot")(function* (
@@ -338,16 +334,15 @@ const make = Effect.gen(function* () {
    * routine that fires in a chat where he once spoke does not inherit his turn.
    */
   const ownerTurnFor = Effect.fn("BotsToolkit.ownerTurnFor")(function* (threadId: ThreadId) {
-    const messages = yield* threadMessages
-      .listByThreadId({ threadId })
+    const latest = yield* engine
+      .latestUserMessage({ threadId })
       .pipe(Effect.mapError(() => toolError("Could not read this chat's messages.")));
-    const latest = messages.findLast((message) => message.role === "user");
-    return latest !== undefined && isOwnerMessageId(latest.messageId);
+    return Option.isSome(latest) && isOwnerMessageId(latest.value.id);
   });
 
   const currentTurnId = Effect.fn("BotsToolkit.currentTurnId")(function* (threadId: ThreadId) {
-    const shell = yield* snapshots
-      .getThreadShellById(threadId)
+    const shell = yield* engine
+      .getThread(threadId)
       .pipe(Effect.mapError(() => toolError("Could not read this thread.")));
     const turnId = Option.isSome(shell)
       ? (shell.value.session?.activeTurnId ?? shell.value.latestTurn?.turnId ?? null)
@@ -569,7 +564,7 @@ const make = Effect.gen(function* () {
           .listDirectChats({ botId: target.botId, limit })
           .pipe(Effect.mapError(() => toolError("Could not read that bot's chats; try again.")));
         const entries = yield* Effect.forEach(chats, (chat) =>
-          snapshots.getThreadShellById(chat.threadId).pipe(
+          engine.getThread(chat.threadId).pipe(
             Effect.map((shell) => (Option.isSome(shell) ? shell.value.session : null)),
             Effect.orElseSucceed(() => null),
             Effect.map((session) => ({

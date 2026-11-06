@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersonalEngine } from "../../../personal/engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import { createAppDataStorePlan } from "../../../personal/connections/createApp/dataStores.ts";
 import * as CreateApp from "../../../personal/connections/createApp/service.ts";
@@ -22,7 +22,7 @@ const make = Effect.gen(function* () {
   const createApp = yield* CreateApp.PersonalCreateAppService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const tasks = yield* PersonalTaskService.PersonalTaskService;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const engine = yield* PersonalEngine;
   const groups = yield* PersonalGroupService.PersonalGroupService;
 
   const refuse = (reason: string) => new ConnectionsToolError({ reason });
@@ -61,8 +61,8 @@ const make = Effect.gen(function* () {
   }) {
     const group = yield* groups.groupNameForMemberThread(caller.threadId);
     if (Option.isSome(group)) return null;
-    const shell = yield* snapshots
-      .getThreadShellById(caller.threadId)
+    const shell = yield* engine
+      .getThread(caller.threadId)
       .pipe(Effect.orElseSucceed(() => Option.none<never>()));
     const turnId = Option.isSome(shell)
       ? (shell.value.session?.activeTurnId ?? shell.value.latestTurn?.turnId ?? null)
