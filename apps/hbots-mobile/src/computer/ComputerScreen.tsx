@@ -27,6 +27,7 @@ import { IconDeviceLaptop, IconMaximize, IconRefresh, IconWorld } from "@tabler/
 import { useIsFocused } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   AppState,
   Modal,
@@ -65,6 +66,7 @@ import {
   desktopEvents,
   liveViewMode,
   pageAddressLabel,
+  takeControlView,
   type BrowserStage,
 } from "./computerScreenModel";
 import type { LiveViewURLs } from "./liveViewAccess";
@@ -260,6 +262,7 @@ export function ComputerScreen({
     helpOpen,
   });
   const isLive = liveViewMode({ status, reachable }) === "live";
+  const control = takeControlView({ stage, takeError, urlError });
   const liveActive = focused && appActive && !fullScreen;
 
   useEffect(() => {
@@ -289,7 +292,6 @@ export function ComputerScreen({
       setTakeSource(null);
       setPausedDriver(null);
       setTakeError(failure);
-      setFullScreen(false);
     }
   };
 
@@ -373,6 +375,14 @@ export function ComputerScreen({
 
   const openChat = (botId: string | null, threadId: string | null) => {
     if (botId !== null && threadId !== null) onOpenChat(botId, threadId);
+  };
+
+  const retryControl = () => {
+    if (control.kind === "error" && control.retry === "url") {
+      refreshURLs();
+      return;
+    }
+    void takeControl();
   };
 
   const sendReload = () => {
@@ -568,8 +578,9 @@ export function ComputerScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Open browser full screen"
+              disabled={!isLive}
               onPress={() => setFullScreen(true)}
-              style={styles.toolButton}
+              style={[styles.toolButton, !isLive ? styles.disabled : null]}
             >
               <IconMaximize size={18} color={tokens.text} />
             </Pressable>
@@ -685,7 +696,11 @@ export function ComputerScreen({
             </Pressable>
             <View style={styles.controlTitle}>
               <Text style={styles.controlTitleText} numberOfLines={1}>
-                {youBrowser ? "You're in control" : "Taking control…"}
+                {control.kind === "error"
+                  ? "Browser didn't start"
+                  : youBrowser
+                    ? "You're in control"
+                    : "Taking control…"}
               </Text>
               {help === null ? null : (
                 <Text style={styles.controlSubtitle} numberOfLines={1}>
@@ -702,16 +717,42 @@ export function ComputerScreen({
               <Text style={styles.primaryButtonText}>Hand back</Text>
             </Pressable>
           </View>
-          <ComputerLiveView
-            mode="browser"
-            url={urls?.browser ?? null}
-            interactive={youBrowser}
-            fullScreen
-            paused={!appActive}
-            attemptKey={urlEpoch}
-            syncViewport={youBrowser}
-            onNeedsURL={refreshURLs}
-          />
+          {control.kind === "live" ? (
+            <ComputerLiveView
+              mode="browser"
+              url={urls?.browser ?? null}
+              interactive={youBrowser}
+              fullScreen
+              paused={!appActive}
+              attemptKey={urlEpoch}
+              syncViewport={youBrowser}
+              onNeedsURL={refreshURLs}
+            />
+          ) : (
+            <View style={styles.controlMessage}>
+              {control.kind === "waiting" ? (
+                <ActivityIndicator color={tokens.textSecondary} />
+              ) : null}
+              <Text
+                style={[
+                  styles.controlMessageText,
+                  control.kind === "error" ? styles.controlErrorText : null,
+                ]}
+              >
+                {control.message}
+              </Text>
+              {control.kind === "error" ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry taking control"
+                  onPress={retryControl}
+                  style={styles.primaryButton}
+                >
+                  <Text style={styles.primaryButtonText}>Retry</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          )}
         </View>
       </Modal>
 
@@ -927,6 +968,20 @@ const styles = StyleSheet.create({
   controlTitle: { flex: 1, gap: 1 },
   controlTitleText: { color: tokens.text, fontSize: 16, fontWeight: "600" },
   controlSubtitle: { color: tokens.reviewText, fontSize: 12 },
+  controlMessage: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+    padding: 28,
+  },
+  controlMessageText: {
+    color: tokens.textSecondary,
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  controlErrorText: { color: tokens.danger },
   handBack: {
     minHeight: 40,
     paddingHorizontal: 14,

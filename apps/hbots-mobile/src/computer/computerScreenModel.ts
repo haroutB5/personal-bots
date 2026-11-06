@@ -220,6 +220,42 @@ export function liveViewMode(input: {
   return input.reachable && hasLiveViewport(input.status) ? "live" : "placeholder";
 }
 
+/**
+ * The full-screen control view is a union, not a black rectangle: it either
+ * draws frames, says what it is waiting for, or names the failure and the
+ * action that retries it.
+ */
+export type ControlView =
+  | { readonly kind: "live" }
+  | { readonly kind: "waiting"; readonly message: string }
+  | { readonly kind: "error"; readonly message: string; readonly retry: "takeControl" | "url" };
+
+export function takeControlView(input: {
+  readonly stage: BrowserStage;
+  readonly takeError: string | null;
+  readonly urlError: string | null;
+}): ControlView {
+  if (input.takeError !== null) {
+    return { kind: "error", message: input.takeError, retry: "takeControl" };
+  }
+  if (input.urlError !== null) {
+    return { kind: "error", message: input.urlError, retry: "url" };
+  }
+  switch (input.stage.kind) {
+    case "crashed":
+    case "locked":
+    case "offline":
+      return { kind: "error", message: input.stage.message, retry: "takeControl" };
+    case "connecting":
+    case "starting":
+      return { kind: "waiting", message: input.stage.message };
+    case "idle":
+      return { kind: "waiting", message: "Starting Brave on the laptop." };
+    case "live":
+      return { kind: "live" };
+  }
+}
+
 /** A sensitive-site pause, unless another thread's help card is the active one. */
 export function activeEgressPause(status: PersonalBrowserStatus | null) {
   const pause = egressPause(status);

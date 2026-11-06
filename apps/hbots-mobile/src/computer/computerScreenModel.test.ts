@@ -23,6 +23,8 @@ import {
   formatFileRow,
   liveViewMode,
   pageAddressLabel,
+  takeControlView,
+  type BrowserStage,
 } from "./computerScreenModel";
 
 const thread = ThreadId.make("thread-1");
@@ -594,5 +596,60 @@ describe("activity helpers", () => {
       title: "shot.png",
       detail: "2 KB · screenshot",
     });
+  });
+});
+
+describe("takeControlView", () => {
+  const stage = (kind: BrowserStage["kind"], message = ""): BrowserStage =>
+    kind === "live" ? { kind } : ({ kind, message } as BrowserStage);
+
+  it("draws frames only when the browser is live", () => {
+    expect(takeControlView({ stage: stage("live"), takeError: null, urlError: null })).toEqual({
+      kind: "live",
+    });
+  });
+
+  it("shows why a crashed browser did not start, with a retry", () => {
+    expect(
+      takeControlView({
+        stage: { kind: "crashed", message: "Brave stopped. Take control to restart it." },
+        takeError: null,
+        urlError: null,
+      }),
+    ).toEqual({
+      kind: "error",
+      message: "Brave stopped. Take control to restart it.",
+      retry: "takeControl",
+    });
+  });
+
+  it("shows a refused take-control command instead of a black screen", () => {
+    expect(
+      takeControlView({
+        stage: stage("live"),
+        takeError: "Could not take the browser.",
+        urlError: null,
+      }),
+    ).toEqual({ kind: "error", message: "Could not take the browser.", retry: "takeControl" });
+  });
+
+  it("retries the live-view URL when only the stream failed", () => {
+    expect(
+      takeControlView({
+        stage: stage("live"),
+        takeError: null,
+        urlError: "Couldn't open the live view.",
+      }),
+    ).toEqual({ kind: "error", message: "Couldn't open the live view.", retry: "url" });
+  });
+
+  it("says what it is waiting for while the browser starts", () => {
+    expect(
+      takeControlView({
+        stage: stage("starting", "Starting Brave on the laptop."),
+        takeError: null,
+        urlError: null,
+      }),
+    ).toEqual({ kind: "waiting", message: "Starting Brave on the laptop." });
   });
 });
