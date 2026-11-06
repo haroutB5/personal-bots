@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, type LayoutChangeEvent } from "react-native";
 
-import { keyboardRemainder } from "./keyboardInset";
+import { keyboardRemainder, nextBaseHeight } from "./keyboardInset";
 
 /**
  * Padding that lifts a full-height container above the IME. It measures the
@@ -26,8 +26,9 @@ export function useKeyboardInset(active = true): {
       setKeyboardHeight(event.endCoordinates.height);
     });
     const hide = Keyboard.addListener("keyboardDidHide", () => {
+      // Keep the closed-keyboard height: edge-to-edge windows do not lay out
+      // again on hide, so clearing it left every later open without padding.
       setKeyboardHeight(0);
-      baseHeight.current = null;
     });
     return () => {
       show.remove();
@@ -39,7 +40,11 @@ export function useKeyboardInset(active = true): {
   const onLayout = (event: LayoutChangeEvent) => {
     const height = event.nativeEvent.layout.height;
     setFrameHeight(height);
-    if (keyboardHeight === 0) baseHeight.current = height;
+    baseHeight.current = nextBaseHeight({
+      previous: baseHeight.current,
+      layoutHeight: height,
+      keyboardOpen: keyboardHeight > 0,
+    });
   };
   if (keyboardHeight === 0 || baseHeight.current === null) {
     return { padding: 0, open: keyboardHeight > 0, frameHeight, onLayout };
