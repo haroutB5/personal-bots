@@ -14,7 +14,7 @@
 //     which would make a binary-only rollback unsafe.
 // Prints one JSON line with the outcome.
 //
-// Usage: node scripts/personal/sync/resolve-migrations.ts [--base <sha>] [--upstream <ref>]
+// Usage: node scripts/personal/sync/resolve-migrations.ts [--base <sha>] [--upstream <ref>] [--hold 063,064]
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
@@ -65,7 +65,17 @@ const added = changes
   .map(({ path }) => path.slice(MIGRATIONS_DIR.length, -".ts".length))
   .toSorted();
 
-const nonAdditive = added.filter((file) =>
+const held = new Set(
+  (arg("--hold") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .map((value) => value.padStart(3, "0")),
+);
+const heldFiles = added.filter((file) => held.has(file.slice(0, 3)));
+const appendedFiles = added.filter((file) => !held.has(file.slice(0, 3)));
+
+const nonAdditive = appendedFiles.filter((file) =>
   /\b(DROP|RENAME|DELETE\s+FROM)\b/i.test(git("show", `${upstream}:${MIGRATIONS_DIR}${file}.ts`)),
 );
 if (nonAdditive.length > 0) {
@@ -89,7 +99,7 @@ if (ids.length === 0) finish(1, { status: "error", reason: "no migration entries
 let nextId = Math.max(...ids) + 1;
 
 const appended: Array<{ file: string; id: number }> = [];
-for (const file of added) {
+for (const file of appendedFiles) {
   if (mapped.has(file)) {
     // Already renumbered by an earlier sync; HEAD must register it.
     if (!registry.includes(`"./Migrations/${file}.ts"`)) {
@@ -116,10 +126,10 @@ if (
   appended.length === 0 &&
   !git("diff", "--name-only", "--diff-filter=U").split("\n").includes(MIGRATIONS_TS)
 ) {
-  finish(0, { status: "resolved", appended, note: "no new upstream migrations" });
+  finish(0, { status: "resolved", appended, held: heldFiles, note: "no new upstream migrations" });
 }
 
 NodeFS.writeFileSync(MIGRATIONS_TS, registry.replace(/\n+$/, "\n"));
 NodeFS.writeFileSync(MAP_TS, mapSource);
 git("add", MIGRATIONS_TS, MAP_TS);
-finish(0, { status: "resolved", appended, maxId: nextId - 1 });
+finish(0, { status: "resolved", appended, held: heldFiles, maxId: nextId - 1 });
