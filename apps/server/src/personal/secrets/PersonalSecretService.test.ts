@@ -66,7 +66,7 @@ import * as PersonalBotService from "../PersonalBotService.ts";
 import { PERSONAL_BOT_APP_RULES } from "../personalBotInstructions.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
-import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import * as PersonalSecretService from "./PersonalSecretService.ts";
@@ -121,7 +121,9 @@ const makeLayer = (harness: Harness) =>
     Layer.provideMerge(PersonalSecretService.layerLive),
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(
+      PersonalBotService.layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1Live)),
+    ),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(SqlitePersistenceMemory),

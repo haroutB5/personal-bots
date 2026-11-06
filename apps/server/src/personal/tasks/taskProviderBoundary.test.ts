@@ -51,7 +51,7 @@ import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
-import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 
 // --- stand-ins for the orchestration side (same as PersonalTaskService.test.ts) -------
@@ -93,7 +93,9 @@ const makeLayer = (
     Layer.provideMerge(fallbackProviders === undefined ? Layer.empty : PersonalModelFallback.layer),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(
+      PersonalBotService.layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1Live)),
+    ),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(
       dbPath === undefined ? SqlitePersistenceMemory : makeSqlitePersistenceLive(dbPath),

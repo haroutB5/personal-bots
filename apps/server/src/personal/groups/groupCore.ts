@@ -27,8 +27,6 @@ import {
 } from "@t3tools/contracts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import type { PersonalEngineError } from "../engine/errors.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { makeSensitiveExposureStore } from "../browser/sensitiveExposureStore.ts";
@@ -57,8 +55,6 @@ export const makeGroupCore = () =>
     const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
     const bots = yield* PersonalBotService.PersonalBotService;
     const engine = yield* PersonalEngine.PersonalEngine;
-    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const messages = yield* ProjectionThreadMessageRepository;
 
     const leaseOwner = `personal-groups:${NodeCrypto.randomUUID()}`;
     const upserts = yield* PubSub.unbounded<PersonalGroupStreamEvent>();
@@ -175,7 +171,7 @@ export const makeGroupCore = () =>
       all.find((bot) => bot.botId === botId)?.name ?? "A bot";
 
     const readMessageText = (messageId: MessageId) =>
-      messages.getByMessageId({ messageId }).pipe(
+      engine.messageById(messageId).pipe(
         // A reply's quote goes in front of its text, as a model reads it in a bot chat.
         Effect.map((row) =>
           Option.isSome(row) ? withPersonalReplyQuote(row.value.text, row.value.context) : "",
@@ -209,8 +205,8 @@ export const makeGroupCore = () =>
       if (newest === undefined) {
         return { ...base, newestMessage: null } satisfies PersonalGroup;
       }
-      const row = yield* messages
-        .getByMessageId({ messageId: newest.messageId })
+      const row = yield* engine
+        .messageById(newest.messageId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
       // The list preview of a group never carries a hidden bot's words (the
       // owner's "Hide message previews" switch): not the bot's own message, and
@@ -229,7 +225,7 @@ export const makeGroupCore = () =>
         newestMessage: Option.isNone(row)
           ? null
           : {
-              id: row.value.messageId,
+              id: row.value.id,
               role: row.value.role,
               text: hideText ? "" : row.value.text,
               ...(row.value.context === undefined || hideText
@@ -357,7 +353,6 @@ export const makeGroupCore = () =>
       limitResumes,
       liveBots,
       lock,
-      messages,
       publishGroup,
       publishRound,
       publishVote,
@@ -369,7 +364,6 @@ export const makeGroupCore = () =>
       repository,
       requireGroup,
       requireLiveBot,
-      snapshots,
       throttles,
       toPublic,
       toPublicGroup,

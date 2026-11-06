@@ -19,9 +19,6 @@ import {
 } from "@t3tools/contracts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -44,9 +41,6 @@ export const makeTaskCore = () =>
     const bots = yield* PersonalBotService.PersonalBotService;
     const engine = yield* PersonalEngine.PersonalEngine;
     const rel = yield* PersonalProjectionRelations;
-    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const messages = yield* ProjectionThreadMessageRepository;
-    const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
     // Work records live beside the task tables. Optional so a layer that has no
     // SQL client (a unit test of the dispatcher alone) simply keeps none.
     const sqlOption = yield* Effect.serviceOption(SqlClient.SqlClient);
@@ -407,7 +401,7 @@ export const makeTaskCore = () =>
     );
 
     const readSession = (threadId: ThreadId) =>
-      snapshots.getThreadShellById(threadId).pipe(
+      engine.getThread(threadId).pipe(
         Effect.map((shell) => (Option.isSome(shell) ? shell.value.session : null)),
         Effect.mapError((cause) =>
           fail("Personal tasks could not read the thread session.", cause),
@@ -602,9 +596,7 @@ export const makeTaskCore = () =>
       idleWaitThreadIds,
       latestContextTokens,
       leaseOwner,
-      liveness,
       lock,
-      messages,
       modelFallback,
       publish,
       readSession,
@@ -621,7 +613,6 @@ export const makeTaskCore = () =>
       resumingThreadIds,
       returnToParent,
       settledThreadAtMs,
-      snapshots,
       toPublic,
       upserts,
       workRecordTainted,

@@ -29,7 +29,6 @@ import {
   type PersonalTaskStreamEvent,
   type TurnId,
 } from "@t3tools/contracts";
-import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
@@ -564,7 +563,4 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(PersonalTaskService, make);
 
 /** The service with its own repositories; needs SqlClient, bots, engine and projections. */
-export const layerLive = layer.pipe(
-  Layer.provideMerge(PersonalTaskRepository.layer),
-  Layer.provide(ProjectionThreadMessageRepositoryLive),
-);
+export const layerLive = layer.pipe(Layer.provideMerge(PersonalTaskRepository.layer));

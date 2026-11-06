@@ -37,9 +37,9 @@ export const makeGroupFinish = (core: GroupCore, turns: GroupTurns) => {
     activeMemberThreadIds,
     botName,
     carryTaint,
+    engine,
     limitResumes,
     liveBots,
-    messages,
     relayComplete,
     relayDelta,
     reportedWaits,
@@ -55,25 +55,25 @@ export const makeGroupFinish = (core: GroupCore, turns: GroupTurns) => {
     threadId: ThreadId,
   ) {
     if (round.activeTurnId !== null) {
-      const byTurn = yield* messages
-        .getLatestAssistantMessageForTurn({ threadId, turnId: round.activeTurnId })
+      const byTurn = yield* engine
+        .latestAssistantMessage({ threadId, turnId: round.activeTurnId })
         .pipe(Effect.orElseSucceed(() => Option.none()));
       if (Option.isSome(byTurn)) {
         return byTurn.value;
       }
     }
     const anchorId = briefMessageId(round.roundId, round.spoken.length);
-    const anchor = yield* messages
-      .getByMessageId({ messageId: anchorId })
+    const anchor = yield* engine
+      .messageById(anchorId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(anchor)) {
       return undefined;
     }
-    const after = yield* messages
-      .getLatestAssistantMessageAfter({
+    const after = yield* engine
+      .latestAssistantMessage({
         threadId,
-        afterCreatedAt: anchor.value.createdAt,
-        afterMessageId: anchor.value.messageId,
+        after: DateTime.makeUnsafe(anchor.value.createdAt),
+        afterMessageId: anchor.value.id,
       })
       .pipe(Effect.orElseSucceed(() => Option.none()));
     return Option.getOrUndefined(after);

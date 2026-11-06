@@ -25,7 +25,6 @@ import {
   type PersonalGroupUpdateInput,
   type PersonalGroupVote,
 } from "@t3tools/contracts";
-import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { personalSchedulersOff } from "../schedulersSwitch.ts";
@@ -286,7 +285,4 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(PersonalGroupService, make);
 
 /** The service with its own repository; needs SqlClient, bots, engine and projections. */
-export const layerLive = layer.pipe(
-  Layer.provideMerge(PersonalGroupRepository.layer),
-  Layer.provide(ProjectionThreadMessageRepositoryLive),
-);
+export const layerLive = layer.pipe(Layer.provideMerge(PersonalGroupRepository.layer));

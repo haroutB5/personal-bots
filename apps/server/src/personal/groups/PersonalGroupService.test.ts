@@ -36,7 +36,8 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
+import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import {
   makeSqlitePersistenceLive,
@@ -179,10 +180,14 @@ const applyToProjection = (harness: Harness, command: OrchestrationCommand) => {
 const optionOf = <A>(value: A | undefined): Option.Option<A> =>
   value === undefined ? Option.none() : Option.some(value);
 
+const BotServiceLive = PersonalBotService.layerRequiringEngine.pipe(
+  Layer.provideMerge(PersonalEngineV1Live),
+);
+
 const makeLayer = (harness: Harness, dbPath?: string) =>
   PersonalGroupService.layer.pipe(
     Layer.provideMerge(PersonalGroupRepository.layer),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(BotServiceLive),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(
       dbPath === undefined ? SqlitePersistenceMemory : makeSqlitePersistenceLive(dbPath),
@@ -204,6 +209,7 @@ const makeLayer = (harness: Harness, dbPath?: string) =>
         listProviders: () => Effect.succeed([]),
       }),
     ),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getProjectShellById: () => Effect.succeed(Option.none()),

@@ -37,7 +37,6 @@ export const makeTaskSteering = (
     repository,
     requireLiveBotInTransaction,
     requireTask,
-    snapshots,
     toPublic,
     writeTask,
   } = core;
@@ -208,8 +207,8 @@ export const makeTaskSteering = (
             const shell =
               attempt === undefined
                 ? Option.none()
-                : yield* snapshots
-                    .getThreadShellById(attempt.providerThreadId)
+                : yield* engine
+                    .getThread(attempt.providerThreadId)
                     .pipe(Effect.orElseSucceed(() => Option.none()));
             const thread = Option.getOrUndefined(shell);
             // A task waiting on background work it left running is between

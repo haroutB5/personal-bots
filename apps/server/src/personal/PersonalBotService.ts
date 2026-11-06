@@ -1362,9 +1362,9 @@ export const make = Effect.gen(function* () {
  * through PersonalEngine, so the layer exports the engine too. A service that
  * needs the seam gets it from the bot service it already depends on.
  */
-export const layer = Layer.effect(PersonalBotService, make).pipe(
-  Layer.provideMerge(PersonalEngineV1WiredLive),
-);
+export const layerRequiringEngine = Layer.effect(PersonalBotService, make);
+
+export const layer = layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1WiredLive));
 
 export const PERSONAL_BOTS_SEED_META_KEY = PERSONAL_META_SEEDED;
 export const PERSONAL_BOTS_PROJECT_META_KEY = PERSONAL_META_PROJECT_ID;

@@ -39,13 +39,11 @@ export const makeGroupSettling = (
     leaseOwner,
     limitResumes,
     liveBots,
-    messages,
     refreshCaches,
     relayDelta,
     reportedWaits,
     repository,
     requireGroup,
-    snapshots,
     throttles,
     writeSystemRow,
   } = core;
@@ -72,8 +70,8 @@ export const makeGroupSettling = (
     }
     let round = found.value;
     const group = yield* requireGroup(round.groupId);
-    const shell = yield* snapshots
-      .getThreadShellById(threadId)
+    const shell = yield* engine
+      .getThread(threadId)
       .pipe(Effect.mapError((cause) => fail("Personal groups could not read a session.", cause)));
     if (Option.isNone(shell)) {
       // The member thread is gone (its bot was deleted mid-reply). Its session
@@ -117,8 +115,8 @@ export const makeGroupSettling = (
       return;
     }
     const observed = round.activeTurnId !== null;
-    const anchor = yield* messages
-      .getByMessageId({ messageId: briefMessageId(round.roundId, round.spoken.length) })
+    const anchor = yield* engine
+      .messageById(briefMessageId(round.roundId, round.spoken.length))
       .pipe(Effect.orElseSucceed(() => Option.none()));
     const fresh =
       Option.isSome(anchor) && Date.parse(session.updatedAt) >= Date.parse(anchor.value.createdAt);
@@ -129,7 +127,7 @@ export const makeGroupSettling = (
     switch (session.status) {
       case "waiting": {
         const last = yield* finalReplyText(round, threadId);
-        if ((!observed && last === undefined) || last?.isStreaming === true) {
+        if ((!observed && last === undefined) || last?.streaming === true) {
           return;
         }
         yield* finishTurn(group, round, last?.text ?? "");

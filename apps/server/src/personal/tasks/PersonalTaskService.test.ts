@@ -46,7 +46,7 @@ import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import { toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
 import { PERSONAL_V1_RELATIONS } from "../engine/PersonalProjectionRelationsV1Live.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import {
@@ -134,7 +134,9 @@ const makeLayer = (
           ),
     ),
     Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(
+      PersonalBotService.layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1Live)),
+    ),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(
       dbPath === undefined ? SqlitePersistenceMemory : makeSqlitePersistenceLive(dbPath),

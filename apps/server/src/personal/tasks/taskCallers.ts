@@ -31,11 +31,11 @@ export const makeTaskCallers = (
   const {
     activeAttemptForThread,
     activeThreadIds,
+    engine,
     externalSlots,
     fail,
     leaseOwner,
     lock,
-    messages,
     publish,
     repository,
     requireLiveBot,
@@ -78,12 +78,15 @@ export const makeTaskCallers = (
             return existing.value;
           }
           yield* requireLiveBot(input.botId);
-          const threadMessages = yield* messages
-            .listByThreadId({ threadId: input.threadId })
-            .pipe(
-              Effect.mapError((cause) => fail("Personal tasks could not read the thread.", cause)),
-            );
-          const lastUser = threadMessages.findLast((message) => message.role === "user");
+          const lastUser = Option.getOrUndefined(
+            yield* engine
+              .latestUserMessage({ threadId: input.threadId })
+              .pipe(
+                Effect.mapError((cause) =>
+                  fail("Personal tasks could not read the thread.", cause),
+                ),
+              ),
+          );
           // The owner's answer to a lead's request arrives while the lead's
           // task waits for its continuation, so no attempt owns the thread.
           // Reusing that task keeps the answer's delegations in its tree.

@@ -58,7 +58,6 @@ export const makeGroupTurns = (
     relayComplete,
     reportedWaits,
     repository,
-    snapshots,
     writeSystemRow,
   } = core;
   const { expirePendingVotes, resolveVote, voteGate } = votes;
@@ -239,8 +238,8 @@ export const makeGroupTurns = (
 
     // The member's current model and options (reasoning effort above all); a
     // turn without them runs at the provider's defaults.
-    const memberThread = yield* snapshots
-      .getThreadShellById(threadId)
+    const memberThread = yield* engine
+      .getThread(threadId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     const modelSelection = yield* botModelSelectionForThread(
       botRepository,

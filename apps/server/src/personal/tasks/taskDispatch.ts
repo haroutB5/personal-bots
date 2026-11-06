@@ -75,7 +75,6 @@ export const makeTaskDispatch = (
     idleWaitThreadIds,
     latestContextTokens,
     leaseOwner,
-    liveness,
     modelFallback,
     publish,
     readSession,
@@ -84,7 +83,6 @@ export const makeTaskDispatch = (
     repository,
     resolveAfterTurn,
     returnToParent,
-    snapshots,
     writeTask,
   } = core;
 
@@ -363,8 +361,8 @@ export const makeTaskDispatch = (
     });
     // The bot's current model and options (reasoning effort above all); a
     // turn without them runs at the provider's defaults.
-    const thread = yield* snapshots
-      .getThreadShellById(attempt.providerThreadId)
+    const thread = yield* engine
+      .getThread(attempt.providerThreadId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     const modelSelection = yield* botModelSelectionForThread(
       botRepository,
@@ -511,7 +509,7 @@ export const makeTaskDispatch = (
         threadId,
         newBackgroundWait(
           backgroundAttemptKey(claimed.attempt),
-          new Set(liveness.getThreadLiveTaskIds(threadId)),
+          new Set(yield* engine.liveTaskIds(threadId)),
         ),
       );
     }

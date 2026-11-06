@@ -10,10 +10,8 @@ import {
   type PersonalTask,
   type PersonalTaskAttempt,
 } from "@t3tools/contracts";
-import { type ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
-import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
-import { isMissingProviderConversationText } from "../../provider/missingProviderConversation.ts";
-import type { PersonalSessionView } from "../engine/PersonalEngine.ts";
+import type { PersonalMessageView, PersonalSessionView } from "../engine/PersonalEngine.ts";
+import type { PersonalEngineError } from "../engine/errors.ts";
 import { toPersonalSessionView } from "../engine/PersonalEngineV1Live.ts";
 import { LEASE_MINUTES, attemptMessageId, minutesFrom, type Changed } from "./taskShared.ts";
 import {
@@ -44,6 +42,7 @@ import {
   withNote,
 } from "./taskResultPolicy.ts";
 import { PERSONAL_TASK_NOTICE_NOTE_PREFIX } from "./PersonalTaskRepository.ts";
+import { isMissingProviderConversationText } from "./missingProviderConversation.ts";
 import { isWaitingForUser, sessionIsAlive, sessionIsBusy } from "./taskSessionPolicy.ts";
 import type { TaskCore } from "./taskCore.ts";
 import type { TaskDispatch } from "./taskDispatch.ts";
@@ -56,15 +55,12 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     engine,
     helpParkedAttempts,
     leaseOwner,
-    liveness,
-    messages,
     publish,
     readSession,
     refreshActiveThreads,
     renewalWaitSince,
     repository,
     resumingThreadIds,
-    snapshots,
     writeTask,
   } = core;
   const { finishAttempt, pump } = dispatch;
@@ -162,13 +158,13 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
    */
   const composeAttemptReplies = (
     attempt: PersonalTaskAttempt,
-    last: ProjectionThreadMessage | undefined,
+    last: PersonalMessageView | undefined,
   ) =>
     composeTaskReplies(
       heldReplyTexts(
         backgroundByThread.get(attempt.providerThreadId),
         backgroundAttemptKey(attempt),
-        last,
+        last === undefined ? undefined : { messageId: last.id, text: last.text },
       ),
     );
 
@@ -252,7 +248,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   const backgroundOutcome = Effect.fn("PersonalTaskService.backgroundOutcome")(function* (
     attempt: PersonalTaskAttempt,
     session: PersonalSessionView,
-    last: ProjectionThreadMessage | undefined,
+    last: PersonalMessageView | undefined,
   ) {
     // A task parked on browser help (or a desktop pause) is waiting for the
     // user, not for work: the reply may say "waiting for ..." or carry the
@@ -273,9 +269,9 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     }
     const claude = session.providerName === BACKGROUND_WAIT_PROVIDER;
     const pending = claude
-      ? liveness
-          .getThreadLiveTaskIds(attempt.providerThreadId)
-          .filter((taskId) => !backgroundFor(attempt).baseline.has(taskId))
+      ? (yield* engine.liveTaskIds(attempt.providerThreadId)).filter(
+          (taskId) => !backgroundFor(attempt).baseline.has(taskId),
+        )
       : [];
     // The app delivers a delegated child's result itself and starts the task's
     // continuation, so the lead's own words must not hold the attempt open: a
@@ -291,7 +287,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
       pending,
       sessionUpdatedAt: session.updatedAt,
       nowMs,
-      last: last === undefined ? undefined : { messageId: last.messageId, text: last.text },
+      last: last === undefined ? undefined : { messageId: last.id, text: last.text },
       statedWait: claude && last !== undefined && saysItIsWaiting(last.text),
       openChildren,
     });
@@ -381,7 +377,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     if (attempt === null) {
       return;
     }
-    const shell = yield* snapshots.getThreadShellById(threadId);
+    const shell = yield* engine.getThread(threadId);
     const raw = Option.isSome(shell) ? shell.value.session : null;
     if (raw === null || raw === undefined) {
       return;
@@ -394,11 +390,9 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     // Two bounded lookups: this runs per message event and per 30s sweep,
     // and node:sqlite is synchronous, so loading the whole thread here
     // blocked the event loop in proportion to the thread's length.
-    const anchorRow = yield* messages.getByMessageId({ messageId: attemptMessageId(attempt) });
-    const anchorMessage =
-      Option.isSome(anchorRow) && anchorRow.value.threadId === threadId
-        ? anchorRow.value
-        : undefined;
+    const anchorRow = yield* engine.messageById(attemptMessageId(attempt));
+    // The id carries the task and attempt, so it cannot belong to another chat.
+    const anchorMessage = Option.getOrUndefined(anchorRow);
     const observed = attempt.turnId !== null;
     const renewalKey = `${attempt.taskId}:${attempt.attempt}`;
     // Any state after the lost-conversation error (the renewal starting) ends the wait.
@@ -406,23 +400,20 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     // Newest assistant reply: by the observed turn id when it has one, else
     // the newest reply written after the anchor. Two bounded lookups replace
     // loading every message of the thread on each event and 30s sweep.
-    const latestReply = (): Effect.Effect<
-      ProjectionThreadMessage | undefined,
-      ProjectionRepositoryError
-    > =>
+    const latestReply = (): Effect.Effect<PersonalMessageView | undefined, PersonalEngineError> =>
       Effect.gen(function* () {
         if (observed && attempt.turnId !== null) {
-          const byTurn = yield* messages.getLatestAssistantMessageForTurn({
+          const byTurn = yield* engine.latestAssistantMessage({
             threadId,
             turnId: attempt.turnId,
           });
           if (Option.isSome(byTurn)) return byTurn.value;
         }
         if (anchorMessage === undefined) return undefined;
-        const afterAnchor = yield* messages.getLatestAssistantMessageAfter({
+        const afterAnchor = yield* engine.latestAssistantMessage({
           threadId,
-          afterCreatedAt: anchorMessage.createdAt,
-          afterMessageId: anchorMessage.messageId,
+          after: DateTime.makeUnsafe(anchorMessage.createdAt),
+          afterMessageId: anchorMessage.id,
         });
         return Option.getOrUndefined(afterAnchor);
       });
@@ -437,7 +428,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
         const last = yield* latestReply();
         // Unobserved turn: only a fresh reply proves the turn ran. Observed
         // turn: wait until the final message stops streaming.
-        if ((!observed && last === undefined) || last?.isStreaming === true) {
+        if ((!observed && last === undefined) || last?.streaming === true) {
           return;
         }
         const note = yield* backgroundOutcome(attempt, session, last);
