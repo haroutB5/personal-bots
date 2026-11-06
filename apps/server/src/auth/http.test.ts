@@ -686,3 +686,174 @@ it.effect("revokes only the calling session and every token renewed from it", ()
     );
   }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
 );
+
+it.effect(
+  "requires a key for a phone exchange, binds the session to it, and refuses a replay",
+  () =>
+    Effect.gen(function* () {
+      const crypto = yield* Crypto.Crypto;
+      const clock = yield* Clock.Clock;
+      const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+        Context.add(Clock.Clock, clock),
+      );
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => HttpRouter.toWebHandler(routesLayer, { disableLogger: true })),
+        (environment) =>
+          Effect.gen(function* () {
+            const call = (request: Request) =>
+              Effect.tryPromise(() => environment.handler(request, requestContext));
+            const readJson = <T>(response: Response) =>
+              Effect.tryPromise(() => response.json() as Promise<T>);
+            const nowSeconds = () =>
+              Clock.currentTimeMillis.pipe(Effect.map((millis) => Math.floor(millis / 1_000)));
+
+            const owner = yield* call(
+              postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+            );
+            const ownerCookie =
+              owner.headers
+                .getSetCookie()
+                .find((cookie) => cookie.startsWith("t3_dev_session_"))
+                ?.split(";", 1)[0] ?? "";
+
+            const pairingCredential = (label: string) =>
+              Effect.gen(function* () {
+                const response = yield* call(
+                  postJson("/api/auth/pairing-token", { label }, { cookie: ownerCookie }),
+                );
+                expect(response.status).toBe(200);
+                return (yield* readJson<{ credential: string }>(response)).credential;
+              });
+
+            const phoneForm = (credential: string, label: string) => ({
+              grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+              subject_token: credential,
+              subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+              requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              client_label: label,
+              client_device_type: "mobile",
+              client_os: "android",
+            });
+
+            const noKeyCredential = yield* pairingCredential("Find X9 Pro");
+            const noKey = yield* call(
+              postForm("/oauth/token", phoneForm(noKeyCredential, "Find X9 Pro")),
+            );
+            expect(noKey.status).toBe(400);
+            expect(yield* readJson<{ code: string; reason: string }>(noKey)).toMatchObject({
+              code: "invalid_request",
+              reason: "dpop_proof_required",
+            });
+
+            const credential = yield* pairingCredential("Find X9 Pro");
+            const exchangeSeconds = yield* nowSeconds();
+            const exchangeProof = makeDpopProof({
+              method: "POST",
+              url: "http://localhost/oauth/token",
+              iat: exchangeSeconds,
+              jti: "phone-exchange",
+            });
+            const paired = yield* call(
+              postForm("/oauth/token", phoneForm(credential, "Find X9 Pro"), {
+                dpop: exchangeProof.proof,
+              }),
+            );
+            expect(paired.status).toBe(200);
+            const dpop = yield* readJson<{ access_token: string; token_type: string }>(paired);
+            expect(dpop.token_type).toBe("DPoP");
+
+            const clientsResponse = yield* call(
+              new Request("http://127.0.0.1/api/auth/clients", {
+                headers: { cookie: ownerCookie },
+              }),
+            );
+            const clients =
+              yield* readJson<ReadonlyArray<{ client: { label?: string; deviceType: string } }>>(
+                clientsResponse,
+              );
+            expect(clients).toContainEqual(
+              expect.objectContaining({
+                client: expect.objectContaining({
+                  label: "Find X9 Pro",
+                  deviceType: "mobile",
+                }),
+              }),
+            );
+
+            const replaySeconds = yield* nowSeconds();
+            const replayProof = makeDpopProof({
+              method: "POST",
+              url: "http://localhost/oauth/token",
+              iat: replaySeconds,
+              jti: "phone-replay",
+              privateKey: exchangeProof.privateKey,
+              publicJwk: exchangeProof.publicJwk,
+            });
+            const replay = yield* call(
+              postForm("/oauth/token", phoneForm(credential, "Find X9 Pro"), {
+                dpop: replayProof.proof,
+              }),
+            );
+            expect(replay.status).toBe(401);
+
+            const renew = (authorization: string, dpopProof?: string) =>
+              call(
+                new Request("http://127.0.0.1/api/auth/session/renew", {
+                  method: "POST",
+                  headers: {
+                    authorization,
+                    ...(dpopProof ? { dpop: dpopProof } : {}),
+                  },
+                }),
+              );
+
+            const unboundRenew = yield* renew(`DPoP ${dpop.access_token}`);
+            expect(unboundRenew.status).toBe(401);
+
+            const wrongSeconds = yield* nowSeconds();
+            const wrongKeyProof = makeDpopProof({
+              method: "POST",
+              url: "http://localhost/api/auth/session/renew",
+              iat: wrongSeconds,
+              jti: "phone-renew-wrong-key",
+              accessToken: dpop.access_token,
+            });
+            const wrongKeyRenew = yield* renew(`DPoP ${dpop.access_token}`, wrongKeyProof.proof);
+            expect(wrongKeyRenew.status).toBe(401);
+
+            const goodSeconds = yield* nowSeconds();
+            const goodKeyProof = makeDpopProof({
+              method: "POST",
+              url: "http://localhost/api/auth/session/renew",
+              iat: goodSeconds,
+              jti: "phone-renew-good-key",
+              accessToken: dpop.access_token,
+              privateKey: exchangeProof.privateKey,
+              publicJwk: exchangeProof.publicJwk,
+            });
+            const goodKeyRenew = yield* renew(`DPoP ${dpop.access_token}`, goodKeyProof.proof);
+            expect(goodKeyRenew.status).toBe(200);
+
+            const legacyCredential = yield* pairingCredential("Old phone build");
+            const legacy = yield* call(
+              postForm("/oauth/token", {
+                grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                subject_token: legacyCredential,
+                subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+                requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                client_label: "Old phone build",
+              }),
+            );
+            expect(legacy.status).toBe(200);
+            const legacyToken = yield* readJson<{ access_token: string; token_type: string }>(
+              legacy,
+            );
+            expect(legacyToken.token_type).toBe("Bearer");
+            const legacyRenew = yield* renew(`Bearer ${legacyToken.access_token}`);
+            expect(legacyRenew.status).toBe(200);
+          }),
+        (environment) => Effect.promise(() => environment.dispose()),
+      );
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
+);

@@ -8,6 +8,7 @@ import {
   personalChatArchiveAfterDurationLabel,
   PERSONAL_CHAT_ARCHIVE_AFTER_DEFAULT_MINUTES,
   PERSONAL_CHAT_ARCHIVE_AFTER_ERROR,
+  environmentShortId,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -22,10 +23,25 @@ import {
   Plug,
   Network,
   Plus,
+  Smartphone,
   SquareTerminal,
   UserRoundX,
 } from "lucide-react";
 
+import { Button } from "~/components/ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import { QRCodeSvg } from "~/components/ui/qr-code";
+import { Textarea } from "~/components/ui/textarea";
+import { createServerPairingCredential } from "~/environments/primary";
+import { setPairingTokenOnUrl } from "../../pairingUrl";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -418,6 +434,117 @@ function DisplayNamePlaceholder({ failed }: { readonly failed: boolean }): JSX.E
 }
 
 /** /bots/settings: greeting name, bot management and the Developer view exit. */
+function PairPhoneRow({ environmentId }: { readonly environmentId: string | null }) {
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ readonly url: string; readonly code: string } | null>(
+    null,
+  );
+  const shortId = environmentId === null ? null : environmentShortId(environmentId);
+
+  const create = async () => {
+    setCreating(true);
+    setError(null);
+    try {
+      const credential = await createServerPairingCredential();
+      const url = setPairingTokenOnUrl(
+        new URL("/pair", window.location.origin),
+        credential.credential,
+      ).toString();
+      setCreated({ url, code: shortId ?? "" });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the pairing link.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <li>
+      <button
+        type="button"
+        className={`${SETTINGS_ROW} w-full text-left`}
+        onClick={() => {
+          setOpen(true);
+          setCreated(null);
+          setError(null);
+        }}
+      >
+        <Smartphone
+          aria-hidden="true"
+          className="size-5 shrink-0 text-[var(--personal-text)]"
+          strokeWidth={1.75}
+        />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+            Create pairing link
+          </span>
+          <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+            Scan a QR code to pair the hbots Android app
+          </span>
+        </span>
+        <ChevronRight
+          aria-hidden="true"
+          className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+          strokeWidth={1.75}
+        />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogPopup className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create pairing link</DialogTitle>
+            <DialogDescription>
+              The phone shows this server code before it pairs. Check both screens match.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            {shortId === null ? null : (
+              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+                <p className="text-xs text-muted-foreground">Server code</p>
+                <p className="font-mono text-lg font-semibold tracking-[0.2em] text-foreground">
+                  {shortId}
+                </p>
+              </div>
+            )}
+            {created === null ? (
+              <p className="text-sm text-muted-foreground">
+                Generate a one-time link, then scan it with the hbots Android app or paste it on the
+                phone. The link expires after 5 minutes.
+              </p>
+            ) : (
+              <>
+                <div className="flex justify-center rounded-xl border border-border/60 bg-muted/30 p-4">
+                  <QRCodeSvg
+                    value={created.url}
+                    size={180}
+                    level="M"
+                    marginSize={2}
+                    title="Pairing link for the hbots Android app"
+                  />
+                </div>
+                <Textarea readOnly value={created.url} rows={3} />
+                <p className="text-xs text-muted-foreground">
+                  This link works once. If the phone does not pair, create another.
+                </p>
+              </>
+            )}
+            {error === null ? null : <p className="text-sm text-destructive">{error}</p>}
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+            <Button disabled={creating} onClick={() => void create()}>
+              {creating ? "Creating…" : created === null ? "Create link" : "Create another"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+    </li>
+  );
+}
+
 export function PersonalSettingsScreen(): JSX.Element {
   const navigate = useNavigate();
   const [diagnosticsOn, setDiagnosticsOn] = useState(() => diagnosticsEnabled());
@@ -611,6 +738,7 @@ export function PersonalSettingsScreen(): JSX.Element {
           Plugins
         </h2>
         <ul className={`${CARD} divide-y divide-[var(--personal-border)]`}>
+          <PairPhoneRow environmentId={environmentId} />
           <li>
             <Link to="/bots/settings/connections" className={SETTINGS_ROW}>
               <Plug
