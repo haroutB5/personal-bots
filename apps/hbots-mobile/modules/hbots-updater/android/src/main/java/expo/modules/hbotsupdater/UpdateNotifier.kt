@@ -15,7 +15,6 @@ import android.os.Looper
 import android.util.Log
 
 object UpdateNotifier {
-  private const val CHANNEL = "app_updates"
   private const val UPDATED_ID = 7201
   private const val READY_ID = 7202
   private const val NEEDS_PERMISSION_ID = 7204
@@ -27,13 +26,16 @@ object UpdateNotifier {
   fun ensureChannel(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val manager = context.getSystemService(NotificationManager::class.java) ?: return
-    if (manager.getNotificationChannel(CHANNEL) == null) {
+    for (spec in UpdateChannels.all) {
+      if (manager.getNotificationChannel(spec.id) != null) continue
       manager.createNotificationChannel(
-        NotificationChannel(CHANNEL, "App updates", NotificationManager.IMPORTANCE_LOW).apply {
-          description = "Silent hbots updates"
-          setSound(null, null)
-          enableVibration(false)
-          setShowBadge(false)
+        NotificationChannel(spec.id, spec.name, spec.importance).apply {
+          description = spec.description
+          if (spec.silent) {
+            setSound(null, null)
+            enableVibration(false)
+          }
+          setShowBadge(!spec.silent)
         },
       )
     }
@@ -76,7 +78,7 @@ object UpdateNotifier {
     if (!canPost(context)) return
     ensureChannel(context)
     val text = if (versionName.isNullOrBlank()) "hbots is up to date." else "hbots updated to $versionName."
-    post(context, UPDATED_ID, "hbots updated", text, openApp(context))
+    post(context, UpdateChannels.receipt.id, UPDATED_ID, "hbots updated", text, openApp(context))
   }
 
   fun postConfirmation(context: Context, confirm: Intent?) {
@@ -93,7 +95,14 @@ object UpdateNotifier {
     } else {
       openApp(context)
     }
-    post(context, READY_ID, "Update ready", "Tap to finish installing the hbots update.", content)
+    post(
+      context,
+      UpdateChannels.action.id,
+      READY_ID,
+      "Update ready",
+      "Tap to finish installing the hbots update.",
+      content,
+    )
   }
 
   fun postNeedsPermission(context: Context, versionName: String) {
@@ -101,6 +110,7 @@ object UpdateNotifier {
     ensureChannel(context)
     post(
       context,
+      UpdateChannels.action.id,
       NEEDS_PERMISSION_ID,
       "Allow hbots to install updates",
       "Update to $versionName is waiting. Tap to allow it.",
@@ -118,10 +128,17 @@ object UpdateNotifier {
     )
   }
 
-  private fun post(context: Context, id: Int, title: String, text: String, content: PendingIntent) {
+  private fun post(
+    context: Context,
+    channelId: String,
+    id: Int,
+    title: String,
+    text: String,
+    content: PendingIntent,
+  ) {
     val manager = context.getSystemService(NotificationManager::class.java) ?: return
     val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      Notification.Builder(context, CHANNEL)
+      Notification.Builder(context, channelId)
     } else {
       @Suppress("DEPRECATION")
       Notification.Builder(context)
