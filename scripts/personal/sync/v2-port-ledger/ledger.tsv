@@ -86,7 +86,7 @@ apps/mobile/src/state/use-thread-pr.ts		content	1	B1	dropped	our only change at 
 apps/mobile/src/state/use-vcs-action-state.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/integration/OrchestrationEngineHarness.integration.ts		modify-delete	8	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
 apps/server/integration/orchestrationEngine.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/integration/orphanedProviderSessionStartup.integration.test.ts		modify-delete	15	C4	open	a turn resumed after restart keeps the bot's instructions and model
+apps/server/integration/orphanedProviderSessionStartup.integration.test.ts		modify-delete	15	C4	dropped	v1 startup reconcile replaced by orchestration-v2 ProviderRuntimeRecoveryService and RestartContinuation; the personal half is covered by PersonalTurnContext.sessionInstructions and the continuation model selection
 apps/server/integration/providerService.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/package.json		content	5	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
 apps/server/scripts/acp-mock-agent.ts		content	544	C8	open	ACP mock for steer and busy-refusal tests
@@ -282,21 +282,21 @@ apps/server/src/personal/PersonalBotRepository.chatExtras.test.ts		added-broken	
 apps/server/src/personal/PersonalBotRepository.groupPresence.test.ts		added-broken	189	C10	open	personal persistence layer (C10)
 apps/server/src/personal/PersonalBotRepository.test.ts		added-broken	670	C10	open	personal persistence layer (C10)
 apps/server/src/personal/PersonalBotRepository.unread.test.ts		added-broken	258	C10	open	personal persistence layer (C10)
-apps/server/src/personal/PersonalBotService.test.ts		added-broken	1143	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broken	206	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
+apps/server/src/personal/PersonalBotService.test.ts		added-broken	1143	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broken	206	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	open	per-bot token usage (C14)
-apps/server/src/personal/PersonalChatResumeService.test.ts		added-broken	675	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
+apps/server/src/personal/PersonalChatResumeService.test.ts		added-broken	675	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalFiles.test.ts		added-broken	299	C10	open	personal persistence layer (C10)
 apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	open	provider fallback port (C9)
-apps/server/src/personal/PersonalTaskChatArchiveService.test.ts		added-broken	727	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/PersonalTurnRetryService.test.ts		added-broken	557	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/agentContextBudget.test.ts		added-broken	74	C4	open	runtime instructions (C4)
+apps/server/src/personal/PersonalTaskChatArchiveService.test.ts		added-broken	727	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/PersonalTurnRetryService.test.ts		added-broken	557	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/agentContextBudget.test.ts		added-broken	74	C4	done	ported to the v2 turn context and engine; targeted suite passes
 apps/server/src/personal/browser/BrowserLease.test.ts		added-broken	735	C13	open	shared browser leases (C13)
 apps/server/src/personal/browser/PersonalBrowser.brave.test.ts		added-broken	282	C13	open	shared browser leases (C13)
 apps/server/src/personal/browser/PersonalBrowser.test.ts		added-broken	5354	C13	open	shared browser leases (C13)
 apps/server/src/personal/browser/PersonalBrowserProtectionRepository.test.ts		added-broken	47	C13	open	shared browser leases (C13)
-apps/server/src/personal/bulkPersonalChats.test.ts		added-broken	276	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/bulkPersonalItems.test.ts		added-broken	204	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
+apps/server/src/personal/bulkPersonalChats.test.ts		added-broken	276	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/bulkPersonalItems.test.ts		added-broken	204	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/connections/credentialStore.test.ts		added-broken	95	C12	open	G14 park; sealed credential names return with C12
 apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.test.ts		added-broken	379	D1	open	G2 park; DeepSeek balance watcher (D1)
 apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts		added-broken	306	D1	open	DeepSeek balance watcher (D1)
@@ -307,40 +307,40 @@ apps/server/src/personal/engine/PersonalEngineV1.test.ts		added-broken	1165	C1	d
 apps/server/src/personal/engine/PersonalEngineV1Live.ts		added-broken	854	C1	done	replaced by PersonalEngineV2Live; the verbs and events wrap ThreadManagementService and OrchestratorV2
 apps/server/src/personal/engine/PersonalProvidersV1.test.ts		added-broken	323	C9	open	provider port types (C9)
 apps/server/src/personal/engine/PersonalProvidersV1Live.ts		added-broken	195	C9	open	provider port types (C9)
-apps/server/src/personal/groups/PersonalGroupService.test.ts		added-broken	2724	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
+apps/server/src/personal/groups/PersonalGroupService.test.ts		added-broken	2724	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/leadBots/leadBotGeminiEffort.test.ts		added-broken	62	C8	open	Antigravity effort (C8)
-apps/server/src/personal/memory/PersonalMemoryService.apps.test.ts		added-broken	769	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/PersonalMemoryService.listPage.test.ts		added-broken	166	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/PersonalMemoryService.replace.test.ts		added-broken	1428	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/PersonalMemoryService.test.ts		added-broken	614	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/PersonalMemoryTidyService.auto.test.ts		added-broken	692	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/PersonalMemoryTidyService.rescope.test.ts		added-broken	246	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/PersonalMemoryTidyService.test.ts		added-broken	1741	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/memoryEvidence.test.ts		added-broken	268	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/memoryReplay.measure.test.ts		added-broken	337	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/memory/tidyUpgrade.measure.test.ts		added-broken	100	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
-apps/server/src/personal/personalBotInstructions.test.ts		added-broken	170	C4	open	runtime instructions (C4)
-apps/server/src/personal/personalChatTitles.test.ts		added-broken	458	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
+apps/server/src/personal/memory/PersonalMemoryService.apps.test.ts		added-broken	769	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/PersonalMemoryService.listPage.test.ts		added-broken	166	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/PersonalMemoryService.replace.test.ts		added-broken	1428	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/PersonalMemoryService.test.ts		added-broken	614	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/PersonalMemoryTidyService.auto.test.ts		added-broken	692	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/PersonalMemoryTidyService.rescope.test.ts		added-broken	246	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/PersonalMemoryTidyService.test.ts		added-broken	1741	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/memoryEvidence.test.ts		added-broken	268	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/memoryReplay.measure.test.ts		added-broken	337	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/memory/tidyUpgrade.measure.test.ts		added-broken	100	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
+apps/server/src/personal/personalBotInstructions.test.ts		added-broken	170	C4	done	ported to the v2 turn context and engine; targeted suite passes
+apps/server/src/personal/personalChatTitles.test.ts		added-broken	458	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/personalShellSlim.test.ts		added-broken	121	C3	done	ported to the v2 shell shape; the slim rule reads the mapped v1 shell
-apps/server/src/personal/personalThreadLinkRepair.test.ts		added-broken	161	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
+apps/server/src/personal/personalThreadLinkRepair.test.ts		added-broken	161	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/providerHooks/claudeQueryOptions.test.ts		added-broken	84	C5	open	G6 park; Claude query options (C5)
 apps/server/src/personal/providerHooks/claudeQueryOptions.ts		added-broken	207	C5	open	G6 park; Claude query options (C5)
-apps/server/src/personal/push/PersonalPushService.test.ts		added-broken	2197	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts		added-broken	622	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/routines/PersonalRoutineService.test.ts		added-broken	1753	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
+apps/server/src/personal/push/PersonalPushService.test.ts		added-broken	2197	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts		added-broken	622	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/routines/PersonalRoutineService.test.ts		added-broken	1753	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/secrets/PersonalSecretService.test.ts		added-broken	2583	C12	open	sealed secrets (C12)
-apps/server/src/personal/taskTitleBackfill.test.ts		added-broken	409	C4	open	title seed (C4)
+apps/server/src/personal/taskTitleBackfill.test.ts		added-broken	409	C4	done	ported to the v2 turn context and engine; targeted suite passes
 apps/server/src/personal/tasks/PersonalTaskRepository.notify.test.ts		added-broken	130	C10	open	personal persistence layer (C10)
-apps/server/src/personal/tasks/PersonalTaskService.test.ts		added-broken	5487	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/tasks/taskProviderBoundary.test.ts		added-broken	1073	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/tasks/taskProviderChain.test.ts		added-broken	586	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/test/personalReadsTestLayer.ts		added-broken	33	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
+apps/server/src/personal/tasks/PersonalTaskService.test.ts		added-broken	5487	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/tasks/taskProviderBoundary.test.ts		added-broken	1073	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/tasks/taskProviderChain.test.ts		added-broken	586	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/test/personalReadsTestLayer.ts		added-broken	33	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/threadTextPreviews.test.ts		added-broken	177	C3	done	ported to the v2 full-text read; preview trimming dropped because U bounds its thread snapshots
 apps/server/src/personal/threadTextPreviews.ts		added-broken	188	B1	done	B1 stub serves the snapshot; C2 moves previews to v2
-apps/server/src/personal/turnContext/PersonalTurnContext.ts		added-broken	285	C4	open	turn context on v2 (C4)
-apps/server/src/personal/voiceCalls/PersonalVoiceCallService.test.ts		added-broken	1586	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/voiceCalls/PersonalVoiceCallSummaryService.test.ts		added-broken	1049	C1-T	open	v1 test harness deleted at U; port to the v2 personal test harness in C1-T (follow-up after the C1 engine)
-apps/server/src/personal/workingProgress.test.ts		added-broken	169	C2-T	open	v1 SQL test layer deleted at U; port to the v2 personal read test layer in C2-T (follow-up after the C2 reads)
+apps/server/src/personal/turnContext/PersonalTurnContext.ts		added-broken	285	C4	done	ported to the v2 turn context and engine; targeted suite passes
+apps/server/src/personal/voiceCalls/PersonalVoiceCallService.test.ts		added-broken	1586	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/voiceCalls/PersonalVoiceCallSummaryService.test.ts		added-broken	1049	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
+apps/server/src/personal/workingProgress.test.ts		added-broken	169	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/preview/PortScanner.ss.test.ts		added-broken	98	C15	open	G2 park; PortScanner row is C15
 apps/server/src/preview/PortScanner.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/preview/PortScanner.ts		content	72	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
@@ -565,7 +565,7 @@ apps/server/src/serverLogger.test.ts		content	2	B1	dropped	our only change at th
 apps/server/src/serverLogger.ts		content	15	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/serverRuntimeStartup.reconcile.test.ts		modify-delete	4	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
 apps/server/src/serverRuntimeStartup.test.ts		content	6	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
-apps/server/src/serverRuntimeStartup.ts		content	28	C4	open	a turn resumed after restart keeps the bot's instructions and model
+apps/server/src/serverRuntimeStartup.ts		content	28	C4	dropped	v2 serverRuntimeStartup has no v1 reconcileProviderSessions; restart continuations go through RestartContinuation and ProviderRuntimeRecoveryService, and the bot persona is applied at ProviderTurnStartService session open
 apps/server/src/serverRuntimeStartup.worktreeSetup.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/serverRuntimeState.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/serverSettings.test.ts		content	176	C9	open	typed provider secrets, Gemini effort defaults
