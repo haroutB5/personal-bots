@@ -424,7 +424,7 @@ function App() {
     (session: StoredSession) => {
       Alert.alert(
         "Sign out this phone?",
-        "This removes the sign-in from this phone. Your bots keep running.",
+        "This removes the sign-in, cached chats and notifications from this phone. Your bots keep running.",
         [
           { text: "Cancel", style: "cancel" },
           { text: "Sign out", style: "destructive", onPress: () => void signOut(session) },

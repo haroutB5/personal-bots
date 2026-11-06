@@ -1,4 +1,4 @@
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import type { AndroidRelease } from "../compat";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -61,16 +61,6 @@ export function ThisPhoneScreen({
         ? "Allow app installs"
         : "Check now";
 
-  const confirmSignOut = () =>
-    Alert.alert(
-      "Sign out this phone?",
-      "This removes the sign-in, cached chats and notifications from this phone. Your bots keep running.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Sign out", style: "destructive", onPress: onSignOut },
-      ],
-    );
-
   return (
     <SettingsPage title="This phone" onBack={onBack}>
       <Section label="This phone">
@@ -113,7 +103,7 @@ export function ThisPhoneScreen({
         <Notice>This build uses a test update signing pin.</Notice>
       ) : null}
 
-      <PrimaryButton label="Sign out this phone" onPress={confirmSignOut} destructive />
+      <PrimaryButton label="Sign out this phone" onPress={onSignOut} destructive />
       <SectionNote>
         hbots checks for updates when it opens and every six hours while open. An update installs
         only after ten minutes in the background.
