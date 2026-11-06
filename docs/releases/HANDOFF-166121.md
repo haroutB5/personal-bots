@@ -42,3 +42,19 @@ Binary only. The previous release is `2324924071` (1.66.120). No migration ran.
 - R1, R2 and R3 fixed at `67f940380f`, `4b1f9b1f1b` and `692eeb24fd`.
 - All 18 RC gates exit 0 at the evidence commit.
 - The gate table, APK hash and release id are in `/home/harout/Claude/AI/dev-team/qa/hbots-166121-rc/REPORT.md`.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=35e43c97bd392539b16b03c766b8ab5a978e48ad release=35e43c97bd39 json-sha256=8277dfae7326910c20673eb41258d5886b36d39d491cc7a0edc033fe4b65cd74 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
