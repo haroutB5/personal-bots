@@ -325,7 +325,7 @@ describe("Settings appearance", () => {
 });
 
 describe("Settings plugins", () => {
-  it("lists API keys as a row beside Connections and Passwords, not inline", async () => {
+  it("lists API keys and devices as rows beside Connections and Passwords, not inline", async () => {
     stubWindow();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     await act(async () => {
@@ -337,6 +337,7 @@ describe("Settings plugins", () => {
       "/bots/settings/connections",
       "/bots/settings/passwords",
       "/bots/settings/api-keys",
+      "/bots/settings/devices",
     ]);
     const row = JSON.stringify(renderer!.toJSON());
     expect(row).toContain("Create pairing link");
