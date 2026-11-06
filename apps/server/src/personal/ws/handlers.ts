@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   archivePersonalChats,
   deletePersonalChats,
@@ -46,7 +45,7 @@ import * as PersonalSecretService from "../secrets/PersonalSecretService.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalVoiceCallService from "../voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceSampleService from "../voiceCalls/PersonalVoiceSampleService.ts";
-import { listBotThreadIds, pickThreadShells } from "../personalShellSlim.ts";
+import { listBotThreadIds } from "../personalShellSlim.ts";
 import type { PersonalSessionPrewarmer } from "../sessionPrewarm.ts";
 import { purgePersonalBot } from "../purgePersonalBot.ts";
 import { readThreadFullText } from "../threadTextPreviews.ts";
@@ -77,7 +76,6 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const { currentSessionId, observeRpcEffect, observeRpcStream, sessionPrewarmer, viewing } =
       deps;
     const sql = yield* SqlClient.SqlClient;
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const personalEngine = yield* PersonalEngine.PersonalEngine;
     const personalBots = yield* PersonalBotService.PersonalBotService;
     const personalBotTokenUsage = yield* PersonalBotTokenUsage.PersonalBotTokenUsage;
@@ -110,8 +108,8 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
           Effect.gen(function* () {
             const ids = yield* listBotThreadIds(input);
             if (ids.size === 0) return { threads: [] };
-            const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
-            return { threads: pickThreadShells(snapshot, ids) };
+            const threads = yield* personalEngine.shellSnapshot({ unsettledOnly: false });
+            return { threads: threads.filter((thread) => ids.has(thread.id)) };
           }).pipe(
             Effect.provideService(SqlClient.SqlClient, sql),
             Effect.mapError(
