@@ -33,7 +33,7 @@ import { ProviderDriverError } from "./Errors.ts";
 import {
   PERSONAL_BOT_CLAUDE_ENVIRONMENT,
   PERSONAL_BOT_CLAUDE_SETTINGS,
-} from "./Layers/ClaudeAdapter.ts";
+} from "../personal/providerHooks/claudeQueryOptions.ts";
 import {
   codexExecLaunchArgs,
   listOwnerCodexSkillFiles,

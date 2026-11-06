@@ -1,0 +1,206 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFs from "node:fs";
+import * as NodePath from "node:path";
+
+import type {
+  AgentDefinition,
+  HookCallback,
+  Options as ClaudeQueryOptions,
+  SettingSource,
+} from "@anthropic-ai/claude-agent-sdk";
+
+import type { BotProtectedPathsInput } from "../secrets/botProtectedPaths.ts";
+import { buildClaudeBotPermissionDeny, botStateDenyEnabled } from "../secrets/botProtectedPaths.ts";
+import {
+  botSubagentModelEnvironment,
+  exploreSubagentAgents,
+} from "../claude/claudeBackgroundModels.ts";
+import {
+  largeFileReadGuardEnabled,
+  largeFileReadRefusalForSize,
+  personalBotDisallowedTools,
+  personalBotSkillOverrides,
+} from "../personalContextBudget.ts";
+import {
+  claudeAutoCompactWindow,
+  claudeShellOutputSettings,
+} from "../../provider/personalBotContextLimits.ts";
+import {
+  claudeCatalogHasModel,
+  type ClaudeModelCatalog,
+} from "../../provider/ClaudeModelCatalog.ts";
+
+/**
+ * Personal-bot sessions (`personalBot` on the start input) load no settings
+ * files (`settingSources: []`), which also drops CLAUDE.md, skills, hooks and
+ * `enabledPlugins`, and use `strictMcpConfig` so only T3's server is loaded.
+ * Auto-memory and claude.ai connectors are read regardless of settingSources,
+ * so both are switched off by setting and by env var. Built-in tools stay.
+ * A bot's own plugin folder (`<baseDir>/bot-plugins/<botId>/`, when it holds
+ * `.claude-plugin/plugin.json`) is passed explicitly via `plugins`, after the
+ * shared folder every bot loads (`<baseDir>/bot-plugins/_shared/`, same rule).
+ */
+export const PERSONAL_BOT_CLAUDE_SETTINGS = {
+  autoMemoryEnabled: false,
+  disableClaudeAiConnectors: true,
+} as const;
+
+export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+  ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+  // 2.1.316+: a bot instruction or owner message that says "ultrathink" would
+  // otherwise raise that turn to xhigh effort. Bots must not opt into it, and
+  // the owner's own chats keep the keyword. Inert until the CLI ships 2.1.316.
+  CLAUDE_CODE_DISABLE_ULTRATHINK: "1",
+} as const;
+
+/**
+ * The message a whole-file `Read` of a large text file is refused with, or
+ * undefined to let it through (1.66.62). A personal bot runs in
+ * `bypassPermissions`, where the SDK never calls `canUseTool`, so this rides a
+ * `PreToolUse` hook instead: hooks run in every permission mode and a `deny`
+ * decision is honoured there. The hook reads the file only when its byte size
+ * leaves the answer open, so the cost is one `stat` on a normal Read.
+ */
+export function largeFileReadRefusalMessage(input: {
+  readonly toolName: string;
+  readonly toolInput: unknown;
+  readonly cwd: string | undefined;
+}): string | undefined {
+  if (input.toolName !== "Read") return undefined;
+  const record =
+    typeof input.toolInput === "object" && input.toolInput !== null
+      ? (input.toolInput as Record<string, unknown>)
+      : undefined;
+  const rawPath = record?.file_path;
+  if (typeof rawPath !== "string" || rawPath.trim().length === 0) return undefined;
+  const resolved = NodePath.isAbsolute(rawPath)
+    ? rawPath
+    : NodePath.resolve(input.cwd ?? process.cwd(), rawPath);
+  let stats: NodeFs.Stats;
+  try {
+    stats = NodeFs.statSync(resolved);
+  } catch {
+    // A missing file or a directory is the Read tool's own error to report.
+    return undefined;
+  }
+  if (!stats.isFile()) return undefined;
+  return largeFileReadRefusalForSize({
+    toolName: input.toolName,
+    toolInput: input.toolInput,
+    statBytes: stats.size,
+    readText: () => {
+      try {
+        return NodeFs.readFileSync(resolved, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+  });
+}
+
+/** The `PreToolUse` hook a personal bot session registers for the Read guard. */
+export const PERSONAL_BOT_READ_GUARD_HOOK: HookCallback = (hookInput) => {
+  if (hookInput.hook_event_name !== "PreToolUse") return Promise.resolve({});
+  const message = largeFileReadRefusalMessage({
+    toolName: hookInput.tool_name,
+    toolInput: hookInput.tool_input,
+    cwd: hookInput.cwd,
+  });
+  if (message === undefined) return Promise.resolve({});
+  return Promise.resolve({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse" as const,
+      permissionDecision: "deny" as const,
+      permissionDecisionReason: message,
+    },
+  });
+};
+
+export interface PersonalClaudeSettings {
+  readonly autoCompactWindow?: number;
+  readonly autoMemoryEnabled?: false;
+  readonly disableClaudeAiConnectors?: true;
+  readonly bashOutputMaxChars?: number;
+  readonly skillOverrides?: Record<string, "user-invocable-only">;
+  readonly permissions?: { readonly deny: Array<string> };
+}
+
+export interface PersonalClaudeQueryOptions {
+  readonly settings: PersonalClaudeSettings;
+  readonly settingSources: ReadonlyArray<SettingSource> | undefined;
+  readonly disallowedTools: Array<string> | undefined;
+  readonly hooks: ClaudeQueryOptions["hooks"] | undefined;
+  readonly mcpServers: ClaudeQueryOptions["mcpServers"] | undefined;
+  readonly env: Readonly<Record<string, string>> | undefined;
+  readonly strictMcpConfig: true | undefined;
+  readonly plugins: ClaudeQueryOptions["plugins"] | undefined;
+  readonly agents: ClaudeQueryOptions["agents"] | undefined;
+  readonly systemPrompt: { readonly snapshot: false } | undefined;
+  readonly pluginDirs: ReadonlyArray<string>;
+  readonly exploreModel: string | undefined;
+  readonly logPluginSkillProblems: boolean;
+}
+
+export function personalClaudeQueryOptions(input: {
+  readonly personalBot: boolean;
+  readonly personalTaskChat: boolean;
+  readonly model: string | undefined;
+  readonly modelCatalog: ClaudeModelCatalog;
+  readonly configuredAutoCompactWindow: string | undefined;
+  readonly protectedPaths: BotProtectedPathsInput;
+  readonly pluginDirs: ReadonlyArray<string>;
+  readonly hasMcpSession: boolean;
+}): PersonalClaudeQueryOptions {
+  const autoCompactWindow = claudeAutoCompactWindow({
+    configured: input.configuredAutoCompactWindow,
+    personalBot: input.personalBot,
+    personalTaskChat: input.personalTaskChat,
+  });
+  const botSkillOverrides = input.personalBot ? personalBotSkillOverrides() : undefined;
+  const botDisallowedTools = input.personalBot ? personalBotDisallowedTools() : undefined;
+  const exploreAgents = exploreSubagentAgents({
+    personalBot: input.personalBot,
+    mainModel: input.model,
+    modelKnown: (slug) => claudeCatalogHasModel(input.modelCatalog, slug),
+  });
+  const subagentEnvironment = botSubagentModelEnvironment({
+    personalBot: input.personalBot,
+    mainModel: input.model,
+    modelKnown: (slug) => claudeCatalogHasModel(input.modelCatalog, slug),
+  });
+  return {
+    settings: {
+      ...(autoCompactWindow !== undefined ? { autoCompactWindow } : {}),
+      ...(input.personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
+      ...claudeShellOutputSettings({ personalBot: input.personalBot }),
+      ...(botSkillOverrides === undefined ? {} : { skillOverrides: botSkillOverrides }),
+      ...(input.personalBot && botStateDenyEnabled()
+        ? { permissions: { deny: buildClaudeBotPermissionDeny(input.protectedPaths) } }
+        : {}),
+    },
+    settingSources: input.personalBot ? [] : undefined,
+    disallowedTools: botDisallowedTools,
+    hooks:
+      input.personalBot && largeFileReadGuardEnabled()
+        ? { PreToolUse: [{ matcher: "Read", hooks: [PERSONAL_BOT_READ_GUARD_HOOK] }] }
+        : undefined,
+    mcpServers: input.personalBot && !input.hasMcpSession ? {} : undefined,
+    env: input.personalBot
+      ? { ...PERSONAL_BOT_CLAUDE_ENVIRONMENT, ...subagentEnvironment }
+      : undefined,
+    strictMcpConfig: input.personalBot ? true : undefined,
+    plugins:
+      input.personalBot && input.pluginDirs.length > 0
+        ? input.pluginDirs.map((pluginDir) => ({ type: "local" as const, path: pluginDir }))
+        : undefined,
+    agents:
+      exploreAgents === undefined
+        ? undefined
+        : ({ ...exploreAgents } as Record<string, AgentDefinition>),
+    systemPrompt: input.personalBot ? { snapshot: false } : undefined,
+    pluginDirs: input.personalBot ? input.pluginDirs : [],
+    exploreModel: exploreAgents?.Explore?.model,
+    logPluginSkillProblems: input.personalBot,
+  };
+}

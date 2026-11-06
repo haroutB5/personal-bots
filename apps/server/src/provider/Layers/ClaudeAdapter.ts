@@ -16,7 +16,6 @@ import {
   query,
   getSessionMessages,
   forkSession,
-  type HookCallback,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
@@ -109,27 +108,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import {
-  largeFileReadGuardEnabled,
-  largeFileReadRefusalForSize,
-  personalBotDisallowedTools,
-  personalBotSkillOverrides,
-} from "../../personal/personalContextBudget.ts";
-import {
-  botStateDenyEnabled,
-  buildClaudeBotPermissionDeny,
-} from "../../personal/secrets/botProtectedPaths.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
-import {
-  botSubagentModelEnvironment,
-  exploreSubagentAgents,
-} from "../../personal/claude/claudeBackgroundModels.ts";
-import { claudeAutoCompactWindow, claudeShellOutputSettings } from "../personalBotContextLimits.ts";
+import { personalClaudeQueryOptions } from "../../personal/providerHooks/claudeQueryOptions.ts";
 import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -1674,20 +1659,8 @@ const CLAUDE_SETTING_SOURCES = [
 ] as const satisfies ReadonlyArray<SettingSource>;
 
 /**
- * Personal-bot sessions (`personalBot` on the start input) load no settings
- * files (`settingSources: []`), which also drops CLAUDE.md, skills, hooks and
- * `enabledPlugins`, and use `strictMcpConfig` so only T3's server is loaded.
- * Auto-memory and claude.ai connectors are read regardless of settingSources,
- * so both are switched off by setting and by env var. Built-in tools stay.
- * A bot's own plugin folder (`<baseDir>/bot-plugins/<botId>/`, when it holds
- * `.claude-plugin/plugin.json`) is passed explicitly via `plugins`, after the
- * shared folder every bot loads (`<baseDir>/bot-plugins/_shared/`, same rule).
+ * Per-bot plugin folders live at `<baseDir>/bot-plugins/<botId>/`.
  */
-export const PERSONAL_BOT_CLAUDE_SETTINGS = {
-  autoMemoryEnabled: false,
-  disableClaudeAiConnectors: true,
-} as const;
-/** Per-bot plugin folders live at `<baseDir>/bot-plugins/<botId>/`. */
 export const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
 /**
  * Skills every bot gets (`<baseDir>/bot-plugins/_shared/`). The leading
@@ -1696,14 +1669,6 @@ export const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
 export const PERSONAL_BOT_SHARED_PLUGIN = "_shared";
 // Bot ids are UUIDs; anything else never becomes a path segment.
 export const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
-  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-  ENABLE_CLAUDEAI_MCP_SERVERS: "false",
-  // 2.1.316+: a bot instruction or owner message that says "ultrathink" would
-  // otherwise raise that turn to xhigh effort. Bots must not opt into it, and
-  // the owner's own chats keep the keyword. Inert until the CLI ships 2.1.316.
-  CLAUDE_CODE_DISABLE_ULTRATHINK: "1",
-} as const;
 /**
  * Defaults for normal (non-bot) threads; the user's own environment wins.
  * Since CLI 2.1.268 TodoWrite is offered only on older models, which leaves
@@ -1712,69 +1677,6 @@ export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
 export const CLAUDE_THREAD_DEFAULT_ENVIRONMENT = {
   CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
 } as const;
-
-/**
- * The message a whole-file `Read` of a large text file is refused with, or
- * undefined to let it through (1.66.62). A personal bot runs in
- * `bypassPermissions`, where the SDK never calls `canUseTool`, so this rides a
- * `PreToolUse` hook instead: hooks run in every permission mode and a `deny`
- * decision is honoured there. The hook reads the file only when its byte size
- * leaves the answer open, so the cost is one `stat` on a normal Read.
- */
-export function largeFileReadRefusalMessage(input: {
-  readonly toolName: string;
-  readonly toolInput: unknown;
-  readonly cwd: string | undefined;
-}): string | undefined {
-  if (input.toolName !== "Read") return undefined;
-  const record =
-    typeof input.toolInput === "object" && input.toolInput !== null
-      ? (input.toolInput as Record<string, unknown>)
-      : undefined;
-  const rawPath = record?.file_path;
-  if (typeof rawPath !== "string" || rawPath.trim().length === 0) return undefined;
-  const resolved = NodePath.isAbsolute(rawPath)
-    ? rawPath
-    : NodePath.resolve(input.cwd ?? process.cwd(), rawPath);
-  let stats: NodeFs.Stats;
-  try {
-    stats = NodeFs.statSync(resolved);
-  } catch {
-    // A missing file or a directory is the Read tool's own error to report.
-    return undefined;
-  }
-  if (!stats.isFile()) return undefined;
-  return largeFileReadRefusalForSize({
-    toolName: input.toolName,
-    toolInput: input.toolInput,
-    statBytes: stats.size,
-    readText: () => {
-      try {
-        return NodeFs.readFileSync(resolved, "utf8");
-      } catch {
-        return undefined;
-      }
-    },
-  });
-}
-
-/** The `PreToolUse` hook a personal bot session registers for the Read guard. */
-export const PERSONAL_BOT_READ_GUARD_HOOK: HookCallback = (hookInput) => {
-  if (hookInput.hook_event_name !== "PreToolUse") return Promise.resolve({});
-  const message = largeFileReadRefusalMessage({
-    toolName: hookInput.tool_name,
-    toolInput: hookInput.tool_input,
-    cwd: hookInput.cwd,
-  });
-  if (message === undefined) return Promise.resolve({});
-  return Promise.resolve({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse" as const,
-      permissionDecision: "deny" as const,
-      permissionDecisionReason: message,
-    },
-  });
-};
 
 function buildPromptText(
   input: ProviderSendTurnInput,
@@ -5418,45 +5320,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? "bypassPermissions"
           : runtimeModeToPermission[input.runtimeMode]);
       const personalBot = input.personalBot === true;
-      // The fixed per-step context trims (1.66.62): the built-in tools no bot
-      // calls, the bundled skills bots never use, and the large whole-file Read
-      // guard. Each has its own env kill switch, read here at session start.
-      const botSkillOverrides = personalBot ? personalBotSkillOverrides() : undefined;
-      const botDisallowedTools = personalBot ? personalBotDisallowedTools() : undefined;
-      // A delegated-task or routine chat compacts near 200k; the owner's own
-      // chats keep the CLI default (PERSONAL_TASK_AUTO_COMPACT=off for all).
-      const autoCompactWindow = claudeAutoCompactWindow({
-        configured: claudeSettings.autoCompactWindow,
-        personalBot,
-        personalTaskChat: input.personalTaskChat === true,
-      });
-      const settings = {
-        ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-        ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
-        ...(fastMode ? { fastMode: true } : {}),
-        ...(ultracode ? { ultracode: true } : {}),
-        ...(autoCompactWindow !== undefined ? { autoCompactWindow } : {}),
-        ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
-        // Shell output past ~12k chars goes to a file with a short preview
-        // (PERSONAL_BOT_SHELL_OUTPUT_CAP=off restores the CLI's 30000).
-        ...claudeShellOutputSettings({ personalBot }),
-        ...(botSkillOverrides === undefined ? {} : { skillOverrides: botSkillOverrides }),
-        // Deny rules hold in every permission mode, bypassPermissions included.
-        // Best effort: see botProtectedPaths for what they do and do not stop.
-        ...(personalBot && botStateDenyEnabled()
-          ? { permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) } }
-          : {}),
-      };
-      const settingSources: Array<SettingSource> = personalBot ? [] : [...CLAUDE_SETTING_SOURCES];
       // A bot's own plugin folder (skills, commands) loads explicitly: it is
-      // unaffected by the empty settingSources above, so the machine owner's
+      // unaffected by the empty settingSources below, so the machine owner's
       // user-level plugins stay out while this bot keeps its extras.
       const botPluginDirs = personalBot
         ? yield* resolvePersonalBotPluginDirs(input.personalBotId)
         : [];
+      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const personalClaude = personalClaudeQueryOptions({
+        personalBot,
+        personalTaskChat: input.personalTaskChat === true,
+        model: modelSelection?.model,
+        modelCatalog,
+        configuredAutoCompactWindow: claudeSettings.autoCompactWindow,
+        protectedPaths: serverConfig,
+        pluginDirs: botPluginDirs,
+        hasMcpSession: mcpSession !== undefined,
+      });
       // The CLI loads these skills itself and drops an unparsable one in
       // silence (a UTF-8 BOM does it), so name each one that cannot load.
-      if (personalBot) {
+      if (personalClaude.logPluginSkillProblems) {
         yield* logPersonalBotPluginSkillProblems({
           baseDir: serverConfig.baseDir,
           botId: input.personalBotId,
@@ -5465,14 +5348,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           Effect.provideService(Path.Path, path),
         );
       }
-      const plugins: ClaudeQueryOptions["plugins"] =
-        botPluginDirs.length > 0
-          ? botPluginDirs.map((pluginDir) => ({ type: "local" as const, path: pluginDir }))
-          : undefined;
+      const settings = {
+        ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+        ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
+        ...(fastMode ? { fastMode: true } : {}),
+        ...(ultracode ? { ultracode: true } : {}),
+        ...personalClaude.settings,
+      };
+      const settingSources: Array<SettingSource> = personalClaude.settingSources
+        ? [...personalClaude.settingSources]
+        : [...CLAUDE_SETTING_SOURCES];
       if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
         extraArgs["thinking-display"] = "summarized";
       }
-      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       // The bearer token rides in the child's environment, not in --mcp-config on
       // its command line (see claudeMcpAuthorization).
       const mcpAuthorization = mcpSession
@@ -5492,9 +5380,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               },
             },
           }
-        : personalBot
-          ? {}
-          : undefined;
+        : personalClaude.mcpServers;
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
@@ -5503,21 +5389,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
-      // A Claude bot on Opus or Sonnet searches with Explore on Haiku 5.5 (kill
-      // switch PERSONAL_EXPLORE_MODEL=off); its own model and every other
-      // subagent stay as they are.
-      const exploreAgents = exploreSubagentAgents({
-        personalBot,
-        mainModel: modelSelection?.model,
-        modelKnown: (slug) => claudeCatalogHasModel(modelCatalog, slug),
-      });
-      // A Claude bot on Opus runs general-purpose and other model-less
-      // subagents on Sonnet 5.5 (kill switch PERSONAL_SUBAGENT_MODEL=off).
-      const subagentEnvironment = botSubagentModelEnvironment({
-        personalBot,
-        mainModel: modelSelection?.model,
-        modelKnown: (slug) => claudeCatalogHasModel(modelCatalog, slug),
-      });
       // Remembers the CLI's PID so a deleted chat can end the commands it ran.
       const processHandle = claudeSdkSpawnDisabled() ? undefined : makeClaudeProcessHandle();
       const queryOptions: ClaudeQueryOptions = {
@@ -5566,19 +5437,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           // Claude Code records the prompt once per conversation by default,
           // so an edited bot would keep its old instructions in existing
           // chats until compaction. Bots render it fresh on every request.
-          ...(personalBot ? { snapshot: false } : {}),
+          ...(personalClaude.systemPrompt ?? {}),
         },
         settingSources,
-        ...(botDisallowedTools === undefined ? {} : { disallowedTools: botDisallowedTools }),
+        ...(personalClaude.disallowedTools === undefined
+          ? {}
+          : { disallowedTools: personalClaude.disallowedTools }),
         // A whole-file Read of a large text file is refused before it runs; see
         // PERSONAL_BOT_READ_GUARD_HOOK. Off with PERSONAL_READ_LARGE_GUARD=off.
-        ...(personalBot && largeFileReadGuardEnabled()
-          ? {
-              hooks: {
-                PreToolUse: [{ matcher: "Read", hooks: [PERSONAL_BOT_READ_GUARD_HOOK] }],
-              },
-            }
-          : {}),
+        ...(personalClaude.hooks === undefined ? {} : { hooks: personalClaude.hooks }),
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
         ...(effectiveEffort
@@ -5605,15 +5472,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: personalBot
-          ? { ...sessionEnvironment, ...PERSONAL_BOT_CLAUDE_ENVIRONMENT, ...subagentEnvironment }
-          : { ...CLAUDE_THREAD_DEFAULT_ENVIRONMENT, ...sessionEnvironment },
+        env:
+          personalClaude.env === undefined
+            ? { ...CLAUDE_THREAD_DEFAULT_ENVIRONMENT, ...sessionEnvironment }
+            : { ...sessionEnvironment, ...personalClaude.env },
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpServers ? { mcpServers } : {}),
-        ...(personalBot ? { strictMcpConfig: true } : {}),
-        ...(plugins ? { plugins } : {}),
-        ...(exploreAgents ? { agents: { ...exploreAgents } } : {}),
+        ...(personalClaude.strictMcpConfig ? { strictMcpConfig: true } : {}),
+        ...(personalClaude.plugins === undefined ? {} : { plugins: personalClaude.plugins }),
+        ...(personalClaude.agents === undefined ? {} : { agents: personalClaude.agents }),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -5629,7 +5497,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.cwd": input.cwd ?? "",
         "claude.query.model": apiModelId ?? "",
         "claude.query.effort": effectiveEffort ?? "",
-        "claude.query.explore_model": exploreAgents?.Explore?.model ?? "",
+        "claude.query.explore_model": personalClaude.exploreModel ?? "",
         "claude.query.permission_mode": permissionMode ?? "",
         "claude.query.allow_dangerously_skip_permissions": permissionMode === "bypassPermissions",
         "claude.query.resume": existingResumeSessionId ?? "",
@@ -5638,7 +5506,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.additional_directories": additionalDirectories,
         "claude.query.setting_sources": settingSources,
         "claude.query.personal_bot": personalBot,
-        "claude.query.plugins": botPluginDirs,
+        "claude.query.plugins": personalClaude.pluginDirs,
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,

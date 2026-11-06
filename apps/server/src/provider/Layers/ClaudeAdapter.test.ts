@@ -59,10 +59,10 @@ import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import {
   makeClaudeAdapter,
-  PERSONAL_BOT_CLAUDE_SETTINGS,
   pluginLoadWarning,
   type ClaudeAdapterLiveOptions,
 } from "./ClaudeAdapter.ts";
+import { PERSONAL_BOT_CLAUDE_SETTINGS } from "../../personal/providerHooks/claudeQueryOptions.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
