@@ -425,10 +425,6 @@
       "types": "./src/settings/connectionsModel.ts",
       "import": "./src/settings/connectionsModel.ts"
     },
-    "./settings/secretAccess": {
-      "types": "./src/settings/secretAccess.ts",
-      "import": "./src/settings/secretAccess.ts"
-    },
     "./memory/personalMemory": {
       "types": "./src/memory/personalMemory.ts",
       "import": "./src/memory/personalMemory.ts"
@@ -448,6 +444,10 @@
     "./settings/personalSettings": {
       "types": "./src/settings/personalSettings.ts",
       "import": "./src/settings/personalSettings.ts"
+    },
+    "./settings/devices": {
+      "types": "./src/settings/devices.ts",
+      "import": "./src/settings/devices.ts"
     },
     "./settings/providerSetup": {
       "types": "./src/settings/providerSetup.ts",

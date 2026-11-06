@@ -496,6 +496,12 @@ import {
   PersonalPushInAppAckInput,
   PersonalPushInAppNotification,
 } from "./personalPush.ts";
+import {
+  PersonalDevicesError,
+  PersonalDevicesListResult,
+  PersonalDevicesRevokeInput,
+  PersonalDevicesRevokeResult,
+} from "./personalDevices.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -818,6 +824,10 @@ export const WS_METHODS = {
   personalPushReportForeground: "personalPush.reportForeground",
   personalPushInApp: "personalPush.inApp",
   personalPushAckInApp: "personalPush.ackInApp",
+
+  // Signed-in devices (Settings > Devices)
+  personalDevicesList: "personalDevices.list",
+  personalDevicesRevoke: "personalDevices.revoke",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -2252,6 +2262,20 @@ const WsPersonalPushAckInAppRpc = Rpc.make(WS_METHODS.personalPushAckInApp, {
   error: EnvironmentAuthorizationError,
 });
 
+const PersonalDevicesRpcError = Schema.Union([PersonalDevicesError, EnvironmentAuthorizationError]);
+
+const WsPersonalDevicesListRpc = Rpc.make(WS_METHODS.personalDevicesList, {
+  payload: Schema.Struct({}),
+  success: PersonalDevicesListResult,
+  error: PersonalDevicesRpcError,
+});
+
+const WsPersonalDevicesRevokeRpc = Rpc.make(WS_METHODS.personalDevicesRevoke, {
+  payload: PersonalDevicesRevokeInput,
+  success: PersonalDevicesRevokeResult,
+  error: PersonalDevicesRpcError,
+});
+
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
@@ -2978,6 +3002,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalPushReportForegroundRpc,
   WsPersonalPushInAppRpc,
   WsPersonalPushAckInAppRpc,
+  WsPersonalDevicesListRpc,
+  WsPersonalDevicesRevokeRpc,
 );
 
 /**

@@ -805,6 +805,28 @@ export function PersonalSettingsScreen(): JSX.Element {
               />
             </Link>
           </li>
+          <li>
+            <Link to="/bots/settings/devices" className={SETTINGS_ROW}>
+              <Smartphone
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text)]"
+                strokeWidth={1.75}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                  Devices
+                </span>
+                <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                  Phones and browsers signed in to hbots
+                </span>
+              </span>
+              <ChevronRight
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                strokeWidth={1.75}
+              />
+            </Link>
+          </li>
         </ul>
       </section>
 

@@ -252,6 +252,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalPushReportForeground]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushInApp]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushAckInApp]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalDevicesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalDevicesRevoke]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectCloneStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectCloneCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectCloneRetry]: AuthOrchestrationOperateScope,
