@@ -1,14 +1,10 @@
 import type { PersonalDesktopStatus } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  createEnvironmentRpcCommand: () => ({}),
-  createEnvironmentRpcSubscriptionAtomFamily: () => () => ({}),
-}));
-vi.mock("~/connection/runtime", () => ({ connectionAtomRuntime: {} }));
-vi.mock("~/state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
+import { desktopHolderLine, desktopLineFor, desktopStreamUrl } from "./desktopModel.ts";
 
-import { desktopHolderLine, desktopLineFor, desktopStreamUrl } from "./desktopState";
+const BROWSER_BASE = "/api/personal/browser";
+const DESKTOP_PATH = "/api/personal/desktop/stream";
 
 const STATUS: PersonalDesktopStatus = {
   available: true,
@@ -21,28 +17,24 @@ const STATUS: PersonalDesktopStatus = {
 describe("desktop live view helpers", () => {
   it("builds the stream URL from the Computer tab's access, keeping a relay prefix and the ticket", () => {
     expect(
-      desktopStreamUrl({
-        httpBase: "https://relay.example/env/abc/api/personal/browser",
-        wsBase: "wss://relay.example/env/abc/api/personal/browser",
-        query: { wsTicket: "t-1" },
-        credentials: false,
-      }),
+      desktopStreamUrl(
+        {
+          wsBase: "wss://relay.example/env/abc/api/personal/browser",
+          query: { wsTicket: "t-1" },
+        },
+        BROWSER_BASE,
+        DESKTOP_PATH,
+      ),
     ).toBe("wss://relay.example/env/abc/api/personal/desktop/stream?wsTicket=t-1");
     expect(
-      desktopStreamUrl({
-        httpBase: "https://pc.local/api/personal/browser",
-        wsBase: "wss://pc.local/api/personal/browser",
-        query: {},
-        credentials: true,
-      }),
+      desktopStreamUrl(
+        { wsBase: "wss://pc.local/api/personal/browser", query: {} },
+        BROWSER_BASE,
+        DESKTOP_PATH,
+      ),
     ).toBe("wss://pc.local/api/personal/desktop/stream");
     expect(
-      desktopStreamUrl({
-        httpBase: "x",
-        wsBase: "wss://pc.local/other",
-        query: {},
-        credentials: true,
-      }),
+      desktopStreamUrl({ wsBase: "wss://pc.local/other", query: {} }, BROWSER_BASE, DESKTOP_PATH),
     ).toBeNull();
   });
 

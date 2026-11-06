@@ -1,7 +1,9 @@
 import type {
   EnvironmentId,
   PersonalBotsListResult,
+  PersonalBotId,
   PersonalBotTokenUsageResult,
+  PersonalBotRestoreResult,
   PersonalFilesListResult,
   PersonalConnectionApprovalListResult,
   PersonalLeadBotChangeListResult,
@@ -11,6 +13,7 @@ import type {
   PersonalMemoryTurnContext,
   PersonalProfile,
   PersonalPushInAppNotification,
+  PersonalRemovedBotsListResult,
   PersonalRoutineListResult,
   PersonalSecretsListPendingResult,
   PersonalTask,
@@ -27,9 +30,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import type { Atom } from "effect/unstable/reactivity";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import type { PersonalClient } from "../client.ts";
+import { commandFailureMessage } from "./commandFeedback.ts";
 import { PERSONAL_TIME_ZONE } from "../conversation/greeting.ts";
 import { perfOptimizationOn } from "../perf/perfFlags.ts";
 import type { EnvironmentQueryView } from "../react/query.ts";
@@ -41,6 +45,10 @@ import { foldPersonalTasksFeed } from "../tasks/feed.ts";
  * runtime and the ports, so the package owns no web singleton and no
  * environment selection.
  */
+export type RestoreOutcome =
+  | { readonly status: "restored"; readonly result: PersonalBotRestoreResult }
+  | { readonly status: "failed"; readonly message: string };
+
 export function createPersonalBotsClient<R, ER, P>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   client: PersonalClient<R, ER, P>,
@@ -61,6 +69,18 @@ export function createPersonalBotsClient<R, ER, P>(
   const personalRoutinesList = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "personal-routines:list",
     tag: WS_METHODS.personalRoutinesList,
+    staleTimeMs: 10_000,
+    idleTtlMs: 5 * 60_000,
+  });
+
+  /**
+   * Bots a team lead removed (soft delete: chats, memory and settings kept).
+   * Owner only. Nothing pushes a removal, so the list is short-lived and the
+   * screen refreshes it on mount.
+   */
+  const personalRemovedBotsList = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-bots:removed",
+    tag: WS_METHODS.personalBotsListRemoved,
     staleTimeMs: 10_000,
     idleTtlMs: 5 * 60_000,
   });
@@ -205,6 +225,21 @@ export function createPersonalBotsClient<R, ER, P>(
     label: "personal-bots:delete",
     tag: WS_METHODS.personalBotsDelete,
     onSuccess: refreshBotsList,
+  });
+
+  /** A restored bot leaves the removed list and joins the main one, so both refresh. */
+  const personalBotRestore = createEnvironmentRpcCommand(runtime, {
+    label: "personal-bots:restore",
+    tag: WS_METHODS.personalBotsRestore,
+    onSuccess: (target, registry) =>
+      Effect.sync(() => {
+        registry.refresh(
+          personalRemovedBotsList({ environmentId: target.environmentId, input: {} }),
+        );
+        registry.refresh(
+          personalBotsList({ environmentId: target.environmentId, input: personalBotsListInput() }),
+        );
+      }),
   });
 
   const personalBotCreateThread = createEnvironmentRpcCommand(runtime, {
@@ -450,6 +485,36 @@ export function createPersonalBotsClient<R, ER, P>(
       [environmentId],
     );
     return client.useEnvironmentQuery(atom);
+  }
+
+  function useRemovedBots(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalRemovedBotsListResult> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalRemovedBotsList({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
+  function useRestoreRemovedBot(
+    environmentId: EnvironmentId | null,
+  ): (botId: PersonalBotId) => Promise<RestoreOutcome> {
+    const restoreRemovedBot = client.useAtomCommand(personalBotRestore, { reportFailure: false });
+    return useCallback(
+      async (botId) => {
+        if (environmentId === null) {
+          return { status: "failed", message: "Not connected to your computer." };
+        }
+        const result = await restoreRemovedBot({ environmentId, input: { botId } });
+        const failure = commandFailureMessage(result, "Couldn't restore this bot. Try again.");
+        if (failure !== null || result._tag !== "Success") {
+          return { status: "failed", message: failure ?? "Couldn't restore this bot. Try again." };
+        }
+        return { status: "restored", result: result.value };
+      },
+      [environmentId, restoreRemovedBot],
+    );
   }
 
   function usePersonalPushInApp(
@@ -718,6 +783,7 @@ export function createPersonalBotsClient<R, ER, P>(
     usePersonalMemoryCards,
     usePersonalMemoryRulesUsage,
     personalBotsList,
+    personalRemovedBotsList,
     personalPushInAppFeed,
     personalPushAckInApp,
     personalPushReportViewing,
@@ -734,6 +800,7 @@ export function createPersonalBotsClient<R, ER, P>(
     personalBotUpdate,
     personalProviderRecheck,
     personalBotDelete,
+    personalBotRestore,
     personalBotCreateThread,
     personalBotArchiveThread,
     personalBotDeleteThread,
@@ -748,6 +815,8 @@ export function createPersonalBotsClient<R, ER, P>(
     personalProfileSet,
     usePersonalEnvironmentId,
     usePersonalBotsList,
+    useRemovedBots,
+    useRestoreRemovedBot,
     usePersonalRoutinesList,
     usePersonalPushInApp,
     usePersonalArchivedLinks,

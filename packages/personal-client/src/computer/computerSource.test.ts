@@ -9,7 +9,7 @@ import {
   resolveSource,
   saveSourcePrefs,
   type ResolveSourceInput,
-} from "./computerSource";
+} from "./computerSource.ts";
 
 const base: ResolveSourceInput = {
   prefs: { auto: true, pinned: "browser" },

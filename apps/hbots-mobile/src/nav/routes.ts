@@ -11,6 +11,8 @@ export type Origin = "bots" | "team" | "notification" | "share" | "deeplink" | "
 export type Route =
   | { readonly kind: "tab"; readonly tab: TabName }
   | { readonly kind: "team" }
+  | { readonly kind: "teamNew" }
+  | { readonly kind: "teamRemoved" }
   | {
       readonly kind: "chat";
       readonly botId: string;
@@ -25,7 +27,15 @@ export type Route =
   | { readonly kind: "task"; readonly taskId: string }
   | { readonly kind: "routine"; readonly routineId: string }
   | { readonly kind: "settings" }
+  | { readonly kind: "settingsNotifications" }
+  | { readonly kind: "settingsProvidersAdd" }
+  | { readonly kind: "settingsProvider"; readonly instanceId: string }
+  | { readonly kind: "settingsProviderCatalog"; readonly catalogId: string }
   | { readonly kind: "thisPhone" }
+  | { readonly kind: "memory" }
+  | { readonly kind: "passwords" }
+  | { readonly kind: "apiKeys" }
+  | { readonly kind: "connections" }
   | { readonly kind: "stop" };
 
 export interface NavState {
@@ -143,12 +153,47 @@ export function parseDeepLink(raw: string): NavState | null {
       return { stack: [BOTS, { kind: "group", groupId: first }] };
     case "groupNew":
       return { stack: [BOTS, { kind: "groupNew" }] };
+    case "team":
+      return { stack: [BOTS, { kind: "team" }] };
+    case "teamNew":
+      return { stack: [BOTS, { kind: "teamNew" }] };
     case "task":
       return first === undefined ? null : { stack: [BOTS, { kind: "task", taskId: first }] };
-    case "settings":
-      return first === "this-phone"
-        ? { stack: [BOTS, { kind: "settings" }, { kind: "thisPhone" }] }
-        : { stack: [BOTS, { kind: "settings" }] };
+    case "settings": {
+      const settings: Route = { kind: "settings" };
+      if (first === "removed") {
+        return { stack: [BOTS, settings, { kind: "teamRemoved" }] };
+      }
+      if (first === "this-phone") {
+        return { stack: [BOTS, settings, { kind: "thisPhone" }] };
+      }
+      if (first === "notifications") {
+        return { stack: [BOTS, settings, { kind: "settingsNotifications" }] };
+      }
+      if (first === "memory") return { stack: [BOTS, settings, { kind: "memory" }] };
+      if (first === "passwords") return { stack: [BOTS, settings, { kind: "passwords" }] };
+      if (first === "api-keys") return { stack: [BOTS, settings, { kind: "apiKeys" }] };
+      if (first === "connections") return { stack: [BOTS, settings, { kind: "connections" }] };
+      if (first === "providers") {
+        if (second === "add") {
+          return { stack: [BOTS, settings, { kind: "settingsProvidersAdd" }] };
+        }
+        if (second === "catalog" && parts[3] !== undefined) {
+          return {
+            stack: [
+              BOTS,
+              settings,
+              { kind: "settingsProvidersAdd" },
+              { kind: "settingsProviderCatalog", catalogId: parts[3] },
+            ],
+          };
+        }
+        if (second !== undefined) {
+          return { stack: [BOTS, settings, { kind: "settingsProvider", instanceId: second }] };
+        }
+      }
+      return { stack: [BOTS, settings] };
+    }
     case "stop":
       return { stack: [BOTS, { kind: "stop" }] };
     default:

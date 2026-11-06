@@ -8,8 +8,8 @@ import {
   latestStep,
   mergeActivity,
   runStartedAt,
-} from "./computerActivity";
-import type { ComputerActivityEvent } from "./computerContract";
+} from "./computerActivity.ts";
+import type { ComputerActivityEvent } from "./computerContract.ts";
 
 let seq = 0;
 function event(overrides: Partial<ComputerActivityEvent>): ComputerActivityEvent {

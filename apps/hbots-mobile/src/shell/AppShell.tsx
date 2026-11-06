@@ -21,6 +21,9 @@ import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
 import { GroupConversationScreen } from "../groups/GroupConversationScreen";
 import { NewGroupScreen } from "../groups/NewGroupScreen";
+import { NewTeamScreen } from "../teams/NewTeamScreen";
+import { RemovedBotsScreen } from "../teams/RemovedBotsScreen";
+import { TeamScreen } from "../teams/TeamScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
 import { UpdateSettings } from "../UpdateSettings";
@@ -31,6 +34,16 @@ import { tokens } from "./tokens";
 import { FilesScreen } from "../files/FilesScreen";
 import { ChatScreen } from "../screens/ChatScreen";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
+import { ComputerScreen } from "../computer/ComputerScreen";
+import { SettingsScreen } from "../settings/SettingsScreen";
+import { NotificationsScreen } from "../settings/NotificationsScreen";
+import { AddProviderScreen } from "../settings/AddProviderScreen";
+import { CatalogProviderScreen } from "../settings/CatalogProviderScreen";
+import { ProviderScreen } from "../settings/ProviderScreen";
+import { MemoryScreen } from "../settings/MemoryScreen";
+import { PasswordsScreen } from "../settings/PasswordsScreen";
+import { ApiKeysScreen } from "../settings/ApiKeysScreen";
+import { ConnectionsScreen } from "../settings/ConnectionsScreen";
 import { RoutineDetailScreen } from "../tasks/RoutineDetailScreen";
 import { RoutineFormScreen } from "../tasks/RoutineFormScreen";
 import { TaskDetailScreen } from "../tasks/TaskDetailScreen";
@@ -61,8 +74,18 @@ export type RootStackParamList = {
   Routine: { readonly routineId: string };
   RoutineForm: { readonly routineId?: string };
   Team: undefined;
+  TeamNew: undefined;
+  TeamRemoved: undefined;
   Settings: undefined;
+  SettingsNotifications: undefined;
+  SettingsProvidersAdd: undefined;
+  SettingsProvider: { readonly instanceId: string };
+  SettingsProviderCatalog: { readonly catalogId: string };
   ThisPhone: undefined;
+  Memory: undefined;
+  Passwords: undefined;
+  ApiKeys: undefined;
+  Connections: undefined;
   Stop: undefined;
 };
 
@@ -116,31 +139,6 @@ function HeaderScreen({
   );
 }
 
-function SettingsScreen({ navigation }: NativeStackScreenProps<RootStackParamList, "Settings">) {
-  const insets = useSafeAreaInsets();
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <ScreenHeader title="Settings" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={styles.settingsBody}>
-        <View style={styles.group}>
-          <Pressable
-            onPress={() => navigation.navigate("ThisPhone")}
-            accessibilityRole="button"
-            accessibilityLabel="This phone"
-            style={styles.settingsRow}
-          >
-            <View style={styles.settingsIcon}>
-              <IconSettings size={20} color={tokens.text} strokeWidth={2} />
-            </View>
-            <Text style={styles.settingsTitle}>This phone</Text>
-            <IconChevronRight size={20} color={tokens.textTertiary} strokeWidth={2} />
-          </Pressable>
-        </View>
-      </ScrollView>
-    </View>
-  );
-}
-
 function ThisPhoneScreen({
   navigation,
   props,
@@ -166,6 +164,10 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Tabs", params: { tab: route.tab } };
     case "team":
       return { name: "Team" };
+    case "teamNew":
+      return { name: "TeamNew" };
+    case "teamRemoved":
+      return { name: "TeamRemoved" };
     case "chat":
       return {
         name: "Chat",
@@ -190,8 +192,24 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Routine", params: { routineId: route.routineId } };
     case "settings":
       return { name: "Settings" };
+    case "settingsNotifications":
+      return { name: "SettingsNotifications" };
+    case "settingsProvidersAdd":
+      return { name: "SettingsProvidersAdd" };
+    case "settingsProvider":
+      return { name: "SettingsProvider", params: { instanceId: route.instanceId } };
+    case "settingsProviderCatalog":
+      return { name: "SettingsProviderCatalog", params: { catalogId: route.catalogId } };
     case "thisPhone":
       return { name: "ThisPhone" };
+    case "memory":
+      return { name: "Memory" };
+    case "passwords":
+      return { name: "Passwords" };
+    case "apiKeys":
+      return { name: "ApiKeys" };
+    case "connections":
+      return { name: "Connections" };
     case "stop":
       return { name: "Stop" };
   }
@@ -375,12 +393,110 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         </Stack.Screen>
         <Stack.Screen name="Team">
           {({ navigation }) => (
-            <HeaderScreen title="Team" onBack={() => navigation.goBack()}>
-              <Placeholder title="Team" body="Your team will show here." />
-            </HeaderScreen>
+            <TeamScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onNewTeam={() => navigation.navigate("TeamNew")}
+              onNewBot={() => navigation.navigate("BotNew")}
+              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+            />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="TeamNew">
+          {({ navigation }) => (
+            <NewTeamScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onCreated={() => navigation.replace("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="TeamRemoved">
+          {({ navigation }) => (
+            <RemovedBotsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Settings">
+          {({ navigation }) => (
+            <SettingsScreen
+              native={props.native}
+              installedVersion={props.installedVersion}
+              onBack={() => navigation.goBack()}
+              onOpenThisPhone={() => navigation.navigate("ThisPhone")}
+              onOpenTeam={() => navigation.navigate("Team")}
+              onOpenNewBot={() => navigation.navigate("BotNew")}
+              onOpenRemovedBots={() => navigation.navigate("TeamRemoved")}
+              onOpenNotifications={() => navigation.navigate("SettingsNotifications")}
+              onOpenMemory={() => navigation.navigate("Memory")}
+              onOpenPasswords={() => navigation.navigate("Passwords")}
+              onOpenApiKeys={() => navigation.navigate("ApiKeys")}
+              onOpenConnections={() => navigation.navigate("Connections")}
+              onOpenRoutines={() => undefined}
+              onOpenProvider={(instanceId) =>
+                navigation.navigate("SettingsProvider", { instanceId })
+              }
+              onAddProvider={() => navigation.navigate("SettingsProvidersAdd")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsNotifications">
+          {({ navigation }) => (
+            <NotificationsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsProvidersAdd">
+          {({ navigation }) => (
+            <AddProviderScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onOpenProvider={(instanceId) =>
+                navigation.navigate("SettingsProvider", { instanceId })
+              }
+              onOpenCatalog={(catalogId) =>
+                navigation.navigate("SettingsProviderCatalog", { catalogId })
+              }
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsProviderCatalog">
+          {({ navigation, route }) => (
+            <CatalogProviderScreen
+              native={props.native}
+              catalogId={route.params.catalogId}
+              onBack={() => navigation.goBack()}
+              onInstalled={(instanceId) => navigation.replace("SettingsProvider", { instanceId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsProvider">
+          {({ navigation, route }) => (
+            <ProviderScreen
+              native={props.native}
+              instanceId={route.params.instanceId}
+              onBack={() => navigation.goBack()}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Memory">
+          {({ navigation }) => (
+            <MemoryScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Passwords">
+          {({ navigation }) => (
+            <PasswordsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ApiKeys">
+          {({ navigation }) => (
+            <ApiKeysScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Connections">
+          {({ navigation }) => (
+            <ConnectionsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
         <Stack.Screen name="ThisPhone">
           {(screenProps) => <ThisPhoneScreen {...screenProps} props={props} />}
         </Stack.Screen>
@@ -480,7 +596,10 @@ function TabsWithBots({
             onNewRoutine={() => navigation.navigate("RoutineForm", {})}
           />
         ) : tab === "computer" ? (
-          <Placeholder title="Computer" body="The live computer view will show here." />
+          <ComputerScreen
+            native={native}
+            onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+          />
         ) : (
           <FilesScreen native={native} />
         )}
@@ -530,5 +649,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: tokens.fillMuted,
   },
-  settingsTitle: { color: tokens.text, fontSize: 16, fontWeight: "500", flex: 1 },
+  settingsTitle: { color: tokens.text, fontSize: 16, fontWeight: "500" },
+  settingsText: { flex: 1, gap: 2 },
+  settingsDetail: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16 },
+  settingsBadge: {
+    minWidth: 24,
+    height: 24,
+    paddingHorizontal: 7,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: tokens.fillMuted,
+  },
+  settingsBadgeText: { color: tokens.text, fontSize: 12, fontWeight: "600" },
 });

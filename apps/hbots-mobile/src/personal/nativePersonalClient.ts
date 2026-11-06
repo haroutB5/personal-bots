@@ -24,6 +24,13 @@ import { createPersonalClient, type PersonalClient } from "@hbots/personal-clien
 import { createPersonalAutomationClient } from "@hbots/personal-client/automation/automationClient";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
 import { createPersonalGroupsClient } from "@hbots/personal-client/groups/personalGroups";
+import { createPersonalMemoryClient } from "@hbots/personal-client/memory/personalMemory";
+import { createPersonalLoginsClient } from "@hbots/personal-client/logins/personalLogins";
+import { createPersonalSecretsClient } from "@hbots/personal-client/secrets/personalSecrets";
+import { createPersonalConnectionsClient } from "@hbots/personal-client/connections/personalConnections";
+import { createPersonalSettingsClient } from "@hbots/personal-client/settings/personalSettings";
+import { createPersonalComputerClient } from "@hbots/personal-client/computer/personalComputer";
+import { createProviderSetupClient } from "@hbots/personal-client/settings/providerSetup";
 import {
   parseSystemSummary,
   SYSTEM_SUMMARY_TIMEOUT_MS,
@@ -39,6 +46,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
+import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
 import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
@@ -176,12 +184,21 @@ export interface NativePersonal {
   readonly bots: ReturnType<typeof createPersonalBotsClient>;
   readonly automation: ReturnType<typeof createPersonalAutomationClient>;
   readonly groups: ReturnType<typeof createPersonalGroupsClient>;
+  readonly settings: ReturnType<typeof createPersonalSettingsClient>;
+  readonly providers: ReturnType<typeof createProviderSetupClient>;
+  readonly memory: ReturnType<typeof createPersonalMemoryClient>;
+  readonly logins: ReturnType<typeof createPersonalLoginsClient>;
+  readonly secrets: ReturnType<typeof createPersonalSecretsClient>;
+  readonly connections: ReturnType<typeof createPersonalConnectionsClient>;
+  readonly computer: ReturnType<typeof createPersonalComputerClient>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly shellsOf: (
     snapshot: OrchestrationShellSnapshot | null,
   ) => ReadonlyArray<EnvironmentThreadShell>;
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
   readonly readSystemSummary: () => Promise<SystemSummary | null>;
+  /** Freshly ticketed browser and desktop live-view sockets. */
+  readonly liveViews: () => Promise<LiveViewURLs>;
   readonly useConnectionState: () => SupervisorConnectionState;
   /**
    * The connection as it is right now, read from the session loop itself. A
@@ -304,6 +321,13 @@ export function createNativePersonal(
       );
     },
   });
+  const settings = createPersonalSettingsClient(runtime, client);
+  const providers = createProviderSetupClient(runtime, client);
+  const memory = createPersonalMemoryClient(runtime, client);
+  const logins = createPersonalLoginsClient(runtime, client);
+  const secrets = createPersonalSecretsClient(runtime, client);
+  const connections = createPersonalConnectionsClient(runtime, client);
+  const computer = createPersonalComputerClient(runtime, client);
   const shell = createEnvironmentShellAtoms(runtime);
 
   let disposed = false;
@@ -513,6 +537,13 @@ export function createNativePersonal(
     bots,
     automation,
     groups,
+    settings,
+    providers,
+    memory,
+    logins,
+    secrets,
+    connections,
+    computer,
     shell,
     shellsOf: (snapshot) =>
       snapshot === null ? [] : snapshot.threads.map((thread) => ({ ...thread, environmentId })),
@@ -535,6 +566,7 @@ export function createNativePersonal(
         clearTimeout(timer);
       }
     },
+    liveViews: () => liveViewURLs(stored),
     useConnectionState: () => {
       const [state, setReactState] = useState<SupervisorConnectionState>(() =>
         Effect.runSync(SubscriptionRef.get(stateRef)),
