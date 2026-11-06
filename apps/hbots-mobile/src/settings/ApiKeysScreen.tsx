@@ -9,16 +9,17 @@ import {
   secretAccessStateOf,
   type SecretAccessState,
 } from "@hbots/personal-client/settings/secretAccess";
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref, type RefObject } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { useSecretDraft } from "../platform/useSecretDraft";
 import { useSecureScreen } from "../platform/secureScreen";
 import { ScreenHeader } from "../shell/ScreenHeader";
 import { tokens } from "../shell/tokens";
-import { apiKeyFormProblem, type ApiKeyFormProblem } from "./apiKeyForm";
+import { apiKeyErrorScrollTarget, apiKeyFormProblem, type ApiKeyFormProblem } from "./apiKeyForm";
 import { buildApiKeyInput } from "./secretHandling";
 import { Field, PrimaryButton, TextButton } from "./SettingsUi";
 
@@ -57,10 +58,14 @@ export function ApiKeysScreen({
   const [accessProblem, setAccessProblem] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  // The ScrollView prop is typed as non-null; the ref stays null until mount.
+  const innerViewRef = useRef<View>(null);
   const nameRef = useRef<TextInput>(null);
   const valueRef = useRef<TextInput>(null);
   const addressRef = useRef<TextInput>(null);
   const accessAddressRef = useRef<TextInput>(null);
+  const keyboard = useKeyboardInset();
+  const [viewportHeight, setViewportHeight] = useState(0);
 
   const rows = secrets.data?.secrets ?? [];
 
@@ -69,6 +74,42 @@ export function ApiKeysScreen({
     else if (problem.field === "value") valueRef.current?.focus();
     else addressRef.current?.focus();
   };
+
+  const revealField = useCallback(
+    (ref: RefObject<TextInput | null>) => {
+      const scroller = scrollRef.current;
+      const inner = innerViewRef.current;
+      const field = ref.current;
+      if (scroller === null || inner === null || field === null) return;
+      field.measureLayout(
+        inner,
+        (_left: number, top: number, _width: number, height: number) => {
+          scroller.scrollTo({
+            y: apiKeyErrorScrollTarget({
+              fieldBottom: top + height,
+              viewportHeight,
+              keyboardInset: keyboard.padding,
+            }),
+            animated: true,
+          });
+        },
+        () => undefined,
+      );
+    },
+    [keyboard.padding, viewportHeight],
+  );
+
+  useEffect(() => {
+    if (addProblem?.field !== "access") return;
+    const frame = requestAnimationFrame(() => revealField(addressRef));
+    return () => cancelAnimationFrame(frame);
+  }, [addProblem, revealField]);
+
+  useEffect(() => {
+    if (accessProblem === null) return;
+    const frame = requestAnimationFrame(() => revealField(accessAddressRef));
+    return () => cancelAnimationFrame(frame);
+  }, [accessProblem, revealField]);
 
   useEffect(() => {
     if (addError !== null) scrollRef.current?.scrollToEnd({ animated: true });
@@ -145,8 +186,16 @@ export function ApiKeysScreen({
       />
       <ScrollView
         ref={scrollRef}
-        contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]}
+        innerViewRef={innerViewRef as RefObject<View>}
+        contentContainerStyle={[
+          styles.body,
+          { paddingBottom: insets.bottom + 32 + keyboard.padding },
+        ]}
         keyboardShouldPersistTaps="handled"
+        onLayout={(event) => {
+          keyboard.onLayout(event);
+          setViewportHeight(event.nativeEvent.layout.height);
+        }}
       >
         <Text style={styles.intro} maxFontSizeMultiplier={1.5}>
           Keys bots use for outside services, like Tavily and SerpApi. All bots lets every bot use a

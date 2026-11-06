@@ -36,3 +36,17 @@ export function apiKeyFormProblem(input: {
   const access = secretAccessProblem(input.access);
   return access === null ? null : { field: "access", message: access };
 }
+
+/**
+ * The ScrollView offset that puts a blocked address field just above the
+ * keyboard. Its error sits directly above the field, so both stay visible.
+ */
+export function apiKeyErrorScrollTarget(input: {
+  readonly fieldBottom: number;
+  readonly viewportHeight: number;
+  readonly keyboardInset: number;
+}): number {
+  const visibleHeight = Math.max(0, input.viewportHeight - input.keyboardInset);
+  const margin = 12;
+  return Math.max(0, Math.ceil(input.fieldBottom - visibleHeight + margin));
+}

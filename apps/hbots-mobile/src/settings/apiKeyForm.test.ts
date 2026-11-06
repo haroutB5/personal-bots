@@ -4,7 +4,7 @@ import {
 } from "@hbots/personal-client/settings/secretAccess";
 import { describe, expect, it } from "vite-plus/test";
 
-import { apiKeyFormProblem } from "./apiKeyForm";
+import { apiKeyFormProblem, apiKeyErrorScrollTarget } from "./apiKeyForm";
 
 const access = (fields: Partial<SecretAccessState> = {}): SecretAccessState => ({
   ...initialSecretAccess(),
@@ -54,5 +54,29 @@ describe("apiKeyFormProblem", () => {
         access: access({ mode: "env", originsText: "" }),
       }),
     ).toBeNull();
+  });
+});
+
+describe("apiKeyErrorScrollTarget", () => {
+  it("scrolls the blocked address field above the keyboard", () => {
+    expect(
+      apiKeyErrorScrollTarget({
+        fieldBottom: 650,
+        viewportHeight: 683,
+        keyboardInset: 299,
+      }),
+    ).toBe(278);
+    expect(650 - 278).toBe(372);
+    expect(372).toBeLessThanOrEqual(683 - 299);
+  });
+
+  it("targets the top when the field fits in the first viewport", () => {
+    expect(
+      apiKeyErrorScrollTarget({
+        fieldBottom: 300,
+        viewportHeight: 683,
+        keyboardInset: 299,
+      }),
+    ).toBe(0);
   });
 });
