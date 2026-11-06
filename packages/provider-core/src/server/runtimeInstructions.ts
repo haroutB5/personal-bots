@@ -26,6 +26,15 @@ export function buildRuntimeInstructions(runtime: {
     : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
 }
 
+/** Wraps the bot persona and app rules in the block every adapter appends once per session. */
+export function withBotInstructions(base: string, botInstructions: string | undefined): string {
+  const extra = botInstructions?.trim();
+  if (!extra) {
+    return base;
+  }
+  return `${base}\n\n<bot_instructions>${extra}</bot_instructions>`;
+}
+
 function toSingleLine(value: string): string {
   return value.replaceAll(/\s+/g, " ").trim();
 }

@@ -204,7 +204,10 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  withBotInstructions,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import {
   mcpToolPresentation,
   normalizeMcpText,
@@ -1773,6 +1776,8 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  /** The bot persona and app rules for a personal thread's session. */
+  readonly systemInstructions?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -1793,6 +1798,7 @@ export function makeClaudeQueryOptions(input: {
   // The CLI puts file text before inline text and trims one trailing newline.
   const launchAppendSystemPrompt = [
     input.appendSystemPromptFileText?.replace(/\r?\n$/, ""),
+    input.systemInstructions,
     launchArgAppendSystemPrompt,
   ].filter((text): text is string => typeof text === "string" && text.length > 0);
   const requestThinkingSummaries =
@@ -1883,14 +1889,17 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
+        withBotInstructions(
+          buildRuntimeInstructions({ harness: "Claude Code" }) +
+            (input.mcpServers === undefined
+              ? ""
+              : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+                CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+                (deviceInstructions
+                  ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+                  : "")),
+          input.systemInstructions,
+        ),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -10953,6 +10962,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onElicitation,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(input.systemInstructions === undefined
+              ? {}
+              : { systemInstructions: input.systemInstructions }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const resolvedTurnCwd = yield* fileSystem

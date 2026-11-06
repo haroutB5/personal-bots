@@ -51,6 +51,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
+import { PersonalTurnContext } from "../personal/turnContext/PersonalTurnContext.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -134,6 +135,20 @@ function startWithMissingWorktree(
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(PersonalTurnContext, {
+          sessionInstructions: () => Effect.succeed(Option.some("BOT PERSONA")),
+          isPersonalBotThread: () => Effect.succeed(true),
+          uniqueTitle: ({ title }: { readonly title: string }) => Effect.succeed(title),
+          prepareTurn: (turn: { readonly text: string }) =>
+            Effect.succeed({
+              text: turn.text,
+              extraContext: undefined,
+              memoryBlock: undefined,
+              memoryPreferencesBlock: undefined,
+              callContext: "",
+              onSent: () => Effect.void,
+            }),
+        }),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
@@ -915,6 +930,20 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(PersonalTurnContext, {
+          sessionInstructions: () => Effect.succeed(Option.some("BOT PERSONA")),
+          isPersonalBotThread: () => Effect.succeed(true),
+          uniqueTitle: ({ title }: { readonly title: string }) => Effect.succeed(title),
+          prepareTurn: (turn: { readonly text: string }) =>
+            Effect.succeed({
+              text: turn.text,
+              extraContext: undefined,
+              memoryBlock: undefined,
+              memoryPreferencesBlock: undefined,
+              callContext: "",
+              onSent: () => Effect.void,
+            }),
+        }),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: (handoff) =>
             input.sideChat?.nativeForkFrom === undefined
@@ -1849,3 +1878,18 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("passes the personal bot instructions to the provider session open", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "What is the main thread doing?",
+      failReadsAfterRunning: true,
+    });
+
+    yield* harness.start;
+
+    expect(harness.open).toHaveBeenCalledWith(
+      expect.objectContaining({ systemInstructions: "BOT PERSONA" }),
+    );
+  }),
+);

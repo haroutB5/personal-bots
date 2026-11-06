@@ -463,6 +463,8 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly resumeFromSession?: OrchestrationV2ProviderSession;
   readonly initialNativeThreadId?: string;
   readonly initialProviderItemIdentityVersion?: 2;
+  /** The bot persona and app rules a personal thread's session carries. */
+  readonly systemInstructions?: string;
 }
 
 export interface ProviderAdapterV2EnsureThreadInput {

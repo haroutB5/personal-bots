@@ -34,6 +34,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
+import { PersonalTurnContext } from "../personal/turnContext/PersonalTurnContext.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
 import {
@@ -161,6 +162,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const personalTurnContext = yield* Effect.serviceOption(PersonalTurnContext);
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
@@ -786,12 +788,18 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
+      const systemInstructions = Option.isSome(personalTurnContext)
+        ? Option.getOrUndefined(
+            yield* personalTurnContext.value.sessionInstructions(projection.thread.id),
+          )
+        : undefined;
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
+          ...(systemInstructions === undefined ? {} : { systemInstructions }),
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),
@@ -837,8 +845,25 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
+      const personalTurn = Option.isSome(personalTurnContext)
+        ? yield* personalTurnContext.value.prepareTurn({
+            threadId: projection.thread.id,
+            messageId: message.id,
+            text: message.text,
+            context: message.context,
+            freshSession: run.freshContext === true,
+            activeSession:
+              existingSessionProjection === undefined
+                ? undefined
+                : {
+                    provider: existingSessionProjection.driver,
+                    providerInstanceId: existingSessionProjection.providerInstanceId,
+                    createdAt: existingSessionProjection.createdAt,
+                  },
+          })
+        : undefined;
       const userText = projectComposerContextForProvider({
-        text: message.text,
+        text: personalTurn?.text ?? message.text,
         records: message.context?.records ?? [],
       });
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
@@ -1600,7 +1625,12 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [
+            delivery.context,
+            sideChatContext,
+            restartNote,
+            personalTurn?.extraContext ?? "",
+          ]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1624,6 +1654,17 @@ export const layer: Layer.Layer<
                 : Effect.void,
             ),
           );
+          if (!compact && personalTurn !== undefined) {
+            yield* personalTurn.onSent("full").pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("personal turn delivery bookkeeping failed", {
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  cause,
+                }),
+              ),
+            );
+          }
           // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
           const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
           yield* Effect.forEach(
