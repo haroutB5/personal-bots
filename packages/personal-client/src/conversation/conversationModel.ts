@@ -1054,12 +1054,15 @@ export function placeSecretRequestCards(
   return placeTimedCards(
     items,
     cards.map((card) => ({
-      item: { kind: "secret", id: `secret:${card.requestId}`, card } as const,
+      item: { kind: "secret", id: secretCardItemId(card.requestId), card } as const,
       atMs: card.createdAtMs,
       pending: card.kind === "pending",
     })),
   );
 }
+
+/** The feed row id of a secret card, used to bring its focused form into view. */
+export const secretCardItemId = (requestId: string): string => `secret:${requestId}`;
 
 export function placeLoginRequestCards(
   items: ReadonlyArray<ConversationItem>,

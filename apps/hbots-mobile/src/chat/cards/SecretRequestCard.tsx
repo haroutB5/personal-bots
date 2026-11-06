@@ -1,4 +1,5 @@
 import type { SecretRequestCardItem } from "@hbots/personal-client/conversation/secretRequestCards";
+import { secretCardItemId } from "@hbots/personal-client/conversation/conversationModel";
 import {
   initialSecretAccess,
   secretAccessChoice,
@@ -84,6 +85,7 @@ function Pending({
         autoCapitalize="none"
         importantForAutofill="no"
         contextMenuHidden
+        onFocus={() => context.revealCard?.(secretCardItemId(card.requestId))}
         onChangeText={setValue}
         style={styles.input}
       />

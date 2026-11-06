@@ -24,8 +24,17 @@ import {
   IconPhoto,
   IconPaperclip,
 } from "@tabler/icons-react-native";
-import { useMemo, useRef, useState, createElement } from "react";
-import { Animated, FlatList, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, createElement } from "react";
+import {
+  Animated,
+  FlatList,
+  Keyboard,
+  PanResponder,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
@@ -35,6 +44,7 @@ import { tokens } from "../shell/tokens";
 import type { CardContext } from "./cards/types";
 import { isChatCard, renderChatCard } from "./cards/registry";
 import type { ChatEnvironment } from "./chatEnvironment";
+import { scrollIndexForItem } from "./messageListModel";
 import { AttachmentImage } from "./AttachmentImage";
 import {
   linkTarget,
@@ -49,6 +59,10 @@ type Row =
   | { readonly kind: "item"; readonly key: string; readonly item: ConversationItem }
   | { readonly kind: "pending"; readonly key: string; readonly message: PendingOutgoingMessage }
   | { readonly kind: "queued"; readonly key: string; readonly row: OutboxRow };
+
+export interface MessageListHandle {
+  readonly scrollToCard: (itemId: string) => void;
+}
 
 type ImageAttachment = Extract<ChatAttachment, { readonly type: "image" }>;
 
@@ -465,6 +479,7 @@ export function MessageList({
   onLoadEarlier,
   loadEarlierBusy,
   groupSpeaker,
+  listControl,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -491,6 +506,8 @@ export function MessageList({
   readonly onRetryQueued: (id: string) => void;
   readonly onLoadEarlier: (() => void) | null;
   readonly loadEarlierBusy: boolean;
+  /** Set by the chat screen so a card can bring itself above the keyboard. */
+  readonly listControl?: { current: MessageListHandle | null };
   /** Group transcripts only: who a member message belongs to. */
   readonly groupSpeaker?: (botId: string) => {
     readonly name: string;
@@ -512,6 +529,29 @@ export function MessageList({
     [items, pending, queued],
   );
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
+  const lastReveal = useRef<string | null>(null);
+  const scrollToCard = useCallback(
+    (itemId: string) => {
+      lastReveal.current = itemId;
+      const index = scrollIndexForItem(rows, itemId);
+      if (index === null) return;
+      listRef.current?.scrollToIndex({ index, viewPosition: 0, animated: true });
+    },
+    [rows],
+  );
+  useEffect(() => {
+    if (listControl === undefined) return;
+    listControl.current = { scrollToCard };
+    return () => {
+      if (listControl.current?.scrollToCard === scrollToCard) listControl.current = null;
+    };
+  }, [listControl, scrollToCard]);
+  useEffect(() => {
+    const subscription = Keyboard.addListener("keyboardDidShow", () => {
+      if (lastReveal.current !== null) scrollToCard(lastReveal.current);
+    });
+    return () => subscription.remove();
+  }, [scrollToCard]);
 
   return (
     <FlatList
@@ -527,6 +567,7 @@ export function MessageList({
       maxToRenderPerBatch={16}
       windowSize={9}
       removeClippedSubviews
+      onScrollToIndexFailed={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
       ListFooterComponent={
         onLoadEarlier === null ? null : (
           <Pressable

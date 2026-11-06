@@ -7,6 +7,7 @@ import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-nati
 import { useSecureScreen } from "../../platform/secureScreen";
 import { tokens } from "../../shell/tokens";
 import { cardStyles } from "./cardStyles";
+import { passwordFieldProps } from "./passwordField";
 import type { CardContext } from "./types";
 
 function hostOf(origin: string): string {
@@ -114,12 +115,8 @@ export function LoginRequestCard({
             <View style={styles.passwordRow}>
               <TextInput
                 value={password}
-                secureTextEntry={!visible}
-                autoComplete="current-password"
-                autoCorrect={false}
+                {...passwordFieldProps(visible)}
                 autoCapitalize="none"
-                importantForAutofill="no"
-                contextMenuHidden
                 onChangeText={setPassword}
                 style={[styles.input, styles.passwordInput]}
               />

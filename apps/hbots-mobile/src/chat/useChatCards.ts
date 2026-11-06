@@ -7,6 +7,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
+import * as DateTime from "effect/DateTime";
 import {
   derivePendingRequests,
   deriveUserInputHistory,
@@ -33,6 +34,7 @@ import {
 } from "@hbots/personal-client/conversation/questionCards";
 import {
   deriveSecretRequestCards,
+  type SecretRequestHistoryEntry,
   type SecretRequestOutcome,
 } from "@hbots/personal-client/conversation/secretRequestCards";
 import type { SecretAccessChoice } from "@hbots/personal-client/settings/secretAccess";
@@ -42,6 +44,8 @@ import { useMemo, useState } from "react";
 import type { ChatEnvironment } from "./chatEnvironment";
 import type { CardContext } from "./cards/types";
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { appendSecretOutcome } from "./secretOutcomeModel";
+import { readSecretOutcomeHistory, writeSecretOutcomeHistory } from "./secretOutcomeStore";
 
 interface SeenUserInputs {
   readonly threadId: string;
@@ -66,6 +70,7 @@ export function useChatCards(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly nowMs: number;
   readonly onOpenChat: (botId: string, threadId: string) => void;
+  readonly onRevealCard?: (itemId: string) => void;
 }): {
   readonly items: ConversationItem[];
   readonly context: CardContext;
@@ -126,6 +131,9 @@ export function useChatCards(input: {
   const [secretOutcomes, setSecretOutcomes] = useState<ReadonlyMap<string, SecretRequestOutcome>>(
     () => new Map(),
   );
+  const [secretHistory, setSecretHistory] = useState<ReadonlyArray<SecretRequestHistoryEntry>>(
+    () => (environmentId === null ? [] : readSecretOutcomeHistory(environmentId)),
+  );
   const [respondingSecretIds, setRespondingSecretIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -135,8 +143,15 @@ export function useChatCards(input: {
     setSeenSecrets(next);
   }
   const secretCards = useMemo(
-    () => deriveSecretRequestCards(pendingSecrets, threadId, seenSecrets, secretOutcomes),
-    [pendingSecrets, secretOutcomes, seenSecrets, threadId],
+    () =>
+      deriveSecretRequestCards(
+        pendingSecrets,
+        threadId,
+        seenSecrets,
+        secretOutcomes,
+        secretHistory,
+      ),
+    [pendingSecrets, secretHistory, secretOutcomes, seenSecrets, threadId],
   );
 
   const approvalsQuery = native.bots.usePersonalConnectionApprovals(environmentId);
@@ -203,6 +218,7 @@ export function useChatCards(input: {
     }).then((result) => {
       if (result._tag === "Success") {
         setSecretOutcomes((current) => new Map(current).set(requestId, "provided"));
+        rememberSecretOutcome(requestId, "provided");
       }
       setRespondingSecretIds((current) => {
         const next = new Set(current);
@@ -211,6 +227,24 @@ export function useChatCards(input: {
       });
       pendingSecretsQuery.refresh();
     });
+  };
+
+  const rememberSecretOutcome = (requestId: string, outcome: SecretRequestOutcome) => {
+    if (environmentId === null) return;
+    const request =
+      pendingSecrets.find((entry) => String(entry.requestId) === requestId) ??
+      seenSecrets.get(requestId);
+    if (request === undefined) return;
+    const next = appendSecretOutcome(secretHistory, {
+      requestId,
+      threadId: String(request.threadId),
+      createdAtMs: DateTime.toEpochMillis(request.createdAt),
+      name: request.name,
+      label: request.label,
+      outcome,
+    });
+    setSecretHistory(next);
+    writeSecretOutcomeHistory(environmentId, next);
   };
 
   const declineSecret = (requestId: string) => {
@@ -222,6 +256,7 @@ export function useChatCards(input: {
     }).then((result) => {
       if (result._tag === "Success") {
         setSecretOutcomes((current) => new Map(current).set(requestId, "declined"));
+        rememberSecretOutcome(requestId, "declined");
       }
       setRespondingSecretIds((current) => {
         const next = new Set(current);
@@ -308,6 +343,7 @@ export function useChatCards(input: {
       providers: input.providers,
       waitingLabelFor: (id) => (id === null ? null : (waitingLabels.get(id) ?? null)),
       onOpenChat: input.onOpenChat,
+      revealCard: input.onRevealCard,
       secrets: {
         respondingIds: respondingSecretIds,
         onProvide: provideSecret,
@@ -327,6 +363,7 @@ export function useChatCards(input: {
       input.chat,
       input.nowMs,
       input.onOpenChat,
+      input.onRevealCard,
       input.providers,
       native,
       provideSecret,

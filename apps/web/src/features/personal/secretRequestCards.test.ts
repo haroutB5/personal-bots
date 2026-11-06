@@ -77,6 +77,52 @@ it("does not carry another chat's remembered request into this one", () => {
   expect(deriveSecretRequestCards([], "thread-1", new Map([["a", other]]), new Map())).toEqual([]);
 });
 
+it("rebuilds a settled card from this device's saved receipt", () => {
+  const cards = deriveSecretRequestCards([], "thread-1", new Map(), new Map(), [
+    {
+      requestId: "a",
+      threadId: "thread-1",
+      createdAtMs: Date.parse("2026-09-14T10:00:00.000Z"),
+      name: "GITHUB_TOKEN",
+      label: "GITHUB_TOKEN label",
+      outcome: "provided",
+    },
+    {
+      requestId: "b",
+      threadId: "thread-2",
+      createdAtMs: Date.parse("2026-09-14T10:01:00.000Z"),
+      name: "NPM_TOKEN",
+      label: "NPM_TOKEN label",
+      outcome: "declined",
+    },
+  ]);
+
+  expect(cards).toEqual([
+    {
+      kind: "provided",
+      requestId: "a",
+      createdAtMs: Date.parse("2026-09-14T10:00:00.000Z"),
+      name: "GITHUB_TOKEN",
+      label: "GITHUB_TOKEN label",
+    },
+  ]);
+});
+
+it("does not let a saved receipt override a live pending request", () => {
+  const asked = request("a", "thread-1", "2026-09-14T10:00:00.000Z");
+  const cards = deriveSecretRequestCards([asked], "thread-1", new Map(), new Map(), [
+    {
+      requestId: "a",
+      threadId: "thread-1",
+      createdAtMs: Date.parse("2026-09-14T09:00:00.000Z"),
+      name: "GITHUB_TOKEN",
+      label: "Old label",
+      outcome: "declined",
+    },
+  ]);
+  expect(cards.map((card) => card.kind)).toEqual(["pending"]);
+});
+
 it("names every chat a bot is parked on a secret in", () => {
   expect(
     threadIdsAwaitingSecret([
