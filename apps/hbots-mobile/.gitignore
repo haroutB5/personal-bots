@@ -11,4 +11,7 @@ modules/hbots-updater/android/build/
 !modules/hbots-network/android/
 !modules/hbots-network/android/**
 modules/hbots-network/android/build/
+!modules/hbots-liveview/android/
+!modules/hbots-liveview/android/**
+modules/hbots-liveview/android/build/
 *.aab
