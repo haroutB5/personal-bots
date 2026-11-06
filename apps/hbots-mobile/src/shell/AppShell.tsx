@@ -406,6 +406,8 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               onNewTeam={() => navigation.navigate("TeamNew")}
               onNewBot={() => navigation.navigate("BotNew")}
               onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+              onOpenTask={(taskId) => navigation.navigate("Task", { taskId })}
+              onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
             />
           )}
         </Stack.Screen>

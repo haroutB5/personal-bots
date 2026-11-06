@@ -12,12 +12,15 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { useNow } from "../chat/useNow";
 import { ScreenHeader } from "../shell/ScreenHeader";
 import { tokens } from "../shell/tokens";
 import { SheetShell } from "../sheets/SheetShell";
 import { NewTeamForm } from "./NewTeamForm";
 import { TeamCard } from "./TeamCards";
 import { TeamLeadConfirmSheet, TeamMembersSheet, TeamMenuSheet, TeamMoveSheet } from "./TeamSheets";
+import { TeamTokenUsage } from "./TeamTokenUsage";
+import { TeamWorkingNow } from "./TeamWorkingNow";
 import {
   leadConfirmFor,
   liveBotIds,
@@ -25,9 +28,10 @@ import {
   removeTeamLabel,
   teamCards,
   teamChartBots,
-  takeTeamNotice,
   teamScreenState,
   teamSummary,
+  teamWorkingNowRows,
+  takeTeamNotice,
   type MoveSheetOption,
   type TeamMemberModel,
   type TeamNotice,
@@ -49,12 +53,16 @@ export function TeamScreen({
   onNewTeam,
   onNewBot,
   onOpenBot,
+  onOpenTask,
+  onOpenChat,
 }: {
   readonly native: NativePersonal;
   readonly onBack: () => void;
   readonly onNewTeam: () => void;
   readonly onNewBot: () => void;
   readonly onOpenBot: (botId: string) => void;
+  readonly onOpenTask: (taskId: string) => void;
+  readonly onOpenChat: (botId: string, threadId: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId;
@@ -62,6 +70,8 @@ export function TeamScreen({
   const profile = native.bots.usePersonalProfile(environmentId);
   const providers = native.useProviders();
   const connection = native.useConnectionState();
+  const now = useNow();
+  const taskFeed = native.bots.usePersonalTasks(environmentId);
   const shellState = useAtomValue(native.shell.stateValueAtom(environmentId));
   const shells = useMemo(
     () => native.shellsOf(Option.getOrNull(shellState.snapshot)),
@@ -93,6 +103,27 @@ export function TeamScreen({
   );
   const bots = useMemo(() => teamChartBots(allBots), [allBots]);
   const live = useMemo(() => liveBotIds(list.data?.threads ?? [], shells), [list.data, shells]);
+  const tasks = useMemo(
+    () => (taskFeed.data === null ? [] : [...taskFeed.data.values()]),
+    [taskFeed.data],
+  );
+  const working = useMemo(
+    () => teamWorkingNowRows({ tasks, bots, nowMs: now }),
+    [bots, now, tasks],
+  );
+  const modelNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const provider of providers) {
+      for (const model of provider.models) {
+        names.set(model.slug, model.name);
+        for (const alias of model.aliases ?? []) {
+          if (!names.has(alias)) names.set(alias, model.name);
+        }
+      }
+    }
+    return names;
+  }, [providers]);
+  const listedBotIds = useMemo(() => new Set(bots.map((bot) => bot.botId as string)), [bots]);
   const cards = useMemo(
     () =>
       teamCards({
@@ -345,6 +376,13 @@ export function TeamScreen({
                 </Text>
               </View>
             </View>
+            <TeamWorkingNow
+              rows={working}
+              onOpen={(row) => {
+                if (row.threadId === null) onOpenTask(row.taskId);
+                else onOpenChat(row.to.botId, row.threadId);
+              }}
+            />
             {cards.map((card) => (
               <TeamCard
                 key={card.team}
@@ -354,6 +392,13 @@ export function TeamScreen({
                 onOpenMenu={() => setMenuTeam(card.team)}
               />
             ))}
+            <TeamTokenUsage
+              native={native}
+              bots={allBots}
+              listedBotIds={listedBotIds}
+              modelNames={modelNames}
+              nowMs={now}
+            />
           </>
         )}
       </ScrollView>

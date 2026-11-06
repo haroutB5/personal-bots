@@ -205,6 +205,10 @@
       "types": "./src/teams/removedBotsModel.ts",
       "import": "./src/teams/removedBotsModel.ts"
     },
+    "./teams/teamWorkingNow": {
+      "types": "./src/teams/teamWorkingNow.ts",
+      "import": "./src/teams/teamWorkingNow.ts"
+    },
     "./conversation/greeting": {
       "types": "./src/conversation/greeting.ts",
       "import": "./src/conversation/greeting.ts"

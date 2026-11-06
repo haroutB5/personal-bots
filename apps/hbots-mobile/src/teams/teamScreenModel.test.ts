@@ -1,4 +1,11 @@
-import type { PersonalBot, PersonalBotTeam, PersonalRemovedBot } from "@t3tools/contracts";
+import type {
+  PersonalBot,
+  PersonalBotTeam,
+  PersonalBotTokenUsageResult,
+  PersonalBotTokenUsageWindow,
+  PersonalRemovedBot,
+  PersonalTask,
+} from "@t3tools/contracts";
 import { PersonalBotId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -17,6 +24,8 @@ import {
   teamChartBots,
   teamScreenState,
   teamSummary,
+  teamUsageModel,
+  teamWorkingNowRows,
 } from "./teamScreenModel";
 
 const botOf = (id: string, name: string, fields: Partial<PersonalBot> = {}): PersonalBot =>
@@ -35,6 +44,156 @@ const other = botOf("bot-other", "Research", { team: "research" as PersonalBotTe
 
 const labelOf = (bot: PersonalBot): string | null =>
   bot.botId === "bot-lead" ? "Sonnet 5.5 · H" : null;
+
+const taskOf = (input: {
+  readonly taskId: string;
+  readonly botId: string;
+  readonly parentTaskId?: string;
+  readonly status?: PersonalTask["status"];
+  readonly threadId?: string | null;
+  readonly startedAt?: string;
+}): PersonalTask =>
+  ({
+    taskId: input.taskId,
+    parentTaskId: input.parentTaskId ?? null,
+    botId: input.botId,
+    threadId: input.threadId === undefined ? `thread-${input.taskId}` : input.threadId,
+    title: `Task ${input.taskId}`,
+    status: input.status ?? "running",
+    createdAt: DateTime.makeUnsafe("2026-10-25T11:00:00.000Z"),
+    updatedAt: DateTime.makeUnsafe("2026-10-25T11:00:00.000Z"),
+    startedAt: DateTime.makeUnsafe(input.startedAt ?? "2026-10-25T11:00:00.000Z"),
+    completedAt: null,
+  }) as unknown as PersonalTask;
+
+const usageTotals = (uncachedInputTokens: number, outputTokens: number) => ({
+  uncachedInputTokens,
+  cachedInputTokens: 0,
+  cacheCreationTokens: 0,
+  outputTokens,
+});
+
+const usageWindow = (id: "today" | "week"): PersonalBotTokenUsageWindow =>
+  ({
+    id,
+    sinceDay: "2026-10-19",
+    untilDay: "2026-10-25",
+    rows: [
+      {
+        botId: "bot-member",
+        totals: usageTotals(600, 400),
+        costUsd: 0.12,
+        unpricedTokens: 0,
+        models: [],
+        sessions: 2,
+      },
+      {
+        botId: "bot-lead",
+        totals: usageTotals(100, 100),
+        costUsd: 0.03,
+        unpricedTokens: 0,
+        models: [],
+        sessions: 1,
+      },
+    ],
+    providers: [
+      {
+        provider: "opencode",
+        totals: usageTotals(700, 500),
+        costUsd: 0.15,
+        unpricedTokens: 0,
+        sessions: 3,
+      },
+    ],
+    other: { totals: usageTotals(0, 0), costUsd: 0, unpricedTokens: 0, sessions: 0 },
+    total: { totals: usageTotals(700, 500), costUsd: 0.15, unpricedTokens: 0, sessions: 3 },
+  }) as unknown as PersonalBotTokenUsageWindow;
+
+describe("teamWorkingNowRows", () => {
+  it("names the two bots and how long the handoff has run", () => {
+    const rows = teamWorkingNowRows({
+      tasks: [
+        taskOf({ taskId: "root", botId: "bot-lead" }),
+        taskOf({
+          taskId: "child",
+          botId: "bot-member",
+          parentTaskId: "root",
+          startedAt: "2026-10-25T11:48:00.000Z",
+          threadId: "thread-child",
+        }),
+        taskOf({
+          taskId: "done",
+          botId: "bot-member",
+          parentTaskId: "root",
+          status: "completed",
+        }),
+      ],
+      bots: [lead, member],
+      nowMs: Date.parse("2026-10-25T12:00:00.000Z"),
+    });
+    expect(rows).toEqual([
+      {
+        taskId: "child",
+        from: {
+          botId: "bot-lead",
+          name: "CTO",
+          avatarShape: "circle",
+          avatarColor: "#123456",
+        },
+        to: {
+          botId: "bot-member",
+          name: "Frontend",
+          avatarShape: "circle",
+          avatarColor: "#123456",
+        },
+        title: "Task child",
+        threadId: "thread-child",
+        forLabel: "12 min",
+      },
+    ]);
+  });
+});
+
+describe("teamUsageModel", () => {
+  const result = {
+    status: "ready",
+    readAt: "2026-10-25T11:56:00.000Z",
+    windows: [usageWindow("today"), usageWindow("week")],
+  } as unknown as PersonalBotTokenUsageResult;
+
+  it("picks the requested range and ranks the bots by use", () => {
+    const model = teamUsageModel({
+      result,
+      windowId: "week",
+      bots: [lead, member],
+      listedBotIds: new Set(["bot-lead", "bot-member"]),
+      modelNames: new Map(),
+      nowMs: Date.parse("2026-10-25T12:00:00.000Z"),
+    });
+    expect(model.table?.total).toBe(1200);
+    expect(model.table?.rows.map((row) => [row.name, row.tokens])).toEqual([
+      ["Frontend", 1000],
+      ["CTO", 200],
+    ]);
+    expect(model.span).toBe("19–25 Oct");
+    expect(model.updated).toBe("Updated 4m ago");
+    expect(model.split).toBe("in 700 · cached 0 · out 500");
+    expect(model.periodWord).toBe("in this period");
+  });
+
+  it("says today and names a bot with no use", () => {
+    const model = teamUsageModel({
+      result,
+      windowId: "today",
+      bots: [lead, member, other],
+      listedBotIds: new Set(["bot-lead", "bot-member", "bot-other"]),
+      modelNames: new Map(),
+      nowMs: Date.parse("2026-10-25T12:00:00.000Z"),
+    });
+    expect(model.periodWord).toBe("today");
+    expect(model.table?.idleBotNames).toEqual(["Research"]);
+  });
+});
 
 describe("teamChartBots", () => {
   it("keeps a group-only bot out unless it leads a team", () => {

@@ -1,4 +1,11 @@
-import type { PersonalBot, PersonalBotTeam, PersonalRemovedBot } from "@t3tools/contracts";
+import type {
+  PersonalBot,
+  PersonalBotTeam,
+  PersonalBotTokenUsageResult,
+  PersonalBotTokenUsageWindowId,
+  PersonalRemovedBot,
+  PersonalTask,
+} from "@t3tools/contracts";
 import {
   botTeam,
   isGroupOnlyBot,
@@ -38,6 +45,17 @@ import {
   removedByLine,
   restoredMessage,
 } from "@hbots/personal-client/teams/removedBotsModel";
+import { deriveWorkingNow, formatWorkingFor } from "@hbots/personal-client/teams/teamWorkingNow";
+import {
+  buildTokenUsageTable,
+  findTokenUsageWindow,
+  formatSplit,
+  formatUpdated,
+  formatWindowSpan,
+  isTokenUsagePending,
+  splitOf,
+  type TokenUsageTable,
+} from "@hbots/personal-client/usage/tokenUsagePresentation";
 
 /** One bot as a team card draws it: the lead first, then the members. */
 export interface TeamMemberModel {
@@ -158,6 +176,101 @@ export function liveBotIds(
   return new Set(
     threads.filter((thread) => liveThreadIds.has(thread.threadId)).map((thread) => thread.botId),
   );
+}
+
+/** The bot at one end of a running handoff, as the row draws it. */
+export interface WorkingNowBot {
+  readonly botId: string;
+  readonly name: string;
+  readonly avatarShape: PersonalBot["avatarShape"];
+  readonly avatarColor: string;
+}
+
+/** One row of the Team screen's "Working now" list. */
+export interface WorkingNowRow {
+  readonly taskId: string;
+  readonly from: WorkingNowBot;
+  readonly to: WorkingNowBot;
+  readonly title: string;
+  /** The receiving bot's task chat, or null while the task has no chat yet. */
+  readonly threadId: string | null;
+  readonly forLabel: string;
+}
+
+/**
+ * The handoffs running now, named for the screen's bots. A bot the chart does
+ * not draw is left out, as on the web, so a row never points at a page the
+ * Team screen cannot open.
+ */
+export function teamWorkingNowRows(input: {
+  readonly tasks: ReadonlyArray<PersonalTask>;
+  readonly bots: ReadonlyArray<PersonalBot>;
+  readonly nowMs: number;
+}): ReadonlyArray<WorkingNowRow> {
+  const botsById = new Map(input.bots.map((bot) => [bot.botId as string, bot] as const));
+  const listed = new Set(botsById.keys());
+  return deriveWorkingNow(input.tasks, listed).flatMap((item) => {
+    const from = botsById.get(item.from);
+    const to = botsById.get(item.to);
+    if (from === undefined || to === undefined) return [];
+    const bot = (entry: PersonalBot): WorkingNowBot => ({
+      botId: entry.botId as string,
+      name: entry.name,
+      avatarShape: entry.avatarShape,
+      avatarColor: entry.avatarColor,
+    });
+    return [
+      {
+        taskId: item.taskId,
+        from: bot(from),
+        to: bot(to),
+        title: item.title,
+        threadId: item.threadId,
+        forLabel: formatWorkingFor(item.sinceMs, input.nowMs),
+      },
+    ];
+  });
+}
+
+/** What the token card shows for one range, computed from the server's scan. */
+export interface TeamUsageModel {
+  readonly table: TokenUsageTable | null;
+  /** `25 Oct` or `19–25 Oct`, when a table exists. */
+  readonly span: string | null;
+  /** `Updated 4m ago`, or null while there is no snapshot. */
+  readonly updated: string | null;
+  /** `in 4.2M · cached 110.0M (96%) · out 1.2M`, or null while there is no window. */
+  readonly split: string | null;
+  readonly periodWord: "today" | "in this period";
+  /** The server is still counting, so the card may ask again soon. */
+  readonly pending: boolean;
+}
+
+export function teamUsageModel(input: {
+  readonly result: PersonalBotTokenUsageResult | null;
+  readonly windowId: PersonalBotTokenUsageWindowId;
+  readonly bots: ReadonlyArray<PersonalBot>;
+  readonly listedBotIds: ReadonlySet<string>;
+  readonly modelNames: ReadonlyMap<string, string>;
+  readonly nowMs: number;
+}): TeamUsageModel {
+  const selected = findTokenUsageWindow(input.result, input.windowId);
+  return {
+    table:
+      selected === null
+        ? null
+        : buildTokenUsageTable({
+            window: selected,
+            bots: input.bots.map((bot) => ({ botId: bot.botId as string, name: bot.name })),
+            listedBotIds: input.listedBotIds,
+            modelNames: input.modelNames,
+          }),
+    span: selected === null ? null : formatWindowSpan(selected.sinceDay, selected.untilDay),
+    updated: formatUpdated(input.result?.readAt ?? null, input.nowMs),
+    split: selected === null ? null : formatSplit(splitOf(selected.total.totals)),
+    periodWord: input.windowId === "today" ? "today" : "in this period",
+    pending: isTokenUsagePending(input.result?.status),
+  };
 }
 
 export interface MoveSheetOption {
