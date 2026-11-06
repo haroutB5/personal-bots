@@ -6,6 +6,7 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationMessageContext,
   type OrchestrationThreadShell,
   ProviderDriverKind,
   type ProjectId,
@@ -13,13 +14,10 @@ import {
   type OrchestrationSessionProviderRetry,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  withPersonalReplyQuote,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
-  VOICE_CALL_SUMMARY_CONTEXT_CALLS,
-  type VoiceCallRecord,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -46,9 +44,9 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
-import { personalBotSystemInstructions } from "../../personal/personalBotInstructions.ts";
 import { buildChatHandoff } from "../../personal/sessionHandoff.ts";
 import { botModelSelectionForThread } from "../../personal/botModelSelection.ts";
+import { makePersonalTurnContext } from "../../personal/turnContext/PersonalTurnContext.ts";
 import { isMissingProviderConversationText } from "../../provider/missingProviderConversation.ts";
 import { providerLimitRetryInfo } from "../../provider/providerLimitRetry.ts";
 import {
@@ -58,7 +56,6 @@ import {
 } from "../../personal/personalThreadTitles.ts";
 import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalVoiceCallRepository from "../../personal/voiceCalls/PersonalVoiceCallRepository.ts";
-import { voiceCallSummaryContextPacked } from "../../personal/voiceCalls/voiceCallSummaryContext.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -82,7 +79,7 @@ import {
   type ThreadTitleMessage,
 } from "../../textGeneration/ThreadTitleContext.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
-import { uniqueAutomaticTitle, withChatTitleLock } from "../../personal/personalChatTitles.ts";
+import { withChatTitleLock } from "../../personal/personalChatTitles.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -298,107 +295,14 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
-  /**
-   * Personal bot instructions for a thread, for the provider session/turn
-   * path. Best-effort: a lookup failure starts the session without bot
-   * instructions rather than failing the turn.
-   */
   const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
   const voiceCalls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
-  /**
-   * The summaries of phone calls the bot has never been shown, as a short block
-   * in front of its next turn's context, newest call first. A call card is
-   * never a chat message and its transcript never reaches a model, so this is
-   * the one thing that crosses from a call into the bot's context: the lines
-   * the owner has already read on the card. Empty for almost every turn; a
-   * lookup that fails is a turn without it, never a failed turn.
-   *
-   * Delivery is recorded by the caller once the block is actually in a turn
-   * (`markSummariesDelivered`), which is what retires it. Nothing here guesses
-   * from message timestamps: a reply that lands before the summary exists must
-   * not consume it (Astra review, finding 3).
-   */
-  const voiceCallSummariesForTurn = (threadId: ThreadId) =>
-    voiceCalls
-      .summariesForTurn({ threadId, limit: VOICE_CALL_SUMMARY_CONTEXT_CALLS })
-      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<VoiceCallRecord>));
-  const personalBotInstructions = (threadId: ThreadId) =>
-    personalBots.getInstructionsForThread({ threadId }).pipe(
-      Effect.map((instructions) =>
-        Option.getOrUndefined(Option.map(instructions, personalBotSystemInstructions)),
-      ),
-      Effect.catchCause((cause) =>
-        Effect.logDebug("personal bot instructions lookup failed; continuing without them", {
-          threadId,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as(undefined)),
-      ),
-    );
-  /**
-   * Every preference the bot can see (capped, newest first) plus up to 6 notes
-   * and 6 task summaries relevant to a turn's text ("Known facts (from
-   * memory)"), sent as that turn's context rather than in the bot's system
-   * instructions: those must read the same on every session start of a
-   * conversation, and a Claude session reads them only when it starts. Memory
-   * only applies to personal-bot threads and never fails the turn: a lookup
-   * that fails is logged and the turn goes without. `preferencesBlock` is the
-   * same block without its notes and task summaries, for a turn whose input
-   * leaves too little room for all of it. A task or routine attempt (and a
-   * steer into one) starts with a personal-task-message; its facts leave out
-   * task summaries, which belong to other tasks.
-   */
-  const personalMemoryForTurn = (
-    threadId: ThreadId,
-    query: string,
-    messageId: MessageId | undefined,
-    freshSession: boolean,
-  ) =>
-    Effect.gen(function* () {
-      if (Option.isNone(personalMemory)) return undefined;
-      const thread = yield* projectionSnapshotQuery
-        .getThreadShellById(threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      // The session this turn runs in: the full preference list goes to it
-      // once, then only when it changes (see contextForThread).
-      const session = yield* providerService.listSessions().pipe(
-        Effect.map((sessions) => sessions.find((candidate) => candidate.threadId === threadId)),
-        Effect.orElseSucceed(() => undefined),
-      );
-      const context = yield* personalMemory.value.contextForThread({
-        threadId,
-        query,
-        projectId: Option.isSome(thread) ? thread.value.projectId : undefined,
-        record: true,
-        ...(messageId !== undefined ? { messageId } : {}),
-        excludeTaskSummaries: messageId !== undefined && isPersonalTaskMessageId(messageId),
-        session:
-          session === undefined
-            ? undefined
-            : {
-                key: `${session.providerInstanceId ?? session.provider}:${session.createdAt}`,
-                fresh: freshSession,
-              },
-      });
-      const block = context.block?.trim() ?? "";
-      if (block.length === 0) return undefined;
-      const preferencesBlock = context.preferencesBlock?.trim() ?? "";
-      return {
-        block,
-        ...(preferencesBlock.length > 0 && preferencesBlock !== block ? { preferencesBlock } : {}),
-      };
-    }).pipe(
-      // contextForThread logs its own failures; this catches what escapes it
-      // (a defect in a lookup around it), so the loss is never silent either.
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.logWarning("personal memory lookup failed; sending the turn without memory", {
-              threadId,
-              errorTag: PersonalMemoryService.errorTagOf(Cause.squash(cause)),
-              cause: PersonalMemoryService.redactSecrets(Cause.pretty(cause)).slice(0, 2_000),
-            }).pipe(Effect.as(undefined)),
-      ),
-    );
+  const personalTurnContext = makePersonalTurnContext({
+    personalBots,
+    personalMemory,
+    voiceCalls,
+    projectionSnapshotQuery,
+  });
   /**
    * A bot chat whose bot now runs on another provider than the chat's session
    * (the owner moved the bot, e.g. Claude to Codex). The chat moves with the
@@ -464,24 +368,6 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           cause: Cause.pretty(cause),
         }).pipe(Effect.as(undefined)),
-      ),
-    );
-  /**
-   * Whether a thread is linked in personal_bot_threads (bot chats, and the
-   * task and routine threads that run through them). Title refinement skips
-   * these threads, and a user-started chat's first message seeds its title
-   * (see personalFirstTurnTitleThread). An explicit "regenerate title" still
-   * runs. A failed lookup counts as not personal, which keeps upstream
-   * behaviour.
-   */
-  const isPersonalBotThread = (threadId: ThreadId) =>
-    personalBots.getThreadLink({ threadId }).pipe(
-      Effect.map(Option.isSome),
-      Effect.catchCause((cause) =>
-        Effect.logDebug("personal bot thread lookup failed; treating thread as not personal", {
-          threadId,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as(false)),
       ),
     );
   const terminalManager = yield* TerminalManager.TerminalManager;
@@ -1154,7 +1040,8 @@ const make = Effect.gen(function* () {
       readonly provider?: ProviderDriverKind;
       readonly freshSession?: boolean;
     }) =>
-      personalBotInstructions(threadId).pipe(
+      personalTurnContext.sessionInstructions(threadId).pipe(
+        Effect.map(Option.getOrUndefined),
         Effect.flatMap((systemInstructions) =>
           providerService
             .startSession(threadId, {
@@ -1396,6 +1283,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly messageId?: MessageId;
     readonly messageText: string;
+    readonly messageContext?: OrchestrationMessageContext;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
@@ -1444,28 +1332,28 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const systemInstructions = yield* personalBotInstructions(input.threadId);
-    const memory = normalizedInput
-      ? yield* personalMemoryForTurn(
-          input.threadId,
-          input.messageText,
-          input.messageId,
-          input.freshSession === true,
-        )
+    const activeSession = yield* providerService
+      .listSessions()
+      .pipe(
+        Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
+      );
+    const systemInstructions = Option.getOrUndefined(
+      yield* personalTurnContext.sessionInstructions(input.threadId),
+    );
+    const personalTurn = normalizedInput
+      ? yield* personalTurnContext.prepareTurn({
+          threadId: input.threadId,
+          messageId: input.messageId,
+          text: input.messageText,
+          context: input.messageContext,
+          freshSession: input.freshSession === true,
+          activeSession,
+        })
       : undefined;
-    const memoryContext = memory?.block;
-    // Calls the bot has never been shown: their summaries go in front of the
-    // memory (the memory block's own rules open with "Known facts", so it reads
-    // correctly wherever it sits) and are dropped only by the usual input cap.
-    const callSummaries = normalizedInput
-      ? yield* voiceCallSummariesForTurn(input.threadId)
-      : ([] as ReadonlyArray<VoiceCallRecord>);
-    // The packer keeps within its own cap and reports which calls it actually
-    // carries: the ones it left out have NOT been shown to the bot, so they stay
-    // due for a later turn, and nothing is retired until the send really
-    // delivered this request's context (Astra re-check R2).
-    const packedCallContext = voiceCallSummaryContextPacked(callSummaries);
-    const callContext = packedCallContext.block;
+    const turnText =
+      personalTurn === undefined ? normalizedInput : toNonEmptyProviderInput(personalTurn.text);
+    const memoryContext = personalTurn?.memoryBlock;
+    const callContext = personalTurn?.callContext ?? "";
     const withCallSummary = (text: string | undefined): string | undefined =>
       callContext === ""
         ? text
@@ -1484,7 +1372,7 @@ const make = Effect.gen(function* () {
             maxChars: Math.min(
               input.handoffMaxChars ?? Number.POSITIVE_INFINITY,
               PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
-                input.messageText.length -
+                (turnText?.length ?? input.messageText.length) -
                 (memoryContext?.length ?? 0) -
                 callContext.length -
                 HANDOFF_INPUT_MARGIN_CHARS,
@@ -1495,7 +1383,7 @@ const make = Effect.gen(function* () {
       handoff !== undefined && memoryText !== undefined
         ? `${handoff}\n\n${memoryText}`
         : (handoff ?? memoryText);
-    const turnContext = withHandoff(withCallSummary(memoryContext));
+    const turnContext = withHandoff(personalTurn?.extraContext);
     // What the turn falls back to when the input leaves too little room, most
     // complete first: the preferences without the notes and task summaries,
     // then the memory without the chat handoff (the handoff is sized to the
@@ -1503,26 +1391,21 @@ const make = Effect.gen(function* () {
     // call summary is small and is kept in every one of them: it is the only
     // trace the bot has that the call happened.
     const turnContextFallbacks: Array<{ text: string; dropped: string }> = [];
-    if (memory?.preferencesBlock !== undefined) {
-      const text = withHandoff(prependCallSummary(memory.preferencesBlock));
+    if (personalTurn?.memoryPreferencesBlock !== undefined) {
+      const text = withHandoff(prependCallSummary(personalTurn.memoryPreferencesBlock));
       if (text !== undefined) {
         turnContextFallbacks.push({ text, dropped: "notes and task summaries" });
       }
     }
-    if (handoff !== undefined && memoryContext !== undefined) {
+    if (handoff !== undefined && personalTurn?.memoryBlock !== undefined) {
       turnContextFallbacks.push({
-        text: prependCallSummary(memory?.preferencesBlock ?? memoryContext),
+        text: prependCallSummary(personalTurn.memoryPreferencesBlock ?? personalTurn.memoryBlock),
         dropped:
-          memory?.preferencesBlock !== undefined
+          personalTurn.memoryPreferencesBlock !== undefined
             ? "notes, task summaries and the earlier-chat handoff"
             : "the earlier-chat handoff",
       });
     }
-    const activeSession = yield* providerService
-      .listSessions()
-      .pipe(
-        Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
-      );
     const sessionModelSwitch =
       activeSession === undefined
         ? "in-session"
@@ -1550,7 +1433,7 @@ const make = Effect.gen(function* () {
       request: {
         threadId: input.threadId,
         ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
-        ...(normalizedInput ? { input: normalizedInput } : {}),
+        ...(turnText ? { input: turnText } : {}),
         ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
         ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
@@ -1561,8 +1444,7 @@ const make = Effect.gen(function* () {
           ? { turnContextFallbacks }
           : {}),
       },
-      /** The calls this request's context really carries, for delivery. */
-      summaryCallIds: packedCallContext.callIds,
+      onSent: personalTurn?.onSent ?? (() => Effect.void),
     };
   });
 
@@ -1667,7 +1549,7 @@ const make = Effect.gen(function* () {
         // A bot's open chats have unique names: a taken AI title gets a number.
         yield* withChatTitleLock(
           Effect.gen(function* () {
-            const title = yield* uniqueAutomaticTitle(personalBots, {
+            const title = yield* personalTurnContext.uniqueTitle({
               threadId: input.threadId,
               title:
                 generated.title === DEFAULT_THREAD_TITLE ? input.expectedTitle : generated.title,
@@ -1722,7 +1604,7 @@ const make = Effect.gen(function* () {
         titleSeed === undefined ||
         thread.titleState?.source === "manual" ||
         (title !== PERSONAL_THREAD_TITLE && title !== DEFAULT_THREAD_TITLE) ||
-        !(yield* isPersonalBotThread(thread.id))
+        !(yield* personalTurnContext.isPersonalBotThread(thread.id))
       ) {
         return thread;
       }
@@ -1730,7 +1612,7 @@ const make = Effect.gen(function* () {
       // already has gets a number after it.
       yield* withChatTitleLock(
         Effect.gen(function* () {
-          const title = yield* uniqueAutomaticTitle(personalBots, {
+          const title = yield* personalTurnContext.uniqueTitle({
             threadId: thread.id,
             title: titleSeed,
           });
@@ -1770,7 +1652,7 @@ const make = Effect.gen(function* () {
       thread.session?.status !== "ready"
     )
       return;
-    if (yield* isPersonalBotThread(threadId)) return;
+    if (yield* personalTurnContext.isPersonalBotThread(threadId)) return;
     const detail = yield* resolveThreadDetail(threadId);
     if (!detail || detail.messages.filter((message) => message.role === "user").length !== 1)
       return;
@@ -1848,7 +1730,7 @@ const make = Effect.gen(function* () {
         const title =
           input.title === undefined
             ? undefined
-            : yield* uniqueAutomaticTitle(personalBots, {
+            : yield* personalTurnContext.uniqueTitle({
                 threadId: input.threadId,
                 title: input.title,
               });
@@ -2293,14 +2175,13 @@ const make = Effect.gen(function* () {
     const turnInput = {
       threadId: event.payload.threadId,
       messageId: event.payload.messageId,
-      // A reply keeps its quote off the stored text; the model reads it here.
-      messageText: withPersonalReplyQuote(
-        projectComposerContextForProvider({
-          text: message.text,
-          records: message.context?.records ?? [],
-        }),
-        message.context,
-      ),
+      messageText: projectComposerContextForProvider({
+        text: message.text,
+        records: message.context?.records ?? [],
+      }),
+      ...(message.context !== null && message.context !== undefined
+        ? { messageContext: message.context }
+        : {}),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       interactionMode: event.payload.interactionMode,
       ...(event.payload.followUp !== undefined ? { followUp: event.payload.followUp } : {}),
@@ -2340,8 +2221,7 @@ const make = Effect.gen(function* () {
       });
       return {
         request: built.request,
-        /** Which calls this build put in the turn's context (may be none). */
-        summaryCallIds: built.summaryCallIds,
+        onSent: built.onSent,
         modelSelection,
         fresh: providerSwitch?.freshSession === true || taskFresh,
       } as const;
@@ -2362,31 +2242,13 @@ const make = Effect.gen(function* () {
     // Retiring a call summary happens at the send, never at the build, so the
     // rebuilt request still finds the calls due and this retry carries them too
     // (Astra re-check R2).
-    const confirmCallSummariesDelivered = (
-      turn: { readonly turnContextDelivery?: "full" | "reduced" | "none" | undefined },
-      callIds: ReadonlyArray<string>,
-    ) =>
-      Effect.gen(function* () {
-        // "none" means the provider had to leave the turn's context out: the
-        // bot never saw the block, so nothing may be retired.
-        if (turn.turnContextDelivery === "none" || callIds.length === 0) return;
-        yield* voiceCalls.markSummariesDelivered({ callIds, at: yield* DateTime.now }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("personal voice call summaries could not be marked delivered", {
-              threadId: event.payload.threadId,
-              count: callIds.length,
-              errorTag: errorTagOf(cause),
-            }),
-          ),
-        );
-      });
     const sendBuilt = (built: {
       readonly request: Parameters<typeof providerService.sendTurn>[0];
-      readonly summaryCallIds: ReadonlyArray<string>;
+      readonly onSent: (delivery: "full" | "reduced" | "none" | undefined) => Effect.Effect<void>;
     }) =>
       providerService
         .sendTurn(built.request)
-        .pipe(Effect.tap((turn) => confirmCallSummariesDelivered(turn, built.summaryCallIds)));
+        .pipe(Effect.tap((turn) => built.onSent(turn.turnContextDelivery)));
     const renewSessionAndSend = (cause: Cause.Cause<unknown>) =>
       Effect.gen(function* () {
         const current = yield* resolveThreadShell(event.payload.threadId);
@@ -2427,14 +2289,6 @@ const make = Effect.gen(function* () {
         isMissingProviderConversationText(Cause.pretty(cause))
           ? renewSessionAndSend(cause)
           : Effect.failCause(cause),
-      ),
-      // The bot has its memory's preference list only once the send went
-      // through with the block in front of the prompt; a failed send, or one
-      // that had to leave the block out, leaves the full list due next time.
-      Effect.tap((turn) =>
-        Option.isSome(personalMemory) && turn.turnContextDelivery !== "none"
-          ? personalMemory.value.confirmPreferencesSent(event.payload.threadId)
-          : Effect.void,
       ),
       Effect.asVoid,
       Effect.catchCause(recoverTurnStartFailure),

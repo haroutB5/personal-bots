@@ -89,6 +89,7 @@ import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PersonalSessionAccess from "../../personal/secrets/PersonalSessionAccess.ts";
+import { makePersonalThreadLookup } from "../../personal/turnContext/PersonalTurnContext.ts";
 import { makeProviderEventSecretFilter } from "../secretEventRedaction.ts";
 const isModelSelection = Schema.is(ModelSelection);
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -501,6 +502,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   // Only for the personal-bot thread check below; provider-only runtimes and
   // tests without SQLite simply never grant the "personal" toolset.
   const personalSql = yield* Effect.serviceOption(SqlClient.SqlClient);
+  const personalLookup = makePersonalThreadLookup({ personalSessions, personalSql });
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -957,53 +959,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return capabilities;
   });
 
-  /** Routines and memory tools belong to personal-bot threads only. */
-  const isPersonalBotThread = (threadId: ThreadId) =>
-    Option.match(personalSql, {
-      onNone: () => Effect.succeed(false),
-      onSome: (sql) =>
-        sql`SELECT 1 AS "present" FROM personal_bot_threads WHERE thread_id = ${threadId} LIMIT 1`.pipe(
-          Effect.map((rows) => rows.length > 0),
-          Effect.orElseSucceed(() => false),
-        ),
-    });
-
-  /**
-   * Whether a bot thread was made for a delegated task or a routine run, or is
-   * a routine's own chat: the same markers as `taskChat` and `routineChat` in
-   * PersonalBotRepository's chat facts (the thread came after its task, or a
-   * routine relay post). A chat a task continued with continueChatId is the
-   * owner's, so it is never one. Fails closed to "the owner's chat".
-   */
-  const isPersonalTaskChat = (threadId: ThreadId) =>
-    Option.match(personalSql, {
-      onNone: () => Effect.succeed(false),
-      onSome: (sql) =>
-        sql<{ readonly taskChat: number }>`
-          SELECT (
-            EXISTS (
-              SELECT 1 FROM personal_tasks d
-              WHERE d.thread_id = t.thread_id
-                AND (
-                  (d.source IN ('delegation', 'routine') AND d.created_at <= t.created_at)
-                  OR (d.source = 'routine' AND EXISTS (
-                    SELECT 1 FROM projection_thread_messages relay
-                    WHERE relay.thread_id = t.thread_id
-                      AND relay.role = 'assistant' AND relay.message_id LIKE 'personal-relay-%'
-                  ))
-                )
-            )
-            OR EXISTS (SELECT 1 FROM personal_routines r WHERE r.thread_id = t.thread_id)
-          ) AS "taskChat"
-          FROM personal_bot_threads t
-          WHERE t.thread_id = ${threadId}
-          LIMIT 1
-        `.pipe(
-          Effect.map((rows) => Number(rows[0]?.taskChat ?? 0) === 1),
-          Effect.orElseSucceed(() => false),
-        ),
-    });
-
   /** Install only the local CLI here. device_open supplies a separate config for each host. */
   const hostPlatform = yield* HostProcessPlatform;
   const agentDeviceEnvironment = Effect.gen(function* () {
@@ -1033,47 +988,43 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
-      // Read once per session start: the capability and the secret variables
-      // both come from the thread's personal-bot link. A session that started
-      // before a secret was saved does not see it; the task dispatcher
+      // Read once per session start: the capability, the flags and the secret
+      // variables all come from the thread's personal-bot link. A session that
+      // started before a secret was saved does not see it; the task dispatcher
       // restarts the session before resuming a task that waited for one.
-      const personal = Option.isSome(personalSessions)
-        ? yield* personalSessions.value.forThread(threadId)
-        : null;
-      const botGrant = personal !== null && personal.botId !== null;
-      const linked = yield* isPersonalBotThread(threadId);
-      const capabilities = yield* agentAccessCapabilities(threadId, { botGrant, linked });
+      const personal = yield* personalLookup.lookupThread(threadId);
+      const capabilities = yield* agentAccessCapabilities(threadId, {
+        botGrant: personal.botGrant,
+        linked: personal.linked,
+      });
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
           ? yield* agentDeviceEnvironment
           : undefined;
-        const secretEnvironment =
-          personal !== null && Object.keys(personal.environment).length > 0
-            ? personal.environment
-            : undefined;
         yield* Effect.sync(() =>
           McpProviderSession.setMcpProviderSession({
             ...credential.config,
             ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
-            ...(secretEnvironment ? { personalSecretEnvironment: secretEnvironment } : {}),
+            ...(personal.secretEnvironment
+              ? { personalSecretEnvironment: personal.secretEnvironment }
+              : {}),
           }),
         );
       }
-      const personalTaskChat = botGrant || linked ? yield* isPersonalTaskChat(threadId) : false;
       // Decided here, where the thread's personal-bot link is already read,
       // so adapters never re-query it. It narrows the toolset and is set even
       // when no MCP credential could be issued, so isolation never fails open.
       return {
-        personalBot: botGrant || linked,
+        personalBot: personal.personalBot,
         // Task and routine chats cap their context by auto-compaction; the
         // owner's own chats never do (he compacts those himself).
-        personalTaskChat,
+        personalTaskChat: personal.personalTaskChat,
         // Only recovery uses this: fresh starts carry the reactor's own
         // instructions (plus memory context) on their start input.
-        systemInstructions: personal?.systemInstructions ?? undefined,
+        systemInstructions: personal.systemInstructions,
         // Lets the adapter load the bot's own plugin folder (per-bot skills).
-        personalBotId: personal?.botId ?? undefined,
+        personalBotId: personal.personalBotId,
       };
     });
   const clearMcpSession = (threadId: ThreadId) =>
@@ -1920,8 +1871,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     // The reactor always sends a bot's instructions; turns sent from elsewhere
     // (the post-restart continuation) do not, and Codex reads them per turn.
     const fallbackInstructions =
-      parsed.systemInstructions === undefined && Option.isSome(personalSessions)
-        ? yield* personalSessions.value.instructionsForThread(parsed.threadId)
+      parsed.systemInstructions === undefined
+        ? Option.getOrUndefined(yield* personalLookup.sessionInstructions(parsed.threadId))
         : null;
     const input = {
       ...parsedWithoutTurnContext,
