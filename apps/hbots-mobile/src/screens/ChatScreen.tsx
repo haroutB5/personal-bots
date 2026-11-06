@@ -22,9 +22,7 @@ import * as Option from "effect/Option";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Linking,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -67,6 +65,7 @@ import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
 import { MessageList } from "../chat/MessageList";
 import type { MessageListHandle } from "../chat/MessageList";
 import { useChatCards } from "../chat/useChatCards";
+import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import { BotAvatar } from "../shell/BotAvatar";
@@ -152,6 +151,7 @@ export function ChatScreen({
   const prewarmed = useRef(false);
   const openedAt = useRef(performance.now());
   const openLogged = useRef(false);
+  const keyboard = useKeyboardInset();
   const messageListControl = useRef<MessageListHandle | null>(null);
   const revealCard = (itemId: string) => messageListControl.current?.scrollToCard(itemId);
 
@@ -531,10 +531,7 @@ export function ChatScreen({
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={[styles.screen, { paddingTop: insets.top }]}
-    >
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
       {searchOpen ? (
         <View style={styles.searchHeader}>
           <View style={styles.searchBox}>
@@ -674,141 +671,144 @@ export function ChatScreen({
         </ScrollView>
       ) : null}
 
-      {searchOpen ? (
-        <ScrollView style={styles.searchResults} keyboardShouldPersistTaps="handled">
-          {searchRows.length === 0 ? (
-            <Text style={styles.searchEmpty}>
-              {search.trim().length < SEARCH_MIN_CHARS
-                ? "Type at least two letters."
-                : searchBusy
-                  ? "Searching…"
-                  : "No messages match."}
-            </Text>
-          ) : (
-            searchRows.map((row) => (
-              <Pressable
-                key={`${row.threadId}:${row.snippet}`}
-                onPress={() => {
-                  setSearchOpen(false);
-                  onOpenChat(botId, row.threadId);
-                }}
-                accessibilityRole="button"
-                style={styles.searchRow}
-              >
-                <Text style={styles.searchTitle} numberOfLines={1}>
-                  {row.title}
-                </Text>
-                <Text style={styles.searchSnippet} numberOfLines={2}>
-                  {row.snippet}
-                </Text>
-              </Pressable>
-            ))
-          )}
-        </ScrollView>
-      ) : actionError !== null ? (
-        <Pressable
-          onPress={() => setActionError(null)}
-          accessibilityRole="alert"
-          style={styles.errorBox}
-        >
-          <Text style={styles.errorText}>{actionError}</Text>
-        </Pressable>
-      ) : null}
+      <View style={[styles.body, { paddingBottom: keyboard.padding }]} onLayout={keyboard.onLayout}>
+        {searchOpen ? (
+          <ScrollView style={styles.searchResults} keyboardShouldPersistTaps="handled">
+            {searchRows.length === 0 ? (
+              <Text style={styles.searchEmpty}>
+                {search.trim().length < SEARCH_MIN_CHARS
+                  ? "Type at least two letters."
+                  : searchBusy
+                    ? "Searching…"
+                    : "No messages match."}
+              </Text>
+            ) : (
+              searchRows.map((row) => (
+                <Pressable
+                  key={`${row.threadId}:${row.snippet}`}
+                  onPress={() => {
+                    setSearchOpen(false);
+                    onOpenChat(botId, row.threadId);
+                  }}
+                  accessibilityRole="button"
+                  style={styles.searchRow}
+                >
+                  <Text style={styles.searchTitle} numberOfLines={1}>
+                    {row.title}
+                  </Text>
+                  <Text style={styles.searchSnippet} numberOfLines={2}>
+                    {row.snippet}
+                  </Text>
+                </Pressable>
+              ))
+            )}
+          </ScrollView>
+        ) : actionError !== null ? (
+          <Pressable
+            onPress={() => setActionError(null)}
+            accessibilityRole="alert"
+            style={styles.errorBox}
+          >
+            <Text style={styles.errorText}>{actionError}</Text>
+          </Pressable>
+        ) : null}
 
-      {thread === null ? (
-        <View style={styles.center}>
-          {view.status === "empty" && view.error !== null ? (
-            <>
-              <Text style={styles.centerText}>Couldn't load this chat.</Text>
-              <Pressable onPress={retryThread} accessibilityRole="button" style={styles.retry}>
-                <Text style={styles.retryText}>Try again</Text>
-              </Pressable>
-            </>
-          ) : (
-            <>
-              <ActivityIndicator color={tokens.textSecondary} />
-              <Text style={styles.centerText}>Loading chat</Text>
-            </>
-          )}
-        </View>
-      ) : (
-        <>
-          {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
-          <MessageList
-            native={native}
-            chat={chat}
-            cardContext={cards.context}
-            items={cards.items}
-            pending={pending}
-            queued={queued}
-            botName={header.botName}
-            currentUserId="You"
-            activities={thread.activities}
-            latestTurn={thread.latestTurn}
-            busy={running}
-            latestMessageStatus={latestMessageStatus}
-            onReply={(quote) => setReplyTo(quote)}
-            onMessageMenu={setMessageMenu}
-            onOpenFile={(path) => setFilePath(path)}
-            onOpenLink={(url) => {
-              void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
-            }}
-            onCancelQueued={(id) => removeOutboxEntry(id)}
-            onRetryQueued={(id) => {
-              retryOutboxEntry(id);
-              // Retry means now. A socket waiting out its backoff would
-              // otherwise turn the tap into another 20 s of "Sending…".
-              if (!native.readConnection().connected) native.retry();
-            }}
-            onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
-            loadEarlierBusy={page?.loadingOlder === true}
-            listControl={messageListControl}
-          />
-          {archived ? (
-            <View style={[styles.archiveBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-              <Text style={styles.archiveText}>Archived · Unarchive to send messages again.</Text>
-              <Pressable onPress={() => void archive()} accessibilityRole="button">
-                <Text style={styles.archiveAction}>Unarchive</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
-              <Pressable
-                onPress={() =>
-                  setActionError("The live computer view arrives with the Computer tab.")
-                }
-                accessibilityRole="button"
-                accessibilityLabel="Computer"
-                style={styles.computerDock}
-              >
-                <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
-                <Text style={styles.computerDockText}>Computer</Text>
-              </Pressable>
-              <Composer
-                native={native}
-                chat={chat}
-                thread={thread}
-                threadId={threadId}
-                bot={record?.bot ?? null}
-                botName={header.botName}
-                working={running}
-                replyTo={replyTo}
-                onClearReply={() => setReplyTo(null)}
-                onPendingChange={setPending}
-                onSendError={setActionError}
-                onInterrupt={async () => {
-                  const result = await interrupt({
-                    environmentId,
-                    input: { threadId: ThreadId.make(threadId) },
-                  });
-                  setActionError(failureText(result, "Couldn't stop this turn."));
-                }}
-                onSent={() => undefined}
-              />
-            </View>
-          )}
-        </>
-      )}
+        {thread === null ? (
+          <View style={styles.center}>
+            {view.status === "empty" && view.error !== null ? (
+              <>
+                <Text style={styles.centerText}>Couldn't load this chat.</Text>
+                <Pressable onPress={retryThread} accessibilityRole="button" style={styles.retry}>
+                  <Text style={styles.retryText}>Try again</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <ActivityIndicator color={tokens.textSecondary} />
+                <Text style={styles.centerText}>Loading chat</Text>
+              </>
+            )}
+          </View>
+        ) : (
+          <>
+            {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
+            <MessageList
+              native={native}
+              chat={chat}
+              cardContext={cards.context}
+              items={cards.items}
+              pending={pending}
+              queued={queued}
+              botName={header.botName}
+              currentUserId="You"
+              activities={thread.activities}
+              latestTurn={thread.latestTurn}
+              busy={running}
+              latestMessageStatus={latestMessageStatus}
+              onReply={(quote) => setReplyTo(quote)}
+              onMessageMenu={setMessageMenu}
+              onOpenFile={(path) => setFilePath(path)}
+              onOpenLink={(url) => {
+                void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
+              }}
+              onCancelQueued={(id) => removeOutboxEntry(id)}
+              onRetryQueued={(id) => {
+                retryOutboxEntry(id);
+                // Retry means now. A socket waiting out its backoff would
+                // otherwise turn the tap into another 20 s of "Sending…".
+                if (!native.readConnection().connected) native.retry();
+              }}
+              onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
+              loadEarlierBusy={page?.loadingOlder === true}
+              listControl={messageListControl}
+              keyboardInset={keyboard.padding}
+            />
+            {archived ? (
+              <View style={[styles.archiveBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+                <Text style={styles.archiveText}>Archived · Unarchive to send messages again.</Text>
+                <Pressable onPress={() => void archive()} accessibilityRole="button">
+                  <Text style={styles.archiveAction}>Unarchive</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
+                <Pressable
+                  onPress={() =>
+                    setActionError("The live computer view arrives with the Computer tab.")
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel="Computer"
+                  style={styles.computerDock}
+                >
+                  <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
+                  <Text style={styles.computerDockText}>Computer</Text>
+                </Pressable>
+                <Composer
+                  native={native}
+                  chat={chat}
+                  thread={thread}
+                  threadId={threadId}
+                  bot={record?.bot ?? null}
+                  botName={header.botName}
+                  working={running}
+                  replyTo={replyTo}
+                  onClearReply={() => setReplyTo(null)}
+                  onPendingChange={setPending}
+                  onSendError={setActionError}
+                  onInterrupt={async () => {
+                    const result = await interrupt({
+                      environmentId,
+                      input: { threadId: ThreadId.make(threadId) },
+                    });
+                    setActionError(failureText(result, "Couldn't stop this turn."));
+                  }}
+                  onSent={() => undefined}
+                />
+              </View>
+            )}
+          </>
+        )}
+      </View>
 
       <ChatMenuSheet
         visible={menuOpen}
@@ -949,7 +949,7 @@ export function ChatScreen({
         path={filePath}
         onClose={() => setFilePath(null)}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -1050,6 +1050,7 @@ function ChatHeader({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.bg },
+  body: { flex: 1 },
   header: {
     minHeight: 52,
     flexDirection: "row",

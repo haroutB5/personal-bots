@@ -1,6 +1,5 @@
 import {
   Animated,
-  Keyboard,
   Modal,
   PanResponder,
   Pressable,
@@ -8,55 +7,14 @@ import {
   Text,
   View,
   useWindowDimensions,
-  type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconX } from "@tabler/icons-react-native";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { PropsWithChildren } from "react";
 
 import { tokens } from "../shell/tokens";
-
-/**
- * A sheet inside the screen already sits above whatever the window resize took
- * away from the keyboard. When the keyboard is taller than that shrink, the
- * remainder is what still covers the buttons, so pad by the difference.
- */
-function useKeyboardRemainder(active: boolean): {
-  readonly padding: number;
-  readonly onLayout: (event: LayoutChangeEvent) => void;
-} {
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [frameHeight, setFrameHeight] = useState(0);
-  const baseHeight = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!active) return;
-    const show = Keyboard.addListener("keyboardDidShow", (event) => {
-      setKeyboardHeight(event.endCoordinates.height);
-    });
-    const hide = Keyboard.addListener("keyboardDidHide", () => {
-      setKeyboardHeight(0);
-      baseHeight.current = null;
-    });
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, [active]);
-
-  if (!active) return { padding: 0, onLayout: () => undefined };
-  const onLayout = (event: LayoutChangeEvent) => {
-    const height = event.nativeEvent.layout.height;
-    setFrameHeight(height);
-    if (keyboardHeight === 0) baseHeight.current = height;
-  };
-  if (keyboardHeight === 0 || baseHeight.current === null) {
-    return { padding: 0, onLayout };
-  }
-  const shrunk = Math.max(0, baseHeight.current - frameHeight);
-  return { padding: Math.max(0, keyboardHeight - shrunk), onLayout };
-}
+import { useKeyboardInset } from "../platform/useKeyboardInset";
 
 export function SheetShell({
   visible,
@@ -73,7 +31,7 @@ export function SheetShell({
 }>) {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
-  const keyboard = useKeyboardRemainder(inline && visible);
+  const keyboard = useKeyboardInset(inline && visible);
   const translateY = useRef(new Animated.Value(0)).current;
   const responder = useRef(
     PanResponder.create({

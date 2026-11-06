@@ -25,16 +25,7 @@ import {
   IconPaperclip,
 } from "@tabler/icons-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, createElement } from "react";
-import {
-  Animated,
-  FlatList,
-  Keyboard,
-  PanResponder,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Animated, FlatList, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
@@ -55,14 +46,14 @@ import {
   type MarkdownBlock,
 } from "./markdown";
 
+export interface MessageListHandle {
+  readonly scrollToCard: (itemId: string) => void;
+}
+
 type Row =
   | { readonly kind: "item"; readonly key: string; readonly item: ConversationItem }
   | { readonly kind: "pending"; readonly key: string; readonly message: PendingOutgoingMessage }
   | { readonly kind: "queued"; readonly key: string; readonly row: OutboxRow };
-
-export interface MessageListHandle {
-  readonly scrollToCard: (itemId: string) => void;
-}
 
 type ImageAttachment = Extract<ChatAttachment, { readonly type: "image" }>;
 
@@ -480,6 +471,7 @@ export function MessageList({
   loadEarlierBusy,
   groupSpeaker,
   listControl,
+  keyboardInset = 0,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -506,6 +498,8 @@ export function MessageList({
   readonly onRetryQueued: (id: string) => void;
   readonly onLoadEarlier: (() => void) | null;
   readonly loadEarlierBusy: boolean;
+  /** The body's keyboard padding, so the reveal runs after the list shrinks. */
+  readonly keyboardInset?: number;
   /** Set by the chat screen so a card can bring itself above the keyboard. */
   readonly listControl?: { current: MessageListHandle | null };
   /** Group transcripts only: who a member message belongs to. */
@@ -535,7 +529,9 @@ export function MessageList({
       lastReveal.current = itemId;
       const index = scrollIndexForItem(rows, itemId);
       if (index === null) return;
-      listRef.current?.scrollToIndex({ index, viewPosition: 0, animated: true });
+      // Inverted: viewPosition 1 puts the card's top at the visible top, so
+      // the field sits just under the header and Save scrolls above the IME.
+      listRef.current?.scrollToIndex({ index, viewPosition: 1, animated: true });
     },
     [rows],
   );
@@ -547,11 +543,12 @@ export function MessageList({
     };
   }, [listControl, scrollToCard]);
   useEffect(() => {
-    const subscription = Keyboard.addListener("keyboardDidShow", () => {
+    if (keyboardInset <= 0 || lastReveal.current === null) return;
+    const frame = requestAnimationFrame(() => {
       if (lastReveal.current !== null) scrollToCard(lastReveal.current);
     });
-    return () => subscription.remove();
-  }, [scrollToCard]);
+    return () => cancelAnimationFrame(frame);
+  }, [keyboardInset, scrollToCard]);
 
   return (
     <FlatList
