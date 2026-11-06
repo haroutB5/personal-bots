@@ -1,7 +1,7 @@
 {
   "appRulesBytes": 8301,
-  "claudeSystemAppendBytes": 10345,
-  "codexAdditionalContextBytes": 12466,
+  "claudeSystemAppendBytes": 10596,
+  "codexAdditionalContextBytes": 16388,
   "mcpToolCount": 76,
-  "mcpToolListJsonBytes": 76121
+  "mcpToolListJsonBytes": 71898
 }

@@ -212,7 +212,7 @@ const withEngine = <A, E>(
   program: (engine: PersonalEngine["Service"]) => Effect.Effect<A, E, SqlClient.SqlClient>,
 ) =>
   Effect.gen(function* () {
-    yield* runMigrations({ toMigrationInclusive: 141 });
+    yield* runMigrations({ toMigrationInclusive: 142 });
     const engine = yield* PersonalEngine;
     return yield* program(engine);
   }).pipe(Effect.provide(makeLayer(shells)));

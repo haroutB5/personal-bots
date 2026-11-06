@@ -105,6 +105,20 @@ export const toPersonalSessionView = (session: OrchestrationSession): PersonalSe
 
 const CONTINUATION_PROMPT = "Continue where you left off.";
 
+const writeTitleState =
+  (input: {
+    readonly threadId: ThreadId;
+    readonly source: "manual" | "generated";
+    readonly version: string;
+  }) =>
+  (sql: SqlClient.SqlClient) =>
+    sql`
+    INSERT INTO personal_thread_title_state (thread_id, source, version, updated_at)
+    VALUES (${input.threadId}, ${input.source}, ${input.version}, ${DateTime.formatIso(DateTime.makeUnsafe(Date.now()))})
+    ON CONFLICT(thread_id) DO UPDATE SET
+      source = excluded.source, version = excluded.version, updated_at = excluded.updated_at
+  `;
+
 const engineError = (operation: string) => (failure: unknown) =>
   new PersonalEngineError({ operation, detail: failureDetail(failure) });
 
@@ -220,10 +234,24 @@ const make = Effect.gen(function* () {
         WHERE thread_id = ${threadId}
       `;
       const retry = retries[0];
+      const titleStates = yield* sql<{
+        readonly source: "manual" | "generated";
+        readonly version: string;
+      }>`
+        SELECT source, version FROM personal_thread_title_state WHERE thread_id = ${threadId}
+      `;
+      const titleState = titleStates[0];
       return {
         providerName: drivers[0]?.driver ?? null,
         providerRetry: retry === undefined ? null : retryViewOf(retry),
-        titleState: null,
+        titleState:
+          titleState === undefined
+            ? null
+            : {
+                source: titleState.source,
+                version: titleState.version as CommandId,
+                needsRefinement: false,
+              },
       };
     }).pipe(Effect.orElseSucceed(() => EMPTY_SHELL_EXTRAS));
 
@@ -359,6 +387,13 @@ const make = Effect.gen(function* () {
         createdBy: "system",
         creationSource: "server",
       });
+      if (input.titleSeed !== undefined) {
+        yield* writeTitleState({
+          threadId: input.threadId,
+          source: "generated",
+          version: `server:personal-thread-title-seed:${input.messageId}`,
+        })(sql);
+      }
     }).pipe(Effect.mapError(engineError("send")));
 
   const continueTurn = (
@@ -366,12 +401,16 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<void, PersonalEngineError> =>
     Effect.gen(function* () {
       const messageId = MessageId.make(`personal-continue:${crypto.randomUUID()}`);
+      // Codex can continue without a prompt, as it did on v1; the empty user
+      // message is hidden by the chat and only carries the turn.
+      const extras = yield* readExtras(input.threadId);
+      const promptless = extras.providerName === "codex";
       yield* threads.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(`personal-engine:continue:${messageId}`),
         threadId: input.threadId,
         messageId,
-        text: CONTINUATION_PROMPT,
+        text: promptless ? "" : CONTINUATION_PROMPT,
         attachments: [],
         dispatchMode: { type: "start_immediately" },
         createdBy: "system",
@@ -486,6 +525,13 @@ const make = Effect.gen(function* () {
               ...(input.branch === undefined ? {} : { branch: input.branch }),
               ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
             });
+            if (input.title !== undefined) {
+              yield* writeTitleState({
+                threadId: input.threadId,
+                source: "manual",
+                version: `personal-engine:thread.meta:${crypto.randomUUID()}`,
+              })(sql);
+            }
           }
           if (input.modelSelection !== undefined) {
             yield* threads.dispatch({
@@ -511,16 +557,22 @@ const make = Effect.gen(function* () {
             shell === null ||
             shell.deletedAt !== null ||
             shell.title !== input.expectedTitle ||
-            shell.titleRegeneration !== undefined
+            shell.titleRegeneration != null
           ) {
             return;
           }
+          const commandId = CommandId.make(`personal-engine:thread.title:${crypto.randomUUID()}`);
           yield* threads.dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make(`personal-engine:thread.title:${crypto.randomUUID()}`),
+            commandId,
             threadId: input.threadId,
             title: input.title,
           });
+          yield* writeTitleState({
+            threadId: input.threadId,
+            source: "generated",
+            version: commandId,
+          })(sql);
         }),
       );
     }).pipe(Effect.mapError(engineError("renameThreadIfUnchanged")));

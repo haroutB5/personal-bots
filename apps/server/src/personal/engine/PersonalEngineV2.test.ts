@@ -310,12 +310,12 @@ const layerFor = (harness: Harness) =>
     ),
   );
 
-const withEngine = <A, E>(
+const withEngine = <A, E, R = never>(
   harness: Harness,
-  program: (engine: PersonalEngine["Service"]) => Effect.Effect<A, E>,
+  program: (engine: PersonalEngine["Service"]) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
-    yield* runMigrations({ toMigrationInclusive: 141 });
+    yield* runMigrations({ toMigrationInclusive: 142 });
     const engine = yield* PersonalEngine;
     return yield* program(engine);
   }).pipe(Effect.provide(layerFor(harness)));
@@ -487,6 +487,48 @@ describe("PersonalEngineV2 verbs", () => {
       }),
     );
   });
+
+  it.effect("a continuation is promptless on Codex and carries the fallback prompt elsewhere", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* withEngine(harness, (engine) =>
+        Effect.gen(function* () {
+          yield* seedThread(harness, "thread-codex");
+          yield* seedThread(harness, "thread-claude");
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_provider_threads
+              (provider_thread_id, thread_id, owner_node_id, provider, provider_session_id, status,
+                first_run_ordinal, last_run_ordinal, updated_at, payload_json)
+            VALUES ('pt-codex', 'thread-codex', NULL, 'codex', NULL, 'active', 1, 1,
+              '2026-11-06T12:00:00.000Z', '{}')
+          `;
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_provider_threads
+              (provider_thread_id, thread_id, owner_node_id, provider, provider_session_id, status,
+                first_run_ordinal, last_run_ordinal, updated_at, payload_json)
+            VALUES ('pt-claude', 'thread-claude', NULL, 'claudeAgent', NULL, 'active', 1, 1,
+              '2026-11-06T12:00:00.000Z', '{}')
+          `;
+          yield* engine.continueTurn({
+            threadId: ThreadId.make("thread-codex"),
+            interactionMode: "default",
+          });
+          yield* engine.continueTurn({
+            threadId: ThreadId.make("thread-claude"),
+            interactionMode: "default",
+          });
+        }),
+      );
+      const dispatched = harness.dispatched.filter(
+        (command) => command.type === "message.dispatch",
+      );
+      expect(dispatched.map((command) => command.text)).toEqual([
+        "",
+        "Continue where you left off.",
+      ]);
+    }),
+  );
 
   it.effect("interrupt, stop, archive and delete reach the v2 commands", () => {
     const harness = makeHarness();
