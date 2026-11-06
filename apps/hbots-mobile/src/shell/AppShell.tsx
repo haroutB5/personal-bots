@@ -14,6 +14,7 @@ import { BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View } f
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AndroidRelease } from "../compat";
+import { chatComputerTarget } from "../chat/chatComputer";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
@@ -286,6 +287,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
               onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
               onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
+              onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
             />
           )}
         </Stack.Screen>

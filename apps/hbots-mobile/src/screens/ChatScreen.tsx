@@ -101,6 +101,7 @@ export function ChatScreen({
   onOpenChats,
   onOpenBot,
   onOpenRoutine,
+  onOpenComputer,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -111,6 +112,7 @@ export function ChatScreen({
   readonly onOpenChats: (botId: string) => void;
   readonly onOpenBot: (botId: string) => void;
   readonly onOpenRoutine: (routineId: string) => void;
+  readonly onOpenComputer: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId;
@@ -773,9 +775,7 @@ export function ChatScreen({
             ) : (
               <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
                 <Pressable
-                  onPress={() =>
-                    setActionError("The live computer view arrives with the Computer tab.")
-                  }
+                  onPress={onOpenComputer}
                   accessibilityRole="button"
                   accessibilityLabel="Computer"
                   style={styles.computerDock}
