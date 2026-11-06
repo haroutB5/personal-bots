@@ -18,6 +18,7 @@ object UpdateNotifier {
   private const val CHANNEL = "app_updates"
   private const val UPDATED_ID = 7201
   private const val READY_ID = 7202
+  private const val NEEDS_PERMISSION_ID = 7204
   private const val TAG = "HbotsUpdate"
   private const val NOTIFICATION_PERMISSION_REQUEST = 7203
 
@@ -95,6 +96,28 @@ object UpdateNotifier {
     post(context, READY_ID, "Update ready", "Tap to finish installing the hbots update.", content)
   }
 
+  fun postNeedsPermission(context: Context, versionName: String) {
+    if (!canPost(context)) return
+    ensureChannel(context)
+    post(
+      context,
+      NEEDS_PERMISSION_ID,
+      "Allow hbots to install updates",
+      "Update to $versionName is waiting. Tap to allow it.",
+      installPermissionIntent(context),
+    )
+  }
+
+  private fun installPermissionIntent(context: Context): PendingIntent {
+    val intent = UpdateInstaller.installPermissionIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    return PendingIntent.getActivity(
+      context,
+      NEEDS_PERMISSION_ID,
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+  }
+
   private fun post(context: Context, id: Int, title: String, text: String, content: PendingIntent) {
     val manager = context.getSystemService(NotificationManager::class.java) ?: return
     val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -117,7 +140,9 @@ object UpdateNotifier {
 
   fun clear(context: Context) {
     runCatching {
-      context.getSystemService(NotificationManager::class.java)?.cancel(READY_ID)
+      val manager = context.getSystemService(NotificationManager::class.java)
+      manager?.cancel(READY_ID)
+      manager?.cancel(NEEDS_PERMISSION_ID)
     }
   }
 }
