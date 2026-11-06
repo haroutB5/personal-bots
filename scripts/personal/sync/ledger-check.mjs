@@ -2,7 +2,8 @@
 //
 //   node scripts/personal/sync/ledger-check.mjs [--file <ledger.tsv>] [--patches <dir>] [--no-open-at <PR>]
 //
-// Columns: path  kind  ourLines  targetPR  status  reason
+// Columns: path  origin  kind  ourLines  targetPR  status  reason
+//   origin a rename's source path, empty when it equals path
 //   kind   modify-delete | content | added-broken
 //   status open | done | dropped
 //
@@ -17,7 +18,7 @@ import * as NodeURL from "node:url";
 
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const DEFAULT_LEDGER_PATH = NodePath.join(HERE, "v2-port-ledger", "ledger.tsv");
-export const LEDGER_HEADER = ["path", "kind", "ourLines", "targetPR", "status", "reason"];
+export const LEDGER_HEADER = ["path", "origin", "kind", "ourLines", "targetPR", "status", "reason"];
 export const LEDGER_KINDS = new Set(["modify-delete", "content", "added-broken"]);
 export const LEDGER_STATUSES = new Set(["open", "done", "dropped"]);
 
@@ -50,8 +51,17 @@ export const checkLedgerText = (text) => {
       );
       continue;
     }
-    const [path, kind, ourLinesText, targetPR, status, reason] = columns;
-    const row = { path, kind, ourLines: ourLinesText, targetPR, status, reason, lineNumber };
+    const [path, origin, kind, ourLinesText, targetPR, status, reason] = columns;
+    const row = {
+      path,
+      origin,
+      kind,
+      ourLines: ourLinesText,
+      targetPR,
+      status,
+      reason,
+      lineNumber,
+    };
     rows.push(row);
     if (!path) {
       errors.push(`line ${lineNumber}: path is empty`);

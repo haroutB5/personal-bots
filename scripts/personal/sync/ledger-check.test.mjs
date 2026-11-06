@@ -14,8 +14,8 @@ const row = (columns) => columns.join("\t");
 test("a well-formed ledger passes and keeps its rows", () => {
   const text = [
     header,
-    row(["apps/server/src/a.ts", "content", "12", "C2", "open", ""]),
-    row(["apps/server/src/b.ts", "modify-delete", "3", "C4", "done", ""]),
+    row(["apps/server/src/a.ts", "", "content", "12", "C2", "open", ""]),
+    row(["apps/server/src/b.ts", "", "modify-delete", "3", "C4", "done", ""]),
   ].join("\n");
 
   const result = checkLedgerText(text);
@@ -24,17 +24,42 @@ test("a well-formed ledger passes and keeps its rows", () => {
   NodeAssert.equal(result.rows[0].targetPR, "C2");
 });
 
+test("a renamed row keeps its origin and an empty origin is valid", () => {
+  const { rows, errors } = checkLedgerText(
+    [
+      header,
+      row([
+        "apps/server/src/provider/ClaudeProvider.ts",
+        "apps/server/src/provider/Layers/ClaudeProvider.ts",
+        "content",
+        "8",
+        "C5",
+        "open",
+        "",
+      ]),
+      row(["apps/server/src/provider/CodexProvider.ts", "", "content", "2", "C6", "open", ""]),
+    ].join("\n"),
+  );
+
+  NodeAssert.deepEqual(errors, []);
+  NodeAssert.equal(rows[0].origin, "apps/server/src/provider/Layers/ClaudeProvider.ts");
+  NodeAssert.equal(rows[1].origin, "");
+});
+
 test("a row without a target PR fails by name", () => {
-  const text = [header, row(["apps/server/src/a.ts", "content", "12", "", "open", ""])].join("\n");
+  const text = [header, row(["apps/server/src/a.ts", "", "content", "12", "", "open", ""])].join(
+    "\n",
+  );
   NodeAssert.deepEqual(checkLedgerText(text).errors, [
     "line 2: apps/server/src/a.ts has no target PR",
   ]);
 });
 
 test("a dropped row needs a reason", () => {
-  const text = [header, row(["apps/server/src/a.ts", "content", "0", "C2", "dropped", "  "])].join(
-    "\n",
-  );
+  const text = [
+    header,
+    row(["apps/server/src/a.ts", "", "content", "0", "C2", "dropped", "  "]),
+  ].join("\n");
   NodeAssert.deepEqual(checkLedgerText(text).errors, [
     "line 2: apps/server/src/a.ts is dropped without a reason",
   ]);
@@ -43,8 +68,8 @@ test("a dropped row needs a reason", () => {
 test("structural damage is reported per row", () => {
   const text = [
     header,
-    row(["apps/server/src/a.ts", "other", "x", "C2", "lost", ""]),
-    row(["apps/server/src/a.ts", "content", "1", "C2", "open", ""]),
+    row(["apps/server/src/a.ts", "", "other", "x", "C2", "lost", ""]),
+    row(["apps/server/src/a.ts", "", "content", "1", "C2", "open", ""]),
     "too\tfew\tcolumns",
   ].join("\n");
 
@@ -66,13 +91,13 @@ test("structural damage is reported per row", () => {
     errors.join("\n"),
   );
   NodeAssert.ok(
-    errors.some((error) => error.includes("expected 6 columns, got 3")),
+    errors.some((error) => error.includes("expected 7 columns, got 3")),
     errors.join("\n"),
   );
 });
 
 test("a missing header is rejected", () => {
-  NodeAssert.deepEqual(checkLedgerText("a.ts\tcontent\t1\tC2\topen\t").errors, [
+  NodeAssert.deepEqual(checkLedgerText("a.ts\t\tcontent\t1\tC2\topen\t").errors, [
     `header must be: ${header}`,
   ]);
 });
@@ -84,8 +109,8 @@ test("--patches reports exactly the rows without a patch file", () => {
   const { rows } = checkLedgerText(
     [
       header,
-      row(["apps/server/src/a.ts", "content", "1", "C2", "open", ""]),
-      row(["apps/server/src/b.ts", "content", "1", "C2", "open", ""]),
+      row(["apps/server/src/a.ts", "", "content", "1", "C2", "open", ""]),
+      row(["apps/server/src/b.ts", "", "content", "1", "C2", "open", ""]),
     ].join("\n"),
   );
 
@@ -96,10 +121,10 @@ test("--no-open-at B1 reports a row B1 left open and accepts a closed one", () =
   const { rows } = checkLedgerText(
     [
       header,
-      row(["apps/server/src/a.ts", "content", "1", "B1", "open", ""]),
-      row(["apps/server/src/b.ts", "content", "1", "B1", "dropped", "upstream has it"]),
-      row(["apps/server/src/c.ts", "content", "1", "B1", "done", ""]),
-      row(["apps/server/src/d.ts", "content", "1", "C2", "open", ""]),
+      row(["apps/server/src/a.ts", "", "content", "1", "B1", "open", ""]),
+      row(["apps/server/src/b.ts", "", "content", "1", "B1", "dropped", "upstream has it"]),
+      row(["apps/server/src/c.ts", "", "content", "1", "B1", "done", ""]),
+      row(["apps/server/src/d.ts", "", "content", "1", "C2", "open", ""]),
     ].join("\n"),
   );
   NodeAssert.deepEqual(openAtErrors(rows, "B1"), [

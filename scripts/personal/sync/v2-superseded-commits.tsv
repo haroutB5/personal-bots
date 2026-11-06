@@ -1,0 +1,2 @@
+sha	subject	proof
+4cabfdaab717b245dbc5908f35f497b46fa5c5b3	chore(platform): move the port to Node 26, pnpm 12 and Effect 4.1.2	U 6577c6b618 pins effect 4.1.2, @effect/platform-node 4.1.2, node 26.12.1, pnpm 12.14.0 (pnpm-workspace.yaml, package.json); U carries its own Effect 4.1 migration

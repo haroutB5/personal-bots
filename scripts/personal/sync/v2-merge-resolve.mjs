@@ -9,13 +9,14 @@
 // seam files stay unmerged for a human; with --apply they take upstream's side
 // and the report lists the registration lines to re-add.
 //
-// Rules, in order (design Appendix E.2), first match wins:
+// Rules, in order (design Appendix E.2 and Appendix G), first match wins:
 //   1. backport     every non-merge commit on our side is an upstream cherry-pick
-//   2. registry     v2-port-targets.tsv names the target and the status after B1
-//   3. v1-stub      a test whose added lines only stub v1 services
-//   4. follow-source a test takes the target of the source it tests
-//   5. area         provider, DeepSeek, orchestration, web and contracts areas
-//   6. no match     fail with the path; never park it at B1 open
+//   2. superseded   our only change at the path is a commit upstream already has
+//   3. registry     v2-port-targets.tsv names the target and the status after B1
+//   4. v1-stub      a test whose added lines only stub v1 services
+//   5. follow-source a test takes the target of the source it tests
+//   6. area         provider, DeepSeek, orchestration, web and contracts areas
+//   7. no match     fail with the path; never park it at B1 open
 //
 // Merge mechanics, in order (design section 4, B1):
 //   1. merge.directoryRenames=false
@@ -46,8 +47,9 @@ export const SEAM_FILES = [
   "apps/server/src/mcp/McpInvocationContext.ts",
 ];
 
-export const LEDGER_HEADER = ["path", "kind", "ourLines", "targetPR", "status", "reason"];
+export const LEDGER_HEADER = ["path", "origin", "kind", "ourLines", "targetPR", "status", "reason"];
 export const REGISTRY_HEADER = ["path", "target", "statusAfterB1", "rule", "flag", "reason"];
+export const SUPERSEDED_HEADER = ["sha", "subject", "proof"];
 export const ASSIGNMENT_HEADER = [
   "path",
   "kind",
@@ -62,6 +64,24 @@ export const ASSIGNMENT_HEADER = [
 
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const DEFAULT_REGISTRY_PATH = NodePath.join(HERE, "v2-port-targets.tsv");
+export const DEFAULT_SUPERSEDED_PATH = NodePath.join(HERE, "v2-superseded-commits.tsv");
+
+/** The review group a path belongs to, used by the assignments file. */
+export const groupFor = (path) => {
+  if (path.startsWith("apps/desktop/")) return "apps/desktop";
+  if (path.startsWith("apps/mobile/")) return "apps/mobile";
+  if (path.startsWith("apps/server/integration/")) return "apps/server/integration";
+  if (path.startsWith("apps/server/scripts/")) return "apps/server/scripts";
+  if (path.startsWith("apps/server/src/")) {
+    const rest = path.slice("apps/server/src/".length);
+    return rest.includes("/") ? `apps/server/src/${rest.split("/")[0]}` : "apps/server/src (root)";
+  }
+  if (path.startsWith("infra/relay/")) return "infra/relay";
+  if (path.startsWith("packages/")) return `packages/${path.split("/")[1] ?? ""}`;
+  if (path.startsWith("scripts/")) return "scripts";
+  if (path.startsWith("evals/")) return "evals";
+  return path.split("/")[0] ?? "root";
+};
 
 /**
  * Area to target PR. DeepSeek is tested before the generic provider prefix so
@@ -141,6 +161,89 @@ export const parseRegistryText = (text) => {
   return rows;
 };
 
+/** Parse the superseded-commit table. A duplicate sha is a hard error. */
+export const parseSupersededText = (text) => {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) throw new Error("superseded commits are empty");
+  const header = lines[0].split("\t");
+  if (
+    header.length !== SUPERSEDED_HEADER.length ||
+    !SUPERSEDED_HEADER.every((name, index) => header[index] === name)
+  ) {
+    throw new Error(`superseded header must be: ${SUPERSEDED_HEADER.join("\t")}`);
+  }
+  const rows = [];
+  const seen = new Set();
+  for (let index = 1; index < lines.length; index += 1) {
+    const columns = lines[index].split("\t");
+    if (columns.length !== SUPERSEDED_HEADER.length) {
+      throw new Error(`superseded line ${index + 1}: expected ${SUPERSEDED_HEADER.length} columns`);
+    }
+    const [sha, subject, proof] = columns;
+    if (!/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error(`superseded line ${index + 1}: sha must be 40 lowercase hex characters`);
+    }
+    if (seen.has(sha)) throw new Error(`superseded line ${index + 1}: duplicate sha ${sha}`);
+    seen.add(sha);
+    rows.push({ sha, subject, proof });
+  }
+  return rows;
+};
+
+/** The sha that supersedes a path, from blob equality with the base and our tree. */
+export const supersededBy = ({ origin, baseTree, oursTree, commits }) => {
+  const baseBlob = baseTree.get(origin);
+  const oursBlob = oursTree.get(origin);
+  if (baseBlob === undefined || oursBlob === undefined) return null;
+  for (const commit of commits) {
+    if (commit.parentTree.get(origin) === baseBlob && commit.tree.get(origin) === oursBlob) {
+      return commit.sha;
+    }
+  }
+  return null;
+};
+
+/** Parse `git ls-files -u -z` output into stage number to blob hash. */
+export const parseUnmergedStages = (text) => {
+  const stages = new Map();
+  for (const item of text.split("\0")) {
+    if (!item) continue;
+    const tab = item.indexOf("\t");
+    if (tab === -1) continue;
+    const [, hash, stage] = item.slice(0, tab).split(" ");
+    stages.set(Number(stage), hash);
+  }
+  return stages;
+};
+
+/**
+ * The path our change lives at. A path absent from our tree is the destination
+ * of an upstream rename; its origin is the one path we own that upstream does
+ * not have, with stage 2 as our blob and stage 1 as the base blob. Zero or
+ * several candidates fail the run.
+ */
+export const originFor = ({ path, stages, oursTree, upstreamTree, baseTree }) => {
+  if (oursTree.has(path)) return { ok: true, origin: path, candidates: [] };
+  const baseBlob = stages.get(1);
+  const oursBlob = stages.get(2);
+  if (baseBlob === undefined || oursBlob === undefined) {
+    return { ok: true, origin: path, candidates: [] };
+  }
+  const candidates = [...oursTree.keys()]
+    .filter(
+      (candidate) =>
+        !upstreamTree.has(candidate) &&
+        oursTree.get(candidate) === oursBlob &&
+        baseTree.get(candidate) === baseBlob,
+    )
+    .sort();
+  if (candidates.length === 1) return { ok: true, origin: candidates[0], candidates };
+  return { ok: false, origin: path, candidates };
+};
+
+/** True when a patch carries at least one hunk. */
+export const hasHunks = (patch) => patch.split("\n").some((line) => line.startsWith("@@"));
+
 const V1_STUB_PATTERN =
   /getPendingInputActivities|validateTurn|prewarmSession|PersonalBotRepository|PersonalVoiceCallRepository|Layer\.provideMerge/;
 
@@ -215,7 +318,14 @@ export const backportMatches = (subjects, upstreamSubjects) =>
  * The ordered target rules. `backport` is computed by the caller because it
  * needs git; everything else is pure so a fixture can drive it.
  */
-export const targetFor = ({ path, patch, registry, backport }) => {
+export const targetFor = ({
+  path,
+  origin = path,
+  patch,
+  registry,
+  backport,
+  superseded = null,
+}) => {
   if (backport) {
     return {
       target: "B1",
@@ -225,7 +335,16 @@ export const targetFor = ({ path, patch, registry, backport }) => {
       reason: "every commit on our side is an upstream cherry-pick U already has",
     };
   }
-  const registered = registry.get(path);
+  if (superseded !== null) {
+    return {
+      target: "B1",
+      status: "dropped",
+      rule: "superseded",
+      flag: "",
+      reason: `our only change at this path is ${superseded}, which U already carries`,
+    };
+  }
+  const registered = registry.get(path) ?? registry.get(origin);
   if (registered !== undefined) {
     return {
       target: registered.target,
@@ -235,7 +354,7 @@ export const targetFor = ({ path, patch, registry, backport }) => {
       reason: registered.reason,
     };
   }
-  if (patch !== null && isV1StubPatch({ path, patch })) {
+  if (patch !== null && isV1StubPatch({ path: origin, patch })) {
     return {
       target: "B1",
       status: "dropped",
@@ -391,8 +510,8 @@ const writePatch = (dir, path, text) => {
   NodeFS.writeFileSync(target, text.endsWith("\n") ? text : `${text}\n`);
 };
 
-const ourPatch = (repo, base, ours, path) => {
-  const result = tryGit(repo, ["diff", "--no-color", base, ours, "--", path]);
+const ourPatch = (repo, base, ours, origin) => {
+  const result = tryGit(repo, ["diff", "--no-color", "--full-index", base, ours, "--", origin]);
   return result.ok ? result.stdout : "";
 };
 
@@ -414,6 +533,7 @@ const parseArgs = (argv) => {
     base: null,
     ledger: null,
     registry: DEFAULT_REGISTRY_PATH,
+    superseded: DEFAULT_SUPERSEDED_PATH,
     assignments: null,
     apply: false,
   };
@@ -431,6 +551,7 @@ const parseArgs = (argv) => {
         "--base",
         "--ledger",
         "--registry",
+        "--superseded",
         "--assignments",
       ].includes(arg)
     ) {
@@ -451,6 +572,7 @@ const parseArgs = (argv) => {
   }
   options.ledger = NodePath.resolve(options.ledger);
   options.registry = NodePath.resolve(options.registry);
+  options.superseded = NodePath.resolve(options.superseded);
   if (options.assignments !== null) options.assignments = NodePath.resolve(options.assignments);
   return options;
 };
@@ -495,6 +617,20 @@ const main = () => {
   let registry;
   try {
     registry = parseRegistryText(NodeFS.readFileSync(options.registry, "utf8"));
+  } catch (error) {
+    console.error(`v2-merge-resolve: ${error.message}`);
+    process.exit(2);
+  }
+
+  let supersededCommits;
+  try {
+    supersededCommits = parseSupersededText(NodeFS.readFileSync(options.superseded, "utf8")).map(
+      (row) => ({
+        sha: row.sha,
+        tree: listTree(repo, row.sha),
+        parentTree: listTree(repo, `${row.sha}^`),
+      }),
+    );
   } catch (error) {
     console.error(`v2-merge-resolve: ${error.message}`);
     process.exit(2);
@@ -550,16 +686,29 @@ const main = () => {
   const leftSeam = [];
   const unclassified = [];
   const unmatched = [];
+  const zeroHunk = [];
+  const originFailures = [];
 
-  const assign = (entry, kind, patch) => {
+  const assign = (entry, kind, patch, origin = entry.path) => {
     const backport = isBackport({
       repo,
       mergeBase,
       ours: oursSha,
-      path: entry.path,
+      path: origin,
       upstreamSubjects,
     });
-    const assignment = targetFor({ path: entry.path, patch, registry, backport });
+    const superseded =
+      kind === "added-broken"
+        ? null
+        : supersededBy({ origin, baseTree, oursTree, commits: supersededCommits });
+    const assignment = targetFor({
+      path: entry.path,
+      origin,
+      patch,
+      registry,
+      backport,
+      superseded,
+    });
     if (assignment === null) {
       unmatched.push(entry.path);
       return;
@@ -568,9 +717,15 @@ const main = () => {
       unmatched.push(entry.path);
       return;
     }
+    if (kind !== "added-broken" && !hasHunks(patch)) {
+      zeroHunk.push(entry.path);
+      return;
+    }
     writePatch(ledger, entry.path, patch);
     rows.push({
       path: entry.path,
+      origin: origin === entry.path ? "" : origin,
+      group: groupFor(entry.path),
       kind,
       ourLines: countPatchLines(patch),
       targetPR: assignment.target,
@@ -597,6 +752,29 @@ const main = () => {
     }
     const plan = planFor({ status: entry.xy, path: entry.path, seam, broken, apply });
 
+    // Read the merge stages before resolving the file: the file actions below
+    // remove or replace the index entries these hashes come from.
+    let origin = entry.path;
+    let patch = null;
+    if (plan.kind === "added-broken") {
+      patch = addedFilePatch(repo, oursSha, entry.path);
+    } else if (plan.kind !== null) {
+      const stages = parseUnmergedStages(git(repo, ["ls-files", "-u", "-z", "--", entry.path]));
+      const resolved = originFor({
+        path: entry.path,
+        stages,
+        oursTree,
+        upstreamTree,
+        baseTree,
+      });
+      if (resolved.ok) {
+        origin = resolved.origin;
+        patch = ourPatch(repo, mergeBase, oursSha, origin);
+      } else {
+        originFailures.push({ path: entry.path, candidates: resolved.candidates });
+      }
+    }
+
     switch (plan.action) {
       case "leave-seam":
         leftSeam.push(entry.path);
@@ -618,13 +796,7 @@ const main = () => {
         unclassified.push(entry.path);
     }
 
-    if (plan.kind !== null) {
-      const patch =
-        plan.kind === "added-broken"
-          ? addedFilePatch(repo, oursSha, entry.path)
-          : ourPatch(repo, mergeBase, oursSha, entry.path);
-      assign(entry, plan.kind, patch);
-    }
+    if (patch !== null) assign(entry, plan.kind, patch, origin);
   }
 
   // Rule 3 continues after the conflicts: a file we added can survive the
@@ -678,7 +850,15 @@ const main = () => {
   const ledgerText = [
     LEDGER_HEADER.join("\t"),
     ...rowsSorted.map((row) =>
-      [row.path, row.kind, String(row.ourLines), row.targetPR, row.status, row.reason].join("\t"),
+      [
+        row.path,
+        row.origin,
+        row.kind,
+        String(row.ourLines),
+        row.targetPR,
+        row.status,
+        row.reason,
+      ].join("\t"),
     ),
     "",
   ].join("\n");
@@ -692,7 +872,7 @@ const main = () => {
           row.path,
           row.kind,
           String(row.ourLines),
-          row.rule,
+          row.group,
           row.targetPR,
           row.status,
           row.rule,
@@ -731,16 +911,26 @@ const main = () => {
   );
   console.log(`  renamed into orchestration-v2: ${relocated.length}`);
   for (const path of relocated.slice(0, 20)) console.log(`    ${path}`);
+  console.log(`  renamed origins: ${rowsSorted.filter((row) => row.origin !== "").length}`);
   console.log(`  ledger    ${NodePath.join(ledger, "ledger.tsv")} (${rowsSorted.length} rows)`);
   for (const kind of ["modify-delete", "content", "added-broken"]) {
     console.log(`    ${kind}: ${byKind[kind] ?? 0}`);
   }
-  for (const rule of ["backport", "registry", "v1-stub", "follow-source", "area"]) {
+  for (const rule of ["backport", "superseded", "registry", "v1-stub", "follow-source", "area"]) {
     console.log(`    ${rule}: ${byRule[rule] ?? 0}`);
   }
   console.log(`  open at B1: ${openAtB1}`);
   console.log(`  unmatched: ${unmatched.length}`);
   for (const path of unmatched) console.log(`    ${path}`);
+  console.log(`  empty patches: ${zeroHunk.length}`);
+  for (const path of zeroHunk) console.log(`    ${path}`);
+  if (originFailures.length > 0) {
+    console.log(`  rename origins not unique: ${originFailures.length}`);
+    for (const failure of originFailures) {
+      console.log(`    ${failure.path} candidates=${failure.candidates.length}`);
+      for (const candidate of failure.candidates) console.log(`      ${candidate}`);
+    }
+  }
   console.log(`  seam left for hand resolution: ${leftSeam.length}`);
   for (const path of leftSeam.sort()) console.log(`    ${path}`);
   if (unclassified.length > 0) {
@@ -752,7 +942,9 @@ const main = () => {
     relocated.length > 0 ||
     unclassified.length > 0 ||
     remainingNonSeam.length > 0 ||
-    unmatched.length > 0;
+    unmatched.length > 0 ||
+    zeroHunk.length > 0 ||
+    originFailures.length > 0;
   if (remainingNonSeam.length > 0) {
     console.error("v2-merge-resolve: non-seam conflicts remain:");
     for (const entry of remainingNonSeam) console.error(`  ${entry.xy} ${entry.path}`);
@@ -760,6 +952,17 @@ const main = () => {
   if (unmatched.length > 0) {
     console.error("v2-merge-resolve: rows with no target (B1 open is not a target):");
     for (const path of unmatched) console.error(`  ${path}`);
+  }
+  if (zeroHunk.length > 0) {
+    console.error("v2-merge-resolve: content or modify-delete rows with an empty patch:");
+    for (const path of zeroHunk) console.error(`  ${path}`);
+  }
+  if (originFailures.length > 0) {
+    console.error("v2-merge-resolve: rename origin is not unique:");
+    for (const failure of originFailures) {
+      console.error(`  ${failure.path} (${failure.candidates.length} candidates)`);
+      for (const candidate of failure.candidates) console.error(`    ${candidate}`);
+    }
   }
   process.exit(failed ? 1 : 0);
 };
