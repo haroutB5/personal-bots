@@ -57,6 +57,7 @@ import { phoneHasInternet, resetNetworkClient } from "./networkReset";
 import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
+import { canManageDevices } from "../sessionScopes";
 import { authMethodOf } from "../sessionAuth";
 
 const connectedState = (generation: number): SupervisorConnectionState => ({
@@ -180,6 +181,8 @@ export interface NativePersonal {
   readonly environmentId: EnvironmentId;
   /** The label this phone gave at pairing; Settings > This phone shows it. */
   readonly deviceLabel: string;
+  /** Both access scopes were granted, so Settings > Devices can list and revoke. */
+  readonly canManageDevices: boolean;
   readonly httpBaseUrl: string;
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
@@ -541,6 +544,7 @@ export function createNativePersonal(
   return {
     environmentId,
     deviceLabel: stored.deviceLabel ?? stored.label,
+    canManageDevices: canManageDevices(stored.scope),
     httpBaseUrl: stored.httpBaseUrl,
     runtime,
     client,
