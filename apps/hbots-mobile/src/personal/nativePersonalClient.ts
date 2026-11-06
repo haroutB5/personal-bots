@@ -28,6 +28,7 @@ import { createPersonalLoginsClient } from "@hbots/personal-client/logins/person
 import { createPersonalSecretsClient } from "@hbots/personal-client/secrets/personalSecrets";
 import { createPersonalConnectionsClient } from "@hbots/personal-client/connections/personalConnections";
 import { createPersonalSettingsClient } from "@hbots/personal-client/settings/personalSettings";
+import { createPersonalComputerClient } from "@hbots/personal-client/computer/personalComputer";
 import { createProviderSetupClient } from "@hbots/personal-client/settings/providerSetup";
 import {
   parseSystemSummary,
@@ -44,6 +45,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
+import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
 import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
@@ -186,12 +188,15 @@ export interface NativePersonal {
   readonly logins: ReturnType<typeof createPersonalLoginsClient>;
   readonly secrets: ReturnType<typeof createPersonalSecretsClient>;
   readonly connections: ReturnType<typeof createPersonalConnectionsClient>;
+  readonly computer: ReturnType<typeof createPersonalComputerClient>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly shellsOf: (
     snapshot: OrchestrationShellSnapshot | null,
   ) => ReadonlyArray<EnvironmentThreadShell>;
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
   readonly readSystemSummary: () => Promise<SystemSummary | null>;
+  /** Freshly ticketed browser and desktop live-view sockets. */
+  readonly liveViews: () => Promise<LiveViewURLs>;
   readonly useConnectionState: () => SupervisorConnectionState;
   /**
    * The connection as it is right now, read from the session loop itself. A
@@ -319,6 +324,7 @@ export function createNativePersonal(
   const logins = createPersonalLoginsClient(runtime, client);
   const secrets = createPersonalSecretsClient(runtime, client);
   const connections = createPersonalConnectionsClient(runtime, client);
+  const computer = createPersonalComputerClient(runtime, client);
   const shell = createEnvironmentShellAtoms(runtime);
 
   let disposed = false;
@@ -533,6 +539,7 @@ export function createNativePersonal(
     logins,
     secrets,
     connections,
+    computer,
     shell,
     shellsOf: (snapshot) =>
       snapshot === null ? [] : snapshot.threads.map((thread) => ({ ...thread, environmentId })),
@@ -555,6 +562,7 @@ export function createNativePersonal(
         clearTimeout(timer);
       }
     },
+    liveViews: () => liveViewURLs(stored),
     useConnectionState: () => {
       const [state, setReactState] = useState<SupervisorConnectionState>(() =>
         Effect.runSync(SubscriptionRef.get(stateRef)),

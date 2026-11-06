@@ -222,9 +222,46 @@ const A15_ITEMS = [
   "rpc:personalSecretsDelete",
 ];
 
+const A16_ITEMS = [
+  "screen:routes/_personal.computer.tsx#computer",
+  "sheet:computer/ComputerActivityCard.tsx#computeractivitysheet",
+  "sheet:computer/ComputerSheet.tsx#computersheet",
+  "action:computer/ComputerScreen.tsx#page-forward",
+  "action:computer/ComputerScreen.tsx#reload",
+  "action:computer/ComputerScreen.tsx#escape",
+  "action:computer/ComputerScreen.tsx#reload-2",
+  "action:computer/ComputerScreen.tsx#close-browser",
+  "action:computer/ComputerSheet.tsx#drag-a-sheet-down-to-close",
+  "card:computer/ComputerActivityCard.tsx#computeractivitycard",
+  "card:computer/ComputerDriverCard.tsx#computerdrivercard",
+  "card:computer/ComputerHelpCard.tsx#computerhelpcard",
+  "rpc:personalBrowserActivity",
+  "rpc:personalBrowserListFiles",
+  "rpc:personalBrowserTakeControl",
+  "rpc:personalBrowserReturnToAgent",
+  "rpc:personalBrowserClose",
+  "rpc:personalBrowserApproveEgress",
+  "rpc:personalBrowserRefuseEgress",
+  "rpc:personalDesktopStatus",
+  "rpc:personalDesktopStop",
+  "rpc:personalDesktopActivity",
+];
+
 describe("Android parity ratchet", () => {
   it("keeps A1, A2 and the chat PRs merged", () => {
-    expect(MERGED_PRS).toEqual(["A1", "A2", "A3", "A4", "A5", "A9", "A10", "A11", "A14", "A15"]);
+    expect(MERGED_PRS).toEqual([
+      "A1",
+      "A2",
+      "A3",
+      "A4",
+      "A5",
+      "A9",
+      "A10",
+      "A11",
+      "A14",
+      "A15",
+      "A16",
+    ]);
   });
 
   it("keeps every A1 and A2 item claimed", () => {
@@ -249,5 +286,9 @@ describe("Android parity ratchet", () => {
 
   it("claims every A15 item, including the four screens, selection actions and credential RPCs", () => {
     for (const item of A15_ITEMS) expect(DONE_ITEMS).toContain(item);
+  });
+
+  it("claims every A16 item, including the live view, its actions, cards and RPCs", () => {
+    for (const item of A16_ITEMS) expect(DONE_ITEMS).toContain(item);
   });
 });

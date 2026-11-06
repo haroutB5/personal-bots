@@ -32,6 +32,7 @@ import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
 import { ChatScreen } from "../screens/ChatScreen";
+import { ComputerScreen } from "../computer/ComputerScreen";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { NotificationsScreen } from "../settings/NotificationsScreen";
 import { AddProviderScreen } from "../settings/AddProviderScreen";
@@ -513,7 +514,10 @@ function TabsWithBots({
         ) : tab === "tasks" ? (
           <Placeholder title="Tasks" body="Your tasks will show here." />
         ) : tab === "computer" ? (
-          <Placeholder title="Computer" body="The live computer view will show here." />
+          <ComputerScreen
+            native={native}
+            onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+          />
         ) : (
           <Placeholder title="Files" body="Shared files will show here." />
         )}
