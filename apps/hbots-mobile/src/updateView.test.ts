@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { AndroidRelease } from "./compat";
 import type { UpdateSnapshot } from "./updater";
-import { describeLastCheck, describeSignedOutUpdate, describeUpdate } from "./updateView";
+import {
+  describeLastCheck,
+  describeSignedOutUpdate,
+  describeUpdate,
+  updateBannerModel,
+} from "./updateView";
 
 const latest: AndroidRelease = {
   version: "1.66.111",
@@ -88,5 +93,27 @@ describe("describeLastCheck", () => {
     expect(describeLastCheck(now - 5 * 60_000, now)).toBe("Checked 5 min ago");
     expect(describeLastCheck(now - 3 * 60 * 60_000, now)).toBe("Checked 3 h ago");
     expect(describeLastCheck(now - 2 * 24 * 60 * 60_000, now)).toBe("Checked 2 d ago");
+  });
+});
+
+describe("updateBannerModel", () => {
+  const target = { version: "1.66.118", sha256: "a".repeat(64), size: 42_000_000 };
+
+  it("asks for the permission while the install is blocked", () => {
+    expect(updateBannerModel(snapshot({ state: "needsPermission", target }))).toEqual({
+      text: "Update to 1.66.118 is waiting. Allow hbots to install updates.",
+    });
+  });
+
+  it("clears once the permission is granted and the download starts", () => {
+    expect(updateBannerModel(snapshot({ state: "downloading", target }))).toBeNull();
+  });
+
+  it("stays hidden in every other state and without a snapshot", () => {
+    for (const state of ["idle", "downloading", "ready", "installing", "needsTap"] as const) {
+      expect(updateBannerModel(snapshot({ state, target }))).toBeNull();
+    }
+    expect(updateBannerModel(snapshot({ state: "needsPermission", target: null }))).toBeNull();
+    expect(updateBannerModel(null)).toBeNull();
   });
 });

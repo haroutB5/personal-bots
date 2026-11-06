@@ -51,11 +51,13 @@ import { NewChatSheet } from "../sheets/NewChatSheet";
 import { RenameChatSheet } from "../sheets/RenameChatSheet";
 import { SnoozeSheet } from "../sheets/SnoozeSheet";
 import type { ChatEnvironment } from "../chat/chatEnvironment";
+import type { UpdateSnapshot } from "../updater";
 import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
 import { botsHomeState, botTapTarget } from "./botsHomeState";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
+import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { SystemStatsLine } from "./SystemStatsLine";
 import { tokens } from "./tokens";
@@ -309,6 +311,8 @@ export function BotsScreen({
   native,
   chat,
   installedVersion,
+  update,
+  onOpenInstallPermission,
   onOpenChat,
   onOpenChats,
   onOpenGroup,
@@ -319,6 +323,8 @@ export function BotsScreen({
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
   readonly installedVersion: string;
+  readonly update: UpdateSnapshot | null;
+  readonly onOpenInstallPermission: () => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
   readonly onOpenGroup: (groupId: string) => void;
@@ -660,6 +666,7 @@ export function BotsScreen({
       style={styles.screen}
     >
       <PersonalOfflineBanner native={native} />
+      <UpdatePermissionBanner update={update} onPress={onOpenInstallPermission} />
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Text style={styles.title} maxFontSizeMultiplier={1.2}>

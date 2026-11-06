@@ -251,6 +251,8 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               native={props.native}
               chat={chat}
               installedVersion={props.installedVersion}
+              update={props.update}
+              onOpenInstallPermission={props.onOpenPermission}
             />
           )}
         </Stack.Screen>
@@ -436,11 +438,15 @@ function TabsWithBots({
   native,
   chat,
   installedVersion,
+  update,
+  onOpenInstallPermission,
   ...screenProps
 }: TabsProps & {
   readonly native: NativePersonal;
   readonly chat: ReturnType<typeof createChatEnvironment>;
   readonly installedVersion: string;
+  readonly update: UpdateSnapshot | null;
+  readonly onOpenInstallPermission: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const tab = screenProps.route.params?.tab ?? "bots";
@@ -465,6 +471,8 @@ function TabsWithBots({
             native={native}
             chat={chat}
             installedVersion={installedVersion}
+            update={update}
+            onOpenInstallPermission={onOpenInstallPermission}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
             onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
             onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}

@@ -18,6 +18,7 @@ import {
   markForegrounded,
   markThisRunAlive,
   reportPreviousUncleanExit,
+  reportUpdaterState,
   setCrashBaseUrl,
 } from "./crash/crashReporter";
 import { apkUrlFor, fetchCompat, type AndroidRelease } from "./compat";
@@ -107,6 +108,7 @@ function App() {
   const setSnapshot = useCallback((snapshot: UpdateSnapshot | null) => {
     updateRef.current = snapshot;
     setUpdate(snapshot);
+    reportUpdaterState(snapshot);
     sessionLifetime.raise(snapshot?.sessionGeneration ?? 0);
   }, []);
 
@@ -219,6 +221,7 @@ function App() {
       nativeRef.current = native;
       setCrashBaseUrl(session.httpBaseUrl);
       void reportPreviousUncleanExit();
+      reportUpdaterState(updateRef.current);
       setScreen({ kind: "ready", session, native });
       void checkForUpdate(session, false);
       void attempt;
