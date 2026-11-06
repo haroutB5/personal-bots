@@ -71,6 +71,8 @@ export const CLIENT_DIAG_EVENTS: ReadonlySet<string> = new Set([
   // Every look for a tap iOS never dispatched, and what it decided
   // (web features/personal/lostNotificationTaps.ts).
   "lost-tap-check",
+  // The native app's self-updater changed state (hbots-mobile src/crash/updaterDiag.ts).
+  "updater-state",
 ]);
 const VISIBILITY = new Set(["visible", "hidden", "prerender", "unknown"]);
 const TOKEN = /^[A-Za-z0-9._:-]+$/;
@@ -161,6 +163,11 @@ const FIELDS: Record<string, Read> = {
   gone: count,
   recent: count,
   awayMs: count,
+  // updater-state: the updater's state word and the two versions it sits
+  // between. Release version strings only, never an address or an id.
+  state: token(16),
+  targetVersion: token(32),
+  currentVersion: token(32),
   // Which store answered: server, worker, cache-fallback or cache.
   store: token(16),
   // The server's answer: pushes it sent this device while away, or why it
