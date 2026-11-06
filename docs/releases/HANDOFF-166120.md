@@ -36,3 +36,19 @@ Binary only. The previous release is `ef0f74fdcddd` (1.66.119). No migration ran
 - The personal contract diff against `1e3d39d73f` is empty.
 - All 18 RC gates exit 0 at the evidence commit.
 - The gate table and logs are in `/home/harout/Claude/AI/dev-team/qa/hbots-166120-rc/REPORT.md`.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=28c378028b53ff1024a8e52da21eb2e57915fb44 release=28c378028b53 json-sha256=e3a2fcd483cc364c551054907321bdc11062a91fc3c28fb037c8a13a11f7223f result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
