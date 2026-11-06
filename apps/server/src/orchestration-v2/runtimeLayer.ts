@@ -358,6 +358,8 @@ const layerMcpAppRequestsProvided = McpAppRequests.layer.pipe(
 export const layer = Layer.mergeAll(
   layerCommandOutputHubProvided,
   layerOrchestratorProvided,
+  // The personal notices write through the one sink the live streams publish from.
+  layerEventSink,
   layerMcpAppRequestsProvided,
   layerThreadManagementProvided,
   layerEffectWorkerProvided,
