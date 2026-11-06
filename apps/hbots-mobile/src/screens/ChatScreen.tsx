@@ -65,6 +65,7 @@ import { buildChatChips, chatHeaderModel, findChatBot } from "../chat/chatModel"
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
 import { MessageList } from "../chat/MessageList";
+import type { MessageListHandle } from "../chat/MessageList";
 import { useChatCards } from "../chat/useChatCards";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
@@ -151,6 +152,8 @@ export function ChatScreen({
   const prewarmed = useRef(false);
   const openedAt = useRef(performance.now());
   const openLogged = useRef(false);
+  const messageListControl = useRef<MessageListHandle | null>(null);
+  const revealCard = (itemId: string) => messageListControl.current?.scrollToCard(itemId);
 
   const interrupt = native.client.useAtomCommand(chat.thread.interruptTurn, {
     reportFailure: false,
@@ -221,6 +224,7 @@ export function ChatScreen({
     providers,
     nowMs: now,
     onOpenChat,
+    onRevealCard: revealCard,
   });
   const latestMessageStatus = useMemo(
     () =>
@@ -758,6 +762,7 @@ export function ChatScreen({
             }}
             onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
             loadEarlierBusy={page?.loadingOlder === true}
+            listControl={messageListControl}
           />
           {archived ? (
             <View style={[styles.archiveBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
