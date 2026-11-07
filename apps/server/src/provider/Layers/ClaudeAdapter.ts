@@ -4284,6 +4284,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
+      case "session_writes_lost": {
+        // SDK 0.3.317+: the CLI could not save lines of the transcript or
+        // changes to ~/.claude.json because the disk was full or over quota.
+        // The turn's results stand, but a resumed chat may be missing part of
+        // the conversation, so this is a warning row rather than CLI chrome.
+        const transcript = message.lost.includes("transcript");
+        const globalConfig = message.lost.includes("global_config");
+        const reason =
+          message.error_code === "ENOSPC"
+            ? "the disk is full"
+            : message.error_code === "EDQUOT"
+              ? "the disk quota is used up"
+              : `the filesystem refused the write (${message.error_code})`;
+        const lost = [
+          ...(transcript ? ["part of this chat's transcript"] : []),
+          ...(globalConfig ? ["its settings changes"] : []),
+        ].join(" and ");
+        yield* emitRuntimeWarning(
+          context,
+          `Claude could not save ${lost} because ${reason}.${
+            transcript ? " Resuming this chat may miss part of the conversation." : ""
+          }`,
+          message,
+        );
+        return;
+      }
       case "notification":
         // User-facing CLI notification (e.g. context-limit warnings). Only
         // high-priority ones warrant a work-log row.

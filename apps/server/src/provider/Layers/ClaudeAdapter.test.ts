@@ -6094,6 +6094,16 @@ describe("ClaudeAdapterLive", () => {
         session_id: "session",
         uuid: "mrnf",
       } as unknown as SDKMessage);
+      // A lost session write is a data-loss warning, not CLI chrome.
+      harness.query.emit({
+        type: "system",
+        subtype: "session_writes_lost",
+        error_code: "ENOSPC",
+        lost: ["transcript"],
+        transcript_session_ids: ["session"],
+        session_id: "session",
+        uuid: "swl",
+      } as unknown as SDKMessage);
       // session_state_changed maps to the matching session states.
       for (const [state, uuid] of [
         ["running", "ssc-run"],
@@ -6123,8 +6133,9 @@ describe("ClaudeAdapterLive", () => {
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
 
       const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
-      // Exactly four warnings: the fallback notice, high-priority notification,
-      // warning-level informational note, and the refusal. Nothing else.
+      // Exactly five warnings: the fallback notice, high-priority
+      // notification, warning-level informational note, the refusal, and the
+      // lost session write. Nothing else.
       assert.deepEqual(
         warnings.map((event) => event.payload.message),
         [
@@ -6132,6 +6143,7 @@ describe("ClaudeAdapterLive", () => {
           "context window nearly full",
           "Stop hook prevented continuation",
           "The request was declined by the API.",
+          "Claude could not save part of this chat's transcript because the disk is full. Resuming this chat may miss part of the conversation.",
         ],
       );
       const sessionStates = runtimeEvents
