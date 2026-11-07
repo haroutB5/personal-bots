@@ -6,6 +6,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
+import { UPSTREAM_MIGRATION_IDS } from "../upstreamMigrationIds.ts";
+
+// This fork registers upstream 077 at its own id (see upstreamMigrationIds.ts).
+const MIGRATION_ID = UPSTREAM_MIGRATION_IDS["077_RepairBooleanSettledOverride"]!;
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 const createdAt = "2026-09-01T00:00:00.000Z";
@@ -17,7 +21,7 @@ layer("077_RepairBooleanSettledOverride", (it) => {
   it.effect("canonicalizes boolean settled overrides so recovery can decode them", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 76 });
+      yield* runMigrations({ toMigrationInclusive: MIGRATION_ID - 1 });
       const overrides: ReadonlyArray<readonly [string, unknown]> = [
         ["true", true],
         ["false", false],
@@ -64,7 +68,7 @@ layer("077_RepairBooleanSettledOverride", (it) => {
       `;
       const before = new Map((yield* rows).map((row) => [row.thread_id, row.payload_json]));
 
-      yield* runMigrations({ toMigrationInclusive: 77 });
+      yield* runMigrations({ toMigrationInclusive: MIGRATION_ID });
       const after = new Map((yield* rows).map((row) => [row.thread_id, row.payload_json]));
       for (const id of ["settled", "active", "null", "absent"]) {
         assert.strictEqual(after.get(id), before.get(id));

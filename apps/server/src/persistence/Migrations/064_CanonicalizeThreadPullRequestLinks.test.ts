@@ -12,6 +12,10 @@ import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import { runMigrations } from "../Migrations.ts";
+import { UPSTREAM_MIGRATION_IDS } from "../upstreamMigrationIds.ts";
+
+// This fork registers upstream 064 at its own id (see upstreamMigrationIds.ts).
+const MIGRATION_ID = UPSTREAM_MIGRATION_IDS["064_CanonicalizeThreadPullRequestLinks"]!;
 
 const decodeThread = Schema.decodeSync(Schema.fromJsonString(OrchestrationV2AppThreadJson));
 const updatedAt = "2026-09-01T00:00:00.000Z";
@@ -66,7 +70,7 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
   it.effect("migrates single links once, preserves arrays, and keeps links after a rebuild", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 63 });
+      yield* runMigrations({ toMigrationInclusive: MIGRATION_ID - 1 });
       const fixtures = [
         { ...thread("github"), linkedPullRequest: linked },
         {
@@ -123,10 +127,10 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
           'user', ${v1Payload}, '{}', 1)
       `;
 
-      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 64 }), [
-        [64, "CanonicalizeThreadPullRequestLinks"],
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: MIGRATION_ID }), [
+        [MIGRATION_ID, "CanonicalizeThreadPullRequestLinks"],
       ]);
-      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 64 }), []);
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: MIGRATION_ID }), []);
       const rows = yield* sql<{ readonly thread_id: string; readonly payload_json: string }>`
         SELECT thread_id, payload_json FROM orchestration_v2_projection_threads
       `;

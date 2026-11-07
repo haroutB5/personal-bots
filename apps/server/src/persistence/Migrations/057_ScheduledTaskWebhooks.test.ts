@@ -5,6 +5,10 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
+import { UPSTREAM_MIGRATION_IDS } from "../upstreamMigrationIds.ts";
+
+// This fork registers upstream 057 at its own id (see upstreamMigrationIds.ts).
+const MIGRATION_ID = UPSTREAM_MIGRATION_IDS["057_ScheduledTaskWebhooks"]!;
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
@@ -12,7 +16,7 @@ layer("057_ScheduledTaskWebhooks", (it) => {
   it.effect("keeps existing scheduled tasks and adds webhook storage", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 56 });
+      yield* runMigrations({ toMigrationInclusive: MIGRATION_ID - 1 });
       yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
         task_id: "existing",
         title: "task",
@@ -35,7 +39,7 @@ layer("057_ScheduledTaskWebhooks", (it) => {
         last_run_error: null,
         run_count: 0,
       })}`;
-      yield* runMigrations({ toMigrationInclusive: 57 });
+      yield* runMigrations({ toMigrationInclusive: MIGRATION_ID });
 
       const rows = yield* sql<{
         task_id: string;

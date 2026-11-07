@@ -39,3 +39,11 @@ export const UPSTREAM_MIGRATION_IDS: Readonly<Record<string, number>> = {
   "079_DelegatedRecoveryIndexes": 138,
   "080_ScheduledTaskThreadMode": 139,
 };
+
+/**
+ * Upstream migrations that stay out of the registry on purpose. 063 drops the
+ * V1 projection tables, so it ships one release after the V2 importer has run
+ * on live data. The file stays in the tree; the sync resolver adds it with
+ * --hold 063 until then.
+ */
+export const HELD_UPSTREAM_MIGRATIONS: ReadonlyArray<string> = ["063_DropUnusedV1Projections"];

@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 
 import { migrationManifest } from "./Migrations.ts";
-import { UPSTREAM_MIGRATION_IDS } from "./upstreamMigrationIds.ts";
+import { HELD_UPSTREAM_MIGRATIONS, UPSTREAM_MIGRATION_IDS } from "./upstreamMigrationIds.ts";
 
 // The migrator runs only ids above the latest applied one, so a duplicate id,
 // a gap, or an upstream migration left at its upstream number would be
@@ -34,6 +34,8 @@ const registered = [...registrySource.matchAll(/^\s*\[(\d+), "([^"]+)", (\w+)\],
 const migrationFiles = NodeFS.readdirSync(migrationsDir)
   .filter((file) => /^\d{3}_\w+\.ts$/.test(file) && !file.endsWith(".test.ts"))
   .map((file) => file.slice(0, -".ts".length));
+const held = new Set(HELD_UPSTREAM_MIGRATIONS);
+const registeredFiles = migrationFiles.filter((file) => !held.has(file));
 
 describe("migration registry", () => {
   it("parses the same entries the migrator loads", () => {
@@ -51,7 +53,18 @@ describe("migration registry", () => {
     const files = registered.map((entry) => entry.file);
     expect(files.every((file) => file !== undefined)).toBe(true);
     expect(new Set(files).size).toBe(files.length);
-    expect([...files].toSorted()).toEqual([...migrationFiles].toSorted());
+    expect([...files].toSorted()).toEqual([...registeredFiles].toSorted());
+  });
+
+  it("keeps held upstream migrations in the tree and out of the registry", () => {
+    for (const file of HELD_UPSTREAM_MIGRATIONS) {
+      expect(migrationFiles, file).toContain(file);
+      expect(
+        registered.find((entry) => entry.file === file),
+        file,
+      ).toBeUndefined();
+      expect(UPSTREAM_MIGRATION_IDS[file], file).toBeUndefined();
+    }
   });
 
   it("keeps each file at its own number unless it is a mapped upstream migration", () => {

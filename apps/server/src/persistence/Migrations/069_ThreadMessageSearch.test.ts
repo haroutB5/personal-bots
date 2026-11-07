@@ -6,6 +6,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { rebuildMessageSearch } from "../../orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../Migrations.ts";
+import { UPSTREAM_MIGRATION_IDS } from "../upstreamMigrationIds.ts";
+
+// This fork registers the upstream ids at its own numbers (see upstreamMigrationIds.ts).
+const SHELL_STOP_REQUEST_INDEX_ID = UPSTREAM_MIGRATION_IDS["068_ShellStopRequestIndex"]!;
+const MESSAGE_SEARCH_ID = UPSTREAM_MIGRATION_IDS["069_ThreadMessageSearch"]!;
+const ACTIVE_TURN_ITEM_INDEXES_ID = UPSTREAM_MIGRATION_IDS["073_ActiveTurnItemIndexes"]!;
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 
@@ -13,7 +19,7 @@ layer("069_ThreadMessageSearch", (it) => {
   it.effect("backfills what users wrote and agents answered, then follows deletes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 68 });
+      yield* runMigrations({ toMigrationInclusive: SHELL_STOP_REQUEST_INDEX_ID });
       const insert = (
         id: string,
         role: string,
@@ -61,7 +67,10 @@ it.effect.each(["inserted", "updated", "backfilled", "rebuilt"])(
   (path) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: path === "backfilled" ? 68 : 73 });
+      yield* runMigrations({
+        toMigrationInclusive:
+          path === "backfilled" ? SHELL_STOP_REQUEST_INDEX_ID : ACTIVE_TURN_ITEM_INDEXES_ID,
+      });
       if (path !== "backfilled") {
         // Pre-upgrade triggers indexed user text even when it was an attachment placeholder.
         yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
@@ -124,7 +133,9 @@ it.effect.each(["inserted", "updated", "backfilled", "rebuilt"])(
           `;
         }
       }
-      yield* runMigrations({ toMigrationInclusive: path === "backfilled" ? 69 : undefined });
+      yield* runMigrations({
+        toMigrationInclusive: path === "backfilled" ? MESSAGE_SEARCH_ID : undefined,
+      });
       if (path === "rebuilt") yield* rebuildMessageSearch(sql);
       const indexed = yield* sql<{ readonly messageId: string }>`
         SELECT messages.message_id AS "messageId"

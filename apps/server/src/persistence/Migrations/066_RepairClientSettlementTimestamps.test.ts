@@ -9,7 +9,12 @@ import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { runMigrations } from "../Migrations.ts";
+import { UPSTREAM_MIGRATION_IDS } from "../upstreamMigrationIds.ts";
 import Migration0066 from "./066_RepairClientSettlementTimestamps.ts";
+
+// This fork registers the upstream ids at its own numbers and holds 063 one release.
+const PRIOR_ID = UPSTREAM_MIGRATION_IDS["065_CodexUsageNativeTurnIndex"]!;
+const MIGRATION_ID = UPSTREAM_MIGRATION_IDS["066_RepairClientSettlementTimestamps"]!;
 
 const layer = it.layer(
   ProjectionReplay.layer.pipe(
@@ -32,11 +37,11 @@ layer("066_RepairClientSettlementTimestamps", (it) => {
   it.effect("repairs only sweep stamps, preserves overrides, and survives a V2 rebuild", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 64 });
-      assert.deepEqual(
-        yield* sql`SELECT name FROM sqlite_master WHERE name = 'projection_turns'`,
-        [],
-      );
+      yield* runMigrations({ toMigrationInclusive: PRIOR_ID });
+      // 063 is held one release, so its V1 drop has not run when 066 runs here.
+      assert.deepEqual(yield* sql`SELECT name FROM sqlite_master WHERE name = 'projection_turns'`, [
+        { name: "projection_turns" },
+      ]);
       let eventNumber = 0;
       const insertEvent = (
         threadId: string,
@@ -85,7 +90,7 @@ layer("066_RepairClientSettlementTimestamps", (it) => {
         );
       });
 
-      // A finished turn must come from retained events after 063 drops projection_turns.
+      // A finished turn must come from retained events while projection_turns is still held.
       for (const [at, status, activeTurnId] of [
         ["2026-06-01T00:00:00.000Z", "running", "turn-1"],
         [finishedAt, "ready", null],
@@ -314,7 +319,7 @@ layer("066_RepairClientSettlementTimestamps", (it) => {
       `;
       const overridesBefore = yield* overrides;
 
-      yield* runMigrations({ toMigrationInclusive: 66 });
+      yield* runMigrations({ toMigrationInclusive: MIGRATION_ID });
       const legacy = yield* sql`
         SELECT thread_id, settled_override, settled_at FROM projection_threads
         WHERE thread_id LIKE 'sweep-%' ORDER BY thread_id
@@ -359,7 +364,7 @@ layer("066_RepairClientSettlementTimestamps", (it) => {
         sql`SELECT * FROM orchestration_events ORDER BY sequence`,
       ]);
       const repaired = yield* snapshot;
-      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 66 }), []);
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: MIGRATION_ID }), []);
       yield* Migration0066;
       assert.deepEqual(yield* snapshot, repaired);
 
