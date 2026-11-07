@@ -791,12 +791,6 @@ const make = Effect.gen(function* () {
       );
       yield* secrets.remove(CLOUD_LINK_REVOKED);
       yield* secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
-      // Managed links advertise the tunnel origin; a manual link drops the
-      // stored one so `t3 pair --connect` cannot hand out a local address.
-      yield* persistRelayEndpoint(
-        secrets,
-        payload.endpointRuntime ?? { providerKind: "manual", httpBaseUrl: "" },
-      );
       yield* awarenessRelay.requestCatchUp();
       if (endpointRuntimeJson !== null) {
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(endpointRuntimeJson));
@@ -894,6 +888,9 @@ const make = Effect.gen(function* () {
         schema: RelayEnvironmentLinkResponse,
         timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
       });
+      // Managed links advertise the tunnel origin; a manual link drops the
+      // stored one so `t3 pair --connect` cannot hand out a local address.
+      yield* persistRelayEndpoint(secrets, link.endpoint);
       yield* setCliDesiredCloudLink(true, mode).pipe(withSecrets);
       yield* applyCloudRelayConfig(
         {

@@ -26,6 +26,7 @@ import {
 } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import {
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
@@ -230,8 +231,18 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
     if (request.headers.upgrade?.toLowerCase() !== "websocket") {
       return HttpServerResponse.text("Upgrade Required", { status: 426 });
     }
+    const sessions = yield* SessionStore.SessionStore;
     return yield* serveUntilSessionRevoked({
       sessionId: session.sessionId,
+      until: sessions
+        .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("Failed to watch a stream session for revocation.").pipe(
+              Effect.annotateLogs({ sessionId: session.sessionId, cause }),
+            ),
+          ),
+        ),
       serve: serveBrowserStream(session),
     });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),

@@ -98,23 +98,23 @@ apps/server/src/assets/AttachmentUpload.test.ts		content	1	B1	dropped	our only c
 apps/server/src/assets/GitHubMediaFetch.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/assets/NativeAppIconResolver.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/assets/NativeAppIconResolver.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/auth/EnvironmentAuth.test.ts		content	56	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/auth/EnvironmentAuth.ts		content	20	C11	open	cb26088ef4 slides direct phone sessions and names renewal outcomes; the rest of our diff is the Effect 4.1 codemod
+apps/server/src/auth/EnvironmentAuth.test.ts		content	56	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/EnvironmentAuth.ts		content	20	C11	done	C11: cb26088ef4 slides direct phone sessions and names renewal outcomes; the rest of our diff is the Effect 4.1 codemod
 apps/server/src/auth/EnvironmentAuthAdmin.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/auth/EnvironmentAuthPolicy.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/auth/PairingGrantStore.test.ts		content	1	C11	open	M1: MAIN pairing grant cases parked; C11 tests U's consume path
+apps/server/src/auth/PairingGrantStore.test.ts		content	1	C11	done	C11: M1: MAIN pairing grant cases parked; C11 tests U's consume path
 apps/server/src/auth/PairingGrantStore.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/auth/ServerSecretStore.test.ts		content	182	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/auth/ServerSecretStore.ts		content	253	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
-apps/server/src/auth/SessionStore.test.ts		content	225	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/auth/SessionStore.ts		content	189	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/SessionStore.test.ts		content	225	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/SessionStore.ts		content	189	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/auth/WsRpcGroupComposition.test.ts		added-broken	50	B1	dropped	U composes one WsRpcGroup; the split groups this test covered are gone
 apps/server/src/auth/dpop.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/auth/http.test.ts		content	560	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/auth/http.ts		content	124	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/http.test.ts		content	560	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/http.ts		content	124	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/auth/replayMarkers.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/auth/sessionRevocationClose.test.ts		added-broken	165	C11	open	session revoke close is parked at B1; C11 ports it
-apps/server/src/auth/sessionRevocationClose.ts		added-broken	93	C11	open	session revoke close is parked at B1; C11 ports it
+apps/server/src/auth/sessionRevocationClose.test.ts		added-broken	165	C11	done	C11: session revoke close is parked at B1; C11 ports it
+apps/server/src/auth/sessionRevocationClose.ts		added-broken	93	C11	done	C11: session revoke close is parked at B1; C11 ports it
 apps/server/src/auth/utils.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/bin.test.ts		modify-delete	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/bin.ts		content	16	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
@@ -126,25 +126,25 @@ apps/server/src/cli/app.test.ts		content	2	B1	dropped	our only change at this pa
 apps/server/src/cli/auth.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cli/config.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cli/config.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/cli/connect.test.ts		content	24	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/cli/connect.ts		content	34	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/cli/pair.test.ts		content	76	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/cli/pair.ts		content	65	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/connect.test.ts		content	24	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/connect.ts		content	34	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/pair.test.ts		content	76	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/pair.ts		content	65	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/cli/project.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cli/server.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cli/service.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cli/service.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cli/serviceLauncher.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cli/theme.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/cloud/CliState.test.ts		content	3	C11	open	462ae5a35d pair --connect and environment label override cases
+apps/server/src/cloud/CliState.test.ts		content	3	C11	done	C11: 462ae5a35d pair --connect and environment label override cases
 apps/server/src/cloud/CliTokenManager.test.ts		content	75	B1	dropped	only upstream commits (#N) on our side, each present in U
 apps/server/src/cloud/CliTokenManager.ts		content	21	B1	dropped	only upstream commits (#N) on our side, each present in U
 apps/server/src/cloud/ManagedEndpointRuntime.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cloud/ManagedEndpointRuntime.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/cloud/config.ts		content	3	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/config.ts		content	3	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/cloud/environmentKeys.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/cloud/http.test.ts		content	45	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/cloud/http.ts		content	27	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/http.test.ts		content	45	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/http.ts		content	27	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/cloud/pinnedRuntime.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cloud/pinnedRuntime.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/cloud/selfUpdate.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -153,8 +153,8 @@ apps/server/src/cloud/traceRelayRequest.ts		content	1	B1	dropped	our only change
 apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/desktopUpdate/DesktopAppUpdate.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/device/AgentDeviceTarget.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/device/DeviceHubProxy.test.ts		content	42	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/device/DeviceHubProxy.ts		content	32	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/device/DeviceHubProxy.test.ts		content	42	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/device/DeviceHubProxy.ts		content	32	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/device/DeviceMultiHost.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/device/DeviceService.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/device/DeviceService.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -167,8 +167,8 @@ apps/server/src/environment/RemoteOpenTargets.test.ts		content	1	B1	dropped	our 
 apps/server/src/environment/RemoteOpenTargets.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/environment/ServerEnvironment.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/environment/ServerEnvironment.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/environment/ServerEnvironmentLabel.test.ts		modify-delete	24	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/environment/ServerEnvironmentLabel.ts		content	12	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/environment/ServerEnvironmentLabel.test.ts		modify-delete	24	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/environment/ServerEnvironmentLabel.ts		content	12	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/environment/ServerEnvironmentMachine.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/environmentTheme.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/git/GitManager.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -249,7 +249,7 @@ apps/server/src/orchestration/replacedSessions.test.ts		added-broken	154	C1	drop
 apps/server/src/orchestration/replacedSessions.ts		added-broken	103	C1	dropped	v1 ingestion workaround; v2 provider-session events and run attempts own the replaced-session case (ProviderSwitch.integration.test.ts)
 apps/server/src/orchestration/toolResultMedia.test.ts		added-broken	59	C10	dropped	superseded by the toolOutputImageBytes tests; the v1 activity payload path is deleted
 apps/server/src/orchestration/toolResultMedia.ts		added-broken	96	C10	dropped	superseded by orchestration-v2/toolOutputImageBytes.ts, which strips served image bytes at ingest
-apps/server/src/persistence/AuthSessions.ts		content	40	C11	open	phone session slide (extendExpiry) is an E11 session behaviour, not an infra hook
+apps/server/src/persistence/AuthSessions.ts		content	40	C11	done	C11: extendExpiry updates only a live, unexpired row; covered by the sliding renewal cases
 apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Layers/OrchestrationEventStore.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -560,7 +560,7 @@ apps/server/src/relay/AgentAwarenessRelay.test.ts		content	1	B1	dropped	our only
 apps/server/src/relay/AgentAwarenessRelay.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/resourceTelemetry/NativeTelemetryClient.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/server.test.ts		modify-delete	1734	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/server.test.ts		modify-delete	1734	C11	done	C11: the 17 revoke cases moved to personal/auth/sessionRevocation.integration.test.ts; usage cases to C14, provider catalog cases to C9, the rest to C3
 apps/server/src/serverLogger.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/serverLogger.ts		content	15	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/serverRuntimeStartup.reconcile.test.ts		modify-delete	4	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
@@ -577,8 +577,8 @@ apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts		modify-delete
 apps/server/src/sourceControl/SourceControlDiscovery.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/sourceControl/SourceControlRepositoryService.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/startupAccess.test.ts		content	82	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/startupAccess.ts		content	44	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/startupAccess.test.ts		content	82	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/startupAccess.ts		content	44	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/storageCleanup.ts		content	2	C10	done	C10: the hourly cleanup drain runs inside withStallJob(job:storage-cleanup)
 apps/server/src/telemetry/AnalyticsService.test.ts		content	87	B1	dropped	only upstream commits (#N) on our side, each present in U
 apps/server/src/telemetry/AnalyticsService.ts		content	106	B1	dropped	only upstream commits (#N) on our side, each present in U
@@ -837,7 +837,7 @@ packages/client-runtime/src/work-log/presentation.ts		content	9	C16	dropped	U's 
 packages/contracts/src/assets.ts		content	26	C12	open	landed-PR retarget (Appendix H.4): C12
 packages/contracts/src/baseSchemas.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/device.ts		content	3	C15	dropped	U already carries the shortened device contract
-packages/contracts/src/environmentHttp.ts		content	38	C11	open	landed-PR retarget (Appendix H.4): C11
+packages/contracts/src/environmentHttp.ts		content	38	C11	done	C11: landed-PR retarget (Appendix H.4): C11
 packages/contracts/src/model.ts		content	59	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/orchestration.test.ts		modify-delete	79	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/orchestration.ts		modify-delete	121	D1	open	landed-PR retarget (Appendix H.4): D1
@@ -929,11 +929,11 @@ apps/hbots-mobile/src/pairing.ts		content	0	C11	done	M1b restored MAIN DPoP pair
 apps/hbots-mobile/src/personal/nativePersonalClient.ts		content	0	C16	done	M1b restored MAIN clients over C16 runtime; shells read personalBots.threadShells and the chat reads U v2 threadDetail
 apps/hbots-mobile/src/personal/nativeSession.ts		content	0	C16	done	M1b restored MAIN abort handling over the merged RPC client
 apps/hbots-mobile/src/shell/BotsScreen.tsx		content	0	C16	done	M1b restored MAIN bots, groups and handoff rows over personalBots.threadShells
-apps/server/src/auth/RpcAuthorization.ts		content	0	C11	open	MAIN device scopes parked; C11 moves them to personal/auth/personalRpcScopes.ts
-apps/server/src/auth/RpcAuthorization.test.ts		content	0	C11	open	MAIN device scope tests parked with RpcAuthorization; C11 restores coverage
+apps/server/src/auth/RpcAuthorization.ts		content	0	C11	done	C11: MAIN device scopes parked; C11 moves them to personal/auth/personalRpcScopes.ts
+apps/server/src/auth/RpcAuthorization.test.ts		content	0	C11	done	C11: MAIN device scope tests parked with RpcAuthorization; C11 restores coverage
 apps/server/src/http.ts		content	0	C12	open	MAIN attachment upload endpoint header parked; C12 adds it with contracts assets.ts
-apps/server/src/server.ts		content	0	C11	open	MAIN device handlers and session close wiring parked; C11 adds them in personal/ws/handlers.ts
-apps/server/src/ws.ts		content	0	C11	open	MAIN dropConnection and device socket wiring parked; C11 swaps in serveUntilSessionRevoked
+apps/server/src/server.ts		content	0	C11	done	C11: MAIN device handlers and session close wiring parked; C11 adds them in personal/ws/handlers.ts
+apps/server/src/ws.ts		content	0	C11	done	C11: MAIN dropConnection and device socket wiring parked; C11 swaps in serveUntilSessionRevoked
 apps/server/src/orchestration/Services/OrchestrationEngine.ts		modify-delete	0	C1	open	MAIN service file deleted with the v1 engine; getCommandReceipt moves to C1
 apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts		content	0	C9	open	MAIN 1.66.122 auto-update action and report parked; C9 ports provider updates
 apps/server/src/personal/providerUpdates/PersonalProviderUpdates.test.ts		content	0	C9	open	MAIN auto-update test cases parked; C9 ports them with the source
@@ -944,9 +944,14 @@ apps/web/src/features/personal/usePersonalGroups.ts		content	0	phase 4	open	MAIN
 apps/web/src/features/personal/useRemovedBots.ts		content	0	phase 4	open	MAIN web removed-bots hook changes parked; web is out of scope
 apps/web/src/pendingUserInput.ts		content	0	phase 4	open	MAIN web pending-input changes parked; web is out of scope
 packages/personal-client/src/bots/personalBots.ts		content	0	C16	done	M1b restored MAIN bots list, search, restore, tasks feed and thread changes on the merged contracts
-packages/contracts/src/rpc.ts		content	0	C11	open	MAIN device RPCs parked; C11 adds personalDevices RPCs in contracts personalRpc.ts
-packages/contracts/src/index.ts		content	0	C11	open	MAIN device and personal export lines parked; M1 exports personalDevices only
-packages/contracts/src/environment.test.ts		content	0	C11	open	MAIN shortId descriptor test parked; C11 restores it
-apps/hbots-mobile/src/settings/DevicesScreen.tsx		added-broken	0	C11	open	M1b deferred the devices screen until C11 adds personalDevices.list and .revoke
-packages/personal-client/src/settings/devices.ts		added-broken	0	C11	open	M1b deferred the device row model until C11 adds the device RPCs
-packages/personal-client/src/settings/devices.test.ts		added-broken	0	C11	open	M1b deferred the device row tests until C11 adds the device RPCs
+packages/contracts/src/rpc.ts		content	0	C11	done	C11: MAIN device RPCs parked; C11 adds personalDevices RPCs in contracts personalRpc.ts
+packages/contracts/src/index.ts		content	0	C11	done	C11: MAIN device and personal export lines parked; M1 exports personalDevices only
+packages/contracts/src/environment.test.ts		content	0	C11	done	C11: shortId descriptor case restored
+apps/hbots-mobile/src/settings/DevicesScreen.tsx		added-broken	0	C11	done	C11: M1b deferred the devices screen until C11 adds personalDevices.list and .revoke
+packages/personal-client/src/settings/devices.ts		added-broken	0	C11	done	C11: M1b deferred the device row model until C11 adds the device RPCs
+packages/personal-client/src/settings/devices.test.ts		added-broken	0	C11	done	C11: M1b deferred the device row tests until C11 adds the device RPCs
+apps/server/src/personal/auth/sessionRevocation.integration.test.ts		added-broken	0	C11	done	C11: 17 revoke cases on the real server layer
+apps/server/src/personal/auth/personalRpcScopes.ts		content	0	C11	done	C11: personalDevices read and operate scopes
+apps/server/src/personal/ws/handlers.ts		content	0	C11	done	C11: personalDevices list and revoke handlers
+apps/server/src/personal/browser/routes.ts		content	0	C11	done	C11: browser stream uses the one invalidation signal
+apps/server/src/personal/desktop/routes.ts		content	0	C11	done	C11: desktop stream uses the one invalidation signal

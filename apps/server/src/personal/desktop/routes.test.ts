@@ -50,7 +50,7 @@ const fixture = (auth: "missing" | ReadonlyArray<AuthEnvironmentScope>) => {
       ),
       Layer.provideMerge(
         Layer.succeed(SessionStore, {
-          awaitRevoked: () => Effect.never,
+          awaitInvalidation: () => Effect.never,
         } as unknown as SessionStore["Service"]),
       ),
       Layer.provideMerge(

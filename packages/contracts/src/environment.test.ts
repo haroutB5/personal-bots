@@ -14,6 +14,10 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+  it("carries the server short id when the server advertises it", () => {
+    expect(decodeDescriptor({ ...descriptor, shortId: "7F3A-91C2" }).shortId).toBe("7F3A-91C2");
+  });
+
   it("decodes old, recognized and future manual installation descriptors", () => {
     expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
     for (const installation of [{ kind: "npx" }, { kind: "npm-global", prefix: "/opt/node" }]) {

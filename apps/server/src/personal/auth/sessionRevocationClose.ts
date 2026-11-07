@@ -85,5 +85,5 @@ export const serveUntilSessionRevoked = <A, E, R, UR>(input: {
 export const endStreamWhenSessionRevoked = <A, E, R, UR>(input: {
   readonly stream: Stream.Stream<A, E, R>;
   readonly until: Effect.Effect<void, never, UR>;
-}): Effect.Effect<Stream.Stream<A, E, R>, never, UR> =>
+}): Effect.Effect<Stream.Stream<A, E, R | UR>, never> =>
   Effect.sync(() => input.stream.pipe(Stream.interruptWhen(input.until)));

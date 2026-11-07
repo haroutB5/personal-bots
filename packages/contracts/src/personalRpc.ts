@@ -947,15 +947,16 @@ const WsPersonalMemoryTidyUndoRpc = Rpc.make(WS_METHODS.personalMemoryTidyUndo, 
   success: PersonalMemoryTidyLogResult,
   error: PersonalMemoryRpcError,
 });
+const PersonalDevicesRpcError = Schema.Union([PersonalDevicesError, EnvironmentAuthorizationError]);
 const WsPersonalDevicesListRpc = Rpc.make(WS_METHODS.personalDevicesList, {
   payload: Schema.Struct({}),
   success: PersonalDevicesListResult,
-  error: PersonalDevicesError,
+  error: PersonalDevicesRpcError,
 });
 const WsPersonalDevicesRevokeRpc = Rpc.make(WS_METHODS.personalDevicesRevoke, {
   payload: PersonalDevicesRevokeInput,
   success: PersonalDevicesRevokeResult,
-  error: PersonalDevicesError,
+  error: PersonalDevicesRpcError,
 });
 const WsPersonalPushPublicKeyRpc = Rpc.make(WS_METHODS.personalPushPublicKey, {
   payload: Schema.Struct({}),

@@ -1,4 +1,5 @@
 import {
+  RelayManagedEndpoint,
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
@@ -109,7 +110,7 @@ export const readHoldWebhooksWhileOffline = readSecretString(
  */
 export const persistRelayEndpoint = Effect.fn("environment.cloud.persistRelayEndpoint")(function* (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
-  endpoint: { readonly providerKind: string; readonly httpBaseUrl: string },
+  endpoint: RelayManagedEndpoint,
 ) {
   if (endpoint.providerKind === "manual") {
     yield* secrets.remove(CLOUD_ENDPOINT_HTTP_BASE_URL);
