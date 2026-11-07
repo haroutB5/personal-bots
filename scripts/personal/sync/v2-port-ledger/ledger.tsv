@@ -92,8 +92,8 @@ apps/server/package.json		content	5	B1	done	take upstream, re-apply our hunk wit
 apps/server/scripts/acp-mock-agent.ts		content	544	C8	dropped	v2 uses AcpRegistryAdapterV2.testkit.ts and packages/effect-acp/test/fixtures/acp-mock-peer.ts; the v1 script has no caller
 apps/server/scripts/cli.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/scripts/measure-pr-preview.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/assets/AssetAccess.test.ts		content	202	C12	open	follows apps/server/src/assets/AssetAccess.ts
-apps/server/src/assets/AssetAccess.ts		content	102	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/assets/AssetAccess.test.ts		content	202	C12	done	follows apps/server/src/assets/AssetAccess.ts
+apps/server/src/assets/AssetAccess.ts		content	102	C12	done	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/assets/AttachmentUpload.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/assets/GitHubMediaFetch.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/assets/NativeAppIconResolver.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -104,8 +104,8 @@ apps/server/src/auth/EnvironmentAuthAdmin.test.ts		content	1	B1	dropped	our only
 apps/server/src/auth/EnvironmentAuthPolicy.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/auth/PairingGrantStore.test.ts		content	1	C11	done	C11: M1: MAIN pairing grant cases parked; C11 tests U's consume path
 apps/server/src/auth/PairingGrantStore.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/auth/ServerSecretStore.test.ts		content	182	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
-apps/server/src/auth/ServerSecretStore.ts		content	253	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/auth/ServerSecretStore.test.ts		content	182	C12	done	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/auth/ServerSecretStore.ts		content	253	C12	done	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/auth/SessionStore.test.ts		content	225	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/auth/SessionStore.ts		content	189	C11	done	C11: session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/auth/WsRpcGroupComposition.test.ts		added-broken	50	B1	dropped	U composes one WsRpcGroup; the split groups this test covered are gone
@@ -117,7 +117,7 @@ apps/server/src/auth/sessionRevocationClose.test.ts		added-broken	165	C11	done	C
 apps/server/src/auth/sessionRevocationClose.ts		added-broken	93	C11	done	C11: session revoke close is parked at B1; C11 ports it
 apps/server/src/auth/utils.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/bin.test.ts		modify-delete	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/bin.ts		content	16	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/bin.ts		content	16	C12	done	C12: registered in binCli.ts with the async console redirect first
 apps/server/src/bootstrap.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/checkpointing/CheckpointDiffQuery.test.ts		content	5	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
 apps/server/src/checkpointing/CheckpointStore.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -174,7 +174,7 @@ apps/server/src/environmentTheme.test.ts		content	1	B1	dropped	our only change a
 apps/server/src/git/GitManager.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/git/GitManager.ts		content	21	B1	dropped	only upstream commits (#N) on our side, each present in U
 apps/server/src/git/GitWorkflowService.ts		content	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
-apps/server/src/http.test.ts		content	20	C12	open	c1a7c4bd14 cases for the browser credential store deny list and pinned host file reads
+apps/server/src/http.test.ts		content	20	C12	done	c1a7c4bd14 cases for the browser credential store deny list and pinned host file reads
 apps/server/src/mcp/McpDeviceToolkit.test.ts		content	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/mcp/McpHttpServer.test.ts		content	206	C13	done	C13: the v2 MCP server test is present and passes
 apps/server/src/mcp/McpProviderSession.ts		modify-delete	54	C5	done	ported to provider-core mcpSession.ts: token off argv with PERSONAL_MCP_TOKEN_ON_ARGV and personal secret env, tested in ClaudeAdapterV2.test.ts
@@ -297,7 +297,7 @@ apps/server/src/personal/browser/PersonalBrowser.test.ts		added-broken	5354	C13	
 apps/server/src/personal/browser/PersonalBrowserProtectionRepository.test.ts		added-broken	47	C13	done	C13: restored on the v2 persistence layer and passes
 apps/server/src/personal/bulkPersonalChats.test.ts		added-broken	276	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/bulkPersonalItems.test.ts		added-broken	204	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
-apps/server/src/personal/connections/credentialStore.test.ts		added-broken	95	C12	open	G14 park; sealed credential names return with C12
+apps/server/src/personal/connections/credentialStore.test.ts		added-broken	95	C12	done	G14 park; sealed credential names return with C12
 apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.test.ts		added-broken	379	D1	open	G2 park; DeepSeek balance watcher (D1)
 apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts		added-broken	306	D1	open	DeepSeek balance watcher (D1)
 apps/server/src/personal/deepseek/deepSeekBalanceAlert.test.ts		added-broken	179	D1	open	G6 park; DeepSeek balance alert (D1)
@@ -328,7 +328,7 @@ apps/server/src/personal/providerHooks/claudeQueryOptions.ts		added-broken	207	C
 apps/server/src/personal/push/PersonalPushService.test.ts		added-broken	2197	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts		added-broken	622	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/routines/PersonalRoutineService.test.ts		added-broken	1753	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
-apps/server/src/personal/secrets/PersonalSecretService.test.ts		added-broken	2583	C12	open	sealed secrets (C12)
+apps/server/src/personal/secrets/PersonalSecretService.test.ts		added-broken	2583	C12	done	sealed secrets (C12)
 apps/server/src/personal/taskTitleBackfill.test.ts		added-broken	409	C4	done	ported to the v2 turn context and engine; targeted suite passes
 apps/server/src/personal/tasks/PersonalTaskRepository.notify.test.ts		added-broken	130	C16	done	C16: ported to the v2 projection tables; seeds go through test/v2ProjectionSeed.ts and the suite is green
 apps/server/src/personal/tasks/PersonalTaskService.test.ts		added-broken	5487	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
@@ -545,8 +545,8 @@ apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	dropped	
 apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	dropped	C15: the probe is rebuilt as PersonalProvidersV2Live.smokeTestFor on the structured generator, tested in PersonalProvidersV2.test.ts
 apps/server/src/provider/providerStatusCache.test.ts		content	90	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/providerStatusCache.ts		content	58	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
-apps/server/src/provider/secretEventRedaction.test.ts		added-broken	128	C12	open	G6 park; log redaction (C12)
-apps/server/src/provider/secretEventRedaction.ts		added-broken	130	C12	open	G6 park; log redaction (C12)
+apps/server/src/provider/secretEventRedaction.test.ts		added-broken	128	C12	done	G6 park; log redaction (C12)
+apps/server/src/provider/secretEventRedaction.ts		added-broken	130	C12	done	G6 park; log redaction (C12)
 apps/server/src/provider/testUtils/providerRegistryMock.ts		content	1	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/userInputAttachments.test.ts		content	7	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/pullRequest/GitHubPullRequestCli.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -562,7 +562,7 @@ apps/server/src/resourceTelemetry/NativeTelemetryClient.ts		content	3	B1	dropped
 apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/server.test.ts		modify-delete	1734	C11	done	C11: the 17 revoke cases moved to personal/auth/sessionRevocation.integration.test.ts; usage cases to C14, provider catalog cases to C9, the rest to C3
 apps/server/src/serverLogger.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/serverLogger.ts		content	15	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/serverLogger.ts		content	15	C12	done	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/serverRuntimeStartup.reconcile.test.ts		modify-delete	4	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
 apps/server/src/serverRuntimeStartup.test.ts		content	6	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
 apps/server/src/serverRuntimeStartup.ts		content	28	C4	dropped	v2 serverRuntimeStartup has no v1 reconcileProviderSessions; restart continuations go through RestartContinuation and ProviderRuntimeRecoveryService, and the bot persona is applied at ProviderTurnStartService session open
@@ -629,8 +629,8 @@ apps/server/src/vcs/VcsProcess.test.ts		content	2	B1	dropped	our only change at 
 apps/server/src/vcs/VcsProvisioningService.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/VcsStatusBroadcaster.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/gitSpawnExecutable.test.ts		added-broken	26	C15	dropped	the helper it tests is not in U; resolveSpawnCommand covers the case
-apps/server/src/workspace/WorkspaceFileSystem.test.ts		content	195	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
-apps/server/src/workspace/WorkspaceFileSystem.ts		content	151	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/workspace/WorkspaceFileSystem.test.ts		content	195	C12	done	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/workspace/WorkspaceFileSystem.ts		content	151	C12	done	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/workspace/WorkspaceSearchIndex.test.ts		content	68	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/src/workspace/WorkspaceSearchIndex.ts		content	21	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/test/ActivityPayloadProjection.test.ts		modify-delete	15	C10	dropped	the v1 activity projection pipeline is deleted; v2 stores turn items
@@ -834,7 +834,7 @@ packages/client-runtime/src/state/threads-atoms.test.ts		content	3	B1	dropped	ou
 packages/client-runtime/src/state/threads-sync.test.ts		content	20	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 packages/client-runtime/src/state/threads.ts		content	12	C16	dropped	U's thread state stands; personal-client reads threads through personalBots RPCs
 packages/client-runtime/src/work-log/presentation.ts		content	9	C16	dropped	U's work-log presentation stands; personal-client's OrchestrationThreadActivity type lives in conversation/wireTypes.ts
-packages/contracts/src/assets.ts		content	26	C12	open	landed-PR retarget (Appendix H.4): C12
+packages/contracts/src/assets.ts		content	26	C12	done	landed-PR retarget (Appendix H.4): C12
 packages/contracts/src/baseSchemas.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/device.ts		content	3	C15	dropped	U already carries the shortened device contract
 packages/contracts/src/environmentHttp.ts		content	38	C11	done	C11: landed-PR retarget (Appendix H.4): C11
@@ -931,7 +931,7 @@ apps/hbots-mobile/src/personal/nativeSession.ts		content	0	C16	done	M1b restored
 apps/hbots-mobile/src/shell/BotsScreen.tsx		content	0	C16	done	M1b restored MAIN bots, groups and handoff rows over personalBots.threadShells
 apps/server/src/auth/RpcAuthorization.ts		content	0	C11	done	C11: MAIN device scopes parked; C11 moves them to personal/auth/personalRpcScopes.ts
 apps/server/src/auth/RpcAuthorization.test.ts		content	0	C11	done	C11: MAIN device scope tests parked with RpcAuthorization; C11 restores coverage
-apps/server/src/http.ts		content	0	C12	open	MAIN attachment upload endpoint header parked; C12 adds it with contracts assets.ts
+apps/server/src/http.ts		content	0	C12	done	MAIN attachment upload endpoint header parked; C12 adds it with contracts assets.ts
 apps/server/src/server.ts		content	0	C11	done	C11: MAIN device handlers and session close wiring parked; C11 adds them in personal/ws/handlers.ts
 apps/server/src/ws.ts		content	0	C11	done	C11: MAIN dropConnection and device socket wiring parked; C11 swaps in serveUntilSessionRevoked
 apps/server/src/orchestration/Services/OrchestrationEngine.ts		modify-delete	0	C1	open	MAIN service file deleted with the v1 engine; getCommandReceipt moves to C1
