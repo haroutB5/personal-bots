@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import {
+  applyUsageLimitsUpdate,
+  resolveUsageLimitsAfterProbe,
+  seedUsageLimits,
+} from "./usageLimits.ts";
 
 const checkedAt = "2026-09-03T12:00:00.000Z";
 const session = {
@@ -118,5 +122,18 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+  });
+});
+
+describe("seedUsageLimits", () => {
+  it("fills only an empty or failed reading and keeps a good one", () => {
+    const seed = { checkedAt, windows: [session] };
+    const good = { checkedAt, windows: [weekly] };
+    const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
+
+    expect(seedUsageLimits({ published: undefined, seed })).toBe(seed);
+    expect(seedUsageLimits({ published: failed, seed })).toBe(seed);
+    expect(seedUsageLimits({ published: good, seed })).toBe(good);
+    expect(seedUsageLimits({ published: undefined, seed: failed })).toBeUndefined();
   });
 });

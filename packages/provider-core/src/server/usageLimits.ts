@@ -99,6 +99,24 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
+/**
+ * Offer a provider the last good reading from before a restart. It only fills
+ * a gap: a provider with no reading, or whose last probe failed, takes it.
+ */
+export function seedUsageLimits(input: {
+  readonly published: ServerProviderUsageLimits | undefined;
+  readonly seed: ServerProviderUsageLimits;
+}): ServerProviderUsageLimits | undefined {
+  const { published, seed } = input;
+  if (seed.unavailable !== undefined || seed.windows.length === 0) {
+    return published;
+  }
+  if (published === undefined || published.unavailable?.reason === "probeFailed") {
+    return seed;
+  }
+  return published;
+}
+
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;

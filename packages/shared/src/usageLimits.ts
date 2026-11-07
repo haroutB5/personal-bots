@@ -640,6 +640,33 @@ export function windowHasReset(window: ServerProviderUsageWindow, now: number): 
   return resetsAt !== null && resetsAt <= now;
 }
 
+/** Earliest reset still ahead of `now`, epoch ms, or null when none is reported. */
+export function nextUsageResetAt(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): number | null {
+  let next: number | null = null;
+  for (const window of limits?.windows ?? []) {
+    const resetsAt = resetMillis(window);
+    if (resetsAt !== null && resetsAt > now && (next === null || resetsAt < next)) next = resetsAt;
+  }
+  return next;
+}
+
+/** A window has reset since this reading was taken, so the reading is out of date. */
+export function usageResetSinceReading(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): boolean {
+  if (limits === undefined) return false;
+  const readAt = Date.parse(limits.checkedAt);
+  if (!Number.isFinite(readAt)) return false;
+  return limits.windows.some((window) => {
+    const resetsAt = resetMillis(window);
+    return resetsAt !== null && resetsAt > readAt && resetsAt <= now;
+  });
+}
+
 export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null || window.windowDurationMins === undefined) return null;

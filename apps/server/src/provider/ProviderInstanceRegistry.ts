@@ -66,8 +66,39 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
+/**
+ * A rebuild closes the instance scope and stops every session under it, so a
+ * config key the driver reads only for display must not count as a change.
+ */
+const entryEqual = <R>(
+  a: ProviderInstanceConfig,
+  b: ProviderInstanceConfig,
+  driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
+): boolean => {
+  if (Equal.equals(a, b)) return true;
+  const aKeys = driversById.get(a.driver)?.rebuildIrrelevantConfigKeys ?? [];
+  const bKeys = driversById.get(b.driver)?.rebuildIrrelevantConfigKeys ?? [];
+  if (aKeys.length === 0 && bKeys.length === 0) return false;
+  return Equal.equals(withoutConfigKeys(a, aKeys), withoutConfigKeys(b, bKeys));
+};
+
+/** A copy of `entry` with `keys` dropped from its config, for the comparison only. */
+const withoutConfigKeys = (
+  entry: ProviderInstanceConfig,
+  keys: ReadonlyArray<string>,
+): ProviderInstanceConfig => {
+  const config = entry.config;
+  if (config === null || typeof config !== "object" || Array.isArray(config)) return entry;
+  const stripped: Record<string, unknown> = { ...(config as Record<string, unknown>) };
+  let dropped = false;
+  for (const key of keys) {
+    if (key in stripped) {
+      delete stripped[key];
+      dropped = true;
+    }
+  }
+  return dropped ? { ...entry, config: stripped } : entry;
+};
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -334,7 +365,7 @@ const makeReconcile = <R>(input: {
         const nextEntry = configMap[instanceId];
         if (
           rebuild.has(instanceId) ||
-          (nextEntry !== undefined && !entryEqual(live.entry, nextEntry))
+          (nextEntry !== undefined && !entryEqual(live.entry, nextEntry, driversById))
         ) {
           replacedIds.add(instanceId);
         }
@@ -354,7 +385,9 @@ const makeReconcile = <R>(input: {
 
       const parkedSnapshot = (instanceId: ProviderInstanceId, entry: ProviderInstanceConfig) => {
         const parked = previousSecretsUnreadable.get(instanceId);
-        return !rebuild.has(instanceId) && parked !== undefined && entryEqual(parked, entry)
+        return !rebuild.has(instanceId) &&
+          parked !== undefined &&
+          entryEqual(parked, entry, driversById)
           ? previousUnavailable.get(instanceId)
           : undefined;
       };

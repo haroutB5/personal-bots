@@ -108,6 +108,8 @@ export interface ProviderDriver<Config, R = never, UsageR = never> {
   // Codec keeps DecodingServices = never; Schema would widen it through AnyProviderDriver.
   readonly configSchema: Schema.Codec<Config, unknown>;
   readonly defaultConfig: () => Config;
+  /** Config keys that change what a live instance shows but not what `create` reads. */
+  readonly rebuildIrrelevantConfigKeys?: ReadonlyArray<string>;
   /** Failures become unavailable snapshots; never throw defects. */
   readonly create: (
     input: ProviderDriverCreateInput<Config>,

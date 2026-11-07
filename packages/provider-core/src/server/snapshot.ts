@@ -1,6 +1,7 @@
 import type {
   ProviderUsageLimitsUpdate,
   ServerProvider,
+  ServerProviderUsageLimits,
   ServerSettingsError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -14,6 +15,10 @@ export interface ManagedServerProvider {
   }) => Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly getSnapshot: Effect.Effect<ServerProvider>;
   readonly refresh: Effect.Effect<ServerProvider>;
+  /** The settings card's manual refresh: asks for the uncached registry lookup. */
+  readonly refreshLatest?: Effect.Effect<ServerProvider>;
+  /** Takes the usage reading persisted before a restart when the provider has none. */
+  readonly seedUsageLimits?: (limits: ServerProviderUsageLimits) => Effect.Effect<void>;
   readonly refreshUsage?: Effect.Effect<void, ServerSettingsError>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
   /** Merge windows by ID; updates with no usable window leave the snapshot untouched. */

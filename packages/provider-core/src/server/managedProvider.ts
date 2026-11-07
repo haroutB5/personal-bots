@@ -4,6 +4,8 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { nextUsageResetAt, usageResetSinceReading } from "@t3tools/shared/usageLimits";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -16,7 +18,12 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderHost from "./ProviderHost.ts";
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import { probeBackoffInterval, usageAwareWait } from "./probeBackoff.ts";
+import {
+  applyUsageLimitsUpdate,
+  resolveUsageLimitsAfterProbe,
+  seedUsageLimits,
+} from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
@@ -63,6 +70,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const host = yield* ProviderHost.ProviderHost;
   const refreshSemaphore = yield* Semaphore.make(1);
   const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
+  const probeFailureStreak = yield* Ref.make(0);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -150,7 +158,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const probedSnapshot = yield* input.checkProvider;
+    const probedSnapshot = yield* input.checkProvider.pipe(
+      Effect.tap(() => Ref.set(probeFailureStreak, 0)),
+      Effect.tapError(() => Ref.update(probeFailureStreak, (streak) => streak + 1)),
+    );
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -271,7 +282,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       }
       return;
     }
-    const probed = yield* input.checkUsageLimits;
+    const probed = yield* input.checkUsageLimits.pipe(
+      Effect.tap(() => Ref.set(probeFailureStreak, 0)),
+      Effect.tapError(() => Ref.update(probeFailureStreak, (streak) => streak + 1)),
+    );
     const next = yield* Ref.modify(snapshotStateRef, (state) => {
       const usageLimits = resolveUsageLimitsAfterProbe({
         published: state.snapshot.usageLimits,
@@ -327,6 +341,22 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   }
 
+  // A reading that moves a usage reset changes when the loop should wake, so
+  // the loop re-plans its sleep without probing when the reset time changes.
+  const plannedResetRef = yield* Ref.make<number | null>(null);
+  const resetSubscription = yield* PubSub.subscribe(changesPubSub);
+  yield* Stream.fromSubscription(resetSubscription).pipe(
+    Stream.runForEach((snapshot) =>
+      Effect.gen(function* () {
+        const next = nextUsageResetAt(snapshot.usageLimits, yield* Clock.currentTimeMillis);
+        if (next === (yield* Ref.get(plannedResetRef))) return;
+        yield* Ref.set(plannedResetRef, next);
+        yield* Queue.offer(refreshIntervalChanges, undefined);
+      }),
+    ),
+    Effect.forkScoped,
+  );
+
   // A failed check must not end this subscription: the next settings change
   // retries, like the periodic and initial checks below.
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
@@ -335,30 +365,42 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   yield* Effect.forever(
     getRefreshInterval.pipe(
-      Effect.flatMap((refreshInterval) =>
-        // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
-        Effect.raceFirst(
-          Effect.sleep(
-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
-              ? "60 seconds"
-              : refreshInterval,
-          ).pipe(Effect.as(true)),
-          Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
-        ).pipe(
-          Effect.flatMap((intervalElapsed) =>
-            intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
-              ? shouldRefreshOnInterval.pipe(
-                  Effect.flatMap((shouldRefresh) =>
-                    shouldRefresh
-                      ? refreshSemaphore.withPermits(1)(refreshOnInterval())
-                      : Effect.void,
-                  ),
-                )
-              : Effect.void,
-          ),
-        ),
+      Effect.flatMap((configured) =>
+        Effect.gen(function* () {
+          // Read per iteration so a settings change and the current failure
+          // streak both take effect on the very next wait.
+          const refreshInterval = probeBackoffInterval(
+            configured,
+            yield* Ref.get(probeFailureStreak),
+          );
+          const enabled = Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0;
+          const planned = (yield* Ref.get(snapshotStateRef)).snapshot;
+          yield* Ref.set(
+            plannedResetRef,
+            nextUsageResetAt(planned.usageLimits, yield* Clock.currentTimeMillis),
+          );
+          const wait = usageAwareWait(
+            enabled ? refreshInterval : Duration.seconds(60),
+            planned.usageLimits,
+            yield* Clock.currentTimeMillis,
+          );
+          // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
+          const intervalElapsed = yield* Effect.raceFirst(
+            Effect.sleep(wait).pipe(Effect.as(true)),
+            Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
+          );
+          if (!enabled || !intervalElapsed) return;
+          // A reading older than a reset is wrong for everyone who opens the
+          // app next, so it is read again even without a viewer.
+          const resetSinceReading = usageResetSinceReading(
+            (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits,
+            yield* Clock.currentTimeMillis,
+          );
+          if (resetSinceReading || (yield* shouldRefreshOnInterval)) {
+            yield* refreshSemaphore.withPermits(1)(refreshOnInterval());
+          }
+        }).pipe(Effect.ignoreCause({ log: true })),
       ),
-      Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
 
@@ -367,13 +409,36 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     Effect.forkScoped,
   );
 
+  const applyUsageLimitsSeed: NonNullable<ManagedServerProvider["seedUsageLimits"]> = Effect.fn(
+    "ManagedServerProvider.seedUsageLimits",
+  )(function* (seed) {
+    const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
+      const usageLimits = seedUsageLimits({ published: state.snapshot.usageLimits, seed });
+      if (usageLimits === state.snapshot.usageLimits) {
+        return [null, state] as const;
+      }
+      const snapshot = withUsageLimits(state.snapshot, usageLimits);
+      return [snapshot, { ...state, snapshot }] as const;
+    });
+    if (snapshotToPublish !== null) {
+      yield* PubSub.publish(changesPubSub, snapshotToPublish);
+    }
+  });
+
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     refresh: input
       .resolveMaintenance({ fresh: true })
       .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),
+    // The settings card's manual Refresh is the same uncached lookup.
+    get refreshLatest() {
+      return input
+        .resolveMaintenance({ fresh: true })
+        .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie);
+    },
     applyUsageLimits,
+    seedUsageLimits: applyUsageLimitsSeed,
     refreshUsage: refreshUsage(),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);

@@ -287,7 +287,7 @@ apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broke
 apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	open	per-bot token usage (C14)
 apps/server/src/personal/PersonalChatResumeService.test.ts		added-broken	675	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalFiles.test.ts		added-broken	299	C10	open	personal persistence layer (C10)
-apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	open	provider fallback port (C9)
+apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	dropped	the v1 harness imports the deleted v1 orchestration services; the v2 service has no direct suite, reported open
 apps/server/src/personal/PersonalTaskChatArchiveService.test.ts		added-broken	727	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalTurnRetryService.test.ts		added-broken	557	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/agentContextBudget.test.ts		added-broken	74	C4	done	ported to the v2 turn context and engine; targeted suite passes
@@ -305,8 +305,8 @@ apps/server/src/personal/deepseek/deepSeekBalanceAlert.ts		added-broken	145	D1	o
 apps/server/src/personal/engine/PersonalEngineV1.reads.test.ts		added-broken	265	C2	done	ported to PersonalEngineV2.reads.test.ts
 apps/server/src/personal/engine/PersonalEngineV1.test.ts		added-broken	1165	C1	done	ported to PersonalEngineV2.test.ts (verbs, events, notices)
 apps/server/src/personal/engine/PersonalEngineV1Live.ts		added-broken	854	C1	done	replaced by PersonalEngineV2Live; the verbs and events wrap ThreadManagementService and OrchestratorV2
-apps/server/src/personal/engine/PersonalProvidersV1.test.ts		added-broken	323	C9	open	provider port types (C9)
-apps/server/src/personal/engine/PersonalProvidersV1Live.ts		added-broken	195	C9	open	provider port types (C9)
+apps/server/src/personal/engine/PersonalProvidersV1.test.ts		added-broken	323	C9	dropped	the v1 engine was removed at B1; PersonalEngineV2/PersonalProvidersV2 is the only engine
+apps/server/src/personal/engine/PersonalProvidersV1Live.ts		added-broken	195	C9	done	C9: PersonalProvidersV2Live implements provider list (with a first-read readiness wait), refresh, change stream and structured generation; session-level calls degrade to empty
 apps/server/src/personal/groups/PersonalGroupService.test.ts		added-broken	2724	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/leadBots/leadBotGeminiEffort.test.ts		added-broken	62	C8	done	C8: test restored; buildAntigravityModelsFromSession now exposes thinking_level as the shared effort descriptor
 apps/server/src/personal/memory/PersonalMemoryService.apps.test.ts		added-broken	769	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
@@ -392,21 +392,21 @@ apps/server/src/provider/Drivers/CodexDriver.ts		content	23	C5-C9	dropped	v2 dri
 apps/server/src/provider/Drivers/CodexHomeLayout.ts		content	4	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/src/provider/Drivers/CodexManagedProvider.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/CursorDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/Drivers/CursorDriver.ts		modify-delete	10	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/DeepSeekDriver.test.ts		added-broken	265	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/DeepSeekDriver.ts		added-broken	456	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/CursorDriver.ts		modify-delete	10	C5-C9	done	v2 home is packages/provider-cursor/src/server/driver.ts
+apps/server/src/provider/Drivers/DeepSeekDriver.test.ts		added-broken	265	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Drivers/DeepSeekDriver.ts		added-broken	456	D1	open	DeepSeek is the D series, not C5-C9
 apps/server/src/provider/Drivers/DeepSeekEngine.test.ts		added-broken	43	D1	open	G6 park; DeepSeek engine (D1)
 apps/server/src/provider/Drivers/DeepSeekEngine.ts		added-broken	41	D1	open	G6 park; DeepSeek engine (D1)
 apps/server/src/provider/Drivers/DeepSeekEnvironment.test.ts		added-broken	248	D1	open	G2 park; DeepSeek environment (D1)
-apps/server/src/provider/Drivers/DeepSeekEnvironment.ts		added-broken	228	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/DeepSeekEnvironment.ts		added-broken	228	D1	open	DeepSeek is the D series, not C5-C9
 apps/server/src/provider/Drivers/GrokDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/Drivers/GrokDriver.ts		modify-delete	10	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/GrokDriver.ts		modify-delete	10	C5-C9	done	v2 home is packages/provider-grok/src/server/driver.ts
 apps/server/src/provider/Drivers/OpenCodeDriver.ts		modify-delete	83	C5-C9	dropped	driver moved to packages/provider-opencode; the v2 driver wires createOpenCodeAdapterV2 and resolveCodexLaunchArgs equivalents, and the parked hunk is upstream import churn
 apps/server/src/provider/Drivers/RegistryAcpDriver.test.ts		added-broken	258	C5-C9	done	v2 home is packages/provider-acp-registry/src/server with its own tests
 apps/server/src/provider/Drivers/RegistryAcpDriver.ts		added-broken	398	C5-C9	done	v2 home is packages/provider-acp-registry/src/server/adapter.ts
 apps/server/src/provider/Drivers/RegistryAcpLocalProof.test.ts		added-broken	196	C5-C9	dropped	local proof needs a real registry agent; the v2 package tests and app replay suite cover the protocol
-apps/server/src/provider/EventNdjsonLogger.test.ts	apps/server/src/provider/Layers/EventNdjsonLogger.test.ts	content	217	C5-C9	open	area C5-C9
-apps/server/src/provider/EventNdjsonLogger.ts	apps/server/src/provider/Layers/EventNdjsonLogger.ts	content	289	C5-C9	open	area C5-C9
+apps/server/src/provider/EventNdjsonLogger.test.ts	apps/server/src/provider/Layers/EventNdjsonLogger.test.ts	content	217	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/EventNdjsonLogger.ts	apps/server/src/provider/Layers/EventNdjsonLogger.ts	content	289	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/GrokProvider.test.ts	apps/server/src/provider/Layers/GrokProvider.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Layers/AntigravityAdapter.test.ts		modify-delete	314	C5-C9	dropped	v2 AntigravityAdapterV2.test.ts and the provider-acp tests own the adapter
 apps/server/src/provider/Layers/AntigravityAdapter.ts		modify-delete	183	C5-C9	done	C8: AntigravityAdapterV2 with the shared ACP persona, quota notice and effort mapping
@@ -420,18 +420,18 @@ apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts		modify-d
 apps/server/src/provider/Layers/CodexSessionRuntime.test.ts		modify-delete	128	C5-C9	done	C6: skill-root and turn-param cases ported to CodexAdapterV2.test.ts and CodexDeveloperInstructions.test.ts
 apps/server/src/provider/Layers/CodexSessionRuntime.ts		modify-delete	148	C5-C9	done	C6: extra skill roots, priority and terminate ported to CodexAdapterV2
 apps/server/src/provider/Layers/CodexTurnSteer.integration.test.ts		added-broken	157	C5-C9	dropped	v2 adapter owns steering; CodexAdapterV2.test.ts carries 15 steer cases and C6 changes no steer path
-apps/server/src/provider/Layers/CursorAdapter.test.ts		modify-delete	42	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/CursorAdapter.ts		modify-delete	16	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/CursorProvider.test.ts		modify-delete	15	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/CursorProvider.ts		modify-delete	9	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/DeepSeekAdapter.test.ts		added-broken	627	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/DeepSeekAdapter.ts		added-broken	236	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/DeepSeekDshAdapter.test.ts		added-broken	1001	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/DeepSeekDshAdapter.ts		added-broken	1724	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/DeepSeekProvider.ts		added-broken	545	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/GrokAdapter.test.ts		modify-delete	48	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/GrokAdapter.ts		modify-delete	16	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CursorAdapter.test.ts		modify-delete	42	C5-C9	dropped	v2 package tests own the Cursor adapter
+apps/server/src/provider/Layers/CursorAdapter.ts		modify-delete	16	C5-C9	done	v2 home is packages/provider-cursor/src/server/adapter.ts
+apps/server/src/provider/Layers/CursorProvider.test.ts		modify-delete	15	C5-C9	dropped	v2 package tests own the Cursor provider
+apps/server/src/provider/Layers/CursorProvider.ts		modify-delete	9	C5-C9	done	v2 Cursor provider snapshot lives in the package
+apps/server/src/provider/Layers/DeepSeekAdapter.test.ts		added-broken	627	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekAdapter.ts		added-broken	236	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekDshAdapter.test.ts		added-broken	1001	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekDshAdapter.ts		added-broken	1724	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekProvider.ts		added-broken	545	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/GrokAdapter.test.ts		modify-delete	48	C5-C9	dropped	v2 package tests own the Grok adapter
+apps/server/src/provider/Layers/GrokAdapter.ts		modify-delete	16	C5-C9	done	v2 home is packages/provider-grok/src/server/adapter.ts; termination is owned by AcpSessionRuntime
 apps/server/src/provider/Layers/NativeAcpAdapter.test.ts		added-broken	826	C5-C9	dropped	v2 packages/provider-acp/src/server owns the native ACP adapter and its tests
 apps/server/src/provider/Layers/NativeAcpAdapter.ts		added-broken	1261	C5-C9	done	C8: the v2 home is packages/provider-acp/src/server/adapter.ts, now with the bot persona
 apps/server/src/provider/Layers/NativeAcpSteerHandoff.test.ts		added-broken	141	C5-C9	dropped	v2 provider-acp steer tests own the behaviour
@@ -440,14 +440,14 @@ apps/server/src/provider/Layers/OpenCodeAdapter.test.ts		modify-delete	668	C5-C9
 apps/server/src/provider/Layers/OpenCodeAdapter.ts		modify-delete	269	C5-C9	done	C7: persona, per-bot config-home isolation and state deny rules ported to packages/provider-opencode (v2 adapter); the v1 adapter carries the persona
 apps/server/src/provider/Layers/OpenCodeProvider.test.ts		modify-delete	44	C5-C9	dropped	v2 provider snapshot tests live in packages/provider-opencode/src/server; the v1 provider layer no longer exists
 apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts		modify-delete	264	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ProviderInstanceRegistryLive.ts		modify-delete	43	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ProviderRegistry.test.ts		modify-delete	307	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ProviderService.test.ts		modify-delete	662	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ProviderService.ts		modify-delete	250	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts		modify-delete	264	C5-C9	done	v2 ProviderInstanceRegistry tests own the rebuild comparison
+apps/server/src/provider/Layers/ProviderInstanceRegistryLive.ts		modify-delete	43	C5-C9	done	C9: entryEqual ignores rebuildIrrelevantConfigKeys in ProviderInstanceRegistry
+apps/server/src/provider/Layers/ProviderRegistry.test.ts		modify-delete	307	C5-C9	dropped	v1 registry suite; v2 ProviderRegistry tests are the home
+apps/server/src/provider/Layers/ProviderService.test.ts		modify-delete	662	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
+apps/server/src/provider/Layers/ProviderService.ts		modify-delete	250	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
 apps/server/src/provider/Layers/ProviderSessionDirectory.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/Layers/ProviderSessionReaper.test.ts		modify-delete	3	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ProviderSessionReaper.ts		modify-delete	2	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ProviderSessionReaper.test.ts		modify-delete	3	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
+apps/server/src/provider/Layers/ProviderSessionReaper.ts		modify-delete	2	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
 apps/server/src/provider/Layers/RegistryAcpAdapter.test.ts		added-broken	317	C8	dropped	v2 AcpRegistryAdapterV2.test.ts owns the registry adapter with 2424 lines
 apps/server/src/provider/Layers/RegistryAcpAdapter.ts		added-broken	69	C8	done	C8: the v2 registry path is AcpRegistryAdapterV2 plus packages/provider-acp-registry
 apps/server/src/provider/Layers/antigravityUsageLimits.test.ts		added-broken	465	C5-C9	done	v2 home is AntigravityUsage.ts with the provider tests
@@ -455,17 +455,17 @@ apps/server/src/provider/Layers/antigravityUsageLimits.ts		added-broken	489	C5-C
 apps/server/src/provider/Layers/codexLaunchArgs.test.ts		modify-delete	22	C5-C9	done	C6: personal-bot switch and skill-args tests ported
 apps/server/src/provider/Layers/openCodeUsageLimits.ts		modify-delete	11	C5-C9	done	C7: the console key is read from OpenCode 2's stored credentials in usageLimits.ts, with the opencode-go fallback
 apps/server/src/provider/Layers/resetCreditCoordinator.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/ModelManifest.test.ts		content	24	C5-C9	open	area C5-C9
-apps/server/src/provider/ModelManifest.ts		content	7	C5-C9	open	area C5-C9
-apps/server/src/provider/ProviderAuthService.test.ts	apps/server/src/provider/Layers/ProviderAuthService.test.ts	content	28	C9	open	provider auth test follows the C9 port
-apps/server/src/provider/ProviderDriver.ts		modify-delete	26	C5-C9	open	area C5-C9
+apps/server/src/provider/ModelManifest.test.ts		content	24	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/ModelManifest.ts		content	7	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/ProviderAuthService.test.ts	apps/server/src/provider/Layers/ProviderAuthService.test.ts	content	28	C9	done	v2 test present and green with serverSettings (87 tests)
+apps/server/src/provider/ProviderDriver.ts		modify-delete	26	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
 apps/server/src/provider/ProviderInstanceEnvironment.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/ProviderRegistry.ts	apps/server/src/provider/Layers/ProviderRegistry.ts	content	108	C5-C9	open	area C5-C9
-apps/server/src/provider/RuntimeInstructions.ts		modify-delete	14	C5-C9	open	area C5-C9
-apps/server/src/provider/Services/ProviderAdapter.ts		modify-delete	39	C5-C9	open	area C5-C9
-apps/server/src/provider/Services/ProviderRegistry.ts		modify-delete	32	C5-C9	open	area C5-C9
-apps/server/src/provider/Services/ProviderService.ts		modify-delete	12	C5-C9	open	area C5-C9
-apps/server/src/provider/Services/ServerProvider.ts		modify-delete	21	C5-C9	open	area C5-C9
+apps/server/src/provider/ProviderRegistry.ts	apps/server/src/provider/Layers/ProviderRegistry.ts	content	108	C5-C9	done	C9: v2 registry present; seedUsageLimits and refreshLatest wired through managedProvider
+apps/server/src/provider/RuntimeInstructions.ts		modify-delete	14	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
+apps/server/src/provider/Services/ProviderAdapter.ts		modify-delete	39	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
+apps/server/src/provider/Services/ProviderRegistry.ts		modify-delete	32	C5-C9	dropped	v1 services path; v2 ProviderRegistry is the home
+apps/server/src/provider/Services/ProviderService.ts		modify-delete	12	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
+apps/server/src/provider/Services/ServerProvider.ts		modify-delete	21	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
 apps/server/src/provider/acp/AcpCoreRuntimeEvents.ts		modify-delete	30	C5-C9	done	v2 provider-acp runtime owns the events
 apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/AcpNativeLogging.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -477,8 +477,8 @@ apps/server/src/provider/acp/AntigravityAcpSupport.test.ts		content	308	C5-C9	do
 apps/server/src/provider/acp/AntigravityAcpSupport.ts		content	136	C5-C9	done	v2 module present
 apps/server/src/provider/acp/CursorAcpCliProbe.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/CursorAcpSupport.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/acp/DshAcpSupport.test.ts		added-broken	682	C5-C9	open	area C5-C9
-apps/server/src/provider/acp/DshAcpSupport.ts		added-broken	1049	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/DshAcpSupport.test.ts		added-broken	682	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/acp/DshAcpSupport.ts		added-broken	1049	D1	open	DeepSeek is the D series, not C5-C9
 apps/server/src/provider/acp/GrokAcpCliProbe.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/XAiAcpExtension.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/antigravityAuthSupport.test.ts		content	192	C5-C9	done	v2 module and test present
@@ -486,69 +486,69 @@ apps/server/src/provider/antigravityAuthSupport.ts		content	95	C5-C9	done	v2 mod
 apps/server/src/provider/antigravityRelease.ts		content	42	C5-C9	done	v2 module present
 apps/server/src/provider/botPluginSkillDiagnostics.test.ts		added-broken	201	C6	done	C6: added-broken file restored and ported to the v2 path
 apps/server/src/provider/botPluginSkillDiagnostics.ts		added-broken	162	C6	done	C6: added-broken file restored
-apps/server/src/provider/botPluginSkillRoots.ts		added-broken	91	C5-C9	open	area C5-C9
-apps/server/src/provider/botProcessPriority.spawnSites.test.ts		added-broken	193	C5-C9	open	area C5-C9
-apps/server/src/provider/builtInDrivers.ts		content	7	C5-C9	open	area C5-C9
-apps/server/src/provider/builtInProviderCatalog.ts		content	1	C5-C9	open	area C5-C9
-apps/server/src/provider/catalog/INTEGRATION.md		added-broken	110	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/ProviderCatalog.test.ts		added-broken	476	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/ProviderCatalog.ts		added-broken	465	C5-C9	open	area C5-C9
-apps/server/src/provider/catalog/acpSmoke.test.ts		added-broken	93	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/acpSmoke.ts		added-broken	112	C5-C9	open	area C5-C9
-apps/server/src/provider/catalog/archive.test.ts		added-broken	328	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/archive.ts		added-broken	465	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/archiveFixtures.ts		added-broken	143	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/catalogLive.test.ts		added-broken	143	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/entries.test.ts		added-broken	264	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/entries.ts		added-broken	322	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/errors.ts		added-broken	96	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/fixtures/registry-2026-10-20.json		added-broken	1270	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/index.ts		added-broken	17	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/installer.test.ts		added-broken	1061	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/installer.ts		added-broken	1299	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/launch.ts		added-broken	149	C5-C9	open	area C5-C9
-apps/server/src/provider/catalog/overlay.ts		added-broken	96	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/plan.ts		added-broken	218	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/provider-catalog-overlay.json		added-broken	69	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/registry.test.ts		added-broken	370	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/registry.ts		added-broken	297	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/registryAuth.ts		added-broken	116	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/registryModels.ts		added-broken	73	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/registryProbe.ts		added-broken	310	C5-C9	open	area C5-C9
-apps/server/src/provider/catalog/transport.test.ts		added-broken	291	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
-apps/server/src/provider/catalog/transport.ts		added-broken	244	C5-C9	open	the registry provider catalog is parked at B1; C9 ports it
+apps/server/src/provider/botPluginSkillRoots.ts		added-broken	91	C5-C9	done	C6: file restored to provider/botPluginSkillRoots.ts
+apps/server/src/provider/botProcessPriority.spawnSites.test.ts		added-broken	193	C5-C9	dropped	the v1 spawners are gone; priority is wired at CodexAdapterV2, OpenCodeRuntime, AcpSessionRuntime and claudeProcessSpawner, each with unit tests
+apps/server/src/provider/builtInDrivers.ts		content	7	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/builtInProviderCatalog.ts		content	1	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/catalog/INTEGRATION.md		added-broken	110	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/ProviderCatalog.test.ts		added-broken	476	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/ProviderCatalog.ts		added-broken	465	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/acpSmoke.test.ts		added-broken	93	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/acpSmoke.ts		added-broken	112	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/archive.test.ts		added-broken	328	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/archive.ts		added-broken	465	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/archiveFixtures.ts		added-broken	143	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/catalogLive.test.ts		added-broken	143	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/entries.test.ts		added-broken	264	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/entries.ts		added-broken	322	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/errors.ts		added-broken	96	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/fixtures/registry-2026-10-20.json		added-broken	1270	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/index.ts		added-broken	17	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/installer.test.ts		added-broken	1061	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/installer.ts		added-broken	1299	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/launch.ts		added-broken	149	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/overlay.ts		added-broken	96	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/plan.ts		added-broken	218	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/provider-catalog-overlay.json		added-broken	69	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/registry.test.ts		added-broken	370	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/registry.ts		added-broken	297	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/registryAuth.ts		added-broken	116	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/registryModels.ts		added-broken	73	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/registryProbe.ts		added-broken	310	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/transport.test.ts		added-broken	291	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/transport.ts		added-broken	244	C15	open	the provider catalog is not C5-C9; assigned to C15
 apps/server/src/provider/claudeResetCredits.test.ts	apps/server/src/provider/Layers/claudeResetCredits.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/claudeUsageLimits.test.ts	apps/server/src/provider/Layers/claudeUsageLimits.test.ts	content	55	C5-C9	open	area C5-C9
-apps/server/src/provider/claudeUsageLimits.ts	apps/server/src/provider/Layers/claudeUsageLimits.ts	content	23	C5-C9	open	area C5-C9
+apps/server/src/provider/claudeUsageLimits.test.ts	apps/server/src/provider/Layers/claudeUsageLimits.test.ts	content	55	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/claudeUsageLimits.ts	apps/server/src/provider/Layers/claudeUsageLimits.ts	content	23	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/codexLaunchArgs.ts	apps/server/src/provider/Layers/codexLaunchArgs.ts	content	80	C5-C9	done	C6: personal-bot app-server args, skill args and owner skill listing ported
 apps/server/src/provider/codexUsageLimits.test.ts	apps/server/src/provider/Layers/codexUsageLimits.test.ts	content	33	C5-C9	done	C6: usage-limit wording tests ported
 apps/server/src/provider/codexUsageLimits.ts	apps/server/src/provider/Layers/codexUsageLimits.ts	content	31	C5-C9	done	C6: usage-limit wording ported
 apps/server/src/provider/dshUsageLedger.test.ts		added-broken	254	D1	open	G6 park; DeepSeek usage ledger (D1)
 apps/server/src/provider/dshUsageLedger.ts		added-broken	349	D1	open	G6 park; DeepSeek usage ledger (D1)
-apps/server/src/provider/model-manifest.json		content	65	C5-C9	open	area C5-C9
+apps/server/src/provider/model-manifest.json		content	65	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/opencode2.live.test.ts		added-broken	197	C7	dropped	live test needs a real OpenCode CLI and the user's account; package OpenCode2Server/Client tests cover the protocol and the app replay suite covers sessions
 apps/server/src/provider/opencode2.test.ts		added-broken	214	C5-C9	dropped	v1 opencode2 client suite; its behaviour lives in packages/provider-opencode/src/server/v2 tests
 apps/server/src/provider/opencode2.ts		added-broken	641	C5-C9	dropped	v1 opencode2 client; packages/provider-opencode/src/server/v2/{adapter,OpenCode2Client,OpenCode2Server}.ts is the v2 home
 apps/server/src/provider/opencodeRuntime.environment.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/opencodeRuntime.inventory.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/opencodeRuntime.ts		modify-delete	3	C5-C9	done	C7: bot process priority ported to packages/provider-opencode/src/server/OpenCodeRuntime.ts for both spawn sites
-apps/server/src/provider/probeBackoff.test.ts		added-broken	72	C9	open	G6 park; managed provider backoff (C9)
-apps/server/src/provider/probeBackoff.ts		added-broken	62	C9	open	G6 park; managed provider backoff (C9)
-apps/server/src/provider/providerCompatibility.test.ts		content	13	C5-C9	open	area C5-C9
-apps/server/src/provider/providerInstallation.test.ts		content	268	C5-C9	open	area C5-C9
-apps/server/src/provider/providerInstallation.ts		content	188	C5-C9	open	area C5-C9
-apps/server/src/provider/providerMaintenance.test.ts		modify-delete	113	C5-C9	open	area C5-C9
-apps/server/src/provider/providerMaintenance.ts		modify-delete	67	C5-C9	open	area C5-C9
-apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C5-C9	open	area C5-C9
-apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C5-C9	open	area C5-C9
-apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	open	G2 park; smokeCheck returns with C9
-apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	open	area C5-C9
-apps/server/src/provider/providerStatusCache.test.ts		content	90	C5-C9	open	area C5-C9
-apps/server/src/provider/providerStatusCache.ts		content	58	C5-C9	open	area C5-C9
+apps/server/src/provider/probeBackoff.test.ts		added-broken	72	C9	done	C9: probeBackoff restored under provider-core with its test
+apps/server/src/provider/probeBackoff.ts		added-broken	62	C9	done	C9: probe backoff and usage-aware wait restored under provider-core
+apps/server/src/provider/providerCompatibility.test.ts		content	13	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/providerInstallation.test.ts		content	268	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/providerInstallation.ts		content	188	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/providerMaintenance.test.ts		modify-delete	113	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
+apps/server/src/provider/providerMaintenance.ts		modify-delete	67	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
+apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	dropped	the v1 one-message probe needs three deleted helpers; PersonalProvidersV2Live.smokeTestFor stays stubbed, reported open
+apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	dropped	same: the v1 probe is not on the v2 adapter surface; the smoke verdict path remains open
+apps/server/src/provider/providerStatusCache.test.ts		content	90	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/providerStatusCache.ts		content	58	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/secretEventRedaction.test.ts		added-broken	128	C12	open	G6 park; log redaction (C12)
 apps/server/src/provider/secretEventRedaction.ts		added-broken	130	C12	open	G6 park; log redaction (C12)
-apps/server/src/provider/testUtils/providerRegistryMock.ts		content	1	C5-C9	open	area C5-C9
-apps/server/src/provider/userInputAttachments.test.ts		content	7	C5-C9	open	area C5-C9
+apps/server/src/provider/testUtils/providerRegistryMock.ts		content	1	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/userInputAttachments.test.ts		content	7	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/pullRequest/GitHubPullRequestCli.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/pullRequest/GitLabPullRequestCli.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/pullRequest/PullRequestReadCache.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -568,8 +568,8 @@ apps/server/src/serverRuntimeStartup.test.ts		content	6	B1	dropped	our lines onl
 apps/server/src/serverRuntimeStartup.ts		content	28	C4	dropped	v2 serverRuntimeStartup has no v1 reconcileProviderSessions; restart continuations go through RestartContinuation and ProviderRuntimeRecoveryService, and the bot persona is applied at ProviderTurnStartService session open
 apps/server/src/serverRuntimeStartup.worktreeSetup.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/serverRuntimeState.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/serverSettings.test.ts		content	176	C9	open	typed provider secrets, Gemini effort defaults
-apps/server/src/serverSettings.ts		content	86	C9	open	typed provider secrets, Gemini effort defaults
+apps/server/src/serverSettings.test.ts		content	176	C9	done	v2 test present and green
+apps/server/src/serverSettings.ts		content	86	C9	done	v2 module present
 apps/server/src/serviceLauncher.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/sourceControl/GitHubCli.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/sourceControl/GitHubSourceControlProvider.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -845,13 +845,13 @@ packages/contracts/src/personalV1Wire.test.ts		added-broken	36	C3	done	ported wi
 packages/contracts/src/previewAutomation.ts		content	253	C13	open	landed-PR retarget (Appendix H.4): C13
 packages/contracts/src/provider.test.ts		content	6	C5	dropped	v1 provider wire test; personal flags are tested at the v2 adapter input
 packages/contracts/src/provider.ts		content	71	C5	dropped	v1 provider wire replaced by ProviderAdapterV2OpenSessionInput.personal and systemInstructions
-packages/contracts/src/providerRuntime.ts		content	26	C9	open	landed-PR retarget (Appendix H.4): C9
-packages/contracts/src/providerSetup.ts		content	33	C9	open	landed-PR retarget (Appendix H.4): C9
+packages/contracts/src/providerRuntime.ts		content	26	C9	done	v2 module present
+packages/contracts/src/providerSetup.ts		content	33	C9	done	v2 module present
 packages/contracts/src/providerUsageLimits.ts		content	115	C14	open	landed-PR retarget (Appendix H.4): C14
 packages/contracts/src/pullRequest.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/relay.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/contracts/src/server.ts		content	82	C9	open	landed-PR retarget (Appendix H.4): C9
-packages/contracts/src/settings.test.ts		content	13	C9	open	landed-PR retarget (Appendix H.4): C9
+packages/contracts/src/server.ts		content	82	C9	done	v2 module present
+packages/contracts/src/settings.test.ts		content	13	C9	done	v2 test present
 packages/contracts/src/settings.ts		content	88	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/usage.ts		content	4	C14	open	landed-PR retarget (Appendix H.4): C14
 packages/effect-acp/src/client.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -859,20 +859,20 @@ packages/effect-acp/src/protocol.test.ts		content	2	B1	dropped	our only change a
 packages/effect-acp/src/rpc.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/effect-codex-app-server/src/client.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/effect-codex-app-server/src/client.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/provider-core/src/server/auth.ts	apps/server/src/provider/Services/ProviderAuthService.ts	content	12	C5-C9	open	area C5-C9
-packages/provider-core/src/server/managedProvider.test.ts	apps/server/src/provider/makeManagedServerProvider.test.ts	content	521	C5-C9	open	area C5-C9
-packages/provider-core/src/server/managedProvider.ts	apps/server/src/provider/makeManagedServerProvider.ts	content	159	C5-C9	open	area C5-C9
+packages/provider-core/src/server/auth.ts	apps/server/src/provider/Services/ProviderAuthService.ts	content	12	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+packages/provider-core/src/server/managedProvider.test.ts	apps/server/src/provider/makeManagedServerProvider.test.ts	content	521	C5-C9	done	v2 test present; probeBackoff and seedUsageLimits have their own tests
+packages/provider-core/src/server/managedProvider.ts	apps/server/src/provider/makeManagedServerProvider.ts	content	159	C5-C9	done	C9: probe backoff, usage-aware wait, reset re-plan, seedUsageLimits and refreshLatest
 packages/provider-core/src/server/providerAuthFlow.test.ts	apps/server/src/provider/ProviderAuthFlow.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-core/src/server/providerAuthFlow.ts	apps/server/src/provider/ProviderAuthFlow.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-core/src/server/snapshotProbe.test.ts	apps/server/src/provider/providerSnapshot.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/provider-core/src/server/snapshotProbe.ts	apps/server/src/provider/providerSnapshot.ts	content	4	C5-C9	open	area C5-C9
+packages/provider-core/src/server/snapshotProbe.ts	apps/server/src/provider/providerSnapshot.ts	content	4	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 packages/provider-core/src/server/usageLimits.test.ts	apps/server/src/provider/providerUsageLimits.test.ts	content	172	C14	open	follows packages/shared/src/usageLimits.ts
-packages/provider-core/src/server/usageLimits.ts	apps/server/src/provider/providerUsageLimits.ts	content	105	C5-C9	open	area C5-C9
+packages/provider-core/src/server/usageLimits.ts	apps/server/src/provider/providerUsageLimits.ts	content	105	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 packages/provider-cursor/src/server/usageLimits.ts	apps/server/src/provider/Layers/cursorUsageLimits.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-grok/src/server/acpSupport.ts	apps/server/src/provider/acp/GrokAcpSupport.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-grok/src/server/skills.test.ts	apps/server/src/provider/Drivers/GrokSkills.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-grok/src/server/skills.ts	apps/server/src/provider/Drivers/GrokSkills.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/provider-grok/src/server/status.ts	apps/server/src/provider/Layers/GrokProvider.ts	content	5	C5-C9	open	area C5-C9
+packages/provider-grok/src/server/status.ts	apps/server/src/provider/Layers/GrokProvider.ts	content	5	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 packages/provider-grok/src/server/usageLimits.ts	apps/server/src/provider/Layers/grokUsageLimits.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-opencode/src/server/textGeneration.test.ts	apps/server/src/textGeneration/OpenCodeTextGeneration.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/shared/package.json		content	25	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides

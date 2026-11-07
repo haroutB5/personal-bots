@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { PersonalProviders } from "./PersonalProviders.ts";
 import { PersonalProvidersV2Live } from "./PersonalProvidersV2Live.ts";
 
@@ -25,10 +26,15 @@ const withProviders = <A, E>(
   body: (providers: PersonalProviders["Service"]) => Effect.Effect<A, E>,
 ) => {
   const registry = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({ getInstance });
+  const providerRegistry = Layer.mock(ProviderRegistry.ProviderRegistry)({});
   return Effect.gen(function* () {
     const providers = yield* PersonalProviders;
     return yield* body(providers);
-  }).pipe(Effect.provide(PersonalProvidersV2Live.pipe(Layer.provide(registry))));
+  }).pipe(
+    Effect.provide(
+      PersonalProvidersV2Live.pipe(Layer.provide(Layer.merge(registry, providerRegistry))),
+    ),
+  );
 };
 
 describe("PersonalProvidersV2 structured generation", () => {
