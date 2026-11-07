@@ -1,12 +1,10 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { PERSONAL_BOT_THREADS_BATCH_MAX } from "@t3tools/contracts";
-import { useEffect, useMemo } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useEffect, useMemo, useRef } from "react";
+import { AppState } from "react-native";
 
 import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 
 import type { NativePersonal } from "./nativePersonalClient";
-
-const SHELL_REFRESH_MS = 5_000;
 
 export interface BotShells {
   readonly shells: ReadonlyArray<EnvironmentThreadShell>;
@@ -16,55 +14,56 @@ export interface BotShells {
 }
 
 /**
- * The bot chats a screen paints, read through the personal contract rather
- * than the v1 shell stream. The stream carries every thread on the machine,
- * including ones no bot owns; personalBots.threadShells carries only the
- * linked chats and the v1 fields their rows read.
+ * Bot chats from the one shared shells store: snapshot, then upserts and
+ * removals. No interval. A shell missing from `personalBots.list` refreshes
+ * the list once; foreground refreshes it too.
  */
 export function useBotShells(native: NativePersonal, environmentId: EnvironmentId): BotShells {
+  const store = native.bots.usePersonalBotShells(environmentId);
   const list = native.bots.usePersonalBotsList(environmentId);
   const connection = native.useConnectionState();
-  const idsKey =
-    list.data === null
-      ? ""
-      : list.data.threads
-          .map((link) => link.threadId as string)
-          .toSorted()
-          .slice(0, PERSONAL_BOT_THREADS_BATCH_MAX)
-          .join(",");
-  const atom = useMemo(
-    () =>
-      idsKey.length === 0
-        ? null
-        : native.bots.personalBotsThreadShells({
-            environmentId,
-            input: { threadIds: idsKey.split(",") as ThreadId[] },
-          }),
-    [environmentId, idsKey, native],
-  );
-  const query = native.client.useEnvironmentQuery(atom);
-  const refresh = query.refresh;
-  const refreshList = list.refresh;
-
-  useEffect(() => {
-    if (atom === null || connection.phase !== "connected") return;
-    const timer = setInterval(() => {
-      refresh();
-      refreshList();
-    }, SHELL_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [atom, connection.phase, refresh, refreshList]);
 
   const shells = useMemo<ReadonlyArray<EnvironmentThreadShell>>(
     () =>
-      query.data === null ? [] : query.data.threads.map((thread) => ({ ...thread, environmentId })),
-    [environmentId, query.data],
+      store.data === null
+        ? []
+        : [...store.data.values()].map((thread) => ({ ...thread, environmentId })),
+    [environmentId, store.data],
   );
+
+  const refreshList = list.refresh;
+  const knownIds = useMemo(
+    () => new Set((list.data?.threads ?? []).map((link) => link.threadId as string)),
+    [list.data],
+  );
+  const unknownIds = useMemo(
+    () =>
+      store.data === null || list.data === null
+        ? ""
+        : [...store.data.keys()]
+            .filter((threadId) => !knownIds.has(threadId))
+            .toSorted()
+            .join(","),
+    [knownIds, list.data, store.data],
+  );
+  const refreshedUnknownIds = useRef("");
+  useEffect(() => {
+    if (unknownIds.length === 0 || refreshedUnknownIds.current === unknownIds) return;
+    refreshedUnknownIds.current = unknownIds;
+    refreshList();
+  }, [refreshList, unknownIds]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refreshList();
+    });
+    return () => subscription.remove();
+  }, [refreshList]);
 
   return {
     shells,
-    status: connection.phase !== "connected" ? "empty" : query.isSuccess ? "live" : "synchronizing",
-    error: query.error,
-    refresh,
+    status: connection.phase !== "connected" ? "empty" : store.isSuccess ? "live" : "synchronizing",
+    error: store.error,
+    refresh: store.refresh,
   };
 }
