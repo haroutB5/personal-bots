@@ -177,8 +177,23 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
+/**
+ * The eight-character code a person compares across two screens, written
+ * `XXXX-XXXX`. Derived from the environment id so both sides can compute it
+ * without a second source of truth.
+ */
+export function environmentShortId(environmentId: string): string {
+  const head = environmentId
+    .replace(/[^A-Za-z0-9]/g, "")
+    .slice(0, 8)
+    .padEnd(8, "0");
+  const upper = head.toUpperCase();
+  return `${upper.slice(0, 4)}-${upper.slice(4, 8)}`;
+}
+
 export const ExecutionEnvironmentDescriptor = Schema.Struct({
   environmentId: EnvironmentId,
+  shortId: Schema.optionalKey(TrimmedNonEmptyString),
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,

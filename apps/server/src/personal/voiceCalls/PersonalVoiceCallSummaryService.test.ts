@@ -369,7 +369,7 @@ const storedAttempts = (sql: SqlClient.SqlClient) =>
 describe("PersonalVoiceCallSummaryService.summarise", () => {
   it.effect("falls back to one Gemini text call when Claude cannot answer", () => {
     const calls: Array<HttpCall> = [];
-    return withService({ calls }, (service) =>
+    return withService({ calls }, (service, sql) =>
       Effect.gen(function* () {
         const summary = yield* service.summarise(CALL_ID);
         expect(summary).not.toBeNull();
@@ -977,7 +977,7 @@ describe("PersonalVoiceCallSummaryService.sweep", () => {
   // them. The sweep must walk past them and still summarise the real call.
   it.effect("pages past permanently ineligible newer calls and reaches the older one", () => {
     const calls: Array<HttpCall> = [];
-    return withService({ calls }, (service) =>
+    return withService({ calls }, (service, sql) =>
       Effect.gen(function* () {
         // Five newer calls in a chat that had a sensitive site open: newer than
         // CALL_ID, so they fill the whole first page.

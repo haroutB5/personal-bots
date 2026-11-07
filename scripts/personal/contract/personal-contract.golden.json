@@ -33656,6 +33656,9 @@
               },
               "serverVersion": {
                 "type": "string"
+              },
+              "shortId": {
+                "type": "string"
               }
             },
             "required": ["environmentId", "label", "platform", "serverVersion", "capabilities"],

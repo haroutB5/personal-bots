@@ -26,6 +26,7 @@ data class UpdateRecord(
   val lastCheckAt: Long? = null,
   val lastOffer: Release? = null,
   val notifiedCode: Long = 0L,
+  val permissionNotifiedCode: Long = 0L,
   val sessionGeneration: Long = 0L,
   val deferrals: Int = 0,
 )
@@ -66,5 +67,6 @@ sealed interface UpdateEffect {
   data object DeleteAllFiles : UpdateEffect
   data object PostUpdated : UpdateEffect
   data object PostUpdateReady : UpdateEffect
+  data class PostNeedsPermission(val version: String) : UpdateEffect
   data object ClearNotification : UpdateEffect
 }

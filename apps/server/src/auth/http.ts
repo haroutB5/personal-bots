@@ -363,6 +363,9 @@ export const layer = HttpApiBuilder.group(
             if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
+            if (args.payload.client_device_type === "mobile" && !args.headers.dpop) {
+              return yield* failEnvironmentInvalidRequest("dpop_proof_required");
+            }
             const proofKeyThumbprint = args.headers.dpop
               ? yield* verifyRequestDpopProof({ request }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>

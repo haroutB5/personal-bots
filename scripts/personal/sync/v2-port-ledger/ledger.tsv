@@ -102,7 +102,7 @@ apps/server/src/auth/EnvironmentAuth.test.ts		content	56	C11	open	session renew 
 apps/server/src/auth/EnvironmentAuth.ts		content	20	C11	open	cb26088ef4 slides direct phone sessions and names renewal outcomes; the rest of our diff is the Effect 4.1 codemod
 apps/server/src/auth/EnvironmentAuthAdmin.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/auth/EnvironmentAuthPolicy.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/auth/PairingGrantStore.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/server/src/auth/PairingGrantStore.test.ts		content	1	C11	open	M1: MAIN pairing grant cases parked; C11 tests U's consume path
 apps/server/src/auth/PairingGrantStore.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/auth/ServerSecretStore.test.ts		content	182	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/auth/ServerSecretStore.ts		content	253	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
@@ -539,8 +539,8 @@ apps/server/src/provider/providerInstallation.test.ts		content	268	C5-C9	done	v2
 apps/server/src/provider/providerInstallation.ts		content	188	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/providerMaintenance.test.ts		modify-delete	113	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
 apps/server/src/provider/providerMaintenance.ts		modify-delete	67	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
-apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
-apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C9	open	M1: MAIN mise update tests parked; C9 ports them with the runner
+apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C9	open	M1: MAIN 1.66.122 mise update handling parked; C9 ports provider updates
 apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	dropped	C15: the probe is rebuilt as PersonalProvidersV2Live.smokeTestFor on the structured generator, tested in PersonalProvidersV2.test.ts
 apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	dropped	C15: the probe is rebuilt as PersonalProvidersV2Live.smokeTestFor on the structured generator, tested in PersonalProvidersV2.test.ts
 apps/server/src/provider/providerStatusCache.test.ts		content	90	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
@@ -686,7 +686,7 @@ apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts		modify
 apps/web/src/components/preview/previewAutomationRequestConsumer.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/projectScriptEditor.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/pullRequest/usePullRequestFilesViewed.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/web/src/components/settings/ConnectionsSettings.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
+apps/web/src/components/settings/ConnectionsSettings.tsx		content	1	phase 4	open	M1: MAIN ConnectionsSettings server-code changes parked with the web revert; web is out of scope
 apps/web/src/components/settings/ProjectSettingsPanel.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/settings/ProviderInstanceCard.tsx		content	75	phase 4	open	area phase 4
 apps/web/src/components/settings/ProviderSettingsForm.test.ts		content	8	phase 4	open	area phase 4
@@ -850,7 +850,7 @@ packages/contracts/src/providerSetup.ts		content	33	C9	done	v2 module present
 packages/contracts/src/providerUsageLimits.ts		content	115	C14	done	C14: fullReadAt, refreshFailed and the balance and spend shapes; ServerProvider wiring is D1/D6
 packages/contracts/src/pullRequest.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/relay.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/contracts/src/server.ts		content	82	C9	done	v2 module present
+packages/contracts/src/server.ts		content	82	C9	open	M1: MAIN provider smoke, auto-update, catalog and balance fields parked; C9 ports them
 packages/contracts/src/settings.test.ts		content	13	C9	done	v2 test present
 packages/contracts/src/settings.ts		content	88	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/usage.ts		content	4	C14	dropped	U already has deepseek in UsageProviderKind at contract v6
@@ -923,3 +923,27 @@ scripts/smoke-cli-archive.ts		content	4	B1	dropped	our only change at this path 
 scripts/sync-reference-repos.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 scripts/update-release-package-versions.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 vite.config.ts		content	83	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+apps/hbots-mobile/src/App.tsx		content	0	C16	open	MAIN 1.66.122 full phone UI (chat, groups, settings, tasks, computer) parked; C16 phone app stands while Architect rules the C10-C16 deviation
+apps/hbots-mobile/src/shell/AppShell.tsx		content	0	C16	open	MAIN shell navigation and settings screens parked with the phone UI; C16 AppShell stands
+apps/hbots-mobile/src/pairing.ts		content	0	C11	open	MAIN's DPoP pairing client and shortId identity parked; C16 pairing stands until C11/E1 aligns the phone
+apps/hbots-mobile/src/personal/nativePersonalClient.ts		content	0	C16	open	MAIN shell cache, thread loader and settings clients parked; C16 polls personalBots.threadShells
+apps/hbots-mobile/src/personal/nativeSession.ts		content	0	C16	open	MAIN abort handling around makeWsRpcProtocolClient parked; C16 native session code stands
+apps/hbots-mobile/src/shell/BotsScreen.tsx		content	0	C16	open	MAIN group chats, working-now handoff and swipe actions parked; C16 BotsScreen stands
+apps/server/src/auth/RpcAuthorization.ts		content	0	C11	open	MAIN device scopes parked; C11 moves them to personal/auth/personalRpcScopes.ts
+apps/server/src/auth/RpcAuthorization.test.ts		content	0	C11	open	MAIN device scope tests parked with RpcAuthorization; C11 restores coverage
+apps/server/src/http.ts		content	0	C12	open	MAIN attachment upload endpoint header parked; C12 adds it with contracts assets.ts
+apps/server/src/server.ts		content	0	C11	open	MAIN device handlers and session close wiring parked; C11 adds them in personal/ws/handlers.ts
+apps/server/src/ws.ts		content	0	C11	open	MAIN dropConnection and device socket wiring parked; C11 swaps in serveUntilSessionRevoked
+apps/server/src/orchestration/Services/OrchestrationEngine.ts		modify-delete	0	C1	open	MAIN service file deleted with the v1 engine; getCommandReceipt moves to C1
+apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts		content	0	C9	open	MAIN 1.66.122 auto-update action and report parked; C9 ports provider updates
+apps/server/src/personal/providerUpdates/PersonalProviderUpdates.test.ts		content	0	C9	open	MAIN auto-update test cases parked; C9 ports them with the source
+apps/server/src/personal/providerUpdates/miseProviderMaintenance.ts		content	0	C9	open	MAIN mise-managed provider update module and its test parked; providerMaintenance.ts is deleted at M1
+apps/server/src/personal/providerUpdates/providerAutoUpdate.ts		content	0	C9	open	MAIN provider auto-update policy and its test parked; C9 ports provider updates
+apps/web/src/features/personal/usePersonalAutomation.ts		content	0	phase 4	open	MAIN web automation hook changes parked; web is out of scope
+apps/web/src/features/personal/usePersonalGroups.ts		content	0	phase 4	open	MAIN web group hook changes parked; web is out of scope
+apps/web/src/features/personal/useRemovedBots.ts		content	0	phase 4	open	MAIN web removed-bots hook changes parked; web is out of scope
+apps/web/src/pendingUserInput.ts		content	0	phase 4	open	MAIN web pending-input changes parked; web is out of scope
+packages/personal-client/src/bots/personalBots.ts		content	0	C16	open	MAIN bots list and thread changes parked; C16 reads shells through personalBots.threadShells
+packages/contracts/src/rpc.ts		content	0	C11	open	MAIN device RPCs parked; C11 adds personalDevices RPCs in contracts personalRpc.ts
+packages/contracts/src/index.ts		content	0	C11	open	MAIN device and personal export lines parked; M1 exports personalDevices only
+packages/contracts/src/environment.test.ts		content	0	C11	open	MAIN shortId descriptor test parked; C11 restores it

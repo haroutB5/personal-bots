@@ -165,6 +165,12 @@ export const AuthStandardClientScopes = [
   AuthAccessWriteScope,
   AuthRelayWriteScope,
 ] as const;
+/** A phone manages its own device list, so its link carries the access scopes. */
+export const AuthPhoneClientScopes = [
+  ...AuthStandardClientScopes,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+] as const;
 
 export const AuthTokenExchangeGrantType =
   "urn:ietf:params:oauth:grant-type:token-exchange" as const;

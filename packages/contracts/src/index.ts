@@ -89,6 +89,7 @@ export * from "./personalGroups.ts";
 export * from "./personalReply.ts";
 export * from "./personalFollowUp.ts";
 export * from "./personalSecrets.ts";
+export * from "./personalDevices.ts";
 export * from "./personalConnections.ts";
 export * from "./personalCreateApp.ts";
 export * from "./personalLogins.ts";

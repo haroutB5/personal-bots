@@ -44,7 +44,7 @@ const manifestFor = (version: string) =>
     notes: "Update screen and zoom fixes",
   });
 
-type AuthFixture = "missing" | "cookie" | ReadonlyArray<AuthEnvironmentScope>;
+type AuthFixture = "missing" | "cookie" | "dpop" | ReadonlyArray<AuthEnvironmentScope>;
 
 interface FixtureOptions {
   readonly auth: AuthFixture;
@@ -93,8 +93,15 @@ const fixture = async (options: FixtureOptions) => {
                   sessionId: AuthSessionId.make("session-1"),
                   subject: "test",
                   method:
-                    options.auth === "cookie" ? "browser-session-cookie" : "bearer-access-token",
-                  scopes: options.auth === "cookie" ? [AuthOrchestrationReadScope] : options.auth,
+                    options.auth === "cookie"
+                      ? "browser-session-cookie"
+                      : options.auth === "dpop"
+                        ? "dpop-access-token"
+                        : "bearer-access-token",
+                  scopes:
+                    options.auth === "cookie" || options.auth === "dpop"
+                      ? [AuthOrchestrationReadScope]
+                      : options.auth,
                 }),
         } as unknown as EnvironmentAuth["Service"]),
       ),
@@ -129,9 +136,18 @@ describe("the APK the phone downloads for a self-update", () => {
     expect(Buffer.from(await response.arrayBuffer()).equals(Buffer.from(APK_BYTES))).toBe(true);
   });
 
-  it("refuses a request with no Bearer header before it looks at the token", async () => {
+  it("refuses a request with no direct credential before it looks at the token", async () => {
     const { handler } = await fixture({ auth: [AuthOrchestrationReadScope] });
     expect((await handler(get(apk(CURRENT)))).status).toBe(401);
+  });
+
+  it("serves a phone whose session is bound to its DPoP key", async () => {
+    const { handler } = await fixture({ auth: "dpop" });
+    const response = await handler(
+      get(apk(CURRENT), { authorization: "DPoP test-token", dpop: "test-proof" }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.arrayBuffer()).byteLength).toBe(APK_BYTES.byteLength);
   });
 
   it("refuses a browser cookie session even when the request also carries a Bearer header", async () => {

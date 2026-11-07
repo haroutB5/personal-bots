@@ -101,7 +101,7 @@ const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit
     ? Deferred.succeed(deferred, exit.value)
     : Deferred.failCause(deferred, exit.cause);
 
-export const makeCommandGate = Effect.gen(function* () {
+const makeCommandGate = Effect.gen(function* () {
   const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
   const commandQueue = yield* Queue.unbounded<QueuedCommand>();
   const commandReadinessState = yield* Ref.make<CommandReadinessState>("pending");
@@ -189,7 +189,7 @@ interface AutoBootstrapWelcomeTargets {
   readonly bootstrapThreadId?: ThreadId;
 }
 
-export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
+const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   projects: ReadonlyArray<Pick<Project, "id" | "workspaceRoot" | "autoPull">>,
   settings = DEFAULT_SERVER_SETTINGS,
 ) {
@@ -384,30 +384,30 @@ interface StartupOptions {
   readonly abort?: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
 }
 
-export const startEffectWorkerWithRelay = Effect.fn(
-  "ServerRuntimeStartup.startEffectWorkerWithRelay",
-)(function* <WorkerContext, RelayContext>(input: {
-  readonly runWorker: Effect.Effect<void, never, WorkerContext>;
-  readonly startRelay: Effect.Effect<void, never, RelayContext>;
-  readonly workerFiberRef: Ref.Ref<Fiber.Fiber<void, never> | null>;
-}) {
-  const workerFiber = yield* forkParkedFiber(input.runWorker);
-  yield* Ref.set(input.workerFiberRef, workerFiber);
-  yield* input.startRelay.pipe(
-    Effect.onExit((exit) => {
-      if (Exit.isSuccess(exit)) {
-        return Effect.void;
-      }
-      return Ref.getAndSet(input.workerFiberRef, null).pipe(
-        Effect.flatMap((ownedWorkerFiber) =>
-          ownedWorkerFiber === null
-            ? Effect.void
-            : Fiber.interrupt(ownedWorkerFiber).pipe(Effect.asVoid),
-        ),
-      );
-    }),
-  );
-});
+const startEffectWorkerWithRelay = Effect.fn("ServerRuntimeStartup.startEffectWorkerWithRelay")(
+  function* <WorkerContext, RelayContext>(input: {
+    readonly runWorker: Effect.Effect<void, never, WorkerContext>;
+    readonly startRelay: Effect.Effect<void, never, RelayContext>;
+    readonly workerFiberRef: Ref.Ref<Fiber.Fiber<void, never> | null>;
+  }) {
+    const workerFiber = yield* forkParkedFiber(input.runWorker);
+    yield* Ref.set(input.workerFiberRef, workerFiber);
+    yield* input.startRelay.pipe(
+      Effect.onExit((exit) => {
+        if (Exit.isSuccess(exit)) {
+          return Effect.void;
+        }
+        return Ref.getAndSet(input.workerFiberRef, null).pipe(
+          Effect.flatMap((ownedWorkerFiber) =>
+            ownedWorkerFiber === null
+              ? Effect.void
+              : Fiber.interrupt(ownedWorkerFiber).pipe(Effect.asVoid),
+          ),
+        );
+      }),
+    );
+  },
+);
 
 const runOrderedV2StartupPhases = Effect.fn("serverRuntimeStartup.runOrderedV2StartupPhases")(
   function* <
