@@ -38,6 +38,7 @@ import { PERSONAL_TIME_ZONE } from "../conversation/greeting.ts";
 import { perfOptimizationOn } from "../perf/perfFlags.ts";
 import type { EnvironmentQueryView } from "../react/query.ts";
 import { foldPersonalTasksFeed } from "../tasks/feed.ts";
+import { foldBotShellStream, type BotShellMap } from "./shellStream.ts";
 
 /**
  * Builds the bots list, its profile and file queries, every mutation the
@@ -137,11 +138,15 @@ export function createPersonalBotsClient<R, ER, P>(
     tag: WS_METHODS.serverRefreshProviders,
   });
 
-  /** The slim shell leaves out archived bot chats; a screen asks for them here. */
-  const personalBotsThreadShells = createEnvironmentRpcQueryAtomFamily(runtime, {
-    label: "personal-bots:thread-shells",
-    tag: WS_METHODS.personalBotsThreadShells,
-    staleTimeMs: 30_000,
+  /**
+   * Every open bot chat's shell, live: one snapshot on subscribe, then
+   * upserts and removals. One atom per environment is the shared phone store;
+   * every screen reads it through `usePersonalBotShells`.
+   */
+  const personalBotsShells = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "personal-bots:shells",
+    tag: WS_METHODS.personalBotsSubscribeThreadShells,
+    transform: foldBotShellStream,
     idleTtlMs: 5 * 60_000,
   });
 
@@ -627,6 +632,17 @@ export function createPersonalBotsClient<R, ER, P>(
     return client.useEnvironmentQuery(atom);
   }
 
+  /** The live bot-chat shells. Null until the snapshot lands. */
+  function usePersonalBotShells(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<BotShellMap> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalBotsShells({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   /** The live task feed. Null until the first replay value lands. */
   function usePersonalTasks(
     environmentId: EnvironmentId | null,
@@ -794,7 +810,7 @@ export function createPersonalBotsClient<R, ER, P>(
     providerConsumeResetCredit,
     personalGroupsCreate,
     serverRefreshProviders,
-    personalBotsThreadShells,
+    personalBotsShells,
     personalBotsWorkingProgress,
     personalProfile,
     personalFilesList,
@@ -818,6 +834,7 @@ export function createPersonalBotsClient<R, ER, P>(
     personalProfileSet,
     usePersonalEnvironmentId,
     usePersonalBotsList,
+    usePersonalBotShells,
     useRemovedBots,
     useRestoreRemovedBot,
     usePersonalRoutinesList,

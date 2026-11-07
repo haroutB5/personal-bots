@@ -493,6 +493,10 @@
       "types": "./src/bots/threadShell.ts",
       "import": "./src/bots/threadShell.ts"
     },
+    "./bots/shellStream": {
+      "types": "./src/bots/shellStream.ts",
+      "import": "./src/bots/shellStream.ts"
+    },
     "./bots/deepseekModels": {
       "types": "./src/bots/deepseekModels.ts",
       "import": "./src/bots/deepseekModels.ts"
