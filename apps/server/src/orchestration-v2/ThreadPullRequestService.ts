@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -394,7 +395,11 @@ export const make = Effect.gen(function* () {
           if (!(yield* backgroundPolicy.shouldRunOpportunisticWork)) return;
           yield* worker.enqueue({ threadId: null, refresh: false });
           yield* worker.drain;
-        }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.delay("1 minute"));
+        }).pipe(
+          withStallJob("job:thread-pull-request-refresh"),
+          Effect.repeat(Schedule.spaced("1 minute")),
+          Effect.delay("1 minute"),
+        );
       }).pipe(Effect.asVoid),
     );
   });

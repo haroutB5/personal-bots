@@ -11,6 +11,26 @@ import * as ServerConfig from "../config.ts";
 
 const WAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024;
 
+/** FULL fsyncs every commit on the main thread, so a busy disk blocks it; NORMAL fsyncs at checkpoints and a power cut can lose only post-checkpoint commits. `T3CODE_SQLITE_SYNCHRONOUS=full` restores FULL. */
+export const sqliteSynchronousFromEnv = (value: string | undefined): "NORMAL" | "FULL" => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "full" || normalized === "2" || normalized === "extra" ? "FULL" : "NORMAL";
+};
+
+export const SQLITE_CACHE_DEFAULT_MB = 64;
+const SQLITE_CACHE_MAX_MB = 1024;
+
+/** 64 MiB of page cache keeps the big UUID index leaves in memory, where the default 2 MiB reads them from disk on every command. `T3CODE_SQLITE_CACHE_MB=off` keeps SQLite's default and a size from 1 to 1024 sets it. */
+export const sqliteCacheMbFromEnv = (value: string | undefined): number | null => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === undefined || normalized === "") return SQLITE_CACHE_DEFAULT_MB;
+  if (["off", "0", "false", "no", "default"].includes(normalized)) return null;
+  const mb = Number(normalized);
+  return Number.isInteger(mb) && mb >= 1 && mb <= SQLITE_CACHE_MAX_MB
+    ? mb
+    : SQLITE_CACHE_DEFAULT_MB;
+};
+
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -25,12 +45,19 @@ const layerSetup = Layer.effectDiscard(
     yield* sql`PRAGMA journal_mode = WAL;`;
     // FULL fsyncs every event commit on the main thread; NORMAL syncs only at WAL checkpoints.
     // App crashes lose nothing; OS crashes or power loss can roll back post-checkpoint commits without corruption.
-    yield* sql`PRAGMA synchronous = NORMAL;`;
+    yield* sql.unsafe(
+      `PRAGMA synchronous = ${sqliteSynchronousFromEnv(process.env.T3CODE_SQLITE_SYNCHRONOUS)};`,
+    );
     // macOS fsync misses drive caches; F_FULLFSYNC flushes them at checkpoints and is ignored elsewhere.
     yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
     // Keep statement journals and sort spills off the main thread's disk path.
     // Large statements and open savepoints can increase peak memory use.
     yield* sql`PRAGMA temp_store = MEMORY;`;
+    const cacheMb = sqliteCacheMbFromEnv(process.env.T3CODE_SQLITE_CACHE_MB);
+    if (cacheMb !== null) {
+      // Negative = KiB, so the size does not depend on the page size.
+      yield* sql.unsafe(`PRAGMA cache_size = -${cacheMb * 1024};`);
+    }
     // PASSIVE checkpoints retain peak WAL size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();

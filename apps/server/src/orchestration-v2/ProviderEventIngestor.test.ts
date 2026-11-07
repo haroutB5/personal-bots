@@ -46,6 +46,7 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -2365,3 +2366,22 @@ it.effect.each([
     assert.isEmpty(persisted);
   }).pipe(Effect.provide(layerFailingWrites(errors))),
 );
+
+it("masks a saved secret in an ingested event payload", () => {
+  secretRedactor.set("TEST_KEY", "sk-test-1234567890");
+  try {
+    const events = [
+      {
+        type: "message.updated",
+        payload: { text: "the key sk-test-1234567890 was printed" },
+      },
+    ] as never;
+    const redacted = ProviderEventIngestor.redactDomainEventSecrets(events);
+    assert.equal(
+      (redacted[0] as { payload: { text: string } }).payload.text,
+      "the key [secret TEST_KEY] was printed",
+    );
+  } finally {
+    secretRedactor.clear();
+  }
+});

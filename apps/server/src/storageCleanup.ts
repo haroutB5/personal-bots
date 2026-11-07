@@ -49,6 +49,7 @@ import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirect
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { withStallJob } from "./observability/stallJobs.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { isNetworkPath } from "@t3tools/shared/path";
@@ -1413,6 +1414,7 @@ const make = Effect.gen(function* () {
     yield* forkParked(
       requestSweep.pipe(
         Effect.andThen(worker.drain),
+        withStallJob("job:storage-cleanup"),
         Effect.repeat(Schedule.spaced("1 hour")),
         Effect.asVoid,
       ),

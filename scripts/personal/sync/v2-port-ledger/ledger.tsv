@@ -196,14 +196,14 @@ apps/server/src/mcp/toolkits/pullRequests/handlers.test.ts		content	2	B1	dropped
 apps/server/src/mcp/toolkits/pullRequests/handlers.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/mcp/toolkits/pullRequests/tools.ts		content	12	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
 apps/server/src/observability/HeapSnapshot.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/observability/Observability.ts	apps/server/src/observability/Layers/Observability.ts	content	19	C10	open	area C10
-apps/server/src/observability/RpcInstrumentation.test.ts		modify-delete	42	C10	open	area C10
-apps/server/src/observability/RpcInstrumentation.ts		content	2	C10	open	area C10
-apps/server/src/orchestration-v2/ThreadPullRequestService.ts	apps/server/src/orchestration/ThreadPullRequestReactor.ts	content	7	C10	open	withStallJob wrap on the pull request refresh; Appendix A target C10; the crypto hunk is the superseded codemod
-apps/server/src/orchestration/ActivityPayloadProjection.test.ts		modify-delete	52	C10	open	test of an Appendix A hook file
-apps/server/src/orchestration/ActivityPayloadProjection.ts		modify-delete	15	C10	open	hook file listed in Appendix A
+apps/server/src/observability/Observability.ts	apps/server/src/observability/Layers/Observability.ts	content	19	C10	done	C10: trace sink and OTLP tracer mask saved secret values
+apps/server/src/observability/RpcInstrumentation.test.ts		modify-delete	42	C10	done	C10: the v1 middleware hook moved into rpcInstrumentationLayer; no personal fixture left
+apps/server/src/observability/RpcInstrumentation.ts		content	2	C10	done	C10: every RPC effect runs inside withStallJob(rpc:<method>)
+apps/server/src/orchestration-v2/ThreadPullRequestService.ts	apps/server/src/orchestration/ThreadPullRequestReactor.ts	content	7	C10	done	C10: the one-minute sweep runs inside withStallJob(job:thread-pull-request-refresh)
+apps/server/src/orchestration/ActivityPayloadProjection.test.ts		modify-delete	52	C10	dropped	the v1 activity projection pipeline is deleted; v2 stores turn items
+apps/server/src/orchestration/ActivityPayloadProjection.ts		modify-delete	15	C10	dropped	the v1 activity projection pipeline is deleted; v2 stores turn items and turn items carry no activity merge
 apps/server/src/orchestration/Layers/CheckpointReactor.test.ts		modify-delete	2	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
-apps/server/src/orchestration/Layers/CheckpointReactor.ts		modify-delete	15	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/CheckpointReactor.ts		modify-delete	15	C10	dropped	the v1 checkpoint reactor is deleted; v2 CheckpointCaptureService captures from turn items with no git-repository probe
 apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts		modify-delete	279	C1	dropped	v1 orchestration engine deleted at U; v2 Orchestrator and runtimeLayer tests cover commands and events
 apps/server/src/orchestration/Layers/OrchestrationEngine.ts		modify-delete	7	B1	dropped	Appendix A class DROP, v1 artefact
 apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts		modify-delete	1	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
@@ -213,20 +213,20 @@ apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts		modify-del
 apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts		modify-delete	27	C3	dropped	v1 snapshot query deleted at U; PersonalEngine.getThread and shellSnapshot read ProjectionStoreV2
 apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts		modify-delete	1852	C4+C10	open	test of an Appendix A hook file
 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts		modify-delete	844	C4+C10	open	hook file listed in Appendix A
-apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.activity.test.ts		modify-delete	100	C10	open	test of an Appendix A hook file
-apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts		modify-delete	630	C10	open	test of an Appendix A hook file
-apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts		modify-delete	208	C10	open	hook file listed in Appendix A
-apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts		modify-delete	38	C10	open	test of an Appendix A hook file
-apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts		modify-delete	45	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.activity.test.ts		modify-delete	100	C10	dropped	the v1 activity projection is deleted; v2 turn items replace activities
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts		modify-delete	630	C10	dropped	the v1 ingestion reactor is deleted; its v2 home ProviderEventIngestor.test.ts covers normalization and failure items
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts		modify-delete	208	C10	dropped	the v1 ingestion reactor is deleted; v2 ProviderEventIngestor writes typed turn items and runs, so the replay/replaced-session/title guards have no v2 event surface
+apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts		modify-delete	38	C10	done	C10: PersonalThreadDeletionReactor.test.ts asserts browser, card and lease cleanup and ignores archive events
+apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts		modify-delete	45	C10	done	C10: PersonalThreadDeletionReactor releases the browser and deletes voice-call cards and leases on ThreadDeleted
 apps/server/src/orchestration/Normalizer.attachments.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/orchestration/PullRequestSyncReactor.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/orchestration/PullRequestSyncReactor.ts		modify-delete	7	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/PullRequestSyncReactor.ts		modify-delete	7	C10	done	C10: v2 PullRequestSyncReactor's sweep runs inside withStallJob(job:pull-request-sync)
 apps/server/src/orchestration/Services/ProjectionSnapshotQuery.ts		modify-delete	4	C3	dropped	v1 snapshot query deleted at U; PersonalEngine.getThread and shellSnapshot read ProjectionStoreV2
-apps/server/src/orchestration/Services/ProviderCommandReactor.ts		modify-delete	23	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Services/ProviderCommandReactor.ts		modify-delete	23	C10	done	C10: prewarm now opens through PersonalPrewarmSession and ProviderSessionManagerV2
 apps/server/src/orchestration/ThreadBackgroundLiveness.ts		modify-delete	8	C2	dropped	v1 liveness service replaced by the OrchestratorV2 shell pendingBackgroundTasks; liveTaskIds and backgroundLiveness read it
 apps/server/src/orchestration/ThreadPullRequestReactor.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/orchestration/ThreadSettlementReactor.test.ts		modify-delete	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/orchestration/ThreadSettlementReactor.ts		modify-delete	7	C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/ThreadSettlementReactor.ts		modify-delete	7	C10	done	C10: v2 ThreadSettlementService's sweep runs inside withStallJob(job:thread-settlement)
 apps/server/src/orchestration/decider.active-order.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/orchestration/decider.autoSettleSet.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/orchestration/decider.delete.test.ts		modify-delete	67	C1	dropped	v2 ThreadDeletion.test.ts covers deletion; the personal send guard is tested in PersonalEngineV2.test.ts
@@ -247,9 +247,9 @@ apps/server/src/orchestration/http.ts		modify-delete	17	C3	dropped	v1 HTTP layer
 apps/server/src/orchestration/messageContext.test.ts		modify-delete	49	C2	done	assistant notice context covered in PersonalEngineV2.test.ts
 apps/server/src/orchestration/replacedSessions.test.ts		added-broken	154	C1	dropped	v1 ingestion workaround; v2 provider-session events and run attempts own the replaced-session case (ProviderSwitch.integration.test.ts)
 apps/server/src/orchestration/replacedSessions.ts		added-broken	103	C1	dropped	v1 ingestion workaround; v2 provider-session events and run attempts own the replaced-session case (ProviderSwitch.integration.test.ts)
-apps/server/src/orchestration/toolResultMedia.test.ts		added-broken	59	C10	open	U deleted v1 orchestration; tool-result media stripping returns with the v2 event store (C10)
-apps/server/src/orchestration/toolResultMedia.ts		added-broken	96	C10	open	U deleted v1 orchestration; tool-result media stripping returns with the v2 event store (C10)
-apps/server/src/persistence/AuthSessions.ts		content	40	C10	open	area C10
+apps/server/src/orchestration/toolResultMedia.test.ts		added-broken	59	C10	dropped	superseded by the toolOutputImageBytes tests; the v1 activity payload path is deleted
+apps/server/src/orchestration/toolResultMedia.ts		added-broken	96	C10	dropped	superseded by orchestration-v2/toolOutputImageBytes.ts, which strips served image bytes at ingest
+apps/server/src/persistence/AuthSessions.ts		content	40	C11	open	phone session slide (extendExpiry) is an E11 session behaviour, not an infra hook
 apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Layers/OrchestrationEventStore.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -259,13 +259,13 @@ apps/server/src/persistence/Layers/ProjectionRepositories.test.ts		modify-delete
 apps/server/src/persistence/Layers/ProjectionState.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Layers/ProjectionThreadActivities.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Layers/ProjectionThreadActivities.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/persistence/Layers/ProjectionThreadMessages.ts		modify-delete	79	C10	open	area C10
+apps/server/src/persistence/Layers/ProjectionThreadMessages.ts		modify-delete	79	C10	dropped	the v1 projection repository is deleted; v2 reads messages through ProjectionStore and PersonalEngine.latestAssistantMessage
 apps/server/src/persistence/Layers/ProjectionThreadProposedPlans.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/persistence/Layers/ProjectionThreadSessions.ts		modify-delete	6	C10	open	area C10
+apps/server/src/persistence/Layers/ProjectionThreadSessions.ts		modify-delete	6	C10	dropped	the v1 projection repository is deleted; provider retry rides on the v2 provider session and thread shell
 apps/server/src/persistence/Layers/ProjectionThreads.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Layers/ProjectionTurns.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/persistence/Layers/Sqlite.test.ts		modify-delete	177	C10	open	area C10
-apps/server/src/persistence/Layers/Sqlite.ts		modify-delete	123	C10	open	area C10
+apps/server/src/persistence/Layers/Sqlite.test.ts		modify-delete	177	C10	done	C10: env switch and page-cache tests ported to persistence/Sqlite.test.ts
+apps/server/src/persistence/Layers/Sqlite.ts		modify-delete	123	C10	done	C10: synchronous and cache_size come from T3CODE_SQLITE_SYNCHRONOUS and T3CODE_SQLITE_CACHE_MB; tests read both pragmas back
 apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -275,18 +275,18 @@ apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.test.ts		
 apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/Migrations/047_ProjectionProjectIcon.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/persistence/ProjectionThreadPullRequests.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/persistence/ProviderSessionRuntime.test.ts		added-broken	90	C10	open	area C10
-apps/server/src/persistence/Services/ProjectionThreadMessages.ts		modify-delete	25	C10	open	area C10
-apps/server/src/persistence/Services/ProjectionThreadSessions.ts		modify-delete	5	C10	open	area C10
-apps/server/src/personal/PersonalBotRepository.chatExtras.test.ts		added-broken	447	C10	open	personal persistence layer (C10)
-apps/server/src/personal/PersonalBotRepository.groupPresence.test.ts		added-broken	189	C10	open	personal persistence layer (C10)
-apps/server/src/personal/PersonalBotRepository.test.ts		added-broken	670	C10	open	personal persistence layer (C10)
-apps/server/src/personal/PersonalBotRepository.unread.test.ts		added-broken	258	C10	open	personal persistence layer (C10)
+apps/server/src/persistence/ProviderSessionRuntime.test.ts		added-broken	90	C10	dropped	the v1 provider_session_runtime table is deleted; v2 session state lives in orchestration_v2_projection_provider_sessions
+apps/server/src/persistence/Services/ProjectionThreadMessages.ts		modify-delete	25	C10	dropped	the v1 projection repository is deleted; v2 reads messages through ProjectionStore and PersonalEngine
+apps/server/src/persistence/Services/ProjectionThreadSessions.ts		modify-delete	5	C10	dropped	the v1 projection repository is deleted; provider retry rides on the v2 provider session and thread shell
+apps/server/src/personal/PersonalBotRepository.chatExtras.test.ts		added-broken	447	C16	open	chat-extras SQL reads v1 projection tables; C16 moves personal SQL off them
+apps/server/src/personal/PersonalBotRepository.groupPresence.test.ts		added-broken	189	C16	open	group-presence SQL reads v1 projection tables; C16 moves personal SQL off them
+apps/server/src/personal/PersonalBotRepository.test.ts		added-broken	670	C16	open	the repository suite runs on v1 projection tables; C16 moves personal SQL off them
+apps/server/src/personal/PersonalBotRepository.unread.test.ts		added-broken	258	C16	open	unread SQL reads v1 projection tables; C16 moves personal SQL off them
 apps/server/src/personal/PersonalBotService.test.ts		added-broken	1143	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broken	206	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	open	per-bot token usage (C14)
 apps/server/src/personal/PersonalChatResumeService.test.ts		added-broken	675	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
-apps/server/src/personal/PersonalFiles.test.ts		added-broken	299	C10	open	personal persistence layer (C10)
+apps/server/src/personal/PersonalFiles.test.ts		added-broken	299	C10	dropped	the v1 harness imports the deleted OrchestrationEngine and ProjectionSnapshotQuery; the file handler is covered by the app HTTP tests
 apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	dropped	the v1 harness imports the deleted v1 orchestration services; the v2 service has no direct suite, reported open
 apps/server/src/personal/PersonalTaskChatArchiveService.test.ts		added-broken	727	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalTurnRetryService.test.ts		added-broken	557	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
@@ -330,7 +330,7 @@ apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts		ad
 apps/server/src/personal/routines/PersonalRoutineService.test.ts		added-broken	1753	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/secrets/PersonalSecretService.test.ts		added-broken	2583	C12	open	sealed secrets (C12)
 apps/server/src/personal/taskTitleBackfill.test.ts		added-broken	409	C4	done	ported to the v2 turn context and engine; targeted suite passes
-apps/server/src/personal/tasks/PersonalTaskRepository.notify.test.ts		added-broken	130	C10	open	personal persistence layer (C10)
+apps/server/src/personal/tasks/PersonalTaskRepository.notify.test.ts		added-broken	130	C16	open	the task repository suite runs on v1 projection tables; C16 moves personal SQL off them
 apps/server/src/personal/tasks/PersonalTaskService.test.ts		added-broken	5487	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/tasks/taskProviderBoundary.test.ts		added-broken	1073	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/tasks/taskProviderChain.test.ts		added-broken	586	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
@@ -579,7 +579,7 @@ apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts		content	2	B
 apps/server/src/sourceControl/SourceControlRepositoryService.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/startupAccess.test.ts		content	82	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
 apps/server/src/startupAccess.ts		content	44	C11	open	session renew and revoke, revoked-socket close, phone session slide, pair --connect
-apps/server/src/storageCleanup.ts		content	2	C10	open	withStallJob wrap
+apps/server/src/storageCleanup.ts		content	2	C10	done	C10: the hourly cleanup drain runs inside withStallJob(job:storage-cleanup)
 apps/server/src/telemetry/AnalyticsService.test.ts		content	87	B1	dropped	only upstream commits (#N) on our side, each present in U
 apps/server/src/telemetry/AnalyticsService.ts		content	106	B1	dropped	only upstream commits (#N) on our side, each present in U
 apps/server/src/telemetry/Identify.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -633,7 +633,7 @@ apps/server/src/workspace/WorkspaceFileSystem.test.ts		content	195	C12	open	seal
 apps/server/src/workspace/WorkspaceFileSystem.ts		content	151	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/workspace/WorkspaceSearchIndex.test.ts		content	68	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/src/workspace/WorkspaceSearchIndex.ts		content	21	B1	dropped	every commit on our side is an upstream cherry-pick U already has
-apps/server/test/ActivityPayloadProjection.test.ts		modify-delete	15	C10	open	test of an Appendix A hook file
+apps/server/test/ActivityPayloadProjection.test.ts		modify-delete	15	C10	dropped	the v1 activity projection pipeline is deleted; v2 stores turn items
 apps/server/vite.config.ts		content	8	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
 apps/web/package.json		content	8	phase 4	open	area phase 4
 apps/web/public/manifest.webmanifest		content	20	phase 4	open	area phase 4

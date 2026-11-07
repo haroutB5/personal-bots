@@ -183,3 +183,97 @@ it.effect("drops planner statistics a database already has", () => {
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });
+
+it("syncs the WAL only at checkpoints unless the kill switch asks for FULL", () => {
+  assert.strictEqual(SqlitePersistence.sqliteSynchronousFromEnv(undefined), "NORMAL");
+  assert.strictEqual(SqlitePersistence.sqliteSynchronousFromEnv(""), "NORMAL");
+  assert.strictEqual(SqlitePersistence.sqliteSynchronousFromEnv("normal"), "NORMAL");
+  assert.strictEqual(SqlitePersistence.sqliteSynchronousFromEnv("full"), "FULL");
+  assert.strictEqual(SqlitePersistence.sqliteSynchronousFromEnv(" FULL "), "FULL");
+  assert.strictEqual(SqlitePersistence.sqliteSynchronousFromEnv("2"), "FULL");
+});
+
+const readSynchronous = (envValue: string | undefined) => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-sync-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const previous = process.env.T3CODE_SQLITE_SYNCHRONOUS;
+  if (envValue === undefined) delete process.env.T3CODE_SQLITE_SYNCHRONOUS;
+  else process.env.T3CODE_SQLITE_SYNCHRONOUS = envValue;
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
+    return row!.synchronous;
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env.T3CODE_SQLITE_SYNCHRONOUS;
+        else process.env.T3CODE_SQLITE_SYNCHRONOUS = previous;
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }),
+    ),
+  );
+};
+
+it.effect("opens the server database with synchronous=NORMAL (1) by default", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* readSynchronous(undefined), 1);
+  }),
+);
+
+it.effect("opens the server database with synchronous=FULL (2) when the kill switch is set", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* readSynchronous("full"), 2);
+  }),
+);
+
+it("sizes the page cache at 64 MiB unless the kill switch or a valid size says otherwise", () => {
+  assert.strictEqual(
+    SqlitePersistence.sqliteCacheMbFromEnv(undefined),
+    SqlitePersistence.SQLITE_CACHE_DEFAULT_MB,
+  );
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv(""), 64);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("off"), null);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv(" OFF "), null);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("0"), null);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("default"), null);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("128"), 128);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("1024"), 1024);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("4096"), 64);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("12.5"), 64);
+  assert.strictEqual(SqlitePersistence.sqliteCacheMbFromEnv("lots"), 64);
+});
+
+const readCacheSize = (envValue: string | undefined) => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-cache-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const previous = process.env.T3CODE_SQLITE_CACHE_MB;
+  if (envValue === undefined) delete process.env.T3CODE_SQLITE_CACHE_MB;
+  else process.env.T3CODE_SQLITE_CACHE_MB = envValue;
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly cache_size: number }>`PRAGMA cache_size`;
+    return row!.cache_size;
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env.T3CODE_SQLITE_CACHE_MB;
+        else process.env.T3CODE_SQLITE_CACHE_MB = previous;
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }),
+    ),
+  );
+};
+
+it.effect("opens the server database with a 64 MiB page cache by default", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* readCacheSize(undefined), -64 * 1024);
+  }),
+);
+
+it.effect("keeps SQLite's default page cache (-2000) when the kill switch is set", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* readCacheSize("off"), -2000);
+  }),
+);

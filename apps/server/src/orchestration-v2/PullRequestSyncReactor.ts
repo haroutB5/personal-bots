@@ -31,6 +31,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -727,7 +728,11 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* worker.enqueue("all");
         yield* worker.drain;
-      }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
+      }).pipe(
+        withStallJob("job:pull-request-sync"),
+        Effect.repeat(Schedule.spaced("1 minute")),
+        Effect.asVoid,
+      ),
     );
   });
 

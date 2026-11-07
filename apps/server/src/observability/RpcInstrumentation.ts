@@ -7,6 +7,7 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 import { PERSONAL_RPC_AGGREGATES } from "../personal/observability/personalRpcAggregates.ts";
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
+import { withStallJob } from "./stallJobs.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -246,6 +247,7 @@ export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation
 export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
   const method = rpc._tag;
   const measured = effect.pipe(
+    withStallJob(`rpc:${method}`),
     withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
   );
 

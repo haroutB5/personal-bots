@@ -1,5 +1,5 @@
 /**
- * The personal server group as one layer: the runtime services and the three
+ * The personal server group as one layer: the runtime services and the four
  * personal reactors that start with them.
  *
  * @module personal/PersonalServerLayerLive
@@ -10,9 +10,11 @@ import { PersonalRuntimeLayerLive } from "./PersonalLayerLive.ts";
 import { PersonalBrowserArchiveReactorLive } from "./reactors/PersonalBrowserArchiveReactor.ts";
 import { PersonalBrowserTurnReactorLive } from "./reactors/PersonalBrowserTurnReactor.ts";
 import { PersonalTaskEndReactorLive } from "./reactors/PersonalTaskEndReactor.ts";
+import { PersonalThreadDeletionReactorLive } from "./reactors/PersonalThreadDeletionReactor.ts";
 
 export const PersonalServerLayerLive = Layer.mergeAll(
   PersonalBrowserTurnReactorLive,
   PersonalBrowserArchiveReactorLive,
   PersonalTaskEndReactorLive,
+  PersonalThreadDeletionReactorLive,
 ).pipe(Layer.provideMerge(PersonalRuntimeLayerLive));

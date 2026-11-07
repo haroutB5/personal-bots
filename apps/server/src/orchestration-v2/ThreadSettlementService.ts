@@ -26,6 +26,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -692,7 +693,11 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* fullSweeps.enqueue(undefined);
         yield* fullSweeps.drain;
-      }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
+      }).pipe(
+        withStallJob("job:thread-settlement"),
+        Effect.repeat(Schedule.spaced("1 minute")),
+        Effect.asVoid,
+      ),
     );
     yield* forkParked(
       Stream.runForEach(settingsChanges, (settings) => {

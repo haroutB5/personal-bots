@@ -25,6 +25,7 @@ import {
   type PersonalGenerateStructured,
   type PersonalProvidersShape,
 } from "./PersonalProviders.ts";
+import { PersonalPrewarmSession } from "./PersonalPrewarmSession.ts";
 import { failureDetail, PersonalProvidersError } from "./errors.ts";
 
 const providersError = (operation: string) => (failure: unknown) =>
@@ -33,6 +34,7 @@ const providersError = (operation: string) => (failure: unknown) =>
 const make = Effect.gen(function* () {
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const prewarmSession = yield* Effect.serviceOption(PersonalPrewarmSession);
   const structuredGenerator: PersonalProvidersShape["structuredGenerator"] = (instanceId) =>
     instances.getInstance(instanceId).pipe(
       Effect.map((instance) => {
@@ -73,7 +75,10 @@ const make = Effect.gen(function* () {
     sessionEvents: Stream.empty,
     structuredGenerator,
     smokeTestFor: () => Effect.succeed(Option.none()),
-    prewarm: () => Effect.succeed("unsupported" as const),
+    prewarm: (input) =>
+      Option.isSome(prewarmSession)
+        ? prewarmSession.value.prewarm(input)
+        : Effect.succeed("unsupported" as const),
   };
   return shape;
 });

@@ -27,6 +27,7 @@ import * as SqlError from "effect/sql/SqlError";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
 import {
   ProviderTurnAnalytics,
   type ProviderTurnAnalyticsContext,
@@ -76,6 +77,19 @@ const isLockTimeout = (error: EventSink.EventSinkV2Error) =>
   SqlError.isSqlError(error.cause) && error.cause.reason._tag === "LockTimeoutError";
 const retryLockTimeout = <A, R>(write: Effect.Effect<A, EventSink.EventSinkV2Error, R>) =>
   Effect.retry(write, { while: isLockTimeout, times: 2 });
+
+/**
+ * A saved secret a provider printed (reply text, tool output, a failure) must
+ * not land in the event store, the chat, a task result or an activity feed.
+ * Payloads are the only text-bearing part of a domain event; ids and type tags
+ * are produced by us.
+ */
+export const redactDomainEventSecrets = <Event extends OrchestrationV2DomainEvent>(
+  events: ReadonlyArray<Event>,
+): ReadonlyArray<Event> =>
+  secretRedactor.active()
+    ? events.map((event) => ({ ...event, payload: secretRedactor.redact(event.payload) }))
+    : events;
 
 export const ProviderEventIngestorV2Error = Schema.Union([
   ProviderEventNormalizeError,
@@ -673,7 +687,7 @@ export const layer: Layer.Layer<
         /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
         Effect.fnUntraced(
           function* (input) {
-            const events = yield* normalize(input);
+            const events = redactDomainEventSecrets(yield* normalize(input));
             if (events.length === 0) {
               return [];
             }
