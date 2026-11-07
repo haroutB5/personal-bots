@@ -34,6 +34,7 @@ import { FilesScreen } from "../files/FilesScreen";
 import { ChatScreen } from "../screens/ChatScreen";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
 import { ComputerScreen } from "../computer/ComputerScreen";
+import { DevicesScreen } from "../settings/DevicesScreen";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { ThisPhoneScreen } from "../settings/ThisPhoneScreen";
 import { NotificationsScreen } from "../settings/NotificationsScreen";
@@ -76,6 +77,7 @@ export type RootStackParamList = {
   Settings: undefined;
   SettingsNotifications: undefined;
   ThisPhone: undefined;
+  SettingsDevices: undefined;
   Memory: undefined;
   Passwords: undefined;
   ApiKeys: undefined;
@@ -147,6 +149,7 @@ function ThisPhoneRoute({
       onCheckNow={props.onCheckNow}
       onInstall={props.onInstall}
       onOpenPermission={props.onOpenPermission}
+      onOpenDevices={() => navigation.navigate("SettingsDevices")}
       onSignOut={props.onSignOut}
     />
   );
@@ -459,6 +462,11 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         </Stack.Screen>
         <Stack.Screen name="ThisPhone">
           {(screenProps) => <ThisPhoneRoute {...screenProps} props={props} />}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsDevices">
+          {({ navigation }) => (
+            <DevicesScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
         </Stack.Screen>
         <Stack.Screen name="Stop">
           {({ navigation }) => (

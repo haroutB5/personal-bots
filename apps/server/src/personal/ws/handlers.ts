@@ -1,4 +1,5 @@
 import {
+  AuthSessionId,
   EnvironmentAuthorizationError,
   PersonalBotsError,
   ThreadId,
@@ -9,6 +10,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+
+import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 
 import {
   archivePersonalChats,
@@ -26,6 +29,7 @@ import { deletePersonalChat } from "../deletePersonalChat.ts";
 import { deletePersonalGroup } from "../deletePersonalGroup.ts";
 import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalDesktop from "../desktop/PersonalDesktop.ts";
+import * as PersonalDevices from "../devices/PersonalDevices.ts";
 import * as PersonalBotShellStream from "../PersonalBotShellStream.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as PersonalGroupService from "../groups/PersonalGroupService.ts";
@@ -81,6 +85,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const { currentSessionId, observeRpcEffect, observeRpcStream, sessionPrewarmer, viewing } =
       deps;
     const sql = yield* SqlClient.SqlClient;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const personalEngine = yield* PersonalEngine.PersonalEngine;
     const personalBots = yield* PersonalBotService.PersonalBotService;
     const personalBotShellStream = yield* PersonalBotShellStream.PersonalBotShellStream;
@@ -937,6 +942,25 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
         observeRpcEffect(
           WS_METHODS.personalMemoryTidyRun,
           personalMemoryTidy.run({ dryRun: input.dryRun ?? true }),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalDevicesList]: (_input) =>
+        observeRpcEffect(
+          WS_METHODS.personalDevicesList,
+          PersonalDevices.listPersonalDevices(
+            environmentAuth,
+            AuthSessionId.make(currentSessionId),
+          ),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalDevicesRevoke]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalDevicesRevoke,
+          PersonalDevices.revokePersonalDevice(
+            environmentAuth,
+            AuthSessionId.make(currentSessionId),
+            input.sessionId,
+          ),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushPublicKey]: (_input) =>

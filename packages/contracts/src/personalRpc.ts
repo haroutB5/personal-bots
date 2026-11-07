@@ -74,6 +74,12 @@ import {
   VoiceCallTranscriptResult,
 } from "./personalVoiceCalls.ts";
 import {
+  PersonalDevicesError,
+  PersonalDevicesListResult,
+  PersonalDevicesRevokeInput,
+  PersonalDevicesRevokeResult,
+} from "./personalDevices.ts";
+import {
   PersonalTasksError,
   PersonalTask,
   PersonalTaskCreateInput,
@@ -941,6 +947,16 @@ const WsPersonalMemoryTidyUndoRpc = Rpc.make(WS_METHODS.personalMemoryTidyUndo, 
   success: PersonalMemoryTidyLogResult,
   error: PersonalMemoryRpcError,
 });
+const WsPersonalDevicesListRpc = Rpc.make(WS_METHODS.personalDevicesList, {
+  payload: Schema.Struct({}),
+  success: PersonalDevicesListResult,
+  error: PersonalDevicesError,
+});
+const WsPersonalDevicesRevokeRpc = Rpc.make(WS_METHODS.personalDevicesRevoke, {
+  payload: PersonalDevicesRevokeInput,
+  success: PersonalDevicesRevokeResult,
+  error: PersonalDevicesError,
+});
 const WsPersonalPushPublicKeyRpc = Rpc.make(WS_METHODS.personalPushPublicKey, {
   payload: Schema.Struct({}),
   success: PersonalPushPublicKeyResult,
@@ -1034,6 +1050,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsPersonalBotsListRpc,
   WsPersonalBotsThreadShellsRpc,
+  WsPersonalDevicesListRpc,
+  WsPersonalDevicesRevokeRpc,
   WsPersonalBotsSubscribeThreadShellsRpc,
   WsPersonalBotsThreadFullTextRpc,
   WsPersonalBotsCreateRpc,

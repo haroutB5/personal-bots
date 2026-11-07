@@ -27,6 +27,7 @@ export function ThisPhoneScreen({
   onCheckNow,
   onInstall,
   onOpenPermission,
+  onOpenDevices,
   onSignOut,
 }: {
   readonly native: NativePersonal;
@@ -37,6 +38,7 @@ export function ThisPhoneScreen({
   readonly onCheckNow: () => void;
   readonly onInstall: () => void;
   readonly onOpenPermission: () => void;
+  readonly onOpenDevices: () => void;
   readonly onSignOut: () => void;
 }) {
   const push = native.settings.usePushSettings(native.environmentId);
@@ -64,7 +66,15 @@ export function ThisPhoneScreen({
     <SettingsPage title="This phone" onBack={onBack}>
       <Section label="This phone">
         <Row title="Name" value={label} />
-        <Row title="Notifications" value={notifications} last />
+        <Row title="Notifications" value={notifications} last={!native.canManageDevices} />
+        {native.canManageDevices ? (
+          <Row
+            title="Signed-in devices"
+            hint="Phones and browsers signed in to hbots"
+            onPress={onOpenDevices}
+            last
+          />
+        ) : null}
       </Section>
 
       <Section label="Update">

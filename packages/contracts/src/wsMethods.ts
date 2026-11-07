@@ -175,6 +175,8 @@ export const WS_METHODS = {
   personalBotsDeleteThread: "personalBots.deleteThread",
   personalBotsArchiveThreads: "personalBots.archiveThreads",
   personalBotsThreadShells: "personalBots.threadShells",
+  personalDevicesList: "personalDevices.list",
+  personalDevicesRevoke: "personalDevices.revoke",
   personalBotsSubscribeThreadShells: "personalBots.subscribeThreadShells",
   personalBotsThreadFullText: "personalBots.threadFullText",
   personalBotsUpdateThreads: "personalBots.updateThreads",
