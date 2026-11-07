@@ -413,9 +413,11 @@ it.effect("denies manual cleanup before the handler without settings permission"
 );
 
 describe("personal device authorization", () => {
+  const deviceMethods = [WS_METHODS.personalDevicesList, WS_METHODS.personalDevicesRevoke] as const;
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
-      (tag) => tag !== WS_METHODS.personalDevicesList && tag !== WS_METHODS.personalDevicesRevoke,
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof deviceMethods)[number]> =>
+        !(deviceMethods as ReadonlyArray<string>).includes(tag),
     ),
   );
   const handlers = Layer.mergeAll(
