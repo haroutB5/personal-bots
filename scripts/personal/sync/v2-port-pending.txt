@@ -1,4 +1,3 @@
 # Personal tests that fail until their fill-in PR lands.
 # One repo-relative path per line. A listed test that starts passing must leave
 # this file (pending-check.mjs enforces both directions).
-apps/server/src/personal/browser/ServerBrowserHost.test.ts

@@ -6,6 +6,9 @@ import {
   PreviewAutomationDialogInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationHistoryInput,
+  PreviewAutomationCloseTabInput,
+  PreviewAutomationCloseTabResult,
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
   PreviewAutomationRecordingArtifact,
@@ -222,6 +225,28 @@ const PreviewRecordingStopTool = safeBrowserTool(
   }).annotate(Tool.Title, "Stop browser recording"),
 );
 
+const PreviewHistoryTool = browserTool(
+  Tool.make("preview_history", {
+    description:
+      "Go back or forward one step in the tab's history, or reload. Returns the tab's status once the page settles. Fails at once when there is no earlier or later page. A reload or a step that moves the tab to a site other than the sensitive site this chat has read needs the same approval as preview_navigate. Disabled in a tab where a saved login was filled: open a new tab instead.",
+    parameters: PreviewAutomationHistoryInput,
+    success: PreviewAutomationStatus,
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Go back, forward or reload"),
+);
+
+const PreviewCloseTabTool = browserTool(
+  Tool.make("preview_close_tab", {
+    description:
+      "Close one of your own tabs by tabId (required; the current tab is never closed by default). Other tabs stay open and the result lists them. Fails while the user is controlling the browser, and for another chat's tab. Use close_browser to shut the whole browser.",
+    parameters: PreviewAutomationCloseTabInput,
+    success: Schema.Struct({ ...PreviewAutomationCloseTabResult.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Close browser tab"),
+);
+
 export const PreviewToolkit = Toolkit.make(
   PreviewDialogTool,
   PreviewStatusTool,
@@ -233,6 +258,8 @@ export const PreviewToolkit = Toolkit.make(
   PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
+  PreviewHistoryTool,
+  PreviewCloseTabTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
 );
@@ -247,6 +274,8 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
+  PreviewHistoryTool,
+  PreviewCloseTabTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
 );

@@ -51,6 +51,8 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "hover",
   "select",
   "drag",
+  "history",
+  "closeTab",
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
@@ -312,6 +314,13 @@ export const PreviewAutomationClickInput = Schema.Struct({
       description: "1 click, 2 double, 3 triple. Default 1.",
     }),
   ),
+  /** V1 spelling of clickCount; the standalone preview_click tool takes it. */
+  clicks: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })).annotate({
+      description: "1 click, 2 double, 3 triple. Alias for clickCount.",
+    }),
+  ),
+  modifiers: Schema.optional(Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"]))),
 }).check(singlePointerTarget);
 export type PreviewAutomationClickInput = typeof PreviewAutomationClickInput.Type;
 
@@ -345,10 +354,29 @@ export type PreviewAutomationSelectResult = typeof PreviewAutomationSelectResult
 
 export const PreviewAutomationDragInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
-  source: Locator,
-  target: Locator,
+  source: Schema.optional(Locator),
+  target: Schema.optional(Locator),
+  /** V1 locator spelling; the standalone preview_drag tool takes these. */
+  fromLocator: Schema.optional(Locator),
+  toLocator: Schema.optional(Locator),
+  fromX: Schema.optional(Schema.Finite),
+  fromY: Schema.optional(Schema.Finite),
+  toX: Schema.optional(Schema.Finite),
+  toY: Schema.optional(Schema.Finite),
   timeoutMs: OptionalTimeoutMs,
-});
+}).check(
+  Schema.makeFilter((input) => {
+    const locators = input.source !== undefined && input.target !== undefined;
+    const v1Locators = input.fromLocator !== undefined && input.toLocator !== undefined;
+    const points =
+      input.fromX !== undefined &&
+      input.fromY !== undefined &&
+      input.toX !== undefined &&
+      input.toY !== undefined;
+    if (locators || v1Locators || points) return true;
+    return "Provide source and target, fromLocator and toLocator, or fromX, fromY, toX and toY.";
+  }),
+);
 export type PreviewAutomationDragInput = typeof PreviewAutomationDragInput.Type;
 
 export const PreviewAutomationUploadInput = Schema.Struct({
@@ -367,6 +395,45 @@ export const PreviewAutomationUploadInput = Schema.Struct({
   ),
 );
 export type PreviewAutomationUploadInput = typeof PreviewAutomationUploadInput.Type;
+
+export const PreviewAutomationHistoryInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  action: Schema.Literals(["back", "forward", "reload"]).annotate({
+    description: "back and forward move one step; reload reloads.",
+  }),
+  readiness: Schema.optional(
+    Schema.Literals(["load", "domContentLoaded", "none"]).annotate({
+      description: "When to return: load (default), domContentLoaded, or none (immediately).",
+    }),
+  ),
+  timeoutMs: OptionalTimeoutMs,
+}).annotate({
+  description: "Steps back or forward in a tab's history, or reloads it.",
+});
+export type PreviewAutomationHistoryInput = typeof PreviewAutomationHistoryInput.Type;
+
+const CLOSE_TAB_ID_DESCRIPTION =
+  "Tab to close, from preview_open or preview_status. Must be your own tab.";
+
+export const PreviewAutomationCloseTabInput = Schema.Struct({
+  // A plain checked string, not PreviewTabId: a required branded field loses its description in the tool's JSON schema.
+  // The checks are PreviewTabId's own (trimmed, 1 to 128 characters), so the handler can brand it safely.
+  tabId: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isNonEmpty({ description: CLOSE_TAB_ID_DESCRIPTION }),
+    Schema.isMaxLength(128),
+  ).annotateKey({ description: CLOSE_TAB_ID_DESCRIPTION }),
+}).annotate({ description: "Closes one browser tab." });
+export type PreviewAutomationCloseTabInput = typeof PreviewAutomationCloseTabInput.Type;
+
+export const PreviewAutomationCloseTabResult = Schema.Struct({
+  tabId: Schema.Null,
+  closedTabId: PreviewTabId,
+  remainingTabIds: Schema.Array(PreviewTabId).annotate({
+    description: "Your tabs still open.",
+  }),
+});
+export type PreviewAutomationCloseTabResult = typeof PreviewAutomationCloseTabResult.Type;
 
 export const PreviewAutomationTypeInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
@@ -589,6 +656,8 @@ export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   /** Missing means the V1 operation set from before capability negotiation. */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
+  /** Missing means a desktop host: only the in-process server browser is trusted with its own error text. */
+  kind: Schema.optional(Schema.Literals(["desktop", "server"])),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
@@ -707,6 +776,8 @@ const PreviewAutomationRemoteDiagnosticFields = {
     Schema.Literals(["null", "array", "object", "string", "number", "boolean"]),
   ),
   cause: Schema.Defect(),
+  /** Only the in-process server browser's own text; a desktop host's text can carry page content. */
+  hostMessage: Schema.optional(Schema.String),
 };
 
 const PreviewAutomationOptionalRemoteDiagnosticFields = {
@@ -716,6 +787,8 @@ const PreviewAutomationOptionalRemoteDiagnosticFields = {
     Schema.Literals(["null", "array", "object", "string", "number", "boolean"]),
   ),
   cause: Schema.optional(Schema.Defect()),
+  /** Only the in-process server browser's own text; a desktop host's text can carry page content. */
+  hostMessage: Schema.optional(Schema.String),
 };
 
 export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<PreviewAutomationNoAvailableHostError>()(
@@ -771,7 +844,7 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
 ) {
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    return this.reason === undefined ? summary : `${summary} ${this.reason}`;
+    return this.hostMessage ?? (this.reason === undefined ? summary : `${summary} ${this.reason}`);
   }
 }
 
@@ -795,6 +868,7 @@ export class PreviewAutomationControlInterruptedError extends Schema.TaggedError
   },
 ) {
   override get message(): string {
+    if (this.hostMessage !== undefined) return this.hostMessage;
     if (this.reason === "agentMismatch")
       return "This browser tab belongs to another agent session or a human. Open your own tab.";
     if (this.reason === "humanControl")
@@ -821,6 +895,7 @@ export class PreviewAutomationExecutionError extends Schema.TaggedError<PreviewA
   },
 ) {
   override get message(): string {
+    if (this.hostMessage !== undefined) return this.hostMessage;
     return this.reason === undefined
       ? `Preview automation ${this.operation} failed on client ${this.clientId}.`
       : `Preview automation ${this.operation} failed: ${this.reason}`;

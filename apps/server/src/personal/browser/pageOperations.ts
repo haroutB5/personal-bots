@@ -593,7 +593,8 @@ const requireInsideViewport = async (
 
 const pointerOptions = (input: PreviewAutomationClickInput): PointerClickOptions => ({
   button: input.button,
-  clickCount: input.clickCount,
+  clickCount: input.clickCount ?? input.clicks,
+  modifiers: input.modifiers,
 });
 
 export async function performClick(
@@ -627,13 +628,32 @@ export async function performHover(
   await page.mouseMove(point.x, point.y);
 }
 
-/** Drags from one locator to another. */
+/** Drags from one locator to another, or from one point to another. */
 export async function performDrag(
   page: BrowserPage,
   input: PreviewAutomationDragInput,
   timeoutMs: number,
 ): Promise<void> {
-  await page.dragLocators(input.source, input.target, timeoutMs);
+  const source = input.source ?? input.fromLocator;
+  const target = input.target ?? input.toLocator;
+  if (source !== undefined && target !== undefined) {
+    await page.dragLocators(source, target, timeoutMs);
+    return;
+  }
+  const fromX = input.fromX ?? 0;
+  const fromY = input.fromY ?? 0;
+  const toX = input.toX ?? 0;
+  const toY = input.toY ?? 0;
+  await requireInsideViewport(page, { x: fromX, y: fromY }, "Drag start");
+  await requireInsideViewport(page, { x: toX, y: toY }, "Drag end");
+  await page.mouseMove(fromX, fromY);
+  await page.mouseDown();
+  try {
+    await page.mouseMove(toX, toY, 8);
+    await page.mouseMove(toX, toY);
+  } finally {
+    await page.mouseUp();
+  }
 }
 
 export function performType(

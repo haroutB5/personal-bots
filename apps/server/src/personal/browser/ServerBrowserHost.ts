@@ -40,6 +40,8 @@ export const SERVER_BROWSER_OPERATIONS: ReadonlyArray<PreviewAutomationOperation
   "setColorScheme",
   "hover",
   "drag",
+  "history",
+  "closeTab",
 ];
 
 export const toRemoteError = (
@@ -110,6 +112,7 @@ export const layer = Layer.effectDiscard(
         clientId: SERVER_BROWSER_CLIENT_ID,
         environmentId: descriptor.environmentId,
         supportedOperations: [...SERVER_BROWSER_OPERATIONS],
+        kind: "server",
       });
       // Scoped to this connection on purpose: the broker drops a response
       // carrying a superseded connection id, so an id must never outlive the

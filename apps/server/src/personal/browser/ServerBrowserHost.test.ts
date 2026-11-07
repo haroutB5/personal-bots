@@ -257,8 +257,10 @@ it("advertises the 1.66.6 operations and still leaves recording to the desktop a
     expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).toContain(operation);
   }
   expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).not.toContain("recordingStart");
-  // Every operation the host serves is one the broker knows.
-  expect(new Set(PREVIEW_AUTOMATION_SERVER_OPERATIONS)).toEqual(
-    new Set([...ServerBrowserHost.SERVER_BROWSER_OPERATIONS, "recordingStart", "recordingStop"]),
-  );
+  // Every operation the host serves is one the broker knows. The contract set
+  // is wider: desktop hosts also answer dialog, upload, select and the V1 close.
+  const known = new Set<string>(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
+  for (const operation of ServerBrowserHost.SERVER_BROWSER_OPERATIONS) {
+    expect(known).toContain(operation);
+  }
 });

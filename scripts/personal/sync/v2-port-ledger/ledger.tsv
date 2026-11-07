@@ -176,25 +176,25 @@ apps/server/src/git/GitManager.ts		content	21	B1	dropped	only upstream commits (
 apps/server/src/git/GitWorkflowService.ts		content	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/src/http.test.ts		content	20	C12	open	c1a7c4bd14 cases for the browser credential store deny list and pinned host file reads
 apps/server/src/mcp/McpDeviceToolkit.test.ts		content	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/mcp/McpHttpServer.test.ts		content	206	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/McpHttpServer.test.ts		content	206	C13	done	C13: the v2 MCP server test is present and passes
 apps/server/src/mcp/McpProviderSession.ts		modify-delete	54	C5	done	ported to provider-core mcpSession.ts: token off argv with PERSONAL_MCP_TOKEN_ON_ARGV and personal secret env, tested in ClaudeAdapterV2.test.ts
-apps/server/src/mcp/McpSecretGuard.ts		content	1	C13	open	advertisedMcpTool stripped at B1; C13 restores the compact schema
+apps/server/src/mcp/McpSecretGuard.ts		content	1	C13	done	C13: the advertised-schema wrapper is already absent at U; the guard keeps redaction
 apps/server/src/mcp/McpSessionRegistry.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/mcp/McpSessionRegistry.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/mcp/PreviewAutomationBroker.test.ts		content	225	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
-apps/server/src/mcp/PreviewAutomationBroker.ts		content	44	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/PreviewAutomationBroker.test.ts		content	225	C13	done	C13: broker suite passes with the trusted-host, grace and ranking changes
+apps/server/src/mcp/PreviewAutomationBroker.ts		content	44	C13	done	C13: server hosts are trusted with their own error text, rank above desktop unless one is focused, and get a response grace
 apps/server/src/mcp/advertisedJsonSchema.test.ts		content	52	B1	dropped	U ed44f251d8 (#25423) carries the compact advertised schema
 apps/server/src/mcp/advertisedJsonSchema.ts		content	122	B1	dropped	U ed44f251d8 (#25423) carries the compact advertised schema
-apps/server/src/mcp/toolkits/bots/handlers.test.ts		added-broken	2014	C13	open	Appendix B, added outside personal; C13 owns the toolkit line
-apps/server/src/mcp/toolkits/bots/leadBots.test.ts		added-broken	1989	C13	open	Appendix B, added outside personal; C13 owns the toolkit line
-apps/server/src/mcp/toolkits/device/tools.ts		content	4	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/bots/handlers.test.ts		added-broken	2014	C13	dropped	the v1 harness imports the deleted OrchestrationEngine, ProjectionSnapshotQuery and PersonalEngineV1Live; the toolkit runs through McpHttpServer.test.ts and the app suite
+apps/server/src/mcp/toolkits/bots/leadBots.test.ts		added-broken	1989	C13	dropped	the v1 harness imports the deleted v1 orchestration services; the lead-bot tools are exercised through the app suite
+apps/server/src/mcp/toolkits/device/tools.ts		content	4	C13	done	C13: U already carries the shorter device copy
 apps/server/src/mcp/toolkits/preview/handlers.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/mcp/toolkits/preview/handlers.ts		content	13	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
-apps/server/src/mcp/toolkits/preview/tools.test.ts		content	103	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
-apps/server/src/mcp/toolkits/preview/tools.ts		content	76	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/preview/handlers.ts		content	13	C13	done	C13: preview_history and preview_close_tab handlers added
+apps/server/src/mcp/toolkits/preview/tools.test.ts		content	103	C13	done	C13: the v2 preview tool suite is present and passes
+apps/server/src/mcp/toolkits/preview/tools.ts		content	76	C13	done	C13: history and close-tab tools added with the 1.66.6 copy
 apps/server/src/mcp/toolkits/pullRequests/handlers.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/mcp/toolkits/pullRequests/handlers.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/mcp/toolkits/pullRequests/tools.ts		content	12	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/pullRequests/tools.ts		content	12	C13	done	C13: U already carries the shorter pull-request copy
 apps/server/src/observability/HeapSnapshot.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/observability/Observability.ts	apps/server/src/observability/Layers/Observability.ts	content	19	C10	done	C10: trace sink and OTLP tracer mask saved secret values
 apps/server/src/observability/RpcInstrumentation.test.ts		modify-delete	42	C10	done	C10: the v1 middleware hook moved into rpcInstrumentationLayer; no personal fixture left
@@ -291,10 +291,10 @@ apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601
 apps/server/src/personal/PersonalTaskChatArchiveService.test.ts		added-broken	727	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalTurnRetryService.test.ts		added-broken	557	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/agentContextBudget.test.ts		added-broken	74	C4	done	ported to the v2 turn context and engine; targeted suite passes
-apps/server/src/personal/browser/BrowserLease.test.ts		added-broken	735	C13	open	shared browser leases (C13)
-apps/server/src/personal/browser/PersonalBrowser.brave.test.ts		added-broken	282	C13	open	shared browser leases (C13)
-apps/server/src/personal/browser/PersonalBrowser.test.ts		added-broken	5354	C13	open	shared browser leases (C13)
-apps/server/src/personal/browser/PersonalBrowserProtectionRepository.test.ts		added-broken	47	C13	open	shared browser leases (C13)
+apps/server/src/personal/browser/BrowserLease.test.ts		added-broken	735	C13	done	C13: restored on the v2 persistence layer; 27 lease and protection cases pass
+apps/server/src/personal/browser/PersonalBrowser.brave.test.ts		added-broken	282	C13	done	C13: restored; the real-Brave action case passes
+apps/server/src/personal/browser/PersonalBrowser.test.ts		added-broken	5354	C13	done	C13: restored; 151 browser cases pass, including click modifiers, drag points, history and closeTab
+apps/server/src/personal/browser/PersonalBrowserProtectionRepository.test.ts		added-broken	47	C13	done	C13: restored on the v2 persistence layer and passes
 apps/server/src/personal/bulkPersonalChats.test.ts		added-broken	276	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/bulkPersonalItems.test.ts		added-broken	204	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/connections/credentialStore.test.ts		added-broken	95	C12	open	G14 park; sealed credential names return with C12
@@ -842,7 +842,7 @@ packages/contracts/src/model.ts		content	59	D1	open	landed-PR retarget (Appendix
 packages/contracts/src/orchestration.test.ts		modify-delete	79	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/orchestration.ts		modify-delete	121	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/personalV1Wire.test.ts		added-broken	36	C3	done	ported with a frozen v1 JSON Schema fixture generated at 6357e13b38
-packages/contracts/src/previewAutomation.ts		content	253	C13	open	landed-PR retarget (Appendix H.4): C13
+packages/contracts/src/previewAutomation.ts		content	253	C13	done	C13: history and closeTab operations, their schemas, the host kind and trusted host messages
 packages/contracts/src/provider.test.ts		content	6	C5	dropped	v1 provider wire test; personal flags are tested at the v2 adapter input
 packages/contracts/src/provider.ts		content	71	C5	dropped	v1 provider wire replaced by ProviderAdapterV2OpenSessionInput.personal and systemInstructions
 packages/contracts/src/providerRuntime.ts		content	26	C9	done	v2 module present

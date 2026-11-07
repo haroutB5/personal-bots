@@ -7,6 +7,7 @@ import {
   type PreviewAutomationDragInput,
   type PreviewAutomationEvaluateInput,
   type PreviewAutomationHoverInput,
+  type PreviewAutomationHistoryInput,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
   type PreviewAutomationPressInput,
@@ -287,7 +288,8 @@ export const makeBrowserOperations = (
           yield* syncPreviewStatus(tab);
           return { tab, result: statusOf(tab) };
         }
-        case "close": {
+        case "close":
+        case "closeTab": {
           // Only a tab this chat opened, named explicitly: an inherited "current tab" is never closed by accident.
           const tab = request.tabIdExplicit === true ? tabForRequest(request) : undefined;
           if (tab === undefined) {
@@ -352,7 +354,10 @@ export const makeBrowserOperations = (
             );
           }
           // Same rule as preview_press: nothing but the plainest input reaches a tab holding a credential.
-          if (tab.loginProtected && (input.button ?? "left") !== "left") {
+          if (
+            tab.loginProtected &&
+            ((input.button ?? "left") !== "left" || (input.modifiers?.length ?? 0) > 0)
+          ) {
             return yield* rejectUrl(
               "Only plain left clicks are allowed after a saved login is filled: no right or middle button and no held keys.",
             );
@@ -376,12 +381,14 @@ export const makeBrowserOperations = (
         }
         case "drag": {
           const input = request.input as PreviewAutomationDragInput;
-          if (tab.loginProtected) {
+          const from = input.source ?? input.fromLocator;
+          const to = input.target ?? input.toLocator;
+          if (tab.loginProtected && (from !== undefined || to !== undefined)) {
             return yield* rejectUrl(
               "Locator drags are disabled after a saved login is filled. Use coordinates captured before use_login.",
             );
           }
-          yield* attempt({ locator: input.source }, () =>
+          yield* attempt({ locator: from }, () =>
             performDrag(tab.page, input, driverTimeoutFor(request.timeoutMs, input.timeoutMs)),
           );
           return { tab, result: { tabId: tab.tabId } };
@@ -459,6 +466,50 @@ export const makeBrowserOperations = (
           );
           return { tab, result: { tabId: tab.tabId } };
         }
+        case "history": {
+          const input = request.input as PreviewAutomationHistoryInput;
+          if (tab.loginProtected) {
+            return yield* rejectUrl(
+              "This tab contains a saved login, so history and reload are disabled. Open a new tab to continue.",
+            );
+          }
+          const step =
+            input.action === "back" ? "back" : input.action === "forward" ? "forward" : null;
+          if (step !== null) {
+            const destination = yield* attempt({}, () => tab.page.historyTarget(step));
+            if (destination === null) {
+              return yield* Effect.fail(
+                new HostOperationError(
+                  "PreviewAutomationExecutionError",
+                  `There is no ${step === "back" ? "earlier" : "later"} page in this tab's history.`,
+                ),
+              );
+            }
+            yield* guardEgress(request.threadId, {
+              kind: "navigate",
+              target: webOrigin(destination),
+            });
+          } else {
+            yield* guardEgress(request.threadId, {
+              kind: "navigate",
+              target: webOrigin(tab.page.url()),
+            });
+          }
+          yield* attempt({}, async () => {
+            if (input.action === "back") await tab.page.goBack();
+            else if (input.action === "forward") await tab.page.goForward();
+            else await tab.page.reload();
+            if (input.readiness !== "none") {
+              await tab.page.waitForLoadState?.(
+                input.readiness === "domContentLoaded" ? "domcontentloaded" : "load",
+                timeoutMs,
+              );
+            }
+          });
+          runFork(logBotCheckLanding(tab));
+          yield* syncPreviewStatus(tab);
+          return { tab, result: statusOf(tab) };
+        }
         case "resize": {
           const input = request.input as PreviewAutomationResizeInput;
           const setting = yield* Effect.try({
@@ -516,6 +567,12 @@ export const makeBrowserOperations = (
         return tab?.title ? `Checked ${tab.title.slice(0, 60)}` : "Checked the page";
       case "click":
         return typeof target === "string" ? `Clicked ${target.slice(0, 60)}` : "Clicked the page";
+      case "history":
+        return input.action === "reload"
+          ? "Reloaded the page"
+          : `Went ${String(input.action ?? "back")} in history`;
+      case "closeTab":
+        return "Closed a browser tab";
       case "hover":
         return typeof target === "string" ? `Hovered ${target.slice(0, 60)}` : "Hovered the page";
       case "drag":

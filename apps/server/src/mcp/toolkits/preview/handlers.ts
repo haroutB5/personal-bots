@@ -13,6 +13,7 @@ import {
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
+  type PreviewAutomationCloseTabResult,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
@@ -236,6 +237,17 @@ const handlers = {
           "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
         ),
       ),
+    ),
+  ),
+  preview_history: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationStatus>("history", input, input.timeoutMs),
+  ),
+  preview_close_tab: McpToolAccess.actsAsCaller(({ tabId }) =>
+    invoke<PreviewAutomationCloseTabResult>("closeTab", {}, undefined, tabId as PreviewTabId).pipe(
+      Effect.map(({ result, toolIcon }) => ({
+        ...result,
+        ...(toolIcon ? { toolIcon } : {}),
+      })),
     ),
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>

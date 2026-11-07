@@ -80,6 +80,7 @@ interface ClientConnection {
   readonly connectionId: string;
   readonly environmentId: PreviewAutomationHost["environmentId"];
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
+  readonly kind: "desktop" | "server";
   readonly focused: boolean;
   readonly preferred: boolean;
   readonly liveTabs: NonNullable<PreviewAutomationHostFocus["liveTabs"]>;
@@ -91,6 +92,7 @@ interface PendingRequest {
   readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
   readonly context: PreviewAutomationRequestErrorContext;
+  readonly trustedHost: boolean;
 }
 
 /** A lease belongs to this exact connectionId/queue; replacing the host invalidates it. */
@@ -218,12 +220,17 @@ const MAX_REASON_CHARS = 500;
 const classifyResponseError = (
   context: PreviewAutomationRequestErrorContext,
   error: NonNullable<PreviewAutomationResponse["error"]>,
+  trustedHost = false,
 ): PreviewAutomationError => {
   const remoteDiagnostics = {
     remoteTag: error._tag,
     remoteMessageLength: error.message.length,
     ...(error.detail === undefined ? {} : { remoteDetailKind: remoteDetailKind(error.detail) }),
     cause: error,
+    // Only the in-process server browser's own words reach the model: it says
+    // what happened (a dialog it is holding open, a stalled page) in text it
+    // wrote and redacted itself.
+    ...(trustedHost && error.message.length > 0 ? { hostMessage: error.message } : {}),
   };
   switch (error._tag) {
     case "PreviewAutomationRecordingDesktopUpdateRequiredError":
@@ -418,6 +425,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       connectionId,
       environmentId: host.environmentId,
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
+      kind: host.kind ?? "desktop",
       focused: false,
       preferred: options?.preferred ?? false,
       liveTabs: [],
@@ -498,7 +506,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       }
       const next = new Map(current.pending);
       next.delete(response.requestId);
-      return [entry, { ...current, pending: next }] as const;
+      const trustedHost = current.clients.get(entry.context.clientId)?.kind === "server";
+      return [
+        { ...entry, trustedHost },
+        { ...current, pending: next },
+      ] as const;
     });
     if (!pending) return;
     if (response.ok) {
@@ -507,7 +519,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       yield* Deferred.fail(
         pending.deferred,
         response.error
-          ? classifyResponseError(pending.context, response.error)
+          ? classifyResponseError(pending.context, response.error, pending.trustedHost)
           : new PreviewAutomationMalformedResponseError(pending.context),
       );
     }
@@ -539,27 +551,37 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
             (!visibleOnly || tab.visible === true) &&
             (input.tabId === undefined || tab.tabId === input.tabId),
         );
+      const eligibleHosts = hasLiveAssignment
+        ? []
+        : Array.from(current.clients.values()).filter(
+            (host) =>
+              host.environmentId === input.scope.environmentId &&
+              supportsOperation(host, input.operation),
+          );
+      // The in-process server browser ranks above every desktop host unless
+      // one of them is focused (the user is looking at a desktop preview).
+      // Desktop hosts keep their historical order among themselves.
+      const focusedDesktopExists = eligibleHosts.some(
+        (host) => host.kind === "desktop" && host.focused,
+      );
+      const serverRank = (host: ClientConnection) =>
+        host.kind === "server" ? (focusedDesktopExists ? -1 : 1) : 0;
       const connection =
         hasLiveAssignment && supportsOperation(assignedConnection, input.operation)
           ? assignedConnection
           : hasLiveAssignment
             ? undefined
-            : Array.from(current.clients.values())
-                .filter(
-                  (host) =>
-                    host.environmentId === input.scope.environmentId &&
-                    supportsOperation(host, input.operation),
-                )
-                .sort(
-                  (left, right) =>
-                    Number(input.tabId !== undefined && ownsTargetTab(right)) -
-                      Number(input.tabId !== undefined && ownsTargetTab(left)) ||
-                    Number(right.preferred) - Number(left.preferred) ||
-                    Number(ownsTargetTab(right, true)) - Number(ownsTargetTab(left, true)) ||
-                    Number(ownsTargetTab(right)) - Number(ownsTargetTab(left)) ||
-                    Number(right.focused) - Number(left.focused) ||
-                    right.focusOrder - left.focusOrder,
-                )[0];
+            : eligibleHosts.sort(
+                (left, right) =>
+                  serverRank(right) - serverRank(left) ||
+                  Number(input.tabId !== undefined && ownsTargetTab(right)) -
+                    Number(input.tabId !== undefined && ownsTargetTab(left)) ||
+                  Number(right.preferred) - Number(left.preferred) ||
+                  Number(ownsTargetTab(right, true)) - Number(ownsTargetTab(left, true)) ||
+                  Number(ownsTargetTab(right)) - Number(ownsTargetTab(left)) ||
+                  Number(right.focused) - Number(left.focused) ||
+                  right.focusOrder - left.focusOrder,
+              )[0];
       if (!connection) {
         if (!hasLiveAssignment) assignments.delete(assignmentKey);
         return [undefined, { ...current, assignments }] as const;
@@ -599,7 +621,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         ...selectorDiagnostics,
       };
       const pending = new Map(current.pending);
-      pending.set(requestId, { queue: connection.queue, deferred, context });
+      pending.set(requestId, { queue: connection.queue, deferred, context, trustedHost: false });
       return [
         { connection, requestId, requestContext: context, requestSequence },
         { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
