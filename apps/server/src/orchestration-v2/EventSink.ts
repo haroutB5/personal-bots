@@ -28,6 +28,7 @@ import * as SqlError from "effect/sql/SqlError";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
+import { makeProviderEventSecretFilter } from "../provider/secretEventRedaction.ts";
 import { projectStoredEventForWire } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
@@ -994,7 +995,19 @@ const layerBase: Layer.Layer<
     );
 
     return EventSinkV2.of({
-      consumeProviderEvents: coordinator.consume,
+      consumeProviderEvents: (source, process, after, canBatch) => {
+        const filter = makeProviderEventSecretFilter();
+        return coordinator.consume(
+          source.pipe(
+            Stream.flatMap((event: ProviderAdapter.ProviderAdapterV2Event) =>
+              Stream.fromIterable(filter.process(event)),
+            ),
+          ),
+          process,
+          after,
+          canBatch,
+        );
+      },
       withProviderBatch,
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(
