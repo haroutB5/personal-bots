@@ -2,10 +2,12 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -157,3 +159,64 @@ it.effect("reads a management key from its secret provider", () => {
     Effect.scoped,
   );
 });
+
+it.effect(
+  "polls an unreachable hub less often than a healthy one, and adds no load for a missing key",
+  () => {
+    const hubRequests = (managementKey: string, answer: boolean) => {
+      let requests = 0;
+      return Effect.gen(function* () {
+        yield* UsageLimitSources.make;
+        for (let minute = 0; minute < 60; minute += 1) {
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* Effect.yieldNow;
+        }
+        return requests;
+      }).pipe(
+        Effect.provide([
+          ServerSettings.layerTest({
+            usageLimitSources: {
+              [UsageLimitSourceId.make("hub")]: {
+                kind: "cliproxy",
+                url: "https://hub.test",
+                managementKey,
+                enabled: true,
+              },
+            },
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Effect.succeed(true),
+          }),
+          Layer.succeed(SecretResolver.SecretResolver, {
+            label: (provider) => Effect.succeed(provider),
+            read: (references) => Effect.succeed(references.map(() => undefined)),
+            invalidate: () => Effect.void,
+          }),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.sync(() => {
+                requests += 1;
+                return HttpClientResponse.fromWeb(
+                  request,
+                  answer ? Response.json({ files: [] }) : new Response("down", { status: 503 }),
+                );
+              }),
+            ),
+          ),
+          NodeCrypto.layer,
+        ]),
+        Effect.scoped,
+      );
+    };
+    return Effect.gen(function* () {
+      const healthy = yield* hubRequests("a-key", true);
+      const down = yield* hubRequests("a-key", false);
+      const unconfigured = yield* hubRequests("", false);
+      expect(healthy).toBeGreaterThanOrEqual(8);
+      expect(down).toBeGreaterThan(0);
+      expect(down).toBeLessThan(healthy);
+      expect(unconfigured).toBe(0);
+    });
+  },
+);

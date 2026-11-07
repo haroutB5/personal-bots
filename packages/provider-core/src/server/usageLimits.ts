@@ -29,7 +29,11 @@ export function makeUsageLimits(input: {
   readonly checkedAt: string;
   readonly windows: Iterable<ServerProviderUsageWindow>;
 }): ServerProviderUsageLimits {
-  return { checkedAt: input.checkedAt, windows: sortWindows(input.windows) };
+  return {
+    checkedAt: input.checkedAt,
+    fullReadAt: input.checkedAt,
+    windows: sortWindows(input.windows),
+  };
 }
 
 export function makeUnavailableUsageLimits(input: {
@@ -76,13 +80,14 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined) {
+  if (!changed && previous !== undefined && previous.refreshFailed === undefined) {
     return previous;
   }
   const unavailable =
     previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
-    ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
+    checkedAt: input.checkedAt,
+    windows: sortWindows(merged.values()),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
@@ -112,27 +117,72 @@ export function seedUsageLimits(input: {
     return published;
   }
   if (published === undefined || published.unavailable?.reason === "probeFailed") {
-    return seed;
+    if (seed.refreshFailed === undefined) return seed;
+    const { refreshFailed: _carried, ...reading } = seed;
+    return reading;
   }
   return published;
 }
 
+export interface UsageProbeContext {
+  readonly checkedAt: string;
+  readonly message?: string | undefined;
+  readonly enabled?: boolean | undefined;
+  readonly installed?: boolean | undefined;
+}
+
+const REASON_MAX_CHARS = 120;
+
+/** The first sentence of a probe message, capped, for "Couldn't refresh · <reason>". */
+export function shortProbeFailureReason(message: string | undefined): string | undefined {
+  const text = message?.replace(/\s+/g, " ").trim();
+  if (!text) return undefined;
+  const sentence = /^(.+?[.!?])(?:\s|$)/.exec(text)?.[1] ?? text;
+  const trimmed = sentence.replace(/[.!?]+$/, "");
+  if (trimmed.length === 0) return undefined;
+  return trimmed.length <= REASON_MAX_CHARS
+    ? trimmed
+    : `${trimmed.slice(0, REASON_MAX_CHARS - 1)}…`;
+}
+
+/**
+ * A probe that read no usage keeps the last good windows and marks them
+ * `refreshFailed`; a read replaces them. `unsupported`, a disabled provider and
+ * an uninstalled CLI are authoritative and replace the reading.
+ */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
+  readonly context?: UsageProbeContext | undefined;
 }): ServerProviderUsageLimits | undefined {
-  const { published, probed } = input;
-  if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
-    return published;
+  const { published, probed, context } = input;
+  if (probed?.unavailable?.reason === "unsupported") return probed;
+  if (context?.enabled === false || context?.installed === false) return probed;
+  const read =
+    probed !== undefined && probed.unavailable === undefined && probed.windows.length > 0;
+  if (read) {
+    if (
+      published !== undefined &&
+      published.unavailable === undefined &&
+      Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
+    ) {
+      return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+    }
+    return probed.fullReadAt === probed.checkedAt
+      ? probed
+      : { ...probed, fullReadAt: probed.checkedAt };
   }
-  if (
-    published &&
-    probed &&
-    !published.unavailable &&
-    !probed.unavailable &&
-    Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
-  ) {
-    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
-  }
-  return probed;
+  if (probed === undefined) return undefined;
+  const lastGood =
+    published !== undefined && published.unavailable === undefined && published.windows.length > 0;
+  if (!lastGood) return probed;
+  const reason =
+    shortProbeFailureReason(probed?.unavailable?.message) ??
+    shortProbeFailureReason(context?.message) ??
+    (probed.unavailable === undefined ? "usage came back empty" : undefined);
+  const at = context?.checkedAt ?? probed.checkedAt;
+  return {
+    ...published,
+    refreshFailed: { at, ...(reason ? { message: reason } : {}) },
+  };
 }

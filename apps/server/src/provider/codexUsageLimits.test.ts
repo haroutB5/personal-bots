@@ -35,7 +35,7 @@ describe("codexRateLimitsToLimits", () => {
         snapshot: { limitId: "spark" },
         rateLimitsByLimitId: { codex: snapshot },
       }),
-    ).toEqual({ checkedAt, windows });
+    ).toEqual({ checkedAt, fullReadAt: checkedAt, windows });
     expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows });
   });
 
@@ -51,6 +51,7 @@ describe("codexRateLimitsToLimits", () => {
       }),
     ).toEqual({
       checkedAt,
+      fullReadAt: checkedAt,
       windows: [
         {
           id: "primary",

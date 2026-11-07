@@ -574,7 +574,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
+    const usedPercent =
+      members.reduce((sum, m) => sum + windowAsOf(m.window, now).usedPercent, 0) / members.length;
     // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
@@ -640,6 +641,21 @@ export function windowHasReset(window: ServerProviderUsageWindow, now: number): 
   return resetsAt !== null && resetsAt <= now;
 }
 
+/**
+ * The window as it stands at `now`: a window whose reset has passed starts
+ * over at 0% used, whatever the last reading said. Readings only arrive with
+ * a probe or a turn, so without this a spent window kept showing 100% after
+ * its reset until the next read came back.
+ */
+export function windowAsOf(
+  window: ServerProviderUsageWindow,
+  now: number,
+): ServerProviderUsageWindow {
+  return windowHasReset(window, now) && window.usedPercent !== 0
+    ? { ...window, usedPercent: 0 }
+    : window;
+}
+
 /** Earliest reset still ahead of `now`, epoch ms, or null when none is reported. */
 export function nextUsageResetAt(
   limits: ServerProviderUsageLimits | undefined,
@@ -670,6 +686,7 @@ export function usageResetSinceReading(
 export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null || window.windowDurationMins === undefined) return null;
+  if (resetsAt <= now) return null;
   const length = window.windowDurationMins * MINUTE;
   if (length <= 0) return null;
   return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));

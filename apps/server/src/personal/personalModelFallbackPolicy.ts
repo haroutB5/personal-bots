@@ -260,13 +260,7 @@ export interface SwitchBackInput {
 }
 
 export function primaryUsageRecovered(input: SwitchBackInput): boolean {
-  // refreshFailed and fullReadAt return with C14; absent, the early-recovery proof fails closed.
-  const usage = input.homeProvider?.usageLimits as
-    | (ServerProviderUsageLimits & {
-        readonly refreshFailed?: boolean;
-        readonly fullReadAt?: string;
-      })
-    | undefined;
+  const usage = input.homeProvider?.usageLimits;
   // Only a reading from a full probe that began after the limit hit can prove
   // early recovery. The driver can hand back the answer it took before the hit
   // stamped with the current time, so a reading with no such probe behind it is
@@ -276,7 +270,7 @@ export function primaryUsageRecovered(input: SwitchBackInput): boolean {
     input.freshAfterMs === undefined ||
     usage === undefined ||
     usage.unavailable ||
-    usage.refreshFailed ||
+    usage.refreshFailed !== undefined ||
     usage.fullReadAt !== usage.checkedAt
   ) {
     return false;

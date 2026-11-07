@@ -766,7 +766,10 @@ describe("makeManagedServerProvider", () => {
           ],
         } as const;
         yield* Ref.set(probeSnapshot, { ...refreshedSnapshot, usageLimits: completeLimits });
-        assert.deepStrictEqual((yield* provider.refresh).usageLimits, completeLimits);
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, {
+          ...completeLimits,
+          fullReadAt: completeLimits.checkedAt,
+        });
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

@@ -247,7 +247,7 @@ describe("Antigravity model catalog", () => {
   it("offers each model the thinking levels it reported when selected", () => {
     const thinking = (currentValue: string) =>
       ({
-        id: "thinking_level",
+        id: "effort",
         name: "Thinking Level",
         category: "thought_level",
         type: "select",
@@ -281,10 +281,10 @@ describe("Antigravity model catalog", () => {
     const thinkingOf = (slug: string) =>
       models.find((model) => model.slug === slug)?.capabilities?.optionDescriptors?.[0];
 
-    expect(thinkingOf("gemini")).toMatchObject({ id: "thinking_level", currentValue: "high" });
-    expect(thinkingOf("claude")).toMatchObject({ id: "thinking_level", currentValue: "low" });
+    expect(thinkingOf("gemini")).toMatchObject({ id: "effort", currentValue: "high" });
+    expect(thinkingOf("claude")).toMatchObject({ id: "effort", currentValue: "low" });
     expect(thinkingOf("plain")).toBeUndefined();
-    expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
+    expect(thinkingOf("unseen")).toMatchObject({ id: "effort" });
     expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
   });
 });
@@ -712,7 +712,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
           const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
           yield* harness.initialize;
-          expect((yield* published)?.usageLimits).toEqual(limits);
+          expect((yield* published)?.usageLimits).toEqual({
+            ...limits,
+            fullReadAt: limits.checkedAt,
+          });
           // The second health check is the one the failed background read triggers.
           const checks = yield* Ref.make(0);
           const failedReadApplied = yield* Deferred.make<void>();
@@ -732,7 +735,11 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           });
           yield* harness.provider.snapshot.refresh;
           yield* Deferred.await(failedReadApplied);
-          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
+          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
+            ...limits,
+            fullReadAt: limits.checkedAt,
+            refreshFailed: { at: "2026-10-09T12:01:00.000Z" },
+          });
           yield* harness.provider.onSignedOut;
           expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
           yield* Ref.set(usage, {
@@ -807,7 +814,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           ],
         } satisfies ServerProviderUsageLimits;
         yield* Deferred.succeed(readResult, limits);
-        expect((yield* published)?.usageLimits).toEqual(limits);
+        expect((yield* published)?.usageLimits).toEqual({
+          ...limits,
+          fullReadAt: limits.checkedAt,
+        });
       }),
     ),
   );
@@ -830,7 +840,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* Ref.set(usage, Effect.succeed(newLimits));
         yield* harness.provider.onSignedIn;
         yield* harness.provider.onSessionStarted(started);
-        expect((yield* published)?.usageLimits).toEqual(newLimits);
+        expect((yield* published)?.usageLimits).toEqual({
+          ...newLimits,
+          fullReadAt: newLimits.checkedAt,
+        });
         // Switching again must not republish the previous account's limits, even if the read fails.
         const failed = {
           checkedAt: "2026-10-09T12:02:00.000Z",

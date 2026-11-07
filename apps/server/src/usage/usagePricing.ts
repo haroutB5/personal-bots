@@ -4,6 +4,7 @@ import type {
   UsageModelPriceOverride,
   UsageTokenTotals,
 } from "@t3tools/contracts";
+import { deepSeekPeakWindowEndMs } from "@t3tools/shared/deepseekPeak";
 
 import type { UsageRecord, UsageSpeed } from "@t3tools/provider-core/server/usage";
 
@@ -18,6 +19,73 @@ export interface TokenRates {
 export interface ModelRate extends TokenRates {
   readonly fast: TokenRates | null;
   readonly ultrafast: TokenRates | null;
+}
+
+/**
+ * DeepSeek-V4-Flash off-peak rates in USD per token. DeepSeek bills through its own card, not LiteLLM, and the picker offers only Flash.
+ * Peak doubles these rates; cache writes bill as cache misses because DeepSeek publishes no cache-write rate.
+ */
+const DEEPSEEK_FLASH_RATES: ModelRate = {
+  inputCostPerToken: 0.15 / 1_000_000,
+  outputCostPerToken: 0.6 / 1_000_000,
+  cacheReadCostPerToken: 0.003 / 1_000_000,
+  cacheCreationCostPerToken: 0.15 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+const DEEPSEEK_FLASH_PEAK_RATES: ModelRate = {
+  inputCostPerToken: 0.3 / 1_000_000,
+  outputCostPerToken: 1.2 / 1_000_000,
+  cacheReadCostPerToken: 0.006 / 1_000_000,
+  cacheCreationCostPerToken: 0.3 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+/** Gemini published list rates in USD per token, retrieved 2026-10-21 from ai.google.dev/pricing. */
+const GEMINI_38_FLASH_RATES: ModelRate = {
+  inputCostPerToken: 0.75 / 1_000_000,
+  outputCostPerToken: 3.75 / 1_000_000,
+  cacheReadCostPerToken: 0.075 / 1_000_000,
+  cacheCreationCostPerToken: 0.75 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+const GEMINI_4_ARGON_RATES: ModelRate = {
+  inputCostPerToken: 2.0 / 1_000_000,
+  outputCostPerToken: 10.0 / 1_000_000,
+  cacheReadCostPerToken: 0.1 / 1_000_000,
+  cacheCreationCostPerToken: 2.0 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+const GEMINI_PUBLISHED_RATES: Readonly<Record<string, ModelRate>> = {
+  "gemini-3.8-flash": GEMINI_38_FLASH_RATES,
+  "gemini-4-argon": GEMINI_4_ARGON_RATES,
+};
+
+/** Strips effort and tier suffixes (`-high`, `-medium`, `-low`, `-n`) from a Gemini model id. */
+function normalizeGeminiModel(model: string): string {
+  return model
+    .trim()
+    .toLowerCase()
+    .replace(/(?:-(?:high|medium|low|none|minimal|xhigh|max|n))$/, "");
+}
+
+const fastDeepSeekPricing = process.env.T3CODE_DEEPSEEK_PRICING_FAST !== "off";
+
+/** Peak is 01:00-04:00 and 06:00-10:00 UTC on weekdays; weekends and unreadable times are off-peak. */
+function isDeepSeekPeakTime(timestampMs: number): boolean {
+  if (fastDeepSeekPricing) return deepSeekPeakWindowEndMs(timestampMs) !== null;
+  const at = new Date(timestampMs);
+  if (!Number.isFinite(at.getTime())) return false;
+  const day = at.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const hour = at.getUTCHours();
+  return (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10);
 }
 
 export type RateTable = ReadonlyMap<string, ModelRate>;
@@ -217,12 +285,14 @@ function resolveRate(table: RateTable, model: string): ModelRate | null {
   const key = stripVariantSuffix(normalizeRateKey(model));
   const bareName = bareModelName(key);
   if (bareName.length === 0 || UNPRICEABLE_MODELS.has(bareName)) return null;
-  return table.get(key) ?? null;
+  const fromTable = table.get(key);
+  if (fromTable !== undefined) return fromTable;
+  return GEMINI_PUBLISHED_RATES[normalizeGeminiModel(bareName)] ?? null;
 }
 
 export type PricedRecord = Pick<
   UsageRecord,
-  "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
+  "provider" | "timestampMs" | "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
 >;
 
 export interface PricedUsage {
@@ -245,6 +315,16 @@ function sumCategories(cost: UsageCategoryCost): number {
   return cost.input + cost.cacheRead + cost.cacheWrite + cost.output;
 }
 
+/** DeepSeek prices by its own card, peak or off-peak by timestamp; every other model uses the table. */
+function baseRate(table: RateTable, record: PricedRecord): ModelRate | null {
+  if (record.provider === "deepseek") {
+    return isDeepSeekPeakTime(record.timestampMs)
+      ? DEEPSEEK_FLASH_PEAK_RATES
+      : DEEPSEEK_FLASH_RATES;
+  }
+  return lookupRate(table, record.rateModel ?? record.model);
+}
+
 /** Reasoning tokens are already included in outputTokens; do not charge twice. */
 export function priceUsage(
   table: RateTable,
@@ -263,7 +343,7 @@ export function priceUsage(
     categoryCostUsd: null,
     speedPremiumUsd: 0,
   });
-  const rate = override ?? lookupRate(table, record.rateModel ?? model);
+  const rate = override ?? baseRate(table, record);
   if (rate === null) {
     return reported === null ? unsplit(0, "unpriced") : unsplit(reported, "providerReported");
   }

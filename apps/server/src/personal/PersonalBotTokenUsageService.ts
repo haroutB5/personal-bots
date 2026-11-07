@@ -13,7 +13,8 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { withStallJob } from "../observability/stallJobs.ts";
-import { botUsageTotalTokens, type BotUsageCell } from "../usage/botUsage.ts";
+import { botUsageTotalTokens } from "../usage/botUsage.ts";
+import { UsageService } from "../usage/UsageService.ts";
 import { providerSessionHistoryEnabled } from "../usage/providerSessions.ts";
 import {
   buildSessionOwners,
@@ -70,6 +71,7 @@ interface ZoneEntry {
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;
+  const usage = yield* UsageService;
 
   const zones = new Map<string, ZoneEntry>();
 
@@ -128,11 +130,12 @@ export const make = Effect.gen(function* () {
       const startedAtMs = yield* Clock.currentTimeMillis;
       const today = dayInZone(startedAtMs, timeZone);
 
-      // B1 stub: UsageService.readSessionUsage returns in C14.
-      const scan = yield* Effect.succeed({
-        cells: [] as ReadonlyArray<BotUsageCell>,
-        scannedFiles: 0,
-        scanDurationMs: 0,
+      const scan = yield* usage.readSessionUsage({
+        timeZone,
+        sinceDay: new Date(Date.parse(`${today}T00:00:00Z`) - 29 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10),
+        untilDay: today,
       });
       // The chats are read after the scan, so a chat that started while it ran is mapped.
       const chats = yield* readChatSessions;

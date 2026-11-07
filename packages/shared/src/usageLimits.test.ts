@@ -23,6 +23,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  windowAsOf,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1504,5 +1505,42 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("usage windows that have reset", () => {
+  it("reads a spent window as 0% once its reset has passed", () => {
+    const spent = {
+      ...window,
+      usedPercent: 100,
+      resetsAt: "2026-09-03T14:00:00.000Z",
+    };
+    const after = Date.parse("2026-09-03T14:00:01.000Z");
+    expect(windowAsOf(spent, after).usedPercent).toBe(0);
+    expect(windowAsOf(spent, now).usedPercent).toBe(100);
+    expect(elapsedShare(spent, after)).toBeNull();
+  });
+
+  it("pools a reset member at 0% instead of its stale reading", () => {
+    const account = (key: string, usedPercent: number, resetsAt: string): LimitAccount => ({
+      key,
+      driver: ProviderDriverKind.make("codex"),
+      displayName: key,
+      email: undefined,
+      plan: undefined,
+      accentColor: undefined,
+      environments: [],
+      sourceLabel: null,
+      redeem: null,
+      limits: {
+        checkedAt: "2026-09-03T13:55:00.000Z",
+        windows: [{ ...window, usedPercent, resetsAt }],
+      },
+    });
+    const pools = collectLimitPools(
+      [account("a", 100, "2026-09-03T14:00:00.000Z"), account("b", 40, "2026-09-03T18:00:00.000Z")],
+      Date.parse("2026-09-03T14:00:01.000Z"),
+    );
+    expect(pools[0]?.windows[0]?.usedPercent).toBe(20);
   });
 });

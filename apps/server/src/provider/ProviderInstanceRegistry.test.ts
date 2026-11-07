@@ -558,7 +558,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         message: "Claude Agent CLI failed while checking account status.",
       });
       expect(accountChangedFailure.checkedAt).not.toBe(first.checkedAt);
-      expect(accountChangedFailure.usageLimits).toBeUndefined();
+      expect(accountChangedFailure.usageLimits?.windows ?? []).toEqual([]);
       expect(accountChangedFailure.slashCommands).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
       );

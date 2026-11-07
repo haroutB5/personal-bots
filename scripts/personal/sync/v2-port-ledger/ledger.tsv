@@ -284,7 +284,7 @@ apps/server/src/personal/PersonalBotRepository.test.ts		added-broken	670	C16	ope
 apps/server/src/personal/PersonalBotRepository.unread.test.ts		added-broken	258	C16	open	unread SQL reads v1 projection tables; C16 moves personal SQL off them
 apps/server/src/personal/PersonalBotService.test.ts		added-broken	1143	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broken	206	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
-apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	open	per-bot token usage (C14)
+apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	done	C14: per-bot token usage tests against UsageService.readSessionUsage
 apps/server/src/personal/PersonalChatResumeService.test.ts		added-broken	675	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalFiles.test.ts		added-broken	299	C10	dropped	the v1 harness imports the deleted OrchestrationEngine and ProjectionSnapshotQuery; the file handler is covered by the app HTTP tests
 apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	dropped	the v1 harness imports the deleted v1 orchestration services; the v2 service has no direct suite, reported open
@@ -597,11 +597,11 @@ apps/server/src/textGeneration/GrokTextGeneration.test.ts		content	1	B1	dropped	
 apps/server/src/textGeneration/GrokTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/OpenCode2TextGeneration.ts		added-broken	259	C7	dropped	no personal behaviour in the hunk; packages/provider-opencode/src/server/v2/textGeneration.ts is the v2 home
 apps/server/src/textGeneration/TextGeneration.ts		content	17	C5	done	service exposes the optional structured generator from provider-core
-apps/server/src/usage-transcript-worker.ts		added-broken	25	C14	open	G14 park; usage transcript worker (C14)
-apps/server/src/usage/UsageLimitSources.ts		content	30	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/UsageService.sessionUsage.test.ts		added-broken	398	C14	open	G2 park; UsageService row is C14
-apps/server/src/usage/UsageService.test.ts		content	281	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/UsageService.ts		content	399	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage-transcript-worker.ts		added-broken	25	D1	open	DeepSeek-only transcript worker; needs the D1 DeepSeek transcript format
+apps/server/src/usage/UsageLimitSources.ts		content	30	C14	done	C14: probe backoff on a failing hub, no backoff for a missing key
+apps/server/src/usage/UsageService.sessionUsage.test.ts		added-broken	398	C14	done	C14: readSessionUsage tests: per-bot window, bounded HTTP, no Cursor network
+apps/server/src/usage/UsageService.test.ts		content	281	C14	done	C14: U v11 cache supersedes the v4 upgrade case; DeepSeek cases go to D1; OpenCode 2 store root is set by the driver environment and packages/provider-opencode usage.test.ts covers the SQLite read
+apps/server/src/usage/UsageService.ts		content	399	C14	done	C14: readSessionUsage with sliced scan and provider filter; DeepSeek reader part goes to D1
 apps/server/src/usage/antigravityUsageReader.test.ts		added-broken	301	C8	done	C8: the v2 reader test is apps/server/src/provider/Drivers/antigravityUsageReader.test.ts
 apps/server/src/usage/antigravityUsageReader.ts		modify-delete	75	C8	done	C8: apps/server/src/provider/Drivers/antigravityUsageReader.ts owns it, with dedupe and the PERSONAL_ANTIGRAVITY_USAGE_DEDUPE switch
 apps/server/src/usage/botUsage.test.ts		added-broken	354	B1	done	G8 restored the test at B1 against U's UsageRecord; the reader returns in C14
@@ -612,13 +612,13 @@ apps/server/src/usage/cursorUsageReader.ts		modify-delete	1	B1	dropped	every com
 apps/server/src/usage/opencodeUsageReader.test.ts		added-broken	142	C7	dropped	v2 usage reads the same records from the OpenCode 2 SQLite store; packages/provider-opencode/src/server/usage.test.ts owns the cases
 apps/server/src/usage/opencodeUsageReader.ts		modify-delete	129	C7	dropped	v2 usage.ts is the home: it reads OpenCode 2's SQLite store through the shared worker, so no personal reader is left to port
 apps/server/src/usage/usageAggregation.test.ts		content	3	B1	dropped	every commit on our side is an upstream cherry-pick U already has
-apps/server/src/usage/usagePricing.test.ts		content	163	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/usagePricing.ts		content	226	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/usageScanCache.test.ts		content	104	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/usageScanCache.ts		content	230	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/usageTranscriptReader.test.ts		content	163	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/usageTranscriptReader.ts		content	32	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/usageTranscriptWorkerClient.ts		added-broken	78	C14	open	G14 park; usage transcript worker (C14)
+apps/server/src/usage/usagePricing.test.ts		content	163	C14	done	C14: DeepSeek peak rates and Gemini fallback rates
+apps/server/src/usage/usagePricing.ts		content	226	C14	done	C14: DeepSeek Flash peak window rates and Gemini fallback rates
+apps/server/src/usage/usageScanCache.test.ts		content	104	C14	dropped	U v11 scan cache supersedes the personal cache
+apps/server/src/usage/usageScanCache.ts		content	230	C14	dropped	U v11 scan cache supersedes the personal cache
+apps/server/src/usage/usageTranscriptReader.test.ts		content	163	D1	open	DeepSeek transcript reader; needs the D1 DeepSeek transcript format
+apps/server/src/usage/usageTranscriptReader.ts		content	32	D1	open	DeepSeek transcript reader; needs the D1 DeepSeek transcript format
+apps/server/src/usage/usageTranscriptWorkerClient.ts		added-broken	78	D1	open	DeepSeek-only worker client; needs the D1 DeepSeek transcript format
 apps/server/src/usage/usageTranscripts.test.ts		modify-delete	24	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/src/usage/usageTranscripts.ts		modify-delete	69	C9+D6	open	hook file listed in Appendix A
 apps/server/src/vcs/GitVcsDriver.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -847,13 +847,13 @@ packages/contracts/src/provider.test.ts		content	6	C5	dropped	v1 provider wire t
 packages/contracts/src/provider.ts		content	71	C5	dropped	v1 provider wire replaced by ProviderAdapterV2OpenSessionInput.personal and systemInstructions
 packages/contracts/src/providerRuntime.ts		content	26	C9	done	v2 module present
 packages/contracts/src/providerSetup.ts		content	33	C9	done	v2 module present
-packages/contracts/src/providerUsageLimits.ts		content	115	C14	open	landed-PR retarget (Appendix H.4): C14
+packages/contracts/src/providerUsageLimits.ts		content	115	C14	done	C14: fullReadAt, refreshFailed and the balance and spend shapes; ServerProvider wiring is D1/D6
 packages/contracts/src/pullRequest.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/relay.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/server.ts		content	82	C9	done	v2 module present
 packages/contracts/src/settings.test.ts		content	13	C9	done	v2 test present
 packages/contracts/src/settings.ts		content	88	D1	open	landed-PR retarget (Appendix H.4): D1
-packages/contracts/src/usage.ts		content	4	C14	open	landed-PR retarget (Appendix H.4): C14
+packages/contracts/src/usage.ts		content	4	C14	dropped	U already has deepseek in UsageProviderKind at contract v6
 packages/effect-acp/src/client.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/effect-acp/src/protocol.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/effect-acp/src/rpc.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -866,8 +866,8 @@ packages/provider-core/src/server/providerAuthFlow.test.ts	apps/server/src/provi
 packages/provider-core/src/server/providerAuthFlow.ts	apps/server/src/provider/ProviderAuthFlow.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-core/src/server/snapshotProbe.test.ts	apps/server/src/provider/providerSnapshot.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-core/src/server/snapshotProbe.ts	apps/server/src/provider/providerSnapshot.ts	content	4	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
-packages/provider-core/src/server/usageLimits.test.ts	apps/server/src/provider/providerUsageLimits.test.ts	content	172	C14	open	follows packages/shared/src/usageLimits.ts
-packages/provider-core/src/server/usageLimits.ts	apps/server/src/provider/providerUsageLimits.ts	content	105	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
+packages/provider-core/src/server/usageLimits.test.ts	apps/server/src/provider/providerUsageLimits.test.ts	content	172	C14	done	C14: full-read proof, failed-refresh note and probe resolution tests
+packages/provider-core/src/server/usageLimits.ts	apps/server/src/provider/providerUsageLimits.ts	content	105	C5-C9	done	C5-C9 closed this too early; C14 ported fullReadAt, refreshFailed and resolveUsageLimitsAfterProbe here
 packages/provider-cursor/src/server/usageLimits.ts	apps/server/src/provider/Layers/cursorUsageLimits.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-grok/src/server/acpSupport.ts	apps/server/src/provider/acp/GrokAcpSupport.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/provider-grok/src/server/skills.test.ts	apps/server/src/provider/Drivers/GrokSkills.test.ts	content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -894,8 +894,8 @@ packages/shared/src/relayTracing.test.ts		content	1	B1	dropped	our only change a
 packages/shared/src/schemaJson.ts		content	33	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/shared/src/shell.test.ts		content	161	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
 packages/shared/src/shell.ts		content	163	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
-packages/shared/src/usageLimits.test.ts		content	36	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-packages/shared/src/usageLimits.ts		content	55	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+packages/shared/src/usageLimits.test.ts		content	36	C14	done	C14: reset-window reads
+packages/shared/src/usageLimits.ts		content	55	C14	done	C14: windowAsOf treats a passed reset as 0 percent used
 packages/source-control-azure-devops/src/server/AzureDevOpsCli.test.ts	apps/server/src/sourceControl/AzureDevOpsCli.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/source-control-bitbucket/src/server/BitbucketApi.test.ts	apps/server/src/sourceControl/BitbucketApi.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/ssh/src/command.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries

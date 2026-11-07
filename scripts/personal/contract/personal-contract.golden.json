@@ -35157,6 +35157,43 @@
                                 }
                               ]
                             },
+                            "fullReadAt": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "refreshFailed": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "at": {
+                                      "type": "string"
+                                    },
+                                    "message": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": ["at"],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "resetCredits": {
                               "anyOf": [
                                 {
@@ -38297,6 +38334,43 @@
                                           }
                                         ]
                                       },
+                                      "fullReadAt": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "refreshFailed": {
+                                        "anyOf": [
+                                          {
+                                            "additionalProperties": true,
+                                            "properties": {
+                                              "at": {
+                                                "type": "string"
+                                              },
+                                              "message": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string"
+                                                  },
+                                                  {
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "required": ["at"],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
                                       "resetCredits": {
                                         "anyOf": [
                                           {
@@ -39690,6 +39764,43 @@
                                     }
                                   },
                                   "required": ["label", "url"],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "fullReadAt": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "refreshFailed": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "at": {
+                                      "type": "string"
+                                    },
+                                    "message": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": ["at"],
                                   "type": "object"
                                 },
                                 {

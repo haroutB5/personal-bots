@@ -35,6 +35,7 @@ describe("claudeUsageResponseToLimits", () => {
       names: { overageIncluded: "Fable" },
       limits: {
         checkedAt,
+        fullReadAt: checkedAt,
         windows: [
           {
             id: "five_hour",
@@ -139,6 +140,7 @@ describe("claudeUsageResponseToLimits", () => {
     expect(claudeUsageResponseToLimits({ checkedAt, response: enterpriseResponse }).limits).toEqual(
       {
         checkedAt,
+        fullReadAt: checkedAt,
         windows: [monthlyWindow],
       },
     );

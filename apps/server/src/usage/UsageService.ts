@@ -40,6 +40,8 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { type BotUsageCell, UsageBotAggregator } from "./botUsage.ts";
+import { makeSliceYield } from "./sliceYield.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -77,6 +79,16 @@ const TRANSCRIPT_READ_CONCURRENCY = 4;
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
 );
+
+/** Providers whose transcripts name a session id a chat can own; Cursor reads cloud events and is left out. */
+const SESSION_USAGE_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set([
+  "claude",
+  "codex",
+  "opencode",
+  "deepseek",
+  "antigravity",
+  "grok",
+]);
 
 const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
@@ -144,8 +156,23 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
+    readonly readSessionUsage: (
+      input: SessionUsageInput,
+    ) => Effect.Effect<SessionUsageResult, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
+
+export interface SessionUsageInput {
+  readonly timeZone: string;
+  readonly sinceDay: string;
+  readonly untilDay: string;
+}
+
+export interface SessionUsageResult {
+  readonly cells: ReadonlyArray<BotUsageCell>;
+  readonly scannedFiles: number;
+  readonly scanDurationMs: number;
+}
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -616,13 +643,16 @@ export const make = Effect.gen(function* () {
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
     awaitRefresh: boolean,
+    onlyProviders?: ReadonlySet<UsageProviderKind>,
   ) {
     const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
       Effect.provideContext(readerContext),
     );
 
     const scans = Effect.forEach(
-      scanReaders,
+      onlyProviders === undefined
+        ? scanReaders
+        : scanReaders.filter(({ reader }) => onlyProviders.has(reader.provider)),
       ({ driver, reader }) =>
         usageInstances(driver, settings).pipe(
           Effect.flatMap((instances) =>
@@ -654,7 +684,9 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
     const scanned: readonly ScannedDir[] = [...transcripts, ...scanDirs.flat()];
-    return scanned;
+    return onlyProviders === undefined
+      ? scanned
+      : scanned.filter((dir) => onlyProviders.has(dir.provider));
   });
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
@@ -887,8 +919,88 @@ export const make = Effect.gen(function* () {
     } satisfies UsageSummary;
   });
 
-  const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
+  /**
+   * The per-bot usage cells for a day window, from the same transcript scan and
+   * cache the usage page uses. Time sliced so a cold scan does not hold the
+   * event loop.
+   */
+  const scanSessionUsage = Effect.fn("UsageService.scanSessionUsage")(function* (
+    input: SessionUsageInput,
+  ) {
+    const since = DateTime.make(`${input.sinceDay}T00:00:00Z`);
+    const until = DateTime.make(`${input.untilDay}T00:00:00Z`);
+    if (Option.isNone(since) || Option.isNone(until) || input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `Session usage window '${input.sinceDay}'..'${input.untilDay}' is not valid`,
+      });
+    }
+    const startedAtMs = yield* Clock.currentTimeMillis;
+    const settings = yield* readSettings;
+    yield* ensureScanCacheLoaded;
+    yield* ensureRates(false);
+    const windowStartMs = DateTime.toEpochMillis(since.value) - MTIME_SLACK_MS;
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const scannedDirs = yield* collectDirs(
+      windowStartMs,
+      settings,
+      retentionCutoffMs,
+      false,
+      SESSION_USAGE_PROVIDERS,
+    );
 
+    const aggregator = new UsageBotAggregator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
+    });
+    const slice = makeSliceYield();
+    let scannedFiles = 0;
+    let fed = 0;
+    for (const { provider, dir, files } of scannedDirs) {
+      const retained = [...(files ?? [])];
+      const livePaths = new Set(retained.map((file) => file.path));
+      for (const [filePath, entry] of fileCache) {
+        if (
+          entry.provider !== provider ||
+          entry.mtimeMs < Math.max(windowStartMs, retentionCutoffMs) ||
+          livePaths.has(filePath) ||
+          !isWithinDirectory(filePath, dir)
+        ) {
+          continue;
+        }
+        retained.push({
+          path: filePath,
+          records: [...entry.records, ...entry.tailRecords],
+          malformedRecords: entry.malformedRecords,
+        });
+      }
+      for (const file of retained) {
+        if (file.records.length === 0) continue;
+        scannedFiles += 1;
+        const scope = aggregator.beginFile();
+        for (const record of file.records) {
+          scope.add(correctedRecord(record));
+          fed += 1;
+          if (fed % 64 === 0 && slice.due()) yield* Effect.promise(slice.yieldNow);
+        }
+      }
+    }
+
+    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
+    if (pruned > 0) cacheDirty = true;
+    yield* persistCaches;
+    const finishedAtMs = yield* Clock.currentTimeMillis;
+    return {
+      cells: aggregator.finish(),
+      scannedFiles,
+      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+    } satisfies SessionUsageResult;
+  });
+
+  const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
   const scanKey = (input: UsageSummaryInput, settings: ServerSettingsValue): string =>
     JSON.stringify([
       input.timeZone,
@@ -935,7 +1047,7 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  return { readSummary, refreshRates, readSessionUsage: scanSessionUsage, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { cursorRateModel } from "@t3tools/provider-cursor/server/accountUsage";
+import type { UsageProviderKind } from "@t3tools/contracts";
 import type { UsageSpeed } from "@t3tools/provider-core/server/usage";
 import {
   cacheSavingsUsd,
@@ -28,7 +29,10 @@ describe("usage pricing", () => {
     model: string,
     reportedCostUsd: number | null = null,
     speed: UsageSpeed = "standard",
+    extra: { readonly provider?: UsageProviderKind; readonly timestampMs?: number } = {},
   ) => ({
+    provider: extra.provider ?? ("claudeAgent" as UsageProviderKind),
+    timestampMs: extra.timestampMs ?? Date.parse("2026-10-12T12:00:00.000Z"),
     model,
     totals,
     reportedCostUsd,
@@ -285,5 +289,42 @@ describe("usage pricing", () => {
     });
 
     expect(lookupRate(table, "example-model")).toBeNull();
+  });
+});
+
+describe("personal provider pricing", () => {
+  const totals = {
+    uncachedInputTokens: 1_000_000,
+    cachedInputTokens: 1_000_000,
+    cacheCreationTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    reasoningTokens: 0,
+  };
+  const priced = (model: string, provider: UsageProviderKind, at: string) =>
+    priceUsage(new Map(), {
+      provider,
+      timestampMs: Date.parse(at),
+      model,
+      totals,
+      reportedCostUsd: null,
+      speed: "standard",
+    });
+
+  it("prices DeepSeek at double its off-peak card during a weekday peak window", () => {
+    const peak = priced("deepseek-v4-flash", "deepseek", "2026-10-12T02:00:00.000Z");
+    expect(peak.costSource).toBe("modelPriced");
+    expect(peak.costUsd).toBeCloseTo(0.3 + 0.006 + 0.3 + 1.2, 9);
+
+    const offPeak = priced("deepseek-v4-flash", "deepseek", "2026-10-12T12:00:00.000Z");
+    expect(offPeak.costUsd).toBeCloseTo(0.15 + 0.003 + 0.15 + 0.6, 9);
+
+    const weekend = priced("deepseek-v4-flash", "deepseek", "2026-10-11T02:00:00.000Z");
+    expect(weekend.costUsd).toBeCloseTo(offPeak.costUsd, 9);
+  });
+
+  it("prices a Gemini model from the published card when the fetched table lacks it", () => {
+    const result = priced("gemini-3.8-flash-high", "antigravity", "2026-10-12T12:00:00.000Z");
+    expect(result.costSource).toBe("modelPriced");
+    expect(result.costUsd).toBeCloseTo(0.75 + 0.075 + 0.75 + 3.75, 9);
   });
 });
