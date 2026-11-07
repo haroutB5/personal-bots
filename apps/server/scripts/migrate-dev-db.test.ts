@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../src/persistence/Migrations.ts";
+import { UPSTREAM_MIGRATION_IDS } from "../src/persistence/upstreamMigrationIds.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
 
@@ -249,7 +250,10 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
         { sharedHome: sourceDir },
       );
-      assert.include(result.executedMigrations, "55_OrchestrationV2");
+      assert.include(
+        result.executedMigrations,
+        `${UPSTREAM_MIGRATION_IDS["055_OrchestrationV2"]}_OrchestrationV2`,
+      );
     }),
   );
 
