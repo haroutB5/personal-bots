@@ -33,7 +33,9 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
+import { secretsCommand } from "./cli/secrets.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
+import { installAsyncConsoleFileRedirect } from "./observability/asyncConsoleFile.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
 
@@ -106,6 +108,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       doctorCommand,
       policyCommand,
       triageCommand,
+      secretsCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );
@@ -113,6 +116,11 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
 export const cli = makeCli();
 
 export function runCli() {
+  // The release launcher redirects stdout and stderr into the server log file,
+  // and Node writes to file handles synchronously: one log line would hold the
+  // event loop for the disk's latency (seconds under load). Swap the write for
+  // an async one before anything logs. No-op for TTYs, pipes and `pair.ps1`.
+  installAsyncConsoleFileRedirect();
   extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
   Command.run(cli, { version: packageJson.version }).pipe(
