@@ -23,6 +23,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as EventSink from "./EventSink.ts";
@@ -334,6 +335,40 @@ layer("CommandOutputHub", (it) => {
           truncated: false,
           running: true,
         });
+      }),
+    ),
+  );
+
+  it.effect("masks a saved key split across live output chunks and releases a held tail", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* CommandOutputHub.CommandOutputHub;
+        const threadId = yield* seedThread;
+        const key = "sk-live-CommandOutput0123456789";
+        secretRedactor.set("COMMAND_KEY", key);
+        yield* Effect.addFinalizer(() => Effect.sync(() => secretRedactor.remove("COMMAND_KEY")));
+        yield* writeCommandItem(threadId, { status: "running" });
+
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: `before ${key.slice(0, 8)}` });
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: key.slice(8) });
+        const frames = yield* subscribeFrames(threadId);
+        const first = yield* takeFrame(frames);
+        assert.include(first.text, "before [secret COMMAND_KEY]");
+        assert.notInclude(first.text, key);
+
+        yield* TestClock.adjust("1 second");
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "see sk-live-Com" });
+        const held = yield* takeFrame(frames);
+        assert.equal(held.kind, "append");
+        assert.equal(held.text, "see ");
+
+        yield* TestClock.adjust("1 second");
+        yield* hub.finish({ threadId, itemId: ITEM_ID });
+        yield* writeCommandItem(threadId, { status: "interrupted" });
+        const final = yield* takeFrame(frames);
+        assert.include(final.text, "see sk-live-Com");
+        assert.notInclude(final.text, key);
+        assert.equal(yield* Queue.take(frames), "ended");
       }),
     ),
   );

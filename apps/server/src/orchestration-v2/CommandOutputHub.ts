@@ -23,6 +23,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { secretRedactor, type SecretStream } from "../personal/secrets/secretRedaction.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -124,6 +125,8 @@ export const make = Effect.gen(function* () {
   const tails = new Map<string, TerminalOutputState>();
   const finished = new Map<string, TerminalOutputState>();
   const subscribers = new Map<string, Set<Subscriber>>();
+  // One carry per live command, so a key split across chunks never reaches a viewer.
+  const secretStreams = new Map<string, SecretStream>();
 
   const wakeAll = (key: string, chunk: string) =>
     Effect.forEach(
@@ -142,10 +145,8 @@ export const make = Effect.gen(function* () {
       { discard: true },
     );
 
-  const append: CommandOutputHubShape["append"] = ({ chunk, ...target }) =>
+  const appendText = (key: string, chunk: string) =>
     Effect.suspend(() => {
-      if (chunk.length === 0) return Effect.void;
-      const key = commandKey(target);
       const tail = appendTerminalOutput(tails.get(key) ?? EMPTY_TERMINAL_OUTPUT, chunk);
       setBounded(tails, key, tail, MAX_LIVE_COMMANDS, (oldest) => {
         // Eviction invalidates viewers' state; resync on their next frame.
@@ -157,13 +158,32 @@ export const make = Effect.gen(function* () {
       return wakeAll(key, chunk);
     });
 
-  const finish: CommandOutputHubShape["finish"] = (target) =>
-    Effect.sync(() => {
+  const append: CommandOutputHubShape["append"] = ({ chunk, ...target }) =>
+    Effect.suspend(() => {
+      if (chunk.length === 0) return Effect.void;
       const key = commandKey(target);
-      const tail = tails.get(key);
-      if (tail === undefined) return;
-      tails.delete(key);
-      setBounded(finished, key, tail, MAX_FINISHED_COMMANDS);
+      const stream = secretStreams.get(key) ?? secretRedactor.stream();
+      const safe = stream.push(chunk);
+      if (stream.holding()) secretStreams.set(key, stream);
+      else secretStreams.delete(key);
+      return safe.length === 0 ? Effect.void : appendText(key, safe);
+    });
+
+  const finish: CommandOutputHubShape["finish"] = (target) =>
+    Effect.suspend(() => {
+      const key = commandKey(target);
+      const held = secretStreams.get(key)?.flush() ?? "";
+      secretStreams.delete(key);
+      return (held.length === 0 ? Effect.void : appendText(key, held)).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            const tail = tails.get(key);
+            if (tail === undefined) return;
+            tails.delete(key);
+            setBounded(finished, key, tail, MAX_FINISHED_COMMANDS);
+          }),
+        ),
+      );
     });
 
   const subscribe: CommandOutputHubShape["subscribe"] = (target) =>
