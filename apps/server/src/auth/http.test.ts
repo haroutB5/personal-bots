@@ -677,3 +677,73 @@ it.effect("revokes only the calling session and every token renewed from it", ()
     Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, TestClock.layer())),
   ),
 );
+
+it.effect("requires a key for a phone exchange and keeps the refused link spendable", () =>
+  Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom;
+    const clock = yield* Clock.Clock;
+    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
+      Context.add(Clock.Clock, clock),
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore()),
+    );
+    yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const call = (request: Request) =>
+            Effect.tryPromise(() => environment.handler(request, requestContext));
+          const readJson = <T>(response: Response) =>
+            Effect.tryPromise(() => response.json() as Promise<T>);
+          const nowSeconds = () =>
+            Clock.currentTimeMillis.pipe(Effect.map((millis) => Math.floor(millis / 1_000)));
+
+          const owner = yield* call(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          const ownerCookie =
+            owner.headers
+              .getSetCookie()
+              .find((cookie) => cookie.startsWith("t3_dev_session_"))
+              ?.split(";", 1)[0] ?? "";
+          const pairing = yield* call(
+            postJson("/api/auth/pairing-token", { label: "Find X9 Pro" }, { cookie: ownerCookie }),
+          );
+          const { credential } = yield* readJson<{ credential: string }>(pairing);
+          const phoneForm = {
+            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+            subject_token: credential,
+            subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+            requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            client_label: "Find X9 Pro",
+            client_device_type: "mobile",
+            client_os: "android",
+          };
+
+          const noKey = yield* call(postForm("/oauth/token", phoneForm));
+          expect(noKey.status).toBe(400);
+          expect(yield* readJson<{ reason: string }>(noKey)).toMatchObject({
+            code: "invalid_request",
+            reason: "dpop_proof_required",
+          });
+
+          const exchangeProof = makeDpopProof({
+            method: "POST",
+            url: "http://localhost/oauth/token",
+            iat: yield* nowSeconds(),
+            jti: "phone-exchange",
+          });
+          const paired = yield* call(
+            postForm("/oauth/token", phoneForm, { dpop: exchangeProof.proof }),
+          );
+          expect(paired.status).toBe(200);
+          expect(yield* readJson<{ token_type: string }>(paired)).toMatchObject({
+            token_type: "DPoP",
+          });
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, TestClock.layer())),
+  ),
+);
