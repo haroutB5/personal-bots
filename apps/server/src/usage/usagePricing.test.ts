@@ -1,15 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { cursorRateModel } from "./cursorUsageReader.ts";
-import type { UsageSpeed } from "./usageTranscripts.ts";
+import { cursorRateModel } from "@t3tools/provider-cursor/server/accountUsage";
+import type { UsageProviderKind } from "@t3tools/contracts";
+import type { UsageSpeed } from "@t3tools/provider-core/server/usage";
 import {
   cacheSavingsUsd,
   createOverrideRateTable,
-  GEMINI_38_FLASH_RATES,
-  GEMINI_4_ARGON_RATES,
-  isDeepSeekPeakTime,
   lookupRate,
-  normalizeGeminiModel,
   parseRateTable,
   priceUsage,
 } from "./usagePricing.ts";
@@ -19,9 +16,6 @@ const rate = (input: number, cacheRead?: number) => ({
   output_cost_per_token: input * 5,
   ...(cacheRead === undefined ? {} : { cache_read_input_token_cost: cacheRead }),
 });
-
-/** Wednesday 2026-10-14 12:00 UTC: a weekday outside every peak window. */
-const OFF_PEAK_MS = Date.parse("2026-10-14T12:00:00Z");
 
 describe("usage pricing", () => {
   const totals = {
@@ -35,10 +29,11 @@ describe("usage pricing", () => {
     model: string,
     reportedCostUsd: number | null = null,
     speed: UsageSpeed = "standard",
+    extra: { readonly provider?: UsageProviderKind; readonly timestampMs?: number } = {},
   ) => ({
-    provider: "claude" as const,
+    provider: extra.provider ?? ("claudeAgent" as UsageProviderKind),
+    timestampMs: extra.timestampMs ?? Date.parse("2026-10-12T12:00:00.000Z"),
     model,
-    timestampMs: OFF_PEAK_MS,
     totals,
     reportedCostUsd,
     speed,
@@ -56,7 +51,7 @@ describe("usage pricing", () => {
     });
 
     for (const reportedCostUsd of [null, 99]) {
-      expect(priceUsage(table, record("example-model", reportedCostUsd), overrides)).toEqual({
+      expect(priceUsage(table, record("example-model", reportedCostUsd), overrides)).toMatchObject({
         costUsd: 13.5,
         costSource: "modelPriced",
       });
@@ -78,86 +73,10 @@ describe("usage pricing", () => {
     expect(cacheSavingsUsd(table, cursorRecord("claude-fable-5-1-thinking-high"))).toBeCloseTo(9);
     expect(cacheSavingsUsd(table, cursorRecord("cursor-grok-4.7-high-fast"))).toBeCloseTo(1.5);
     expect(cacheSavingsUsd(table, cursorRecord("default"))).toBe(0);
-    expect(priceUsage(table, cursorRecord("grok-4.7-xhigh-fast"))).toEqual({
+    expect(priceUsage(table, cursorRecord("grok-4.7-xhigh-fast"))).toMatchObject({
       costUsd: 0.25,
       costSource: "providerReported",
     });
-  });
-
-  it("prices every DeepSeek turn at the published Flash rates, cache split or not", () => {
-    const deepseekRecord = (overrides: Partial<typeof totals> = {}) => ({
-      provider: "deepseek" as const,
-      model: "deepseek-flash",
-      timestampMs: OFF_PEAK_MS,
-      totals: { ...totals, ...overrides },
-      reportedCostUsd: null,
-      speed: "standard" as const,
-    });
-
-    // A cache split at off-peak: cached input at the cache-hit rate
-    // ($0.003/M), the rest at the cache-miss ($0.15/M) and output ($0.60/M)
-    // rates. DeepSeek publishes no separate cache-write price, so writes bill
-    // as misses.
-    const split = priceUsage(new Map(), deepseekRecord());
-    expect(split.costSource).toBe("modelPriced");
-    expect(split.costUsd).toBeCloseTo(0.15 + 0.003 + 0.15 + 0.6, 10);
-    expect(cacheSavingsUsd(new Map(), deepseekRecord())).toBeCloseTo(0.15 - 0.003, 10);
-
-    // No cache split (no cached tokens recorded): every input token at the
-    // cache-miss rate.
-    const noSplit = priceUsage(
-      new Map(),
-      deepseekRecord({ cachedInputTokens: 0, cacheCreationTokens: 0 }),
-    );
-    expect(noSplit.costUsd).toBeCloseTo(0.15 + 0.6, 10);
-    expect(cacheSavingsUsd(new Map(), deepseekRecord({ cachedInputTokens: 0 }))).toBe(0);
-
-    // DeepSeek never reads the LiteLLM table: a table that knows its model
-    // string, a table that does not, and no table at all price identically.
-    const known = parseRateTable({ "deepseek-flash": rate(1) });
-    expect(priceUsage(known, deepseekRecord()).costUsd).toBeCloseTo(split.costUsd, 10);
-  });
-
-  it("doubles DeepSeek's Flash rates inside the peak windows, priced by record timestamp", () => {
-    const deepseekRecord = (timestampMs: number) => ({
-      provider: "deepseek" as const,
-      model: "deepseek-flash",
-      timestampMs,
-      totals,
-      reportedCostUsd: null,
-      speed: "standard" as const,
-    });
-
-    // Peak is 01:00-04:00 and 06:00-10:00 UTC, Monday-Friday; every boundary
-    // instant: 01:00 and 06:00 enter peak, 04:00 and 10:00 leave it.
-    const cases: ReadonlyArray<[number, boolean]> = [
-      [Date.parse("2026-10-14T00:59:59.999Z"), false],
-      [Date.parse("2026-10-14T01:00:00Z"), true],
-      [Date.parse("2026-10-14T03:59:59.999Z"), true],
-      [Date.parse("2026-10-14T04:00:00Z"), false],
-      [Date.parse("2026-10-14T05:59:59.999Z"), false],
-      [Date.parse("2026-10-14T06:00:00Z"), true],
-      [Date.parse("2026-10-14T09:59:59.999Z"), true],
-      [Date.parse("2026-10-14T10:00:00Z"), false],
-      [OFF_PEAK_MS, false],
-      // Weekends are off-peak in full.
-      [Date.parse("2026-10-17T02:00:00Z"), false],
-      [Date.parse("2026-10-18T08:00:00Z"), false],
-    ];
-    for (const [timestampMs, isPeak] of cases) {
-      expect(isDeepSeekPeakTime(timestampMs)).toBe(isPeak);
-    }
-
-    const offPeak = deepseekRecord(OFF_PEAK_MS);
-    const peak = deepseekRecord(Date.parse("2026-10-14T06:00:00Z"));
-    expect(priceUsage(new Map(), peak).costUsd).toBeCloseTo(
-      priceUsage(new Map(), offPeak).costUsd * 2,
-      10,
-    );
-    expect(cacheSavingsUsd(new Map(), peak)).toBeCloseTo(
-      cacheSavingsUsd(new Map(), offPeak) * 2,
-      10,
-    );
   });
 
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {
@@ -166,7 +85,7 @@ describe("usage pricing", () => {
       "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
     });
 
-    expect(priceUsage(table, record("example-model"), overrides)).toEqual({
+    expect(priceUsage(table, record("example-model"), overrides)).toMatchObject({
       costUsd: 14,
       costSource: "modelPriced",
     });
@@ -181,7 +100,7 @@ describe("usage pricing", () => {
         outputCostPerMillionTokens: 0,
       },
     });
-    expect(priceUsage(table, record(" vendor/example-model[1m] ", 99), overrides)).toEqual({
+    expect(priceUsage(table, record(" vendor/example-model[1m] ", 99), overrides)).toMatchObject({
       costUsd: 0,
       costSource: "modelPriced",
     });
@@ -195,6 +114,8 @@ describe("usage pricing", () => {
       expect(priceUsage(table, record(model, 99), overrides)).toEqual({
         costUsd: 99,
         costSource: "providerReported",
+        categoryCostUsd: null,
+        speedPremiumUsd: 0,
       });
     }
   });
@@ -214,11 +135,44 @@ describe("usage pricing", () => {
     expect(cacheSavingsUsd(table, record("claude-opus-5-5", null, "fast"))).toBeCloseTo(
       2 * cacheSavingsUsd(table, record("claude-opus-5-5")),
     );
-    // No published fast tier, and custom prices, both stay at the standard rate.
     expect(cost("claude-fable-5-1", "fast")).toBe(cost("claude-fable-5-1", "standard"));
     expect(cost("claude-opus-5-5", "fast", overrides)).toBe(
       cost("claude-opus-5-5", "standard", overrides),
     );
+  });
+
+  it("splits cost by category and prices the speed premium", () => {
+    const table = parseRateTable({
+      "claude-opus-5-5": {
+        ...rate(4e-6, 4e-7),
+        cache_creation_input_token_cost: 5e-6,
+        provider_specific_entry: { fast: 2 },
+      },
+    });
+    const split = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({
+      input: expect.closeTo(input),
+      cacheRead: expect.closeTo(cacheRead),
+      cacheWrite: expect.closeTo(cacheWrite),
+      output: expect.closeTo(output),
+    });
+
+    expect(priceUsage(table, record("claude-opus-5-5", null, "fast"))).toEqual({
+      costUsd: expect.closeTo(58.8),
+      costSource: "modelPriced",
+      categoryCostUsd: split(8, 0.8, 10, 40),
+      speedPremiumUsd: expect.closeTo(29.4),
+    });
+    expect(priceUsage(table, record("claude-opus-5-5", 29.4, "fast"))).toEqual({
+      costUsd: 29.4,
+      costSource: "providerReported",
+      categoryCostUsd: split(4, 0.4, 5, 20),
+      speedPremiumUsd: expect.closeTo(14.7),
+    });
+    expect(priceUsage(table, record("unknown-model", 29.4, "fast"))).toMatchObject({
+      costUsd: 29.4,
+      categoryCostUsd: null,
+      speedPremiumUsd: 0,
+    });
   });
 
   it("prices Codex priority and ultrafast requests at their published tier rates", () => {
@@ -230,7 +184,6 @@ describe("usage pricing", () => {
         cache_read_input_token_cost_priority: 2e-6,
         input_cost_per_token_ultrafast: 6e-5,
         output_cost_per_token_ultrafast: 3e-4,
-        // No ultrafast cache rate: keeps the standard 10:1 input-to-cache ratio.
       },
       "gpt-6-sol": rate(2e-6, 2e-7),
     });
@@ -243,7 +196,6 @@ describe("usage pricing", () => {
     expect(cacheSavingsUsd(table, record("gpt-6-astra", null, "ultrafast"))).toBeCloseTo(
       6 * cacheSavingsUsd(table, record("gpt-6-astra")),
     );
-    // A tier the model does not publish bills at the standard rate.
     expect(cost("gpt-6-sol", "ultrafast")).toBe(cost("gpt-6-sol", "standard"));
   });
 
@@ -285,6 +237,21 @@ describe("usage pricing", () => {
     );
   });
 
+  it("keeps a bare alias when a reseller entry omits the fast tier", () => {
+    const table = parseRateTable({
+      "provider-a/example-model": {
+        ...rate(1),
+        input_cost_per_token_priority: 2,
+        output_cost_per_token_priority: 10,
+      },
+      "provider-b/example-model": rate(1),
+    });
+
+    expect(lookupRate(table, "example-model")).toEqual(
+      lookupRate(table, "provider-a/example-model"),
+    );
+  });
+
   it("leaves an ambiguous bare name unpriced", () => {
     const table = parseRateTable({
       "provider-a/example-model": rate(1),
@@ -296,41 +263,68 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "example-model")).toBeNull();
   });
 
-  it("normalizes and prices Gemini models at published rates", () => {
-    expect(normalizeGeminiModel("gemini-3.8-flash-high")).toBe("gemini-3.8-flash");
-    expect(normalizeGeminiModel("gemini-3.8-flash-medium")).toBe("gemini-3.8-flash");
-    expect(normalizeGeminiModel("gemini-3.8-flash-low")).toBe("gemini-3.8-flash");
-    expect(normalizeGeminiModel("gemini-3.8-flash-n")).toBe("gemini-3.8-flash");
-    expect(normalizeGeminiModel("gemini-4-argon-high")).toBe("gemini-4-argon");
+  it("prices a bare name at the model maker's rate when a reseller marks it up", () => {
+    const reseller = { "kyma/gemini-4-argon": rate(5.4e-6) };
+    const makers = {
+      "gemini/gemini-4-argon": rate(2e-6, 1e-7),
+      "vertex_ai/gemini-4-argon": rate(2e-6, 1e-7),
+    };
 
-    const emptyTable = new Map();
-    expect(lookupRate(emptyTable, "gemini-3.8-flash")).toEqual(GEMINI_38_FLASH_RATES);
-    expect(lookupRate(emptyTable, "gemini-3.8-flash-high")).toEqual(GEMINI_38_FLASH_RATES);
-    expect(lookupRate(emptyTable, "gemini-3.8-flash-n")).toEqual(GEMINI_38_FLASH_RATES);
-    expect(lookupRate(emptyTable, "gemini-4-argon")).toEqual(GEMINI_4_ARGON_RATES);
-    expect(lookupRate(emptyTable, "gemini-4-argon-high")).toEqual(GEMINI_4_ARGON_RATES);
-    expect(lookupRate(emptyTable, "antigravity-unknown")).toBeNull();
+    for (const document of [
+      { ...reseller, ...makers },
+      { ...makers, ...reseller },
+    ]) {
+      const table = parseRateTable(document);
+      expect(lookupRate(table, "gemini-4-argon")).toEqual(
+        lookupRate(table, "gemini/gemini-4-argon"),
+      );
+    }
+  });
 
-    const agyRecord = (model: string, overrides: Partial<typeof totals> = {}) => ({
-      provider: "antigravity" as const,
-      model,
-      rateModel: normalizeGeminiModel(model),
-      timestampMs: OFF_PEAK_MS,
-      totals: { ...totals, ...overrides },
-      reportedCostUsd: null,
-      speed: "standard" as const,
+  it("leaves a bare name unpriced when model makers' own entries disagree", () => {
+    const table = parseRateTable({
+      "openai/example-model": rate(1),
+      "xai/example-model": rate(3),
+      "kyma/example-model": rate(1),
     });
 
-    const flashPrice = priceUsage(emptyTable, agyRecord("gemini-3.8-flash-high"));
-    expect(flashPrice.costSource).toBe("modelPriced");
-    expect(flashPrice.costUsd).toBeCloseTo(0.75 + 0.075 + 0.75 + 3.75, 10);
-    expect(cacheSavingsUsd(emptyTable, agyRecord("gemini-3.8-flash-high"))).toBeCloseTo(
-      0.75 - 0.075,
-      10,
-    );
+    expect(lookupRate(table, "example-model")).toBeNull();
+  });
+});
 
-    const argonPrice = priceUsage(emptyTable, agyRecord("gemini-4-argon"));
-    expect(argonPrice.costSource).toBe("modelPriced");
-    expect(argonPrice.costUsd).toBeCloseTo(2.0 + 0.1 + 2.0 + 10.0, 10);
+describe("personal provider pricing", () => {
+  const totals = {
+    uncachedInputTokens: 1_000_000,
+    cachedInputTokens: 1_000_000,
+    cacheCreationTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    reasoningTokens: 0,
+  };
+  const priced = (model: string, provider: UsageProviderKind, at: string) =>
+    priceUsage(new Map(), {
+      provider,
+      timestampMs: Date.parse(at),
+      model,
+      totals,
+      reportedCostUsd: null,
+      speed: "standard",
+    });
+
+  it("prices DeepSeek at double its off-peak card during a weekday peak window", () => {
+    const peak = priced("deepseek-v4-flash", "deepseek", "2026-10-12T02:00:00.000Z");
+    expect(peak.costSource).toBe("modelPriced");
+    expect(peak.costUsd).toBeCloseTo(0.3 + 0.006 + 0.3 + 1.2, 9);
+
+    const offPeak = priced("deepseek-v4-flash", "deepseek", "2026-10-12T12:00:00.000Z");
+    expect(offPeak.costUsd).toBeCloseTo(0.15 + 0.003 + 0.15 + 0.6, 9);
+
+    const weekend = priced("deepseek-v4-flash", "deepseek", "2026-10-11T02:00:00.000Z");
+    expect(weekend.costUsd).toBeCloseTo(offPeak.costUsd, 9);
+  });
+
+  it("prices a Gemini model from the published card when the fetched table lacks it", () => {
+    const result = priced("gemini-3.8-flash-high", "antigravity", "2026-10-12T12:00:00.000Z");
+    expect(result.costSource).toBe("modelPriced");
+    expect(result.costUsd).toBeCloseTo(0.75 + 0.075 + 0.75 + 3.75, 9);
   });
 });

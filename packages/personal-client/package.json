@@ -25,9 +25,53 @@
       "types": "./src/bots/chatActivity.ts",
       "import": "./src/bots/chatActivity.ts"
     },
+    "./bots/chatActionText": {
+      "types": "./src/bots/chatActionText.ts",
+      "import": "./src/bots/chatActionText.ts"
+    },
     "./bots/chatState": {
       "types": "./src/bots/chatState.ts",
       "import": "./src/bots/chatState.ts"
+    },
+    "./bots/chatSelection": {
+      "types": "./src/bots/chatSelection.ts",
+      "import": "./src/bots/chatSelection.ts"
+    },
+    "./bots/botFormModel": {
+      "types": "./src/bots/botFormModel.ts",
+      "import": "./src/bots/botFormModel.ts"
+    },
+    "./bots/botDraft": {
+      "types": "./src/bots/botDraft.ts",
+      "import": "./src/bots/botDraft.ts"
+    },
+    "./bots/botFormFields": {
+      "types": "./src/bots/botFormFields.ts",
+      "import": "./src/bots/botFormFields.ts"
+    },
+    "./bots/modelPlanFilter": {
+      "types": "./src/bots/modelPlanFilter.ts",
+      "import": "./src/bots/modelPlanFilter.ts"
+    },
+    "./bots/modelSearchView": {
+      "types": "./src/bots/modelSearchView.ts",
+      "import": "./src/bots/modelSearchView.ts"
+    },
+    "./bots/commandFeedback": {
+      "types": "./src/bots/commandFeedback.ts",
+      "import": "./src/bots/commandFeedback.ts"
+    },
+    "./bots/chatModelSelection": {
+      "types": "./src/bots/chatModelSelection.ts",
+      "import": "./src/bots/chatModelSelection.ts"
+    },
+    "./bots/bulkChatActions": {
+      "types": "./src/bots/bulkChatActions.ts",
+      "import": "./src/bots/bulkChatActions.ts"
+    },
+    "./bots/wrapupChat": {
+      "types": "./src/bots/wrapupChat.ts",
+      "import": "./src/bots/wrapupChat.ts"
     },
     "./bots/botModelLabel": {
       "types": "./src/bots/botModelLabel.ts",
@@ -141,6 +185,30 @@
       "types": "./src/conversation/groupModel.ts",
       "import": "./src/conversation/groupModel.ts"
     },
+    "./groups/personalGroups": {
+      "types": "./src/groups/personalGroups.ts",
+      "import": "./src/groups/personalGroups.ts"
+    },
+    "./teams/newTeamModel": {
+      "types": "./src/teams/newTeamModel.ts",
+      "import": "./src/teams/newTeamModel.ts"
+    },
+    "./teams/teamDiagramModel": {
+      "types": "./src/teams/teamDiagramModel.ts",
+      "import": "./src/teams/teamDiagramModel.ts"
+    },
+    "./teams/teamMoves": {
+      "types": "./src/teams/teamMoves.ts",
+      "import": "./src/teams/teamMoves.ts"
+    },
+    "./teams/removedBotsModel": {
+      "types": "./src/teams/removedBotsModel.ts",
+      "import": "./src/teams/removedBotsModel.ts"
+    },
+    "./teams/teamWorkingNow": {
+      "types": "./src/teams/teamWorkingNow.ts",
+      "import": "./src/teams/teamWorkingNow.ts"
+    },
     "./conversation/greeting": {
       "types": "./src/conversation/greeting.ts",
       "import": "./src/conversation/greeting.ts"
@@ -168,6 +236,42 @@
     "./conversation/taskPresentation": {
       "types": "./src/conversation/taskPresentation.ts",
       "import": "./src/conversation/taskPresentation.ts"
+    },
+    "./conversation/pendingUserInput": {
+      "types": "./src/conversation/pendingUserInput.ts",
+      "import": "./src/conversation/pendingUserInput.ts"
+    },
+    "./conversation/feedCards": {
+      "types": "./src/conversation/feedCards.ts",
+      "import": "./src/conversation/feedCards.ts"
+    },
+    "./conversation/leadBotTextDiff": {
+      "types": "./src/conversation/leadBotTextDiff.ts",
+      "import": "./src/conversation/leadBotTextDiff.ts"
+    },
+    "./tasks/feed": {
+      "types": "./src/tasks/feed.ts",
+      "import": "./src/tasks/feed.ts"
+    },
+    "./memory/presentation": {
+      "types": "./src/memory/presentation.ts",
+      "import": "./src/memory/presentation.ts"
+    },
+    "./settings/secretAccess": {
+      "types": "./src/settings/secretAccess.ts",
+      "import": "./src/settings/secretAccess.ts"
+    },
+    "./conversation/routinesModel": {
+      "types": "./src/conversation/routinesModel.ts",
+      "import": "./src/conversation/routinesModel.ts"
+    },
+    "./bots/chatChipRows": {
+      "types": "./src/bots/chatChipRows.ts",
+      "import": "./src/bots/chatChipRows.ts"
+    },
+    "./bots/chatSettingsModel": {
+      "types": "./src/bots/chatSettingsModel.ts",
+      "import": "./src/bots/chatSettingsModel.ts"
     },
     "./conversation/previewPrivacy": {
       "types": "./src/conversation/previewPrivacy.ts",
@@ -200,6 +304,202 @@
     "./computer/systemStats": {
       "types": "./src/computer/systemStats.ts",
       "import": "./src/computer/systemStats.ts"
+    },
+    "./composer/outbox": {
+      "types": "./src/composer/outbox.ts",
+      "import": "./src/composer/outbox.ts"
+    },
+    "./composer/outboxBlobs": {
+      "types": "./src/composer/outboxBlobs.ts",
+      "import": "./src/composer/outboxBlobs.ts"
+    },
+    "./composer/outboxFlush": {
+      "types": "./src/composer/outboxFlush.ts",
+      "import": "./src/composer/outboxFlush.ts"
+    },
+    "./feed/types": {
+      "types": "./src/feed/types.ts",
+      "import": "./src/feed/types.ts"
+    },
+    "./feed/pendingOutgoing": {
+      "types": "./src/feed/pendingOutgoing.ts",
+      "import": "./src/feed/pendingOutgoing.ts"
+    },
+    "./feed/chatNames": {
+      "types": "./src/feed/chatNames.ts",
+      "import": "./src/feed/chatNames.ts"
+    },
+    "./feed/botThreadRows": {
+      "types": "./src/feed/botThreadRows.ts",
+      "import": "./src/feed/botThreadRows.ts"
+    },
+    "./feed/messageTime": {
+      "types": "./src/feed/messageTime.ts",
+      "import": "./src/feed/messageTime.ts"
+    },
+    "./feed/messageReadStatus": {
+      "types": "./src/feed/messageReadStatus.ts",
+      "import": "./src/feed/messageReadStatus.ts"
+    },
+    "./feed/contextUsed": {
+      "types": "./src/feed/contextUsed.ts",
+      "import": "./src/feed/contextUsed.ts"
+    },
+    "./feed/chatFeed": {
+      "types": "./src/feed/chatFeed.ts",
+      "import": "./src/feed/chatFeed.ts"
+    },
+    "./feed/chatCwd": {
+      "types": "./src/feed/chatCwd.ts",
+      "import": "./src/feed/chatCwd.ts"
+    },
+    "./feed/renameChat": {
+      "types": "./src/feed/renameChat.ts",
+      "import": "./src/feed/renameChat.ts"
+    },
+    "./feed/messageReply": {
+      "types": "./src/feed/messageReply.ts",
+      "import": "./src/feed/messageReply.ts"
+    },
+    "./feed/composerText": {
+      "types": "./src/feed/composerText.ts",
+      "import": "./src/feed/composerText.ts"
+    },
+    "./bots/botMuteModel": {
+      "types": "./src/bots/botMuteModel.ts",
+      "import": "./src/bots/botMuteModel.ts"
+    },
+    "./usage/tokenUsagePresentation": {
+      "types": "./src/usage/tokenUsagePresentation.ts",
+      "import": "./src/usage/tokenUsagePresentation.ts"
+    },
+    "./automation/automationClient": {
+      "types": "./src/automation/automationClient.ts",
+      "import": "./src/automation/automationClient.ts"
+    },
+    "./automation/taskFeed": {
+      "types": "./src/automation/taskFeed.ts",
+      "import": "./src/automation/taskFeed.ts"
+    },
+    "./routines/routineDraft": {
+      "types": "./src/routines/routineDraft.ts",
+      "import": "./src/routines/routineDraft.ts"
+    },
+    "./routines/routineHook": {
+      "types": "./src/routines/routineHook.ts",
+      "import": "./src/routines/routineHook.ts"
+    },
+    "./files/filesModel": {
+      "types": "./src/files/filesModel.ts",
+      "import": "./src/files/filesModel.ts"
+    },
+    "./lists/bulkSelection": {
+      "types": "./src/lists/bulkSelection.ts",
+      "import": "./src/lists/bulkSelection.ts"
+    },
+    "./settings/providerRows": {
+      "types": "./src/settings/providerRows.ts",
+      "import": "./src/settings/providerRows.ts"
+    },
+    "./settings/providerPageModel": {
+      "types": "./src/settings/providerPageModel.ts",
+      "import": "./src/settings/providerPageModel.ts"
+    },
+    "./settings/catalogModel": {
+      "types": "./src/settings/catalogModel.ts",
+      "import": "./src/settings/catalogModel.ts"
+    },
+    "./settings/providerFacts": {
+      "types": "./src/settings/providerFacts.ts",
+      "import": "./src/settings/providerFacts.ts"
+    },
+    "./settings/signInAddress": {
+      "types": "./src/settings/signInAddress.ts",
+      "import": "./src/settings/signInAddress.ts"
+    },
+    "./settings/providerUpdate": {
+      "types": "./src/settings/providerUpdate.ts",
+      "import": "./src/settings/providerUpdate.ts"
+    },
+    "./settings/passwordsModel": {
+      "types": "./src/settings/passwordsModel.ts",
+      "import": "./src/settings/passwordsModel.ts"
+    },
+    "./settings/connectionsModel": {
+      "types": "./src/settings/connectionsModel.ts",
+      "import": "./src/settings/connectionsModel.ts"
+    },
+    "./memory/personalMemory": {
+      "types": "./src/memory/personalMemory.ts",
+      "import": "./src/memory/personalMemory.ts"
+    },
+    "./logins/personalLogins": {
+      "types": "./src/logins/personalLogins.ts",
+      "import": "./src/logins/personalLogins.ts"
+    },
+    "./secrets/personalSecrets": {
+      "types": "./src/secrets/personalSecrets.ts",
+      "import": "./src/secrets/personalSecrets.ts"
+    },
+    "./connections/personalConnections": {
+      "types": "./src/connections/personalConnections.ts",
+      "import": "./src/connections/personalConnections.ts"
+    },
+    "./settings/personalSettings": {
+      "types": "./src/settings/personalSettings.ts",
+      "import": "./src/settings/personalSettings.ts"
+    },
+    "./settings/devices": {
+      "types": "./src/settings/devices.ts",
+      "import": "./src/settings/devices.ts"
+    },
+    "./settings/providerSetup": {
+      "types": "./src/settings/providerSetup.ts",
+      "import": "./src/settings/providerSetup.ts"
+    },
+    "./settings/providerApiKeys": {
+      "types": "./src/settings/providerApiKeys.ts",
+      "import": "./src/settings/providerApiKeys.ts"
+    },
+    "./computer/computerContract": {
+      "types": "./src/computer/computerContract.ts",
+      "import": "./src/computer/computerContract.ts"
+    },
+    "./computer/computerActivity": {
+      "types": "./src/computer/computerActivity.ts",
+      "import": "./src/computer/computerActivity.ts"
+    },
+    "./computer/computerModel": {
+      "types": "./src/computer/computerModel.ts",
+      "import": "./src/computer/computerModel.ts"
+    },
+    "./computer/computerSource": {
+      "types": "./src/computer/computerSource.ts",
+      "import": "./src/computer/computerSource.ts"
+    },
+    "./computer/computerDrivers": {
+      "types": "./src/computer/computerDrivers.ts",
+      "import": "./src/computer/computerDrivers.ts"
+    },
+    "./computer/desktopModel": {
+      "types": "./src/computer/desktopModel.ts",
+      "import": "./src/computer/desktopModel.ts"
+    },
+    "./computer/personalComputer": {
+      "types": "./src/computer/personalComputer.ts",
+      "import": "./src/computer/personalComputer.ts"
+    },
+    "./bots/threadShell": {
+      "types": "./src/bots/threadShell.ts",
+      "import": "./src/bots/threadShell.ts"
+    },
+    "./bots/deepseekModels": {
+      "types": "./src/bots/deepseekModels.ts",
+      "import": "./src/bots/deepseekModels.ts"
+    },
+    "./conversation/wireTypes": {
+      "types": "./src/conversation/wireTypes.ts",
+      "import": "./src/conversation/wireTypes.ts"
     }
   },
   "scripts": {

@@ -14,7 +14,7 @@
 //     which would make a binary-only rollback unsafe.
 // Prints one JSON line with the outcome.
 //
-// Usage: node scripts/personal/sync/resolve-migrations.ts [--base <sha>] [--upstream <ref>] [--hold 063,064]
+// Usage: node scripts/personal/sync/resolve-migrations.ts [--base <sha>] [--upstream <ref>] [--hold 063,064] [--allow-modified] [--allow-non-additive]
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
@@ -52,7 +52,9 @@ const changes = git("diff", "--name-status", "--no-renames", base, upstream, "--
   .filter(({ path }) => /\/\d{3}_\w+\.ts$/.test(path) && !path.endsWith(".test.ts"));
 
 const modified = changes.filter(({ status }) => status !== "A").map(({ path }) => path);
-if (modified.length > 0) {
+// The B1 port allows upstream's edits to its own old migrations: the live DB
+// already applied the fork's ids, and the edits only affect a fresh database.
+if (modified.length > 0 && !process.argv.includes("--allow-modified")) {
   finish(2, {
     status: "needs_judgment",
     reason: "upstream modified or removed existing migration files",
@@ -78,7 +80,7 @@ const appendedFiles = added.filter((file) => !held.has(file.slice(0, 3)));
 const nonAdditive = appendedFiles.filter((file) =>
   /\b(DROP|RENAME|DELETE\s+FROM)\b/i.test(git("show", `${upstream}:${MIGRATIONS_DIR}${file}.ts`)),
 );
-if (nonAdditive.length > 0) {
+if (nonAdditive.length > 0 && !process.argv.includes("--allow-non-additive")) {
   finish(2, {
     status: "needs_judgment",
     reason: "non-additive upstream migration (DROP/RENAME/DELETE FROM): no auto-deploy",

@@ -1,0 +1,15 @@
+diff --git a/apps/desktop/src/shell/DesktopShellEnvironment.ts b/apps/desktop/src/shell/DesktopShellEnvironment.ts
+index 704b061db36357657edf8a5551d4a7d2174ad916..1143ed057b2b88c3bc01096c1394fc1db739e259 100644
+--- a/apps/desktop/src/shell/DesktopShellEnvironment.ts
++++ b/apps/desktop/src/shell/DesktopShellEnvironment.ts
+@@ -5,8 +5,8 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+ 

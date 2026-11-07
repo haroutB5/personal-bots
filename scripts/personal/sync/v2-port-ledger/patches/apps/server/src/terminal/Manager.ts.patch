@@ -1,0 +1,27 @@
+diff --git a/apps/server/src/terminal/Manager.ts b/apps/server/src/terminal/Manager.ts
+index 43d6a0750e65c7265aac4317f66c58295926846b..ffb9901f07c3a92b43d0fa718add61bb1658d129 100644
+--- a/apps/server/src/terminal/Manager.ts
++++ b/apps/server/src/terminal/Manager.ts
+@@ -45,7 +45,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+ import * as DateTime from "effect/DateTime";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64Url from "effect/encoding/Base64Url";
+ import * as Equal from "effect/Equal";
+ import * as Exit from "effect/Exit";
+ import * as Fiber from "effect/Fiber";
+@@ -1225,11 +1225,11 @@ function legacySafeThreadId(threadId: string): string {
+ }
+ 
+ function toSafeThreadId(threadId: string): string {
+-  return `terminal_${Encoding.encodeBase64Url(threadId)}`;
++  return `terminal_${Base64Url.encode(threadId)}`;
+ }
+ 
+ function toSafeTerminalId(terminalId: string): string {
+-  return Encoding.encodeBase64Url(terminalId);
++  return Base64Url.encode(terminalId);
+ }
+ 
+ function toSessionKey(threadId: string, terminalId: string): string {

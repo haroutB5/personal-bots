@@ -1,21 +1,7 @@
 /**
- * BotPluginSkillDiagnostics — makes a bot's unloadable plugin skill visible.
- *
- * A plugin skill whose `SKILL.md` cannot be parsed is dropped in silence by
- * every provider: Claude Code and the DeepSeek harness skip the folder, and
- * Codex reports the refusal only inside its own `skills/list` answer, which
- * hbots reads for the owner's roots but not for a bot session. A `SKILL.md`
- * carrying a UTF-8 BOM does exactly that — its frontmatter `---` is no longer
- * at the start of the file, so the YAML parser finds nothing and the skill
- * disappears from the bot (QA, 15 Oct 2026: all four installed
- * `agent-browser/SKILL.md` files carried one).
- *
- * The check below runs where hbots hands a bot's skill folders to a provider
- * (Claude, Codex, the DeepSeek harness) and logs one WARN per unloadable file,
- * naming the bot, the file and the reason. It reads the same folders that
- * provider is given, so a broken skill is never silently invisible.
- *
- * @module provider/BotPluginSkillDiagnostics
+ * Logs one WARN per `SKILL.md` a provider would refuse, naming the bot, the
+ * file and the reason, so a broken BOM-prefixed plugin skill is never silently
+ * missing. @module provider/BotPluginSkillDiagnostics
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -41,7 +27,7 @@ export const MISSING_FRONTMATTER_REASON = "missing YAML frontmatter delimited by
  * loadable. Covers the two failures a loader hits before anything else: a
  * leading UTF-8 BOM, and frontmatter that is absent or not a YAML mapping.
  */
-export const botPluginSkillLoadFailure = (contents: string): string | undefined => {
+const botPluginSkillLoadFailure = (contents: string): string | undefined => {
   if (contents.startsWith("\uFEFF")) {
     return `the file starts with a UTF-8 BOM, so its frontmatter is not recognized (${MISSING_FRONTMATTER_REASON})`;
   }
@@ -64,11 +50,8 @@ const decodeSkillFile = (bytes: Uint8Array): string =>
   new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
 
 /**
- * Every `SKILL.md` under the given skill folders that a loader would refuse.
- * A skill lives in its own folder (`<root>/<skill>/SKILL.md`) or directly in
- * the root; dot-folders are skipped, as Codex skips them, and a folder without
- * a readable `SKILL.md` is not a skill at all. Unreadable roots and files are
- * left alone: this reports what is broken, it never fails the caller.
+ * Every `SKILL.md` under the given folders that a loader would refuse, one per
+ * skill; dot-folders are skipped and unreadable files are left alone.
  */
 export const findUnloadableBotPluginSkills = Effect.fn("findUnloadableBotPluginSkills")(function* (
   skillDirs: ReadonlyArray<string>,

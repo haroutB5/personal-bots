@@ -1,11 +1,12 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
   PersonalBotId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
+  type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -13,24 +14,22 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
+import { PersonalProviders } from "./engine/PersonalProviders.ts";
+import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import * as PersonalBotService from "./PersonalBotService.ts";
+import { personalTestDatabase } from "./test/personalReadsTestLayer.ts";
 
 /** Settings > Voice calls with nothing saved: the defaults every profile carries. */
 const DEFAULT_VOICE_CALLS = {
   voiceCalls: { voiceName: "Charon", quietHangupMinutes: 2, languages: "English" },
 } as const;
-import { PersonalProviders } from "./engine/PersonalProviders.ts";
-import * as PersonalBotRepository from "./PersonalBotRepository.ts";
-import * as PersonalBotService from "./PersonalBotService.ts";
 
 const makeProviderSnapshot = (input: {
   readonly instanceId: string;
-  readonly driver: "claudeAgent" | "codex" | "grok";
+  readonly driver: "claudeAgent" | "codex" | "cursor" | "grok";
   readonly defaultModel: string;
   /** Listed after the default, like the catalog does. */
   readonly otherModels?: ReadonlyArray<string>;
@@ -93,44 +92,80 @@ const codexSnapshot = () =>
   });
 
 /** A ready provider whose adapter drops `systemInstructions` (ACP; no persona). */
-const grokSnapshot = () =>
-  makeProviderSnapshot({ instanceId: "grok", driver: "grok", defaultModel: "grok-4" });
+const cursorSnapshot = () =>
+  makeProviderSnapshot({ instanceId: "cursor", driver: "cursor", defaultModel: "cursor-1" });
+
+interface EngineCall {
+  readonly type: "createProject" | "createThread" | "updateMeta" | "deleteThread" | "stop";
+  readonly threadId?: ThreadId | undefined;
+  readonly projectId?: ProjectId | undefined;
+  readonly title?: string | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
+}
 
 interface PersonalBotsTestContext {
   readonly snapshots: Array<ServerProvider>;
-  readonly dispatched: Array<OrchestrationCommand>;
+  /** What the service asked the personal engine to do, in order. */
+  readonly calls: Array<EngineCall>;
 }
 
 const makeContext = (snapshots: ReadonlyArray<ServerProvider> = []): PersonalBotsTestContext => ({
   snapshots: [...snapshots],
-  dispatched: [],
+  calls: [],
 });
 
+/**
+ * The personal engine seam, recording the calls the service makes. The real
+ * v2 engine turns these into thread commands; the cases here assert the
+ * service's side of that contract (one project, one thread, title and model
+ * passed through) without an orchestrator.
+ */
 const makeTestLayer = (context: PersonalBotsTestContext) =>
-  PersonalBotService.layer.pipe(
-    Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+  PersonalBotService.layerRequiringEngine.pipe(
     Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
+      Layer.mock(PersonalEngine.PersonalEngine)({
+        createProject: (input) =>
           Effect.sync(() => {
-            context.dispatched.push(command);
-            return { sequence: context.dispatched.length };
+            context.calls.push({ type: "createProject", projectId: input.projectId });
+            return input.projectId ?? ProjectId.make("personal-bots-test-project");
           }),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
+        getProject: () => Effect.succeed(Option.none()),
+        listProjects: () => Effect.succeed([]),
+        createThread: (input) =>
+          Effect.sync(() => {
+            context.calls.push({
+              type: "createThread",
+              ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+              title: input.title,
+              modelSelection: input.modelSelection,
+            });
+            return input.threadId ?? ThreadId.make("personal-bots-test-thread");
+          }),
+        updateMeta: (input) =>
+          Effect.sync(() => {
+            context.calls.push({
+              type: "updateMeta",
+              threadId: input.threadId,
+              title: input.title,
+            });
+          }),
+        getThread: () => Effect.succeed(Option.none()),
+        stop: (input) =>
+          Effect.sync(() => {
+            context.calls.push({ type: "stop", threadId: input.threadId });
+          }),
+        deleteThread: (threadId) =>
+          Effect.sync(() => {
+            context.calls.push({ type: "deleteThread", threadId });
+          }),
+      }),
     ),
+    Layer.provideMerge(PersonalBotRepository.layer),
+    Layer.provideMerge(personalTestDatabase),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.sync(() => [...context.snapshots]),
       }),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: () => Effect.succeed(Option.none()),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-bots-test-" })),
     Layer.provideMerge(NodeServices.layer),
@@ -412,10 +447,10 @@ it.effect(
 it.effect(
   "seeding skips a provider that cannot carry bot instructions and waits for one that can",
   () => {
-    // Grok is ready and would be `available[0]`, but its ACP adapter never
+    // Cursor is ready and would be `available[0]`, but its ACP adapter never
     // passes `systemInstructions`, so a bot seeded onto it would answer as
     // the bare model with no name and no app rules.
-    const context = makeContext([grokSnapshot()]);
+    const context = makeContext([cursorSnapshot()]);
     return Effect.gen(function* () {
       const service = yield* PersonalBotService.PersonalBotService;
       expect(yield* service.seedDefaultsIfNeeded).toEqual([]);
@@ -449,18 +484,14 @@ it.effect(
       const listed = yield* service.list();
       expect(listed.threads.length).toBe(1);
 
-      const threadCreates = context.dispatched.filter(
-        (command) => command.type === "thread.create",
-      );
+      const threadCreates = context.calls.filter((call) => call.type === "createThread");
       expect(threadCreates.length).toBe(1);
       expect(threadCreates[0]).toMatchObject({
         threadId,
         title: "New chat",
         modelSelection: { instanceId: "codex", model: "gpt-6-astra" },
       });
-      expect(context.dispatched.filter((command) => command.type === "project.create").length).toBe(
-        1,
-      );
+      expect(context.calls.filter((call) => call.type === "createProject").length).toBe(1);
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
 );
@@ -477,12 +508,9 @@ it.effect("deleteThread dispatches thread.delete once and removes only that link
 
     yield* service.deleteThread({ threadId: gone });
 
-    const deletes = context.dispatched.filter((command) => command.type === "thread.delete");
+    const deletes = context.calls.filter((call) => call.type === "deleteThread");
     expect(deletes.length).toBe(1);
-    expect(deletes[0]).toMatchObject({
-      threadId: gone,
-      commandId: `personal-engine:thread.delete:${gone}`,
-    });
+    expect(deletes[0]).toMatchObject({ threadId: gone });
     const listed = yield* service.list();
     expect(listed.threads.map((thread) => thread.threadId)).toEqual([kept]);
     // The bot row itself is untouched: only the one chat goes.
@@ -498,7 +526,7 @@ it.effect("deleteThread on an unknown thread fails without dispatching anything"
       service.deleteThread({ threadId: ThreadId.make("thread-nope") }),
     );
     expect(failure.message).toContain("was not found");
-    expect(context.dispatched.length).toBe(0);
+    expect(context.calls.length).toBe(0);
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 

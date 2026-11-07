@@ -1,0 +1,10 @@
+diff --git a/apps/desktop/src/settings/DesktopAppSettings.test.ts b/apps/desktop/src/settings/DesktopAppSettings.test.ts
+index f7db3c27781022ec498b4e0de22ca23e21d90ba0..9e3edf73385558800d04cf3e08803fa27e867ab7 100644
+--- a/apps/desktop/src/settings/DesktopAppSettings.test.ts
++++ b/apps/desktop/src/settings/DesktopAppSettings.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

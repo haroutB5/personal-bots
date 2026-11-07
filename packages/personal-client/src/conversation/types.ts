@@ -1,10 +1,7 @@
-import type { PendingApproval } from "@t3tools/client-runtime/pending-requests";
+import type { PendingApproval } from "./wireTypes.ts";
 import type { WorkLogToolLifecycleStatus } from "@t3tools/client-runtime/work-log/presentation";
 import type {
   ChatAttachment,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationThreadActivity,
   ToolActivityIcon,
   ToolActivitySource,
   ToolActivitySurface,
@@ -12,6 +9,11 @@ import type {
   TurnId,
   UserInputAttachmentAnswerPayload,
 } from "@t3tools/contracts";
+import type {
+  OrchestrationMessage,
+  OrchestrationProposedPlan,
+  OrchestrationThreadActivity,
+} from "./wireTypes.ts";
 
 /**
  * Structural copies of the web app's chat types. The package cannot import

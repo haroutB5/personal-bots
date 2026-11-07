@@ -1,0 +1,110 @@
+diff --git a/apps/server/src/orchestration/Layers/ProjectionPipeline.ts b/apps/server/src/orchestration/Layers/ProjectionPipeline.ts
+index 1acb3c360b15f4195a51a9004868c5439f39b489..10124f17bc1f08406778d210ba81334a095f63bd 100644
+--- a/apps/server/src/orchestration/Layers/ProjectionPipeline.ts
++++ b/apps/server/src/orchestration/Layers/ProjectionPipeline.ts
+@@ -15,7 +15,7 @@ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ import {
+   legacyThreadPullRequestKey,
+   threadPullRequestKeysEqual,
+@@ -128,6 +128,14 @@ function extractActivityRequestId(payload: unknown): ApprovalRequestId | null {
+   return typeof requestId === "string" ? ApprovalRequestId.make(requestId) : null;
+ }
+ 
++function extractActivityMessageId(payload: unknown): string | null {
++  if (typeof payload !== "object" || payload === null) {
++    return null;
++  }
++  const messageId = (payload as Record<string, unknown>).messageId;
++  return typeof messageId === "string" && messageId.length > 0 ? messageId : null;
++}
++
+ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
+   if (detail === null) {
+     return false;
+@@ -1360,6 +1368,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
+         });
+         return;
+       }
++      if (event.type === "thread.deleted") {
++        // Deleting a chat stops its session, but the decider rejects session
++        // updates for a deleted thread, so the "stopped" that follows never
++        // lands and the row read "running" for good (1.49.0). The session ends
++        // with the thread, so it is marked stopped here.
++        const existing = yield* projectionThreadSessionRepository.getByThreadId({
++          threadId: event.payload.threadId,
++        });
++        if (Option.isNone(existing) || existing.value.status === "stopped") return;
++        yield* projectionThreadSessionRepository.upsert({
++          ...existing.value,
++          status: "stopped",
++          activeTurnId: null,
++          providerRetry: null,
++          updatedAt: event.occurredAt,
++        });
++        return;
++      }
+       if (event.type !== "thread.session-set") {
+         return;
+       }
+@@ -1371,6 +1397,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
+         runtimeMode: event.payload.session.runtimeMode,
+         activeTurnId: event.payload.session.activeTurnId,
+         lastError: event.payload.session.lastError,
++        providerRetry: event.payload.session.providerRetry ?? null,
+         updatedAt: event.payload.session.updatedAt,
+       });
+     });
+@@ -1427,6 +1454,26 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
+             yield* projectionTurnRepository.deletePendingTurnStartByThreadId(event.payload);
+             return;
+           }
++          if (event.payload.activity.kind === "user-message.delivered") {
++            // A message folded into a running turn (a steer) never opens a turn
++            // of its own, so no session-set consumes its pending turn-start row;
++            // the provider reporting the message taken in is that row's
++            // completion signal. Without this the row stayed pending forever
++            // (QA 1.66.28 found the live DB holding such rows since 10 Oct).
++            const deliveredMessageId = extractActivityMessageId(event.payload.activity.payload);
++            if (deliveredMessageId === null) return;
++            const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
++              event.payload,
++            );
++            if (
++              Option.isNone(pendingTurnStart) ||
++              String(pendingTurnStart.value.messageId) !== deliveredMessageId
++            ) {
++              return;
++            }
++            yield* projectionTurnRepository.deletePendingTurnStartByThreadId(event.payload);
++            return;
++          }
+           if (event.payload.activity.kind !== "provider.turn.start.failed") return;
+           const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
+             event.payload,
+@@ -1445,13 +1492,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
+         case "thread.session-set": {
+           const turnId = event.payload.session.activeTurnId;
+           if (turnId === null || event.payload.session.status !== "running") {
+-            if (
+-              (event.payload.session.status === "ready" &&
+-                event.commandId?.startsWith("server:provider-session-set:") === true) ||
+-              event.payload.session.status === "error" ||
+-              event.payload.session.status === "stopped" ||
+-              event.payload.session.status === "interrupted"
+-            ) {
++            // The thread is no longer running a turn, so a turn-start row still
++            // pending can never be consumed: a steered message was folded into
++            // the turn that just ended, and a queued send re-requests its own
++            // start when it is drained. Leaving it made the row a permanent
++            // "pending" turn with no turn id (QA 1.66.28's stranded rows), so it
++            // is cleared for every status that has no turn ahead of it -
++            // "starting" is the one that still does.
++            if (event.payload.session.status !== "starting") {
+               yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+                 threadId: event.payload.threadId,
+               });

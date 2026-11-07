@@ -1,0 +1,22 @@
+diff --git a/apps/desktop/src/preview/BrowserImport/Sources.test.ts b/apps/desktop/src/preview/BrowserImport/Sources.test.ts
+index a867f78497b4665c1db22d5c2eb9153eb746b4a6..366150625dada6fd6b21c8eabe45f1e983edf7d2 100644
+--- a/apps/desktop/src/preview/BrowserImport/Sources.test.ts
++++ b/apps/desktop/src/preview/BrowserImport/Sources.test.ts
+@@ -1,7 +1,7 @@
+ // @effect-diagnostics nodeBuiltinImport:off - Builds a Chromium-shaped cookie
+ // table with the same native bindings the source reads.
+ import * as NodePath from "node:path";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import {
+   HostProcessEnvironment,
+@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import * as NodeSqlite from "node:sqlite";
+ 
+ import type { BrowserImportPathContext } from "./Sources.ts";

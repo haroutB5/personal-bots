@@ -3,16 +3,10 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import {
-  CommandId,
-  ThreadId,
-  type OrchestrationSession,
-  type PersonalTask,
-  type PersonalTaskAttempt,
-} from "@t3tools/contracts";
+import { ThreadId, type PersonalTask, type PersonalTaskAttempt } from "@t3tools/contracts";
 import type { PersonalMessageView, PersonalSessionView } from "../engine/PersonalEngine.ts";
 import type { PersonalEngineError } from "../engine/errors.ts";
-import { toPersonalSessionView } from "../engine/PersonalEngineV1Live.ts";
+import { toPersonalSessionView } from "../engine/PersonalEngineV2Live.ts";
 import { LEASE_MINUTES, attemptMessageId, minutesFrom, type Changed } from "./taskShared.ts";
 import {
   BACKGROUND_WAIT_PROVIDER,

@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "./threadShell.ts";
 import {
   isTeamLead,
   type PersonalBot,
@@ -12,13 +12,8 @@ import { isOwnerChat, taskChatThreadIds } from "./ownerChats.ts";
 
 /**
  * Unread chats: the bot replied after the owner last had the chat open.
- *
  * The server decides it (`personalBots.list` marks a link `unread` from the
  * newest assistant message against `last_viewed_at`, never on an archived
- * chat or a group relay). This device then clears it the moment the owner
- * opens the chat, without waiting for a refetch: the chat that is open and
- * visible is never unread, and a chat the owner left is read up to the moment
- * they left it.
  */
 
 /**
@@ -60,12 +55,6 @@ export function isChatUnread(
  * The unread chats by bot id. Bots with none are absent. A bot that shows
  * unread chats ({@link showsUnreadChats}) counts every unread chat; any other
  * bot counts only the chats the owner marked unread (or that woke from a
- * snooze), `markedUnread`, which show for every bot. Reads only the list the
- * Bots screen already has: no request per row.
- *
- * Only a chat the owner can see counts: {@link isOwnerChat}, the very predicate
- * the chat chips draw, so a task or routine chat he never used cannot light the
- * dot while it is in no chip (2026-10-16).
  */
 export function unreadChatsByBot(input: {
   readonly bots: ReadonlyArray<Pick<PersonalBot, "botId" | "lead">>;
@@ -108,7 +97,6 @@ export function unreadChatsLabel(count: number): string {
   return `${count} unread ${count === 1 ? "chat" : "chats"}`;
 }
 
-// --- This device's seen state -------------------------------------------------
 // In memory only: a reload refetches the list, and by then the server has the
 // viewed time (written when the chat was left), so nothing needs persisting.
 

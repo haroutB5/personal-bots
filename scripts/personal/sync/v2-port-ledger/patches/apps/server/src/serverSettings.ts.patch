@@ -1,0 +1,131 @@
+diff --git a/apps/server/src/serverSettings.ts b/apps/server/src/serverSettings.ts
+index 6949a66d981be188753c90a0742b8a1967af1e6e..c6a12c3ec966366cae50af58285f34e6d5163a26 100644
+--- a/apps/server/src/serverSettings.ts
++++ b/apps/server/src/serverSettings.ts
+@@ -46,7 +46,7 @@ import * as Schema from "effect/Schema";
+ import * as Semaphore from "effect/Semaphore";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ import { writeFileStringAtomically } from "./atomicWrite.ts";
+ import * as ServerConfig from "./config.ts";
+ import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
+@@ -172,16 +172,76 @@ function redactProviderEnvironmentVariable(
+   };
+ }
+ 
++const OPENCODE_PASSWORD_REDACTED = "[redacted]";
++
++function openCodeServerConfig(
++  instance: ProviderInstanceConfig | undefined,
++): Record<string, unknown> | undefined {
++  if (instance?.driver !== "opencode") return undefined;
++  const config = instance.config;
++  return config && typeof config === "object" && !Array.isArray(config)
++    ? (config as Record<string, unknown>)
++    : undefined;
++}
++
++function openCodeServerPassword(instance: ProviderInstanceConfig | undefined): string | undefined {
++  const password = openCodeServerConfig(instance)?.serverPassword;
++  return typeof password === "string" ? password : undefined;
++}
++
++/** Restore only the sentinel; an explicit empty string still clears a password. */
++export function restoreRedactedOpenCodePasswords(
++  current: ServerSettings,
++  next: ServerSettings,
++): ServerSettings {
++  return {
++    ...next,
++    providers: {
++      ...next.providers,
++      opencode: {
++        ...next.providers.opencode,
++        ...(next.providers.opencode.serverPassword === OPENCODE_PASSWORD_REDACTED
++          ? { serverPassword: current.providers.opencode.serverPassword }
++          : {}),
++      },
++    },
++    providerInstances: Object.fromEntries(
++      Object.entries(next.providerInstances).map(([id, instance]) => {
++        if (openCodeServerPassword(instance) !== OPENCODE_PASSWORD_REDACTED) return [id, instance];
++        const previous = current.providerInstances[ProviderInstanceId.make(id)];
++        return [
++          id,
++          {
++            ...instance,
++            config: {
++              ...openCodeServerConfig(instance),
++              serverPassword: openCodeServerPassword(previous) ?? "",
++            },
++          },
++        ];
++      }),
++    ) as ServerSettings["providerInstances"],
++  };
++}
++
+ export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
+   const providerInstances = Object.fromEntries(
+     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
+       instanceId,
+-      instance.environment
+-        ? {
+-            ...instance,
+-            environment: instance.environment.map(redactProviderEnvironmentVariable),
+-          }
+-        : instance,
++      {
++        ...instance,
++        ...(instance.environment
++          ? { environment: instance.environment.map(redactProviderEnvironmentVariable) }
++          : {}),
++        ...(openCodeServerPassword(instance)
++          ? {
++              config: {
++                ...openCodeServerConfig(instance),
++                serverPassword: OPENCODE_PASSWORD_REDACTED,
++              },
++            }
++          : {}),
++      },
+     ]),
+   );
+   // The hub key is a bearer secret; clients only need to know one is set.
+@@ -199,7 +259,21 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
+     accessToken: redactSecret(settings.bitbucket.accessToken),
+     apiToken: redactSecret(settings.bitbucket.apiToken),
+   };
+-  return { ...settings, providerInstances, usageLimitSources, bitbucket };
++  return {
++    ...settings,
++    providerInstances,
++    usageLimitSources,
++    bitbucket,
++    providers: {
++      ...settings.providers,
++      opencode: {
++        ...settings.providers.opencode,
++        ...(settings.providers.opencode.serverPassword
++          ? { serverPassword: OPENCODE_PASSWORD_REDACTED }
++          : {}),
++      },
++    },
++  };
+ }
+ 
+ export class ServerSettingsService extends Context.Service<
+@@ -1023,7 +1097,10 @@ const make = Effect.gen(function* () {
+     writeSemaphore.withPermits(1)(
+       Effect.gen(function* () {
+         const current = yield* getSettingsFromCache;
+-        const updated = applyServerSettingsPatch(current, patch);
++        const updated = restoreRedactedOpenCodePasswords(
++          current,
++          applyServerSettingsPatch(current, patch),
++        );
+         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
+         const next = yield* normalizeServerSettings(persisted.settings);
+         const materialized = yield* Effect.uninterruptibleMask(() =>

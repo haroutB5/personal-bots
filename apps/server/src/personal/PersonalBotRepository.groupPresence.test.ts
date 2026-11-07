@@ -5,10 +5,13 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { seedV2Message, seedV2Thread } from "./test/v2ProjectionSeed.ts";
 
-const testLayer = PersonalBotRepository.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const testLayer = PersonalBotRepository.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+);
 
 const decodeCreateBot = Schema.decodeSync(PersonalBotRepository.CreatePersonalBotInput);
 const decodeInsertThreadLink = Schema.decodeSync(
@@ -63,20 +66,18 @@ it.effect("derives group presence, ignoring relay threads and empty chats", () =
         }
         const archivedAt = options.archivedThread === true ? at : null;
         const deletedAt = options.deletedThread === true ? at : null;
-        yield* sql`
-          INSERT INTO projection_threads (
-            thread_id, project_id, title, created_at, updated_at, archived_at, deleted_at
-          ) VALUES (${id}, 'project-1', ${id}, ${at}, ${at}, ${archivedAt}, ${deletedAt})
-        `;
+        yield* seedV2Thread({
+          threadId: id,
+          title: id,
+          createdAt: at,
+          archivedAt,
+          deletedAt,
+        });
         let index = 0;
         for (const role of options.messages ?? []) {
           const messageId = `${id}-m${String(index)}`;
           index += 1;
-          yield* sql`
-            INSERT INTO projection_thread_messages (
-              message_id, thread_id, role, text, is_streaming, created_at, updated_at
-            ) VALUES (${messageId}, ${id}, ${role}, 'hi', 0, ${at}, ${at})
-          `;
+          yield* seedV2Message({ messageId, threadId: id, role, text: "hi", createdAt: at });
         }
       });
 
@@ -172,16 +173,18 @@ it.effect("derives group presence, ignoring relay threads and empty chats", () =
     });
 
     // The first message in the empty chat makes it a private chat: Luna is back.
-    yield* sql`
-      INSERT INTO projection_thread_messages (
-        message_id, thread_id, role, text, is_streaming, created_at, updated_at
-      ) VALUES ('first', 'luna-empty', 'user', 'hello', 0, ${at}, ${at})
-    `;
+    yield* seedV2Message({
+      messageId: "first",
+      threadId: "luna-empty",
+      role: "user",
+      text: "hello",
+      createdAt: at,
+    });
     const afterMessage = yield* repository.listGroupPresence();
     expect(afterMessage.find((row) => row.botId === "luna")?.hasPrivateChat).toBe(true);
 
     // Deleting that chat hides it again.
-    yield* sql`UPDATE projection_threads SET deleted_at = ${at} WHERE thread_id = 'luna-empty'`;
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${at} WHERE thread_id = 'luna-empty'`;
     const afterDelete = yield* repository.listGroupPresence();
     expect(afterDelete.find((row) => row.botId === "luna")?.hasPrivateChat).toBe(false);
   }).pipe(Effect.provide(testLayer)),

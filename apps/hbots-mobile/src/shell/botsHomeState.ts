@@ -28,3 +28,14 @@ export function botsHomeState(input: {
   if (input.visibleCount > 0) return "list";
   return input.query.trim().length > 0 ? "no-match" : "empty";
 }
+
+/** What tapping a bot opens: its newest chat, or a fresh chat when it has none. */
+export type BotTapTarget =
+  | { readonly kind: "chat"; readonly threadId: string }
+  | { readonly kind: "new-chat" };
+
+export function botTapTarget(newestThreadId: string | null): BotTapTarget {
+  return newestThreadId === null
+    ? { kind: "new-chat" }
+    : { kind: "chat", threadId: newestThreadId };
+}

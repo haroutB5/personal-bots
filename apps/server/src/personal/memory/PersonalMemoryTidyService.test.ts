@@ -11,11 +11,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import { ServerConfig } from "../../config.ts";
 import * as ServerConfigModule from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Schema from "effect/Schema";
 import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
 import type { TidyJudgeOutput } from "./memoryTidy.ts";
@@ -63,7 +63,7 @@ const fakeJudge = (answer: (ref: (needle: string) => string) => TidyJudgeOutput[
 
 const testLayer = (judge: Layer.Layer<PersonalMemoryTidyJudge>) =>
   Layer.mergeAll(tidyLayer.pipe(Layer.provide(judge)), memoryLayer).pipe(
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(NodeServices.layer),
   );
 
@@ -504,7 +504,6 @@ it.effect("a bot's save and forget proposals apply only on approval, version-che
   Effect.gen(function* () {
     const ids = yield* seed;
     const memory = yield* PersonalMemoryService;
-    const tidy = yield* PersonalMemoryTidy;
     const target = yield* memory.get(PersonalMemoryId.make(ids.unsure));
     const saveId = yield* memory.propose({
       action: "save",

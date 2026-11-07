@@ -1,0 +1,14 @@
+diff --git a/apps/web/src/state/desktopWslState.test.ts b/apps/web/src/state/desktopWslState.test.ts
+index f3a532215afdcdf13a1ded10d53e0f576ed3c03d..0ae9a34a4b95f69bba17004de0df9508c6920e56 100644
+--- a/apps/web/src/state/desktopWslState.test.ts
++++ b/apps/web/src/state/desktopWslState.test.ts
+@@ -1,7 +1,7 @@
+ import type { DesktopWslState } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+-import { AtomRegistry } from "effect/unstable/reactivity";
++import * as AsyncResult from "effect/reactivity/AsyncResult";
++import { AtomRegistry } from "effect/reactivity";
+ import { describe, expect, it, vi } from "vite-plus/test";
+ 
+ import { createDesktopWslStateAtom } from "./desktopWslState";

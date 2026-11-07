@@ -2,16 +2,6 @@
  * The call's own state, as pure data: every state the screen and the bar draw,
  * the copy for each one, and the clock rules that end a call. No React, no
  * audio, no network, so all of it is unit-testable and the screen stays a
- * renderer.
- *
- * Copy rules (harout's decisions, 15 Oct):
- * - The voice speaks AS the bot, in the first person. Captions are labelled
- *   with the bot's name ("CTO"), never the word "Voice".
- * - Nothing reads as if a middle bot were relaying. The Undo card says
- *   "Asking CTO to:" and the send is described as the owner's own message.
- * - Free tier at launch: the call card carries duration only, no cost line.
- *
- * @module features/personal/voice/callState
  */
 import type { VoiceCallAnyErrorCode } from "./voiceCallApi.ts";
 
@@ -19,8 +9,6 @@ import type { VoiceCallAnyErrorCode } from "./voiceCallApi.ts";
  * A failure code the call screen can render. The server's own codes come from
  * the contract; "unknown" is a local failure (the microphone, usually) that
  * never reached the laptop at all, and "mic_blocked" is the browser refusing
- * the microphone itself (WebKit's NotAllowedError), which the owner fixes in
- * Settings rather than by trying again.
  */
 export type VoiceCallUiErrorCode = VoiceCallAnyErrorCode | "unknown" | "mic_blocked";
 
@@ -34,12 +22,7 @@ function errorName(error: unknown): string | null {
 /**
  * True when the *browser* refused the microphone, rather than the device being
  * missing or busy.
- *
  * WebKit raises NotAllowedError both for a denied permission and for a
- * `getUserMedia` called after the user's gesture has ended (what every call hit
- * on the iPhone on 16 Oct 2026), and it names the same thing in its message.
- * That is the one microphone failure the owner has to fix in iPhone Settings,
- * so it gets its own code and its own card, distinct from "unknown".
  */
 export function isMicrophoneBlocked(error: unknown): boolean {
   const name = errorName(error);
@@ -173,12 +156,6 @@ export const VOICE_FINISH_RETRY_MS: ReadonlyArray<number> = [
  * How long after a call ENDED a card without a summary is still worth asking
  * for again. The server writes the summary within about half a minute of the
  * card, and retries it about a minute later; past this window the chat stops
- * polling, because a call whose summary failed never gets one and a card that
- * keeps asking forever is a cost with no answer.
- *
- * It is measured from the end, not the start: a call may run for 30 minutes, so
- * a window from the start would already be spent by the time it hung up (Astra
- * re-check R4). See `voiceCallSummaryPending`.
  */
 export const VOICE_SUMMARY_WAIT_MS = 10 * 60_000;
 
@@ -276,8 +253,6 @@ export function callMetaLine(input: {
  * Did this call ever reach Gemini? Only a call that did ends as "ended"; the
  * engine publishes "error" for a call that never connected (a live call that
  * drops reconnects, then ends). The failed screen used to read the end reason
- * instead, so a refused start printed "Call dropped · 0:01" above "The call
- * never connected." (Harout's 16 Oct 2026 report).
  */
 export function callEverConnected(status: VoiceCallStatus): boolean {
   return status === "ended";
@@ -495,8 +470,6 @@ export function appendCaption(
   const next = [...lines, line];
   return next.length > 40 ? next.slice(next.length - 40) : next;
 }
-
-/* ---------------------------------------------------------------- colour */
 
 /** `#aabbcc` as [r, g, b] 0-255, or null when the value is not a hex colour. */
 export function parseHexColour(value: string): [number, number, number] | null {

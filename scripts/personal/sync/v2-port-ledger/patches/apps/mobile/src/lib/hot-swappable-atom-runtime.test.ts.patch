@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/lib/hot-swappable-atom-runtime.test.ts b/apps/mobile/src/lib/hot-swappable-atom-runtime.test.ts
+index b4d596900a41a43f0c77d1134c64bf126b6e4289..f14108e49c37608a1fdcb0709093b5d2fb62fa40 100644
+--- a/apps/mobile/src/lib/hot-swappable-atom-runtime.test.ts
++++ b/apps/mobile/src/lib/hot-swappable-atom-runtime.test.ts
+@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+ 
+ import { hotSwappableAtomRuntime } from "./hot-swappable-atom-runtime";
+ 

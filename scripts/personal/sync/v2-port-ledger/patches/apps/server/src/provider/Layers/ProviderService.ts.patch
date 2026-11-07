@@ -1,0 +1,466 @@
+diff --git a/apps/server/src/provider/Layers/ProviderService.ts b/apps/server/src/provider/Layers/ProviderService.ts
+index a90a77ab86f459bc4c99aea622d942db11960ce6..1bba0d1cc86aea63bf63877f880726b4583fc0f2 100644
+--- a/apps/server/src/provider/Layers/ProviderService.ts
++++ b/apps/server/src/provider/Layers/ProviderService.ts
+@@ -52,8 +52,10 @@ import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
+ import * as SchemaIssue from "effect/SchemaIssue";
+ import * as Stream from "effect/Stream";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
++import { UserMessageDeliveryTracker } from "../userMessageDelivery.ts";
+ import { resolveAttachmentPath } from "../../attachmentStore.ts";
+ import * as ServerConfig from "../../config.ts";
+ import * as DeviceService from "../../device/DeviceService.ts";
+@@ -86,6 +88,9 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+ import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+ import * as ServerSettings from "../../serverSettings.ts";
+ import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
++import * as PersonalSessionAccess from "../../personal/secrets/PersonalSessionAccess.ts";
++import { makePersonalThreadLookup } from "../../personal/turnContext/PersonalTurnContext.ts";
++import { makeProviderEventSecretFilter } from "../secretEventRedaction.ts";
+ const isModelSelection = Schema.is(ModelSelection);
+ const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+ 
+@@ -491,6 +496,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+   const projectionQuery = yield* Effect.serviceOption(
+     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+   );
++  // Optional: without it (provider-only runtimes, most tests) no thread is a
++  // personal bot's, so none gets the "bots" capability or secret variables.
++  const personalSessions = yield* Effect.serviceOption(PersonalSessionAccess.PersonalSessionAccess);
++  // Only for the personal-bot thread check below; provider-only runtimes and
++  // tests without SQLite simply never grant the "personal" toolset.
++  const personalSql = yield* Effect.serviceOption(SqlClient.SqlClient);
++  const personalLookup = makePersonalThreadLookup({ personalSessions, personalSql });
+   const issueMcpCredential =
+     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
+   const fileSystem = yield* FileSystem.FileSystem;
+@@ -512,6 +524,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+   });
+   let turnAnalyticsRequestId = 0;
+   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
++  const nowMillis = Effect.map(DateTime.now, DateTime.toEpochMillis);
+ 
+   const finishTurnAnalytics = (
+     state: TurnAnalyticsState,
+@@ -931,11 +944,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+ 
+   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
+     threadId: ThreadId,
++    personal: { readonly botGrant: boolean; readonly linked: boolean },
+   ) {
+     const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
+     const access = yield* agentAccessSettings(threadId);
+     if (access.browser) capabilities.add("preview");
+     if (access.device) capabilities.add("device");
++    if (personal.botGrant) capabilities.add("bots");
++    if (personal.linked) capabilities.add("personal");
++    // Bots start without the owner's user-level MCP servers (see personalBot
++    // on the session start input), so the server-owned shared browser is their
++    // only browser, whatever the managed project's browser setting says.
++    if (personal.botGrant || personal.linked) capabilities.add("preview");
+     return capabilities;
+   });
+ 
+@@ -968,7 +988,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+ 
+   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+     Effect.gen(function* () {
+-      const capabilities = yield* agentAccessCapabilities(threadId);
++      // Read once per session start: the capability, the flags and the secret
++      // variables all come from the thread's personal-bot link. A session that
++      // started before a secret was saved does not see it; the task dispatcher
++      // restarts the session before resuming a task that waited for one.
++      const personal = yield* personalLookup.lookupThread(threadId);
++      const capabilities = yield* agentAccessCapabilities(threadId, {
++        botGrant: personal.botGrant,
++        linked: personal.linked,
++      });
+       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
+       if (credential) {
+         const deviceEnvironment = capabilities.has("device")
+@@ -978,17 +1006,54 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+           McpProviderSession.setMcpProviderSession({
+             ...credential.config,
+             ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
++            ...(personal.secretEnvironment
++              ? { personalSecretEnvironment: personal.secretEnvironment }
++              : {}),
+           }),
+         );
+       }
+-      return credential;
++      // Decided here, where the thread's personal-bot link is already read,
++      // so adapters never re-query it. It narrows the toolset and is set even
++      // when no MCP credential could be issued, so isolation never fails open.
++      return {
++        personalBot: personal.personalBot,
++        // Task and routine chats cap their context by auto-compaction; the
++        // owner's own chats never do (he compacts those himself).
++        personalTaskChat: personal.personalTaskChat,
++        // Only recovery uses this: fresh starts carry the reactor's own
++        // instructions (plus memory context) on their start input.
++        systemInstructions: personal.systemInstructions,
++        // Lets the adapter load the bot's own plugin folder (per-bot skills).
++        personalBotId: personal.personalBotId,
++      };
+     });
+   const clearMcpSession = (threadId: ThreadId) =>
+     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
+       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+     );
+ 
+-  const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
++  const userMessageDeliveries = new UserMessageDeliveryTracker();
++  const publishUserMessageDelivered = (input: {
++    readonly provider: ProviderDriverKind;
++    readonly providerInstanceId: ProviderInstanceId;
++    readonly threadId: ThreadId;
++    readonly turnId: TurnId;
++    readonly messageId: MessageId;
++  }) =>
++    Effect.gen(function* () {
++      yield* publishRuntimeEvent({
++        type: "user-message.delivered",
++        eventId: EventId.make(`${input.messageId}:delivered:${yield* nowMillis}`),
++        provider: input.provider,
++        providerInstanceId: input.providerInstanceId,
++        threadId: input.threadId,
++        createdAt: yield* nowIso,
++        turnId: input.turnId,
++        payload: { messageId: input.messageId },
++      });
++    });
++
++  const publishCanonicalEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+     Effect.succeed(event).pipe(
+       Effect.tap((canonicalEvent) =>
+         canonicalEventLogger
+@@ -999,6 +1064,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+       Effect.asVoid,
+     );
+ 
++  // Every runtime event, whichever adapter made it, leaves through here: a saved
++  // key a bot printed is masked before the chat, a task result or the log sees it.
++  const secretEventFilter = makeProviderEventSecretFilter();
++  const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
++    Effect.forEach(secretEventFilter.process(event), publishCanonicalEvent, { discard: true });
++
+   const isCompactedEvent = (
+     event: ProviderRuntimeEvent,
+   ): event is Extract<ProviderRuntimeEvent, { readonly type: "thread.state.changed" }> =>
+@@ -1119,6 +1190,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+       });
+       if (canonicalEvent.type === "turn.started") {
+         yield* observeTurnStartedForAnalytics(source, canonicalEvent);
++        if (canonicalEvent.turnId !== undefined) {
++          for (const messageId of userMessageDeliveries.turnStarted(
++            canonicalEvent.threadId,
++            canonicalEvent.turnId,
++          )) {
++            yield* publishUserMessageDelivered({
++              provider: canonicalEvent.provider,
++              providerInstanceId: source.instanceId,
++              threadId: canonicalEvent.threadId,
++              turnId: canonicalEvent.turnId,
++              messageId,
++            });
++          }
++        }
+       } else if (canonicalEvent.type === "model.rerouted") {
+         yield* observeModelReroutedForAnalytics(source, canonicalEvent);
+       } else if (
+@@ -1157,6 +1242,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+         }
+       } else if (canonicalEvent.type === "session.exited") {
+         yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
++        userMessageDeliveries.forget(canonicalEvent.threadId);
+       }
+       if (
+         isCompactedEvent(canonicalEvent) &&
+@@ -1253,6 +1339,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
+     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
+     readonly operation: string;
++    readonly systemInstructions?: string | undefined;
+   }) {
+     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
+     yield* Effect.annotateCurrentSpan({
+@@ -1295,7 +1382,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
+       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
+ 
+-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
++      const prepared = yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
++      const personalBot = prepared.personalBot;
++      const personalBotId = prepared.personalBotId;
++      // The reactor's turn instructions win; the bot's own, looked up here,
++      // are the fallback (e.g. a continuation). Both are the same persona.
++      const systemInstructions = input.systemInstructions ?? prepared.systemInstructions;
+       const resumed = yield* adapter
+         .startSession({
+           threadId: input.binding.threadId,
+@@ -1305,6 +1397,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
+           runtimeMode: input.binding.runtimeMode ?? "full-access",
++          ...(personalBot ? { personalBot: true } : {}),
++          ...(personalBot && personalBotId ? { personalBotId } : {}),
++          ...(personalBot && prepared.personalTaskChat ? { personalTaskChat: true } : {}),
++          // Session-scoped instructions (Claude's appended system prompt) are
++          // read only at start, and this start bypasses the reactor, so a
++          // resumed bot chat would otherwise lose its persona and app rules.
++          ...(personalBot && systemInstructions !== undefined ? { systemInstructions } : {}),
+         })
+         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
+       if (resumed.provider !== adapter.provider) {
+@@ -1339,6 +1438,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+     readonly threadId: ThreadId;
+     readonly operation: string;
+     readonly allowRecovery: boolean;
++    /** The triggering turn's instructions, preferred by a recovery start. */
++    readonly systemInstructions?: string | undefined;
+   }) {
+     const bindingOption = yield* directory.getBinding(input.threadId);
+     const binding = Option.getOrUndefined(bindingOption);
+@@ -1375,6 +1476,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+     const recovered = yield* recoverSessionForThread({
+       binding,
+       operation: input.operation,
++      systemInstructions: input.systemInstructions,
+     });
+     return {
+       adapter: recovered.adapter,
+@@ -1449,8 +1551,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+             `Provider instance '${resolvedInstanceId}' belongs to driver '${resolvedProvider}', not '${parsed.provider}'.`,
+           );
+         }
++        const { freshSession, resumeCursor: requestedResumeCursor, ...startFields } = parsed;
+         const input = {
+-          ...parsed,
++          ...startFields,
++          ...(freshSession !== true && requestedResumeCursor !== undefined
++            ? { resumeCursor: requestedResumeCursor }
++            : {}),
+           threadId,
+           provider: resolvedProvider,
+         };
+@@ -1460,7 +1566,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+             `Provider instance '${resolvedInstanceId}' is disabled in T3 Code settings.`,
+           );
+         }
+-        const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
++        // A fresh session ignores the persisted conversation: it belongs to
++        // another provider, or the provider no longer has it.
++        const persistedBinding =
++          freshSession === true
++            ? undefined
++            : Option.getOrUndefined(yield* directory.getBinding(threadId));
+         if (
+           persistedBinding?.provider === resolvedProvider &&
+           persistedBinding.providerInstanceId !== resolvedInstanceId &&
+@@ -1526,13 +1637,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+         }
+         const adapter = yield* registry.getByInstance(resolvedInstanceId);
+         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
+-        yield* prepareMcpSession(threadId, resolvedInstanceId);
++        const { personalBot, personalBotId, personalTaskChat } = yield* prepareMcpSession(
++          threadId,
++          resolvedInstanceId,
++        );
++        // The bot id and the task-chat mark come only from the thread's
++        // personal-bot link, never from the caller's input.
++        const {
++          personalBotId: _callerBotId,
++          personalTaskChat: _callerTaskChat,
++          ...startInput
++        } = input;
+         const session = yield* adapter
+           .startSession({
+-            ...input,
++            ...startInput,
+             providerInstanceId: resolvedInstanceId,
+             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
+             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
++            ...(personalBot ? { personalBot: true } : {}),
++            ...(personalBot && personalBotId ? { personalBotId } : {}),
++            ...(personalBot && personalTaskChat ? { personalTaskChat: true } : {}),
+           })
+           .pipe(Effect.onError(() => clearMcpSession(threadId)));
+ 
+@@ -1697,11 +1821,65 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+       );
+     }
+ 
++    // Turn context (a bot's memory for this message) goes in front of the
++    // prompt, where it stays in the transcript with its turn. Carrying it in
++    // the system prompt instead would change that prompt on every session
++    // start of the same conversation, and a Claude session reads it only once.
++    // In front rather than behind, because Claude Code dispatches a skill from
++    // the last text block and would take trailing context as the skill's
++    // arguments. It is optional: when it does not fit, the turn goes with the
++    // first smaller version that does (a bot's preferences matter more than
++    // its notes), else without it. Either way it is logged, and the result
++    // says which, so the memory bookkeeping only counts what went in.
++    const { turnContext, turnContextFallbacks, ...parsedWithoutTurnContext } = parsed;
++    let turnContextDelivery: "full" | "reduced" | "none" | undefined;
++    if (turnContext !== undefined) {
++      const inputChars = inputTextWithAttachmentContext?.length;
++      const fits = (text: string) =>
++        inputChars !== undefined &&
++        text.length + 2 + inputChars <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
++      const chosen = fits(turnContext)
++        ? { text: turnContext, dropped: null }
++        : (turnContextFallbacks ?? []).find((candidate) => fits(candidate.text));
++      if (chosen === undefined) {
++        turnContextDelivery = "none";
++        yield* Effect.logWarning("turn context did not fit the input limit; sent without it", {
++          threadId: parsed.threadId,
++          inputChars: inputChars ?? null,
++          contextChars: turnContext.length,
++          limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
++          dropped: "the whole turn context (memory and any earlier-chat handoff)",
++        });
++      } else {
++        inputTextWithAttachmentContext = `${chosen.text}\n\n${inputTextWithAttachmentContext}`;
++        if (chosen.dropped === null) {
++          turnContextDelivery = "full";
++        } else {
++          turnContextDelivery = "reduced";
++          yield* Effect.logWarning("turn context did not fit the input limit; sent a smaller one", {
++            threadId: parsed.threadId,
++            inputChars,
++            contextChars: turnContext.length,
++            sentChars: chosen.text.length,
++            limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
++            dropped: chosen.dropped,
++          });
++        }
++      }
++    }
++
++    // The reactor always sends a bot's instructions; turns sent from elsewhere
++    // (the post-restart continuation) do not, and Codex reads them per turn.
++    const fallbackInstructions =
++      parsed.systemInstructions === undefined
++        ? Option.getOrUndefined(yield* personalLookup.sessionInstructions(parsed.threadId))
++        : null;
+     const input = {
+-      ...parsed,
++      ...parsedWithoutTurnContext,
+       ...(inputTextWithAttachmentContext !== undefined
+         ? { input: inputTextWithAttachmentContext }
+         : {}),
++      ...(fallbackInstructions ? { systemInstructions: fallbackInstructions } : {}),
+     };
+     yield* Effect.annotateCurrentSpan({
+       "provider.operation": "send-turn",
+@@ -1733,6 +1911,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+           threadId: input.threadId,
+           operation: "ProviderService.sendTurn",
+           allowRecovery: true,
++          systemInstructions: input.systemInstructions,
+         });
+       }
+       metricProvider = routed.adapter.provider;
+@@ -1777,6 +1956,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+                 }),
+               ),
+             );
++            // When the owner's message counts as taken in, per adapter: Claude
++            // only queues it here and reports the drain from its SDK lifecycle;
++            // Codex queues a mid-turn send as its own turn, delivered when that
++            // turn starts; the rest (OpenCode promptAsync) have it on return.
++            const delivery = routed.adapter.capabilities.userMessageDelivery ?? "handover";
++            if (
++              input.messageId !== undefined &&
++              delivery !== "adapter" &&
++              (delivery === "handover" ||
++                userMessageDeliveries.sent(input.threadId, turn.turnId, input.messageId))
++            ) {
++              yield* publishUserMessageDelivered({
++                provider: routed.adapter.provider,
++                providerInstanceId: routed.instanceId,
++                threadId: input.threadId,
++                turnId: turn.turnId,
++                messageId: input.messageId,
++              });
++            }
+             yield* associateTurnAnalytics({
+               providerInstanceId: routed.instanceId,
+               threadId: input.threadId,
+@@ -1820,7 +2018,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+         attachmentCount: attachments.length,
+         hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+       });
+-      return turn;
++      return turnContextDelivery === undefined ? turn : { ...turn, turnContextDelivery };
+     }).pipe(
+       withMetrics({
+         counter: providerTurnsTotal,
+@@ -2104,7 +2302,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+               input.threadId,
+             );
+           }
+-          yield* routed.adapter.stopSession(routed.threadId);
++          yield* routed.adapter.stopSession(
++            routed.threadId,
++            input.terminateProcesses === true ? { terminateProcesses: true } : undefined,
++          );
+         }
+         const pendingCompaction = pendingCompactions.get(input.threadId);
+         if (pendingCompaction !== undefined) {
+@@ -2232,6 +2433,43 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
+     registry.getInstanceInfo(instanceId);
+ 
++  /**
++   * The provider's own preflight on a turn, asked before any session exists.
++   *
++   * A refusal made once the session has started is not safe: the session's own
++   * start events ("starting", then "ready") are already in flight and land a
++   * moment later, so they can leave the thread ready with no error and the chat
++   * with nothing on it. That is exactly what QA saw on 1.66.45 C5F/C5R, where a
++   * fresh chat's first message was an oversized photo.
++   */
++  const validateTurn: ProviderServiceMethod<"validateTurn"> = (rawInput) =>
++    Effect.gen(function* () {
++      // Best effort on purpose: an instance this build cannot resolve is left to
++      // the session start, which reports it with its own precise message.
++      const adapter = yield* registry
++        .getByInstance(rawInput.instanceId)
++        .pipe(Effect.orElseSucceed(() => undefined));
++      const validate = adapter?.validateTurn;
++      if (adapter === undefined || validate === undefined) {
++        return;
++      }
++      yield* Effect.annotateCurrentSpan({
++        "provider.operation": "validate-turn",
++        "provider.kind": adapter.provider,
++        "provider.thread_id": rawInput.threadId,
++      });
++      yield* validate({
++        ...(rawInput.modelSelection !== undefined
++          ? { modelSelection: rawInput.modelSelection }
++          : {}),
++        ...(rawInput.input !== undefined ? { input: rawInput.input } : {}),
++        ...(rawInput.attachments !== undefined ? { attachments: rawInput.attachments } : {}),
++        ...(rawInput.interactionMode !== undefined
++          ? { interactionMode: rawInput.interactionMode }
++          : {}),
++      });
++    });
++
+   const assertConversationRollbackSupported: ProviderServiceMethod<"assertConversationRollbackSupported"> =
+     Effect.fn("assertConversationRollbackSupported")(function* (threadId) {
+       const routed = yield* resolveRoutableSession({
+@@ -2452,6 +2690,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+   return {
+     startSession,
+     sendTurn,
++    validateTurn,
+     compactThread,
+     interruptTurn,
+     respondToRequest,

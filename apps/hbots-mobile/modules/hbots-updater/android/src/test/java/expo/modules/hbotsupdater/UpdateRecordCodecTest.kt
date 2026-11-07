@@ -30,6 +30,7 @@ class UpdateRecordCodecTest {
       UpdateRecord(Installing(release, apk, now), 123L, release, 1_066_110L),
       UpdateRecord(NeedsTap(release, apk), 123L, release, 1_066_110L),
       UpdateRecord(NeedsPermission(release), 123L, release, 1_066_110L),
+      UpdateRecord(NeedsPermission(release), 123L, release, 1_066_110L, permissionNotifiedCode = 1_066_112L),
     )
 
     records.forEach { record ->

@@ -5,10 +5,21 @@ import * as DateTime from "effect/DateTime";
  * What this device did with a request it showed. The server has no activity
  * stream for secrets — `personalSecrets.listPending` only ever returns rows
  * that are still pending — so a settled card reads its ending from the RPC this
- * screen itself ran. A request that left `pending` without this device
- * answering it (another phone, the bot already had the value) is "closed".
  */
 export type SecretRequestOutcome = "provided" | "declined";
+
+/**
+ * A settled card this device kept from an earlier visit. The record carries
+ * only what the settled card draws, so a value can never be stored with it.
+ */
+export interface SecretRequestHistoryEntry {
+  readonly requestId: string;
+  readonly threadId: string;
+  readonly createdAtMs: number;
+  readonly name: string;
+  readonly label: string;
+  readonly outcome: SecretRequestOutcome;
+}
 
 /**
  * A secret the bot asked for, in the state the transcript should show it.
@@ -47,6 +58,7 @@ export function deriveSecretRequestCards(
   threadId: string,
   seen: ReadonlyMap<string, PersonalSecretRequest>,
   outcomes: ReadonlyMap<string, SecretRequestOutcome>,
+  history: ReadonlyArray<SecretRequestHistoryEntry> = [],
 ): ReadonlyArray<SecretRequestCardItem> {
   const forThread = pending.filter((request) => request.threadId === threadId);
   const pendingById = new Map(forThread.map((request) => [request.requestId as string, request]));
@@ -59,6 +71,7 @@ export function deriveSecretRequestCards(
   }
 
   const cards: SecretRequestCardItem[] = [];
+  const claimed = new Set<string>();
   for (const [requestId, request] of requests) {
     const live = pendingById.get(requestId);
     if (live !== undefined) {
@@ -68,6 +81,7 @@ export function deriveSecretRequestCards(
         createdAtMs: createdAtMs(live),
         request: live,
       });
+      claimed.add(requestId);
       continue;
     }
     cards.push({
@@ -76,6 +90,17 @@ export function deriveSecretRequestCards(
       createdAtMs: createdAtMs(request),
       name: request.name,
       label: request.label,
+    });
+    claimed.add(requestId);
+  }
+  for (const entry of history) {
+    if (entry.threadId !== threadId || claimed.has(entry.requestId)) continue;
+    cards.push({
+      kind: entry.outcome,
+      requestId: entry.requestId,
+      createdAtMs: entry.createdAtMs,
+      name: entry.name,
+      label: entry.label,
     });
   }
   return cards.sort((left, right) => left.createdAtMs - right.createdAtMs);

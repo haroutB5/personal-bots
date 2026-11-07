@@ -41,6 +41,20 @@ describe("the SPEC back table", () => {
     expect(back(nav)).toEqual(stack(bots));
   });
 
+  it("returns the bot form to the bot page it was opened from", () => {
+    const nav = stack(bots, { kind: "bot", botId: "b1" }, { kind: "botEdit", botId: "b1" });
+    expect(back(nav)).toEqual(stack(bots, { kind: "bot", botId: "b1" }));
+  });
+
+  it("returns a new bot form to Bots", () => {
+    expect(back(stack(bots, { kind: "botNew" }))).toEqual(stack(bots));
+  });
+
+  it("returns a group page and the new group form to Bots", () => {
+    expect(back(stack(bots, { kind: "group", groupId: "g1" }))).toEqual(stack(bots));
+    expect(back(stack(bots, { kind: "groupNew" }))).toEqual(stack(bots));
+  });
+
   it("returns a bot page opened from Team to Team", () => {
     const nav = stack(bots, { kind: "team" }, { kind: "bot", botId: "b1" });
     expect(back(nav)).toEqual(stack(bots, { kind: "team" }));
@@ -118,8 +132,15 @@ describe("deep links", () => {
 
   it("opens a bot, a task and stop", () => {
     expect(parseDeepLink("hbots://bot/b1")).toEqual(stack(bots, { kind: "bot", botId: "b1" }));
+    expect(parseDeepLink("hbots://bot/b1/edit")).toEqual(
+      stack(bots, { kind: "bot", botId: "b1" }, { kind: "botEdit", botId: "b1" }),
+    );
     expect(parseDeepLink("hbots://task/t9")).toEqual(stack(bots, { kind: "task", taskId: "t9" }));
     expect(parseDeepLink("hbots://stop")).toEqual(stack(bots, { kind: "stop" }));
+    expect(parseDeepLink("hbots://group/g1")).toEqual(
+      stack(bots, { kind: "group", groupId: "g1" }),
+    );
+    expect(parseDeepLink("hbots://groupNew")).toEqual(stack(bots, { kind: "groupNew" }));
   });
 
   it("opens This phone under Settings", () => {

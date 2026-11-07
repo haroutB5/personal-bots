@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "../bots/threadShell.ts";
 import {
   isBotPinned,
   isGroupOnlyBot,
@@ -24,13 +24,8 @@ const decodeMarker = Schema.decodeUnknownOption(PersonalGroupMessageMarker);
 
 /**
  * The group-service marker behind a message, or null when there is none.
- *
  * The mirror of {@link readServerTurn} for groups: attribution rides on the
  * message's own `context` (see `PERSONAL_GROUP_MESSAGE_CONTEXT_KIND`), so who
- * spoke survives paging, needs no join, and is right offline. A message with no
- * marker — everything written before groups existed, and everything the owner
- * types — falls back to plain rendering, which is why this returns null rather
- * than throwing on a shape it does not recognise.
  */
 export function readGroupMarker(message: {
   readonly context?: OrchestrationMessageContext | undefined;
@@ -57,8 +52,6 @@ export function activeGroupMembers(group: PersonalGroup): PersonalGroup["members
  * The member threads every group owns, so the Chats list can hide them from
  * the bots' own chat lists: a member thread is the bot's private relay of the
  * group, not a chat the owner started, and showing it would put the same
- * conversation on screen twice. Pass archived groups too (see
- * `groupRelayThreadIds`): archiving hides the group, not its relays.
  */
 export function groupMemberThreadIds(groups: ReadonlyArray<PersonalGroup>): ReadonlySet<string> {
   const ids = new Set<string>();
@@ -127,11 +120,8 @@ export function filterGroups(
 
 /**
  * Newest activity in a group, in epoch ms.
- *
  * The group's own `updatedAt`, not the newest message's time:
  * `PersonalBotThreadNewestMessage` carries no timestamp (it exists to preview
- * text, not to order rows), and inventing one from the round would leave a
- * group that has only ever been renamed with no time at all.
  */
 export function groupLastActivityMs(group: PersonalGroup, nowMs: number = Date.now()): number {
   const updatedMs = DateTime.toEpochMillis(group.updatedAt);
@@ -316,15 +306,8 @@ export interface GroupVoteCardModel {
 
 /**
  * The tally the owner is being asked to answer, or null.
- *
  * Only ever rendered for a round parked on `paused_vote`, which is exactly the
  * status {@link groupRoundCard} returns null for, so the two cards can never
- * both be on screen.
- *
- * It shows every member's choice WITH its reason, because a plurality is not
- * an argument: the owner is deciding whether work happens, and the reasons are
- * most of what that decision rests on. Nothing here can act — the card's two
- * buttons are the only way a vote ever becomes an instruction.
  */
 export function groupVoteCard(input: {
   readonly round: PersonalGroupRound | null;
@@ -384,17 +367,7 @@ export interface GroupDeleteCandidate {
 /**
  * The Delete group sheet's rows. Nothing starts ticked: the default keeps
  * every bot (a group-only bot moves back to the Bots list).
- *
  * Three things are named on a row, so the owner sees what ticking it would
- * cost outside this group:
- *
- * 1. **It leads a team.** Assistant leads the assistant team, CTO the dev team.
- *    Scrapping a group must never quietly take the lead of a team with it.
- * 2. **It is pinned in Chats**, i.e. the owner has already said it matters.
- * 3. **It is in another group too.** Deleting it would rewrite a conversation
- *    the owner is not looking at.
- *
- * Every row can still be ticked by hand. A tap-through destroys no bot.
  */
 export function groupDeleteCandidates(input: {
   readonly group: PersonalGroup;
@@ -442,8 +415,6 @@ export function groupDeleteSummary(ticked: number): string {
     ? "Deletes the group and 1 bot with its chats."
     : `Deletes the group and ${String(ticked)} bots with their chats.`;
 }
-
-// --- Group-only bots (bots that live only inside groups) ---
 
 /**
  * Group-only bots (in a group, no private chat of their own; the server
@@ -502,9 +473,6 @@ export function memberRemovalMessage(input: {
  * The chat "Message privately" opens: the bot's newest empty private chat if
  * it has one (an earlier tap that was never written in), so repeated taps do
  * not pile up blank chats; null means start a new one.
- *
- * Private means linked to the bot, not archived, and not one of any group's
- * relay threads. Empty means no message and no turn yet on its thread shell.
  */
 export function reusablePrivateChat(input: {
   readonly botId: string;

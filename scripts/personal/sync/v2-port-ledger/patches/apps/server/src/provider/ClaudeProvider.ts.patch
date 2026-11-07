@@ -1,0 +1,181 @@
+diff --git a/apps/server/src/provider/Layers/ClaudeProvider.ts b/apps/server/src/provider/Layers/ClaudeProvider.ts
+index db06557c7c8e7c40dc969a603249e6a5561ea27f..954b4dd3b083317ee8641e913d2a93bb095f9614 100644
+--- a/apps/server/src/provider/Layers/ClaudeProvider.ts
++++ b/apps/server/src/provider/Layers/ClaudeProvider.ts
+@@ -4,6 +4,7 @@ import {
+   type ServerProviderSlashCommand,
+   type ServerProviderResetCredits,
+ } from "@t3tools/contracts";
++import * as Cause from "effect/Cause";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+@@ -11,7 +12,7 @@ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Ref from "effect/Ref";
+ import * as Result from "effect/Result";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import { createModelCapabilities } from "@t3tools/shared/model";
+ import { resolveSpawnCommand } from "@t3tools/shared/shell";
+ import {
+@@ -48,6 +49,7 @@ import {
+   formatClaudeVersionUpgradeMessage,
+   resolveClaudeModelsForVersion,
+ } from "../ClaudeModelCatalog.ts";
++import { warmSpawnImage } from "../../process/spawnImageWarmup.ts";
+ 
+ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+   optionDescriptors: [],
+@@ -172,6 +174,40 @@ function apiProviderAuthMetadata(
+ // `undefined` and left the provider unverified and unselectable in the picker.
+ const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+ 
++// `get_usage` is a network read the CLI makes for us, sent the moment init
++// returns while a cold CLI is still settling (init alone took 4.5-6.3s on the
++// dev box after a restart). It used the generic 4s CLI-command budget, which
++// was never measured for it. The probe runs off the UI path, so a longer wait
++// costs nothing visible while a timeout costs the reading. Bounded like the
++// auth probe; a warm read takes under a second.
++//
++// Raised from 10s, and now literally the auth probe's budget: a 2026-09-16 host
++// measurement caught cold reads finishing at 11.6s and 14.4s on a RAM-starved
++// laptop, so every probe paid for a full SDK spawn and then threw the answer
++// away on a deadline it could not meet. The two waits are the same cold start,
++// so they share a number; one whole probe stays bounded at 50s, an order of
++// magnitude inside the 5-minute health interval.
++export const CLAUDE_USAGE_READ_TIMEOUT_MS = CAPABILITIES_PROBE_TIMEOUT_MS;
++
++const MAX_LOGGED_ERROR_LENGTH = 300;
++
++/** One line for the log: a timeout, or the SDK's own error text, shortened. */
++function describeProbeFailure(failure: unknown): string {
++  if (Cause.isTimeoutError(failure)) {
++    return "timed out";
++  }
++  const cause = Cause.isUnknownError(failure) ? failure.cause : failure;
++  const text =
++    cause instanceof Error
++      ? `${cause.name}: ${cause.message}`
++      : typeof cause === "object" && cause !== null && "message" in cause
++        ? String(cause.message)
++        : String(cause);
++  return text.length > MAX_LOGGED_ERROR_LENGTH
++    ? `${text.slice(0, MAX_LOGGED_ERROR_LENGTH)}…`
++    : text;
++}
++
+ /**
+  * Keep workspace-scoped command discovery intact while isolating the periodic
+  * health check from configured MCP servers.
+@@ -341,6 +377,7 @@ const probeClaudeCapabilities = (
+       claudeSettings.binaryPath,
+       claudeEnvironment,
+     );
++    yield* warmSpawnImage(executablePath);
+     return yield* Effect.tryPromise(async () => {
+       const q = claudeQuery({
+         // Never yield — we only need initialization data, not a conversation.
+@@ -364,9 +401,20 @@ const probeClaudeCapabilities = (
+     Effect.flatMap(({ q, init }) =>
+       Effect.gen(function* () {
+         // Usage has its own deadline so a slow optional request cannot discard initialization.
++        const usageStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+         const usageResult = yield* Effect.tryPromise(() =>
+           q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+-        ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result);
++        ).pipe(Effect.timeout(CLAUDE_USAGE_READ_TIMEOUT_MS), Effect.result);
++        if (Result.isFailure(usageResult)) {
++          // The provider then publishes `probeFailed`; without this line the
++          // cause was invisible and a 40-minute outage left no trace.
++          yield* Effect.logWarning("Claude usage read failed; keeping the last good reading.", {
++            timedOut: Cause.isTimeoutError(usageResult.failure),
++            timeoutMs: CLAUDE_USAGE_READ_TIMEOUT_MS,
++            elapsedMs: DateTime.toEpochMillis(yield* DateTime.now) - usageStartedAt,
++            error: describeProbeFailure(usageResult.failure),
++          });
++        }
+         const usage = Result.isSuccess(usageResult)
+           ? {
+               rate_limits_available: usageResult.success.rate_limits_available,
+@@ -397,11 +445,18 @@ const probeClaudeCapabilities = (
+       }),
+     ),
+     Effect.result,
+-    Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
++    Effect.flatMap((result) =>
++      Result.isSuccess(result)
++        ? Effect.succeed<ClaudeCapabilitiesProbe | undefined>(result.success)
++        : Effect.logWarning("Claude capabilities probe failed.", {
++            timedOut: Cause.isTimeoutError(result.failure),
++            error: describeProbeFailure(result.failure),
++          }).pipe(Effect.as(undefined)),
++    ),
+   );
+ };
+ 
+-const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
++export const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
+   claudeSettings: ClaudeSettings,
+   args: ReadonlyArray<string>,
+   environment?: NodeJS.ProcessEnv,
+@@ -429,6 +484,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
+   /** Banked resets for a subscription login, given the CLI version for the user agent. */
+   resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
++  resolveInstalledModelCatalog?: (
++    cliVersion: string,
++  ) => Effect.Effect<ClaudeModelCatalog, never, never>,
+ ): Effect.fn.Return<
+   ServerProviderDraft,
+   never,
+@@ -526,12 +584,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+     });
+   }
+ 
++  const installedModelCatalog =
++    parsedVersion && resolveInstalledModelCatalog
++      ? yield* resolveInstalledModelCatalog(parsedVersion)
++      : modelCatalog;
+   const models = providerModelsFromSettings(
+-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
++    resolveClaudeModelsForVersion(installedModelCatalog, parsedVersion),
+     claudeSettings.customModels,
+     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+   );
+-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
++  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(
++    installedModelCatalog,
++    parsedVersion,
++  );
+ 
+   const capabilities = resolveCapabilities
+     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+@@ -554,6 +619,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+         status: "warning",
+         auth: { status: "unknown" },
+         message: "Could not verify Claude authentication status from initialization result.",
++        // The SDK probe that reads usage never got that far. Saying so, rather
++        // than omitting usage, keeps the last good reading and earns the
++        // early retry; an omitted field would wipe the reading instead.
++        usageLimits: makeUnavailableUsageLimits({
++          checkedAt,
++          reason: "probeFailed",
++          message: "Claude could not be started to read usage",
++        }),
+       },
+     });
+   }
+@@ -564,7 +637,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+       authMethod: capabilities.tokenSource,
+     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+   const usageLimits = !capabilities.usage
+-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
++    ? makeUnavailableUsageLimits({
++        checkedAt,
++        reason: "probeFailed",
++        message: "Claude did not return its usage",
++      })
+     : scopedLimitNames
+       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+           response: capabilities.usage,

@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/pending-thread-creation.ts b/apps/mobile/src/state/pending-thread-creation.ts
+index 4a2d7839e13e42a9521f2d30b0a52a28aab9ad83..4e7ce90510d1f0623d219eeef3f8739b87eac858 100644
+--- a/apps/mobile/src/state/pending-thread-creation.ts
++++ b/apps/mobile/src/state/pending-thread-creation.ts
+@@ -1,7 +1,7 @@
+ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+ import type { OrchestrationThread } from "@t3tools/contracts";
+ import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
+ import { scopedThreadKey } from "../lib/scopedEntities";

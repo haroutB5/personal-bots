@@ -1,0 +1,26 @@
+diff --git a/scripts/lib/brand-assets.test.ts b/scripts/lib/brand-assets.test.ts
+index 5403fe30e2a40067f25664de41641413481373d0..bbf3840bb9c7d17e7508cd66019035b493b3273c 100644
+--- a/scripts/lib/brand-assets.test.ts
++++ b/scripts/lib/brand-assets.test.ts
+@@ -28,6 +28,10 @@ describe("brand-assets", () => {
+         sourceRelativePath: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
+         targetRelativePath: "dist/client/apple-touch-icon.png",
+       },
++      {
++        sourceRelativePath: BRAND_ASSET_PATHS.productionWebBootLogoWebp,
++        targetRelativePath: "dist/client/boot-logo.webp",
++      },
+     ]);
+   });
+ 
+@@ -56,6 +60,10 @@ describe("brand-assets", () => {
+         sourceRelativePath: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
+         targetRelativePath: "apps/web/public/apple-touch-icon.png",
+       },
++      {
++        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebBootLogoWebp,
++        targetRelativePath: "apps/web/public/boot-logo.webp",
++      },
+     ]);
+   });
+ 

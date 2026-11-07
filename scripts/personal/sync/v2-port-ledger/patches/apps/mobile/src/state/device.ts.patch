@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/device.ts b/apps/mobile/src/state/device.ts
+index f989d3c5b745ace481aecf6f36bd8e397464a904..9183f8effdfb4d9e326f3a10fc583e265f36f8d5 100644
+--- a/apps/mobile/src/state/device.ts
++++ b/apps/mobile/src/state/device.ts
+@@ -3,7 +3,7 @@ import { resolveDeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubA
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useMemo } from "react";
+ 
+ import { connectionAtomRuntime } from "../connection/runtime";

@@ -7,9 +7,10 @@
 //   kind   modify-delete | content | added-broken
 //   status open | done | dropped
 //
-// Fails when a row has no target PR, when a dropped row has no reason, and on
-// any structural damage (bad column count, unknown kind or status, duplicate
-// path, non-integer line count). With --patches, every row must have
+// Fails when a row has no target PR, when a dropped row has no reason, when a
+// row targets a PR that already landed (Appendix H.4), and on any structural
+// damage (bad column count, unknown kind or status, duplicate path,
+// non-integer line count). With --patches, every row must have
 // <dir>/<path>.patch so the parked hunk is reviewable. With --no-open-at, a row
 // whose target names that PR must be closed at merge time.
 import * as NodeFS from "node:fs";
@@ -21,6 +22,7 @@ export const DEFAULT_LEDGER_PATH = NodePath.join(HERE, "v2-port-ledger", "ledger
 export const LEDGER_HEADER = ["path", "origin", "kind", "ourLines", "targetPR", "status", "reason"];
 export const LEDGER_KINDS = new Set(["modify-delete", "content", "added-broken"]);
 export const LEDGER_STATUSES = new Set(["open", "done", "dropped"]);
+export const LANDED_TARGETS = new Set(["3a", "A10", "A6b", "A8"]);
 
 /**
  * Parse and validate one ledger body. Returns `{rows, errors}`; the caller
@@ -108,6 +110,15 @@ export const openAtErrors = (rows, targetPR) =>
         `line ${row.lineNumber}: ${row.path} is open at ${targetPR}; a merge row must be closed there`,
     );
 
+/** Rows may not target a landed PR (Appendix H.4); their work belongs to a later PR. */
+export const landedTargetErrors = (rows, landed = LANDED_TARGETS) =>
+  rows
+    .filter((row) => landed.has(row.targetPR))
+    .map(
+      (row) =>
+        `line ${row.lineNumber}: ${row.path} targets ${row.targetPR}, which already landed; retarget it`,
+    );
+
 const parseArgs = (argv) => {
   const options = { file: DEFAULT_LEDGER_PATH, patches: null, noOpenAt: null };
   for (let index = 0; index < argv.length; index += 1) {
@@ -145,6 +156,7 @@ const main = () => {
   }
 
   const { rows, errors } = checkLedgerText(NodeFS.readFileSync(options.file, "utf8"));
+  errors.push(...landedTargetErrors(rows));
   if (options.patches !== null) {
     for (const path of missingPatches(rows, options.patches)) {
       errors.push(`no patch for ${path} under ${options.patches}`);

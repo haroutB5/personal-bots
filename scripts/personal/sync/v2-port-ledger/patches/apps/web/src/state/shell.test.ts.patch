@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/state/shell.test.ts b/apps/web/src/state/shell.test.ts
+index aef4f1ba16f6f798d9684f19b48532a5dde7b874..0baf895723937cf959a7a21ad45b1f1b04566acb 100644
+--- a/apps/web/src/state/shell.test.ts
++++ b/apps/web/src/state/shell.test.ts
+@@ -6,7 +6,7 @@ import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/conn
+ import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
+ import { EnvironmentId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { Atom, AtomRegistry } from "effect/reactivity";
+ import { describe, expect, it } from "vite-plus/test";
+ 
+ import { createAllEnvironmentProjectSnapshotsReadyAtom } from "./shell";

@@ -1,0 +1,21 @@
+diff --git a/packages/client-runtime/src/state/threadCommands.test.ts b/packages/client-runtime/src/state/threadCommands.test.ts
+index dc70ac5548b185581ec87e3bd2ce3156efd4b51d..01df7e5a2e9c7b0b8ea77875d44f166073c268a3 100644
+--- a/packages/client-runtime/src/state/threadCommands.test.ts
++++ b/packages/client-runtime/src/state/threadCommands.test.ts
+@@ -9,14 +9,14 @@ import {
+   type ClientOrchestrationCommand,
+   type OrchestrationShellSnapshot,
+ } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Queue from "effect/Queue";
+ import * as SubscriptionRef from "effect/SubscriptionRef";
+-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { Atom, AtomRegistry } from "effect/reactivity";
+ 
+ import { EnvironmentRegistry } from "../connection/registry.ts";
+ import { EnvironmentSupervisor } from "../connection/supervisor.ts";

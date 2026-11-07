@@ -1,4 +1,6 @@
-import type { MessageId, OrchestrationMessage } from "@t3tools/contracts";
+import type { MessageId } from "@t3tools/contracts";
+
+import type { PersonalMessageView } from "./engine/PersonalEngine.ts";
 
 /**
  * The chat so far, for a turn that starts a fresh provider session in a chat
@@ -19,7 +21,7 @@ const HANDOFF_HEADER =
   "Earlier in this chat (carried over from a previous session that could not be continued; the owner can see all of it, so do not repeat it back):";
 const HANDOFF_FOOTER = "End of earlier messages. The owner's new message follows.";
 
-type HandoffMessage = Pick<OrchestrationMessage, "id" | "role" | "text" | "attachments">;
+type HandoffMessage = Pick<PersonalMessageView, "id" | "role" | "text" | "attachments">;
 
 function attachmentNote(message: HandoffMessage): string {
   const names = (message.attachments ?? []).map((attachment) =>

@@ -1,11 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - the measurement hook writes a plain dump file.
-import { writeFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import { expect, it } from "@effect/vitest";
 
 import { advertisedToolList } from "../mcp/advertisedTools.ts";
 import { buildCodexAdditionalContext } from "../provider/CodexDeveloperInstructions.ts";
-import { buildRuntimeInstructions, withBotInstructions } from "../provider/RuntimeInstructions.ts";
+import {
+  buildRuntimeInstructions,
+  withBotInstructions,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import budget from "./agentContextBudget.json" with { type: "json" };
 import {
   PERSONAL_BOT_APP_RULES,
@@ -53,7 +56,7 @@ it("bot context matches the committed budget", () => {
   // Measurement hook for before/after reports: writes what the model sees, nothing else.
   const dump = process.env.HBOTS_AGENT_CONTEXT_DUMP;
   if (dump !== undefined && dump.length > 0) {
-    writeFileSync(
+    NodeFS.writeFileSync(
       dump,
       JSON.stringify(
         {

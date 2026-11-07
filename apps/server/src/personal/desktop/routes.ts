@@ -28,7 +28,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
+import { serveUntilSessionRevoked } from "../auth/sessionRevocationClose.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import type { LiveViewer } from "./DesktopLiveView.ts";
 import {

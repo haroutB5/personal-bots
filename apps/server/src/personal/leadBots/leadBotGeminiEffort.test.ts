@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { buildAntigravityModelsFromSession } from "../../provider/Layers/AntigravityProvider.ts";
+import { buildAntigravityModelsFromSession } from "../../provider/AntigravityProvider.ts";
 import { resolveLeadModelSelection } from "./leadBotModel.ts";
 
 describe("Gemini effort in create_bot and update_bot model resolution", () => {
@@ -28,6 +28,7 @@ describe("Gemini effort in create_bot and update_bot model resolution", () => {
         {
           id: "thinking_level",
           name: "Thinking Level",
+          category: "thought_level",
           type: "select",
           currentValue: "high",
           options: ["low", "medium", "high"].map((value) => ({ value, name: value })),

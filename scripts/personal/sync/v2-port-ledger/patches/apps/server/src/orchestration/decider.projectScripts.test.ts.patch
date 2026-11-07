@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/decider.projectScripts.test.ts b/apps/server/src/orchestration/decider.projectScripts.test.ts
+index 14169d067053153c73b4b0e48416d1a0cca4673b..b487d0d68e4b487d3241387bda15327d4e4d23f1 100644
+--- a/apps/server/src/orchestration/decider.projectScripts.test.ts
++++ b/apps/server/src/orchestration/decider.projectScripts.test.ts
+@@ -11,7 +11,7 @@ import {
+ import { createModelSelection } from "@t3tools/shared/model";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ 
+ import { decideOrchestrationCommand } from "./decider.ts";
+ import { createEmptyReadModel, projectEvent } from "./projector.ts";

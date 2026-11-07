@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/state/projectClones.ts b/apps/web/src/state/projectClones.ts
+index 7cc95c8ba00e047974f0b52d73e46a59727a42de..62be642631121badd0daf9b9fe00a37f78cd884a 100644
+--- a/apps/web/src/state/projectClones.ts
++++ b/apps/web/src/state/projectClones.ts
+@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
+ import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
+ import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import { environmentServerConfigsAtom } from "./server";
+ import { sourceControlEnvironment } from "./sourceControl";

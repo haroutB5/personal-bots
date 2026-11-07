@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/onboarding/useProjectScans.ts b/apps/web/src/onboarding/useProjectScans.ts
+index fc039293048c8edd0706de0fa00b09a64386943c..cbb3c4f03d6724f5951e0dd0e727ae563f95ec0d 100644
+--- a/apps/web/src/onboarding/useProjectScans.ts
++++ b/apps/web/src/onboarding/useProjectScans.ts
+@@ -1,7 +1,7 @@
+ import { RegistryContext, useAtomValue } from "@effect/atom-react";
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useContext, useMemo } from "react";
+ 
+ import { agentSessionScan } from "../state/agentSessions";

@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/provider/testUtils/providerRegistryMock.ts b/apps/server/src/provider/testUtils/providerRegistryMock.ts
+index b2195b1d890c1f95965bdf14d38965e856d5282e..b709c0e7608c5117ed91442826fb4c0eaae45ad8 100644
+--- a/apps/server/src/provider/testUtils/providerRegistryMock.ts
++++ b/apps/server/src/provider/testUtils/providerRegistryMock.ts
+@@ -12,6 +12,7 @@ const makeProviderRegistryMock = (
+   refresh: () => Effect.succeed(providers),
+   refreshInstance: () => Effect.succeed(providers),
+   refreshWorkspaceSnapshot: () => Effect.succeed(providers),
++  invalidateUsage: () => Effect.void,
+   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
+   setProviderMaintenanceActionState: () => Effect.succeed(providers),

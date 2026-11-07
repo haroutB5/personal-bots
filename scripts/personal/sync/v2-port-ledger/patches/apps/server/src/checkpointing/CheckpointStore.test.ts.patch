@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/checkpointing/CheckpointStore.test.ts b/apps/server/src/checkpointing/CheckpointStore.test.ts
+index 5a9b5cc5d6b0bab77672220a25deda32592f5916..ea4e54ec179fc846e217dd7d061f020b5d3ec7c6 100644
+--- a/apps/server/src/checkpointing/CheckpointStore.test.ts
++++ b/apps/server/src/checkpointing/CheckpointStore.test.ts
+@@ -1,7 +1,7 @@
+ // @effect-diagnostics nodeBuiltinImport:off
+ import * as NodePath from "node:path";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import { ThreadId, type VcsError } from "@t3tools/contracts";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";

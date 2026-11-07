@@ -1,0 +1,22 @@
+diff --git a/scripts/build-desktop-artifact.test.ts b/scripts/build-desktop-artifact.test.ts
+index 98ba0aaefbc8dc01627cacc2d7b1ebf5e9bce743..52e0837c4971ca5bd1fc2d0ecd85abf32288fd6f 100644
+--- a/scripts/build-desktop-artifact.test.ts
++++ b/scripts/build-desktop-artifact.test.ts
+@@ -2,7 +2,7 @@
+ import * as NodeCrypto from "node:crypto";
+ import * as NodePath from "node:path";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as ConfigProvider from "effect/ConfigProvider";
+ import * as FileSystem from "effect/FileSystem";
+@@ -12,7 +12,7 @@ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import {
+   BundleNotSelfContainedError,

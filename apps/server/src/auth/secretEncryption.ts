@@ -19,7 +19,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /** "T3SEC1" â€” distinguishes a sealed file from a legacy plaintext one. */
 const ENVELOPE_MAGIC = Uint8Array.from([0x54, 0x33, 0x53, 0x45, 0x43, 0x31]);
@@ -65,7 +65,7 @@ export const openSecret = (key: Uint8Array, name: string, envelope: Uint8Array):
 export type MachineMaterialSource = "win-machine-guid" | "machine-id" | "host";
 
 const windowsMachineGuid = (): string | null => {
-  if (HostProcessPlatform.defaultValue() !== "win32") return null;
+  if (HostProcess.Platform.defaultValue() !== "win32") return null;
   try {
     const output = NodeChildProcess.execFileSync(
       "reg",
@@ -94,7 +94,7 @@ const linuxMachineId = (): string | null => {
 const hostMaterial = (): string =>
   [
     NodeOS.hostname(),
-    HostProcessPlatform.defaultValue(),
+    HostProcess.Platform.defaultValue(),
     NodeOS.homedir(),
     NodeOS.userInfo().username,
   ].join("|");

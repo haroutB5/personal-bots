@@ -1,0 +1,144 @@
+diff --git a/apps/server/src/provider/antigravityAuthSupport.ts b/apps/server/src/provider/antigravityAuthSupport.ts
+index 6eaa4ec7a49707ca58b1c3b3d6ba392d89f4a5ba..e8cf8edeb9c400b122aeed0b6bdb12ec969748d2 100644
+--- a/apps/server/src/provider/antigravityAuthSupport.ts
++++ b/apps/server/src/provider/antigravityAuthSupport.ts
+@@ -4,20 +4,27 @@ import * as NodeFSP from "node:fs/promises";
+ import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
+-import * as Crypto from "effect/Crypto";
++import * as Clock from "effect/Clock";
++import * as Crypto from "@t3tools/shared/crypto";
++import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Hex from "effect/encoding/Hex";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import type * as PlatformError from "effect/PlatformError";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import * as AcpErrors from "effect-acp/errors";
+ 
+ import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+ import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
++import {
++  processStartTime,
++  terminateDescendants,
++  type TerminatedDescendants,
++} from "./processTree.ts";
+ import {
+   antigravityUserSkillDirectories,
+   resolveAntigravityUserHome,
+@@ -202,9 +209,7 @@ export const resolveAntigravityInstanceDirectories = Effect.fn(
+ )(function* (stateDir: string, instanceId: ProviderInstanceId) {
+   const crypto = yield* Crypto.Crypto;
+   const path = yield* Path.Path;
+-  const key = Encoding.encodeHex(
+-    yield* crypto.digest("SHA-256", new TextEncoder().encode(instanceId)),
+-  );
++  const key = Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(instanceId)));
+   return {
+     profile: path.join(stateDir, "providers", "antigravity", key),
+     runtimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)),
+@@ -279,6 +284,19 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
+         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
+         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+       );
++      // A link to a missing directory makes the agent fail `session/new` with
++      // "failed to create workspace folder ...: Cannot create a file when that
++      // file already exists". Link only what the user already has, and never
++      // create anything under their `~/.gemini`. A stale link is removed on
++      // its own (never followed, its target never touched).
++      const targetIsDirectory = yield* fs.stat(target).pipe(
++        Effect.map((info) => info.type === "Directory"),
++        Effect.orElseSucceed(() => false),
++      );
++      if (!targetIsDirectory) {
++        if (existing !== undefined) yield* fs.remove(link);
++        return;
++      }
+       if (existing === target) return;
+       if (existing !== undefined) {
+         yield* fs.remove(link);
+@@ -430,6 +448,76 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
+   return profile;
+ });
+ 
++export interface AntigravityLauncherTree {
++  /** Pass to the runtime as `onProcessStarted`; records the launcher PID. */
++  readonly onProcessStarted: (pid: number) => Effect.Effect<void>;
++  /** Ends every descendant of the recorded launcher. A no-op until a PID is recorded. */
++  readonly terminate: Effect.Effect<void>;
++}
++
++/**
++ * The agent is a PyInstaller bootloader that starts a child. Stopping only the
++ * launcher leaves that child running on Windows, where it holds files in the
++ * runtime temp directory. Register `terminate` as a finalizer right after the
++ * runtime is built so it runs before the runtime stops the launcher, while the
++ * parent links can still be walked (the same approach as the installer's
++ * validation). `end` is injectable for tests.
++ */
++export function makeAntigravityLauncherTree(
++  onProcessStarted?: (pid: number) => Effect.Effect<void>,
++  end: (
++    pid: number,
++    expectedCreatedAtMs: number,
++  ) => Effect.Effect<TerminatedDescendants> = terminateDescendants,
++  readStartTime: (pid: number) => Effect.Effect<number | null> = processStartTime,
++): AntigravityLauncherTree {
++  let launcherPid: number | undefined;
++  let launcherStartedAt: Deferred.Deferred<number | null> | undefined;
++  return {
++    onProcessStarted: (pid) =>
++      Effect.gen(function* () {
++        const reportedAt = yield* Clock.currentTimeMillis;
++        const startedAt = yield* Deferred.make<number | null>();
++        launcherPid = pid;
++        launcherStartedAt = startedAt;
++        // The process snapshot takes about 0.4 s and the runtime waits for this
++        // callback, so read it in the background and await it only to stop.
++        yield* readStartTime(pid).pipe(
++          Effect.map((createdAtMs) => acceptLauncherStartTime(createdAtMs, reportedAt)),
++          Effect.catchCause(() => Effect.succeed(null)),
++          Effect.flatMap((createdAtMs) => Deferred.succeed(startedAt, createdAtMs)),
++          Effect.forkDetach,
++        );
++        yield* onProcessStarted?.(pid) ?? Effect.void;
++      }),
++    terminate: Effect.gen(function* () {
++      if (launcherPid === undefined || launcherStartedAt === undefined) return;
++      const createdAtMs = yield* Deferred.await(launcherStartedAt);
++      if (createdAtMs === null) return;
++      // `end` compares this time with the same snapshot it walks, so a reused
++      // PID is skipped without a second process snapshot.
++      yield* end(launcherPid, createdAtMs);
++    }),
++  };
++}
++
++/** A launcher is created just before the runtime reports its PID, never after. */
++const launcherStartEarlyToleranceMs = 10_000;
++const launcherStartLateToleranceMs = 2_000;
++
++/**
++ * The start time is read after the spawn. If the launcher already exited and
++ * its PID was reused, that snapshot would record the new owner, so a time that
++ * does not fit the spawn is dropped (and nothing is killed).
++ */
++function acceptLauncherStartTime(createdAtMs: number | null, reportedAt: number): number | null {
++  if (createdAtMs === null) return null;
++  return createdAtMs >= reportedAt - launcherStartEarlyToleranceMs &&
++    createdAtMs <= reportedAt + launcherStartLateToleranceMs
++    ? createdAtMs
++    : null;
++}
++
+ /** Applies the same subscription-only launch settings to every ACP process. */
+ export function buildAntigravityAcpSpawnInput(input: {
+   readonly installation: {

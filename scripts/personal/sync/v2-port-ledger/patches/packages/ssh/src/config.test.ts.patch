@@ -1,0 +1,11 @@
+diff --git a/packages/ssh/src/config.test.ts b/packages/ssh/src/config.test.ts
+index 4fd3b7636d3f67c2ac238747f2e8234f6e5d742d..12c2a6904d3e4fa62945d65b2db0d891b23a8b1c 100644
+--- a/packages/ssh/src/config.test.ts
++++ b/packages/ssh/src/config.test.ts
+@@ -1,5 +1,5 @@
+ import * as NodePath from "@effect/platform-node/NodePath";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

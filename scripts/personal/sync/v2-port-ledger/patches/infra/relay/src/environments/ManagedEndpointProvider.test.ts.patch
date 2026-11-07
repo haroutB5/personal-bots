@@ -1,0 +1,11 @@
+diff --git a/infra/relay/src/environments/ManagedEndpointProvider.test.ts b/infra/relay/src/environments/ManagedEndpointProvider.test.ts
+index d7cb7d67f9dd6af3758eecbf551bd2b2a97ee048..18e8461f874dab3c1eca1fd2e6df19c6f444f0b1 100644
+--- a/infra/relay/src/environments/ManagedEndpointProvider.test.ts
++++ b/infra/relay/src/environments/ManagedEndpointProvider.test.ts
+@@ -1,5 +1,5 @@
+ import * as NodeCrypto from "node:crypto";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ 
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Alchemy from "alchemy";

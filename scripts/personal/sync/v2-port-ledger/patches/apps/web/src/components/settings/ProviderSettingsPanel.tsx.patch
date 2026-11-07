@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/settings/ProviderSettingsPanel.tsx b/apps/web/src/components/settings/ProviderSettingsPanel.tsx
+index 6b62b342c41b486648cbd24c4315e9077d33ec30..a4b1450c7e4946d84d41592d55f149ff5a954c28 100644
+--- a/apps/web/src/components/settings/ProviderSettingsPanel.tsx
++++ b/apps/web/src/components/settings/ProviderSettingsPanel.tsx
+@@ -659,7 +659,7 @@ export function EnvironmentProviderSettings({
+     void (async () => {
+       const result = await refreshServerProviders({
+         environmentId,
+-        input: { refreshModels: true },
++        input: { refreshModels: true, refreshLatestVersion: true },
+       });
+       refreshingRef.current = false;
+       setIsRefreshingProviders(false);

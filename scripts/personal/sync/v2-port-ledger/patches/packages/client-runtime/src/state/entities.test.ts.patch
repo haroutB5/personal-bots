@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/entities.test.ts b/packages/client-runtime/src/state/entities.test.ts
+index 2efe1076dc4bfc916d92743736f41e3a959d9939..95169cd9b7d227b963b28b23187745fd81a3c8fb 100644
+--- a/packages/client-runtime/src/state/entities.test.ts
++++ b/packages/client-runtime/src/state/entities.test.ts
+@@ -8,7 +8,7 @@ import {
+ } from "@t3tools/contracts";
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+ 
+ import { PrimaryConnectionTarget } from "../connection/model.ts";
+ import {

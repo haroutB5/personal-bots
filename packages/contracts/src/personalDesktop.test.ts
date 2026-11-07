@@ -131,13 +131,13 @@ describe("personal desktop live view contracts", () => {
       { _tag: "InputRefused", detail: "PC is locked; it can't be unlocked remotely." },
     ] as const) {
       const text = Schema.encodeSync(codec)(message);
-      expect(Schema.decodeUnknownSync(codec)(text)).toEqual(message);
+      expect(Schema.decodeSync(codec)(text)).toEqual(message);
     }
   });
 
   it("round-trips the view state message", () => {
     const codec = Schema.fromJsonString(PersonalDesktopViewMessage);
     const text = Schema.encodeSync(codec)({ _tag: "ViewState", state: "locked" });
-    expect(Schema.decodeUnknownSync(codec)(text)).toEqual({ _tag: "ViewState", state: "locked" });
+    expect(Schema.decodeSync(codec)(text)).toEqual({ _tag: "ViewState", state: "locked" });
   });
 });

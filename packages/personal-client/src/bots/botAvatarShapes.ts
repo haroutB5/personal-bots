@@ -162,8 +162,6 @@ export const BOT_AVATAR_SWATCHES: readonly string[] = [
  * The darkest surface an avatar is painted on in the dark appearance:
  * `--personal-surface` (#1a1a19), the card behind the pinned box, the avatar
  * picker and every sheet. Duplicated from `personal.css` because the decision
- * below is made in JS; `botAvatarShapes.test.ts` pins the pair so the two
- * cannot drift apart silently.
  */
 const DARK_CARD_SURFACE = "#1a1a19";
 
@@ -196,32 +194,12 @@ function contrastRatio(a: string, b: string): number {
 /**
  * Whether a bot's stored colour needs the contrast halo (`--personal-avatar-halo`)
  * to be a visible shape on the dark surface.
- *
  * Bot colours are user data and are never rewritten for the theme, so the fix
- * for a near-black bot on a near-black card is an outline. But the outline is
- * only drawn for the colours that need it: it has to be strong enough (3.5:1)
- * to read against #171717's silhouette, and at that strength every saturated
- * avatar in the chats list would look deliberately bordered.
- *
- * The bar is WCAG 2.x 1.4.11 — 3:1 for a meaningful non-text graphic — measured
- * against the *lightest* surface the avatar sits on, which is the worst case.
- * Of the twelve swatches only `#171717` (1.03:1) and `#8A5A3B` (2.99:1) fail;
- * the slate `#64748B` clears it at 3.66:1. Returns false in the light
- * appearance's terms too — the caller does not branch on appearance, because
- * `--personal-avatar-halo` is `transparent` in light, so the extra path paints
- * nothing there.
  */
 /**
  * The whole avatar geometry as plain JSON-safe data.
- *
  * The service worker draws the sending bot's avatar into the push notification
  * icon, and a service worker cannot import from `src/`: it is a standalone
- * script served from `public/`. Rather than copy the silhouettes into it - a
- * second set of paths that would drift the first time a shape is retouched -
- * this object is serialised to `public/bot-avatar-shapes.json`, which the
- * worker fetches. `botAvatarGeometryAsset.test.ts` fails if the checked-in
- * file and this module disagree, so the drift cannot survive a test run;
- * regenerate with `node apps/web/scripts/generate-bot-avatar-shapes.ts`.
  */
 export interface BotAvatarGeometry {
   readonly viewBoxSize: number;

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/vcs/VcsProvisioningService.test.ts b/apps/server/src/vcs/VcsProvisioningService.test.ts
+index 0a28f9c9b2cee9b24b8be2c8fee0dc821cd82732..54e13f3dc6ef7c9203b935192ff5330e866070fa 100644
+--- a/apps/server/src/vcs/VcsProvisioningService.test.ts
++++ b/apps/server/src/vcs/VcsProvisioningService.test.ts
+@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import * as VcsDriver from "./VcsDriver.ts";
+ import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";

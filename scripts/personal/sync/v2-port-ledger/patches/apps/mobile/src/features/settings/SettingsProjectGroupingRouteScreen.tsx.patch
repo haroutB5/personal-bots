@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/settings/SettingsProjectGroupingRouteScreen.tsx b/apps/mobile/src/features/settings/SettingsProjectGroupingRouteScreen.tsx
+index fb17ed64edc9416c8b635de668f05178b43dc939..745c87f1e644f5f19c3d5b0b45a52e36d95e9f21 100644
+--- a/apps/mobile/src/features/settings/SettingsProjectGroupingRouteScreen.tsx
++++ b/apps/mobile/src/features/settings/SettingsProjectGroupingRouteScreen.tsx
+@@ -1,7 +1,7 @@
+ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+ import { useAtomSet, useAtomValue } from "@effect/atom-react";
+ import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { Pressable, View } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";
+ 

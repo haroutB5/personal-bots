@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 import * as NodeTimersPromises from "node:timers/promises";
 
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   PersonalBotId,
@@ -21,6 +21,7 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -36,7 +37,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
@@ -250,13 +251,13 @@ class FakePage implements BrowserPage {
   /** The page script calling confirm()/alert(): parks the page until answered. */
   openDialog(dialog: PageDialog) {
     this.dialog = dialog;
-    for (const listener of [...this.dialogListeners]) listener(dialog);
+    for (const listener of this.dialogListeners) listener(dialog);
   }
   async answerDialog(accept: boolean, promptText?: string) {
     if (this.dialog === null) return false;
     this.dialogAnswers.push({ accept, ...(promptText === undefined ? {} : { promptText }) });
     this.dialog = null;
-    for (const listener of [...this.dialogListeners]) listener(null);
+    for (const listener of this.dialogListeners) listener(null);
     return true;
   }
   unstickCalls = 0;
@@ -453,11 +454,17 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     Layer.provideMerge(PersonalLoginRepository.layer),
     Layer.provideMerge(taskServiceLayer(taskHarness)),
     Layer.provideMerge(PreviewManager.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), baseDir ?? { prefix: "t3-personal-browser-" }),
     ),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(
+      Layer.succeed(
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size).fill(7)),
+      ),
+    ),
   );
 
 const makeLayer = (

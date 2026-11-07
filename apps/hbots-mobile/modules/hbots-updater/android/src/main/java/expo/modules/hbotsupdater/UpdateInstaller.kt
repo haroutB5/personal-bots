@@ -33,12 +33,13 @@ object UpdateInstaller {
     }
   }
 
+  fun installPermissionIntent(context: Context): Intent =
+    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+
   fun openInstallPermission(context: Context) {
     val uri = Uri.parse("package:${context.packageName}")
     val opened = runCatching {
-      context.startActivity(
-        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-      )
+      context.startActivity(installPermissionIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }.isSuccess
     if (!opened) {
       runCatching {

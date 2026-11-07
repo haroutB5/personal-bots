@@ -1,0 +1,25 @@
+diff --git a/apps/desktop/src/backend/DesktopBackendConfiguration.ts b/apps/desktop/src/backend/DesktopBackendConfiguration.ts
+index c2012299802d7c7993d52206b67e1ed82bed9bb7..e8d5eb272d049bf3562903c2bb79f7deaa81bf4a 100644
+--- a/apps/desktop/src/backend/DesktopBackendConfiguration.ts
++++ b/apps/desktop/src/backend/DesktopBackendConfiguration.ts
+@@ -2,9 +2,9 @@ import * as NodeOS from "node:os";
+ 
+ import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Hex from "effect/encoding/Hex";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+@@ -842,7 +842,7 @@ export const make = Effect.gen(function* () {
+       onNone: () =>
+         crypto.randomBytes(24).pipe(
+           Effect.map((bytes) => {
+-            const token = Encoding.encodeHex(bytes);
++            const token = Hex.encode(bytes);
+             return [token, Option.some(token)] as const;
+           }),
+         ),

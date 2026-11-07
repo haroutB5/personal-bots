@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts b/apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts
+index 2287dd10af45566ed62d28a2204c2a32e26feccf..24592f9131428284c0a1035600415f3c3b179345 100644
+--- a/apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts
++++ b/apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts
+@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { PersistenceDecodeError } from "../Errors.ts";
+ import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";

@@ -1,12 +1,7 @@
+import { useNavigation, type NavigationProp } from "@react-navigation/native";
 import type { PersonalBot } from "@t3tools/contracts";
-import {
-  PersonalBotId,
-  PersonalGroupId,
-  ThreadId,
-  safeDefaultBotModelSlug,
-} from "@t3tools/contracts";
-import { resolveBotProvider } from "@hbots/personal-client/bots/botSummaries";
-import { useEffect, useMemo, useState } from "react";
+import { PersonalBotId, PersonalGroupId, ThreadId } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 import {
   Keyboard,
   Modal,
@@ -20,11 +15,10 @@ import {
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { BotAvatar } from "./BotAvatar";
+import type { RootStackParamList } from "./AppShell";
 import { tokens } from "./tokens";
 
-type Mode = "menu" | "bot" | "group" | "team";
-
-const SWATCHES = ["#1A73E8", "#F26A1B", "#F0457E", "#E5323B", "#34A853", "#7D3AED"] as const;
+type Mode = "menu" | "group";
 
 function Field({
   value,
@@ -64,7 +58,7 @@ function BotPicker({
   readonly onToggle: (botId: string) => void;
 }) {
   if (bots.length === 0) {
-    return <Text style={styles.note}>Create a bot first, then add it to this team.</Text>;
+    return <Text style={styles.note}>Create a bot first, then add it to this group.</Text>;
   }
   return (
     <View style={styles.picker}>
@@ -94,8 +88,8 @@ function BotPicker({
 }
 
 /**
- * The "+" menu and the three creation forms it opens: New bot, New group and
- * New team. The same server calls the web forms make, with the same defaults.
+ * The "+" menu: New bot opens the bot form, New group is the short form below,
+ * and New team opens the team screen's full form (leader and first members).
  */
 export function NewItemsSheet({
   native,
@@ -124,39 +118,20 @@ export function NewItemsSheet({
       hidden.remove();
     };
   }, []);
-  const createBot = native.client.useAtomCommand(native.bots.personalBotCreate, {
-    reportFailure: false,
-  });
   const createGroup = native.client.useAtomCommand(native.bots.personalGroupsCreate, {
     reportFailure: false,
   });
-  const saveProfile = native.client.useAtomCommand(native.bots.personalProfileSet, {
-    reportFailure: false,
-  });
-  const updateBot = native.client.useAtomCommand(native.bots.personalBotUpdate, {
-    reportFailure: false,
-  });
-  const providers = native.useProviders();
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
 
   useEffect(() => {
     if (!visible) return;
+    // eslint-disable-next-line react/set-state-in-effect -- opening the sheet resets its step
     setMode("menu");
     setName("");
     setMemberIds(new Set());
     setError(null);
     setBusy(false);
   }, [visible]);
-
-  const provider = useMemo(
-    () =>
-      providers.find(
-        (candidate) =>
-          candidate.driver === "claudeAgent" &&
-          resolveBotProvider(candidate.instanceId, providers).available,
-      ) ??
-      providers.find((candidate) => resolveBotProvider(candidate.instanceId, providers).available),
-    [providers],
-  );
 
   const toggle = (botId: string) => {
     setMemberIds((current) => {
@@ -178,82 +153,28 @@ export function NewItemsSheet({
   const create = async () => {
     const trimmed = name.trim();
     if (trimmed.length === 0) {
-      setError(
-        mode === "group"
-          ? "Give the group a name."
-          : mode === "team"
-            ? "Give the team a name."
-            : "Give your bot a name.",
-      );
+      setError("Give the group a name.");
       return;
     }
-    if (mode === "bot" && provider === undefined) {
-      setError("No provider is ready on your computer yet.");
-      return;
-    }
-    if (
-      mode === "bot" &&
-      bots.some((bot) => bot.name.trim().toLowerCase() === trimmed.toLowerCase())
-    ) {
-      setError(`You already have a bot called ${trimmed}.`);
+    if (memberIds.size === 0) {
+      setError("Pick at least one bot.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      if (mode === "bot" && provider !== undefined) {
-        const result = await createBot({
-          environmentId: native.environmentId,
-          input: {
-            botId: PersonalBotId.make(native.client.ports.ids.randomUUID()),
-            name: trimmed,
-            description: "",
-            instructions: "",
-            avatarShape: "blob",
-            avatarColor: SWATCHES[bots.length % SWATCHES.length]!,
-            modelSelection: {
-              instanceId: provider.instanceId,
-              model: safeDefaultBotModelSlug(provider),
-            },
-          },
-        });
-        if (result._tag !== "Success") {
-          setError("Couldn't create the bot. Try again.");
-          return;
-        }
-      } else if (mode === "group") {
-        if (memberIds.size === 0) {
-          setError("Pick at least one bot.");
-          return;
-        }
-        const result = await createGroup({
-          environmentId: native.environmentId,
-          input: {
-            groupId: PersonalGroupId.make(native.client.ports.ids.randomUUID()),
-            threadId: ThreadId.make(native.client.ports.ids.randomUUID()),
-            name: trimmed,
-            botIds: [...memberIds].map((id) => PersonalBotId.make(id)),
-          },
-        });
-        if (result._tag !== "Success") {
-          setError("Couldn't create the group. Try again.");
-          return;
-        }
-      } else if (mode === "team") {
-        const result = await saveProfile({
-          environmentId: native.environmentId,
-          input: { teamChange: { operation: "create", name: trimmed } },
-        });
-        if (result._tag !== "Success") {
-          setError("Couldn't create the team. Try again.");
-          return;
-        }
-        for (const botId of memberIds) {
-          await updateBot({
-            environmentId: native.environmentId,
-            input: { botId: PersonalBotId.make(botId), team: trimmed },
-          });
-        }
+      const result = await createGroup({
+        environmentId: native.environmentId,
+        input: {
+          groupId: PersonalGroupId.make(native.client.ports.ids.randomUUID()),
+          threadId: ThreadId.make(native.client.ports.ids.randomUUID()),
+          name: trimmed,
+          botIds: [...memberIds].map((id) => PersonalBotId.make(id)),
+        },
+      });
+      if (result._tag !== "Success") {
+        setError("Couldn't create the group. Try again.");
+        return;
       }
       onClose();
     } finally {
@@ -261,14 +182,7 @@ export function NewItemsSheet({
     }
   };
 
-  const title =
-    mode === "bot"
-      ? "New bot"
-      : mode === "group"
-        ? "New group"
-        : mode === "team"
-          ? "New team"
-          : "New";
+  const title = mode === "group" ? "New group" : "New";
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={closeOrBack}>
@@ -305,7 +219,10 @@ export function NewItemsSheet({
           {mode === "menu" ? (
             <View style={styles.menu}>
               <Pressable
-                onPress={() => setMode("bot")}
+                onPress={() => {
+                  onClose();
+                  navigation.navigate("BotNew");
+                }}
                 accessibilityRole="button"
                 style={styles.menuRow}
               >
@@ -319,7 +236,10 @@ export function NewItemsSheet({
                 <Text style={styles.menuText}>New group</Text>
               </Pressable>
               <Pressable
-                onPress={() => setMode("team")}
+                onPress={() => {
+                  onClose();
+                  navigation.navigate("TeamNew");
+                }}
                 accessibilityRole="button"
                 style={styles.menuRow}
               >
@@ -336,20 +256,12 @@ export function NewItemsSheet({
               <Field
                 value={name}
                 onChange={setName}
-                placeholder={
-                  mode === "bot" ? "Bot name" : mode === "group" ? "Group name" : "Team name"
-                }
+                placeholder="Group name"
                 autoFocus
                 maxLength={60}
               />
-              {mode === "group" || mode === "team" ? (
-                <>
-                  <Text style={styles.label}>
-                    {mode === "group" ? "Members" : "First members (optional)"}
-                  </Text>
-                  <BotPicker bots={bots} selected={memberIds} onToggle={toggle} />
-                </>
-              ) : null}
+              <Text style={styles.label}>Members</Text>
+              <BotPicker bots={bots} selected={memberIds} onToggle={toggle} />
               {error !== null ? (
                 <Text style={styles.error} accessibilityLiveRegion="polite">
                   {error}
@@ -362,15 +274,7 @@ export function NewItemsSheet({
                 accessibilityState={{ busy, disabled: busy }}
                 style={[styles.primary, busy ? styles.disabled : null]}
               >
-                <Text style={styles.primaryText}>
-                  {busy
-                    ? "Creating…"
-                    : mode === "bot"
-                      ? "Create bot"
-                      : mode === "group"
-                        ? "Create group"
-                        : "Create team"}
-                </Text>
+                <Text style={styles.primaryText}>{busy ? "Creating…" : "Create group"}</Text>
               </Pressable>
             </ScrollView>
           )}

@@ -213,6 +213,7 @@ object UpdateEngine {
       UpdateEffect.PostUpdated ->
         UpdateNotifier.postUpdated(app, targetOf(before.state)?.version ?: installedVersionName())
       UpdateEffect.PostUpdateReady -> UpdateNotifier.postConfirmation(app, pendingTapIntent)
+      is UpdateEffect.PostNeedsPermission -> UpdateNotifier.postNeedsPermission(app, effect.version)
       UpdateEffect.ClearNotification -> UpdateNotifier.clear(app)
     }
   }

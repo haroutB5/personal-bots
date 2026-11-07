@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts b/apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts
+index dde5979c0f56d364663bf07fbd47a27b6271eff2..e08d540b50d05762ce88bcc0caed57d4fb93c428 100644
+--- a/apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts
++++ b/apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts
+@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
+ import * as NodeURL from "node:url";
+ import * as NodeFS from "node:fs";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";

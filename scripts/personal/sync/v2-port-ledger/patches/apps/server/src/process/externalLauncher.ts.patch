@@ -1,0 +1,32 @@
+diff --git a/apps/server/src/process/externalLauncher.ts b/apps/server/src/process/externalLauncher.ts
+index ab287e4d78ee4ec62e5624b4686a575ed62856e4..8c2cb2b742d8bedb75aa969c33c081a22102e04b 100644
+--- a/apps/server/src/process/externalLauncher.ts
++++ b/apps/server/src/process/externalLauncher.ts
+@@ -29,15 +29,15 @@ import * as Clock from "effect/Clock";
+ import * as Config from "effect/Config";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Ref from "effect/Ref";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ // ==============================
+ // Definitions
+@@ -172,7 +172,7 @@ function encodeUtf16LeBase64(input: string): string {
+     bytes[index * 2] = code & 0xff;
+     bytes[index * 2 + 1] = code >>> 8;
+   }
+-  return Encoding.encodeBase64(bytes);
++  return Base64.encode(bytes);
+ }
+ 
+ function escapePowerShellStringLiteral(input: string): string {

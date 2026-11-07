@@ -1,0 +1,11 @@
+diff --git a/apps/server/src/textGeneration/OpenCodeTextGeneration.test.ts b/apps/server/src/textGeneration/OpenCodeTextGeneration.test.ts
+index 688bf4bca35276ea2b53f55289d38ce5ea86e4fc..3a5e1947fb550da70e20442c400bb984115d971e 100644
+--- a/apps/server/src/textGeneration/OpenCodeTextGeneration.test.ts
++++ b/apps/server/src/textGeneration/OpenCodeTextGeneration.test.ts
+@@ -1,5 +1,5 @@
+ import { OpenCodeSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";

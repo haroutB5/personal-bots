@@ -1,0 +1,10 @@
+diff --git a/scripts/resolve-nightly-release.test.ts b/scripts/resolve-nightly-release.test.ts
+index 9eab67b289564b6e701e07e8701ef7fb8f912e01..2b8ac74c9a3d96e3d09bcb59b86c7cf1cd7d316a 100644
+--- a/scripts/resolve-nightly-release.test.ts
++++ b/scripts/resolve-nightly-release.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Config from "effect/Config";
+ import * as ConfigProvider from "effect/ConfigProvider";

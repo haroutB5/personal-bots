@@ -2,20 +2,18 @@
 // Provider-boundary scenarios for delegated tasks, at the point where the provider's state reaches the task
 // service: the projected session and messages. A scripted fake provider (the `codex`, `claude` and `provider`
 // helpers below) writes them in the shapes and orders the adapters produce, including duplicates, late and
-// out-of-order events, a crash and a restart. The same stand-ins as PersonalTaskService.test.ts: commands are
-// recorded, the session and messages are set by the test, no timers (TestClock). taskProviderChain.test.ts runs
-// the same kind of scenarios through the real ingestion and engine.
-import * as NodeServices from "@t3tools/shared/nodeServices";
+// out-of-order events, a crash and a restart. The same stand-ins as PersonalTaskService.test.ts: PersonalEngine
+// calls are recorded, the session and messages are set by the test, no timers (TestClock).
+// taskProviderChain.test.ts runs the same kind of scenarios through the real v2 ingestion and orchestrator.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  CommandId,
-  CorrelationId,
-  EventId,
   MessageId,
   PersonalBotId,
+  ProjectId,
   ProviderInstanceId,
   TurnId,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
+  type OrchestrationMessageContext,
   type OrchestrationSession,
   type PersonalTask,
   ThreadId,
@@ -27,23 +25,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionThreadMessageRepository,
-  type ProjectionThreadMessage,
-  type ProjectionThreadMessageRepositoryShape,
-} from "../../persistence/Services/ProjectionThreadMessages.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import { PersonalProjectionRelationsV2Live } from "../engine/PersonalProjectionRelationsV2Live.ts";
+import { personalStatusOf } from "../engine/PersonalThreadShellV2.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -51,34 +42,356 @@ import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
-import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
-import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 
 // --- stand-ins for the orchestration side (same as PersonalTaskService.test.ts) -------
 
+interface HarnessMessage {
+  readonly messageId: MessageId;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | null;
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly context?: OrchestrationMessageContext;
+  readonly isStreaming: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+type EngineCall =
+  | { readonly type: "createProject"; readonly projectId: ProjectId }
+  | {
+      readonly type: "createThread";
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly modelSelection: PersonalEngine.CreateThreadInput["modelSelection"];
+    }
+  | {
+      readonly type: "send";
+      readonly threadId: ThreadId;
+      readonly message: {
+        readonly messageId: MessageId;
+        readonly text: string;
+        readonly context?: OrchestrationMessageContext;
+      };
+      readonly mode: PersonalEngine.PersonalSendMode;
+      readonly modelSelection?: PersonalEngine.PersonalSendInput["modelSelection"];
+    }
+  | { readonly type: "interrupt"; readonly threadId: ThreadId; readonly turnId?: TurnId }
+  | { readonly type: "stop"; readonly threadId: ThreadId; readonly terminateProcesses: boolean }
+  | { readonly type: "archive"; readonly threadId: ThreadId }
+  | { readonly type: "deleteThread"; readonly threadId: ThreadId }
+  | {
+      readonly type: "updateMeta";
+      readonly threadId: ThreadId;
+      readonly title?: string;
+      readonly modelSelection?: unknown;
+    }
+  | { readonly type: "rename"; readonly threadId: ThreadId; readonly title: string }
+  | {
+      readonly type: "notice";
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly text: string;
+      readonly context?: OrchestrationMessageContext;
+    }
+  | { readonly type: "postUserMessage"; readonly threadId: ThreadId; readonly text: string };
+
 interface Harness {
-  readonly dispatched: Array<OrchestrationCommand>;
+  readonly calls: Array<EngineCall>;
   readonly sessions: Map<string, OrchestrationSession>;
-  readonly messages: Map<string, Array<ProjectionThreadMessage>>;
-  readonly statuses: Map<string, PersonalThreadStatus>;
+  readonly messages: Map<string, Array<HarnessMessage>>;
+  readonly titles: Map<string, string>;
+  readonly threads: Map<string, { readonly title: string; readonly createdAt: string }>;
+  readonly projects: Map<string, { readonly id: ProjectId; readonly workspaceRoot: string }>;
+  readonly statuses: Map<string, import("../engine/PersonalEngine.ts").PersonalThreadStatus>;
   sequence: number;
 }
 
 const makeHarness = (): Harness => ({
-  dispatched: [],
+  calls: [],
   sessions: new Map(),
   messages: new Map(),
+  titles: new Map(),
+  threads: new Map(),
+  projects: new Map(),
   statuses: new Map(),
   sequence: 0,
 });
 
-const optionOf = <A>(value: A | undefined): Option.Option<A> =>
-  value === undefined ? Option.none() : Option.some(value);
+const TEST_PROJECT_ID = ProjectId.make("personal-test-project");
 
-const compareNewestFirst = (
-  left: { readonly createdAt: string; readonly messageId: string },
-  right: { readonly createdAt: string; readonly messageId: string },
-) => right.createdAt.localeCompare(left.createdAt) || right.messageId.localeCompare(left.messageId);
+const toSessionView = (session: OrchestrationSession): PersonalEngine.PersonalSessionView => ({
+  threadId: session.threadId,
+  status: personalStatusOf(session.status),
+  activeTurnId: session.activeTurnId,
+  lastError: session.lastError,
+  providerInstanceId: session.providerInstanceId ?? null,
+  providerName: session.providerName,
+  providerRetry:
+    session.providerRetry === undefined
+      ? null
+      : {
+          kind: session.providerRetry.kind,
+          provider: session.providerRetry.provider,
+          observedAt: session.providerRetry.observedAt,
+          ...(session.providerRetry.retryAt === undefined
+            ? {}
+            : { retryAt: session.providerRetry.retryAt }),
+        },
+  updatedAt: session.updatedAt,
+});
+
+const toMessageView = (row: HarnessMessage): PersonalEngine.PersonalMessageView => ({
+  id: row.messageId,
+  role: row.role,
+  text: row.text,
+  ...(row.context === undefined ? {} : { context: row.context }),
+  turnId: row.turnId,
+  streaming: row.isStreaming,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+const atMillis = (iso: string): number => Date.parse(iso);
+
+/** The PersonalEngine the personal services see in these tests. */
+const makeEngine = (harness: Harness) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+    const rowsFor = (threadId: ThreadId) => harness.messages.get(threadId) ?? [];
+
+    const createThread = (input: PersonalEngine.CreateThreadInput) =>
+      Effect.gen(function* () {
+        const threadId = input.threadId ?? ThreadId.make(crypto.randomUUID());
+        const at = yield* nowIso;
+        harness.threads.set(threadId, { title: input.title, createdAt: at });
+        harness.titles.set(threadId, input.title);
+        harness.calls.push({
+          type: "createThread",
+          threadId,
+          title: input.title,
+          modelSelection: input.modelSelection,
+        });
+        return threadId;
+      });
+
+    const getThread = (
+      threadId: ThreadId,
+    ): Effect.Effect<Option.Option<PersonalEngine.PersonalThreadView>> =>
+      Effect.gen(function* () {
+        const session = harness.sessions.get(threadId);
+        const thread = harness.threads.get(threadId);
+        if (session === undefined && thread === undefined) return Option.none();
+        const at = session?.updatedAt ?? thread?.createdAt ?? (yield* nowIso);
+        return Option.some({
+          id: threadId,
+          projectId: TEST_PROJECT_ID,
+          title: harness.titles.get(threadId) ?? thread?.title ?? "New chat",
+          modelSelection: undefined as never,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: thread?.createdAt ?? at,
+          updatedAt: at,
+          archivedAt: null,
+          session: session ?? null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        } as unknown as PersonalEngine.PersonalThreadView);
+      });
+
+    const latestAssistantMessage = (input: {
+      readonly threadId: ThreadId;
+      readonly after?: DateTime.Utc;
+      readonly afterMessageId?: MessageId;
+      readonly turnId?: TurnId;
+    }): Effect.Effect<Option.Option<PersonalEngine.PersonalMessageView>> =>
+      Effect.gen(function* () {
+        if (input.turnId !== undefined) {
+          const found = rowsFor(input.threadId)
+            .filter((row) => row.role === "assistant" && row.turnId === input.turnId)
+            .toSorted(
+              (left, right) =>
+                right.createdAt.localeCompare(left.createdAt) ||
+                right.messageId.localeCompare(left.messageId),
+            )[0];
+          return found === undefined ? Option.none() : Option.some(toMessageView(found));
+        }
+        if (input.after !== undefined && input.afterMessageId !== undefined) {
+          const list = rowsFor(input.threadId);
+          const anchor = list.findIndex((row) => row.messageId === input.afterMessageId);
+          void input.after;
+          const found = list.slice(anchor + 1).findLast((row) => row.role === "assistant");
+          return found === undefined ? Option.none() : Option.some(toMessageView(found));
+        }
+        const afterMillis = input.after === undefined ? null : DateTime.toEpochMillis(input.after);
+        const found = rowsFor(input.threadId)
+          .filter(
+            (row) =>
+              row.role === "assistant" &&
+              (afterMillis === null || atMillis(row.createdAt) > afterMillis),
+          )
+          .at(-1);
+        return found === undefined ? Option.none() : Option.some(toMessageView(found));
+      });
+
+    const latestUserMessage = (input: {
+      readonly threadId: ThreadId;
+      readonly excludeIdPrefix?: string;
+    }): Effect.Effect<Option.Option<PersonalEngine.PersonalMessageView>> =>
+      Effect.gen(function* () {
+        const found = rowsFor(input.threadId)
+          .filter(
+            (row) =>
+              row.role === "user" &&
+              (input.excludeIdPrefix === undefined ||
+                !row.messageId.startsWith(input.excludeIdPrefix)),
+          )
+          .at(-1);
+        return found === undefined ? Option.none() : Option.some(toMessageView(found));
+      });
+
+    const messageById = (
+      messageId: MessageId,
+    ): Effect.Effect<Option.Option<PersonalEngine.PersonalMessageView>> =>
+      Effect.sync(() => {
+        for (const list of harness.messages.values()) {
+          const found = list.find((row) => row.messageId === messageId);
+          if (found !== undefined) return Option.some(toMessageView(found));
+        }
+        return Option.none();
+      });
+
+    return PersonalEngine.PersonalEngine.of({
+      createProject: (input) =>
+        Effect.gen(function* () {
+          const projectId = input.projectId ?? ProjectId.make(crypto.randomUUID());
+          harness.projects.set(projectId, { id: projectId, workspaceRoot: input.workspaceRoot });
+          harness.calls.push({ type: "createProject", projectId });
+          return projectId;
+        }),
+      createThread,
+      send: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "send",
+            threadId: input.threadId,
+            message: {
+              messageId: input.messageId,
+              text: input.text,
+              ...(input.context === undefined ? {} : { context: input.context }),
+            },
+            mode: input.mode,
+            ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+          });
+        }),
+      continueTurn: () => Effect.void,
+      setProviderRetry: () => Effect.void,
+      interrupt: (threadId, turnId) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "interrupt",
+            threadId,
+            ...(turnId === undefined ? {} : { turnId }),
+          });
+        }),
+      stop: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "stop",
+            threadId: input.threadId,
+            terminateProcesses: input.terminateProcesses,
+          });
+        }),
+      archive: (threadId) =>
+        Effect.sync(() => {
+          harness.calls.push({ type: "archive", threadId });
+        }),
+      deleteThread: (threadId) =>
+        Effect.sync(() => {
+          harness.calls.push({ type: "deleteThread", threadId });
+          harness.threads.delete(threadId);
+          harness.titles.delete(threadId);
+        }),
+      updateMeta: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "updateMeta",
+            threadId: input.threadId,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+          });
+          if (input.title !== undefined) harness.titles.set(input.threadId, input.title);
+        }),
+      renameThreadIfUnchanged: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({ type: "rename", threadId: input.threadId, title: input.title });
+          harness.titles.set(input.threadId, input.title);
+        }),
+      postNotice: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "notice",
+            threadId: input.threadId,
+            messageId: input.messageId,
+            text: input.text,
+            ...(input.context === undefined ? {} : { context: input.context }),
+          });
+        }),
+      appendNotice: () => Effect.void,
+      completeNotice: () => Effect.void,
+      postUserMessage: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "postUserMessage",
+            threadId: input.threadId,
+            text: input.text,
+          });
+        }),
+      getThread,
+      getProject: (projectId) =>
+        Effect.sync(() => Option.fromUndefinedOr(harness.projects.get(projectId))),
+      listProjects: () => Effect.sync(() => [...harness.projects.values()]),
+      latestAssistantMessage,
+      latestUserMessage,
+      messageById,
+      messagesByIds: (input) =>
+        Effect.sync(() =>
+          rowsFor(input.threadId)
+            .filter((row) => input.messageIds.includes(row.messageId))
+            .map(toMessageView),
+        ),
+      listMessages: (input) =>
+        Effect.sync(() =>
+          rowsFor(input.threadId).slice(-Math.max(0, input.limit)).map(toMessageView),
+        ),
+      latestContextTokens: (threadId) =>
+        sql<{ readonly used: number | null }>`
+          SELECT json_extract(payload_json, '$.usedTokens') AS "used"
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId} AND kind = 'context-window.updated'
+          ORDER BY created_at DESC LIMIT 1
+        `.pipe(
+          Effect.map((rows) => (typeof rows[0]?.used === "number" ? rows[0].used : null)),
+          Effect.orElseSucceed(() => null),
+        ),
+      compactedSince: () => Effect.succeed(false),
+      threadUsedWeb: () => Effect.succeed(false),
+      toolStepsSince: () => Effect.succeed([]),
+      activitiesByIds: () => Effect.succeed([]),
+      workingSnapshot: () => Effect.succeed([]),
+      liveTaskIds: () => Effect.succeed([]),
+      shellSnapshot: () => Effect.succeed([]),
+      events: Stream.never,
+    });
+  });
+
+const engineLayer = (harness: Harness) =>
+  Layer.effect(PersonalEngine.PersonalEngine, makeEngine(harness));
 
 /** `dbPath` rebuilds the service over a file database, simulating a restart. */
 const makeLayer = (
@@ -87,96 +400,32 @@ const makeLayer = (
   fallbackProviders?: ReadonlyArray<unknown>,
   /** Server environment the services read through Config (kill switches). */
   env: Record<string, string> = {},
-) =>
-  PersonalTaskService.layer.pipe(
+) => {
+  const database =
+    dbPath === undefined ? SqlitePersistence.layerMemory : SqlitePersistence.layerFromPath(dbPath);
+  return PersonalTaskService.layer.pipe(
     Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
     Layer.provideMerge(fallbackProviders === undefined ? Layer.empty : PersonalModelFallback.layer),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(
-      PersonalBotService.layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1Live)),
-    ),
+    Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(
-      dbPath === undefined ? SqlitePersistenceMemory : makeSqlitePersistenceLive(dbPath),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            harness.dispatched.push(command);
-            return { sequence: harness.dispatched.length };
-          }),
-        subscribeDomainEvents: Effect.succeed(Stream.never),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    ),
+    Layer.provideMerge(PersonalProjectionRelationsV2Live),
+    Layer.provideMerge(engineLayer(harness).pipe(Layer.provide(database))),
+    Layer.provideMerge(database),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed((fallbackProviders ?? []) as never),
         refreshInstance: () => Effect.succeed((fallbackProviders ?? []) as never),
       }),
     ),
-    Layer.provideMerge(ThreadBackgroundLiveness.layer),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() => {
-            const session = harness.sessions.get(threadId);
-            return session === undefined ? Option.none() : Option.some({ id: threadId, session });
-          }),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionThreadMessageRepository, {
-        listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-          Effect.sync(() => harness.messages.get(threadId) ?? []),
-        getByMessageId: ({ messageId }: { readonly messageId: MessageId }) =>
-          Effect.sync(() => {
-            for (const list of harness.messages.values()) {
-              const found = list.find((message) => message.messageId === messageId);
-              if (found !== undefined) return Option.some(found);
-            }
-            return Option.none();
-          }),
-        getLatestAssistantMessageForTurn: ({
-          threadId,
-          turnId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly turnId: TurnId;
-        }) =>
-          Effect.sync(() =>
-            optionOf(
-              (harness.messages.get(threadId) ?? [])
-                .filter((message) => message.role === "assistant" && message.turnId === turnId)
-                .toSorted(compareNewestFirst)[0],
-            ),
-          ),
-        getLatestAssistantMessageAfter: ({
-          threadId,
-          afterMessageId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly afterCreatedAt: string;
-          readonly afterMessageId: MessageId;
-        }) =>
-          Effect.sync(() => {
-            const list = harness.messages.get(threadId) ?? [];
-            const anchor = list.findIndex((message) => message.messageId === afterMessageId);
-            return optionOf(
-              list.slice(anchor + 1).findLast((message) => message.role === "assistant"),
-            );
-          }),
-      } as unknown as ProjectionThreadMessageRepositoryShape),
-    ),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-tasks-boundary-" }),
     ),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.provideMerge(NodeServices.layer),
   );
+};
 
 const BOTS = ["assistant", "developer", "researcher"] as const;
 type BotKey = (typeof BOTS)[number];
@@ -197,14 +446,16 @@ const seedBots = Effect.gen(function* () {
   }
 });
 
-const turnStarts = (harness: Harness) =>
-  harness.dispatched.flatMap((command) => (command.type === "thread.turn.start" ? [command] : []));
+const callsOf = <A extends EngineCall["type"]>(
+  harness: Harness,
+  type: A,
+): Array<Extract<EngineCall, { type: A }>> =>
+  harness.calls.filter((call): call is Extract<EngineCall, { type: A }> => call.type === type);
+
+const turnStarts = (harness: Harness) => callsOf(harness, "send");
 const startsOn = (harness: Harness, threadId: ThreadId) =>
-  turnStarts(harness).filter((command) => command.threadId === threadId);
-const interrupts = (harness: Harness) =>
-  harness.dispatched.flatMap((command) =>
-    command.type === "thread.turn.interrupt" ? [command] : [],
-  );
+  turnStarts(harness).filter((call) => call.threadId === threadId);
+const interrupts = (harness: Harness) => callsOf(harness, "interrupt");
 
 const makeSession = (input: {
   readonly threadId: ThreadId;
@@ -228,48 +479,31 @@ const makeSession = (input: {
   updatedAt: input.updatedAt,
 });
 
-/** The domain event the dispatcher is fed for a session; `suffix` makes a replay carry a fresh event id. */
-const sessionEvent = (
+/** Feeds the personal session event production sees for a projected session. */
+const ingestSession = (
   harness: Harness,
   session: OrchestrationSession,
-  suffix = "",
-): OrchestrationEvent => {
-  harness.sequence += 1;
-  const id = `evt-${harness.sequence}${suffix}`;
-  return {
-    sequence: harness.sequence,
-    eventId: EventId.make(id),
-    aggregateKind: "thread",
-    aggregateId: session.threadId,
-    type: "thread.session-set",
-    occurredAt: session.updatedAt,
-    commandId: CommandId.make(`cmd-${id}`),
-    causationEventId: null,
-    correlationId: CorrelationId.make(`cmd-${id}`),
-    metadata: {},
-    payload: { threadId: session.threadId, session },
-  } as OrchestrationEvent;
-};
+  service: PersonalTaskService.PersonalTaskService["Service"],
+) =>
+  Effect.gen(function* () {
+    harness.sequence += 1;
+    const status = personalStatusOf(session.status);
+    harness.statuses.set(session.threadId, status);
+    yield* service.ingestDomainEvent({
+      _tag: "StatusChanged",
+      threadId: session.threadId,
+      status,
+      session: toSessionView(session),
+    });
+  });
 
 /** The projection moves to `session` and the dispatcher is told. */
 const setSession = (harness: Harness, session: OrchestrationSession) =>
   Effect.gen(function* () {
     const service = yield* PersonalTaskService.PersonalTaskService;
     harness.sessions.set(session.threadId, session);
-    yield* ingestSession(service, harness, sessionEvent(harness, session));
+    yield* ingestSession(harness, session, service);
     yield* service.drain;
-  });
-
-/** Feeds what the engine stream publishes, through the real mapping. */
-const ingestSession = (
-  service: PersonalTaskService.PersonalTaskService["Service"],
-  harness: Harness,
-  event: OrchestrationEvent,
-) =>
-  Effect.gen(function* () {
-    for (const personal of toPersonalEvents(event, harness.statuses)) {
-      yield* service.ingestDomainEvent(personal);
-    }
   });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -695,8 +929,8 @@ it.effect(
       const childThread = threadOf(yield* reload(child.taskId));
       yield* runTurn(harness, childThread, "", { status: "error", lastError: "Tool crashed" });
       const terminal = harness.sessions.get(childThread)!;
-      for (const suffix of ["-replay-a", "-replay-b", "-replay-c"]) {
-        yield* ingestSession(service, harness, sessionEvent(harness, terminal, suffix));
+      for (const _suffix of ["-replay-a", "-replay-b", "-replay-c"]) {
+        yield* ingestSession(harness, terminal, service);
         yield* service.drain;
       }
       yield* sweepNow;
@@ -729,14 +963,14 @@ it.effect(
         activeTurnId: null,
         updatedAt: yield* nowIso,
       });
-      yield* ingestSession(service, harness, sessionEvent(harness, ready));
+      yield* ingestSession(harness, ready, service);
       yield* service.drain;
       expect((yield* reload(root.taskId)).status).toBe("running");
       // The projection catches up (reply, then session); the sweep and a replay of the event finish it once.
       yield* writeReply(harness, thread, turnId, "All done.");
       harness.sessions.set(thread, ready);
       yield* sweepNow;
-      yield* ingestSession(service, harness, sessionEvent(harness, ready, "-again"));
+      yield* ingestSession(harness, ready, service);
       yield* sweepNow;
       const done = yield* reload(root.taskId);
       expect([done.status, done.result?.summary]).toEqual(["completed", "All done."]);
@@ -939,8 +1173,8 @@ it.effect(
       const retry = yield* provider.codexLimit(harness, thread, turnId, 6 * 60 * 60_000);
       // The same terminal report again, twice, with fresh event ids.
       const terminal = harness.sessions.get(thread)!;
-      yield* ingestSession(service, harness, sessionEvent(harness, terminal, "-dup1"));
-      yield* ingestSession(service, harness, sessionEvent(harness, terminal, "-dup2"));
+      yield* ingestSession(harness, terminal, service);
+      yield* ingestSession(harness, terminal, service);
       yield* service.drain;
       yield* sweepNow;
       expect(retry.kind).toBe("rate_limited");
@@ -953,10 +1187,8 @@ it.effect(
       ]);
       // The fallback notice is one line, not three.
       expect(
-        harness.dispatched.filter(
-          (command) =>
-            command.type === "thread.message.assistant.delta" &&
-            command.delta.startsWith("Codex hit its usage limit."),
+        harness.calls.filter(
+          (call) => call.type === "notice" && call.text.startsWith("Codex hit its usage limit."),
         ).length,
       ).toBe(1);
     }).pipe(Effect.provide(makeLayer(harness, undefined, fallbackProviders(10))));

@@ -1,0 +1,17 @@
+diff --git a/infra/relay/src/agentActivity/ApnsClient.ts b/infra/relay/src/agentActivity/ApnsClient.ts
+index ec841be29b420b8dad4f87a977253c36e3ee024e..5deec9941defef8a30eb1ecd1c2f830b9e056b30 100644
+--- a/infra/relay/src/agentActivity/ApnsClient.ts
++++ b/infra/relay/src/agentActivity/ApnsClient.ts
+@@ -4,9 +4,9 @@ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+-import * as Headers from "effect/unstable/http/Headers";
+-import * as HttpClient from "effect/unstable/http/HttpClient";
+-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
++import * as Headers from "effect/http/Headers";
++import * as HttpClient from "effect/http/HttpClient";
++import * as HttpClientRequest from "effect/http/HttpClientRequest";
+ import { ApnsEnvironment as ApnsEnvironmentSchema, type ApnsCredentials } from "../Config.ts";
+ import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
+ import type { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";

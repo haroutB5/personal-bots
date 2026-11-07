@@ -1,0 +1,782 @@
+diff --git a/apps/web/src/routeTree.gen.ts b/apps/web/src/routeTree.gen.ts
+index 7d7693232c1decf27e35ded88c0e6ae8ea77d7d6..94cc94ac70cd0b76c03e694abb0805f39e773f26 100644
+--- a/apps/web/src/routeTree.gen.ts
++++ b/apps/web/src/routeTree.gen.ts
+@@ -14,6 +14,7 @@ import { Route as UsageRouteImport } from './routes/usage'
+ import { Route as SettingsRouteImport } from './routes/settings'
+ import { Route as PairRouteImport } from './routes/pair'
+ import { Route as ConnectRouteImport } from './routes/connect'
++import { Route as PersonalRouteImport } from './routes/_personal'
+ import { Route as ChatRouteImport } from './routes/_chat'
+ import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+ import { Route as SettingsStorageRouteImport } from './routes/settings.storage'
+@@ -30,9 +31,35 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
+ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
+ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
++import { Route as PersonalTasksRouteImport } from './routes/_personal.tasks'
++import { Route as PersonalFilesRouteImport } from './routes/_personal.files'
++import { Route as PersonalComputerRouteImport } from './routes/_personal.computer'
++import { Route as PersonalBotsRouteImport } from './routes/_personal.bots'
+ import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
++import { Route as PersonalTasksTaskIdRouteImport } from './routes/_personal.tasks_.$taskId'
++import { Route as PersonalBotsTeamRouteImport } from './routes/_personal.bots_.team'
++import { Route as PersonalBotsSettingsRouteImport } from './routes/_personal.bots_.settings'
++import { Route as PersonalBotsNewRouteImport } from './routes/_personal.bots_.new'
+ import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
+ import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
++import { Route as PersonalBotsBotIdIndexRouteImport } from './routes/_personal.bots_.$botId.index'
++import { Route as PersonalTasksRoutinesNewRouteImport } from './routes/_personal.tasks_.routines_.new'
++import { Route as PersonalTasksRoutinesRoutineIdRouteImport } from './routes/_personal.tasks_.routines_.$routineId'
++import { Route as PersonalBotsTeamsNewRouteImport } from './routes/_personal.bots_.teams.new'
++import { Route as PersonalBotsSettingsRemovedRouteImport } from './routes/_personal.bots_.settings_.removed'
++import { Route as PersonalBotsSettingsPasswordsRouteImport } from './routes/_personal.bots_.settings_.passwords'
++import { Route as PersonalBotsSettingsNotificationsRouteImport } from './routes/_personal.bots_.settings_.notifications'
++import { Route as PersonalBotsSettingsMemoryRouteImport } from './routes/_personal.bots_.settings_.memory'
++import { Route as PersonalBotsSettingsConnectionsRouteImport } from './routes/_personal.bots_.settings_.connections'
++import { Route as PersonalBotsSettingsApiKeysRouteImport } from './routes/_personal.bots_.settings_.api-keys'
++import { Route as PersonalBotsGroupsNewRouteImport } from './routes/_personal.bots_.groups.new'
++import { Route as PersonalBotsGroupsGroupIdRouteImport } from './routes/_personal.bots_.groups.$groupId'
++import { Route as PersonalBotsBotIdEditRouteImport } from './routes/_personal.bots_.$botId.edit'
++import { Route as PersonalBotsBotIdThreadIdRouteImport } from './routes/_personal.bots_.$botId.$threadId'
++import { Route as PersonalTasksRoutinesRoutineIdEditRouteImport } from './routes/_personal.tasks_.routines_.$routineId_.edit'
++import { Route as PersonalBotsSettingsProvidersAddRouteImport } from './routes/_personal.bots_.settings_.providers.add'
++import { Route as PersonalBotsSettingsProvidersInstanceIdRouteImport } from './routes/_personal.bots_.settings_.providers.$instanceId'
++import { Route as PersonalBotsSettingsProvidersCatalogCatalogIdRouteImport } from './routes/_personal.bots_.settings_.providers.catalog.$catalogId'
+ 
+ const WelcomeRoute = WelcomeRouteImport.update({
+   id: '/welcome',
+@@ -59,6 +86,10 @@ const ConnectRoute = ConnectRouteImport.update({
+   path: '/connect',
+   getParentRoute: () => rootRouteImport,
+ } as any)
++const PersonalRoute = PersonalRouteImport.update({
++  id: '/_personal',
++  getParentRoute: () => rootRouteImport,
++} as any)
+ const ChatRoute = ChatRouteImport.update({
+   id: '/_chat',
+   getParentRoute: () => rootRouteImport,
+@@ -139,11 +170,51 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
+   path: '/projects/$projectKey',
+   getParentRoute: () => rootRouteImport,
+ } as any)
++const PersonalTasksRoute = PersonalTasksRouteImport.update({
++  id: '/tasks',
++  path: '/tasks',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalFilesRoute = PersonalFilesRouteImport.update({
++  id: '/files',
++  path: '/files',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalComputerRoute = PersonalComputerRouteImport.update({
++  id: '/computer',
++  path: '/computer',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalBotsRoute = PersonalBotsRouteImport.update({
++  id: '/bots',
++  path: '/bots',
++  getParentRoute: () => PersonalRoute,
++} as any)
+ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
+   id: '/pull-requests',
+   path: '/pull-requests',
+   getParentRoute: () => ChatRoute,
+ } as any)
++const PersonalTasksTaskIdRoute = PersonalTasksTaskIdRouteImport.update({
++  id: '/tasks_/$taskId',
++  path: '/tasks/$taskId',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalBotsTeamRoute = PersonalBotsTeamRouteImport.update({
++  id: '/bots_/team',
++  path: '/bots/team',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalBotsSettingsRoute = PersonalBotsSettingsRouteImport.update({
++  id: '/bots_/settings',
++  path: '/bots/settings',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalBotsNewRoute = PersonalBotsNewRouteImport.update({
++  id: '/bots_/new',
++  path: '/bots/new',
++  getParentRoute: () => PersonalRoute,
++} as any)
+ const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
+   id: '/draft/$draftId',
+   path: '/draft/$draftId',
+@@ -155,6 +226,110 @@ const ChatEnvironmentIdThreadIdRoute =
+     path: '/$environmentId/$threadId',
+     getParentRoute: () => ChatRoute,
+   } as any)
++const PersonalBotsBotIdIndexRoute = PersonalBotsBotIdIndexRouteImport.update({
++  id: '/bots_/$botId/',
++  path: '/bots/$botId/',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalTasksRoutinesNewRoute =
++  PersonalTasksRoutinesNewRouteImport.update({
++    id: '/tasks_/routines_/new',
++    path: '/tasks/routines/new',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalTasksRoutinesRoutineIdRoute =
++  PersonalTasksRoutinesRoutineIdRouteImport.update({
++    id: '/tasks_/routines_/$routineId',
++    path: '/tasks/routines/$routineId',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsTeamsNewRoute = PersonalBotsTeamsNewRouteImport.update({
++  id: '/bots_/teams/new',
++  path: '/bots/teams/new',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalBotsSettingsRemovedRoute =
++  PersonalBotsSettingsRemovedRouteImport.update({
++    id: '/bots_/settings_/removed',
++    path: '/bots/settings/removed',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsPasswordsRoute =
++  PersonalBotsSettingsPasswordsRouteImport.update({
++    id: '/bots_/settings_/passwords',
++    path: '/bots/settings/passwords',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsNotificationsRoute =
++  PersonalBotsSettingsNotificationsRouteImport.update({
++    id: '/bots_/settings_/notifications',
++    path: '/bots/settings/notifications',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsMemoryRoute =
++  PersonalBotsSettingsMemoryRouteImport.update({
++    id: '/bots_/settings_/memory',
++    path: '/bots/settings/memory',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsConnectionsRoute =
++  PersonalBotsSettingsConnectionsRouteImport.update({
++    id: '/bots_/settings_/connections',
++    path: '/bots/settings/connections',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsApiKeysRoute =
++  PersonalBotsSettingsApiKeysRouteImport.update({
++    id: '/bots_/settings_/api-keys',
++    path: '/bots/settings/api-keys',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsGroupsNewRoute = PersonalBotsGroupsNewRouteImport.update({
++  id: '/bots_/groups/new',
++  path: '/bots/groups/new',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalBotsGroupsGroupIdRoute =
++  PersonalBotsGroupsGroupIdRouteImport.update({
++    id: '/bots_/groups/$groupId',
++    path: '/bots/groups/$groupId',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsBotIdEditRoute = PersonalBotsBotIdEditRouteImport.update({
++  id: '/bots_/$botId/edit',
++  path: '/bots/$botId/edit',
++  getParentRoute: () => PersonalRoute,
++} as any)
++const PersonalBotsBotIdThreadIdRoute =
++  PersonalBotsBotIdThreadIdRouteImport.update({
++    id: '/bots_/$botId/$threadId',
++    path: '/bots/$botId/$threadId',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalTasksRoutinesRoutineIdEditRoute =
++  PersonalTasksRoutinesRoutineIdEditRouteImport.update({
++    id: '/tasks_/routines_/$routineId_/edit',
++    path: '/tasks/routines/$routineId/edit',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsProvidersAddRoute =
++  PersonalBotsSettingsProvidersAddRouteImport.update({
++    id: '/bots_/settings_/providers/add',
++    path: '/bots/settings/providers/add',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsProvidersInstanceIdRoute =
++  PersonalBotsSettingsProvidersInstanceIdRouteImport.update({
++    id: '/bots_/settings_/providers/$instanceId',
++    path: '/bots/settings/providers/$instanceId',
++    getParentRoute: () => PersonalRoute,
++  } as any)
++const PersonalBotsSettingsProvidersCatalogCatalogIdRoute =
++  PersonalBotsSettingsProvidersCatalogCatalogIdRouteImport.update({
++    id: '/bots_/settings_/providers/catalog/$catalogId',
++    path: '/bots/settings/providers/catalog/$catalogId',
++    getParentRoute: () => PersonalRoute,
++  } as any)
+ 
+ export interface FileRoutesByFullPath {
+   '/': typeof ChatIndexRoute
+@@ -164,6 +339,10 @@ export interface FileRoutesByFullPath {
+   '/usage': typeof UsageRoute
+   '/welcome': typeof WelcomeRoute
+   '/pull-requests': typeof ChatPullRequestsRoute
++  '/bots': typeof PersonalBotsRoute
++  '/computer': typeof PersonalComputerRoute
++  '/files': typeof PersonalFilesRoute
++  '/tasks': typeof PersonalTasksRoute
+   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+   '/settings/appearance': typeof SettingsAppearanceRoute
+   '/settings/archived': typeof SettingsArchivedRoute
+@@ -180,14 +359,41 @@ export interface FileRoutesByFullPath {
+   '/settings/storage': typeof SettingsStorageRoute
+   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+   '/draft/$draftId': typeof ChatDraftDraftIdRoute
++  '/bots/new': typeof PersonalBotsNewRoute
++  '/bots/settings': typeof PersonalBotsSettingsRoute
++  '/bots/team': typeof PersonalBotsTeamRoute
++  '/tasks/$taskId': typeof PersonalTasksTaskIdRoute
++  '/bots/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
++  '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
++  '/bots/groups/$groupId': typeof PersonalBotsGroupsGroupIdRoute
++  '/bots/groups/new': typeof PersonalBotsGroupsNewRoute
++  '/bots/settings/api-keys': typeof PersonalBotsSettingsApiKeysRoute
++  '/bots/settings/connections': typeof PersonalBotsSettingsConnectionsRoute
++  '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
++  '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
++  '/bots/settings/passwords': typeof PersonalBotsSettingsPasswordsRoute
++  '/bots/settings/removed': typeof PersonalBotsSettingsRemovedRoute
++  '/bots/teams/new': typeof PersonalBotsTeamsNewRoute
++  '/tasks/routines/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
++  '/tasks/routines/new': typeof PersonalTasksRoutinesNewRoute
++  '/bots/$botId/': typeof PersonalBotsBotIdIndexRoute
++  '/bots/settings/providers/$instanceId': typeof PersonalBotsSettingsProvidersInstanceIdRoute
++  '/bots/settings/providers/add': typeof PersonalBotsSettingsProvidersAddRoute
++  '/tasks/routines/$routineId/edit': typeof PersonalTasksRoutinesRoutineIdEditRoute
++  '/bots/settings/providers/catalog/$catalogId': typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
+ }
+ export interface FileRoutesByTo {
++  '/': typeof ChatIndexRoute
+   '/connect': typeof ConnectRoute
+   '/pair': typeof PairRoute
+   '/settings': typeof SettingsRouteWithChildren
+   '/usage': typeof UsageRoute
+   '/welcome': typeof WelcomeRoute
+   '/pull-requests': typeof ChatPullRequestsRoute
++  '/bots': typeof PersonalBotsRoute
++  '/computer': typeof PersonalComputerRoute
++  '/files': typeof PersonalFilesRoute
++  '/tasks': typeof PersonalTasksRoute
+   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+   '/settings/appearance': typeof SettingsAppearanceRoute
+   '/settings/archived': typeof SettingsArchivedRoute
+@@ -202,19 +408,45 @@ export interface FileRoutesByTo {
+   '/settings/snap-shot': typeof SettingsSnapShotRoute
+   '/settings/source-control': typeof SettingsSourceControlRoute
+   '/settings/storage': typeof SettingsStorageRoute
+-  '/': typeof ChatIndexRoute
+   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+   '/draft/$draftId': typeof ChatDraftDraftIdRoute
++  '/bots/new': typeof PersonalBotsNewRoute
++  '/bots/settings': typeof PersonalBotsSettingsRoute
++  '/bots/team': typeof PersonalBotsTeamRoute
++  '/tasks/$taskId': typeof PersonalTasksTaskIdRoute
++  '/bots/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
++  '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
++  '/bots/groups/$groupId': typeof PersonalBotsGroupsGroupIdRoute
++  '/bots/groups/new': typeof PersonalBotsGroupsNewRoute
++  '/bots/settings/api-keys': typeof PersonalBotsSettingsApiKeysRoute
++  '/bots/settings/connections': typeof PersonalBotsSettingsConnectionsRoute
++  '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
++  '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
++  '/bots/settings/passwords': typeof PersonalBotsSettingsPasswordsRoute
++  '/bots/settings/removed': typeof PersonalBotsSettingsRemovedRoute
++  '/bots/teams/new': typeof PersonalBotsTeamsNewRoute
++  '/tasks/routines/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
++  '/tasks/routines/new': typeof PersonalTasksRoutinesNewRoute
++  '/bots/$botId': typeof PersonalBotsBotIdIndexRoute
++  '/bots/settings/providers/$instanceId': typeof PersonalBotsSettingsProvidersInstanceIdRoute
++  '/bots/settings/providers/add': typeof PersonalBotsSettingsProvidersAddRoute
++  '/tasks/routines/$routineId/edit': typeof PersonalTasksRoutinesRoutineIdEditRoute
++  '/bots/settings/providers/catalog/$catalogId': typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
+ }
+ export interface FileRoutesById {
+   __root__: typeof rootRouteImport
+   '/_chat': typeof ChatRouteWithChildren
++  '/_personal': typeof PersonalRouteWithChildren
+   '/connect': typeof ConnectRoute
+   '/pair': typeof PairRoute
+   '/settings': typeof SettingsRouteWithChildren
+   '/usage': typeof UsageRoute
+   '/welcome': typeof WelcomeRoute
+   '/_chat/pull-requests': typeof ChatPullRequestsRoute
++  '/_personal/bots': typeof PersonalBotsRoute
++  '/_personal/computer': typeof PersonalComputerRoute
++  '/_personal/files': typeof PersonalFilesRoute
++  '/_personal/tasks': typeof PersonalTasksRoute
+   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+   '/settings/appearance': typeof SettingsAppearanceRoute
+   '/settings/archived': typeof SettingsArchivedRoute
+@@ -232,6 +464,28 @@ export interface FileRoutesById {
+   '/_chat/': typeof ChatIndexRoute
+   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
++  '/_personal/bots_/new': typeof PersonalBotsNewRoute
++  '/_personal/bots_/settings': typeof PersonalBotsSettingsRoute
++  '/_personal/bots_/team': typeof PersonalBotsTeamRoute
++  '/_personal/tasks_/$taskId': typeof PersonalTasksTaskIdRoute
++  '/_personal/bots_/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
++  '/_personal/bots_/$botId/edit': typeof PersonalBotsBotIdEditRoute
++  '/_personal/bots_/groups/$groupId': typeof PersonalBotsGroupsGroupIdRoute
++  '/_personal/bots_/groups/new': typeof PersonalBotsGroupsNewRoute
++  '/_personal/bots_/settings_/api-keys': typeof PersonalBotsSettingsApiKeysRoute
++  '/_personal/bots_/settings_/connections': typeof PersonalBotsSettingsConnectionsRoute
++  '/_personal/bots_/settings_/memory': typeof PersonalBotsSettingsMemoryRoute
++  '/_personal/bots_/settings_/notifications': typeof PersonalBotsSettingsNotificationsRoute
++  '/_personal/bots_/settings_/passwords': typeof PersonalBotsSettingsPasswordsRoute
++  '/_personal/bots_/settings_/removed': typeof PersonalBotsSettingsRemovedRoute
++  '/_personal/bots_/teams/new': typeof PersonalBotsTeamsNewRoute
++  '/_personal/tasks_/routines_/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
++  '/_personal/tasks_/routines_/new': typeof PersonalTasksRoutinesNewRoute
++  '/_personal/bots_/$botId/': typeof PersonalBotsBotIdIndexRoute
++  '/_personal/bots_/settings_/providers/$instanceId': typeof PersonalBotsSettingsProvidersInstanceIdRoute
++  '/_personal/bots_/settings_/providers/add': typeof PersonalBotsSettingsProvidersAddRoute
++  '/_personal/tasks_/routines_/$routineId_/edit': typeof PersonalTasksRoutinesRoutineIdEditRoute
++  '/_personal/bots_/settings_/providers/catalog/$catalogId': typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
+ }
+ export interface FileRouteTypes {
+   fileRoutesByFullPath: FileRoutesByFullPath
+@@ -243,6 +497,10 @@ export interface FileRouteTypes {
+     | '/usage'
+     | '/welcome'
+     | '/pull-requests'
++    | '/bots'
++    | '/computer'
++    | '/files'
++    | '/tasks'
+     | '/projects/$projectKey'
+     | '/settings/appearance'
+     | '/settings/archived'
+@@ -259,14 +517,41 @@ export interface FileRouteTypes {
+     | '/settings/storage'
+     | '/$environmentId/$threadId'
+     | '/draft/$draftId'
++    | '/bots/new'
++    | '/bots/settings'
++    | '/bots/team'
++    | '/tasks/$taskId'
++    | '/bots/$botId/$threadId'
++    | '/bots/$botId/edit'
++    | '/bots/groups/$groupId'
++    | '/bots/groups/new'
++    | '/bots/settings/api-keys'
++    | '/bots/settings/connections'
++    | '/bots/settings/memory'
++    | '/bots/settings/notifications'
++    | '/bots/settings/passwords'
++    | '/bots/settings/removed'
++    | '/bots/teams/new'
++    | '/tasks/routines/$routineId'
++    | '/tasks/routines/new'
++    | '/bots/$botId/'
++    | '/bots/settings/providers/$instanceId'
++    | '/bots/settings/providers/add'
++    | '/tasks/routines/$routineId/edit'
++    | '/bots/settings/providers/catalog/$catalogId'
+   fileRoutesByTo: FileRoutesByTo
+   to:
++    | '/'
+     | '/connect'
+     | '/pair'
+     | '/settings'
+     | '/usage'
+     | '/welcome'
+     | '/pull-requests'
++    | '/bots'
++    | '/computer'
++    | '/files'
++    | '/tasks'
+     | '/projects/$projectKey'
+     | '/settings/appearance'
+     | '/settings/archived'
+@@ -281,18 +566,44 @@ export interface FileRouteTypes {
+     | '/settings/snap-shot'
+     | '/settings/source-control'
+     | '/settings/storage'
+-    | '/'
+     | '/$environmentId/$threadId'
+     | '/draft/$draftId'
++    | '/bots/new'
++    | '/bots/settings'
++    | '/bots/team'
++    | '/tasks/$taskId'
++    | '/bots/$botId/$threadId'
++    | '/bots/$botId/edit'
++    | '/bots/groups/$groupId'
++    | '/bots/groups/new'
++    | '/bots/settings/api-keys'
++    | '/bots/settings/connections'
++    | '/bots/settings/memory'
++    | '/bots/settings/notifications'
++    | '/bots/settings/passwords'
++    | '/bots/settings/removed'
++    | '/bots/teams/new'
++    | '/tasks/routines/$routineId'
++    | '/tasks/routines/new'
++    | '/bots/$botId'
++    | '/bots/settings/providers/$instanceId'
++    | '/bots/settings/providers/add'
++    | '/tasks/routines/$routineId/edit'
++    | '/bots/settings/providers/catalog/$catalogId'
+   id:
+     | '__root__'
+     | '/_chat'
++    | '/_personal'
+     | '/connect'
+     | '/pair'
+     | '/settings'
+     | '/usage'
+     | '/welcome'
+     | '/_chat/pull-requests'
++    | '/_personal/bots'
++    | '/_personal/computer'
++    | '/_personal/files'
++    | '/_personal/tasks'
+     | '/projects/$projectKey'
+     | '/settings/appearance'
+     | '/settings/archived'
+@@ -310,10 +621,33 @@ export interface FileRouteTypes {
+     | '/_chat/'
+     | '/_chat/$environmentId/$threadId'
+     | '/_chat/draft/$draftId'
++    | '/_personal/bots_/new'
++    | '/_personal/bots_/settings'
++    | '/_personal/bots_/team'
++    | '/_personal/tasks_/$taskId'
++    | '/_personal/bots_/$botId/$threadId'
++    | '/_personal/bots_/$botId/edit'
++    | '/_personal/bots_/groups/$groupId'
++    | '/_personal/bots_/groups/new'
++    | '/_personal/bots_/settings_/api-keys'
++    | '/_personal/bots_/settings_/connections'
++    | '/_personal/bots_/settings_/memory'
++    | '/_personal/bots_/settings_/notifications'
++    | '/_personal/bots_/settings_/passwords'
++    | '/_personal/bots_/settings_/removed'
++    | '/_personal/bots_/teams/new'
++    | '/_personal/tasks_/routines_/$routineId'
++    | '/_personal/tasks_/routines_/new'
++    | '/_personal/bots_/$botId/'
++    | '/_personal/bots_/settings_/providers/$instanceId'
++    | '/_personal/bots_/settings_/providers/add'
++    | '/_personal/tasks_/routines_/$routineId_/edit'
++    | '/_personal/bots_/settings_/providers/catalog/$catalogId'
+   fileRoutesById: FileRoutesById
+ }
+ export interface RootRouteChildren {
+   ChatRoute: typeof ChatRouteWithChildren
++  PersonalRoute: typeof PersonalRouteWithChildren
+   ConnectRoute: typeof ConnectRoute
+   PairRoute: typeof PairRoute
+   SettingsRoute: typeof SettingsRouteWithChildren
+@@ -359,6 +693,13 @@ declare module '@tanstack/react-router' {
+       preLoaderRoute: typeof ConnectRouteImport
+       parentRoute: typeof rootRouteImport
+     }
++    '/_personal': {
++      id: '/_personal'
++      path: ''
++      fullPath: '/'
++      preLoaderRoute: typeof PersonalRouteImport
++      parentRoute: typeof rootRouteImport
++    }
+     '/_chat': {
+       id: '/_chat'
+       path: ''
+@@ -471,6 +812,34 @@ declare module '@tanstack/react-router' {
+       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
+       parentRoute: typeof rootRouteImport
+     }
++    '/_personal/tasks': {
++      id: '/_personal/tasks'
++      path: '/tasks'
++      fullPath: '/tasks'
++      preLoaderRoute: typeof PersonalTasksRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/files': {
++      id: '/_personal/files'
++      path: '/files'
++      fullPath: '/files'
++      preLoaderRoute: typeof PersonalFilesRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/computer': {
++      id: '/_personal/computer'
++      path: '/computer'
++      fullPath: '/computer'
++      preLoaderRoute: typeof PersonalComputerRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots': {
++      id: '/_personal/bots'
++      path: '/bots'
++      fullPath: '/bots'
++      preLoaderRoute: typeof PersonalBotsRouteImport
++      parentRoute: typeof PersonalRoute
++    }
+     '/_chat/pull-requests': {
+       id: '/_chat/pull-requests'
+       path: '/pull-requests'
+@@ -478,6 +847,34 @@ declare module '@tanstack/react-router' {
+       preLoaderRoute: typeof ChatPullRequestsRouteImport
+       parentRoute: typeof ChatRoute
+     }
++    '/_personal/tasks_/$taskId': {
++      id: '/_personal/tasks_/$taskId'
++      path: '/tasks/$taskId'
++      fullPath: '/tasks/$taskId'
++      preLoaderRoute: typeof PersonalTasksTaskIdRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/team': {
++      id: '/_personal/bots_/team'
++      path: '/bots/team'
++      fullPath: '/bots/team'
++      preLoaderRoute: typeof PersonalBotsTeamRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings': {
++      id: '/_personal/bots_/settings'
++      path: '/bots/settings'
++      fullPath: '/bots/settings'
++      preLoaderRoute: typeof PersonalBotsSettingsRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/new': {
++      id: '/_personal/bots_/new'
++      path: '/bots/new'
++      fullPath: '/bots/new'
++      preLoaderRoute: typeof PersonalBotsNewRouteImport
++      parentRoute: typeof PersonalRoute
++    }
+     '/_chat/draft/$draftId': {
+       id: '/_chat/draft/$draftId'
+       path: '/draft/$draftId'
+@@ -492,6 +889,132 @@ declare module '@tanstack/react-router' {
+       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
+       parentRoute: typeof ChatRoute
+     }
++    '/_personal/bots_/$botId/': {
++      id: '/_personal/bots_/$botId/'
++      path: '/bots/$botId'
++      fullPath: '/bots/$botId/'
++      preLoaderRoute: typeof PersonalBotsBotIdIndexRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/tasks_/routines_/new': {
++      id: '/_personal/tasks_/routines_/new'
++      path: '/tasks/routines/new'
++      fullPath: '/tasks/routines/new'
++      preLoaderRoute: typeof PersonalTasksRoutinesNewRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/tasks_/routines_/$routineId': {
++      id: '/_personal/tasks_/routines_/$routineId'
++      path: '/tasks/routines/$routineId'
++      fullPath: '/tasks/routines/$routineId'
++      preLoaderRoute: typeof PersonalTasksRoutinesRoutineIdRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/teams/new': {
++      id: '/_personal/bots_/teams/new'
++      path: '/bots/teams/new'
++      fullPath: '/bots/teams/new'
++      preLoaderRoute: typeof PersonalBotsTeamsNewRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/removed': {
++      id: '/_personal/bots_/settings_/removed'
++      path: '/bots/settings/removed'
++      fullPath: '/bots/settings/removed'
++      preLoaderRoute: typeof PersonalBotsSettingsRemovedRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/passwords': {
++      id: '/_personal/bots_/settings_/passwords'
++      path: '/bots/settings/passwords'
++      fullPath: '/bots/settings/passwords'
++      preLoaderRoute: typeof PersonalBotsSettingsPasswordsRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/notifications': {
++      id: '/_personal/bots_/settings_/notifications'
++      path: '/bots/settings/notifications'
++      fullPath: '/bots/settings/notifications'
++      preLoaderRoute: typeof PersonalBotsSettingsNotificationsRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/memory': {
++      id: '/_personal/bots_/settings_/memory'
++      path: '/bots/settings/memory'
++      fullPath: '/bots/settings/memory'
++      preLoaderRoute: typeof PersonalBotsSettingsMemoryRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/connections': {
++      id: '/_personal/bots_/settings_/connections'
++      path: '/bots/settings/connections'
++      fullPath: '/bots/settings/connections'
++      preLoaderRoute: typeof PersonalBotsSettingsConnectionsRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/api-keys': {
++      id: '/_personal/bots_/settings_/api-keys'
++      path: '/bots/settings/api-keys'
++      fullPath: '/bots/settings/api-keys'
++      preLoaderRoute: typeof PersonalBotsSettingsApiKeysRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/groups/new': {
++      id: '/_personal/bots_/groups/new'
++      path: '/bots/groups/new'
++      fullPath: '/bots/groups/new'
++      preLoaderRoute: typeof PersonalBotsGroupsNewRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/groups/$groupId': {
++      id: '/_personal/bots_/groups/$groupId'
++      path: '/bots/groups/$groupId'
++      fullPath: '/bots/groups/$groupId'
++      preLoaderRoute: typeof PersonalBotsGroupsGroupIdRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/$botId/edit': {
++      id: '/_personal/bots_/$botId/edit'
++      path: '/bots/$botId/edit'
++      fullPath: '/bots/$botId/edit'
++      preLoaderRoute: typeof PersonalBotsBotIdEditRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/$botId/$threadId': {
++      id: '/_personal/bots_/$botId/$threadId'
++      path: '/bots/$botId/$threadId'
++      fullPath: '/bots/$botId/$threadId'
++      preLoaderRoute: typeof PersonalBotsBotIdThreadIdRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/tasks_/routines_/$routineId_/edit': {
++      id: '/_personal/tasks_/routines_/$routineId_/edit'
++      path: '/tasks/routines/$routineId/edit'
++      fullPath: '/tasks/routines/$routineId/edit'
++      preLoaderRoute: typeof PersonalTasksRoutinesRoutineIdEditRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/providers/add': {
++      id: '/_personal/bots_/settings_/providers/add'
++      path: '/bots/settings/providers/add'
++      fullPath: '/bots/settings/providers/add'
++      preLoaderRoute: typeof PersonalBotsSettingsProvidersAddRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/providers/$instanceId': {
++      id: '/_personal/bots_/settings_/providers/$instanceId'
++      path: '/bots/settings/providers/$instanceId'
++      fullPath: '/bots/settings/providers/$instanceId'
++      preLoaderRoute: typeof PersonalBotsSettingsProvidersInstanceIdRouteImport
++      parentRoute: typeof PersonalRoute
++    }
++    '/_personal/bots_/settings_/providers/catalog/$catalogId': {
++      id: '/_personal/bots_/settings_/providers/catalog/$catalogId'
++      path: '/bots/settings/providers/catalog/$catalogId'
++      fullPath: '/bots/settings/providers/catalog/$catalogId'
++      preLoaderRoute: typeof PersonalBotsSettingsProvidersCatalogCatalogIdRouteImport
++      parentRoute: typeof PersonalRoute
++    }
+   }
+ }
+ 
+@@ -511,6 +1034,72 @@ const ChatRouteChildren: ChatRouteChildren = {
+ 
+ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
+ 
++interface PersonalRouteChildren {
++  PersonalBotsRoute: typeof PersonalBotsRoute
++  PersonalComputerRoute: typeof PersonalComputerRoute
++  PersonalFilesRoute: typeof PersonalFilesRoute
++  PersonalTasksRoute: typeof PersonalTasksRoute
++  PersonalBotsNewRoute: typeof PersonalBotsNewRoute
++  PersonalBotsSettingsRoute: typeof PersonalBotsSettingsRoute
++  PersonalBotsTeamRoute: typeof PersonalBotsTeamRoute
++  PersonalTasksTaskIdRoute: typeof PersonalTasksTaskIdRoute
++  PersonalBotsBotIdThreadIdRoute: typeof PersonalBotsBotIdThreadIdRoute
++  PersonalBotsBotIdEditRoute: typeof PersonalBotsBotIdEditRoute
++  PersonalBotsGroupsGroupIdRoute: typeof PersonalBotsGroupsGroupIdRoute
++  PersonalBotsGroupsNewRoute: typeof PersonalBotsGroupsNewRoute
++  PersonalBotsSettingsApiKeysRoute: typeof PersonalBotsSettingsApiKeysRoute
++  PersonalBotsSettingsConnectionsRoute: typeof PersonalBotsSettingsConnectionsRoute
++  PersonalBotsSettingsMemoryRoute: typeof PersonalBotsSettingsMemoryRoute
++  PersonalBotsSettingsNotificationsRoute: typeof PersonalBotsSettingsNotificationsRoute
++  PersonalBotsSettingsPasswordsRoute: typeof PersonalBotsSettingsPasswordsRoute
++  PersonalBotsSettingsRemovedRoute: typeof PersonalBotsSettingsRemovedRoute
++  PersonalBotsTeamsNewRoute: typeof PersonalBotsTeamsNewRoute
++  PersonalTasksRoutinesRoutineIdRoute: typeof PersonalTasksRoutinesRoutineIdRoute
++  PersonalTasksRoutinesNewRoute: typeof PersonalTasksRoutinesNewRoute
++  PersonalBotsBotIdIndexRoute: typeof PersonalBotsBotIdIndexRoute
++  PersonalBotsSettingsProvidersInstanceIdRoute: typeof PersonalBotsSettingsProvidersInstanceIdRoute
++  PersonalBotsSettingsProvidersAddRoute: typeof PersonalBotsSettingsProvidersAddRoute
++  PersonalTasksRoutinesRoutineIdEditRoute: typeof PersonalTasksRoutinesRoutineIdEditRoute
++  PersonalBotsSettingsProvidersCatalogCatalogIdRoute: typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
++}
++
++const PersonalRouteChildren: PersonalRouteChildren = {
++  PersonalBotsRoute: PersonalBotsRoute,
++  PersonalComputerRoute: PersonalComputerRoute,
++  PersonalFilesRoute: PersonalFilesRoute,
++  PersonalTasksRoute: PersonalTasksRoute,
++  PersonalBotsNewRoute: PersonalBotsNewRoute,
++  PersonalBotsSettingsRoute: PersonalBotsSettingsRoute,
++  PersonalBotsTeamRoute: PersonalBotsTeamRoute,
++  PersonalTasksTaskIdRoute: PersonalTasksTaskIdRoute,
++  PersonalBotsBotIdThreadIdRoute: PersonalBotsBotIdThreadIdRoute,
++  PersonalBotsBotIdEditRoute: PersonalBotsBotIdEditRoute,
++  PersonalBotsGroupsGroupIdRoute: PersonalBotsGroupsGroupIdRoute,
++  PersonalBotsGroupsNewRoute: PersonalBotsGroupsNewRoute,
++  PersonalBotsSettingsApiKeysRoute: PersonalBotsSettingsApiKeysRoute,
++  PersonalBotsSettingsConnectionsRoute: PersonalBotsSettingsConnectionsRoute,
++  PersonalBotsSettingsMemoryRoute: PersonalBotsSettingsMemoryRoute,
++  PersonalBotsSettingsNotificationsRoute:
++    PersonalBotsSettingsNotificationsRoute,
++  PersonalBotsSettingsPasswordsRoute: PersonalBotsSettingsPasswordsRoute,
++  PersonalBotsSettingsRemovedRoute: PersonalBotsSettingsRemovedRoute,
++  PersonalBotsTeamsNewRoute: PersonalBotsTeamsNewRoute,
++  PersonalTasksRoutinesRoutineIdRoute: PersonalTasksRoutinesRoutineIdRoute,
++  PersonalTasksRoutinesNewRoute: PersonalTasksRoutinesNewRoute,
++  PersonalBotsBotIdIndexRoute: PersonalBotsBotIdIndexRoute,
++  PersonalBotsSettingsProvidersInstanceIdRoute:
++    PersonalBotsSettingsProvidersInstanceIdRoute,
++  PersonalBotsSettingsProvidersAddRoute: PersonalBotsSettingsProvidersAddRoute,
++  PersonalTasksRoutinesRoutineIdEditRoute:
++    PersonalTasksRoutinesRoutineIdEditRoute,
++  PersonalBotsSettingsProvidersCatalogCatalogIdRoute:
++    PersonalBotsSettingsProvidersCatalogCatalogIdRoute,
++}
++
++const PersonalRouteWithChildren = PersonalRoute._addFileChildren(
++  PersonalRouteChildren,
++)
++
+ interface SettingsRouteChildren {
+   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
+   SettingsArchivedRoute: typeof SettingsArchivedRoute
+@@ -549,6 +1138,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
+ 
+ const rootRouteChildren: RootRouteChildren = {
+   ChatRoute: ChatRouteWithChildren,
++  PersonalRoute: PersonalRouteWithChildren,
+   ConnectRoute: ConnectRoute,
+   PairRoute: PairRoute,
+   SettingsRoute: SettingsRouteWithChildren,

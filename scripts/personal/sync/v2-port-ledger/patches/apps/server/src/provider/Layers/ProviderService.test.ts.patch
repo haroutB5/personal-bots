@@ -1,0 +1,833 @@
+diff --git a/apps/server/src/provider/Layers/ProviderService.test.ts b/apps/server/src/provider/Layers/ProviderService.test.ts
+index 7acf3fcb7b01c826a94170eb16948a622b3e6817..4d88cb736ee520b44fd038f5dd0d59451e8c0f51 100644
+--- a/apps/server/src/provider/Layers/ProviderService.test.ts
++++ b/apps/server/src/provider/Layers/ProviderService.test.ts
+@@ -42,6 +42,7 @@ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+ import * as Fiber from "effect/Fiber";
+ import * as Layer from "effect/Layer";
++import * as Logger from "effect/Logger";
+ import * as Metric from "effect/Metric";
+ import * as Option from "effect/Option";
+ import * as PubSub from "effect/PubSub";
+@@ -50,7 +51,8 @@ import * as Schema from "effect/Schema";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+ import * as TestClock from "effect/testing/TestClock";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
++import type * as SqlError from "effect/sql/SqlError";
+ 
+ import {
+   ProviderAdapterRequestError,
+@@ -67,7 +69,7 @@ import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.
+ import { makeProviderServiceLive } from "./ProviderService.ts";
+ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
+ import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+ import {
+   makeSqlitePersistenceLive,
+@@ -78,6 +80,7 @@ import * as ServerSettings from "../../serverSettings.ts";
+ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+ import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
+ import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
++import * as PersonalSessionAccess from "../../personal/secrets/PersonalSessionAccess.ts";
+ 
+ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+ const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
+@@ -275,7 +278,9 @@ function makeFakeCodexAdapter(
+     capabilities: {
+       sessionModelSwitch: "in-session",
+       ...(supportsConversationRollback !== undefined ? { supportsConversationRollback } : {}),
+-      ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
++      ...(provider === CODEX_DRIVER
++        ? { promptlessTurnContinuation: true, userMessageDelivery: "turn-started" as const }
++        : {}),
+     },
+     startSession,
+     sendTurn,
+@@ -402,6 +407,19 @@ function makeStaticInstanceRegistry(
+ const advanceTestClock = (ms: number) =>
+   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+ 
++// Compaction sends may first await real filesystem work. TestClock advances
++// cannot acknowledge that dispatch; wait for the fake adapter to receive it.
++const nextTurnDispatched = Effect.fn("providerService.test.nextTurnDispatched")(function* (
++  adapter: ReturnType<typeof makeFakeCodexAdapter>,
++) {
++  const dispatched = yield* Deferred.make<void>();
++  const send = adapter.sendTurn.getMockImplementation()!;
++  adapter.sendTurn.mockImplementationOnce((input) =>
++    send(input).pipe(Effect.tap(() => Deferred.succeed(dispatched, undefined))),
++  );
++  return Deferred.await(dispatched);
++});
++
+ const hasMetricSnapshot = (
+   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
+   id: string,
+@@ -1134,10 +1152,11 @@ declaredCompaction.layer("ProviderService declared compaction", (it) => {
+         Stream.runHead,
+         Effect.forkChild({ startImmediately: true }),
+       );
++      const dispatched = yield* nextTurnDispatched(customSlashCompaction);
+       const compactFiber = yield* provider
+         .compactThread(threadId, modelSelection, requestId)
+         .pipe(Effect.forkChild);
+-      yield* advanceTestClock(50);
++      yield* dispatched;
+       customSlashCompaction.emit({
+         type: "turn.completed",
+         eventId: asEventId("custom-slash-completed"),
+@@ -1922,10 +1941,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
+         Effect.forkChild,
+       );
+       const requestId = MessageId.make("message-compact-cursor");
++      const dispatched = yield* nextTurnDispatched(routing.cursor);
+       const compactFiber = yield* provider
+         .compactThread(threadId, undefined, requestId)
+         .pipe(Effect.forkChild);
+-      yield* advanceTestClock(50);
++      yield* dispatched;
+       routing.cursor.emit({
+         type: "turn.completed",
+         eventId: asEventId("evt-cursor-stale-turn-completed"),
+@@ -1966,10 +1986,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
+         Effect.forkChild,
+       );
+       const observedRequestId = MessageId.make("message-observed-compact-cursor");
++      const observedDispatched = yield* nextTurnDispatched(routing.cursor);
+       const observedCompactFiber = yield* provider
+         .compactThread(threadId, undefined, observedRequestId)
+         .pipe(Effect.forkChild);
+-      yield* advanceTestClock(50);
++      yield* observedDispatched;
+       routing.cursor.emit({
+         type: "thread.state.changed",
+         eventId: asEventId("evt-cursor-provider-compacted"),
+@@ -2114,21 +2135,35 @@ routing.layer("ProviderServiceLive routing", (it) => {
+         runtimeMode: "full-access",
+       });
+ 
++      const dispatched = yield* nextTurnDispatched(routing.cursor);
++      const settled = yield* Deferred.make<void>();
+       const resultFiber = yield* provider
+         .compactThread(threadId)
+-        .pipe(Effect.result, Effect.forkChild);
+-      yield* advanceTestClock(600_001);
++        .pipe(
++          Effect.result,
++          Effect.ensuring(Deferred.succeed(settled, undefined)),
++          Effect.forkChild,
++        );
++      yield* dispatched;
++      // The timeout is registered after real filesystem work that follows the
++      // dispatch, so keep advancing the fake clock until the compaction settles.
++      for (let attempt = 0; attempt < 500 && !(yield* Deferred.isDone(settled)); attempt++) {
++        yield* advanceTestClock(600_001);
++        // @effect-diagnostics-next-line globalTimers:off - real time for the filesystem work under the test clock.
++        yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
++      }
+       const result = yield* Fiber.join(resultFiber);
+       assert.equal(result._tag, "Failure");
+ 
++      const retried = yield* Deferred.make<void>();
+       routing.cursor.sendTurn.mockImplementationOnce((input) =>
+         Effect.succeed({
+           threadId: input.threadId,
+           turnId: asTurnId("turn-compact-fallback-retry"),
+-        }),
++        }).pipe(Effect.tap(() => Deferred.succeed(retried, undefined))),
+       );
+       const retryFiber = yield* provider.compactThread(threadId).pipe(Effect.forkChild);
+-      yield* advanceTestClock(50);
++      yield* Deferred.await(retried);
+       routing.cursor.emit({
+         type: "turn.completed",
+         eventId: asEventId("evt-compact-fallback-retry-completed"),
+@@ -2995,6 +3030,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
+ 
+       yield* routing.codex.stopAll();
+       yield* routing.claude.stopAll();
++      yield* routing.cursor.stopAll();
+ 
+       const remaining = yield* provider.listSessions();
+       assert.equal(remaining.length, 0);
+@@ -3211,6 +3247,27 @@ routing.layer("ProviderServiceLive routing", (it) => {
+         assert.equal(startPayload.threadId, initial.threadId);
+       }
+ 
++      // A fresh session never resumes the persisted conversation: the
++      // provider no longer has it, or the bot moved to another provider.
++      secondClaude.startSession.mockClear();
++      yield* Effect.gen(function* () {
++        const provider = yield* ProviderService.ProviderService;
++        yield* provider.startSession(initial.threadId, {
++          provider: ProviderDriverKind.make("claudeAgent"),
++          providerInstanceId: claudeAgentInstanceId,
++          threadId: initial.threadId,
++          cwd: fixtureCwd("project-claude-start"),
++          runtimeMode: "full-access",
++          resumeCursor: initial.resumeCursor,
++          freshSession: true,
++        });
++      }).pipe(Effect.provide(secondProviderLayer));
++      const freshStartInput = secondClaude.startSession.mock.calls[0]?.[0] as
++        | { resumeCursor?: unknown; freshSession?: unknown }
++        | undefined;
++      assert.equal(freshStartInput?.resumeCursor, undefined);
++      assert.equal(freshStartInput?.freshSession, undefined);
++
+       NodeFS.rmSync(tempDir, { recursive: true, force: true });
+     }).pipe(Effect.provide(NodeServices.layer)),
+   );
+@@ -3368,6 +3425,126 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
+     }),
+   );
+ 
++  it.effect(
++    "reports a Codex message read when its queued turn starts, not when turn/start returns",
++    () =>
++      Effect.gen(function* () {
++        const provider = yield* ProviderService.ProviderService;
++        const threadId = asThreadId("thread-read-codex");
++        yield* provider.startSession(threadId, {
++          provider: ProviderDriverKind.make("codex"),
++          providerInstanceId: codexInstanceId,
++          threadId,
++          runtimeMode: "full-access",
++        });
++        const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
++        const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
++          Ref.update(eventsRef, (current) => [...current, event]),
++        ).pipe(Effect.forkChild);
++        yield* advanceTestClock(50);
++        const delivered = () =>
++          Ref.get(eventsRef).pipe(
++            Effect.map((events) =>
++              events.flatMap((event) =>
++                event.type === "user-message.delivered"
++                  ? [`${event.payload.messageId}@${event.turnId}`]
++                  : [],
++              ),
++            ),
++          );
++
++        // Mid-turn: Codex answers turn/start with a queued turn of its own.
++        fanout.codex.sendTurn.mockImplementationOnce((input) =>
++          Effect.succeed({ threadId: input.threadId, turnId: asTurnId("turn-queued") }),
++        );
++        yield* provider.sendTurn({
++          threadId,
++          messageId: MessageId.make("owner-codex-1"),
++          input: "and then this",
++          attachments: [],
++        });
++        yield* advanceTestClock(50);
++        assert.deepEqual(yield* delivered(), []);
++
++        fanout.codex.emit({
++          type: "turn.started",
++          eventId: asEventId("evt-read-codex-start"),
++          provider: ProviderDriverKind.make("codex"),
++          createdAt: "2026-01-01T00:00:00.000Z",
++          threadId,
++          turnId: asTurnId("turn-queued"),
++          payload: {},
++        });
++        yield* advanceTestClock(50);
++        assert.deepEqual(yield* delivered(), ["owner-codex-1@turn-queued"]);
++
++        // Idle: turn/started can land before the turn/start response.
++        fanout.codex.sendTurn.mockImplementationOnce((input) =>
++          Effect.sync(() => {
++            fanout.codex.emit({
++              type: "turn.started",
++              eventId: asEventId("evt-read-codex-idle"),
++              provider: ProviderDriverKind.make("codex"),
++              createdAt: "2026-01-01T00:00:00.000Z",
++              threadId,
++              turnId: asTurnId("turn-idle"),
++              payload: {},
++            });
++            return { threadId: input.threadId, turnId: asTurnId("turn-idle") };
++          }),
++        );
++        yield* advanceTestClock(50);
++        yield* provider.sendTurn({
++          threadId,
++          messageId: MessageId.make("owner-codex-2"),
++          input: "hello",
++          attachments: [],
++        });
++        yield* advanceTestClock(50);
++        yield* Fiber.interrupt(consumer);
++        assert.deepEqual(yield* delivered(), [
++          "owner-codex-1@turn-queued",
++          "owner-codex-2@turn-idle",
++        ]);
++      }),
++  );
++
++  it.effect("reports a message read on handover for adapters without their own signal", () =>
++    Effect.gen(function* () {
++      const provider = yield* ProviderService.ProviderService;
++      const threadId = asThreadId("thread-read-handover");
++      yield* provider.startSession(threadId, {
++        provider: ProviderDriverKind.make("cursor"),
++        providerInstanceId: ProviderInstanceId.make("cursor"),
++        threadId,
++        runtimeMode: "full-access",
++      });
++      const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
++      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
++        Ref.update(eventsRef, (current) => [...current, event]),
++      ).pipe(Effect.forkChild);
++      yield* advanceTestClock(50);
++      yield* provider.sendTurn({
++        threadId,
++        messageId: MessageId.make("owner-cursor-1"),
++        input: "hello",
++        attachments: [],
++      });
++      // No message id (a server-started turn): nothing to report.
++      yield* provider.sendTurn({ threadId, input: "continue", attachments: [] });
++      yield* advanceTestClock(50);
++      yield* Fiber.interrupt(consumer);
++      const delivered = (yield* Ref.get(eventsRef)).filter(
++        (event) => event.type === "user-message.delivered",
++      );
++      assert.equal(delivered.length, 1);
++      assert.equal(
++        delivered[0]?.type === "user-message.delivered" && String(delivered[0].payload.messageId),
++        "owner-cursor-1",
++      );
++    }),
++  );
++
+   it.effect("fans out canonical runtime events in emission order", () =>
+     Effect.gen(function* () {
+       const provider = yield* ProviderService.ProviderService;
+@@ -5067,9 +5244,50 @@ describe("agent browser access", () => {
+     access: boolean | { readonly browser: boolean; readonly device: boolean },
+     threadId: ThreadId,
+     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
+-    options?: { readonly withoutOrchestration?: boolean },
++    options?: {
++      readonly withoutOrchestration?: boolean;
++      /** Provides PersonalSessionAccess, answering whether the thread is a personal bot's. */
++      readonly personalBotThread?: boolean;
++      /** Receives each input the adapter's startSession was called with. */
++      readonly startInputs?: Array<unknown>;
++      /** Instructions the fake PersonalSessionAccess returns for a personal-bot thread. */
++      readonly botInstructions?: string;
++      /**
++       * After the fresh start, drop the adapter's live sessions (a server
++       * restart) and send a turn, which recovers from the persisted binding.
++       * Receives each input the adapter's startSession got during recovery.
++       */
++      readonly recoveryInputs?: Array<unknown>;
++      /** Instructions the recovering turn itself carries (the reactor's). */
++      readonly turnInstructions?: string;
++      /** Context the recovering turn carries (the reactor's memory block). */
++      readonly turnContext?: string;
++      /** Smaller versions of it, most complete first (what the reactor offers). */
++      readonly turnContextFallbacks?: ReadonlyArray<{ text: string; dropped: string }>;
++      /** Receives what provider.sendTurn answered for the recovering turn. */
++      readonly turnResults?: Array<unknown>;
++      /** Receives every log record (level and message arguments) while the turn is sent. */
++      readonly logs?: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }>;
++      /** Text of the recovering turn; defaults to "resume". */
++      readonly turnInput?: string;
++      /** Receives each input the adapter's sendTurn got during recovery. */
++      readonly sentTurns?: Array<unknown>;
++      /**
++       * Gives the service an in-memory app database, seeded by this before the
++       * session starts (the personal-bot thread and task-chat checks read it).
++       */
++      readonly seedPersonalSql?: Effect.Effect<void, never, SqlClient.SqlClient>;
++    },
+   ) =>
+     Effect.gen(function* () {
++      // One in-memory app database, seeded before the service reads it.
++      const personalSqlContext =
++        options?.seedPersonalSql === undefined
++          ? undefined
++          : yield* Layer.build(SqlitePersistenceMemory).pipe(Effect.orDie);
++      if (personalSqlContext !== undefined && options?.seedPersonalSql !== undefined) {
++        yield* options.seedPersonalSql.pipe(Effect.provideContext(personalSqlContext));
++      }
+       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
+       const enableAgentDeviceAccess = typeof access === "boolean" ? access : access.device;
+       const issued: Array<{ threadId: ThreadId; capabilities: ReadonlyArray<string> }> = [];
+@@ -5088,6 +5306,7 @@ describe("agent browser access", () => {
+         getTurnStartMessage: () => Effect.die("unused"),
+         getImportedAgentSessionSources: () => Effect.die("unused"),
+         getUserInputActivity: () => Effect.die("unused"),
++        getPendingInputActivities: () => Effect.succeed([]),
+         listActivitiesByKind: () => Effect.die("unused"),
+         getCommandReadModel: () => Effect.die("unused"),
+         getSnapshot: () => Effect.die("unused"),
+@@ -5144,7 +5363,33 @@ describe("agent browser access", () => {
+       }).pipe(
+         Layer.provide(providerAdapterLayer),
+         Layer.provide(directoryLayer),
++        Layer.provide(
++          personalSqlContext === undefined ? Layer.empty : Layer.succeedContext(personalSqlContext),
++        ),
+         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
++        Layer.provide(
++          options?.personalBotThread === undefined
++            ? Layer.empty
++            : Layer.succeed(PersonalSessionAccess.PersonalSessionAccess, {
++                forThread: () =>
++                  Effect.succeed(
++                    options.personalBotThread
++                      ? {
++                          botId:
++                            "bot-personal" as PersonalSessionAccess.PersonalSessionGrant["botId"],
++                          environment: { PB_SECRET_TEST: "value" },
++                          systemInstructions: options.botInstructions ?? null,
++                        }
++                      : { botId: null, environment: {}, systemInstructions: null },
++                  ),
++                secretsForThread: () => Effect.succeed([]),
++                sharedSecrets: () => Effect.succeed([]),
++                instructionsForThread: () =>
++                  Effect.succeed(
++                    options.personalBotThread ? (options.botInstructions ?? null) : null,
++                  ),
++              }),
++        ),
+         Layer.provide(
+           ServerSettings.ServerSettingsService.layerTest({
+             enableAgentBrowserAccess,
+@@ -5178,13 +5423,47 @@ describe("agent browser access", () => {
+ 
+       yield* Effect.gen(function* () {
+         const provider = yield* ProviderService.ProviderService;
+-        return yield* provider.startSession(threadId, {
++        yield* provider.startSession(threadId, {
+           provider: CODEX_DRIVER,
+           providerInstanceId: codexInstanceId,
+           threadId,
+           runtimeMode: "full-access",
+         });
+-      }).pipe(Effect.provide(providerLayer));
++        options?.startInputs?.push(...codex.startSession.mock.calls.map(([input]) => input));
++        if (options?.recoveryInputs === undefined) return;
++        yield* codex.stopAll();
++        codex.startSession.mockClear();
++        const turnResult = yield* provider.sendTurn({
++          threadId,
++          input: options.turnInput ?? "resume",
++          attachments: [],
++          ...(options.turnInstructions ? { systemInstructions: options.turnInstructions } : {}),
++          ...(options.turnContext ? { turnContext: options.turnContext } : {}),
++          ...(options.turnContextFallbacks
++            ? { turnContextFallbacks: options.turnContextFallbacks }
++            : {}),
++        });
++        options.turnResults?.push(turnResult);
++        options.recoveryInputs.push(...codex.startSession.mock.calls.map(([input]) => input));
++        options.sentTurns?.push(...codex.sendTurn.mock.calls.map(([input]) => input));
++      }).pipe(
++        Effect.provide(
++          Layer.merge(
++            providerLayer,
++            Logger.layer(
++              [
++                Logger.make<unknown, void>(({ logLevel, message }) => {
++                  options?.logs?.push({
++                    level: logLevel,
++                    message: Array.isArray(message) ? message : [message],
++                  });
++                }),
++              ],
++              { mergeWithExisting: true },
++            ),
++          ),
++        ),
++      );
+ 
+       return issued;
+     });
+@@ -5202,6 +5481,376 @@ describe("agent browser access", () => {
+     }).pipe(Effect.provide(NodeServices.layer)),
+   );
+ 
++  it.effect("grants the bots capability only to personal-bot threads", () =>
++    Effect.gen(function* () {
++      const personalThread = asThreadId("thread-personal-bot");
++      const plainThread = asThreadId("thread-not-personal");
++
++      const personal = yield* startSessionWith(false, personalThread, undefined, {
++        personalBotThread: true,
++      });
++      const plain = yield* startSessionWith(false, plainThread, undefined, {
++        personalBotThread: false,
++      });
++      // Without the service at all (provider-only runtimes) nothing is personal.
++      const absent = yield* startSessionWith(false, plainThread);
++
++      assert.deepEqual(personal, [
++        { threadId: personalThread, capabilities: ["bots", "preview", "pull-requests"] },
++      ]);
++      assert.deepEqual(plain, [{ threadId: plainThread, capabilities: ["pull-requests"] }]);
++      assert.deepEqual(absent, [{ threadId: plainThread, capabilities: ["pull-requests"] }]);
++    }).pipe(Effect.provide(NodeServices.layer)),
++  );
++
++  // Bots start without the owner's user-level MCP servers, so the shared
++  // browser must reach them even when the project has browser access off.
++  it.effect(
++    "gives personal-bot threads preview and the isolated toolset regardless of browser access",
++    () =>
++      Effect.gen(function* () {
++        const personalThread = asThreadId("thread-personal-bot-preview");
++        const plainThread = asThreadId("thread-plain-no-browser");
++        const personalStarts: Array<unknown> = [];
++        const plainStarts: Array<unknown> = [];
++
++        const personal = yield* startSessionWith(false, personalThread, false, {
++          personalBotThread: true,
++          startInputs: personalStarts,
++        });
++        const plain = yield* startSessionWith(false, plainThread, false, {
++          personalBotThread: false,
++          startInputs: plainStarts,
++        });
++
++        assert.include(personal[0]?.capabilities ?? [], "preview");
++        assert.notInclude(plain[0]?.capabilities ?? [], "preview");
++        assert.deepEqual(
++          personalStarts.map((input) => (input as { personalBot?: boolean }).personalBot),
++          [true],
++        );
++        assert.deepEqual(
++          plainStarts.map((input) => (input as { personalBot?: boolean }).personalBot),
++          [undefined],
++        );
++      }).pipe(Effect.provide(NodeServices.layer)),
++  );
++
++  // Claude reads its instructions only at session start, and recovery starts
++  // the session outside the reactor, so recovery must bring them itself.
++  it.effect(
++    "recovering a personal-bot session restores its instructions; plain threads get none",
++    () =>
++      Effect.gen(function* () {
++        const personalThread = asThreadId("thread-personal-bot-recover");
++        const plainThread = asThreadId("thread-plain-recover");
++        const botInstructions = `Answer as Nova.\n\n<app_rules>\nCall save_memory.\n</app_rules>`;
++        const personalStarts: Array<unknown> = [];
++        const personalRecoveries: Array<unknown> = [];
++        const plainStarts: Array<unknown> = [];
++        const plainRecoveries: Array<unknown> = [];
++
++        yield* startSessionWith(false, personalThread, undefined, {
++          personalBotThread: true,
++          botInstructions,
++          startInputs: personalStarts,
++          recoveryInputs: personalRecoveries,
++        });
++        yield* startSessionWith(false, plainThread, undefined, {
++          personalBotThread: false,
++          startInputs: plainStarts,
++          recoveryInputs: plainRecoveries,
++        });
++
++        const pick = (inputs: ReadonlyArray<unknown>) =>
++          inputs.map((input) => {
++            const start = input as { personalBot?: boolean; systemInstructions?: string };
++            return { personalBot: start.personalBot, systemInstructions: start.systemInstructions };
++          });
++        // Fresh starts are untouched: the reactor supplies (and owns) theirs.
++        assert.deepEqual(pick(personalStarts), [
++          { personalBot: true, systemInstructions: undefined },
++        ]);
++        assert.deepEqual(pick(personalRecoveries), [
++          { personalBot: true, systemInstructions: botInstructions },
++        ]);
++        assert.deepEqual(pick(plainStarts), [
++          { personalBot: undefined, systemInstructions: undefined },
++        ]);
++        assert.deepEqual(pick(plainRecoveries), [
++          { personalBot: undefined, systemInstructions: undefined },
++        ]);
++      }).pipe(Effect.provide(NodeServices.layer)),
++  );
++
++  // Task and routine chats compact by themselves; the owner's chats never do,
++  // including one a task continued with continueChatId (its task came later).
++  it.effect("marks only task and routine chats as task chats, on start and recovery", () =>
++    Effect.gen(function* () {
++      type Rows = (sql: SqlClient.SqlClient) => Effect.Effect<unknown, SqlError.SqlError>;
++      const seed = (threadId: string, rows: Rows) =>
++        Effect.gen(function* () {
++          const sql = yield* SqlClient.SqlClient;
++          yield* sql`INSERT INTO personal_bots (
++            bot_id, name, avatar_shape, avatar_color, model_selection_json, created_at, updated_at
++          ) VALUES ('bot-personal', 'Nova', 'circle', 'blue', '{}', '2026-10-21T10:00:00.000Z',
++            '2026-10-21T10:00:00.000Z')`;
++          yield* sql`INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
++            VALUES (${threadId}, 'bot-personal', '2026-10-21T10:05:00.000Z')`;
++          yield* rows(sql);
++        }).pipe(Effect.orDie);
++      const task =
++        (threadId: string, source: string, createdAt: string) => (sql: SqlClient.SqlClient) =>
++          sql`INSERT INTO personal_tasks (
++            task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
++            depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
++          ) VALUES ('task-1', 'task-1', 'bot-personal', 't', 'o', 'running', ${source}, 'k1',
++            0, 2, 5, ${createdAt}, ${createdAt}, ${createdAt}, ${threadId})`;
++      const run = (threadId: string, rows: Rows) =>
++        Effect.gen(function* () {
++          const starts: Array<unknown> = [];
++          const recoveries: Array<unknown> = [];
++          yield* startSessionWith(false, asThreadId(threadId), undefined, {
++            personalBotThread: true,
++            startInputs: starts,
++            recoveryInputs: recoveries,
++            seedPersonalSql: seed(threadId, rows),
++          });
++          return [...starts, ...recoveries].map(
++            (input) => (input as { personalTaskChat?: boolean }).personalTaskChat,
++          );
++        });
++      const before = "2026-10-21T10:04:00.000Z";
++      const after = "2026-10-21T10:06:00.000Z";
++
++      assert.deepEqual(
++        yield* run("thread-delegated", task("thread-delegated", "delegation", before)),
++        [true, true],
++      );
++      assert.deepEqual(
++        yield* run("thread-routine-run", task("thread-routine-run", "routine", before)),
++        [true, true],
++      );
++      assert.deepEqual(
++        yield* run("thread-continued", task("thread-continued", "delegation", after)),
++        [undefined, undefined],
++      );
++      assert.deepEqual(yield* run("thread-user-task", task("thread-user-task", "user", before)), [
++        undefined,
++        undefined,
++      ]);
++      assert.deepEqual(yield* run("thread-owner", () => Effect.void), [undefined, undefined]);
++    }).pipe(Effect.provide(NodeServices.layer)),
++  );
++
++  // The adapter loads `<baseDir>/bot-plugins/<botId>` from this id, so both
++  // the fresh start and a recovery must carry the thread's own bot id.
++  it.effect("passes the thread's bot id on start and recovery; plain threads get none", () =>
++    Effect.gen(function* () {
++      const personalStarts: Array<unknown> = [];
++      const personalRecoveries: Array<unknown> = [];
++      const plainStarts: Array<unknown> = [];
++      const plainRecoveries: Array<unknown> = [];
++
++      yield* startSessionWith(false, asThreadId("thread-bot-id-personal"), undefined, {
++        personalBotThread: true,
++        startInputs: personalStarts,
++        recoveryInputs: personalRecoveries,
++      });
++      yield* startSessionWith(false, asThreadId("thread-bot-id-plain"), undefined, {
++        personalBotThread: false,
++        startInputs: plainStarts,
++        recoveryInputs: plainRecoveries,
++      });
++
++      const botIdsOf = (inputs: ReadonlyArray<unknown>) =>
++        inputs.map((input) => (input as { personalBotId?: string }).personalBotId);
++      assert.deepEqual(botIdsOf(personalStarts), ["bot-personal"]);
++      assert.deepEqual(botIdsOf(personalRecoveries), ["bot-personal"]);
++      assert.deepEqual(botIdsOf(plainStarts), [undefined]);
++      assert.deepEqual(botIdsOf(plainRecoveries), [undefined]);
++    }).pipe(Effect.provide(NodeServices.layer)),
++  );
++
++  // A recovery triggered by a user message starts with the instructions the
++  // reactor sent with that message; a turn sent without any (the post-restart
++  // continuation) still gets the bot's own.
++  it.effect("recovery prefers the turn's instructions; bare turns get the bot's", () =>
++    Effect.gen(function* () {
++      const botInstructions = "Answer as Nova.";
++      const withMemory = `${botInstructions}\n\nKeep it short.`;
++      const memoryStarts: Array<unknown> = [];
++      const memoryTurns: Array<unknown> = [];
++      const bareStarts: Array<unknown> = [];
++      const bareTurns: Array<unknown> = [];
++
++      yield* startSessionWith(false, asThreadId("thread-recover-memory"), undefined, {
++        personalBotThread: true,
++        botInstructions,
++        turnInstructions: withMemory,
++        recoveryInputs: memoryStarts,
++        sentTurns: memoryTurns,
++      });
++      yield* startSessionWith(false, asThreadId("thread-recover-bare"), undefined, {
++        personalBotThread: true,
++        botInstructions,
++        recoveryInputs: bareStarts,
++        sentTurns: bareTurns,
++      });
++
++      const instructionsOf = (inputs: ReadonlyArray<unknown>) =>
++        inputs.map((input) => (input as { systemInstructions?: string }).systemInstructions);
++      assert.deepEqual(instructionsOf(memoryStarts), [withMemory]);
++      assert.deepEqual(instructionsOf(memoryTurns), [withMemory]);
++      assert.deepEqual(instructionsOf(bareStarts), [botInstructions]);
++      assert.deepEqual(instructionsOf(bareTurns), [botInstructions]);
++    }).pipe(Effect.provide(NodeServices.layer)),
++  );
++
++  // Memory rides with the turn, never in the instructions: a session's system
++  // prompt must read the same on every start of one conversation.
++  it.effect("puts turn context in front of the prompt, not in the instructions", () =>
++    Effect.gen(function* () {
++      const botInstructions = "Answer as Nova.";
++      const memory = "Known facts (from memory).\n- [note] Likes tea";
++      const starts: Array<unknown> = [];
++      const turns: Array<unknown> = [];
++      const oversizedTurns: Array<unknown> = [];
++
++      yield* startSessionWith(false, asThreadId("thread-turn-context"), undefined, {
++        personalBotThread: true,
++        botInstructions,
++        turnInstructions: botInstructions,
++        turnContext: memory,
++        recoveryInputs: starts,
++        sentTurns: turns,
++      });
++      const longInput = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 10);
++      yield* startSessionWith(false, asThreadId("thread-turn-context-full"), undefined, {
++        personalBotThread: true,
++        botInstructions,
++        turnInstructions: botInstructions,
++        turnContext: memory,
++        turnInput: longInput,
++        recoveryInputs: [],
++        sentTurns: oversizedTurns,
++      });
++
++      const turn = turns[0] as Record<string, unknown> | undefined;
++      assert.equal(turn?.input, `${memory}\n\nresume`);
++      assert.equal(turn?.systemInstructions, botInstructions);
++      assert.isFalse(turn !== undefined && "turnContext" in turn);
++      assert.deepEqual(
++        starts.map((input) => (input as { systemInstructions?: string }).systemInstructions),
++        [botInstructions],
++      );
++      // Too long to fit: the turn goes without its memory rather than failing.
++      assert.equal((oversizedTurns[0] as { input?: string } | undefined)?.input, longInput);
++    }).pipe(Effect.provide(NodeServices.layer)),
++  );
++
++  // 1.60.27: a block that does not fit used to vanish silently. Preferences
++  // are Harout's standing rules, so the notes go first, and every degraded case
++  // is logged (sizes and what was left out, never the memory text).
++  describe("turn context that does not fit the input limit", () => {
++    const header = "Known facts (from memory).";
++    const full = `${header}\n- [preference] Always quote prices in USD.\n- [note] Likes tea ${"x".repeat(500)}`;
++    const preferencesOnly = `${header}\n- [preference] Always quote prices in USD.`;
++    // Room for the preferences-only block but not for the full one.
++    const roomyInput = "y".repeat(
++      PROVIDER_SEND_TURN_MAX_INPUT_CHARS - preferencesOnly.length - 2 - 20,
++    );
++    const fallbacks = [{ text: preferencesOnly, dropped: "notes and task summaries" }];
++
++    const sendWith = (
++      name: string,
++      turnInput: string,
++      turnContextFallbacks: ReadonlyArray<{ text: string; dropped: string }> | undefined,
++    ) =>
++      Effect.gen(function* () {
++        const sentTurns: Array<unknown> = [];
++        const turnResults: Array<unknown> = [];
++        const logs: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }> =
++          [];
++        yield* startSessionWith(false, asThreadId(name), undefined, {
++          personalBotThread: true,
++          turnContext: full,
++          ...(turnContextFallbacks ? { turnContextFallbacks } : {}),
++          turnInput,
++          recoveryInputs: [],
++          sentTurns,
++          turnResults,
++          logs,
++        });
++        return {
++          input: (sentTurns[0] as { input?: string } | undefined)?.input,
++          delivery: (turnResults[0] as { turnContextDelivery?: string } | undefined)
++            ?.turnContextDelivery,
++          warnings: logs.filter((entry) => entry.level === "Warn"),
++        };
++      }).pipe(Effect.provide(NodeServices.layer));
++
++    it.effect("sends the whole block when it fits, without a warning", () =>
++      Effect.gen(function* () {
++        const sent = yield* sendWith("thread-ctx-fits", "resume", fallbacks);
++        assert.equal(sent.input, `${full}\n\nresume`);
++        assert.equal(sent.delivery, "full");
++        assert.deepEqual(sent.warnings, []);
++      }),
++    );
++
++    it.effect("keeps the preferences and drops the notes, with a warning", () =>
++      Effect.gen(function* () {
++        const sent = yield* sendWith("thread-ctx-reduced", roomyInput, fallbacks);
++        assert.equal(sent.input, `${preferencesOnly}\n\n${roomyInput}`);
++        assert.equal(sent.delivery, "reduced");
++        assert.equal(sent.warnings.length, 1);
++        const [message, fields] = sent.warnings[0]!.message as [string, Record<string, unknown>];
++        assert.include(message, "smaller one");
++        assert.deepInclude(fields, {
++          threadId: "thread-ctx-reduced",
++          inputChars: roomyInput.length,
++          contextChars: full.length,
++          sentChars: preferencesOnly.length,
++          limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
++          dropped: "notes and task summaries",
++        });
++        // Sizes and a label only: never the memory text itself.
++        // @effect-diagnostics-next-line preferSchemaOverJson:off
++        assert.notInclude(JSON.stringify(sent.warnings), "USD");
++      }),
++    );
++
++    it.effect("drops the whole block only when even the preferences do not fit", () =>
++      Effect.gen(function* () {
++        const longInput = "z".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 10);
++        const sent = yield* sendWith("thread-ctx-none", longInput, fallbacks);
++        assert.equal(sent.input, longInput);
++        assert.equal(sent.delivery, "none");
++        assert.equal(sent.warnings.length, 1);
++        const [message, fields] = sent.warnings[0]!.message as [string, Record<string, unknown>];
++        assert.include(message, "sent without it");
++        assert.deepInclude(fields, {
++          threadId: "thread-ctx-none",
++          inputChars: longInput.length,
++          contextChars: full.length,
++          limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
++        });
++        // @effect-diagnostics-next-line preferSchemaOverJson:off
++        assert.notInclude(JSON.stringify(sent.warnings), "USD");
++      }),
++    );
++
++    it.effect("drops the whole block, with a warning, when no smaller version is offered", () =>
++      Effect.gen(function* () {
++        const sent = yield* sendWith("thread-ctx-nofallback", roomyInput, undefined);
++        assert.equal(sent.input, roomyInput);
++        assert.equal(sent.delivery, "none");
++        assert.equal(sent.warnings.length, 1);
++      }),
++    );
++  });
++
+   it.effect("issues a credential with preview when agent browser access is on", () =>
+     Effect.gen(function* () {
+       const threadId = asThreadId("thread-browser-on");

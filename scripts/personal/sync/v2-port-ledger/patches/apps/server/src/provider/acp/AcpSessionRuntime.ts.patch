@@ -1,0 +1,156 @@
+diff --git a/apps/server/src/provider/acp/AcpSessionRuntime.ts b/apps/server/src/provider/acp/AcpSessionRuntime.ts
+index 0d0b81e910a308fa7001d21ab4fd00524a7873ca..f016b301762dc397d5bd314a061caca2fbcbb165 100644
+--- a/apps/server/src/provider/acp/AcpSessionRuntime.ts
++++ b/apps/server/src/provider/acp/AcpSessionRuntime.ts
+@@ -1,7 +1,7 @@
+ import * as Cause from "effect/Cause";
+ import * as Clock from "effect/Clock";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Deferred from "effect/Deferred";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+@@ -14,14 +14,15 @@ import * as Ref from "effect/Ref";
+ import * as Scope from "effect/Scope";
+ import * as Semaphore from "effect/Semaphore";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import * as EffectAcpClient from "effect-acp/client";
+ import * as EffectAcpErrors from "effect-acp/errors";
+ import type * as EffectAcpSchema from "effect-acp/schema";
+ import type * as EffectAcpProtocol from "effect-acp/protocol";
+ import { resolveSpawnCommand } from "@t3tools/shared/shell";
+ 
++import { lowerBotProcessPriorityEffect } from "../botProcessPriority.ts";
+ import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
+ import {
+   collectSessionConfigOptionValues,
+@@ -90,15 +91,33 @@ export interface AcpSessionRuntimeOptions {
+   /** Native cancellation waits for the prompt response and the getEvents consumer to drain. */
+   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
+   readonly cancelTimeout?: Duration.Input;
++  /** Allows provider-specific validation of session config options (e.g. Antigravity concrete effort models). */
++  readonly isAllowedConfigOptionValue?: (
++    configOption: EffectAcpSchema.SessionConfigOption,
++    value: string,
++  ) => boolean;
++  /** Matches current option value when provider runtime internally unpacks or maps composite options. */
++  readonly isConfigOptionCurrentValueMatching?: (
++    configOption: EffectAcpSchema.SessionConfigOption,
++    value: string | boolean,
++    allConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
++  ) => boolean;
+   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
+   readonly clientInfo: {
+     readonly name: string;
+     readonly version: string;
+   };
+-  readonly authMethodId: string;
++  /** Null: use the agent's existing credentials, without initiating authentication. */
++  readonly authMethodId: string | null;
+   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+   /** Extra workspace roots the agent may read and write besides `cwd`. */
+   readonly additionalDirectories?: ReadonlyArray<string>;
++  /**
++   * Called once the provider process is up, with its PID. Adapters whose
++   * provider names nothing on its command line record the PID so the
++   * Performance tab can attribute the process (and its children) to the chat.
++   */
++  readonly onProcessStarted?: (pid: number) => Effect.Effect<void>;
+   /** Transforms provider stdout before protocol parsing and protocol logging. */
+   readonly transformStdout?: EffectAcpClient.AcpClientOptions["transformStdout"];
+   /** Normalizes provider-specific fields before notification queues or runtime state retain them. */
+@@ -249,6 +268,12 @@ export class AcpSessionRuntime extends Context.Service<
+      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
+      */
+     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
++    /**
++     * Requests cancellation without interrupting the local prompt RPC. A steer
++     * must retain that RPC until the agent responds, so a queued replacement
++     * cannot overtake a tool that is still finishing remotely.
++     */
++    readonly requestCancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+     /**
+      * Selects the active mode through the negotiated `mode` configuration option.
+      * This is a no-op when the requested mode is already active.
+@@ -483,6 +508,10 @@ export const make = (
+             }),
+         ),
+       );
++    yield* lowerBotProcessPriorityEffect(Number(child.pid), "acp");
++    if (options.onProcessStarted !== undefined) {
++      yield* options.onProcessStarted(Number(child.pid));
++    }
+ 
+     yield* child.stderr.pipe(
+       Stream.decodeText(),
+@@ -660,7 +689,11 @@ export const make = (
+           });
+         }
+         const allowedValues = collectSessionConfigOptionValues(configOption);
+-        if (allowedValues.includes(value)) {
++        if (
++          allowedValues.includes(value) ||
++          (typeof value === "string" &&
++            options.isAllowedConfigOptionValue?.(configOption, value) === true)
++        ) {
+           return;
+         }
+         return yield* new EffectAcpErrors.AcpRequestError({
+@@ -701,7 +734,12 @@ export const make = (
+           Ref.get(configOptionsRef).pipe(
+             Effect.flatMap((configOptions) => {
+               const existing = findSessionConfigOption(configOptions, configId);
+-              if (existing && configOptionCurrentValueMatches(existing, value)) {
++              if (
++                existing &&
++                (configOptionCurrentValueMatches(existing, value) ||
++                  options.isConfigOptionCurrentValueMatching?.(existing, value, configOptions) ===
++                    true)
++              ) {
+                 return Effect.succeed({
+                   configOptions,
+                 } satisfies EffectAcpSchema.SetSessionConfigOptionResponse);
+@@ -743,15 +781,16 @@ export const make = (
+     const startOnce = Effect.gen(function* () {
+       const initializeResult = yield* sendInitialize;
+ 
+-      const authenticatePayload = {
+-        methodId: options.authMethodId,
+-      } satisfies EffectAcpSchema.AuthenticateRequest;
+-
+-      yield* runLoggedRequest(
+-        "authenticate",
+-        authenticatePayload,
+-        acp.agent.authenticate(authenticatePayload),
+-      );
++      if (options.authMethodId !== null) {
++        const authenticatePayload = {
++          methodId: options.authMethodId,
++        } satisfies EffectAcpSchema.AuthenticateRequest;
++        yield* runLoggedRequest(
++          "authenticate",
++          authenticatePayload,
++          acp.agent.authenticate(authenticatePayload),
++        );
++      }
+ 
+       let sessionId: string;
+       let sessionSetupResult:
+@@ -1091,6 +1130,12 @@ export const make = (
+         options.cancelBehavior === "wait-for-prompt"
+           ? promptDispatchSemaphore.withPermit(cancel)
+           : cancel,
++      requestCancel: promptDispatchSemaphore.withPermit(
++        Effect.gen(function* () {
++          const started = yield* getStartedState;
++          yield* acp.agent.cancel({ sessionId: started.sessionId });
++        }),
++      ),
+       setMode: (modeId) =>
+         Ref.get(modeStateRef).pipe(
+           Effect.flatMap((modeState) => {

@@ -3,7 +3,7 @@
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   PersonalConnectionsError,
@@ -601,7 +601,7 @@ export const layer = Layer.effect(
     // Injected rather than read off the global: a test provides a platform and
     // gets that platform's CLI locations, which is the whole point of probing
     // fixed paths.
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     return yield* makeWith(
       defaultLocations(
         process.env,

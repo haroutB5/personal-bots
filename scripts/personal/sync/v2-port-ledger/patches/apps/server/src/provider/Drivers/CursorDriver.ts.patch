@@ -1,0 +1,43 @@
+diff --git a/apps/server/src/provider/Drivers/CursorDriver.ts b/apps/server/src/provider/Drivers/CursorDriver.ts
+index 521c1b943e841c03bb5ada571ba9899076a2a557..4f6151680c273961a43b6674b80aa4936b935e2e 100644
+--- a/apps/server/src/provider/Drivers/CursorDriver.ts
++++ b/apps/server/src/provider/Drivers/CursorDriver.ts
+@@ -12,13 +12,13 @@
+  * @module provider/Drivers/CursorDriver
+  */
+ import { CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { HttpClient } from "effect/unstable/http";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient } from "effect/http";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+ import { ServerConfig } from "../../config.ts";
+@@ -179,7 +179,12 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
+         checkProvider,
+         // Model catalog and capabilities come exclusively from Cursor's
+         // list_available_models extension method during provider checks.
+-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
++        enrichSnapshot: ({
++          settings,
++          snapshot: currentSnapshot,
++          publishSnapshot,
++          refreshLatestVersion,
++        }) =>
+           resolveMaintenance().pipe(
+             Effect.flatMap((maintenanceCapabilities) =>
+               enrichCursorSnapshot({
+@@ -187,6 +192,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
+                 snapshot: currentSnapshot,
+                 maintenanceCapabilities,
+                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
++                forceLatestVersionRefresh: refreshLatestVersion === true,
+                 publishSnapshot,
+                 stampIdentity,
+                 httpClient,

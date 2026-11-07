@@ -19,7 +19,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { priceUsage, type RateTable } from "./usagePricing.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 /** The four buckets the usage page shows. Reasoning is inside output. */
 export interface BotUsageTotals {

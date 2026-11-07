@@ -37,9 +37,9 @@ class SessionCheckTest {
   fun `the keystore alias matches expo-secure-store`() {
     assertEquals(
       "AES/GCM/NoPadding:key_v1:keystoreUnauthenticated",
-      SessionSource.keystoreAlias("key_v1", usesSuffix = true),
+      SecureStoreSource.keystoreAlias("key_v1", usesSuffix = true),
     )
-    assertEquals("AES/GCM/NoPadding:key_v1", SessionSource.keystoreAlias("key_v1", usesSuffix = false))
+    assertEquals("AES/GCM/NoPadding:key_v1", SecureStoreSource.keystoreAlias("key_v1", usesSuffix = false))
   }
 
   @Test

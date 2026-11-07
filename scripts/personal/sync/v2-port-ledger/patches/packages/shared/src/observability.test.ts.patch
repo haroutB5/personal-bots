@@ -1,0 +1,11 @@
+diff --git a/packages/shared/src/observability.test.ts b/packages/shared/src/observability.test.ts
+index b9bf4ef1375da4ab9640a7c55ab6a2ed406367f5..ea127d0b8a9bce3e9017929c3f70f0916399fd77 100644
+--- a/packages/shared/src/observability.test.ts
++++ b/packages/shared/src/observability.test.ts
+@@ -1,5 +1,5 @@
+ import { assert, describe, expect, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Arr from "effect/Array";
+ import * as Cause from "effect/Cause";
+ import * as Effect from "effect/Effect";

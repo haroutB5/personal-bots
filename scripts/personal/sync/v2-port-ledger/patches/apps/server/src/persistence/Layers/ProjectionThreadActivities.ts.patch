@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/persistence/Layers/ProjectionThreadActivities.ts b/apps/server/src/persistence/Layers/ProjectionThreadActivities.ts
+index 9b6d44d170ee0c66ca7686cdb239c547f6c230e0..50511e4f07d74d8c56f106d21953c4be4c3e66f8 100644
+--- a/apps/server/src/persistence/Layers/ProjectionThreadActivities.ts
++++ b/apps/server/src/persistence/Layers/ProjectionThreadActivities.ts
+@@ -1,5 +1,5 @@
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ import { NonNegativeInt } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";

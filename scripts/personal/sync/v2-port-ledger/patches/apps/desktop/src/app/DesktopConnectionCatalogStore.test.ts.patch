@@ -1,0 +1,25 @@
+diff --git a/apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts b/apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts
+index 5cb7aafbbd2006d73bfd6740f401dc246d8bcdd5..6681693f38d346507f3a80d96c64d2f1f5e94a18 100644
+--- a/apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts
++++ b/apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts
+@@ -1,9 +1,9 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
+ import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Layer from "effect/Layer";
+@@ -175,7 +175,7 @@ describe("DesktopConnectionCatalogStore", () => {
+               record.environmentId === "bearer-environment"
+                 ? {
+                     ...record,
+-                    encryptedBearerToken: Encoding.encodeBase64(
++                    encryptedBearerToken: Base64.encode(
+                       textEncoder.encode("encrypted:legacy-token"),
+                     ),
+                   }

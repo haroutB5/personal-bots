@@ -33,12 +33,15 @@ const make = Effect.gen(function* () {
   const callerBot = Effect.fn("ConnectionsToolkit.callerBot")(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("bots");
     const link = yield* bots
-      .getThreadLink({ threadId: scope.threadId })
+      .getThreadLink({ threadId: McpInvocationContext.requireMcpThread(scope).threadId })
       .pipe(Effect.mapError(() => refuse("Could not look up this thread's bot.")));
     if (Option.isNone(link)) {
       return yield* refuse("These tools are available only in a personal bot chat.");
     }
-    return { threadId: scope.threadId, botId: link.value.botId };
+    return {
+      threadId: McpInvocationContext.requireMcpThread(scope).threadId,
+      botId: link.value.botId,
+    };
   });
 
   /**

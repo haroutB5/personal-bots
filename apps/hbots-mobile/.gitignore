@@ -8,4 +8,10 @@ ios/
 !modules/hbots-updater/android/**
 !modules/hbots-updater/android/src/test/resources/apks/*.apk
 modules/hbots-updater/android/build/
+!modules/hbots-network/android/
+!modules/hbots-network/android/**
+modules/hbots-network/android/build/
+!modules/hbots-liveview/android/
+!modules/hbots-liveview/android/**
+modules/hbots-liveview/android/build/
 *.aab

@@ -65,7 +65,7 @@ import {
 import * as ServerConfig from "../config.ts";
 import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
-import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV2Live } from "./engine/PersonalEngineV2Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import {
   isPlaceholderChatTitle,
@@ -1364,7 +1364,7 @@ export const make = Effect.gen(function* () {
  */
 export const layerRequiringEngine = Layer.effect(PersonalBotService, make);
 
-export const layer = layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1WiredLive));
+export const layer = layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV2Live));
 
 export const PERSONAL_BOTS_SEED_META_KEY = PERSONAL_META_SEEDED;
 export const PERSONAL_BOTS_PROJECT_META_KEY = PERSONAL_META_PROJECT_ID;

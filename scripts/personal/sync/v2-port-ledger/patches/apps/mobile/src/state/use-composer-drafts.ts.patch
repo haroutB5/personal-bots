@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/use-composer-drafts.ts b/apps/mobile/src/state/use-composer-drafts.ts
+index de886d54fe910bcc6a7ae7b8af25c105dcc6b3fe..10928c54fbbfaa6d6960565d42c158de4e24eb2f 100644
+--- a/apps/mobile/src/state/use-composer-drafts.ts
++++ b/apps/mobile/src/state/use-composer-drafts.ts
+@@ -19,7 +19,7 @@ import {
+ } from "@t3tools/contracts";
+ import * as Schema from "effect/Schema";
+ import { useEffect } from "react";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import { writeFileAtomically } from "../lib/atomic-file";
+ import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";

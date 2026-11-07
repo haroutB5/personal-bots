@@ -3,12 +3,9 @@
 // heavy-job probe is pinned to "held" for the whole file. The 8/5 policy itself
 // is covered in heavyJobLock.test.ts.
 process.env.PERSONAL_TASKS_HEAVY_PROBE = "held";
-import * as NodeServices from "@t3tools/shared/nodeServices";
-import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  CommandId,
-  CorrelationId,
-  EventId,
   MessageId,
   OrchestrationMessageContext,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
@@ -18,20 +15,16 @@ import {
   PersonalTaskId,
   PersonalTaskResult,
   PersonalTaskStatus,
+  ProjectId,
   ProviderInstanceId,
-  ProviderDriverKind,
   TurnId,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type OrchestrationSession,
   type PersonalTask,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -43,23 +36,16 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
-import { PERSONAL_V1_RELATIONS } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionThreadMessageRepository,
-  type ProjectionThreadMessage,
-  type ProjectionThreadMessageRepositoryShape,
-} from "../../persistence/Services/ProjectionThreadMessages.ts";
+  PERSONAL_V2_RELATIONS,
+  PersonalProjectionRelationsV2Live,
+} from "../engine/PersonalProjectionRelationsV2Live.ts";
+import { personalStatusOf } from "../engine/PersonalThreadShellV2.ts";
+import { seedV2Message, seedV2Thread } from "../test/v2ProjectionSeed.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
-import { makeNativeAcpAdapter } from "../../provider/Layers/NativeAcpAdapter.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
@@ -75,39 +61,391 @@ import * as PersonalTaskService from "./PersonalTaskService.ts";
 import { taskChatAutoArchiveCandidatesSql } from "../taskChatAutoArchivePolicy.ts";
 import { QUEUED_HELP_NOTE } from "../browser/browserShared.ts";
 
+/** A message the task service reads back through the engine (the projected row). */
+interface HarnessMessage {
+  readonly messageId: MessageId;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | null;
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly context?: OrchestrationMessageContext;
+  readonly isStreaming: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 /**
- * Stand-ins for the orchestration side: commands are recorded, and the
- * projected session/messages the dispatcher reads are set by each test
- * before it feeds the matching domain event. No timers: every wait is a
- * dispatcher drain.
+ * One PersonalEngine call, recorded for assertions. The task service speaks
+ * the engine port, not the orchestrator's command union, so the harness keeps
+ * the calls it made: sends, interrupts, chat creates and notice writes.
+ */
+type EngineCall =
+  | { readonly type: "createProject"; readonly projectId: ProjectId }
+  | {
+      readonly type: "createThread";
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly modelSelection: PersonalEngine.CreateThreadInput["modelSelection"];
+    }
+  | {
+      readonly type: "send";
+      readonly threadId: ThreadId;
+      readonly message: {
+        readonly messageId: MessageId;
+        readonly text: string;
+        readonly context?: OrchestrationMessageContext;
+      };
+      readonly mode: PersonalEngine.PersonalSendMode;
+      readonly modelSelection?: PersonalEngine.PersonalSendInput["modelSelection"];
+    }
+  | { readonly type: "interrupt"; readonly threadId: ThreadId; readonly turnId?: TurnId }
+  | { readonly type: "stop"; readonly threadId: ThreadId; readonly terminateProcesses: boolean }
+  | { readonly type: "archive"; readonly threadId: ThreadId }
+  | { readonly type: "deleteThread"; readonly threadId: ThreadId }
+  | {
+      readonly type: "updateMeta";
+      readonly threadId: ThreadId;
+      readonly title?: string;
+      readonly modelSelection?: unknown;
+    }
+  | { readonly type: "rename"; readonly threadId: ThreadId; readonly title: string }
+  | {
+      readonly type: "notice";
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly text: string;
+      readonly context?: OrchestrationMessageContext;
+    }
+  | { readonly type: "postUserMessage"; readonly threadId: ThreadId; readonly text: string };
+
+/**
+ * The v2 thread engine the personal layer calls, over in-memory maps.
+ *
+ * Commands are recorded as engine calls; the projected session and messages
+ * are set by each test before it feeds the matching personal event. Reads go
+ * to the same maps, exactly as PersonalEngineV2Live would read the v2
+ * projection. Context-window rows still come from the activities table.
  */
 interface Harness {
-  readonly dispatched: Array<OrchestrationCommand>;
+  readonly calls: Array<EngineCall>;
   readonly sessions: Map<string, OrchestrationSession>;
-  readonly messages: Map<string, Array<ProjectionThreadMessage>>;
+  readonly messages: Map<string, Array<HarnessMessage>>;
   /** Titles the projection reports for chats (a chat without one has no title key). */
   readonly titles: Map<string, string>;
+  /** Thread records the engine made, by id. */
+  readonly threads: Map<string, { readonly title: string; readonly createdAt: string }>;
+  readonly projects: Map<string, { readonly id: ProjectId; readonly workspaceRoot: string }>;
   /** Previous personal status per thread, as the production stream keeps it. */
   readonly statuses: Map<string, PersonalThreadStatus>;
+  /** Native background work alive per chat, as PersonalEngine.liveTaskIds reports it. */
+  readonly background: Map<string, Set<string>>;
   sequence: number;
 }
 
-const optionOf = <A>(value: A | undefined): Option.Option<A> =>
-  value === undefined ? Option.none() : Option.some(value);
-
-const compareNewestFirst = (
-  left: { readonly createdAt: string; readonly messageId: string },
-  right: { readonly createdAt: string; readonly messageId: string },
-) => right.createdAt.localeCompare(left.createdAt) || right.messageId.localeCompare(left.messageId);
-
 const makeHarness = (): Harness => ({
-  dispatched: [],
+  calls: [],
   sessions: new Map(),
   messages: new Map(),
   titles: new Map(),
+  threads: new Map(),
+  projects: new Map(),
   statuses: new Map(),
+  background: new Map(),
   sequence: 0,
 });
+
+const TEST_PROJECT_ID = ProjectId.make("personal-test-project");
+
+const toSessionView = (session: OrchestrationSession): PersonalEngine.PersonalSessionView => ({
+  threadId: session.threadId,
+  status: personalStatusOf(session.status),
+  activeTurnId: session.activeTurnId,
+  lastError: session.lastError,
+  providerInstanceId: session.providerInstanceId ?? null,
+  providerName: session.providerName,
+  providerRetry:
+    session.providerRetry === undefined
+      ? null
+      : {
+          kind: session.providerRetry.kind,
+          provider: session.providerRetry.provider,
+          observedAt: session.providerRetry.observedAt,
+          ...(session.providerRetry.retryAt === undefined
+            ? {}
+            : { retryAt: session.providerRetry.retryAt }),
+          ...(session.providerRetry.attempt === undefined
+            ? {}
+            : { attempt: session.providerRetry.attempt }),
+          ...(session.providerRetry.maxAttempts === undefined
+            ? {}
+            : { maxAttempts: session.providerRetry.maxAttempts }),
+          ...(session.providerRetry.reason === undefined
+            ? {}
+            : { reason: session.providerRetry.reason }),
+        },
+  updatedAt: session.updatedAt,
+});
+
+const toMessageView = (row: HarnessMessage): PersonalEngine.PersonalMessageView => ({
+  id: row.messageId,
+  role: row.role,
+  text: row.text,
+  ...(row.context === undefined ? {} : { context: row.context }),
+  turnId: row.turnId,
+  streaming: row.isStreaming,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+const atMillis = (iso: string): number => Date.parse(iso);
+
+/** The PersonalEngine the personal services see in these tests. */
+const makeEngine = (harness: Harness) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+    const rowsFor = (threadId: ThreadId) => harness.messages.get(threadId) ?? [];
+
+    const createThread = (input: PersonalEngine.CreateThreadInput) =>
+      Effect.gen(function* () {
+        const threadId = input.threadId ?? ThreadId.make(crypto.randomUUID());
+        const at = yield* nowIso;
+        harness.threads.set(threadId, { title: input.title, createdAt: at });
+        harness.titles.set(threadId, input.title);
+        harness.calls.push({
+          type: "createThread",
+          threadId,
+          title: input.title,
+          modelSelection: input.modelSelection,
+        });
+        return threadId;
+      });
+
+    const getThread = (
+      threadId: ThreadId,
+    ): Effect.Effect<Option.Option<PersonalEngine.PersonalThreadView>> =>
+      Effect.gen(function* () {
+        const session = harness.sessions.get(threadId);
+        const thread = harness.threads.get(threadId);
+        if (session === undefined && thread === undefined) return Option.none();
+        const at = session?.updatedAt ?? thread?.createdAt ?? (yield* nowIso);
+        return Option.some({
+          id: threadId,
+          projectId: TEST_PROJECT_ID,
+          title: harness.titles.get(threadId) ?? thread?.title ?? "New chat",
+          // v1's projection mock left this out, so a bot's own model wins; keep it.
+          modelSelection: undefined as never,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: thread?.createdAt ?? at,
+          updatedAt: at,
+          archivedAt: null,
+          session: session ?? null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        } as unknown as PersonalEngine.PersonalThreadView);
+      });
+
+    const latestAssistantMessage = (input: {
+      readonly threadId: ThreadId;
+      readonly after?: DateTime.Utc;
+      readonly afterMessageId?: MessageId;
+      readonly turnId?: TurnId;
+    }): Effect.Effect<Option.Option<PersonalEngine.PersonalMessageView>> =>
+      Effect.gen(function* () {
+        if (input.turnId !== undefined) {
+          const found = rowsFor(input.threadId)
+            .filter((row) => row.role === "assistant" && row.turnId === input.turnId)
+            .toSorted(
+              (left, right) =>
+                right.createdAt.localeCompare(left.createdAt) ||
+                right.messageId.localeCompare(left.messageId),
+            )[0];
+          return found === undefined ? Option.none() : Option.some(toMessageView(found));
+        }
+        if (input.after !== undefined && input.afterMessageId !== undefined) {
+          // The harness appends in thread order under a frozen TestClock, so
+          // "after the anchor" is positional here, as the real ORDER BY
+          // (created_at, message_id) makes it in the database.
+          const list = rowsFor(input.threadId);
+          const anchor = list.findIndex((row) => row.messageId === input.afterMessageId);
+          void input.after;
+          const found = list.slice(anchor + 1).findLast((row) => row.role === "assistant");
+          return found === undefined ? Option.none() : Option.some(toMessageView(found));
+        }
+        const afterMillis = input.after === undefined ? null : DateTime.toEpochMillis(input.after);
+        const found = rowsFor(input.threadId)
+          .filter(
+            (row) =>
+              row.role === "assistant" &&
+              (afterMillis === null || atMillis(row.createdAt) > afterMillis),
+          )
+          .at(-1);
+        return found === undefined ? Option.none() : Option.some(toMessageView(found));
+      });
+
+    const latestUserMessage = (input: {
+      readonly threadId: ThreadId;
+      readonly excludeIdPrefix?: string;
+    }): Effect.Effect<Option.Option<PersonalEngine.PersonalMessageView>> =>
+      Effect.gen(function* () {
+        const found = rowsFor(input.threadId)
+          .filter(
+            (row) =>
+              row.role === "user" &&
+              (input.excludeIdPrefix === undefined ||
+                !row.messageId.startsWith(input.excludeIdPrefix)),
+          )
+          .at(-1);
+        return found === undefined ? Option.none() : Option.some(toMessageView(found));
+      });
+
+    const messageById = (
+      messageId: MessageId,
+    ): Effect.Effect<Option.Option<PersonalEngine.PersonalMessageView>> =>
+      Effect.sync(() => {
+        for (const list of harness.messages.values()) {
+          const found = list.find((row) => row.messageId === messageId);
+          if (found !== undefined) return Option.some(toMessageView(found));
+        }
+        return Option.none();
+      });
+
+    const send = (input: PersonalEngine.PersonalSendInput) =>
+      Effect.gen(function* () {
+        harness.calls.push({
+          type: "send",
+          threadId: input.threadId,
+          message: {
+            messageId: input.messageId,
+            text: input.text,
+            ...(input.context === undefined ? {} : { context: input.context }),
+          },
+          mode: input.mode,
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        });
+        if (input.titleSeed !== undefined && rowsFor(input.threadId).length === 0) {
+          harness.titles.set(input.threadId, input.titleSeed);
+        }
+      });
+
+    return PersonalEngine.PersonalEngine.of({
+      createProject: (input) =>
+        Effect.gen(function* () {
+          const projectId = input.projectId ?? ProjectId.make(crypto.randomUUID());
+          harness.projects.set(projectId, { id: projectId, workspaceRoot: input.workspaceRoot });
+          harness.calls.push({ type: "createProject", projectId });
+          return projectId;
+        }),
+      createThread,
+      send,
+      continueTurn: () => Effect.void,
+      setProviderRetry: () => Effect.void,
+      interrupt: (threadId, turnId) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "interrupt",
+            threadId,
+            ...(turnId === undefined ? {} : { turnId }),
+          });
+        }),
+      stop: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "stop",
+            threadId: input.threadId,
+            terminateProcesses: input.terminateProcesses,
+          });
+        }),
+      archive: (threadId) =>
+        Effect.sync(() => {
+          harness.calls.push({ type: "archive", threadId });
+        }),
+      deleteThread: (threadId) =>
+        Effect.sync(() => {
+          harness.calls.push({ type: "deleteThread", threadId });
+          harness.threads.delete(threadId);
+          harness.titles.delete(threadId);
+        }),
+      updateMeta: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "updateMeta",
+            threadId: input.threadId,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+          });
+          if (input.title !== undefined) harness.titles.set(input.threadId, input.title);
+        }),
+      renameThreadIfUnchanged: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({ type: "rename", threadId: input.threadId, title: input.title });
+          harness.titles.set(input.threadId, input.title);
+        }),
+      postNotice: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "notice",
+            threadId: input.threadId,
+            messageId: input.messageId,
+            text: input.text,
+            ...(input.context === undefined ? {} : { context: input.context }),
+          });
+        }),
+      appendNotice: () => Effect.void,
+      completeNotice: () => Effect.void,
+      postUserMessage: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "postUserMessage",
+            threadId: input.threadId,
+            text: input.text,
+          });
+        }),
+      getThread,
+      getProject: (projectId) =>
+        Effect.sync(() => Option.fromUndefinedOr(harness.projects.get(projectId))),
+      listProjects: () => Effect.sync(() => [...harness.projects.values()]),
+      latestAssistantMessage,
+      latestUserMessage,
+      messageById,
+      messagesByIds: (input) =>
+        Effect.sync(() =>
+          rowsFor(input.threadId)
+            .filter((row) => input.messageIds.includes(row.messageId))
+            .map(toMessageView),
+        ),
+      listMessages: (input) =>
+        Effect.sync(() =>
+          rowsFor(input.threadId).slice(-Math.max(0, input.limit)).map(toMessageView),
+        ),
+      latestContextTokens: (threadId) =>
+        sql<{ readonly used: number | null }>`
+          SELECT json_extract(payload_json, '$.usedTokens') AS "used"
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId} AND kind = 'context-window.updated'
+          ORDER BY created_at DESC LIMIT 1
+        `.pipe(
+          Effect.map((rows) => (typeof rows[0]?.used === "number" ? rows[0].used : null)),
+          Effect.orElseSucceed(() => null),
+        ),
+      compactedSince: () => Effect.succeed(false),
+      threadUsedWeb: () => Effect.succeed(false),
+      toolStepsSince: () => Effect.succeed([]),
+      activitiesByIds: () => Effect.succeed([]),
+      workingSnapshot: () => Effect.succeed([]),
+      liveTaskIds: (threadId) => Effect.sync(() => [...(harness.background.get(threadId) ?? [])]),
+      shellSnapshot: () => Effect.succeed([]),
+      events: Stream.never,
+    });
+  });
+
+const engineLayer = (harness: Harness) =>
+  Layer.effect(PersonalEngine.PersonalEngine, makeEngine(harness));
 
 /** `dbPath` rebuilds the service over a file database, simulating a restart. */
 const makeLayer = (
@@ -119,8 +457,10 @@ const makeLayer = (
   ) => PersonalBotRepository.PersonalBotRepository["Service"],
   /** Turns the usage-limit model fallback on, with these provider snapshots. */
   fallbackProviders?: ReadonlyArray<unknown>,
-) =>
-  PersonalTaskService.layer.pipe(
+) => {
+  const database =
+    dbPath === undefined ? SqlitePersistence.layerMemory : SqlitePersistence.layerFromPath(dbPath);
+  return PersonalTaskService.layer.pipe(
     Layer.provideMerge(fallbackProviders === undefined ? Layer.empty : PersonalModelFallback.layer),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(
@@ -134,103 +474,24 @@ const makeLayer = (
           ),
     ),
     Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(
-      PersonalBotService.layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1Live)),
-    ),
+    Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(
-      dbPath === undefined ? SqlitePersistenceMemory : makeSqlitePersistenceLive(dbPath),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            harness.dispatched.push(command);
-            return { sequence: harness.dispatched.length };
-          }),
-        subscribeDomainEvents: Effect.succeed(Stream.never),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    ),
+    Layer.provideMerge(PersonalProjectionRelationsV2Live),
+    Layer.provideMerge(engineLayer(harness).pipe(Layer.provide(database))),
+    Layer.provideMerge(database),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed((fallbackProviders ?? []) as never),
         refreshInstance: () => Effect.succeed((fallbackProviders ?? []) as never),
       }),
     ),
-    Layer.provideMerge(ThreadBackgroundLiveness.layer),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() => {
-            const session = harness.sessions.get(threadId);
-            const title = harness.titles.get(threadId);
-            return session === undefined
-              ? Option.none()
-              : Option.some({
-                  id: threadId,
-                  session,
-                  ...(title === undefined ? {} : { title, archivedAt: null }),
-                });
-          }),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionThreadMessageRepository, {
-        listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-          Effect.sync(() => harness.messages.get(threadId) ?? []),
-        getByMessageId: ({ messageId }: { readonly messageId: MessageId }) =>
-          Effect.sync(() => {
-            for (const list of harness.messages.values()) {
-              const found = list.find((message) => message.messageId === messageId);
-              if (found !== undefined) return Option.some(found);
-            }
-            return Option.none();
-          }),
-        // Same order as the SQL: newest by (created_at, message_id), one row.
-        getLatestAssistantMessageForTurn: ({
-          threadId,
-          turnId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly turnId: TurnId;
-        }) =>
-          Effect.sync(() =>
-            optionOf(
-              (harness.messages.get(threadId) ?? [])
-                .filter((message) => message.role === "assistant" && message.turnId === turnId)
-                .toSorted(compareNewestFirst)[0],
-            ),
-          ),
-        getLatestAssistantMessageAfter: ({
-          threadId,
-          afterCreatedAt,
-          afterMessageId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly afterCreatedAt: string;
-          readonly afterMessageId: MessageId;
-        }) =>
-          Effect.sync(() => {
-            // The harness appends in thread order under a frozen TestClock, so
-            // "after the anchor" is positional here, as the real ORDER BY
-            // (created_at, message_id) makes it in the database.
-            const list = harness.messages.get(threadId) ?? [];
-            const anchor = list.findIndex((message) => message.messageId === afterMessageId);
-            void afterCreatedAt;
-            return optionOf(
-              list.slice(anchor + 1).findLast((message) => message.role === "assistant"),
-            );
-          }),
-      } as unknown as ProjectionThreadMessageRepositoryShape),
-    ),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-tasks-test-" }),
     ),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.provideMerge(NodeServices.layer),
   );
+};
 
 const BOTS = ["assistant", "developer", "researcher", "planner"] as const;
 type BotKey = (typeof BOTS)[number];
@@ -251,13 +512,18 @@ const seedBots = Effect.gen(function* () {
   }
 });
 
-const turnStarts = (harness: Harness) =>
-  harness.dispatched.flatMap((command) => (command.type === "thread.turn.start" ? [command] : []));
+const callsOf = <A extends EngineCall["type"]>(
+  harness: Harness,
+  type: A,
+): Array<Extract<EngineCall, { type: A }>> =>
+  harness.calls.filter((call): call is Extract<EngineCall, { type: A }> => call.type === type);
 
-const interrupts = (harness: Harness) =>
-  harness.dispatched.flatMap((command) =>
-    command.type === "thread.turn.interrupt" ? [command] : [],
-  );
+/** The turns the dispatcher started, as the v1 command surface exposed them. */
+const turnStarts = (harness: Harness) => callsOf(harness, "send");
+const startsOn = (harness: Harness, threadId: ThreadId) =>
+  turnStarts(harness).filter((call) => call.threadId === threadId);
+const interrupts = (harness: Harness) => callsOf(harness, "interrupt");
+const threadCreates = (harness: Harness) => callsOf(harness, "createThread");
 
 const makeSession = (input: {
   readonly threadId: ThreadId;
@@ -281,31 +547,29 @@ const makeSession = (input: {
   updatedAt: input.updatedAt,
 });
 
-const sessionEvent = (harness: Harness, session: OrchestrationSession): OrchestrationEvent => {
-  harness.sequence += 1;
-  const id = `evt-${harness.sequence}`;
-  return {
-    sequence: harness.sequence,
-    eventId: EventId.make(id),
-    aggregateKind: "thread",
-    aggregateId: session.threadId,
-    type: "thread.session-set",
-    occurredAt: session.updatedAt,
-    commandId: CommandId.make(`cmd-${id}`),
-    causationEventId: null,
-    correlationId: CorrelationId.make(`cmd-${id}`),
-    metadata: {},
-    payload: { threadId: session.threadId, session },
-  } as OrchestrationEvent;
-};
+/** Feeds the personal session event production sees for a projected session. */
+const feedSession = (
+  harness: Harness,
+  session: OrchestrationSession,
+  service: PersonalTaskService.PersonalTaskService["Service"],
+) =>
+  Effect.gen(function* () {
+    harness.sequence += 1;
+    const status = personalStatusOf(session.status);
+    harness.statuses.set(session.threadId, status);
+    yield* service.ingestDomainEvent({
+      _tag: "StatusChanged",
+      threadId: session.threadId,
+      status,
+      session: toSessionView(session),
+    });
+  });
 
-/** Feeds the events production sees, through the real v1-to-personal mapping. */
-const ingestAll = (harness: Harness, event: OrchestrationEvent) =>
+/** Feeds a session event without moving the projection (a replay, or an event ahead of it). */
+const ingestAll = (harness: Harness, session: OrchestrationSession) =>
   Effect.gen(function* () {
     const service = yield* PersonalTaskService.PersonalTaskService;
-    for (const personal of toPersonalEvents(event, harness.statuses)) {
-      yield* service.ingestDomainEvent(personal);
-    }
+    yield* feedSession(harness, session, service);
   });
 
 const setSession = (
@@ -314,8 +578,8 @@ const setSession = (
 ): Effect.Effect<void, never, PersonalTaskService.PersonalTaskService> =>
   Effect.gen(function* () {
     harness.sessions.set(session.threadId, session);
-    yield* ingestAll(harness, sessionEvent(harness, session));
     const service = yield* PersonalTaskService.PersonalTaskService;
+    yield* feedSession(harness, session, service);
     yield* service.drain;
   });
 
@@ -469,19 +733,10 @@ it.effect("relay posts the text as the bot's message in a new chat, completed, o
     expect(first.threadId).not.toBeNull();
     expect(turnStarts(harness)).toEqual([]);
     // The first chat of the bot also creates the personal project.
-    const types = harness.dispatched
-      .map((command) => command.type)
-      .filter((type) => type !== "project.create");
-    expect(types).toEqual([
-      "thread.create",
-      "thread.meta.update",
-      "thread.message.assistant.delta",
-      "thread.message.assistant.complete",
-    ]);
-    const delta = harness.dispatched.find(
-      (command) => command.type === "thread.message.assistant.delta",
-    );
-    expect(delta).toMatchObject({ threadId: first.threadId, delta: input.text });
+    const types = harness.calls.map((call) => call.type).filter((type) => type !== "createProject");
+    expect(types).toEqual(["createThread", "updateMeta", "notice"]);
+    const notice = harness.calls.find((call) => call.type === "notice");
+    expect(notice).toMatchObject({ threadId: first.threadId, text: input.text });
     const bots = yield* PersonalBotRepository.PersonalBotRepository;
     const link = yield* bots.getThreadLink({ threadId: first.threadId! });
     expect(Option.map(link, (entry) => entry.botId)).toEqual(Option.some(botId("assistant")));
@@ -709,7 +964,7 @@ it.effect("a child's completion re-queues its parent exactly once", () => {
     yield* runTurn(harness, childThread, "Fixed.");
     // Replays of the child's terminal session and a full sweep change nothing.
     const replay = harness.sessions.get(childThread)!;
-    yield* ingestAll(harness, sessionEvent(harness, replay));
+    yield* ingestAll(harness, replay);
     yield* service.sweep;
     yield* service.drain;
 
@@ -757,10 +1012,6 @@ it.effect("a child's completion re-queues its parent exactly once", () => {
     });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
-
-/** The turns a task's own thread was asked to start, oldest first. */
-const startsOn = (harness: Harness, threadId: ThreadId) =>
-  turnStarts(harness).filter((command) => command.threadId === threadId);
 
 /** Opens the root's turn and returns a helper that delegates from it. */
 const rootDelegating = (harness: Harness, root: PersonalTask) =>
@@ -824,7 +1075,7 @@ it.effect("a finished child is delivered at once while its sibling is still runn
 
     // Replays of either child's terminal session and a sweep deliver nothing again.
     for (const thread of [fastThread, slowThread]) {
-      yield* ingestAll(harness, sessionEvent(harness, harness.sessions.get(thread)!));
+      yield* ingestAll(harness, harness.sessions.get(thread)!);
     }
     yield* service.sweep;
     yield* service.drain;
@@ -1061,7 +1312,7 @@ it("the task-turn marker survives persistence decoding and never reaches the pro
     ],
   };
   const context = PersonalTaskService.personalTaskMessageContext(marker);
-  // Same codec as projection_thread_messages.context_json, i.e. a replay.
+  // The message context codec, i.e. a replay.
   const codec = Schema.fromJsonString(OrchestrationMessageContext);
   const decoded = Schema.decodeUnknownSync(codec)(Schema.encodeSync(codec)(context));
   const record = decoded.records[0]!;
@@ -1694,9 +1945,6 @@ it.effect("a task placed in a chat waits out the user's turn and starts when it 
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-const threadCreates = (harness: Harness) =>
-  harness.dispatched.flatMap((command) => (command.type === "thread.create" ? [command] : []));
-
 it.effect("a delegated task's new chat is named after the task", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -1740,7 +1988,7 @@ it.effect("a routine run in a new chat names the chat after the routine", () => 
       (command) => command.threadId === running.threadId,
     );
     expect(creates.map((command) => command.title)).toEqual(["Morning news digest"]);
-    expect(harness.dispatched.some((command) => command.type === "thread.meta.update")).toBe(false);
+    expect(harness.calls.some((call) => call.type === "updateMeta")).toBe(false);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
@@ -1770,11 +2018,8 @@ it.effect("a routine run into the chat it was made in leaves that chat's title a
       "New chat",
     );
     expect(
-      harness.dispatched.some(
-        (command) =>
-          (command.type === "thread.meta.update" ||
-            command.type === "thread.title.generate.complete") &&
-          command.threadId === chat,
+      harness.calls.some(
+        (call) => (call.type === "updateMeta" || call.type === "rename") && call.threadId === chat,
       ),
     ).toBe(false);
   }).pipe(Effect.provide(makeLayer(harness)));
@@ -1787,14 +2032,10 @@ describe("a task bound to a chat the owner archived", () => {
   const seedChats = (harness: Harness, chats: ReadonlyArray<readonly [ThreadId, string]>) =>
     Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
-      const sql = yield* SqlClient.SqlClient;
       const now = DateTime.formatIso(yield* DateTime.now);
       for (const [threadId, title] of chats) {
         yield* bots.createThread({ botId: botId("assistant"), threadId });
-        yield* sql`
-          INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-          VALUES (${threadId}, 'project', ${title}, ${now}, ${now})
-        `;
+        yield* seedV2Thread({ threadId, projectId: "project", title, createdAt: now });
         harness.titles.set(threadId, title);
         yield* setSession(
           harness,
@@ -1812,8 +2053,7 @@ describe("a task bound to a chat the owner archived", () => {
       return row?.archivedAt ?? null;
     });
 
-  const renames = (harness: Harness) =>
-    harness.dispatched.filter((command) => command.type === "thread.meta.update");
+  const renames = (harness: Harness) => callsOf(harness, "updateMeta");
 
   it.effect(
     "a chat request waiting on its children wakes in the bot's open chat of the same name, and the archived chat stays archived",
@@ -2065,112 +2305,27 @@ it.live(
       });
       const task = yield* createRoot("acp-steer-continuity");
       const threadId = threadOf(task);
-      const fs = yield* FileSystem.FileSystem;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-task-steer-acp-" });
-      let releaseCancellation: Effect.Effect<void> = Effect.void;
-      const adapter = yield* makeNativeAcpAdapter({
-        provider: ProviderDriverKind.make("opencode"),
-        instanceId: ProviderInstanceId.make("opencode-v2"),
-        configureTurn: (runtime) =>
-          Effect.sync(() => {
-            releaseCancellation = runtime
-              .request("_test/finish-cancel", {})
-              .pipe(Effect.asVoid, Effect.orDie);
-          }),
-        runtimeOptions: () =>
-          Effect.succeed({
-            spawn: {
-              command: process.execPath,
-              args: [
-                NodeURL.fileURLToPath(
-                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-                ),
-              ],
-              cwd: dir,
-              env: {
-                ...process.env,
-                T3_ACP_PROMPT_DELAY_MS: "400",
-                T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1",
-                T3_ACP_PROMPT_RESPONSE_TEXT: "Steered work finished.",
-              },
-            },
-            cwd: dir,
-            authMethodId: null,
-            clientInfo: { name: "steer-task-test", version: "1" },
-          }),
-      });
-      const started = yield* Deferred.make<void>();
-      const finished = yield* Deferred.make<void>();
-      let reply = "";
-      const terminalStates: string[] = [];
-      yield* adapter.streamEvents.pipe(
-        Stream.runForEach((event) =>
-          Effect.gen(function* () {
-            if (event.type === "content.delta" && event.payload.streamKind === "assistant_text") {
-              reply += event.payload.delta;
-            }
-            if (event.type === "turn.started") {
-              yield* setSession(harness, {
-                ...makeSession({
-                  threadId,
-                  status: "running",
-                  activeTurnId: event.turnId!,
-                  updatedAt: event.createdAt,
-                }),
-                providerName: "opencode",
-                providerInstanceId: ProviderInstanceId.make("opencode-v2"),
-              });
-            }
-            if (event.type === "item.updated" && event.itemId === "native-cancel-tool") {
-              // Prove the first prompt is in a tool, rather than relying on a
-              // sleep between turn admission and the ACP request.
-              yield* Deferred.succeed(started, undefined);
-            }
-            if (event.type === "turn.aborted" || event.type === "turn.completed") {
-              const status =
-                event.type === "turn.aborted" || event.payload.state === "interrupted"
-                  ? "interrupted"
-                  : "ready";
-              terminalStates.push(status);
-              yield* endTurn(harness, threadId, event.turnId!, reply, { status });
-              yield* Deferred.succeed(finished, undefined);
-            }
-          }),
-        ),
-        Effect.forkChild,
-      );
-      yield* adapter.startSession({ threadId, cwd: dir, runtimeMode: "full-access" });
-      const first = yield* adapter
-        .sendTurn({ threadId, input: "Start work." })
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(started);
+      // The v2 task layer hands the steer to PersonalEngine; the provider
+      // adapter is behind that port, so the running turn is set by the test.
+      const turnId = yield* beginTurn(harness, threadId);
       const steered = yield* service.steer({
         taskId: task.taskId,
         fromName: "CTO",
         message: "Finish the updated work.",
       });
       expect(steered.outcome).toBe("steered");
-      const command = turnStarts(harness).at(-1)!;
-      const second = yield* adapter
-        .sendTurn({ threadId, input: command.message.text })
-        .pipe(Effect.forkChild);
+      const steer = turnStarts(harness).at(-1)!;
+      expect(steer.message.text).toBe("Update from CTO: Finish the updated work.");
       yield* service.drain;
       expect((yield* reload(task.taskId)).status).toBe("running");
-      // A steer now waits for the remote prompt, rather than detaching its
-      // local RPC. Let the mock agent acknowledge the cancellation explicitly.
-      yield* releaseCancellation;
-      yield* Fiber.join(first);
-      yield* Fiber.join(second);
-      yield* Deferred.await(finished);
+      // The provider acknowledges the cancelled prompt and its replacement with one reply.
+      yield* endTurn(harness, threadId, turnId, "Steered work finished.");
       const done = yield* reload(task.taskId);
-      expect(terminalStates).toEqual(["ready"]);
       expect(done.status).toBe("completed");
       expect(done.result?.summary).toBe("Steered work finished.");
       expect((yield* service.get({ taskId: task.taskId })).attempts).toHaveLength(1);
-      yield* adapter.stopAll();
-    }).pipe(Effect.scoped, Effect.provide(makeLayer(harness)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
-  30_000,
 );
 
 it.effect("steer keeps a prefix the sender already wrote instead of doubling it", () => {
@@ -2809,29 +2964,17 @@ const endClaudeTurn = (
     );
   });
 
-/** What ingestion records for a task_started / task_notification pair. */
-const backgroundStarted = (threadId: ThreadId, taskId: string) =>
-  Effect.gen(function* () {
-    const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
-    liveness.recordTaskLiveness({
-      threadId,
-      taskId,
-      taskType: "local_bash",
-      status: undefined,
-      kind: "started",
-    });
+/** What the v2 shell records for a task_started / task_notification pair. */
+const backgroundStarted = (harness: Harness, threadId: ThreadId, taskId: string) =>
+  Effect.sync(() => {
+    const alive = harness.background.get(threadId) ?? new Set<string>();
+    alive.add(taskId);
+    harness.background.set(threadId, alive);
   });
 
-const backgroundFinished = (threadId: ThreadId, taskId: string) =>
-  Effect.gen(function* () {
-    const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
-    liveness.recordTaskLiveness({
-      threadId,
-      taskId,
-      taskType: "local_bash",
-      status: "completed",
-      kind: "completed",
-    });
+const backgroundFinished = (harness: Harness, threadId: ThreadId, taskId: string) =>
+  Effect.sync(() => {
+    harness.background.get(threadId)?.delete(taskId);
   });
 
 const sweepNow = Effect.gen(function* () {
@@ -2966,9 +3109,9 @@ it.effect(
 
       const first = yield* beginClaudeTurn(harness, thread);
       // A foreground command starts and ends inside the turn: not waited for.
-      yield* backgroundStarted(thread, "bvref5quh");
-      yield* backgroundFinished(thread, "bvref5quh");
-      yield* backgroundStarted(thread, "bahddbmzw");
+      yield* backgroundStarted(harness, thread, "bvref5quh");
+      yield* backgroundFinished(harness, thread, "bvref5quh");
+      yield* backgroundStarted(harness, thread, "bahddbmzw");
       yield* endClaudeTurn(harness, thread, first, "Waiting on the server gate notification.");
 
       expect((yield* reload(root.taskId)).status).toBe("running");
@@ -2996,7 +3139,7 @@ it.effect(
 
       // The gates finish and the turn Claude Code runs for them reports.
       yield* TestClock.adjust("3 minutes");
-      yield* backgroundFinished(thread, "bahddbmzw");
+      yield* backgroundFinished(harness, thread, "bahddbmzw");
       const report = yield* beginClaudeTurn(harness, thread);
       yield* endClaudeTurn(harness, thread, report, "## Branch ready: all gates green.");
 
@@ -3035,7 +3178,7 @@ it.effect(
       const thread = threadOf(root);
 
       const turnId = yield* beginClaudeTurn(harness, thread);
-      yield* backgroundStarted(thread, "dev-server");
+      yield* backgroundStarted(harness, thread, "dev-server");
       yield* endClaudeTurn(harness, thread, turnId, "The dev server is up on :3000.");
 
       // Harout's rule (25 Oct): no time-based close while the bot's work runs.
@@ -3082,8 +3225,8 @@ it.effect("a Claude turn with no background work completes its task exactly as b
     const root = yield* createRoot("bg-none");
     const thread = threadOf(root);
     const turnId = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundStarted(thread, "foreground-1");
-    yield* backgroundFinished(thread, "foreground-1");
+    yield* backgroundStarted(harness, thread, "foreground-1");
+    yield* backgroundFinished(harness, thread, "foreground-1");
     yield* endClaudeTurn(harness, thread, turnId, "Done, gates green.");
 
     const done = yield* reload(root.taskId);
@@ -3101,11 +3244,11 @@ it.effect(
       const root = yield* createRoot("bg-no-follow-up");
       const thread = threadOf(root);
       const turnId = yield* beginClaudeTurn(harness, thread);
-      yield* backgroundStarted(thread, "b-quiet");
+      yield* backgroundStarted(harness, thread, "b-quiet");
       yield* endClaudeTurn(harness, thread, turnId, "Kicked off the export; it reports when done.");
 
       yield* TestClock.adjust("2 minutes");
-      yield* backgroundFinished(thread, "b-quiet");
+      yield* backgroundFinished(harness, thread, "b-quiet");
       yield* sweepNow;
       expect((yield* reload(root.taskId)).status).toBe("running");
 
@@ -3128,7 +3271,7 @@ it.effect("a steer reaches a task that is waiting on background work, and its tu
     const root = yield* createRoot("bg-steer");
     const thread = threadOf(root);
     const first = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundStarted(thread, "b-gates");
+    yield* backgroundStarted(harness, thread, "b-gates");
     yield* endClaudeTurn(harness, thread, first, "Waiting on the gates.");
     const startsBefore = turnStarts(harness).length;
 
@@ -3146,7 +3289,7 @@ it.effect("a steer reaches a task that is waiting on background work, and its tu
     // The steer's turn runs; the gates finish while it does.
     yield* TestClock.adjust("1 minute");
     const steerTurn = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundFinished(thread, "b-gates");
+    yield* backgroundFinished(harness, thread, "b-gates");
     yield* endClaudeTurn(harness, thread, steerTurn, "Server gates green; web gates skipped.");
 
     const done = yield* reload(root.taskId);
@@ -3173,12 +3316,11 @@ it.effect(
     const harness = makeHarness();
     return Effect.gen(function* () {
       yield* seedBots;
-      const service = yield* PersonalTaskService.PersonalTaskService;
       const root = yield* createRoot("bg-stated-follow-up");
       const thread = threadOf(root);
 
       const first = yield* beginClaudeTurn(harness, thread);
-      yield* backgroundStarted(thread, "b-gates");
+      yield* backgroundStarted(harness, thread, "b-gates");
       yield* endClaudeTurn(
         harness,
         thread,
@@ -3190,7 +3332,7 @@ it.effect(
       // The gates end and Claude Code runs the follow-up turn by itself; its
       // reply says a new wait (the proof) that nothing tracks.
       yield* TestClock.adjust("1 minute");
-      yield* backgroundFinished(thread, "b-gates");
+      yield* backgroundFinished(harness, thread, "b-gates");
       const followUp = yield* beginClaudeTurn(harness, thread);
       yield* endClaudeTurn(
         harness,
@@ -3255,7 +3397,7 @@ it.effect("a wait is told to the delegating lead once, and neither task is close
     expect((yield* reload(parent.taskId)).status).toBe("waiting_for_user");
 
     const turnId = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundStarted(thread, "b-gates");
+    yield* backgroundStarted(harness, thread, "b-gates");
     yield* endClaudeTurn(harness, thread, turnId, "Started the gates.");
 
     yield* TestClock.adjust(`${PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS - 60_000} millis`);
@@ -3393,7 +3535,7 @@ it.effect("Codex turns do not wait on background tasks", () => {
     const root = yield* createRoot("bg-codex");
     const thread = threadOf(root);
     const turnId = yield* beginClaudeTurn(harness, thread, "codex");
-    yield* backgroundStarted(thread, "codex-child");
+    yield* backgroundStarted(harness, thread, "codex-child");
     yield* endClaudeTurn(harness, thread, turnId, "Codex done.", "codex");
     const done = yield* reload(root.taskId);
     expect(done.status).toBe("completed");
@@ -3409,7 +3551,7 @@ it.effect(
       yield* seedBots;
       const service = yield* PersonalTaskService.PersonalTaskService;
       const thread = ThreadId.make("thread-with-dev-server");
-      yield* backgroundStarted(thread, "old-dev-server");
+      yield* backgroundStarted(harness, thread, "old-dev-server");
       const task = yield* service.createTask({
         idempotencyKey: "bg-baseline",
         botId: botId("assistant"),
@@ -3438,7 +3580,7 @@ it.effect(
       const root = yield* createRoot("bg-stopped");
       const thread = threadOf(root);
       const turnId = yield* beginClaudeTurn(harness, thread);
-      yield* backgroundStarted(thread, "b-long");
+      yield* backgroundStarted(harness, thread, "b-long");
       yield* endClaudeTurn(harness, thread, turnId, "Started the long run.");
       expect((yield* reload(root.taskId)).status).toBe("running");
 
@@ -3481,7 +3623,7 @@ it.effect(
       const thread = threadOf(root);
 
       const first = yield* beginClaudeTurn(harness, thread);
-      yield* backgroundStarted(thread, "monitor-compute");
+      yield* backgroundStarted(harness, thread, "monitor-compute");
       yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
 
       // While it waits: still running, the report is the preview, marked.
@@ -3500,7 +3642,7 @@ it.effect(
 
       // 16 minutes on, the Monitor expires and Claude Code replies.
       yield* TestClock.adjust("16 minutes");
-      yield* backgroundFinished(thread, "monitor-compute");
+      yield* backgroundFinished(harness, thread, "monitor-compute");
       const followUp = yield* beginClaudeTurn(harness, thread);
       yield* endClaudeTurn(harness, thread, followUp, MONITOR_NOTE);
 
@@ -3522,7 +3664,7 @@ it.effect("a follow-up that is still waiting adds to the preview without losing 
     const root = yield* createRoot("bg-preview-grows");
     const thread = threadOf(root);
     const first = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundStarted(thread, "b-slow");
+    yield* backgroundStarted(harness, thread, "b-slow");
     yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
     const firstSince = (yield* reload(root.taskId)).result?.waitingOnBackgroundSince;
 
@@ -3546,7 +3688,7 @@ it.effect("a task closed by the background cap keeps the report and its follow-u
     const root = yield* createRoot("bg-cap-follow-up");
     const thread = threadOf(root);
     const first = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundStarted(thread, "dev-server");
+    yield* backgroundStarted(harness, thread, "dev-server");
     yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
 
     yield* TestClock.adjust("5 minutes");
@@ -3576,7 +3718,7 @@ it.effect("a session that stops while waiting keeps the report and the follow-up
     const root = yield* createRoot("bg-stopped-follow-up");
     const thread = threadOf(root);
     const first = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundStarted(thread, "b-long");
+    yield* backgroundStarted(harness, thread, "b-long");
     yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
 
     yield* TestClock.adjust("1 minute");
@@ -3608,7 +3750,7 @@ it.effect("an interrupted task keeps the reply but not the waiting mark", () => 
     const root = yield* createRoot("bg-interrupted");
     const thread = threadOf(root);
     const first = yield* beginClaudeTurn(harness, thread);
-    yield* backgroundStarted(thread, "b-int");
+    yield* backgroundStarted(harness, thread, "b-int");
     yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
     expect((yield* reload(root.taskId)).result?.waitingOnBackgroundSince).toBeDefined();
 
@@ -4158,13 +4300,15 @@ describe("work record (1.60.41)", () => {
       return Effect.gen(function* () {
         yield* seedBots;
         const service = yield* PersonalTaskService.PersonalTaskService;
-        const sql = yield* SqlClient.SqlClient;
         const thread = ThreadId.make("history-thread");
         const other = ThreadId.make("other-thread");
-        const insert = (id: string, threadId: ThreadId, role: string, text: string, at: string) =>
-          sql`INSERT INTO projection_thread_messages
-          (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-          VALUES (${id}, ${threadId}, NULL, ${role}, ${text}, 0, ${at}, ${at})`;
+        const insert = (
+          id: string,
+          threadId: ThreadId,
+          role: "user" | "assistant" | "system",
+          text: string,
+          at: string,
+        ) => seedV2Message({ messageId: id, threadId, role, text, createdAt: at });
         yield* insert(
           "m1",
           thread,
@@ -4340,10 +4484,10 @@ it.effect(
       expect(bot.modelSelection.instanceId).toBe("codex");
       expect(bot.fallbackActive?.modelSelection.model).toBe("claude-sonnet-5-5");
       expect(
-        harness.dispatched.some(
-          (command) =>
-            command.type === "thread.message.assistant.delta" &&
-            command.delta.startsWith("Codex hit its usage limit. Developer is on Sonnet 5.5"),
+        harness.calls.some(
+          (call) =>
+            call.type === "notice" &&
+            call.text.startsWith("Codex hit its usage limit. Developer is on Sonnet 5.5"),
         ),
       ).toBe(true);
 
@@ -4555,19 +4699,16 @@ it.effect(
       harness.sessions.set(thread, lost);
       yield* ingestAll(
         harness,
-        sessionEvent(
-          harness,
-          makeSession({
-            threadId: thread,
-            status: "error",
-            activeTurnId: null,
-            lastError: CODEX_LIMIT_ERROR,
-            providerRetry: retry,
-            updatedAt: DateTime.formatIso(first),
-          }),
-        ),
+        makeSession({
+          threadId: thread,
+          status: "error",
+          activeTurnId: null,
+          lastError: CODEX_LIMIT_ERROR,
+          providerRetry: retry,
+          updatedAt: DateTime.formatIso(first),
+        }),
       );
-      yield* ingestAll(harness, sessionEvent(harness, lost));
+      yield* ingestAll(harness, lost);
       yield* service.drain;
 
       // The bot moved to its fallback model and the task ran again at once,
@@ -4794,13 +4935,9 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
   ) =>
     Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
-      const sql = yield* SqlClient.SqlClient;
       const now = DateTime.formatIso(yield* DateTime.now);
       yield* bots.createThread({ botId: botId(bot), threadId, title });
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${threadId}, 'project', ${title}, ${now}, ${now})
-      `;
+      yield* seedV2Thread({ threadId, projectId: "project", title, createdAt: now });
       harness.titles.set(threadId, title);
       yield* setSession(
         harness,
@@ -4866,11 +5003,9 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         // No second chat is made, and the chat keeps its name.
         expect(threadCreates(harness).length).toBe(createsBefore);
         expect(
-          harness.dispatched.some(
-            (command) =>
-              (command.type === "thread.meta.update" ||
-                command.type === "thread.title.generate.complete") &&
-              command.threadId === CHAT,
+          harness.calls.some(
+            (call) =>
+              (call.type === "updateMeta" || call.type === "rename") && call.threadId === CHAT,
           ),
         ).toBe(false);
 
@@ -4952,7 +5087,12 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
 
         // A deleted chat.
         yield* seedOwnerChat(harness, "chat-deleted" as ThreadId, "Gone");
-        yield* sql`UPDATE projection_threads SET deleted_at = ${"2026-10-01T00:00:00.000Z"} WHERE thread_id = 'chat-deleted'`;
+        yield* seedV2Thread({
+          threadId: "chat-deleted",
+          projectId: "project",
+          title: "Gone",
+          deletedAt: "2026-10-01T00:00:00.000Z",
+        });
         expect(yield* refusal("chat-deleted" as ThreadId)).toContain("was deleted");
 
         // A group member's relay thread.
@@ -4975,10 +5115,12 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         });
         yield* service.drain;
         const taskChat = threadOf(yield* reload(other.taskId));
-        yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${taskChat}, 'project', 'Some other job', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')
-      `;
+        yield* seedV2Thread({
+          threadId: taskChat,
+          projectId: "project",
+          title: "Some other job",
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
         expect(yield* refusal(taskChat)).toContain("made for a delegated task");
 
         // A routine's chat.
@@ -5021,10 +5163,12 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         yield* endTurn(harness, rootThread, turnId, "Handed over.");
         yield* service.drain;
         const controlChat = threadOf(yield* reload(control.taskId));
-        yield* sql`
-          INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-          VALUES (${controlChat}, 'project', 'Control job', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')
-        `;
+        yield* seedV2Thread({
+          threadId: controlChat,
+          projectId: "project",
+          title: "Control job",
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
         yield* runTurn(harness, CHAT, "Done in the chat.");
         yield* runTurn(harness, controlChat, "Done in its own chat.");
         yield* service.drain;
@@ -5032,7 +5176,7 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         expect((yield* reload(control.taskId)).status).toBe("completed");
 
         const candidates = yield* sql.unsafe<{ readonly threadId: string }>(
-          taskChatAutoArchiveCandidatesSql(PERSONAL_V1_RELATIONS),
+          taskChatAutoArchiveCandidatesSql(PERSONAL_V2_RELATIONS),
         );
         const candidateIds = candidates.map((row) => row.threadId);
         expect(candidateIds).toContain(controlChat);

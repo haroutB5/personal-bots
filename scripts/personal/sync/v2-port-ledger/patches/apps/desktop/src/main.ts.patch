@@ -1,0 +1,13 @@
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 35e15e700ff4c404199621cd57a2f779ab071ada..750c3cbbdbcd25a02399e693769145c4a119024e 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -7,7 +7,7 @@ for (const stream of [process.stdout, process.stderr]) {
+ 
+ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as NodeOS from "node:os";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";

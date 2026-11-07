@@ -38,12 +38,14 @@ import { UsageProviderKind } from "./usage.ts";
  * disagree in either direction.
  */
 export const BOT_INSTRUCTION_DRIVER_KINDS: ReadonlyArray<ProviderDriverKind> = [
+  ProviderDriverKind.make("acpRegistry"),
+  ProviderDriverKind.make("antigravity"),
   ProviderDriverKind.make("claudeAgent"),
   ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("fx"),
+  ProviderDriverKind.make("grok"),
+  ProviderDriverKind.make("kiro"),
   ProviderDriverKind.make("opencode"),
-  ProviderDriverKind.make("deepseek"),
-  ProviderDriverKind.make("antigravity"),
-  ProviderDriverKind.make("registry"),
 ];
 
 /**
@@ -264,7 +266,7 @@ export const PersonalBot = Schema.Struct({
    * The bot form's "Allow voice calls": whether this bot's owner chats offer
    * the call button. On for the CTO only at launch, off for every other bot
    * and for a new one. Optional on the wire like the fields above; read it
-   * through {@link botAllowsVoiceCalls}.
+   * through {@link botTakesVoiceCalls}.
    */
   allowVoiceCalls: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,

@@ -1,0 +1,36 @@
+diff --git a/apps/web/src/components/preview/PreviewAutomationHosts.tsx b/apps/web/src/components/preview/PreviewAutomationHosts.tsx
+index 173a027e9df263ceea9610cc5a590d491b271f82..0a4b60be391f0310e0cf8f6e8728fa7f6a4bfdfa 100644
+--- a/apps/web/src/components/preview/PreviewAutomationHosts.tsx
++++ b/apps/web/src/components/preview/PreviewAutomationHosts.tsx
+@@ -22,7 +22,7 @@ import {
+ } from "@t3tools/contracts";
+ import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
+ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useShallow } from "zustand/react/shallow";
+ 
+ import {
+@@ -90,6 +90,7 @@ import {
+   resolvePreviewAutomationTarget,
+ } from "./previewAutomationTarget";
+ import { resolveHostWaitBudgetMs, waitForHostReadiness } from "./previewAutomationHostBudget";
++import { runPreviewClickKeepingHostFocus } from "./previewClickFocus";
+ import { isPreviewViewportReady } from "./previewViewportReadiness";
+ import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
+ 
+@@ -686,9 +687,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
+           }
+           case "click": {
+             const ready = await requireReadyTab();
+-            return await ready.bridge.automation.click(
+-              ready.runtimeTabId,
+-              request.input as Parameters<typeof ready.bridge.automation.click>[1],
++            return await runPreviewClickKeepingHostFocus(ready.runtimeTabId, () =>
++              ready.bridge.automation.click(
++                ready.runtimeTabId,
++                request.input as Parameters<typeof ready.bridge.automation.click>[1],
++              ),
+             );
+           }
+           case "type": {

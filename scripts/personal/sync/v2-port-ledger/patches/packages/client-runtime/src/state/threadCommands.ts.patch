@@ -1,0 +1,12 @@
+diff --git a/packages/client-runtime/src/state/threadCommands.ts b/packages/client-runtime/src/state/threadCommands.ts
+index bb70356aab6af16c3611a7c44a60ea9a2c303bfe..73623a067b9206917b89945a7ab590a2e12a7464 100644
+--- a/packages/client-runtime/src/state/threadCommands.ts
++++ b/packages/client-runtime/src/state/threadCommands.ts
+@@ -1,5 +1,5 @@
+-import * as Crypto from "effect/Crypto";
+-import { Atom } from "effect/unstable/reactivity";
++import * as Crypto from "@t3tools/shared/crypto";
++import { Atom } from "effect/reactivity";
+ import {
+   WS_METHODS,
+   type EnvironmentId,

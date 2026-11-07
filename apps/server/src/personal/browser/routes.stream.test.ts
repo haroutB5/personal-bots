@@ -11,7 +11,7 @@ import * as NodeNet from "node:net";
 
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,

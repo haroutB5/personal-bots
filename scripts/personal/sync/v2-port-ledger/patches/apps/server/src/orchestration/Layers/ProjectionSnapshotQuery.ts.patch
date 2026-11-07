@@ -1,0 +1,103 @@
+diff --git a/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts b/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts
+index 07d30e47e27b18443d4e41700d1d62d682bc09ea..7dcbc475b4ea355083f61b2267847cb3beb5a8f5 100644
+--- a/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts
++++ b/apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts
+@@ -44,8 +44,8 @@ import * as Option from "effect/Option";
+ import * as Result from "effect/Result";
+ import * as Schema from "effect/Schema";
+ import * as Struct from "effect/Struct";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ 
+ import {
+   isPersistenceError,
+@@ -388,6 +388,7 @@ function mapSessionRow(
+     runtimeMode: row.runtimeMode,
+     activeTurnId: row.activeTurnId,
+     lastError: row.lastError,
++    ...(row.providerRetry ? { providerRetry: row.providerRetry } : {}),
+     updatedAt: row.updatedAt,
+   };
+ }
+@@ -909,6 +910,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
+           runtime_mode AS "runtimeMode",
+           active_turn_id AS "activeTurnId",
+           last_error AS "lastError",
++          provider_retry_json AS "providerRetry",
+           updated_at AS "updatedAt"
+         FROM projection_thread_sessions
+         ORDER BY thread_id ASC
+@@ -930,6 +932,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
+           sessions.runtime_mode AS "runtimeMode",
+           sessions.active_turn_id AS "activeTurnId",
+           sessions.last_error AS "lastError",
++          sessions.provider_retry_json AS "providerRetry",
+           sessions.updated_at AS "updatedAt"
+         FROM projection_thread_sessions sessions
+         INNER JOIN projection_threads threads
+@@ -956,6 +959,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
+           sessions.runtime_mode AS "runtimeMode",
+           sessions.active_turn_id AS "activeTurnId",
+           sessions.last_error AS "lastError",
++          sessions.provider_retry_json AS "providerRetry",
+           sessions.updated_at AS "updatedAt"
+         FROM projection_thread_sessions sessions
+         INNER JOIN projection_threads threads
+@@ -1348,6 +1352,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
+           sessions.runtime_mode AS "runtimeMode",
+           sessions.active_turn_id AS "activeTurnId",
+           sessions.last_error AS "lastError",
++          sessions.provider_retry_json AS "providerRetry",
+           sessions.updated_at AS "updatedAt"
+         FROM projection_threads AS threads
+         LEFT JOIN projection_thread_sessions AS sessions
+@@ -1666,6 +1671,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
+           runtime_mode AS "runtimeMode",
+           active_turn_id AS "activeTurnId",
+           last_error AS "lastError",
++          provider_retry_json AS "providerRetry",
+           updated_at AS "updatedAt"
+         FROM projection_thread_sessions
+         WHERE thread_id = ${threadId}
+@@ -1955,6 +1961,23 @@ pending_approval_requests AS (
+       `,
+   });
+ 
++  const getPendingInputActivities: ProjectionSnapshotQueryShape["getPendingInputActivities"] = (
++    threadId,
++  ) =>
++    listPinnedThreadActivityRowsByThread({ threadId }).pipe(
++      Effect.map((rows) =>
++        rows
++          .map(mapThreadActivityRow)
++          .filter((activity) => activity.kind === "user-input.requested"),
++      ),
++      Effect.mapError(
++        toPersistenceSqlOrDecodeError(
++          "ProjectionSnapshotQuery.getPendingInputActivities:query",
++          "ProjectionSnapshotQuery.getPendingInputActivities:decodeRows",
++        ),
++      ),
++    );
++
+   const listPinnedThreadActivityIdsByThread = SqlSchema.findAll({
+     Request: ThreadIdLookupInput,
+     Result: ProjectionThreadActivityIdRowSchema,
+@@ -2339,6 +2362,7 @@ pending_approval_requests AS (
+                   runtimeMode: row.runtimeMode,
+                   activeTurnId: row.activeTurnId,
+                   lastError: row.lastError,
++                  ...(row.providerRetry ? { providerRetry: row.providerRetry } : {}),
+                   updatedAt: row.updatedAt,
+                 });
+               }
+@@ -3839,6 +3863,7 @@ pending_approval_requests AS (
+   return {
+     getCommandReadModel,
+     getUserInputActivity,
++    getPendingInputActivities,
+     listActivitiesByKind,
+     getSnapshot,
+     getShellSnapshot,

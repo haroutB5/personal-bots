@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/textGeneration/CodexTextGeneration.test.ts b/apps/server/src/textGeneration/CodexTextGeneration.test.ts
+index 161a18abb2b748f834e178aaf492d969decc7737..823145ab3148921c3ef957a3ac72d8d1a681b26f 100644
+--- a/apps/server/src/textGeneration/CodexTextGeneration.test.ts
++++ b/apps/server/src/textGeneration/CodexTextGeneration.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

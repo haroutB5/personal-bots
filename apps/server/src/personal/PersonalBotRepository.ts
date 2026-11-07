@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -35,7 +36,7 @@ import {
 import type { PersonalBotPersona } from "./personalBotInstructions.ts";
 import { serverPerfOptimizationOn } from "./perfFlags.ts";
 import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
-import { PersonalProjectionRelationsV1Live } from "./engine/PersonalProjectionRelationsV1Live.ts";
+import { PersonalProjectionRelationsV2Live } from "./engine/PersonalProjectionRelationsV2Live.ts";
 
 export const CreatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
@@ -231,7 +232,7 @@ export interface PersonalBotProviderSession {
   /** The provider that owns the session (`claudeAgent`, `codex`, `opencode`, ...). */
   readonly providerName: string;
   /**
-   * `provider_session_runtime.resume_cursor_json`, as stored. The session id a
+   * the provider-sessions relation's `resume_cursor_json`, as stored. The session id a
    * Claude CLI carries on its command line lives in here (`$.resume`), not in
    * the sessions relation's `provider_session_id`, which is empty on a real
    * data root; `sessionIdFromResumeCursor` reads it for the provider at hand.
@@ -2186,41 +2187,46 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
   return {
     createBot,
-    getBotById,
-    listBots,
+    getBotById: asRead(getBotById),
+    listBots: asRead(listBots),
     updateBot,
     softDeleteBot,
     clearTeamLead,
     insertThreadLink,
-    getThreadLink,
-    isGroupRelay,
+    getThreadLink: asRead(getThreadLink),
+    isGroupRelay: asRead(isGroupRelay),
     setThreadArchived,
     recordThreadViewed,
-    listFallbackStates,
+    listFallbackStates: asRead(listFallbackStates),
     startFallback,
     switchFallback,
     updateFallbackReset,
     endFallback,
     updateThreadState,
-    searchMessages,
+    searchMessages: asRead(searchMessages),
     deleteThreadLink,
-    listThreadLinks,
-    listArchivedChatCounts,
-    listBotProviderSessions,
-    listOpenChatTitles,
-    listOpenChats,
-    getChatFacts,
-    listDirectChats,
-    getRemovedChatOrigin,
-    getChatTitleScope,
-    listGroupPresence,
-    getMeta,
+    listThreadLinks: asRead(listThreadLinks),
+    listArchivedChatCounts: asRead(listArchivedChatCounts),
+    listBotProviderSessions: asRead(listBotProviderSessions),
+    listOpenChatTitles: asRead(listOpenChatTitles),
+    listOpenChats: asRead(listOpenChats),
+    getChatFacts: asRead(getChatFacts),
+    listDirectChats: asRead(listDirectChats),
+    getRemovedChatOrigin: asRead(getRemovedChatOrigin),
+    getChatTitleScope: asRead(getChatTitleScope),
+    listGroupPresence: asRead(listGroupPresence),
+    getMeta: asRead(getMeta),
     setMeta,
     deleteMeta,
-    getInstructionsForThread,
-    listThreadAttachments,
+    getInstructionsForThread: asRead(getInstructionsForThread),
+    listThreadAttachments: asRead(listThreadAttachments),
   } satisfies PersonalBotRepository["Service"];
 });
 
@@ -2230,5 +2236,5 @@ export const make = Effect.gen(function* () {
  * is chosen here, in one place.
  */
 export const layer = Layer.effect(PersonalBotRepository, make).pipe(
-  Layer.provideMerge(PersonalProjectionRelationsV1Live),
+  Layer.provideMerge(PersonalProjectionRelationsV2Live),
 );

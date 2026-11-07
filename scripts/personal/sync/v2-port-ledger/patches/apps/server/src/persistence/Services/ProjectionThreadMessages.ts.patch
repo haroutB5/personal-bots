@@ -1,0 +1,43 @@
+diff --git a/apps/server/src/persistence/Services/ProjectionThreadMessages.ts b/apps/server/src/persistence/Services/ProjectionThreadMessages.ts
+index e3e5b6e5151d0a22bdae1226780fbca4b8e91e04..1fcebf693c674e453cc520b3bdbe165d5305e6f4 100644
+--- a/apps/server/src/persistence/Services/ProjectionThreadMessages.ts
++++ b/apps/server/src/persistence/Services/ProjectionThreadMessages.ts
+@@ -53,6 +53,21 @@ export const GetProjectionThreadMessageInput = Schema.Struct({
+ });
+ export type GetProjectionThreadMessageInput = typeof GetProjectionThreadMessageInput.Type;
+ 
++export const GetLatestAssistantMessageForTurnInput = Schema.Struct({
++  threadId: ThreadId,
++  turnId: TurnId,
++});
++export type GetLatestAssistantMessageForTurnInput =
++  typeof GetLatestAssistantMessageForTurnInput.Type;
++
++export const GetLatestAssistantMessageAfterInput = Schema.Struct({
++  threadId: ThreadId,
++  /** Exclusive lower bound in the thread's (created_at, message_id) order. */
++  afterCreatedAt: IsoDateTime,
++  afterMessageId: MessageId,
++});
++export type GetLatestAssistantMessageAfterInput = typeof GetLatestAssistantMessageAfterInput.Type;
++
+ export const HasProjectionThreadAssistantMessageInput = Schema.Struct({
+   threadId: ThreadId,
+   turnId: TurnId,
+@@ -107,6 +122,16 @@ export interface ProjectionThreadMessageRepositoryShape {
+     input: ListProjectionThreadMessagesInput,
+   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+ 
++  /** Newest assistant message of a turn, or none. Bounded: one row. */
++  readonly getLatestAssistantMessageForTurn: (
++    input: GetLatestAssistantMessageForTurnInput,
++  ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
++
++  /** Newest assistant message strictly after an anchor message. Bounded: one row. */
++  readonly getLatestAssistantMessageAfter: (
++    input: GetLatestAssistantMessageAfterInput,
++  ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
++
+   /** Read the latest user-message timestamp without loading message bodies. */
+   readonly getLatestUserMessageAt: (
+     input: ListProjectionThreadMessagesInput,

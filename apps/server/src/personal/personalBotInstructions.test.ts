@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { withBotInstructions } from "../provider/RuntimeInstructions.ts";
+import { withBotInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { MEMORY_AUTO_SAVE_RULE, personalBotSystemInstructions } from "./personalBotInstructions.ts";
 
 const persona = (instructions: string, title = "Coach") => ({ name: "Nova", title, instructions });

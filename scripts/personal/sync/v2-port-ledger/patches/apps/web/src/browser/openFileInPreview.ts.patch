@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/browser/openFileInPreview.ts b/apps/web/src/browser/openFileInPreview.ts
+index a320e3ba34daeef2c75eba1137fc642d4f7f2746..38ab15eb826b7c64f7f2a6e7486cee5b722f9dc9 100644
+--- a/apps/web/src/browser/openFileInPreview.ts
++++ b/apps/web/src/browser/openFileInPreview.ts
+@@ -13,7 +13,7 @@ import {
+ } from "@t3tools/client-runtime/state/runtime";
+ import * as Cause from "effect/Cause";
+ import * as Data from "effect/Data";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ 
+ import { resolveAssetUrl } from "~/assets/assetUrls";
+ import {

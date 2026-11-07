@@ -1,0 +1,15 @@
+diff --git a/apps/server/scripts/evaluate-thread-titles.ts b/apps/server/scripts/evaluate-thread-titles.ts
+index 4c6e04bb510ea439e214aef38e652273e45c5362..f85433f8df0bc223d9512b94d463f3d3dbcc8bd2 100644
+--- a/apps/server/scripts/evaluate-thread-titles.ts
++++ b/apps/server/scripts/evaluate-thread-titles.ts
+@@ -6,8 +6,8 @@
+ // Add --initial to evaluate only the opening request.
+ import * as NodeUtil from "node:util";
+ import * as NodeCrypto from "node:crypto";
+-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as FetchHttpClient from "effect/http/FetchHttpClient";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";

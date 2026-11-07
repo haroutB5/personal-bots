@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/Layers/cursorUsageLimits.ts b/apps/server/src/provider/Layers/cursorUsageLimits.ts
+index e0611e0c50ab9c04ab207e6f85f974c9d18099fb..394414c1619e4b5d9c39fef0ce247355625fc860 100644
+--- a/apps/server/src/provider/Layers/cursorUsageLimits.ts
++++ b/apps/server/src/provider/Layers/cursorUsageLimits.ts
+@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ import {
+   clampPercent,
+   makeUnavailableUsageLimits,

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/bootstrap.test.ts b/apps/server/src/bootstrap.test.ts
+index d532f71c9fb878dbd232552b13115c33ceaa6fea..abe48aa8479c7ac842018786146ba2c8655bc7ac 100644
+--- a/apps/server/src/bootstrap.test.ts
++++ b/apps/server/src/bootstrap.test.ts
+@@ -2,7 +2,7 @@
+ import * as NodeFS from "node:fs";
+ import * as NodePath from "node:path";
+ import * as NodeChildProcess from "node:child_process";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Schema from "effect/Schema";

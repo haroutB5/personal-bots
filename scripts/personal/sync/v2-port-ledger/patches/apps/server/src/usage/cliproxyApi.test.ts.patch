@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/usage/cliproxyApi.test.ts b/apps/server/src/usage/cliproxyApi.test.ts
+index b0fee363828218989ec243311d1bc7b35a3fd092..f2f2c2f0cfdaaeac81394df63498503ad72be076 100644
+--- a/apps/server/src/usage/cliproxyApi.test.ts
++++ b/apps/server/src/usage/cliproxyApi.test.ts
+@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Schema from "effect/Schema";
+ import * as TestClock from "effect/testing/TestClock";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ 
+ import { creditRedeemRequestId, makeCliproxyApi } from "./cliproxyApi.ts";
+ 

@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/ProviderUpdateEnvironmentRows.test.tsx b/apps/web/src/components/ProviderUpdateEnvironmentRows.test.tsx
+index b34f82a775ac46cc350b2862cc5bdc7e4bb1363c..6760fb57b948f5b646c6ee94dbe4daee0bdc2b34 100644
+--- a/apps/web/src/components/ProviderUpdateEnvironmentRows.test.tsx
++++ b/apps/web/src/components/ProviderUpdateEnvironmentRows.test.tsx
+@@ -6,7 +6,7 @@ import {
+   ProviderInstanceId,
+   type ServerProvider,
+ } from "@t3tools/contracts";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ 
+ import type {
+   LocalEnvironmentUpdateGroup,

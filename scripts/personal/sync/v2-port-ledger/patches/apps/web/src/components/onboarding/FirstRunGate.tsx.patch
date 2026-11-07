@@ -1,0 +1,57 @@
+diff --git a/apps/web/src/components/onboarding/FirstRunGate.tsx b/apps/web/src/components/onboarding/FirstRunGate.tsx
+index 0fda2ee2cecc70894ada667143e1690a80f303dd..ac1c1f93f125d400d5376fec9dcdcd9cde6384ad 100644
+--- a/apps/web/src/components/onboarding/FirstRunGate.tsx
++++ b/apps/web/src/components/onboarding/FirstRunGate.tsx
+@@ -1,7 +1,7 @@
+ import { RefreshIcon } from "~/components/ui/refresh-icon";
+ import { useAtomValue } from "@effect/atom-react";
+ import { useLocation, useNavigate } from "@tanstack/react-router";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useEffect, useState } from "react";
+ 
+ import {
+@@ -30,6 +30,7 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/s
+ import { environmentShell } from "../../state/shell";
+ import { environmentThreadShells } from "../../state/threads";
+ import { Button } from "../ui/button";
++import { isPersonalPath } from "../../features/personal/personalMode";
+ 
+ /**
+  * Holds back authenticated and hosted app trees until the first-run decision
+@@ -151,23 +152,31 @@ export function FirstRunGate({
+         threadCount: threads.length,
+       });
+ 
++  // The personal Bots app needs no project setup, so a fresh install that
++  // opens on a personal route completes onboarding instead of showing the
++  // upstream wizard.
++  const personalRoute = isPersonalPath(pathname);
++  const skipWizardForPersonal = personalRoute && nextDecision === "wizard";
++  const effectiveDecision = skipWizardForPersonal ? "app" : nextDecision;
++  const effectivePersistCompletion = persistCompletion || skipWizardForPersonal;
++
+   useEffect(() => {
+     if (decision === "wizard" || !hydrated) return;
+ 
+-    if (persistCompletion && onboardingCompletedAt === null) {
++    if (effectivePersistCompletion && onboardingCompletedAt === null) {
+       void completeOnboarding().catch(() => undefined);
+     }
+ 
+     setGateState((state) =>
+-      transitionFirstRunGateState(state, { type: "evidence", decision: nextDecision }),
++      transitionFirstRunGateState(state, { type: "evidence", decision: effectiveDecision }),
+     );
+   }, [
+     completeOnboarding,
+     decision,
++    effectiveDecision,
++    effectivePersistCompletion,
+     hydrated,
+-    nextDecision,
+     onboardingCompletedAt,
+-    persistCompletion,
+   ]);
+ 
+   // A stalled server read gets a recovery screen, but never mounts the app.

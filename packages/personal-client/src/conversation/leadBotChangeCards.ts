@@ -5,10 +5,6 @@ import * as DateTime from "effect/DateTime";
  * A team lead's request to remove or rewrite a bot, in the state the
  * transcript should show it. Unlike connection approvals the server keeps
  * settled rows for a week, so the ending comes from the list itself and this
- * device needs no memory of what it showed.
- *
- * The card carries the whole change because every word the owner reads
- * (`lines`, `reason`) is server-authored from validated values.
  */
 export type LeadBotChangeCardItem = {
   readonly kind: PersonalLeadBotChangeStatus;

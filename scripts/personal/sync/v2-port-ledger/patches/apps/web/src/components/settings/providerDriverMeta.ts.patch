@@ -1,0 +1,30 @@
+diff --git a/apps/web/src/components/settings/providerDriverMeta.ts b/apps/web/src/components/settings/providerDriverMeta.ts
+index 4bf4da3919ba382cf55cb8621404613599d34771..71564d4e166f7e4af045d00561b065773c23503b 100644
+--- a/apps/web/src/components/settings/providerDriverMeta.ts
++++ b/apps/web/src/components/settings/providerDriverMeta.ts
+@@ -3,10 +3,12 @@ import {
+   ClaudeSettings,
+   CodexSettings,
+   CursorSettings,
++  DeepSeekSettings,
+   GrokSettings,
+   OpenCodeSettings,
+   ProviderDriverKind,
+ } from "@t3tools/contracts";
++import { BotIcon } from "lucide-react";
+ import type * as Schema from "effect/Schema";
+ import {
+   AntigravityIcon,
+@@ -76,6 +78,12 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+     icon: OpenCodeIcon,
+     settingsSchema: OpenCodeSettings,
+   },
++  {
++    value: ProviderDriverKind.make("deepseek"),
++    label: "DeepSeek",
++    icon: BotIcon,
++    settingsSchema: DeepSeekSettings,
++  },
+   {
+     value: ProviderDriverKind.make("antigravity"),
+     label: "Antigravity",

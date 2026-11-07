@@ -1,0 +1,22 @@
+diff --git a/apps/web/src/hooks/useLocalStorage.ts b/apps/web/src/hooks/useLocalStorage.ts
+index 8e7158c36152c7a17a8f273632a295134d33088a..7d6c39bdbd25034c5723a4d9422c279f596d6308 100644
+--- a/apps/web/src/hooks/useLocalStorage.ts
++++ b/apps/web/src/hooks/useLocalStorage.ts
+@@ -150,9 +150,16 @@ export function useLocalStorage<T, E>(
+   const setValue = useCallback(
+     (value: T | ((val: T) => T)) => {
+       try {
+-        const currentValue = getLocalStorageItem(key, schema) ?? initialValue;
+         let valueToStore: T;
+         if (typeof value === "function") {
++          // Like the read path, treat an unreadable stored value as the initial
++          // value, so a corrupt blob cannot block every later write.
++          let currentValue = initialValue;
++          try {
++            currentValue = getLocalStorageItem(key, schema) ?? initialValue;
++          } catch (error) {
++            console.error("[LOCALSTORAGE] Could not read stored value.", error);
++          }
+           try {
+             valueToStore = (value as (val: T) => T)(currentValue);
+           } catch (cause) {

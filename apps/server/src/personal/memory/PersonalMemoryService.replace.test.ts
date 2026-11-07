@@ -11,18 +11,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { makeMemoryCore } from "./memoryCore.ts";
 import { makeMemoryPersistence } from "./memoryPersistence.ts";
 import { localDay } from "./memoryTidy.ts";
 import { PersonalMemoryService, RULE_FORGOTTEN_REASON } from "./PersonalMemoryService.ts";
 import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
+import { seedV2Message, seedV2Run, seedV2Thread } from "../test/v2ProjectionSeed.ts";
 
-const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const BOT_A = PersonalBotId.make("bot-a");
 const BOT_B = PersonalBotId.make("bot-b");
@@ -47,10 +47,9 @@ const linkThreads = Effect.gen(function* () {
       INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
       VALUES (${threadId}, ${botId}, ${now})
     `;
+    yield* seedV2Thread({ threadId, createdAt: now });
   }
 });
-
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 let noticeCount = 0;
 
@@ -61,7 +60,6 @@ let noticeCount = 0;
  */
 const noticeFor = (archived: PersonalMemoryEntry, threadId: ThreadId = THREAD_A) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const now = DateTime.formatIso(yield* DateTime.now);
     noticeCount += 1;
     const messageId = `personal-notice-memory-test-${noticeCount}`;
@@ -84,15 +82,14 @@ const noticeFor = (archived: PersonalMemoryEntry, threadId: ThreadId = THREAD_A)
         },
       ],
     };
-    yield* sql`
-      INSERT INTO projection_thread_messages (
-        message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at, context_json
-      )
-      VALUES (
-        ${messageId}, ${threadId}, NULL, 'assistant', 'Replaced a note', 0, ${now}, ${now},
-        ${encodeJson(context)}
-      )
-    `;
+    yield* seedV2Message({
+      messageId,
+      threadId,
+      role: "assistant",
+      text: "Replaced a note",
+      createdAt: now,
+      context,
+    });
     return {
       memoryId: archived.memoryId,
       undo: "unreplace" as const,
@@ -403,6 +400,13 @@ it.effect(
         (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
       VALUES ('compact-1', ${THREAD_A}, NULL, 'info', 'context-compaction', 'Context compacted', '{}', ${later})
     `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('compact-1', ${THREAD_A}, 'turn-1', NULL, NULL, NULL, NULL, 99, 'compaction',
+          'completed', ${later}, '{"type":"compaction"}')
+      `;
       yield* TestClock.adjust("2 seconds");
       expect(yield* turn("s1")).toContain("Lead with the outcome.");
 
@@ -549,6 +553,13 @@ it.effect("a note is sent once per session and again once the provider compacted
         (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
       VALUES ('compact-notes-1', ${THREAD_A}, NULL, 'info', 'context-compaction', 'Context compacted', '{}', ${later})
     `;
+    yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('compact-notes-1', ${THREAD_A}, 'turn-1', NULL, NULL, NULL, NULL, 99, 'compaction',
+          'completed', ${later}, '{"type":"compaction"}')
+      `;
     yield* TestClock.adjust("2 seconds");
     expect((yield* build).block).toContain("Harout likes green tea");
   }).pipe(Effect.provide(TestLayer)),
@@ -650,13 +661,9 @@ it.effect("owner messages leave out task briefs, relays and notices", () =>
   Effect.gen(function* () {
     yield* linkThreads;
     const memory = yield* PersonalMemoryService;
-    const sql = yield* SqlClient.SqlClient;
     const now = DateTime.formatIso(yield* DateTime.now);
-    const add = (messageId: string, text: string, at: string) => sql`
-      INSERT INTO projection_thread_messages
-        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-      VALUES (${messageId}, ${THREAD_A}, NULL, 'user', ${text}, 0, ${at}, ${at})
-    `;
+    const add = (messageId: string, text: string, at: string) =>
+      seedV2Message({ messageId, threadId: THREAD_A, text, createdAt: at });
     yield* add("personal-task-1", "Remember that deploys need no OK.", "1960-01-01T00:00:00.000Z");
     yield* add("1b9e0c1a-real", "Remember I take my coffee black.", now);
     const owner = yield* memory.ownerMessages(THREAD_A);
@@ -853,32 +860,27 @@ const runningTurn = (
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const at = "2026-10-02T08:00:00.000Z";
-    yield* sql`DELETE FROM projection_thread_sessions WHERE thread_id = ${THREAD_A}`;
-    yield* sql`DELETE FROM projection_turns WHERE thread_id = ${THREAD_A}`;
-    yield* sql`DELETE FROM projection_thread_activities WHERE thread_id = ${THREAD_A}`;
-    yield* sql`
-      INSERT INTO projection_thread_messages
-        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-      VALUES (${messageId}, ${THREAD_A}, 'turn-1', 'user', 'Go', 0, ${at}, ${at})
-    `;
-    yield* sql`
-      INSERT INTO projection_turns
-        (thread_id, turn_id, pending_message_id, state, requested_at, checkpoint_files_json)
-      VALUES (${THREAD_A}, 'turn-1', ${messageId}, 'running', ${at}, '[]')
-    `;
-    yield* sql`
-      INSERT INTO projection_thread_sessions (thread_id, status, active_turn_id, updated_at)
-      VALUES (${THREAD_A}, 'running', 'turn-1', ${at})
-    `;
+    yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE thread_id = ${THREAD_A}`;
+    yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${THREAD_A}`;
+    yield* seedV2Run({
+      runId: "turn-1",
+      threadId: THREAD_A,
+      instanceId: "claudeAgent",
+      requestedAt: at,
+      userMessageId: messageId,
+    });
+    yield* seedV2Message({ messageId, threadId: THREAD_A, text: "Go", createdAt: at });
     let n = 0;
     for (const tool of tools) {
       n += 1;
       yield* sql`
-        INSERT INTO projection_thread_activities
-          (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at, sequence)
-        VALUES (${`act-${messageId}-${n}`}, ${THREAD_A}, 'turn-1', 'tool', 'tool.completed',
-          ${tool.summary}, ${`{"itemType":"${tool.type}","title":"${tool.summary}"}`},
-          '2026-10-02T08:00:05.000Z', ${n})
+        INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json)
+        VALUES (${`act-${messageId}-${n}`}, ${THREAD_A}, 'turn-1', NULL, NULL, NULL, NULL,
+          ${n}, ${tool.type === "mcp_tool_call" ? "dynamic_tool" : tool.type}, 'completed',
+          '2026-10-02T08:00:05.000Z',
+          ${`{"type":"${tool.type === "mcp_tool_call" ? "dynamic_tool" : tool.type}","title":"${tool.summary}"}`})
       `;
     }
   });

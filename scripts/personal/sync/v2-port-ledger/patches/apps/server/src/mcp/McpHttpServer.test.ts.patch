@@ -1,0 +1,343 @@
+diff --git a/apps/server/src/mcp/McpHttpServer.test.ts b/apps/server/src/mcp/McpHttpServer.test.ts
+index 5619f19b25497b76a5f3ac25b027717d94ce7ac5..701954ba1075402f0f3390a2daa3ba0bcf2b77c9 100644
+--- a/apps/server/src/mcp/McpHttpServer.test.ts
++++ b/apps/server/src/mcp/McpHttpServer.test.ts
+@@ -1,7 +1,13 @@
+ import { expect, it } from "@effect/vitest";
+ import { NodeHttpServer } from "@effect/platform-node";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
+-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
++import * as NodeServices from "@t3tools/shared/nodeServices";
++import {
++  EnvironmentId,
++  PREVIEW_AUTOMATION_OPERATIONS,
++  PreviewTabId,
++  ProviderInstanceId,
++  ThreadId,
++} from "@t3tools/contracts";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+@@ -9,21 +15,26 @@ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
+-import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
++import { McpProtocol, McpSchema, McpServer, type Tool } from "effect/ai";
++import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/http";
+ 
+ import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+ import * as ServerConfig from "../config.ts";
++import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
++import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+ import * as McpHttpServer from "./McpHttpServer.ts";
+ import * as McpInvocationContext from "./McpInvocationContext.ts";
+ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
++import { PreviewSnapshotToolkit, PreviewStandardToolkit } from "./toolkits/preview/tools.ts";
++import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+ 
+ const environmentId = EnvironmentId.make("environment-mcp-test");
+ const threadId = ThreadId.make("thread-mcp-test");
+ const tabId = PreviewTabId.make("tab-mcp-test");
+ const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
+ const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
++const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+ const invocation = {
+   environmentId,
+   threadId,
+@@ -45,13 +56,13 @@ const client = McpSchema.McpServerClient.of({
+   getClient: Effect.die("unused"),
+ });
+ const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
+-  Layer.provideMerge(McpServer.McpServer.layer),
++  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+   Layer.provideMerge(PreviewAutomationBroker.layer),
+   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
+   Layer.provideMerge(NodeServices.layer),
+ );
+ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.pipe(
+-  Layer.provideMerge(McpServer.McpServer.layer),
++  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+   Layer.provide(
+     Layer.mergeAll(
+       Layer.mock(ProjectionSnapshotQuery)({
+@@ -114,6 +125,65 @@ const callSnapshot = (args: Record<string, unknown>) =>
+       );
+   });
+ 
++for (const [name, value, expected] of [
++  [
++    "nested undefined",
++    { value: undefined, nested: { keep: null, omit: undefined } },
++    { nested: { keep: null } },
++  ],
++  ["array holes", [1, , undefined, { omit: undefined, ok: true }], [1, null, null, { ok: true }]],
++  ["null", null, null],
++  ["top-level undefined", undefined, null],
++] as const) {
++  it.effect(`encodes ${name} through the registered evaluate tool and real MCP result schema`, () =>
++    Effect.scoped(
++      Effect.gen(function* () {
++        yield* serveSnapshots(`json-${name}`, value);
++        const server = yield* McpServer.McpServer;
++        const result = yield* server
++          .callTool({ name: "preview_evaluate", arguments: { expression: "fixture" } })
++          .pipe(
++            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
++            Effect.provideService(McpSchema.McpServerClient, client),
++          );
++        expect(result.isError, encodeJsonText(result.content)).toBe(false);
++        const encoded = yield* Schema.encodeEffect(McpSchema.CallToolResult)(result);
++        expect(encoded.structuredContent).toEqual({ value: expected });
++        const block = result.content[0];
++        expect(block?.type === "text" ? decodeJsonText(block.text) : null).toEqual({
++          value: expected,
++        });
++      }),
++    ).pipe(Effect.provide(TestLayer)),
++  );
++}
++
++for (const [name, value] of [
++  ["nonfinite", NaN],
++  ["bigint", 1n],
++  ["function", () => {}],
++] as const) {
++  it.effect(`returns a clear tool error for unsupported ${name} at the native MCP boundary`, () =>
++    Effect.scoped(
++      Effect.gen(function* () {
++        yield* serveSnapshots(`unsupported-${name}`, value);
++        const server = yield* McpServer.McpServer;
++        const result = yield* server
++          .callTool({ name: "preview_evaluate", arguments: { expression: "fixture" } })
++          .pipe(
++            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
++            Effect.provideService(McpSchema.McpServerClient, client),
++          );
++        expect(result.isError).toBe(true);
++        const encoded = yield* Schema.encodeEffect(McpSchema.CallToolResult)(result);
++        expect(encoded.content).toEqual([
++          { type: "text", text: "Tool result contains an unsupported JSON value." },
++        ]);
++      }),
++    ).pipe(Effect.provide(TestLayer)),
++  );
++}
++
+ it("normalizes empty successful notification responses to accepted", () => {
+   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
+     HttpServerResponse.text("", { status: 200, contentType: "application/json" }),
+@@ -213,14 +283,14 @@ it.effect.each([
+   ).pipe(Effect.provide(TestLayer)),
+ );
+ 
+-it.effect("tells the agent how to fall back when no desktop app can run the snapshot", () =>
++it.effect("tells the agent how to recover when no preview host can run the snapshot", () =>
+   Effect.gen(function* () {
+     const snapshot = yield* callSnapshot({});
+ 
+     expect(snapshot.isError).toBe(true);
+     const [text] = snapshot.content;
+     expect(text?.type === "text" ? text.text : "").toContain(
+-      "use a headless browser from the shell",
++      "Retry preview_status, then call preview_open",
+     );
+     expect(snapshot.structuredContent).toMatchObject({
+       error: { _tag: "PreviewAutomationNoAvailableHostError" },
+@@ -387,7 +457,10 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
+       const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
+       const screenshotPath = structured.screenshotPath;
+       expect(typeof screenshotPath).toBe("string");
+-      expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir);
++      // Forward slashes only: an agent pastes this straight into markdown, where
++      // a backslash before punctuation is an escape and would corrupt the path.
++      expect(screenshotPath).not.toContain("\\");
++      expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir.replaceAll("\\", "/"));
+       expect(path.basename(screenshotPath!)).toMatch(
+         /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
+       );
+@@ -448,7 +521,7 @@ it.effect(
+       const linkTool = server.tools.find(({ tool }) => tool.name === "link_pull_request");
+       expect(linkTool?.tool.annotations?.idempotentHint).toBe(true);
+       expect(linkTool?.tool.annotations?.openWorldHint).toBe(false);
+-      expect(linkTool?.tool.description).toContain("Register every pull request you open");
++      expect(linkTool?.tool.description).toContain("Link every PR you open for this thread");
+ 
+       const denied = yield* server
+         .callTool({ name: "list_thread_pull_requests", arguments: {} })
+@@ -679,6 +752,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
+         version: "1.0.0",
+         path: "/mcp",
+         protocols: [McpProtocol.v2025_06_18],
++        allowSessionTermination: true,
+       });
+       yield* HttpRouter.serve(serverLayer, {
+         disableListenLog: true,
+@@ -725,6 +799,25 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
+   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+ );
+ 
++const expectCompactSchemas = (byName: Record<string, Tool.Any>) =>
++  Effect.gen(function* () {
++    const server = yield* McpServer.McpServer;
++    expect(server.tools.length).toBe(Object.keys(byName).length);
++    for (const { tool } of server.tools) {
++      expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(byName[tool.name]!));
++    }
++  });
++
++it.effect("advertises the compact input schema for every preview tool", () =>
++  expectCompactSchemas({ ...PreviewStandardToolkit.tools, ...PreviewSnapshotToolkit.tools }).pipe(
++    Effect.provide(TestLayer),
++  ),
++);
++
++it.effect("advertises the compact input schema for every pull request tool", () =>
++  expectCompactSchemas(PullRequestsToolkit.tools).pipe(Effect.provide(PullRequestsTestLayer)),
++);
++
+ it.effect("registers annotated tools and preserves authenticated request context", () =>
+   Effect.scoped(
+     Effect.gen(function* () {
+@@ -741,6 +834,7 @@ it.effect("registers annotated tools and preserves authenticated request context
+       const events = yield* broker.connect({
+         clientId: "mcp-test-client",
+         environmentId,
++        supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
+       });
+       yield* Stream.runForEach(events, (event) => {
+         if (event.type === "connected") return Effect.void;
+@@ -757,14 +851,16 @@ it.effect("registers annotated tools and preserves authenticated request context
+                 ? ["Connect", "Continue"]
+                 : event.request.operation === "press"
+                   ? undefined
+-                  : {
+-                      available: true,
+-                      visible: true,
+-                      tabId,
+-                      url: "http://example.test/",
+-                      title: "Example",
+-                      loading: false,
+-                    },
++                  : event.request.operation === "closeTab"
++                    ? { tabId: null, closedTabId: tabId, remainingTabIds: [] }
++                    : {
++                        available: true,
++                        visible: true,
++                        tabId,
++                        url: "http://example.test/",
++                        title: "Example",
++                        loading: false,
++                      },
+         });
+       }).pipe(Effect.forkScoped);
+       yield* Effect.yieldNow;
+@@ -812,7 +908,7 @@ it.effect("registers annotated tools and preserves authenticated request context
+           Effect.provideService(McpSchema.McpServerClient, client),
+           Effect.flip,
+         );
+-      expect(malformed._tag).toBe("InvalidParams");
++      expect((malformed as { _tag?: string })._tag).toBe("InvalidParams");
+ 
+       const snapshot = yield* server
+         .callTool({ name: "preview_snapshot", arguments: { tabId: alternateTabId } })
+@@ -867,6 +963,97 @@ it.effect("registers annotated tools and preserves authenticated request context
+         const text = result.content[0];
+         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
+       }
++
++      // 1.66.6: the four new browser tools are registered, annotated, and reach the host as their own operations.
++      for (const [name, destructive] of [
++        ["preview_hover", false],
++        ["preview_drag", true],
++        ["preview_history", true],
++        ["preview_close_tab", true],
++      ] as const) {
++        const registered = server.tools.find(({ tool }) => tool.name === name);
++        expect(registered, name).toBeDefined();
++        expect(registered?.tool.annotations?.destructiveHint, name).toBe(destructive);
++        expect(registered?.tool.annotations?.openWorldHint, name).toBe(true);
++      }
++      for (const [request, operation] of [
++        [{ name: "preview_hover", arguments: { x: 10, y: 10 } }, "hover"],
++        [{ name: "preview_drag", arguments: { fromX: 1, fromY: 2, toX: 30, toY: 40 } }, "drag"],
++        [{ name: "preview_click", arguments: { x: 5, y: 6, button: "right", clicks: 2 } }, "click"],
++      ] as const) {
++        const result = yield* server
++          .callTool(request)
++          .pipe(
++            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
++            Effect.provideService(McpSchema.McpServerClient, client),
++          );
++        expect(result.isError, request.name).toBe(false);
++        expect(result.structuredContent).toEqual({ toolIcon });
++        expect(routedRequests.some((entry) => entry.operation === operation)).toBe(true);
++      }
++      const history = yield* server
++        .callTool({ name: "preview_history", arguments: { action: "back" } })
++        .pipe(
++          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
++          Effect.provideService(McpSchema.McpServerClient, client),
++        );
++      expect(history.isError).toBe(false);
++      expect(history.structuredContent).toMatchObject({ url: "http://example.test/", tabId });
++      expect(routedRequests.some((entry) => entry.operation === "history")).toBe(true);
++
++      const closed = yield* server
++        .callTool({ name: "preview_close_tab", arguments: { tabId } })
++        .pipe(
++          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
++          Effect.provideService(McpSchema.McpServerClient, client),
++        );
++      expect(closed.isError).toBe(false);
++      expect(closed.structuredContent).toMatchObject({
++        tabId: null,
++        closedTabId: tabId,
++        remainingTabIds: [],
++      });
++      // The tab id travelled as the request's explicit tab, which is what the host checks.
++      expect(routedRequests.find((entry) => entry.operation === "closeTab")?.tabId).toBe(tabId);
++
++      // A close_tab call without a tab id is refused before it reaches any host.
++      const before = routedRequests.length;
++      const missing = yield* server
++        .callTool({ name: "preview_close_tab", arguments: {} })
++        .pipe(
++          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
++          Effect.provideService(McpSchema.McpServerClient, client),
++          Effect.flip,
++        );
++      expect(String(missing)).toContain("preview_close_tab");
++      expect(String(missing)).toContain("tabId");
++      expect(routedRequests).toHaveLength(before);
++    }),
++  ).pipe(Effect.provide(TestLayer)),
++);
++
++it.effect("masks a saved key in a registered tool's input before the handler sees it", () =>
++  Effect.scoped(
++    Effect.gen(function* () {
++      const key = "sk-live-AbCdEf0123456789xyzQ";
++      secretRedactor.set("SAVED_KEY", key);
++      yield* Effect.addFinalizer(() => Effect.sync(() => secretRedactor.clear()));
++      const inputs = yield* serveSnapshots("mcp-guard-client", ["ok"]);
++      const server = yield* McpServer.McpServer;
++      const result = yield* server
++        .callTool({
++          name: "preview_evaluate",
++          arguments: { expression: `fetch("/x?k=${key}")` },
++        })
++        .pipe(
++          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
++          Effect.provideService(McpSchema.McpServerClient, client),
++        );
++      expect(result.isError).toBe(false);
++      expect(inputs.length).toBeGreaterThan(0);
++      const sent = encodeJsonText(inputs);
++      expect(sent).not.toContain(key);
++      expect(sent).toContain("[secret SAVED_KEY]");
+     }),
+   ).pipe(Effect.provide(TestLayer)),
+ );

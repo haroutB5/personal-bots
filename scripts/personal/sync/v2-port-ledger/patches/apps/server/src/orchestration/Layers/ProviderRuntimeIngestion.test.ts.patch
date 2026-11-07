@@ -1,0 +1,725 @@
+diff --git a/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts b/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts
+index 4c6e3703ba82ddac0a536ccb86dae8654432b3c3..33b6330f93619d109a43bda3819d9e32851cd754 100644
+--- a/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts
++++ b/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts
+@@ -18,6 +18,8 @@ import {
+   EventId,
+   MessageId,
+   type OrchestrationCommand,
++  PersonalBotId,
++  type PersonalBotThread,
+   ProjectId,
+   ProviderItemId,
+   RuntimeRequestId,
+@@ -37,6 +39,11 @@ import * as PubSub from "effect/PubSub";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+ import * as Tracer from "effect/Tracer";
++import {
++  clearReplacedSessions,
++  markSessionReplaced,
++  unmarkSessionReplaced,
++} from "../replacedSessions.ts";
+ import { it as effectIt } from "@effect/vitest";
+ import { afterEach, describe, expect, it } from "vite-plus/test";
+ 
+@@ -63,12 +70,18 @@ import {
+   splitBufferedAssistantText,
+ } from "./ProviderRuntimeIngestion.ts";
+ import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
++import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
++import {
++  PERSONAL_THREAD_TITLE,
++  PERSONAL_TITLE_SEED_COMMAND_TAG,
++  personalTaskMessageId,
++} from "../../personal/personalThreadTitles.ts";
+ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+ import { ServerConfig } from "../../config.ts";
+ import { ServerSettingsService } from "../../serverSettings.ts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+ 
+ function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
+@@ -125,6 +138,7 @@ function createProviderServiceHarness() {
+   const service: ProviderServiceShape = {
+     startSession: () => unsupported(),
+     sendTurn: () => unsupported(),
++    validateTurn: () => unsupported(),
+     compactThread: () => unsupported(),
+     interruptTurn: () => unsupported(),
+     respondToRequest: () => unsupported(),
+@@ -219,7 +233,9 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
+ async function waitForThread(
+   readModel: () => Promise<ProviderRuntimeTestReadModel>,
+   predicate: (thread: ProviderRuntimeTestThread) => boolean,
+-  timeoutMs = 2000,
++  // A ceiling, not a delay: a passing wait returns as soon as the predicate
++  // holds. 2s timed out 4-9 random tests per run on the fork's Windows host.
++  timeoutMs = 10_000,
+   threadId: ThreadId = asThreadId("thread-1"),
+ ) {
+   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
+@@ -269,6 +285,10 @@ describe("ProviderRuntimeIngestion", () => {
+   async function createHarness(options?: {
+     serverSettings?: Partial<ServerSettings>;
+     threadTitle?: string;
++    /** thread-1 is linked to a personal bot (personal_bot_threads). */
++    personalBotThread?: boolean;
++    /** Titles of thread-1's bot's other open chats (its chat-name scope). */
++    peerChatTitles?: ReadonlyArray<string>;
+     workspaceSubdirectory?: string;
+     isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
+   }) {
+@@ -328,6 +348,31 @@ describe("ProviderRuntimeIngestion", () => {
+       // engine, and the snapshot query (reader).
+       Layer.provideMerge(ThreadBackgroundLiveness.layer),
+       Layer.provideMerge(ThreadPlanProgress.layer),
++      Layer.provideMerge(
++        Layer.mock(PersonalBotRepository.PersonalBotRepository)({
++          getThreadLink: ({ threadId }) =>
++            Effect.succeed(
++              options?.personalBotThread === true && threadId === "thread-1"
++                ? Option.some({
++                    botId: "bot-1",
++                    threadId,
++                    createdAt: "2026-01-01T00:00:00.000Z",
++                    archivedAt: null,
++                  } as unknown as PersonalBotThread)
++                : Option.none(),
++            ),
++          getChatTitleScope: ({ threadId }) =>
++            Effect.succeed(
++              options?.personalBotThread === true && threadId === "thread-1"
++                ? Option.some({
++                    botId: PersonalBotId.make("bot-1"),
++                    archived: false,
++                    peerTitles: options.peerChatTitles ?? [],
++                  })
++                : Option.none(),
++            ),
++        }),
++      ),
+       Layer.provideMerge(SqlitePersistenceMemory),
+       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
+@@ -482,6 +527,87 @@ describe("ProviderRuntimeIngestion", () => {
+     expect(thread.session?.lastError).toBe("turn failed");
+   });
+ 
++  it("ignores a turn.started replayed under a new event id after its own turn completed", async () => {
++    const harness = await createHarness();
++    const threadId = asThreadId("thread-1");
++    const turnId = asTurnId("turn-replayed");
++    const base = {
++      provider: ProviderDriverKind.make("codex"),
++      threadId,
++      turnId,
++      createdAt: "2026-01-01T00:00:00.000Z",
++    };
++    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-replay-started") });
++    harness.emit({
++      ...base,
++      type: "turn.completed",
++      eventId: asEventId("evt-replay-completed"),
++      payload: { state: "completed" },
++    });
++    await waitForThread(
++      harness.readModel,
++      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
++      2_000,
++      threadId,
++    );
++
++    // The start of a turn that has already ended, delivered again with a new id.
++    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-replay-started-again") });
++    await harness.drain();
++
++    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
++    expect(thread?.session).toMatchObject({ status: "ready", activeTurnId: null });
++    expect(thread?.latestTurn).toMatchObject({ turnId, state: "completed" });
++  });
++
++  it("still runs a new turn that reuses the id of a finished turn once the server asked for it", async () => {
++    const harness = await createHarness();
++    const threadId = asThreadId("thread-1");
++    const turnId = asTurnId("turn-reused");
++    const createdAt = "2026-01-01T00:00:00.000Z";
++    const base = { provider: ProviderDriverKind.make("codex"), threadId, turnId, createdAt };
++    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-reuse-started") });
++    harness.emit({
++      ...base,
++      type: "turn.completed",
++      eventId: asEventId("evt-reuse-completed"),
++      payload: { state: "completed" },
++    });
++    await waitForThread(
++      harness.readModel,
++      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
++      2_000,
++      threadId,
++    );
++
++    // The next user message asks for a turn; the provider answers with the same id.
++    await Effect.runPromise(
++      harness.engine.dispatch({
++        type: "thread.turn.start",
++        commandId: CommandId.make("cmd-turn-start-reuse"),
++        threadId,
++        message: {
++          messageId: asMessageId("msg-reuse"),
++          role: "user",
++          text: "and again",
++          attachments: [],
++        },
++        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
++        runtimeMode: "approval-required",
++        createdAt,
++      }),
++    );
++    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-reuse-started-2") });
++
++    const thread = await waitForThread(
++      harness.readModel,
++      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === turnId,
++      2_000,
++      threadId,
++    );
++    expect(thread.session?.activeTurnId).toBe(turnId);
++  });
++
+   it.each([
+     { delivery: "buffered", responseStreamingMode: "paragraph" as const },
+     { delivery: "streamed", responseStreamingMode: "token" as const },
+@@ -843,6 +969,127 @@ describe("ProviderRuntimeIngestion", () => {
+     expect(thread.session?.lastError).toBeNull();
+   });
+ 
++  it("carries a provider wait on the session until output resumes", async () => {
++    const harness = await createHarness();
++    const base = {
++      provider: ProviderDriverKind.make("claudeAgent"),
++      threadId: asThreadId("thread-1"),
++      turnId: asTurnId("turn-wait"),
++    };
++    harness.emit({
++      ...base,
++      type: "turn.started",
++      eventId: asEventId("evt-wait-turn"),
++      createdAt: "2026-09-13T03:47:09.000Z",
++    });
++    // The shape the Claude adapter emits for the observed 429 api_retry.
++    harness.emit({
++      ...base,
++      type: "session.state.changed",
++      eventId: asEventId("evt-wait-retry"),
++      createdAt: "2026-09-13T03:47:16.087Z",
++      payload: {
++        state: "running",
++        reason: "api_retry:1/300",
++        retry: {
++          kind: "rate_limited",
++          retryAt: "2026-09-13T09:47:16.087Z",
++          attempt: 1,
++          maxAttempts: 300,
++          reason: "HTTP 429 rate_limit",
++        },
++      },
++    });
++
++    const waiting = await waitForThread(
++      harness.readModel,
++      (entry) => entry.session?.providerRetry?.kind === "rate_limited",
++    );
++    expect(waiting.session?.status).toBe("running");
++    expect(waiting.session?.activeTurnId).toBe("turn-wait");
++    expect(waiting.session?.providerRetry).toEqual({
++      kind: "rate_limited",
++      retryAt: "2026-09-13T09:47:16.087Z",
++      attempt: 1,
++      maxAttempts: 300,
++      reason: "HTTP 429 rate_limit",
++      provider: "claudeAgent",
++      observedAt: "2026-09-13T03:47:16.087Z",
++    });
++    // The shell stream re-reads the persisted session row; it carries the wait too.
++    expect((await harness.readThreadShell()).session?.providerRetry?.retryAt).toBe(
++      "2026-09-13T09:47:16.087Z",
++    );
++
++    harness.emit({
++      ...base,
++      type: "content.delta",
++      eventId: asEventId("evt-wait-output"),
++      itemId: asItemId("wait-text"),
++      createdAt: "2026-09-13T09:47:20.000Z",
++      payload: { streamKind: "assistant_text", delta: "Back again." },
++    });
++    const resumed = await waitForThread(
++      harness.readModel,
++      (entry) => entry.session !== null && entry.session.providerRetry === undefined,
++    );
++    expect(resumed.session?.status).toBe("running");
++    expect(resumed.session?.activeTurnId).toBe("turn-wait");
++    expect((await harness.readThreadShell()).session?.providerRetry).toBeUndefined();
++  });
++
++  it("keeps a rate limit on the turn that failed on it and clears it on the next turn", async () => {
++    const harness = await createHarness();
++    const base = { provider: ProviderDriverKind.make("codex"), threadId: asThreadId("thread-1") };
++    harness.emit({
++      ...base,
++      type: "turn.started",
++      eventId: asEventId("evt-limit-turn"),
++      createdAt: "2026-09-13T10:00:00.000Z",
++      turnId: asTurnId("turn-limit"),
++    });
++    harness.emit({
++      ...base,
++      type: "turn.completed",
++      eventId: asEventId("evt-limit-failed"),
++      createdAt: "2026-09-13T10:00:05.000Z",
++      turnId: asTurnId("turn-limit"),
++      payload: {
++        state: "failed",
++        errorMessage: "Codex usage limit reached.",
++        retry: {
++          kind: "rate_limited",
++          retryAt: "2026-09-13T15:00:00.000Z",
++          reason: "usageLimitExceeded",
++        },
++      },
++    });
++    // 10s ceiling like the other cold-harness waits here: the first events on a
++    // fresh harness can exceed the 2s default on a loaded Windows machine.
++    const failed = await waitForThread(
++      harness.readModel,
++      (entry) => entry.session?.status === "error" && entry.session.providerRetry !== undefined,
++      10_000,
++    );
++    expect(failed.session?.lastError).toBe("Codex usage limit reached.");
++    expect(failed.session?.providerRetry?.retryAt).toBe("2026-09-13T15:00:00.000Z");
++
++    harness.emit({
++      ...base,
++      type: "turn.started",
++      eventId: asEventId("evt-next-turn"),
++      createdAt: "2026-09-13T15:01:00.000Z",
++      turnId: asTurnId("turn-next"),
++    });
++    const next = await waitForThread(
++      harness.readModel,
++      (entry) => entry.session?.activeTurnId === "turn-next",
++      10_000,
++    );
++    expect(next.session?.status).toBe("running");
++    expect(next.session?.providerRetry).toBeUndefined();
++  });
++
+   it("clears active turn when provider session becomes ready", async () => {
+     const harness = await createHarness();
+     const now = "2026-01-01T00:00:00.000Z";
+@@ -4008,6 +4255,36 @@ describe("ProviderRuntimeIngestion", () => {
+     expect(thread.session?.lastError).toBeNull();
+   });
+ 
++  it("keeps a runtime.warning whose message is empty, labelled generically", async () => {
++    // Measured 15 Oct 2026 with the real CLI: a notice with an empty body made
++    // the activity summary empty, and the event store (summary min length 1)
++    // rejected the whole event, so the work-log row was lost with a WARN.
++    const harness = await createHarness();
++    const now = "2026-01-01T00:00:00.000Z";
++
++    harness.emit({
++      type: "runtime.warning",
++      eventId: asEventId("evt-warning-empty"),
++      provider: ProviderDriverKind.make("claudeAgent"),
++      createdAt: now,
++      threadId: asThreadId("thread-1"),
++      payload: {
++        message: "",
++      },
++    });
++
++    const thread = await waitForThread(harness.readModel, (entry) =>
++      entry.activities.some(
++        (activity: ProviderRuntimeTestActivity) =>
++          activity.id === "evt-warning-empty" && activity.kind === "runtime.warning",
++      ),
++    );
++    const activity = thread.activities.find(
++      (candidate: ProviderRuntimeTestActivity) => candidate.id === "evt-warning-empty",
++    );
++    expect(activity?.summary).toBe("Runtime warning");
++  });
++
+   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
+     const harness = await createHarness();
+     const now = "2026-01-01T00:00:00.000Z";
+@@ -4457,6 +4734,148 @@ describe("ProviderRuntimeIngestion", () => {
+     expect(thread?.title).toBe("User-set title");
+   });
+ 
++  describe("provider session titles on personal bot threads", () => {
++    const now = "2026-01-01T00:00:00.000Z";
++    const threadId = ThreadId.make("thread-1");
++    const providerTitle = (harness: { emit: (event: never) => void }, id: string, name: string) =>
++      harness.emit({
++        type: "thread.metadata.updated",
++        eventId: asEventId(id),
++        provider: ProviderDriverKind.make("opencode"),
++        createdAt: now,
++        threadId,
++        payload: { name, metadata: { sessionID: "ses-1" } },
++      } as never);
++    const sendUserMessage = (
++      harness: Awaited<ReturnType<typeof createHarness>>,
++      messageId: MessageId,
++      text: string,
++    ) =>
++      harness.dispatch({
++        type: "thread.turn.start",
++        commandId: CommandId.make(`cmd-turn-${messageId}`),
++        threadId,
++        message: { messageId, role: "user", text, attachments: [] },
++        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
++        runtimeMode: "approval-required",
++        createdAt: now,
++      });
++    const readTitle = async (harness: Awaited<ReturnType<typeof createHarness>>) => {
++      await harness.drain();
++      const readModel = await harness.readModel();
++      return readModel.threads.find((entry) => entry.id === threadId)?.title;
++    };
++
++    it("replaces a user-started chat's first-message seed once, then never again", async () => {
++      const harness = await createHarness({
++        threadTitle: PERSONAL_THREAD_TITLE,
++        personalBotThread: true,
++      });
++      await sendUserMessage(harness, MessageId.make("user-first"), "plan my week");
++      await harness.dispatch({
++        type: "thread.title.generate.complete",
++        commandId: CommandId.make(`server:${PERSONAL_TITLE_SEED_COMMAND_TAG}:seed-1`),
++        threadId,
++        title: "plan my week",
++        expectedTitle: PERSONAL_THREAD_TITLE,
++        expectedVersion: null,
++        needsRefinement: false,
++      });
++
++      providerTitle(harness, "evt-opencode-title-1", "Weekly plan");
++      await waitForThread(harness.readModel, (entry) => entry.title === "Weekly plan");
++      providerTitle(harness, "evt-opencode-title-2", "Something else");
++
++      expect(await readTitle(harness)).toBe("Weekly plan");
++    });
++
++    it("gives a provider-reported title a number when another open chat of the bot has it", async () => {
++      const harness = await createHarness({
++        threadTitle: PERSONAL_THREAD_TITLE,
++        personalBotThread: true,
++        peerChatTitles: ["weekly   PLAN"],
++      });
++      await sendUserMessage(harness, MessageId.make("user-first"), "plan my week");
++      await harness.dispatch({
++        type: "thread.title.generate.complete",
++        commandId: CommandId.make(`server:${PERSONAL_TITLE_SEED_COMMAND_TAG}:seed-peer`),
++        threadId,
++        title: "plan my week",
++        expectedTitle: PERSONAL_THREAD_TITLE,
++        expectedVersion: null,
++        needsRefinement: false,
++      });
++
++      providerTitle(harness, "evt-opencode-title-peer", "Weekly plan");
++
++      await waitForThread(harness.readModel, (entry) => entry.title === "Weekly plan 2");
++      expect(await readTitle(harness)).toBe("Weekly plan 2");
++    });
++
++    it("never renames a task or routine chat", async () => {
++      const harness = await createHarness({
++        threadTitle: "Daily digest",
++        personalBotThread: true,
++      });
++      await sendUserMessage(harness, personalTaskMessageId("task-1", 1), "Run the digest");
++
++      providerTitle(harness, "evt-opencode-title-task", "Digest summary");
++
++      expect(await readTitle(harness)).toBe("Daily digest");
++    });
++
++    it("never renames a task chat still on a placeholder", async () => {
++      const harness = await createHarness({
++        threadTitle: DEFAULT_THREAD_TITLE,
++        personalBotThread: true,
++      });
++      await sendUserMessage(harness, personalTaskMessageId("task-2", 1), "Run the digest");
++
++      providerTitle(harness, "evt-opencode-title-task-placeholder", "Digest summary");
++
++      expect(await readTitle(harness)).toBe(DEFAULT_THREAD_TITLE);
++    });
++
++    it("never overrides a manual rename", async () => {
++      const harness = await createHarness({
++        threadTitle: PERSONAL_THREAD_TITLE,
++        personalBotThread: true,
++      });
++      await sendUserMessage(harness, MessageId.make("user-first"), "hello");
++      await harness.dispatch({
++        type: "thread.meta.update",
++        commandId: CommandId.make("cmd-manual-rename"),
++        threadId,
++        title: PERSONAL_THREAD_TITLE,
++      });
++
++      providerTitle(harness, "evt-opencode-title-manual", "Greeting");
++
++      expect(await readTitle(harness)).toBe(PERSONAL_THREAD_TITLE);
++    });
++
++    it("leaves a title the AI already replaced the seed with", async () => {
++      const harness = await createHarness({
++        threadTitle: PERSONAL_THREAD_TITLE,
++        personalBotThread: true,
++      });
++      await sendUserMessage(harness, MessageId.make("user-first"), "plan my week");
++      await harness.dispatch({
++        type: "thread.title.generate.complete",
++        commandId: CommandId.make("server:thread-title-rename:ai-1"),
++        threadId,
++        title: "Week planning",
++        expectedTitle: PERSONAL_THREAD_TITLE,
++        expectedVersion: null,
++        needsRefinement: false,
++      });
++
++      providerTitle(harness, "evt-opencode-title-after-ai", "Weekly plan");
++
++      expect(await readTitle(harness)).toBe("Week planning");
++    });
++  });
++
+   it("projects context window updates into normalized thread activities", async () => {
+     const harness = await createHarness();
+     const now = "2026-01-01T00:00:00.000Z";
+@@ -4972,6 +5391,215 @@ describe("ProviderRuntimeIngestion", () => {
+     expect(completed?.payload).toMatchObject({ title: "Watch round-3 CI and bots" });
+   });
+ 
++  it("keeps a failed turn's error when its provider process exits afterwards", async () => {
++    const harness = await createHarness();
++    const threadId = asThreadId("thread-1");
++    const provider = ProviderDriverKind.make("claudeAgent");
++    const setSession = (status: "error" | "ready", at: string) =>
++      harness.dispatch({
++        type: "thread.session.set",
++        commandId: CommandId.make(`cmd-session-${status}-${at}`),
++        threadId,
++        session: {
++          threadId,
++          status,
++          providerName: "claudeAgent",
++          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
++          runtimeMode: "full-access",
++          activeTurnId: null,
++          lastError: status === "error" ? "No conversation found with session ID: 853cc750" : null,
++          updatedAt: at,
++        },
++        createdAt: at,
++      });
++    const exited = (id: string, at: string) =>
++      harness.emitAndDrain([
++        {
++          type: "session.exited",
++          eventId: asEventId(id),
++          provider,
++          createdAt: at,
++          threadId,
++          payload: {},
++        },
++      ]);
++    const session = async () =>
++      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.session;
++
++    await setSession("error", "2026-01-01T00:00:01.000Z");
++    await exited("evt-exit-after-error", "2026-01-01T00:00:02.000Z");
++    expect(await session()).toMatchObject({
++      status: "error",
++      lastError: "No conversation found with session ID: 853cc750",
++    });
++
++    // A session that was fine just stops.
++    await setSession("ready", "2026-01-01T00:00:03.000Z");
++    await exited("evt-exit-after-ready", "2026-01-01T00:00:04.000Z");
++    expect((await session())?.status).toBe("stopped");
++  });
++
++  it("the exit of a session the thread moved off is not the new session's stop", async () => {
++    // A bot chat that follows its bot to another provider stops the old session
++    // once the thread already points at the new one. That exit used to set the
++    // thread "stopped", which ended the task, routine or group turn that caused
++    // the move although its reply was on the way.
++    const harness = await createHarness();
++    const threadId = asThreadId("thread-1");
++    const setSession = (
++      instance: string,
++      driver: string,
++      status: "starting" | "ready",
++      at: string,
++    ) =>
++      harness.dispatch({
++        type: "thread.session.set",
++        commandId: CommandId.make(`cmd-session-${instance}-${status}-${at}`),
++        threadId,
++        session: {
++          threadId,
++          status,
++          providerName: driver,
++          providerInstanceId: ProviderInstanceId.make(instance),
++          runtimeMode: "full-access",
++          activeTurnId: null,
++          lastError: null,
++          updatedAt: at,
++        },
++        createdAt: at,
++      });
++    const exited = (id: string, driver: string, instance: string | undefined, at: string) =>
++      harness.emitAndDrain([
++        {
++          type: "session.exited",
++          eventId: asEventId(id),
++          provider: ProviderDriverKind.make(driver),
++          ...(instance === undefined
++            ? {}
++            : { providerInstanceId: ProviderInstanceId.make(instance) }),
++          createdAt: at,
++          threadId,
++          payload: {},
++        },
++      ]);
++    const session = async () =>
++      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.session;
++
++    // The chat moved to Claude; Codex's exit arrives afterwards, with or without its instance.
++    await setSession("claudeAgent", "claudeAgent", "starting", "2026-01-01T00:00:01.000Z");
++    await exited("evt-old-codex-exit", "codex", "codex", "2026-01-01T00:00:02.000Z");
++    expect(await session()).toMatchObject({ status: "starting", providerName: "claudeAgent" });
++    await exited("evt-old-codex-exit-bare", "codex", undefined, "2026-01-01T00:00:02.500Z");
++    expect(await session()).toMatchObject({ status: "starting", providerName: "claudeAgent" });
++
++    // Two instances of one driver are told apart by instance.
++    await setSession("claude_work", "claudeAgent", "ready", "2026-01-01T00:00:03.000Z");
++    await exited("evt-old-instance-exit", "claudeAgent", "claude_home", "2026-01-01T00:00:04.000Z");
++    expect(await session()).toMatchObject({ status: "ready", providerInstanceId: "claude_work" });
++
++    // The current session's own exit still stops the thread.
++    await exited("evt-current-exit", "claudeAgent", "claude_work", "2026-01-01T00:00:05.000Z");
++    expect((await session())?.status).toBe("stopped");
++  });
++
++  it("the exit a same-instance fresh restart causes is not the new session's stop", async () => {
++    // The reactor stops the old session for a fresh one on the same instance. Its
++    // exit looks like the new session's own, so the stop is marked and the first
++    // exit after it is ignored; the next exit is a real stop.
++    clearReplacedSessions();
++    const harness = await createHarness();
++    const threadId = asThreadId("thread-1");
++    const instance = ProviderInstanceId.make("claudeAgent");
++    await harness.dispatch({
++      type: "thread.session.set",
++      commandId: CommandId.make("cmd-session-ready-fresh-restart"),
++      threadId,
++      session: {
++        threadId,
++        status: "ready",
++        providerName: "claudeAgent",
++        providerInstanceId: instance,
++        runtimeMode: "full-access",
++        activeTurnId: null,
++        lastError: null,
++        updatedAt: "2026-01-01T00:00:01.000Z",
++      },
++      createdAt: "2026-01-01T00:00:01.000Z",
++    });
++    markSessionReplaced({
++      threadId,
++      provider: "claudeAgent",
++      instanceId: instance,
++      nowMs: Date.parse("2026-01-01T00:00:02.000Z"),
++    });
++    const exited = (id: string, at: string) =>
++      harness.emitAndDrain([
++        {
++          type: "session.exited",
++          eventId: asEventId(id),
++          provider: ProviderDriverKind.make("claudeAgent"),
++          providerInstanceId: instance,
++          createdAt: at,
++          threadId,
++          payload: {},
++        },
++      ]);
++    const status = async () =>
++      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.session?.status;
++    await exited("evt-old-session-exit", "2026-01-01T00:00:03.000Z");
++    expect(await status()).toBe("ready");
++    await exited("evt-new-session-exit", "2026-01-01T00:00:04.000Z");
++    expect(await status()).toBe("stopped");
++    clearReplacedSessions();
++  });
++
++  it("a failing new session's exit is not swallowed once the stop is taken back", async () => {
++    // The reactor marked a stop that stopped nothing, then took the mark back: the new
++    // session that fails right after starting must stop the thread, not vanish.
++    clearReplacedSessions();
++    const harness = await createHarness();
++    const threadId = asThreadId("thread-1");
++    const instance = ProviderInstanceId.make("claudeAgent");
++    await harness.dispatch({
++      type: "thread.session.set",
++      commandId: CommandId.make("cmd-session-ready-unmarked"),
++      threadId,
++      session: {
++        threadId,
++        status: "ready",
++        providerName: "claudeAgent",
++        providerInstanceId: instance,
++        runtimeMode: "full-access",
++        activeTurnId: null,
++        lastError: null,
++        updatedAt: "2026-01-01T00:00:01.000Z",
++      },
++      createdAt: "2026-01-01T00:00:01.000Z",
++    });
++    const id = markSessionReplaced({
++      threadId,
++      provider: "claudeAgent",
++      instanceId: instance,
++      nowMs: Date.parse("2026-01-01T00:00:02.000Z"),
++    });
++    unmarkSessionReplaced(threadId, id);
++    await harness.emitAndDrain([
++      {
++        type: "session.exited",
++        eventId: asEventId("evt-new-session-fails"),
++        provider: ProviderDriverKind.make("claudeAgent"),
++        providerInstanceId: instance,
++        createdAt: "2026-01-01T00:00:03.000Z",
++        threadId,
++        payload: {},
++      },
++    ]);
++    const status = (await harness.readModel()).threads.find((entry) => entry.id === threadId)
++      ?.session?.status;
++    expect(status).toBe("stopped");
++    clearReplacedSessions();
++  });
++
+   it("projects structured user input request and resolution as thread activities", async () => {
+     const harness = await createHarness();
+     const now = "2026-01-01T00:00:00.000Z";

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/device/DeviceService.test.ts b/apps/server/src/device/DeviceService.test.ts
+index 7a81d757c0ac0820e9588fd1fe21f0927c4f7e49..b681d54ea1fbd0ec2680da6d67fd5b780d0adb0b 100644
+--- a/apps/server/src/device/DeviceService.test.ts
++++ b/apps/server/src/device/DeviceService.test.ts
+@@ -15,7 +15,7 @@ import * as PubSub from "effect/PubSub";
+ import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ import { ServerSettingsService } from "../serverSettings.ts";
+ import * as DeviceHost from "./DeviceHost.ts";
+ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";

@@ -1,0 +1,19 @@
+diff --git a/scripts/mobile-native-static-check.test.ts b/scripts/mobile-native-static-check.test.ts
+index 7393b4bd9c829f6e495f446de949188f58f6f63f..2fa5d1edf5bf2306bbec0ee2b292fc9efc8353f3 100644
+--- a/scripts/mobile-native-static-check.test.ts
++++ b/scripts/mobile-native-static-check.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as HostProcess from "@t3tools/shared/hostProcess";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import { collectSources, runCommand } from "./mobile-native-static-check.ts";
+ 

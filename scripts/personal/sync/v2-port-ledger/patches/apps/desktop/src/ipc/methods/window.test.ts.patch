@@ -1,0 +1,11 @@
+diff --git a/apps/desktop/src/ipc/methods/window.test.ts b/apps/desktop/src/ipc/methods/window.test.ts
+index 0b43fa9e6ef9a25bdd3d0d09f6ebc43a8637fa63..cc25b0a8876ac30e976a2a929d2873fbb1602d67 100644
+--- a/apps/desktop/src/ipc/methods/window.test.ts
++++ b/apps/desktop/src/ipc/methods/window.test.ts
+@@ -1,5 +1,5 @@
+ import { assert, describe, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";

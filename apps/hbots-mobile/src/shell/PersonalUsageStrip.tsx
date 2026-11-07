@@ -1,7 +1,6 @@
 import type {
   EnvironmentId,
   ProviderConsumeResetCreditOutcome,
-  ServerProvider,
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { isLowProviderBalance } from "@t3tools/contracts";
@@ -53,6 +52,8 @@ const PROVIDER_DOT: Record<UsageProviderKind, string> = {
   deepseek: "#4d6bfe",
   cursor: "#8c8c88",
   grok: "#8c8c88",
+  muse: "#8c8c88",
+  pi: "#8c8c88",
 };
 
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
@@ -437,7 +438,7 @@ function UsageSheet({
     try {
       await refreshProviders({
         environmentId: native.environmentId,
-        input: { refreshUsage: true },
+        input: { fresh: true },
       });
     } finally {
       setRefreshing(false);
@@ -448,12 +449,15 @@ function UsageSheet({
     if (!visible || probed.current) return;
     if (!usageNeedsRefreshOnOpen(cards, Date.now())) return;
     probed.current = true;
+    // eslint-disable-next-line react/set-state-in-effect -- the open-time probe starts once
     void refresh();
     // Once per open: the sheet is mounted only while it is up.
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- once per open, by design
   }, [visible]);
 
   const pan = useMemo(
     () =>
+      // eslint-disable-next-line react/refs -- the responder is created once
       PanResponder.create({
         onMoveShouldSetPanResponder: (_event, gesture) =>
           gesture.dy > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
@@ -561,8 +565,10 @@ export function PersonalUsageStrip({
   const cells = selectUsageStripCells(cards);
 
   useEffect(() => {
+    // eslint-disable-next-line react/purity -- the probe runs in an effect, not render
     const at = Date.now();
     const due = usageAutoProbeDue({
+      // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the probe reads the current cards
       cards,
       now: at,
       lastProbeAt: probe.current.lastProbeAt,
@@ -573,7 +579,7 @@ export function PersonalUsageStrip({
     probe.current.lastProbeAt = at;
     void refreshProviders({
       environmentId: native.environmentId,
-      input: { refreshUsage: true },
+      input: { fresh: true },
     });
   }, [providers, now, hidden]);
 

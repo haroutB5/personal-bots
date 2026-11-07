@@ -17,11 +17,6 @@ export interface UsageStripCell {
  * Cells for the strip, in card order (Claude, Codex, OpenCode, Antigravity).
  * Cards that cannot report (`unavailable` / `not-reported`) keep their cell so
  * the provider name stays visible; their figures are null.
- *
- * A balance card (DeepSeek) gets no cell at all, on purpose: the strip is a
- * row of percent windows with one shared "Session/Weekly percent used" shape,
- * and a balance has no window to fill. The balance with its granted/topped-up
- * split lives one tap away, in the sheet.
  */
 export function selectUsageStripCells(cards: ReadonlyArray<UsageCard>): readonly UsageStripCell[] {
   return cards
@@ -38,10 +33,6 @@ export function selectUsageStripCells(cards: ReadonlyArray<UsageCard>): readonly
  * What the cell's one bar fills to: the window that is further spent, and so
  * the one that will actually stop him working. A weekly allowance at 100% with
  * an idle session window used to render as an empty bar beside the words
- * "Weekly 100% used" — the bar claimed he had everything left.
- *
- * Null only when neither window was reported. A reported 0% still fills to 0,
- * which is honest; null is the strip's "nothing to say".
  */
 export function stripCellBarPercent(cell: UsageStripCell): number | null {
   const reported = [cell.sessionPercent, cell.weeklyPercent].filter(
@@ -55,12 +46,8 @@ export const STRIP_BINDING_THRESHOLD = 80;
 
 /**
  * Which window is the one about to stop a bot, once either is near spent.
- *
  * The bar fills to the worse of the two, which answers "how much headroom is
  * left" but not "which limit is it" - and those differ a lot: a spent 5-hour
- * window clears in hours, a spent week may not clear for days. Naming the
- * binding window in the text costs no vertical space. A tie goes to weekly,
- * the one that takes longer to come back.
  */
 export function stripBindingWindow(cell: UsageStripCell): "session" | "weekly" | null {
   const session = cell.sessionPercent;

@@ -1,0 +1,13 @@
+diff --git a/packages/tailscale/src/tailscale.test.ts b/packages/tailscale/src/tailscale.test.ts
+index 102153f6e2046898314d0f35504452e49b56adcc..e69df58eec93d2832d4d314796829d2ec68e7828 100644
+--- a/packages/tailscale/src/tailscale.test.ts
++++ b/packages/tailscale/src/tailscale.test.ts
+@@ -7,7 +7,7 @@ import * as PlatformError from "effect/PlatformError";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+ import * as TestClock from "effect/testing/TestClock";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ 
+ import {

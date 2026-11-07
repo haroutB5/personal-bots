@@ -1,0 +1,17 @@
+diff --git a/apps/server/src/assets/NativeAppIconResolver.test.ts b/apps/server/src/assets/NativeAppIconResolver.test.ts
+index 206f5e952cd6294ed759ee777abea0bb1e5e80d2..e6474ac1cffc670f7ba77fe7697f5cab332d7d3d 100644
+--- a/apps/server/src/assets/NativeAppIconResolver.test.ts
++++ b/apps/server/src/assets/NativeAppIconResolver.test.ts
+@@ -1,10 +1,10 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ 
+ import * as ServerConfig from "../config.ts";

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.test.ts b/apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.test.ts
+index 248c74b43b34b67c169fba7fea2b35ab1a643b9c..84f69deb273f949e06474ceb2261829583b458d9 100644
+--- a/apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.test.ts
++++ b/apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.test.ts
+@@ -1,7 +1,7 @@
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { runMigrations } from "../Migrations.ts";
+ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";

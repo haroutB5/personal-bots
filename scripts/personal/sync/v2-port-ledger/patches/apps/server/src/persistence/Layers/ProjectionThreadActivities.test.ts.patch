@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Layers/ProjectionThreadActivities.test.ts b/apps/server/src/persistence/Layers/ProjectionThreadActivities.test.ts
+index d92ed97ea6fab92169e02915d32522c3acfc083f..6462caa97591f5c722a691435483b04a57e1ea59 100644
+--- a/apps/server/src/persistence/Layers/ProjectionThreadActivities.test.ts
++++ b/apps/server/src/persistence/Layers/ProjectionThreadActivities.test.ts
+@@ -2,7 +2,7 @@ import { EventId, ThreadId } from "@t3tools/contracts";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { ProjectionThreadActivityRepository } from "../Services/ProjectionThreadActivities.ts";
+ import { ProjectionThreadActivityRepositoryLive } from "./ProjectionThreadActivities.ts";

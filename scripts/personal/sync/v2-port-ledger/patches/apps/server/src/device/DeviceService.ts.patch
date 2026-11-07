@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/device/DeviceService.ts b/apps/server/src/device/DeviceService.ts
+index dcb81d95eb99eb3044d3baf9a6c3077dbe7bc23b..e402db235a1ce5fb2e637ba82c12b1d64292ae3c 100644
+--- a/apps/server/src/device/DeviceService.ts
++++ b/apps/server/src/device/DeviceService.ts
+@@ -56,7 +56,7 @@ import * as Scope from "effect/Scope";
+ import * as Semaphore from "effect/Semaphore";
+ import * as Stream from "effect/Stream";
+ import * as SynchronizedRef from "effect/SynchronizedRef";
+-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ 
+ import * as ServerSettings from "../serverSettings.ts";
+ import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";

@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/relay/managedRelayState.test.ts b/packages/client-runtime/src/relay/managedRelayState.test.ts
+index 5c8b1a957c32384d18e48e5d7a265ee110f9d649..f893b58fa227f43cbda65da0ba53a4005e432ffb 100644
+--- a/packages/client-runtime/src/relay/managedRelayState.test.ts
++++ b/packages/client-runtime/src/relay/managedRelayState.test.ts
+@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
+ import * as Fiber from "effect/Fiber";
+ import * as Layer from "effect/Layer";
+ import * as Stream from "effect/Stream";
+-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { Atom, AtomRegistry } from "effect/reactivity";
+ import { afterEach, vi } from "vite-plus/test";
+ 
+ import { DPOP_UNKNOWN_HINT } from "./errorPresentation.ts";

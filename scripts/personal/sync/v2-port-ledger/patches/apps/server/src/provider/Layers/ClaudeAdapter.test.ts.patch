@@ -1,0 +1,1764 @@
+diff --git a/apps/server/src/provider/Layers/ClaudeAdapter.test.ts b/apps/server/src/provider/Layers/ClaudeAdapter.test.ts
+index a91d82cef9e0b076d2731509825e5a21d0c1596a..4a343d90ee13bd3477a3a548664a61eb3bbccde0 100644
+--- a/apps/server/src/provider/Layers/ClaudeAdapter.test.ts
++++ b/apps/server/src/provider/Layers/ClaudeAdapter.test.ts
+@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
+ import * as NodeOS from "node:os";
+ import * as NodePath from "node:path";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import type {
+   Options as ClaudeQueryOptions,
+   PermissionMode,
+@@ -16,6 +16,7 @@ import type {
+ import {
+   ApprovalRequestId,
+   ClaudeSettings,
++  MessageId,
+   ProviderDriverKind,
+   ProviderItemId,
+   ProviderRuntimeEvent,
+@@ -28,9 +29,11 @@ import { assert, describe, it } from "@effect/vitest";
+ import * as Clock from "effect/Clock";
+ import * as Context from "effect/Context";
+ import * as Deferred from "effect/Deferred";
++import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as Fiber from "effect/Fiber";
+ import * as Layer from "effect/Layer";
++import * as Logger from "effect/Logger";
+ import * as Random from "effect/Random";
+ import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
+@@ -39,6 +42,9 @@ import * as TestClock from "effect/testing/TestClock";
+ 
+ import { attachmentRelativePath } from "../../attachmentStore.ts";
+ import { ServerConfig } from "../../config.ts";
++import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
++import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
++import { buildClaudeBotPermissionDeny } from "../../personal/secrets/botProtectedPaths.ts";
+ import { ServerSettingsService } from "../../serverSettings.ts";
+ import {
+   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+@@ -47,10 +53,16 @@ import {
+   SYNTHETIC_CLAUDE_STANDARD_MODEL,
+   SYNTHETIC_CLAUDE_THINKING_MODEL,
+ } from "../ClaudeModelCatalog.testFixtures.ts";
++import type { ClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
+ import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+ import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
+-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
++import {
++  makeClaudeAdapter,
++  pluginLoadWarning,
++  type ClaudeAdapterLiveOptions,
++} from "./ClaudeAdapter.ts";
++import { PERSONAL_BOT_CLAUDE_SETTINGS } from "../../personal/providerHooks/claudeQueryOptions.ts";
+ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+ const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+ 
+@@ -175,6 +187,7 @@ function makeHarness(config?: {
+   readonly environment?: ClaudeAdapterLiveOptions["environment"];
+   readonly getSessionMessages?: ClaudeAdapterLiveOptions["getSessionMessages"];
+   readonly forkSession?: ClaudeAdapterLiveOptions["forkSession"];
++  readonly modelCatalog?: ClaudeModelCatalog;
+ }) {
+   const query = new FakeClaudeQuery();
+   const queries = [query];
+@@ -189,7 +202,7 @@ function makeHarness(config?: {
+     ...(config?.environment ? { environment: config.environment } : {}),
+     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+     ...(config?.scopedLimitNames ? { scopedLimitNames: config.scopedLimitNames } : {}),
+-    modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
++    modelCatalog: Effect.succeed(config?.modelCatalog ?? SYNTHETIC_CLAUDE_MODEL_CATALOG),
+     ...(config?.getSessionMessages ? { getSessionMessages: config.getSessionMessages } : {}),
+     ...(config?.forkSession ? { forkSession: config.forkSession } : {}),
+     createQuery: (input) => {
+@@ -521,7 +534,8 @@ describe("ClaudeAdapterLive", () => {
+ 
+       const createInput = harness.getLastCreateQueryInput();
+       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
+-      assert.equal(createInput?.options.permissionMode, undefined);
++      // Explicit "default": with no mode the CLI would start the thread in auto mode.
++      assert.equal(createInput?.options.permissionMode, "default");
+       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
+     }).pipe(
+       Effect.provideService(Random.Random, makeDeterministicRandomService()),
+@@ -529,6 +543,673 @@ describe("ClaudeAdapterLive", () => {
+     );
+   });
+ 
++  it("pluginLoadWarning names each plugin that did not load and stays quiet otherwise", () => {
++    assert.equal(pluginLoadWarning(undefined), null);
++    assert.equal(pluginLoadWarning([]), null);
++    assert.equal(pluginLoadWarning("nope"), null);
++    const one = pluginLoadWarning([
++      { plugin: "inline[0]", type: "path-not-found", message: "no plugin.json", path: "C:/p" },
++    ]);
++    assert.equal(one?.text, "A plugin did not load: inline[0] (path-not-found): no plugin.json");
++    assert.deepEqual(one?.plugins, ["inline[0] (path-not-found)"]);
++    const many = pluginLoadWarning(
++      Array.from({ length: 6 }, (_, i) => ({
++        plugin: `p${i}`,
++        type: "generic-error",
++        message: "",
++      })),
++    );
++    assert.ok(many?.text.endsWith("and 2 more"));
++    assert.equal(many?.plugins.length, 6);
++  });
++
++  it.effect("system/init plugin_errors surface as a warning row, a clean init does not", () => {
++    const harness = makeHarness();
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      const eventsFiber = yield* adapter.streamEvents.pipe(
++        Stream.takeUntil((event) => event.type === "turn.completed"),
++        Stream.runCollect,
++        Effect.forkChild,
++      );
++      const session = yield* adapter.startSession({
++        threadId: THREAD_ID,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++      });
++      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
++      harness.query.emit({
++        type: "system",
++        subtype: "init",
++        session_id: "sdk-session-plugins",
++        uuid: "init-plugins",
++        plugin_errors: [
++          {
++            plugin: "frontend-bot@inline",
++            type: "dependency-unsatisfied",
++            message: "needs node 99",
++          },
++        ],
++      } as unknown as SDKMessage);
++      harness.query.emit({
++        type: "system",
++        subtype: "init",
++        session_id: "sdk-session-plugins",
++        uuid: "init-clean",
++      } as unknown as SDKMessage);
++      harness.query.emit({
++        type: "result",
++        subtype: "success",
++        is_error: false,
++        errors: [],
++        session_id: "sdk-session-plugins",
++        uuid: "result-plugins",
++      } as unknown as SDKMessage);
++      const events = Array.from(yield* Fiber.join(eventsFiber));
++      const warnings = events.flatMap((event) =>
++        event.type === "runtime.warning" ? [event.payload.message] : [],
++      );
++      assert.deepEqual(warnings, [
++        "A plugin did not load: frontend-bot@inline (dependency-unsatisfied): needs node 99",
++      ]);
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  const setT3McpSession = (threadId: ThreadId) =>
++    McpProviderSession.setMcpProviderSession({
++      environmentId: "env-test" as McpProviderSession.McpProviderSessionConfig["environmentId"],
++      threadId,
++      providerSessionId: "mcp-session-test",
++      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
++      endpoint: "http://127.0.0.1:9999/mcp",
++      authorizationHeader: "Bearer test-token",
++      capabilities: new Set(["preview", "personal"]),
++    });
++
++  it.effect("starts personal-bot sessions with only built-ins and the t3-code server", () => {
++    const threadId = ThreadId.make("thread-personal-bot-claude");
++    const harness = makeHarness({ environment: { PATH: "/usr/bin" } });
++    setT3McpSession(threadId);
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      yield* adapter.startSession({
++        threadId,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++        personalBot: true,
++      });
++
++      const options = harness.getLastCreateQueryInput()?.options;
++      // No user/project/local settings files: no CLAUDE.md, skills, hooks or plugins.
++      assert.deepEqual(options?.settingSources, []);
++      // Only T3's MCP server; user, project and plugin servers are ignored.
++      assert.equal(options?.strictMcpConfig, true);
++      assert.deepEqual(Object.keys(options?.mcpServers ?? {}), ["t3-code"]);
++      // Auto-memory and claude.ai connectors sit outside settingSources.
++      // Exact on purpose: every key here reaches a bot session, so a sync that
++      // adds one should fail until someone decides whether a bot may have it.
++      // `showThinkingSummaries` (upstream 052c7ae53, #11784) is derived from
++      // the turn's own thinking display, not from the owner's config.
++      const serverConfig = yield* ServerConfig;
++      assert.deepEqual(options?.settings, {
++        autoMemoryEnabled: false,
++        disableClaudeAiConnectors: true,
++        showThinkingSummaries: true,
++        // Shell output past 12k chars goes to a file with a preview (1.66.80).
++        bashOutputMaxChars: 12_000,
++        // Bundled skills a bot never calls stay typable as /name but leave the
++        // model's list (1.66.62/1.66.63, PERSONAL_BOT_HIDDEN_SKILLS).
++        skillOverrides: {
++          "code-review": "user-invocable-only",
++          "fewer-permission-prompts": "user-invocable-only",
++          init: "user-invocable-only",
++          "keybindings-help": "user-invocable-only",
++          loop: "user-invocable-only",
++          "plugin-authoring": "user-invocable-only",
++          run: "user-invocable-only",
++          schedule: "user-invocable-only",
++          "security-review": "user-invocable-only",
++          simplify: "user-invocable-only",
++          "workflow-authoring": "user-invocable-only",
++        },
++        permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) },
++      });
++      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
++      assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
++      // 2.1.316+: no bot turn may be raised to xhigh by the "ultrathink" keyword.
++      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_ULTRATHINK, "1");
++      assert.equal(options?.env?.PATH, "/usr/bin");
++      assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, undefined);
++      // Built-in tools no bot has ever called are removed from the schema
++      // (1.66.62; PERSONAL_BOT_TOOL_TRIM=off restores all of them).
++      assert.equal(options?.tools, undefined);
++      assert.equal(options?.allowedTools, undefined);
++      assert.deepEqual(options?.disallowedTools, [
++        "Workflow",
++        "ReportFindings",
++        "ScheduleWakeup",
++        "AskUserQuestion",
++      ]);
++    }).pipe(
++      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  describe("Explore subagent on Haiku 5.5 for Claude bots", () => {
++    const claudeCapabilities = { optionDescriptors: [] };
++    const modelEntry = (slug: string) => ({
++      model: { slug, name: slug, isCustom: false, capabilities: claudeCapabilities },
++      runtime: {},
++      compatibility: {},
++    });
++    const catalog = (slugs: ReadonlyArray<string>): ClaudeModelCatalog => ({
++      models: slugs.map(modelEntry),
++    });
++    const ALL = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
++
++    const startBot = (input: {
++      readonly model: string;
++      readonly personalBot?: boolean;
++      readonly models?: ReadonlyArray<string>;
++      readonly env?: Record<string, string>;
++    }) => {
++      const threadId = ThreadId.make(`thread-explore-${input.model}-${input.personalBot ?? true}`);
++      const harness = makeHarness({ modelCatalog: catalog(input.models ?? ALL) });
++      const previous = Object.fromEntries(
++        Object.keys(input.env ?? {}).map((key) => [key, process.env[key]]),
++      );
++      return Effect.gen(function* () {
++        Object.assign(process.env, input.env ?? {});
++        const adapter = yield* ClaudeAdapter;
++        yield* adapter.startSession({
++          threadId,
++          provider: ProviderDriverKind.make("claudeAgent"),
++          runtimeMode: "full-access",
++          ...(input.personalBot === false ? {} : { personalBot: true }),
++          modelSelection: createModelSelection(ProviderInstanceId.make("claudeAgent"), input.model),
++        });
++        return harness.getLastCreateQueryInput()?.options;
++      }).pipe(
++        Effect.ensuring(
++          Effect.sync(() => {
++            for (const [key, value] of Object.entries(previous)) {
++              if (value === undefined) delete process.env[key];
++              else process.env[key] = value;
++            }
++          }),
++        ),
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    };
++
++    it.effect("runs Explore on Haiku 5.5 at medium effort for a bot on Sonnet", () =>
++      Effect.gen(function* () {
++        const options = yield* startBot({ model: "claude-sonnet-5-5" });
++        assert.deepEqual(Object.keys(options?.agents ?? {}), ["Explore"]);
++        const explore = options?.agents?.Explore;
++        assert.equal(explore?.model, "claude-haiku-5-5");
++        assert.equal(explore?.effort, "medium");
++        // Read-only, like Claude Code's own: no file changes and no further subagents.
++        assert.deepEqual(explore?.disallowedTools, [
++          "Agent",
++          "Task",
++          "ExitPlanMode",
++          "Edit",
++          "Write",
++          "NotebookEdit",
++        ]);
++        assert.equal(explore?.tools, undefined);
++        // The bot's own model is untouched, and no other subagent is defined.
++        assert.equal(options?.model, "claude-sonnet-5-5");
++      }),
++    );
++
++    it.effect("does the same for a bot on Opus", () =>
++      Effect.gen(function* () {
++        const options = yield* startBot({ model: "claude-opus-5-5" });
++        assert.equal(options?.agents?.Explore?.model, "claude-haiku-5-5");
++      }),
++    );
++
++    it.effect("leaves a Haiku bot, a Fable bot and a plain thread alone", () =>
++      Effect.gen(function* () {
++        assert.equal((yield* startBot({ model: "claude-haiku-5-5" }))?.agents, undefined);
++        assert.equal((yield* startBot({ model: "claude-fable-5-1" }))?.agents, undefined);
++        assert.equal(
++          (yield* startBot({ model: "claude-sonnet-5-5", personalBot: false }))?.agents,
++          undefined,
++        );
++      }),
++    );
++
++    it.effect("does nothing when the installed CLI does not know Haiku 5.5", () =>
++      Effect.gen(function* () {
++        const options = yield* startBot({
++          model: "claude-sonnet-5-5",
++          models: ["claude-sonnet-5-5", "claude-haiku-4-5"],
++        });
++        assert.equal(options?.agents, undefined);
++      }),
++    );
++
++    it.effect("runs a bot on Opus's other subagents on Sonnet 5.5 through the CLI env", () =>
++      Effect.gen(function* () {
++        const opus = yield* startBot({ model: "claude-opus-5-5" });
++        assert.equal(opus?.env?.CLAUDE_CODE_SUBAGENT_MODEL, "claude-sonnet-5-5");
++        // Explore names its own model, so it stays on Haiku; the bot stays on Opus.
++        assert.equal(opus?.agents?.Explore?.model, "claude-haiku-5-5");
++        assert.equal(opus?.model, "claude-opus-5-5");
++      }),
++    );
++
++    it.effect("leaves subagents of Sonnet, Haiku and Fable bots and plain threads alone", () =>
++      Effect.gen(function* () {
++        for (const model of ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]) {
++          assert.equal((yield* startBot({ model }))?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
++        }
++        assert.equal(
++          (yield* startBot({ model: "claude-opus-5-5", personalBot: false }))?.env
++            ?.CLAUDE_CODE_SUBAGENT_MODEL,
++          undefined,
++        );
++      }),
++    );
++
++    it.effect("PERSONAL_SUBAGENT_MODEL=off is the kill switch; another model id is a setting", () =>
++      Effect.gen(function* () {
++        const off = yield* startBot({
++          model: "claude-opus-5-5",
++          env: { PERSONAL_SUBAGENT_MODEL: "off" },
++        });
++        assert.equal(off?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
++        const haiku = yield* startBot({
++          model: "claude-opus-5-5",
++          env: { PERSONAL_SUBAGENT_MODEL: "claude-haiku-5-5" },
++        });
++        assert.equal(haiku?.env?.CLAUDE_CODE_SUBAGENT_MODEL, "claude-haiku-5-5");
++        const unknown = yield* startBot({
++          model: "claude-opus-5-5",
++          models: ["claude-opus-5-5", "claude-haiku-5-5"],
++        });
++        assert.equal(unknown?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
++      }),
++    );
++
++    it.effect("PERSONAL_EXPLORE_MODEL=off is the kill switch; effort and model are settings", () =>
++      Effect.gen(function* () {
++        assert.equal(
++          (yield* startBot({ model: "claude-sonnet-5-5", env: { PERSONAL_EXPLORE_MODEL: "off" } }))
++            ?.agents,
++          undefined,
++        );
++        const high = yield* startBot({
++          model: "claude-sonnet-5-5",
++          env: { PERSONAL_EXPLORE_EFFORT: "high" },
++        });
++        assert.equal(high?.agents?.Explore?.effort, "high");
++        const none = yield* startBot({
++          model: "claude-sonnet-5-5",
++          env: { PERSONAL_EXPLORE_EFFORT: "off" },
++        });
++        assert.equal(none?.agents?.Explore?.effort, undefined);
++        assert.equal(none?.agents?.Explore?.model, "claude-haiku-5-5");
++      }),
++    );
++  });
++
++  it.effect("keeps the MCP bearer token off the CLI's command line", () => {
++    const threadId = ThreadId.make("thread-personal-bot-claude-token");
++    const harness = makeHarness({ environment: { PATH: "/usr/bin" } });
++    setT3McpSession(threadId);
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      yield* adapter.startSession({
++        threadId,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++        personalBot: true,
++      });
++      const options = harness.getLastCreateQueryInput()?.options;
++      // --mcp-config is built from mcpServers, so nothing secret may be in it.
++      assert.deepEqual(options?.mcpServers, {
++        "t3-code": {
++          type: "http",
++          url: "http://127.0.0.1:9999/mcp",
++          headers: { Authorization: "Bearer ${T3_MCP_TOKEN}" },
++        },
++      });
++      // The token is in the child's environment, where the CLI expands the placeholder.
++      assert.equal(options?.env?.T3_MCP_TOKEN, "test-token");
++    }).pipe(
++      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  it.effect("denies a bot the secrets folder and database writes in every runtime mode", () => {
++    // A real absolute base dir: a drive-less "/tmp" is not absolute on Windows.
++    const harness = makeHarness({ baseDir: NodeOS.tmpdir() });
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      const serverConfig = yield* ServerConfig;
++      const expected = buildClaudeBotPermissionDeny(serverConfig);
++      for (const runtimeMode of ["full-access", "auto", "approval-required"] as const) {
++        yield* adapter.startSession({
++          threadId: ThreadId.make(`thread-bot-deny-${runtimeMode}`),
++          provider: ProviderDriverKind.make("claudeAgent"),
++          runtimeMode,
++          personalBot: true,
++        });
++        const settings = harness.getLastCreateQueryInput()?.options?.settings;
++        assert.notEqual(typeof settings, "string");
++        const deny =
++          typeof settings === "object" ? ((settings.permissions?.deny ?? []) as string[]) : [];
++        // Same rules whatever the mode: deny rules are evaluated before the mode.
++        assert.deepEqual(deny, expected);
++      }
++      // The rules name the real paths, the sidecars included.
++      const names = (rule: string) => rule.replaceAll("\\", "/");
++      assert.ok(expected.some((rule) => /^Read\(.*\/secrets\/\*\*\)$/.test(names(rule))));
++      assert.ok(expected.some((rule) => /^Edit\(.*state\.sqlite-wal\)$/.test(names(rule))));
++      // Database and logs stay readable: no Read rule on the database, no rule on the logs.
++      assert.ok(!expected.some((rule) => /^Read\(.*state\.sqlite/.test(names(rule))));
++      assert.ok(!expected.some((rule) => /\/logs/.test(names(rule))));
++      // Only the tools whose path rules Claude Code actually consults.
++      for (const rule of expected) {
++        assert.match(rule, /^(Read|Edit|Bash|PowerShell)\(/);
++      }
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  it.effect("gives a normal thread no deny rules", () => {
++    const harness = makeHarness();
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      yield* adapter.startSession({
++        threadId: ThreadId.make("thread-normal-no-deny"),
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++      });
++      const settings = harness.getLastCreateQueryInput()?.options?.settings;
++      assert.notEqual(typeof settings, "string");
++      assert.equal(typeof settings === "object" ? settings.permissions : "string", undefined);
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  it("uses the token on the command line only when the kill switch is set", () => {
++    const config = { authorizationHeader: "Bearer abc123" };
++    assert.deepEqual(McpProviderSession.claudeMcpAuthorization(config, {}), {
++      header: "Bearer ${T3_MCP_TOKEN}",
++      environment: { T3_MCP_TOKEN: "abc123" },
++    });
++    assert.deepEqual(
++      McpProviderSession.claudeMcpAuthorization(config, { PERSONAL_MCP_TOKEN_ON_ARGV: "1" }),
++      { header: "Bearer abc123", environment: {} },
++    );
++    // A header that is not a bearer token is left exactly as it is.
++    assert.deepEqual(
++      McpProviderSession.claudeMcpAuthorization({ authorizationHeader: "Basic x" }, {}),
++      {
++        header: "Basic x",
++        environment: {},
++      },
++    );
++  });
++
++  it.effect("keeps a personal bot's MCP config strict and empty without a T3 credential", () => {
++    const harness = makeHarness();
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      yield* adapter.startSession({
++        threadId: ThreadId.make("thread-personal-bot-no-mcp"),
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++        personalBot: true,
++      });
++
++      const options = harness.getLastCreateQueryInput()?.options;
++      assert.deepEqual(options?.settingSources, []);
++      assert.equal(options?.strictMcpConfig, true);
++      assert.deepEqual(options?.mcpServers, {});
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  /** Every WARN with its structured fields, so a test can count and name them. */
++  const captureWarnLines = () => {
++    const lines: Array<{ readonly text: string; readonly fields: Record<string, unknown> }> = [];
++    const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
++      if (logLevel !== "Warn") return;
++      const [text, fields] = Array.isArray(message) ? message : [message, {}];
++      lines.push({ text: String(text), fields: (fields ?? {}) as Record<string, unknown> });
++    });
++    return { lines, layer: Logger.layer([sink], { mergeWithExisting: false }) };
++  };
++
++  const BOT_ID = "df17a657-d7bf-4439-856f-389848e1cec9";
++  const makeBotPluginBaseDir = (withManifest: boolean) => {
++    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-bot-plugins-"));
++    const pluginDir = NodePath.join(baseDir, "bot-plugins", BOT_ID);
++    NodeFS.mkdirSync(NodePath.join(pluginDir, ".claude", "skills"), { recursive: true });
++    if (withManifest) {
++      NodeFS.mkdirSync(NodePath.join(pluginDir, ".claude-plugin"), { recursive: true });
++      NodeFS.writeFileSync(
++        NodePath.join(pluginDir, ".claude-plugin", "plugin.json"),
++        JSON.stringify({ name: "frontend-bot", skills: "./.claude/skills/" }),
++      );
++    }
++    return { baseDir, pluginDir };
++  };
++  const startWithBotPlugins = (
++    baseDir: string,
++    start: { readonly personalBot?: boolean; readonly personalBotId?: string },
++  ) => {
++    const harness = makeHarness({ baseDir });
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      yield* adapter.startSession({
++        threadId: ThreadId.make("thread-bot-plugins"),
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++        ...start,
++      });
++      return harness.getLastCreateQueryInput()?.options;
++    }).pipe(
++      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true }))),
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  };
++
++  it.effect("loads a personal bot's own plugin folder when it has a manifest", () => {
++    const { baseDir, pluginDir } = makeBotPluginBaseDir(true);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, {
++        personalBot: true,
++        personalBotId: BOT_ID,
++      });
++      assert.deepEqual(options?.plugins, [{ type: "local", path: pluginDir }]);
++      // The plugin loads explicitly; the owner's settings files stay out.
++      assert.deepEqual(options?.settingSources, []);
++      assert.equal(options?.strictMcpConfig, true);
++    });
++  });
++
++  const addSharedPlugin = (baseDir: string) => {
++    const sharedDir = NodePath.join(baseDir, "bot-plugins", "_shared");
++    NodeFS.mkdirSync(NodePath.join(sharedDir, ".claude-plugin"), { recursive: true });
++    NodeFS.writeFileSync(
++      NodePath.join(sharedDir, ".claude-plugin", "plugin.json"),
++      JSON.stringify({ name: "hbots-shared", skills: "./.claude/skills/" }),
++    );
++    return sharedDir;
++  };
++
++  it.effect("loads the shared plugin folder for every bot, before the bot's own", () => {
++    const { baseDir, pluginDir } = makeBotPluginBaseDir(true);
++    const sharedDir = addSharedPlugin(baseDir);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, {
++        personalBot: true,
++        personalBotId: BOT_ID,
++      });
++      assert.deepEqual(options?.plugins, [
++        { type: "local", path: sharedDir },
++        { type: "local", path: pluginDir },
++      ]);
++    });
++  });
++
++  it.effect("a bot with no folder of its own still gets the shared plugin", () => {
++    const { baseDir } = makeBotPluginBaseDir(false);
++    const sharedDir = addSharedPlugin(baseDir);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, {
++        personalBot: true,
++        personalBotId: "00000000-0000-4000-8000-000000000000",
++      });
++      assert.deepEqual(options?.plugins, [{ type: "local", path: sharedDir }]);
++    });
++  });
++
++  it.effect("normal threads never load the shared bot plugin", () => {
++    const { baseDir } = makeBotPluginBaseDir(false);
++    addSharedPlugin(baseDir);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, {});
++      assert.equal(options?.plugins, undefined);
++    });
++  });
++
++  it.effect("loads no plugins for a bot whose folder has no manifest", () => {
++    const { baseDir } = makeBotPluginBaseDir(false);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, {
++        personalBot: true,
++        personalBotId: BOT_ID,
++      });
++      assert.equal(options?.plugins, undefined);
++      assert.deepEqual(options?.settingSources, []);
++    });
++  });
++
++  it.effect("warns once for the skill a bot's plugin folder cannot load", () => {
++    const { baseDir, pluginDir } = makeBotPluginBaseDir(true);
++    const bomSkill = NodePath.join(pluginDir, ".claude", "skills", "bom", "SKILL.md");
++    NodeFS.mkdirSync(NodePath.dirname(bomSkill), { recursive: true });
++    // A UTF-8 BOM is what the CLI drops in silence; the bot would simply lose
++    // the skill, so hbots names the file instead.
++    NodeFS.writeFileSync(bomSkill, "\uFEFF---\nname: bom\n---\n\nBody.\n");
++    const logs = captureWarnLines();
++    return Effect.gen(function* () {
++      yield* startWithBotPlugins(baseDir, { personalBot: true, personalBotId: BOT_ID });
++
++      const warnings = logs.lines.filter((line) => line.text === "bot plugin skill failed to load");
++      assert.equal(warnings.length, 1);
++      assert.equal(warnings[0]?.fields.botId, BOT_ID);
++      assert.equal(warnings[0]?.fields.path, bomSkill);
++      assert.ok(String(warnings[0]?.fields.reason).includes("UTF-8 BOM"));
++    }).pipe(Effect.provide(logs.layer));
++  });
++
++  it.effect("loads no bot plugins for a bot without an id or a folder", () => {
++    const { baseDir } = makeBotPluginBaseDir(true);
++    return Effect.gen(function* () {
++      const withoutId = yield* startWithBotPlugins(baseDir, { personalBot: true });
++      assert.equal(withoutId?.plugins, undefined);
++    });
++  });
++
++  it.effect("loads no bot plugins for another bot's id", () => {
++    const { baseDir } = makeBotPluginBaseDir(true);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, {
++        personalBot: true,
++        personalBotId: "00000000-0000-4000-8000-000000000000",
++      });
++      assert.equal(options?.plugins, undefined);
++    });
++  });
++
++  it.effect("never turns a path-like bot id into a plugin path", () => {
++    const { baseDir } = makeBotPluginBaseDir(true);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, {
++        personalBot: true,
++        personalBotId: `../bot-plugins/${BOT_ID}`,
++      });
++      assert.equal(options?.plugins, undefined);
++      // Edited bot instructions must reach resumed chats, not a recorded prompt.
++      assert.equal((options?.systemPrompt as { snapshot?: boolean } | undefined)?.snapshot, false);
++    });
++  });
++
++  it.effect("loads no bot plugins for a normal thread, even with a bot id", () => {
++    const { baseDir } = makeBotPluginBaseDir(true);
++    return Effect.gen(function* () {
++      const options = yield* startWithBotPlugins(baseDir, { personalBotId: BOT_ID });
++      assert.equal(options?.plugins, undefined);
++      assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
++    });
++  });
++
++  it.effect("leaves normal threads on the upstream settings and MCP config", () => {
++    const threadId = ThreadId.make("thread-normal-claude");
++    const harness = makeHarness({ environment: { PATH: "/usr/bin" } });
++    setT3McpSession(threadId);
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      yield* adapter.startSession({
++        threadId,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++      });
++
++      const options = harness.getLastCreateQueryInput()?.options;
++      assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
++      assert.equal(options?.strictMcpConfig, undefined);
++      assert.deepEqual(Object.keys(options?.mcpServers ?? {}), ["t3-code"]);
++      // Upstream may put its own keys here (052c7ae53 added
++      // showThinkingSummaries); what a normal thread must not get is the
++      // bot-isolation pair, which would silence the owner's own memory. Read
++      // the keys off the constant rather than restating them, and reject the
++      // string (settings-file path) shape, which would make this vacuous.
++      const normalSettings = options?.settings;
++      assert.notEqual(typeof normalSettings, "string");
++      const normalSettingsKeys = Object.keys(
++        typeof normalSettings === "object" ? normalSettings : {},
++      );
++      for (const key of Object.keys(PERSONAL_BOT_CLAUDE_SETTINGS)) {
++        assert.ok(!normalSettingsKeys.includes(key), `normal thread got bot setting '${key}'`);
++      }
++      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, undefined);
++      assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, undefined);
++      // The owner keeps the "ultrathink" keyword in their own chats.
++      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_ULTRATHINK, undefined);
++      // Newer models get the todo tools back so the plan panel fills.
++      assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, "1");
++    }).pipe(
++      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
+   it.effect("uses bypass permissions for full-access claude sessions", () => {
+     const harness = makeHarness();
+     return Effect.gen(function* () {
+@@ -570,6 +1251,146 @@ describe("ClaudeAdapterLive", () => {
+     );
+   });
+ 
++  describe("bot shell output cap", () => {
++    const startWith = (name: string, personalBot: boolean, env: Record<string, string>) => {
++      const harness = makeHarness();
++      const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
++      return Effect.gen(function* () {
++        Object.assign(process.env, env);
++        const adapter = yield* ClaudeAdapter;
++        yield* adapter.startSession({
++          threadId: ThreadId.make(`thread-shell-cap-${name}`),
++          provider: ProviderDriverKind.make("claudeAgent"),
++          runtimeMode: "full-access",
++          ...(personalBot ? { personalBot: true } : {}),
++        });
++        const settings = harness.getLastCreateQueryInput()?.options.settings;
++        return typeof settings === "object" ? settings.bashOutputMaxChars : undefined;
++      }).pipe(
++        Effect.ensuring(
++          Effect.sync(() => {
++            for (const [key, value] of Object.entries(previous)) {
++              if (value === undefined) delete process.env[key];
++              else process.env[key] = value;
++            }
++          }),
++        ),
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    };
++
++    it.effect("caps a bot's shell output at 12k chars and leaves plain threads alone", () =>
++      Effect.gen(function* () {
++        assert.equal(yield* startWith("bot", true, {}), 12_000);
++        assert.equal(yield* startWith("plain", false, {}), undefined);
++      }),
++    );
++
++    it.effect("PERSONAL_BOT_SHELL_OUTPUT_CAP=off is the kill switch; a number sets the cap", () =>
++      Effect.gen(function* () {
++        assert.equal(
++          yield* startWith("off", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "off" }),
++          undefined,
++        );
++        assert.equal(
++          yield* startWith("custom", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "20000" }),
++          20_000,
++        );
++        assert.equal(
++          yield* startWith("clamped", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "100" }),
++          4_000,
++        );
++      }),
++    );
++  });
++
++  describe("task chat auto-compaction", () => {
++    const startChat = (input: {
++      readonly name: string;
++      readonly personalBot?: boolean;
++      readonly personalTaskChat?: boolean;
++      readonly configured?: string;
++      readonly env?: Record<string, string>;
++    }) => {
++      const harness = makeHarness(
++        input.configured === undefined
++          ? {}
++          : { claudeConfig: { autoCompactWindow: input.configured } },
++      );
++      const previous = Object.fromEntries(
++        Object.keys(input.env ?? {}).map((key) => [key, process.env[key]]),
++      );
++      return Effect.gen(function* () {
++        Object.assign(process.env, input.env ?? {});
++        const adapter = yield* ClaudeAdapter;
++        yield* adapter.startSession({
++          threadId: ThreadId.make(`thread-compact-${input.name}`),
++          provider: ProviderDriverKind.make("claudeAgent"),
++          runtimeMode: "full-access",
++          ...(input.personalBot === false ? {} : { personalBot: true }),
++          ...(input.personalTaskChat ? { personalTaskChat: true } : {}),
++        });
++        const settings = harness.getLastCreateQueryInput()?.options.settings;
++        return typeof settings === "object" ? settings.autoCompactWindow : undefined;
++      }).pipe(
++        Effect.ensuring(
++          Effect.sync(() => {
++            for (const [key, value] of Object.entries(previous)) {
++              if (value === undefined) delete process.env[key];
++              else process.env[key] = value;
++            }
++          }),
++        ),
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    };
++
++    it.effect("a task or routine chat compacts with a 200k window", () =>
++      Effect.gen(function* () {
++        assert.equal(yield* startChat({ name: "task", personalTaskChat: true }), 200_000);
++      }),
++    );
++
++    it.effect("the owner's own bot chat and a plain thread keep the CLI default", () =>
++      Effect.gen(function* () {
++        assert.equal(yield* startChat({ name: "owner" }), undefined);
++        assert.equal(
++          yield* startChat({ name: "plain", personalBot: false, personalTaskChat: true }),
++          undefined,
++        );
++      }),
++    );
++
++    it.effect("the owner's provider setting still applies, and a smaller one wins", () =>
++      Effect.gen(function* () {
++        assert.equal(yield* startChat({ name: "owner-set", configured: "300000" }), 300_000);
++        assert.equal(
++          yield* startChat({ name: "task-larger", personalTaskChat: true, configured: "300000" }),
++          200_000,
++        );
++        assert.equal(
++          yield* startChat({ name: "task-smaller", personalTaskChat: true, configured: "150000" }),
++          150_000,
++        );
++      }),
++    );
++
++    it.effect("PERSONAL_TASK_AUTO_COMPACT=off is the kill switch", () =>
++      Effect.gen(function* () {
++        assert.equal(
++          yield* startChat({
++            name: "task-off",
++            personalTaskChat: true,
++            env: { PERSONAL_TASK_AUTO_COMPACT: "off" },
++          }),
++          undefined,
++        );
++      }),
++    );
++  });
++
+   it.effect("forwards claude effort levels into query options", () => {
+     const harness = makeHarness();
+     return Effect.gen(function* () {
+@@ -853,7 +1674,9 @@ describe("ClaudeAdapterLive", () => {
+       return Effect.gen(function* () {
+         const { options: customOptions, prompt: customPrompt } = yield* runCustomFlow;
+         assert.equal(customOptions.model, SYNTHETIC_CLAUDE_COLLIDING_ALIAS);
+-        assert.equal(customOptions.effort, undefined);
++        // A custom entry carries no runtime profile, so its option values reach
++        // Claude Code verbatim (see scopeClaudeModelCatalog).
++        assert.equal(customOptions.effort, "max");
+         assert.deepEqual(customOptions.settings, { showThinkingSummaries: true });
+         assert.deepEqual(customHarness.query.setModelCalls, [
+           `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,
+@@ -1557,6 +2380,380 @@ describe("ClaudeAdapterLive", () => {
+     );
+   });
+ 
++  it.effect(
++    "a no-turn result before the prompt starts does not end the turn (resumed session, 26 Sep)",
++    () => {
++      const harness = makeHarness();
++      return Effect.gen(function* () {
++        const adapter = yield* ClaudeAdapter;
++        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
++          Stream.takeUntil((event) => event.type === "session.exited"),
++          Stream.runCollect,
++          Effect.forkChild,
++        );
++        const session = yield* adapter.startSession({
++          threadId: THREAD_ID,
++          provider: ProviderDriverKind.make("claudeAgent"),
++          runtimeMode: "full-access",
++        });
++        const turn = yield* adapter.sendTurn({
++          threadId: session.threadId,
++          input: "[Routine task] confirm the release",
++          attachments: [],
++        });
++        const sessionId = "sdk-session-replay";
++        const lifecycle = (state: string, uuid: string) =>
++          ({
++            type: "command_lifecycle",
++            command_uuid: String(turn.turnId),
++            state,
++            session_id: sessionId,
++            uuid,
++          }) as unknown as SDKMessage;
++
++        // The resumed CLI replays a background shell's notice from the last
++        // session and closes it with an empty result before our prompt runs.
++        harness.query.emit({
++          type: "system",
++          subtype: "init",
++          capabilities: ["interrupt_receipt_v1", "msg_lifecycle_v1"],
++          session_id: sessionId,
++          uuid: "init-1",
++        } as unknown as SDKMessage);
++        harness.query.emit({
++          type: "system",
++          subtype: "task_notification",
++          task_id: "b57em7hee",
++          tool_use_id: "toolu_replayed",
++          status: "stopped",
++          output_file: "",
++          summary: "Background shell command didn't finish before the previous session ended",
++          session_id: sessionId,
++          uuid: "notice-1",
++        } as unknown as SDKMessage);
++        harness.query.emit({
++          type: "result",
++          subtype: "success",
++          is_error: false,
++          errors: [],
++          num_turns: 0,
++          duration_api_ms: 0,
++          usage: { input_tokens: 0, output_tokens: 0 },
++          session_id: sessionId,
++          uuid: "result-replayed-notice",
++        } as unknown as SDKMessage);
++        // Then the prompt itself runs, answers, and ends.
++        harness.query.emit(lifecycle("queued", "lifecycle-queued"));
++        harness.query.emit(lifecycle("started", "lifecycle-started"));
++        harness.query.emit({
++          type: "assistant",
++          session_id: sessionId,
++          uuid: "assistant-replay-1",
++          parent_tool_use_id: null,
++          message: {
++            id: "assistant-message-replay-1",
++            content: [{ type: "text", text: "Live and smoke passed." }],
++          },
++        } as unknown as SDKMessage);
++        harness.query.emit({
++          type: "result",
++          subtype: "success",
++          is_error: false,
++          errors: [],
++          num_turns: 2,
++          session_id: sessionId,
++          uuid: "result-prompt",
++        } as unknown as SDKMessage);
++        harness.query.emit(lifecycle("completed", "lifecycle-completed"));
++        harness.query.finish();
++
++        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
++        const started = runtimeEvents.filter((event) => event.type === "turn.started");
++        const completions = runtimeEvents.filter((event) => event.type === "turn.completed");
++        // One turn, closed by the prompt's own result, after its reply.
++        assert.equal(started.length, 1);
++        assert.equal(completions.length, 1);
++        assert.equal(String(completions[0]?.turnId), String(turn.turnId));
++        const replyIndex = runtimeEvents.findIndex(
++          (event) =>
++            event.type === "item.completed" && JSON.stringify(event).includes("Live and smoke"),
++        );
++        const completedIndex = runtimeEvents.indexOf(completions[0]!);
++        assert.ok(replyIndex >= 0 && replyIndex < completedIndex);
++      }).pipe(
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    },
++  );
++
++  it.effect("a held result still ends the turn when the prompt ends without its own", () => {
++    const harness = makeHarness();
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
++        Stream.takeUntil((event) => event.type === "turn.completed"),
++        Stream.runCollect,
++        Effect.forkChild,
++      );
++      const session = yield* adapter.startSession({
++        threadId: THREAD_ID,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++      });
++      const turn = yield* adapter.sendTurn({
++        threadId: session.threadId,
++        input: "hello",
++        attachments: [],
++      });
++      harness.query.emit({
++        type: "system",
++        subtype: "init",
++        capabilities: ["msg_lifecycle_v1"],
++        session_id: "sdk-session-held",
++        uuid: "init-held",
++      } as unknown as SDKMessage);
++      harness.query.emit({
++        type: "result",
++        subtype: "error_during_execution",
++        is_error: true,
++        errors: ["could not start"],
++        num_turns: 0,
++        session_id: "sdk-session-held",
++        uuid: "result-held",
++      } as unknown as SDKMessage);
++      harness.query.emit({
++        type: "command_lifecycle",
++        command_uuid: String(turn.turnId),
++        state: "cancelled",
++        session_id: "sdk-session-held",
++        uuid: "lifecycle-cancelled",
++      } as unknown as SDKMessage);
++
++      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
++      const completed = runtimeEvents.at(-1);
++      assert.equal(completed?.type, "turn.completed");
++      assert.equal(String(completed?.turnId), String(turn.turnId));
++      if (completed?.type === "turn.completed") assert.equal(completed.payload.state, "failed");
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  it.effect(
++    "a turn that leaves background work running ends; Claude Code's own follow-up turns report it (7739ab64, 26 Sep)",
++    () => {
++      const harness = makeHarness();
++      return Effect.gen(function* () {
++        const adapter = yield* ClaudeAdapter;
++        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
++          Stream.takeUntil((event) => event.type === "session.exited"),
++          Stream.runCollect,
++          Effect.forkChild,
++        );
++        const session = yield* adapter.startSession({
++          threadId: THREAD_ID,
++          provider: ProviderDriverKind.make("claudeAgent"),
++          runtimeMode: "full-access",
++        });
++        const turn = yield* adapter.sendTurn({
++          threadId: session.threadId,
++          input: "[Task from CTO] hand-merge upstream and run the gates",
++          attachments: [],
++        });
++        const sessionId = "sdk-session-background";
++        const lifecycle = (state: string, uuid: string) =>
++          ({
++            type: "command_lifecycle",
++            command_uuid: String(turn.turnId),
++            state,
++            session_id: sessionId,
++            uuid,
++          }) as unknown as SDKMessage;
++        const assistant = (uuid: string, text: string) =>
++          ({
++            type: "assistant",
++            session_id: sessionId,
++            uuid,
++            parent_tool_use_id: null,
++            message: { id: `message-${uuid}`, content: [{ type: "text", text }] },
++          }) as unknown as SDKMessage;
++        const result = (uuid: string, numTurns: number) =>
++          ({
++            type: "result",
++            subtype: "success",
++            is_error: false,
++            errors: [],
++            num_turns: numTurns,
++            session_id: sessionId,
++            uuid,
++          }) as unknown as SDKMessage;
++        const init = (uuid: string) =>
++          ({
++            type: "system",
++            subtype: "init",
++            capabilities: ["msg_lifecycle_v1"],
++            session_id: sessionId,
++            uuid,
++          }) as unknown as SDKMessage;
++
++        // The task's turn, with the 1.46.0 case in front of it: a replayed
++        // background notice closed by a num_turns:0 result before the prompt
++        // starts is still held back.
++        harness.query.emit(init("init-1"));
++        harness.query.emit(result("result-replayed-notice", 0));
++        harness.query.emit(lifecycle("started", "lifecycle-started"));
++        // A foreground command runs and finishes inside the turn.
++        harness.query.emit({
++          type: "system",
++          subtype: "task_started",
++          task_id: "bvref5quh",
++          task_type: "local_bash",
++          is_backgrounded: false,
++          description: "Commit changes in logical commits",
++          tool_use_id: "toolu_commit",
++          session_id: sessionId,
++          uuid: "task-started-commit",
++        } as unknown as SDKMessage);
++        harness.query.emit({
++          type: "system",
++          subtype: "task_notification",
++          task_id: "bvref5quh",
++          tool_use_id: "toolu_commit",
++          status: "completed",
++          output_file: "",
++          summary: "done",
++          session_id: sessionId,
++          uuid: "task-notification-commit",
++        } as unknown as SDKMessage);
++        // The gates start in the background and the turn ends on them.
++        harness.query.emit({
++          type: "system",
++          subtype: "task_started",
++          task_id: "bahddbmzw",
++          task_type: "local_bash",
++          is_backgrounded: true,
++          description: "Run server gates",
++          tool_use_id: "toolu_gates",
++          session_id: sessionId,
++          uuid: "task-started-gates",
++        } as unknown as SDKMessage);
++        harness.query.emit(
++          assistant("assistant-waiting", "Waiting on the server gate notification."),
++        );
++        harness.query.emit(result("result-task-turn", 127));
++        harness.query.emit(lifecycle("completed", "lifecycle-completed"));
++
++        // Claude Code runs a turn of its own: a progress note, gates still running.
++        harness.query.emit(init("init-2"));
++        harness.query.emit(
++          assistant("assistant-progress", "`src/personal` passed. Still waiting on tsc."),
++        );
++        harness.query.emit(result("result-follow-up-1", 1));
++
++        // The gates finish; the next turn it runs writes the real report.
++        harness.query.emit(init("init-3"));
++        harness.query.emit({
++          type: "system",
++          subtype: "task_updated",
++          task_id: "bahddbmzw",
++          patch: { status: "completed", end_time: 1790422166010 },
++          session_id: sessionId,
++          uuid: "task-updated-gates",
++        } as unknown as SDKMessage);
++        harness.query.emit({
++          type: "system",
++          subtype: "task_notification",
++          task_id: "bahddbmzw",
++          tool_use_id: "toolu_gates",
++          status: "completed",
++          output_file: "",
++          summary: "Run server gates completed",
++          session_id: sessionId,
++          uuid: "task-notification-gates",
++        } as unknown as SDKMessage);
++        harness.query.emit(assistant("assistant-report", "## Branch ready: all gates green."));
++        harness.query.emit(result("result-follow-up-2", 10));
++        harness.query.finish();
++
++        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
++
++        // Fold task events into the liveness registry the way ingestion does,
++        // and read it at each turn end: what the task service sees there.
++        const liveness = ThreadBackgroundLiveness.make();
++        const liveAtTurnEnd: Array<ReadonlyArray<string>> = [];
++        const turnReplies = new Map<string, Array<string>>();
++        for (const event of runtimeEvents) {
++          switch (event.type) {
++            case "task.started":
++            case "task.progress":
++            case "task.updated":
++            case "task.completed": {
++              const payload = event.payload as {
++                taskId: string;
++                taskType?: string;
++                status?: string;
++                agentId?: string;
++              };
++              liveness.recordTaskLiveness({
++                threadId: String(event.threadId),
++                taskId: payload.taskId,
++                taskType: payload.taskType,
++                status: payload.status,
++                agentId: payload.agentId,
++                kind:
++                  event.type === "task.started"
++                    ? "started"
++                    : event.type === "task.progress"
++                      ? "progress"
++                      : event.type === "task.updated"
++                        ? "updated"
++                        : "completed",
++              });
++              break;
++            }
++            case "item.completed":
++              if (event.payload.itemType === "assistant_message" && event.turnId !== undefined) {
++                const replies = turnReplies.get(String(event.turnId)) ?? [];
++                replies.push(event.payload.detail ?? "");
++                turnReplies.set(String(event.turnId), replies);
++              }
++              break;
++            case "turn.completed":
++              liveAtTurnEnd.push(liveness.getThreadLiveTaskIds(String(event.threadId)));
++              break;
++          }
++        }
++
++        const started = runtimeEvents.filter((event) => event.type === "turn.started");
++        const completions = runtimeEvents.filter((event) => event.type === "turn.completed");
++        // The task's turn plus two follow-ups, each closed by its own result;
++        // the held num_turns:0 result closed nothing.
++        assert.equal(started.length, 3);
++        assert.equal(completions.length, 3);
++        assert.equal(String(completions[0]?.turnId), String(turn.turnId));
++        assert.deepEqual(
++          completions.map((event) => String(event.turnId)),
++          started.map((event) => String(event.turnId)),
++        );
++        // The task's turn and the first follow-up end with the gates still
++        // live; the turn that reports them ends with nothing left.
++        assert.deepEqual(liveAtTurnEnd, [["bahddbmzw"], ["bahddbmzw"], []]);
++        // The report is the last follow-up turn's reply.
++        assert.deepEqual(turnReplies.get(String(completions[2]?.turnId)), [
++          "## Branch ready: all gates green.",
++        ]);
++        assert.deepEqual(turnReplies.get(String(turn.turnId)), [
++          "Waiting on the server gate notification.",
++        ]);
++      }).pipe(
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    },
++  );
++
+   it.effect("keeps a turn open past the result of a Claude-initiated turn", () => {
+     const harness = makeHarness();
+     return Effect.gen(function* () {
+@@ -1691,6 +2888,211 @@ describe("ClaudeAdapterLive", () => {
+     );
+   });
+ 
++  it.effect(
++    "reports a steered message read only when the CLI drains it, not on the bot's other output",
++    () => {
++      const harness = makeHarness();
++      return Effect.gen(function* () {
++        const adapter = yield* ClaudeAdapter;
++        const runtimeEventsFiber = yield* Stream.takeUntil(
++          adapter.streamEvents,
++          (event) => event.type === "turn.completed",
++        ).pipe(Stream.runCollect, Effect.forkChild);
++
++        const session = yield* adapter.startSession({
++          threadId: THREAD_ID,
++          provider: ProviderDriverKind.make("claudeAgent"),
++          runtimeMode: "full-access",
++        });
++        const turn = yield* adapter.sendTurn({
++          threadId: session.threadId,
++          messageId: MessageId.make("owner-message-1"),
++          input: "run 5 commands",
++          attachments: [],
++        });
++        yield* adapter.sendTurn({
++          threadId: session.threadId,
++          messageId: MessageId.make("owner-message-2"),
++          input: "actually run 15",
++          attachments: [],
++        });
++        const [first, steer] = yield* Effect.promise(() =>
++          readPromptMessages(harness.getLastCreateQueryInput(), 2),
++        );
++        assert.equal(first?.uuid, String(turn.turnId));
++        // The steer carries its own uuid so the CLI reports its lifecycle.
++        assert.ok(steer?.uuid);
++        assert.notEqual(steer?.uuid, String(turn.turnId));
++
++        const sessionId = "sdk-session-read";
++        const lifecycle = (uuid: string, state: string, frame: string) =>
++          ({
++            type: "command_lifecycle",
++            command_uuid: uuid,
++            state,
++            session_id: sessionId,
++            uuid: frame,
++          }) as unknown as SDKMessage;
++
++        harness.query.emit(lifecycle(String(turn.turnId), "queued", "lc-1"));
++        harness.query.emit(lifecycle(String(turn.turnId), "started", "lc-2"));
++        harness.query.emit(lifecycle(steer!.uuid!, "queued", "lc-3"));
++        // The step the bot was already on keeps talking: that is not the steer.
++        harness.query.emit({
++          type: "assistant",
++          session_id: sessionId,
++          uuid: "assistant-read-1",
++          parent_tool_use_id: null,
++          user_message_uuid: String(turn.turnId),
++          user_message_uuids: [String(turn.turnId)],
++          message: {
++            id: "assistant-message-read-1",
++            content: [{ type: "text", text: "Running command 3 of 5." }],
++          },
++        } as unknown as SDKMessage);
++        // The fold: the CLI drains the steer into the running turn.
++        harness.query.emit(lifecycle(steer!.uuid!, "started", "lc-4"));
++        harness.query.emit({
++          type: "assistant",
++          session_id: sessionId,
++          uuid: "assistant-read-2",
++          parent_tool_use_id: null,
++          message: {
++            id: "assistant-message-read-2",
++            content: [{ type: "text", text: "Switching to 15." }],
++          },
++        } as unknown as SDKMessage);
++        harness.query.emit(lifecycle(steer!.uuid!, "completed", "lc-5"));
++        harness.query.emit({
++          type: "result",
++          subtype: "success",
++          is_error: false,
++          errors: [],
++          session_id: sessionId,
++          uuid: "result-read-1",
++        } as unknown as SDKMessage);
++
++        const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
++        const delivered = events.flatMap((event, index) =>
++          event.type === "user-message.delivered"
++            ? [{ index, messageId: String(event.payload.messageId) }]
++            : [],
++        );
++        // Each message reported exactly once, the steer only at its drain.
++        assert.deepEqual(
++          delivered.map((entry) => entry.messageId),
++          ["owner-message-1", "owner-message-2"],
++        );
++        const textIndex = (text: string) =>
++          events.findIndex((event) => JSON.stringify(event.payload).includes(text));
++        const unrelatedText = textIndex("Running command 3 of 5.");
++        assert.ok(unrelatedText >= 0, "unrelated output was emitted");
++        // The bot's output from the step it was on came first and did not count.
++        assert.ok(delivered[1]!.index > unrelatedText);
++      }).pipe(
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    },
++  );
++
++  it.effect("reports an idle send read as soon as its turn's prompt starts", () => {
++    const harness = makeHarness();
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      const runtimeEventsFiber = yield* Stream.takeUntil(
++        adapter.streamEvents,
++        (event) => event.type === "user-message.delivered",
++      ).pipe(Stream.runCollect, Effect.forkChild);
++
++      const session = yield* adapter.startSession({
++        threadId: THREAD_ID,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++      });
++      const turn = yield* adapter.sendTurn({
++        threadId: session.threadId,
++        messageId: MessageId.make("owner-message-idle"),
++        input: "hello",
++        attachments: [],
++      });
++      harness.query.emit({
++        type: "command_lifecycle",
++        command_uuid: String(turn.turnId),
++        state: "started",
++        session_id: "sdk-session-idle",
++        uuid: "lc-idle",
++      } as unknown as SDKMessage);
++
++      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
++      const delivered = events.at(-1);
++      assert.equal(delivered?.type, "user-message.delivered");
++      if (delivered?.type !== "user-message.delivered") return;
++      assert.equal(String(delivered.payload.messageId), "owner-message-idle");
++      assert.equal(String(delivered.turnId), String(turn.turnId));
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
++  it.effect("never reports a message the CLI cancelled before it ran", () => {
++    const harness = makeHarness();
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++      const runtimeEventsFiber = yield* Stream.takeUntil(
++        adapter.streamEvents,
++        (event) => event.type === "turn.completed",
++      ).pipe(Stream.runCollect, Effect.forkChild);
++
++      const session = yield* adapter.startSession({
++        threadId: THREAD_ID,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++      });
++      yield* adapter.sendTurn({
++        threadId: session.threadId,
++        input: "long job",
++        attachments: [],
++      });
++      yield* adapter.sendTurn({
++        threadId: session.threadId,
++        messageId: MessageId.make("owner-message-cancelled"),
++        input: "never mind",
++        attachments: [],
++      });
++      const [, steer] = yield* Effect.promise(() =>
++        readPromptMessages(harness.getLastCreateQueryInput(), 2),
++      );
++      const frame = (state: string, uuid: string) =>
++        ({
++          type: "command_lifecycle",
++          command_uuid: steer!.uuid!,
++          state,
++          session_id: "sdk-session-cancel",
++          uuid,
++        }) as unknown as SDKMessage;
++      harness.query.emit(frame("queued", "lc-c1"));
++      harness.query.emit(frame("cancelled", "lc-c2"));
++      // A late terminal frame for the same uuid must not resurrect it.
++      harness.query.emit(frame("completed", "lc-c3"));
++      harness.query.emit({
++        type: "result",
++        subtype: "success",
++        is_error: false,
++        errors: [],
++        session_id: "sdk-session-cancel",
++        uuid: "result-cancel-1",
++      } as unknown as SDKMessage);
++
++      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
++      assert.equal(events.filter((event) => event.type === "user-message.delivered").length, 0);
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
+   it.effect("maps Claude reasoning deltas, streamed tool inputs, and tool results", () => {
+     const harness = makeHarness();
+     return Effect.gen(function* () {
+@@ -2303,6 +3705,80 @@ describe("ClaudeAdapterLive", () => {
+     );
+   });
+ 
++  it.effect("labels an MCP tool step in plain words, never with its arguments", () => {
++    const harness = makeHarness();
++    return Effect.gen(function* () {
++      const adapter = yield* ClaudeAdapter;
++
++      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
++        Stream.takeUntil((event) => event.type === "turn.completed"),
++        Stream.runCollect,
++        Effect.forkChild,
++      );
++
++      const session = yield* adapter.startSession({
++        threadId: THREAD_ID,
++        provider: ProviderDriverKind.make("claudeAgent"),
++        runtimeMode: "full-access",
++      });
++
++      yield* adapter.sendTurn({
++        threadId: session.threadId,
++        input: "book the court",
++        attachments: [],
++      });
++
++      harness.query.emit({
++        type: "stream_event",
++        session_id: "sdk-session-mcp-label",
++        uuid: "stream-mcp-label-1",
++        parent_tool_use_id: null,
++        event: {
++          type: "content_block_start",
++          index: 0,
++          content_block: {
++            type: "mcp_tool_use",
++            id: "tool-mcp-label-1",
++            name: "mcp__t3-code__preview_navigate",
++            input: {
++              url: "https://www.clubspark.uk/booking/42?token=sk-live-SECRETSECRETSECRET",
++            },
++          },
++        },
++      } as unknown as SDKMessage);
++
++      harness.query.emit({
++        type: "result",
++        subtype: "success",
++        is_error: false,
++        errors: [],
++        usage: {
++          input_tokens: 100,
++          cache_read_input_tokens: 40,
++          cache_creation_input_tokens: 10,
++          output_tokens: 20,
++        },
++        session_id: "sdk-session-mcp-label",
++        uuid: "result-mcp-label",
++      } as unknown as SDKMessage);
++
++      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
++      const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
++      assert.equal(toolStarted?.type, "item.started");
++      if (toolStarted?.type === "item.started") {
++        assert.equal(toolStarted.payload.itemType, "mcp_tool_call");
++        assert.equal(toolStarted.payload.title, "Opening clubspark.uk");
++        // The status line is what the owner reads: no path, no query, no key.
++        for (const leaked of ["booking", "42", "token", "SECRET"]) {
++          assert.ok(!(toolStarted.payload.title ?? "").includes(leaked));
++        }
++      }
++    }).pipe(
++      Effect.provideService(Random.Random, makeDeterministicRandomService()),
++      Effect.provide(harness.layer),
++    );
++  });
++
+   it.effect("treats user-aborted Claude results as interrupted without a runtime error", () => {
+     const harness = makeHarness();
+     return Effect.gen(function* () {
+@@ -2667,6 +4143,14 @@ describe("ClaudeAdapterLive", () => {
+         payload.errorMessage,
+         "Claude usage limit reached. Send the message again once the limit resets.",
+       );
++      // The reset rides on the failed turn, so the chat can continue after it.
++      assert.deepEqual(payload.retry, {
++        kind: "rate_limited",
++        retryAt: DateTime.formatIso(
++          DateTime.makeUnsafe((Math.floor(nowMs / 1000) + 2 * 60 * 60) * 1000),
++        ),
++        reason: "five_hour",
++      });
+     }).pipe(
+       Effect.provideService(Random.Random, makeDeterministicRandomService()),
+       Effect.provide(harness.layer),
+@@ -2752,6 +4236,11 @@ describe("ClaudeAdapterLive", () => {
+       assert.equal(errors[0]?.payload.message, expected);
+       assert.equal(completedTurn(events).state, "failed");
+       assert.equal(completedTurn(events).errorMessage, expected);
++      // A limit seen only in the reply is a limit with no reset time.
++      assert.deepEqual(
++        completedTurn(events).retry,
++        expected === usageLimitMessage ? { kind: "rate_limited" } : undefined,
++      );
+     }).pipe(
+       Effect.provideService(Random.Random, makeDeterministicRandomService()),
+       Effect.provide(harness.layer),
+@@ -6504,6 +7993,142 @@ describe("ClaudeAdapterLive", () => {
+     );
+   });
+ 
++  it.effect(
++    "starts a new Claude conversation instead of resuming one that never ran a turn",
++    () => {
++      const harness = makeHarness();
++      return Effect.gen(function* () {
++        const adapter = yield* ClaudeAdapter;
++
++        // A prewarmed chat the owner left without sending: Claude Code never
++        // wrote a transcript, so resuming it fails with "No conversation found".
++        yield* adapter.startSession({
++          threadId: RESUME_THREAD_ID,
++          provider: ProviderDriverKind.make("claudeAgent"),
++          resumeCursor: {
++            threadId: "resume-thread-1",
++            resume: "853cc750-05e8-4fe6-92e7-48ffd8259294",
++            turnCount: 0,
++            turnStartMessageIds: [],
++          },
++          runtimeMode: "full-access",
++        });
++
++        const createInput = harness.getLastCreateQueryInput();
++        assert.equal(createInput?.options.resume, undefined);
++        assert.notEqual(createInput?.options.sessionId, undefined);
++        assert.notEqual(createInput?.options.sessionId, "853cc750-05e8-4fe6-92e7-48ffd8259294");
++      }).pipe(
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    },
++  );
++
++  it.effect(
++    "fails the next turn with Claude's own line when the resumed conversation is gone",
++    () => {
++      const harness = makeHarness();
++      return Effect.gen(function* () {
++        const adapter = yield* ClaudeAdapter;
++        const session = yield* adapter.startSession({
++          threadId: RESUME_THREAD_ID,
++          provider: ProviderDriverKind.make("claudeAgent"),
++          resumeCursor: {
++            threadId: "resume-thread-1",
++            resume: "853cc750-05e8-4fe6-92e7-48ffd8259294",
++            turnCount: 2,
++          },
++          runtimeMode: "full-access",
++        });
++        harness.query.emit({
++          type: "result",
++          subtype: "error_during_execution",
++          is_error: true,
++          errors: ["No conversation found with session ID: 853cc750-05e8-4fe6-92e7-48ffd8259294"],
++          num_turns: 0,
++          session_id: "853cc750-05e8-4fe6-92e7-48ffd8259294",
++          uuid: "result-missing",
++        } as unknown as SDKMessage);
++        for (let index = 0; index < 50; index += 1) yield* Effect.yieldNow;
++
++        const error = yield* adapter
++          .sendTurn({
++            threadId: session.threadId,
++            input: "hello again",
++            interactionMode: "default",
++            attachments: [],
++          })
++          .pipe(Effect.flip);
++        assert.include(
++          String((error as { readonly detail?: string }).detail),
++          "No conversation found with session ID",
++        );
++      }).pipe(
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    },
++  );
++
++  it.effect(
++    "the stream failure after a lost conversation's result carries the same words, not a generic error",
++    () => {
++      const harness = makeHarness();
++      return Effect.gen(function* () {
++        const adapter = yield* ClaudeAdapter;
++        const runtimeEvents: Array<ProviderRuntimeEvent> = [];
++        const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
++          Effect.sync(() => {
++            runtimeEvents.push(event);
++          }),
++        ).pipe(Effect.forkChild);
++        const session = yield* adapter.startSession({
++          threadId: RESUME_THREAD_ID,
++          provider: ProviderDriverKind.make("claudeAgent"),
++          resumeCursor: {
++            threadId: "resume-thread-1",
++            resume: "853cc750-05e8-4fe6-92e7-48ffd8259294",
++            turnCount: 2,
++          },
++          runtimeMode: "full-access",
++        });
++        yield* adapter.sendTurn({
++          threadId: session.threadId,
++          input: "hello again",
++          interactionMode: "default",
++          attachments: [],
++        });
++        // The captured order: the error result, then the CLI exits and the stream fails.
++        harness.query.emit({
++          type: "result",
++          subtype: "error_during_execution",
++          is_error: true,
++          errors: ["No conversation found with session ID: 853cc750-05e8-4fe6-92e7-48ffd8259294"],
++          num_turns: 0,
++          session_id: "853cc750-05e8-4fe6-92e7-48ffd8259294",
++          uuid: "result-missing-2",
++        } as unknown as SDKMessage);
++        for (let index = 0; index < 30; index += 1) yield* Effect.yieldNow;
++        harness.query.fail(new Error("Claude Code process exited with code 1"));
++        for (let index = 0; index < 30; index += 1) yield* Effect.yieldNow;
++        runtimeEventsFiber.interruptUnsafe();
++
++        const messages = runtimeEvents.flatMap((event) =>
++          event.type === "runtime.error" ? [event.payload.message] : [],
++        );
++        assert.isAtLeast(messages.length, 2);
++        for (const message of messages) {
++          assert.include(message, "No conversation found with session ID");
++        }
++        assert.isFalse(messages.some((message) => message === "Claude runtime stream failed."));
++      }).pipe(
++        Effect.provideService(Random.Random, makeDeterministicRandomService()),
++        Effect.provide(harness.layer),
++      );
++    },
++  );
++
+   it.effect("preserves durable resume ids across Claude resume hooks", () => {
+     const harness = makeHarness();
+     return Effect.gen(function* () {

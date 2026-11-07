@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -65,9 +65,9 @@ const fixture = async (options: {
   }
 
   const { handler, dispose } = HttpRouter.toWebHandler(
-    makePersonalUpdateStatusRouteLayer({
-      ...(options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs }),
-    }).pipe(
+    makePersonalUpdateStatusRouteLayer(
+      options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs },
+    ).pipe(
       Layer.provideMerge(
         Layer.succeed(ServerConfig.ServerConfig, {
           baseDir,

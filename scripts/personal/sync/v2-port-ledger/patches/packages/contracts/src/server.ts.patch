@@ -1,0 +1,132 @@
+diff --git a/packages/contracts/src/server.ts b/packages/contracts/src/server.ts
+index c8983988ead1193464dd9dc90ac601cbdbbdaebe..7ae21b7a614a3038932dd69757aeefdc02857e88 100644
+--- a/packages/contracts/src/server.ts
++++ b/packages/contracts/src/server.ts
+@@ -24,7 +24,12 @@ import {
+ import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
+ import { ModelCapabilities } from "./model.ts";
+ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+-import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
++import { ProviderCatalogId, ProviderCatalogSource } from "./providerCatalog.ts";
++import {
++  ServerProviderUsageBalance,
++  ServerProviderUsageLimits,
++  UsageLimitSourceSnapshots,
++} from "./providerUsageLimits.ts";
+ import { ServerSettings } from "./settings.ts";
+ 
+ const KeybindingsMalformedConfigIssue = Schema.Struct({
+@@ -204,6 +209,49 @@ export const ServerProviderUpdateState = Schema.Struct({
+ });
+ export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
+ 
++export const ServerProviderSmokeCheckStatus = Schema.Literals([
++  "checking",
++  "passed",
++  "failed",
++  // No model passed and every failure was a usage limit or an empty balance:
++  // the update is not blamed, and the test runs again after `retryAt`.
++  "waiting_for_limit",
++]);
++export type ServerProviderSmokeCheckStatus = typeof ServerProviderSmokeCheckStatus.Type;
++
++/**
++ * Outcome of the one-message test turn the server runs after a provider's
++ * installed version changes (personal bots). `version` is the version that was
++ * tested; a result for an older version says nothing about the current one.
++ * `retryAt` rides on `waiting_for_limit`: when the limit is expected to be over
++ * (the test runs about a minute later).
++ */
++export const ServerProviderSmokeCheck = Schema.Struct({
++  status: ServerProviderSmokeCheckStatus,
++  version: TrimmedNonEmptyString,
++  checkedAt: Schema.NullOr(IsoDateTime),
++  message: Schema.NullOr(TrimmedNonEmptyString),
++  retryAt: Schema.optional(IsoDateTime),
++  /** The model that answered (passed) or that the last attempt used (failed). */
++  model: Schema.optional(TrimmedNonEmptyString),
++  /** How long the answering turn took, for the Ready card. */
++  durationMs: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
++  /**
++   * The version that worked before this one, when the test failed after an
++   * update: the "Go back" target. Absent when none is known.
++   */
++  previousVersion: Schema.optional(TrimmedNonEmptyString),
++  /**
++   * Model slugs bots use that the provider no longer lists. The test then
++   * retried on the provider's default model; this is set when that passed, so
++   * the provider is fine and only those bots need a new model.
++   */
++  missingModels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
++  /** The owner asked for this test ("Test"); it is not about an update. */
++  manual: Schema.optional(Schema.Boolean),
++});
++export type ServerProviderSmokeCheck = typeof ServerProviderSmokeCheck.Type;
++
+ export const ServerProvider = Schema.Struct({
+   // Routing key for the configured instance this snapshot represents. This
+   // is the only stable identity consumers may use for provider routing.
+@@ -226,6 +274,10 @@ export const ServerProvider = Schema.Struct({
+     Schema.Struct({
+       canAuthenticate: Schema.Boolean,
+       canInstall: Schema.Boolean,
++      // Newer fields: absent from older servers, read as false.
++      canRemove: Schema.optionalKey(Schema.Boolean),
++      canTest: Schema.optionalKey(Schema.Boolean),
++      canOpenOnLaptop: Schema.optionalKey(Schema.Boolean),
+     }),
+   ),
+   runtimePaths: Schema.optionalKey(
+@@ -258,9 +310,30 @@ export const ServerProvider = Schema.Struct({
+   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
+   // Absent when the driver has no notion of subscription usage.
+   usageLimits: Schema.optional(ServerProviderUsageLimits),
++  // Absent when the driver has no notion of a prepaid balance.
++  usageBalance: Schema.optional(ServerProviderUsageBalance),
+   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
+   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
+   updateState: Schema.optionalKey(ServerProviderUpdateState),
++  smokeCheck: Schema.optionalKey(ServerProviderSmokeCheck),
++  catalogId: Schema.optionalKey(Schema.NullOr(ProviderCatalogId)),
++  source: Schema.optionalKey(Schema.NullOr(ProviderCatalogSource)),
++  publisher: Schema.optionalKey(Schema.NullOr(Schema.String)),
++  license: Schema.optionalKey(Schema.NullOr(Schema.String)),
++  openSource: Schema.optionalKey(Schema.Boolean),
++  iconUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
++  addedByUser: Schema.optionalKey(Schema.Boolean),
++  previousVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
++  showUsage: Schema.optionalKey(Schema.Boolean),
++  install: Schema.optionalKey(
++    Schema.NullOr(
++      Schema.Struct({
++        phase: Schema.String,
++        downloadedBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
++        totalBytes: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
++      }),
++    ),
++  ),
+ });
+ export type ServerProvider = typeof ServerProvider.Type;
+ 
+@@ -611,6 +684,8 @@ export const ServerConfig = Schema.Struct({
+   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
+   /** Whether thread reads accept the reasoningMessages opt-in. */
+   reasoningMessages: Schema.optionalKey(Schema.Boolean),
++  /** Whether thread reads accept the textPreviews opt-in. */
++  textPreviews: Schema.optionalKey(Schema.Boolean),
+   /**
+    * Folder behind this environment's Scratch project, for threads that need
+    * no repository. Present only on servers that answer projects.ensureScratch
+@@ -838,6 +913,12 @@ export const ServerProviderUpdateInput = Schema.Struct({
+   provider: ProviderDriverKind,
+   targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
+   instanceId: Schema.optionalKey(ProviderInstanceId),
++  /**
++   * "Go back": install `targetVersion` even though it is older than the
++   * recommended one. Only a version the manifest does not mark broken or
++   * unsupported is accepted.
++   */
++  rollback: Schema.optionalKey(Schema.Boolean),
+ });
+ export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
+ 

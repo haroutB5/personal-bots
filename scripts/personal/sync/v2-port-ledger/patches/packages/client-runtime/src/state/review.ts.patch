@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/review.ts b/packages/client-runtime/src/state/review.ts
+index 24fe3fb6fa76288f4128333197d4a96177a83673..d96181dd70f5e59be959e4f2c1800ef5f9476d68 100644
+--- a/packages/client-runtime/src/state/review.ts
++++ b/packages/client-runtime/src/state/review.ts
+@@ -6,7 +6,7 @@ import {
+ import * as Effect from "effect/Effect";
+ import * as Semaphore from "effect/Semaphore";
+ import { request } from "../rpc/client.ts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import {
+   createAtomCommandScheduler,

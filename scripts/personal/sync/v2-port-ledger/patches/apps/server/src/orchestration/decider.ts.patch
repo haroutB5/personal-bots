@@ -1,0 +1,165 @@
+diff --git a/apps/server/src/orchestration/decider.ts b/apps/server/src/orchestration/decider.ts
+index 21df39a162e6b324a81fd01da1258599681ee755..cd008c1117f515aa5d7f5d151ed8c3e1e4d1bd9b 100644
+--- a/apps/server/src/orchestration/decider.ts
++++ b/apps/server/src/orchestration/decider.ts
+@@ -22,7 +22,7 @@ import {
+ } from "@t3tools/shared/threadPullRequests";
+ import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+ import * as DateTime from "effect/DateTime";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Schema from "effect/Schema";
+ import * as Option from "effect/Option";
+@@ -212,10 +212,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+   command,
+   readModel,
+   userInputActivity,
++  pendingInputActivities,
+ }: {
+   readonly command: OrchestrationCommand;
+   readonly readModel: OrchestrationReadModel;
+   readonly userInputActivity?: OrchestrationThreadActivity;
++  readonly pendingInputActivities?: ReadonlyArray<OrchestrationThreadActivity>;
+ }): Effect.fn.Return<
+   DecideOrchestrationCommandResult,
+   OrchestrationCommandRejection | PlatformError.PlatformError,
+@@ -1399,6 +1401,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+         command,
+         threadId: command.threadId,
+       });
++      // Thread deletion is a soft delete, so `requireThread` alone still
++      // admits a turn on a chat the user was told was removed: a task that
++      // kept the thread id, or a `thread.create` whose receipt replayed
++      // without recreating the row, both land here. Mirrors the
++      // `thread.history.import` guard below.
++      if (targetThread.deletedAt !== null) {
++        return yield* new OrchestrationCommandInvariantError({
++          commandType: command.type,
++          detail: `Thread '${command.threadId}' is deleted and cannot start a turn.`,
++        });
++      }
+       const sourceProposedPlan = command.sourceProposedPlan;
+       const sourceThread = sourceProposedPlan
+         ? yield* requireThread({
+@@ -1474,6 +1487,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
+           runtimeMode: targetThread.runtimeMode,
+           interactionMode: targetThread.interactionMode,
++          ...(command.followUp !== undefined ? { followUp: command.followUp } : {}),
+           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
+           createdAt: command.createdAt,
+         },
+@@ -1516,8 +1530,40 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+           },
+         });
+       }
++      const supersededEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
++      for (const request of pendingInputActivities ?? openRequests(targetThread).values()) {
++        if (
++          request.kind !== "user-input.requested" ||
++          !Predicate.isObject(request.payload) ||
++          request.payload.responseMode !== "message" ||
++          typeof request.payload.requestId !== "string"
++        )
++          continue;
++        supersededEvents.push({
++          ...(yield* withEventBase({
++            aggregateKind: "thread",
++            aggregateId: command.threadId,
++            occurredAt: command.createdAt,
++            commandId: command.commandId,
++          })),
++          type: "thread.activity-appended",
++          payload: {
++            threadId: command.threadId,
++            activity: {
++              id: EventId.make(`superseded:${command.commandId}:${request.payload.requestId}`),
++              kind: "user-input.resolved",
++              summary: "Answered in the chat",
++              tone: "info",
++              turnId: request.turnId,
++              createdAt: command.createdAt,
++              payload: { requestId: request.payload.requestId, responseMode: "superseded" },
++            },
++          },
++        });
++      }
+       return [
+         ...lifecycleResetEvents,
++        ...supersededEvents,
+         ...(userMessageEvent ? [userMessageEvent] : []),
+         turnStartRequestedEvent,
+       ];
+@@ -1620,6 +1666,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+         threadId: command.threadId,
+       });
+       const request = userInputActivity;
++      if (
++        request?.kind === "user-input.resolved" &&
++        Predicate.isObject(request.payload) &&
++        request.payload.responseMode === "superseded"
++      ) {
++        return {
++          ...(yield* withEventBase({
++            aggregateKind: "thread",
++            aggregateId: command.threadId,
++            occurredAt: command.createdAt,
++            commandId: command.commandId,
++          })),
++          type: "thread.activity-appended",
++          payload: {
++            threadId: command.threadId,
++            activity: { ...request, id: EventId.make(`superseded-tap:${command.commandId}`) },
++          },
++        };
++      }
+       const attachments = Object.values(command.attachmentsByQuestionId ?? {}).flat();
+       let questionTextById: Record<string, string> = {};
+       if (attachments.length > 0) {
+@@ -1692,7 +1757,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+               threadId: command.threadId,
+               createdAt: command.createdAt,
+               activity: {
+-                id: EventId.make(`async-answer:${command.requestId}`),
++                id: EventId.make(`async-answer:${command.commandId}:${command.requestId}`),
+                 kind: "user-input.resolved",
+                 summary: "User input submitted",
+                 tone: "info",
+@@ -1716,7 +1781,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+               runtimeMode: thread.runtimeMode,
+               interactionMode: thread.interactionMode,
+               message: {
+-                messageId: MessageId.make(`async-answer:${command.requestId}`),
++                messageId: MessageId.make(`async-answer:${command.commandId}:${command.requestId}`),
+                 role: "user",
+                 text: replies.join("\n\n"),
+                 attachments,
+@@ -1877,6 +1942,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+         payload: {
+           threadId: command.threadId,
+           createdAt: command.createdAt,
++          ...(command.terminateProcesses === true ? { terminateProcesses: true } : {}),
+         },
+       };
+     }
+@@ -1945,6 +2011,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+         command,
+         threadId: command.threadId,
+       });
++      // Only the assistant delta carries context - the group service marks the
++      // speaker on the first delta of a relayed reply - so read it off the
++      // narrowed command rather than off the shared union.
++      const deltaContext =
++        command.type === "thread.message.assistant.delta" ? command.context : undefined;
+       return {
+         ...(yield* withEventBase({
+           aggregateKind: "thread",
+@@ -1958,6 +2029,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
+           messageId: command.messageId,
+           role: command.type === "thread.message.reasoning.delta" ? "reasoning" : "assistant",
+           text: command.delta,
++          ...(deltaContext !== undefined ? { context: deltaContext } : {}),
+           turnId: command.turnId ?? null,
+           streaming: true,
+           createdAt: command.createdAt,

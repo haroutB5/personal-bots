@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx b/apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx
+index 9784f22b78012734ea1531c1b168943623ebdb25..9acb4469e58d2a88f4be9a7174ff2a5193a8fa14 100644
+--- a/apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx
++++ b/apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx
+@@ -1,6 +1,6 @@
+ import { useAtomValue } from "@effect/atom-react";
+ import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useMemo, useState } from "react";
+ 
+ import type { EnvironmentPresentation } from "~/state/environments";

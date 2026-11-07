@@ -1,0 +1,57 @@
+diff --git a/apps/server/src/provider/providerMaintenanceRunner.ts b/apps/server/src/provider/providerMaintenanceRunner.ts
+index 17be8eb087f67ece82f69c36e5fb0a7304a64f66..3418eb20e565a8d9da4e0e1477d51a9c95871fdb 100644
+--- a/apps/server/src/provider/providerMaintenanceRunner.ts
++++ b/apps/server/src/provider/providerMaintenanceRunner.ts
+@@ -18,8 +18,8 @@ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
+-import { HttpClient } from "effect/unstable/http";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { HttpClient } from "effect/http";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import * as ModelManifest from "./ModelManifest.ts";
+ import { resolveProviderCompatibility } from "./providerCompatibility.ts";
+@@ -56,6 +56,8 @@ export interface ProviderMaintenanceRunnerShape {
+           readonly provider: ProviderDriverKind;
+           readonly instanceId?: ProviderInstanceId | undefined;
+           readonly targetVersion?: string | undefined;
++          /** "Go back": an older `targetVersion` is allowed unless the manifest marks it broken. */
++          readonly rollback?: boolean | undefined;
+         },
+   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
+ }
+@@ -317,6 +319,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
+         ? defaultInstanceIdForDriver(provider)
+         : (target.instanceId ?? defaultInstanceIdForDriver(provider));
+     const targetVersion = typeof target === "string" ? undefined : target.targetVersion;
++    const rollback = typeof target === "string" ? false : target.rollback === true;
+     const targetKey = `instance:${instanceId}`;
+     const capabilities = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
+       instanceId,
+@@ -401,12 +404,19 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
+               targetVersion !== undefined
+                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
+                 : fresh.update;
++            const recordedPreviousVersion = (yield* providerRegistry.getProviders).find(
++              (candidate) => candidate.instanceId === instanceId,
++            )?.smokeCheck?.previousVersion;
+             const rejected =
+-              targetVersion !== undefined
+-                ? !command ||
+-                  advisory?.recommendedVersion !== targetVersion ||
+-                  advisory.status !== "supported"
+-                : advisory?.status === "broken" || advisory?.status === "unsupported";
++              rollback && (targetVersion === undefined || targetVersion !== recordedPreviousVersion)
++                ? true
++                : targetVersion !== undefined
++                  ? !command ||
++                    (rollback
++                      ? advisory?.status === "broken" || advisory?.status === "unsupported"
++                      : advisory?.recommendedVersion !== targetVersion ||
++                        advisory.status !== "supported")
++                  : advisory?.status === "broken" || advisory?.status === "unsupported";
+             if (rejected || !command) {
+               return yield* finish(
+                 makeUpdateState({

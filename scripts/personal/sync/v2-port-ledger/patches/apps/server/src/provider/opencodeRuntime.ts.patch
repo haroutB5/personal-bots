@@ -1,0 +1,24 @@
+diff --git a/apps/server/src/provider/opencodeRuntime.ts b/apps/server/src/provider/opencodeRuntime.ts
+index d8319bc44a71c65b803997d1c8bc0815dfb66374..dbec5e36ac236547dd24109bcdef19aaa59cba20 100644
+--- a/apps/server/src/provider/opencodeRuntime.ts
++++ b/apps/server/src/provider/opencodeRuntime.ts
+@@ -28,9 +28,10 @@ import * as Result from "effect/Result";
+ import * as Scope from "effect/Scope";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import { isWindowsCommandNotFound } from "../processRunner.ts";
++import { lowerBotProcessPriorityEffect } from "./botProcessPriority.ts";
+ import { collectStreamAsString } from "./providerSnapshot.ts";
+ import * as NetService from "@t3tools/shared/Net";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+@@ -720,6 +721,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
+               }),
+           ),
+         );
++      yield* lowerBotProcessPriorityEffect(Number(child.pid), "opencode");
+ 
+       const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
+         hostPlatform === "win32"

@@ -1,0 +1,119 @@
+diff --git a/apps/server/src/device/DeviceHubProxy.ts b/apps/server/src/device/DeviceHubProxy.ts
+index 706137796654507daa314c5b8c859d884c23f386..468d56a1ba6c9b2cc83070292e85718c5fb868aa 100644
+--- a/apps/server/src/device/DeviceHubProxy.ts
++++ b/apps/server/src/device/DeviceHubProxy.ts
+@@ -15,6 +15,7 @@ import {
+   AuthOrchestrationReadScope,
+   AuthOrchestrationOperateScope,
+   type AuthEnvironmentScope,
++  type AuthSessionId,
+ } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+@@ -24,8 +25,9 @@ import {
+   HttpRouter,
+   HttpServerRequest,
+   HttpServerResponse,
+-} from "effect/unstable/http";
+-import * as Socket from "effect/unstable/socket/Socket";
++} from "effect/http";
++import type { HttpMethod } from "effect/http/HttpMethod";
++import * as Socket from "effect/socket/Socket";
+ import * as NodeSocket from "@effect/platform-node/NodeSocket";
+ 
+ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+@@ -34,6 +36,10 @@ import {
+   failEnvironmentInternal,
+   failEnvironmentScopeRequired,
+ } from "../auth/http.ts";
++import {
++  endStreamWhenSessionRevoked,
++  serveUntilSessionRevoked,
++} from "../auth/sessionRevocationClose.ts";
+ import * as DeviceService from "./DeviceService.ts";
+ 
+ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
+@@ -107,6 +113,7 @@ const authenticate = (requiredScope: AuthEnvironmentScope) =>
+     if (!session.scopes.includes(requiredScope)) {
+       return yield* failEnvironmentScopeRequired(requiredScope);
+     }
++    return session;
+   });
+ 
+ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: string) => {
+@@ -124,10 +131,8 @@ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: st
+  * Pipe a client WebSocket to the hub's with no framing changes. Frames are
+  * opaque: H.264 access units one way, input packets the other.
+  */
+-const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
+-  request: HttpServerRequest.HttpServerRequest,
+-  upstreamUrl: string,
+-) {
++const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (upstreamUrl: string) {
++  const request = yield* HttpServerRequest.HttpServerRequest;
+   const client = yield* request.upgrade;
+   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
+     openTimeout: "10 seconds",
+@@ -156,12 +161,13 @@ const pumpFrames = (source: Socket.Socket, sink: Socket.Writer) =>
+   });
+ 
+ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
++  sessionId: AuthSessionId,
+   request: HttpServerRequest.HttpServerRequest,
+   upstreamUrl: string,
+   hubOrigin: string,
+ ) {
+   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
+-  const method = request.method;
++  const method = request.method as HttpMethod;
+   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
+     HttpClientRequest.setHeaders(forwardHeaders(request, hubOrigin)),
+     method === "GET" || method === "HEAD"
+@@ -178,7 +184,12 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
+   }
+   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
+   headers["cache-control"] = "no-store, no-transform";
+-  return HttpServerResponse.stream(response.stream, {
++  // A body with a Content-Length is bounded, so only unbounded streams (mjpeg, avcc, events) pay for the revoke watch.
++  const body =
++    response.headers["content-length"] === undefined
++      ? yield* endStreamWhenSessionRevoked({ sessionId, stream: response.stream })
++      : response.stream;
++  return HttpServerResponse.stream(body, {
+     status: response.status,
+     headers,
+     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
+@@ -206,7 +217,9 @@ const handler = Effect.gen(function* () {
+   const controlsDevice =
+     (upgrade && hubPath !== "/api/devices/ws") ||
+     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
+-  yield* authenticate(controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope);
++  const session = yield* authenticate(
++    controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
++  );
+   const devices = yield* DeviceService.DeviceService;
+   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
+   if (!ready) {
+@@ -222,12 +235,17 @@ const handler = Effect.gen(function* () {
+   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
+   const upstreamPath = `${hubPath}${search}`;
+   if (upgrade) {
+-    return yield* proxyWebSocket(
+-      request,
+-      `${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`,
+-    );
++    return yield* serveUntilSessionRevoked({
++      sessionId: session.sessionId,
++      serve: proxyWebSocket(`${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`),
++    });
+   }
+-  return yield* proxyHttp(request, `${ready.hub.origin}${upstreamPath}`, ready.hub.origin);
++  return yield* proxyHttp(
++    session.sessionId,
++    request,
++    `${ready.hub.origin}${upstreamPath}`,
++    ready.hub.origin,
++  );
+ });
+ 
+ export const deviceHubProxyRouteLayer = HttpRouter.add(

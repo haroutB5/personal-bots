@@ -12,10 +12,10 @@
 // is not done, which is how a new field in an already-ported web file fails the same build.
 // --require-done adds PR ids to that set by hand. "done" comes from apps/hbots-mobile/src/parity.ts at the Android ref once that file
 // exists (program PR G0), and from the measured DONE_TODAY table before then.
-import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 const argv = process.argv.slice(2);
 const repo = argv[0];
@@ -31,13 +31,16 @@ const opt = (name, fallback) => {
 };
 const REF = opt("--ref", "personal-bots/main");
 const ANDROID_REF = opt("--android-ref", "feat/hbots-mobile-scaffold");
-const OUT = opt("--out", join(dirname(fileURLToPath(import.meta.url)), "parity.json"));
+const OUT = opt(
+  "--out",
+  NodePath.join(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "parity.json"),
+);
 const CHECK = argv.includes("--check");
 const REQUIRE_DONE = (opt("--require-done", "") || "").split(",").filter(Boolean);
 const LIST = opt("--list", null);
 
 const git = (...args) =>
-  execFileSync("git", ["-C", repo, ...args], {
+  NodeChildProcess.execFileSync("git", ["-C", repo, ...args], {
     encoding: "utf8",
     maxBuffer: 1 << 28,
     stdio: ["ignore", "pipe", "pipe"],
@@ -166,7 +169,8 @@ const resolveSpec = (from, spec) => {
   if (spec.startsWith("~/")) base = `${WEB}/${spec.slice(2)}`;
   else if (spec.startsWith("@hbots/personal-client/"))
     base = `${CLIENT}/${spec.slice("@hbots/personal-client/".length)}`;
-  else if (spec.startsWith(".")) base = normalize(join(dirname(from), spec));
+  else if (spec.startsWith("."))
+    base = NodePath.normalize(NodePath.join(NodePath.dirname(from), spec));
   else return null;
   for (const c of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) {
     if (webSet.has(c) && /\.(ts|tsx)$/.test(c)) return c;
@@ -477,7 +481,12 @@ const RULES = [
       "T3 Connect browser linking. The phone pairs through the relay link instead (NETWORK-PATH.md, Relay design).",
     ),
   ],
+  [
+    /^screen routes\/connect-agent\.tsx/,
+    NA("Upstream T3 developer view. Plan section 2 keeps it off the phone."),
+  ],
   [/^screen routes\/pair\.tsx/, { pr: "A17" }],
+  [/^screen routes\/_personal\.bots_\.settings_\.devices\.tsx/, { pr: "A18" }],
   [/^screen routes\/_personal\.tsx/, { pr: "A1" }],
   [/^screen routes\/_personal\.bots\.tsx/, { pr: "A2" }],
   [/^screen routes\/_personal\.bots_\.\$botId\.\$threadId/, { pr: "A4" }],
@@ -495,6 +504,18 @@ const RULES = [
   [/^screen routes\/_personal\.computer\.tsx/, { pr: "A16" }],
   [/^screen routes\/_personal\.files\.tsx/, { pr: "A13" }],
   [/^screen routes\/_personal\.tasks/, { pr: "A12" }],
+  [
+    /^sheet PersonalSettingsScreen\.tsx Create pairing link/,
+    NA(
+      "The phone is the device that scans a pairing link. Minting one for another phone stays on the laptop's web Settings; the phone pairs from onboarding frame 1a.",
+    ),
+  ],
+  [
+    /^setting PersonalSettingsScreen\.tsx Plugins \/ PairPhoneRow/,
+    NA(
+      "Pairing starts from onboarding frame 1a on the phone. Another phone is paired from the laptop's web Settings.",
+    ),
+  ],
   [
     /^setting PersonalSettingsScreen\.tsx Appearance/,
     NA("Android is dark only by the approved spec (SPEC.md section 0, plan section 4)."),
@@ -567,6 +588,7 @@ const RULES = [
     /ChatsScreen|BotRow|ChatSectionRows|AllChatsCount|UnreadChatsBadge|PersonalUsageStrip|PersonalResetCredits|ProviderMixBar|UsageRangeControl|PersonalOfflineBanner|InAppNotifications|PersonalEmptyTab|BotAvatar|PinMark/,
     { pr: "A2" },
   ],
+  [/DevicesScreen/, { pr: "A18" }],
   [/PersonalUnreachableScreen/, { pr: "A1" }],
   [/PersonalShell|PersonalTabBar|RouteLoadError|edge swipe back|drag a sheet down/, { pr: "A1" }],
   [
@@ -601,6 +623,7 @@ const RPC_RULES = [
     { pr: "A7" },
   ],
   [/^personal(Memory|Logins|Connections|Secrets)/, { pr: "A15" }],
+  [/^personalDevices/, { pr: "A18" }],
   [/^personal(Browser|Desktop)/, { pr: "A16" }],
   [/^personalVoiceCalls/, { pr: "X4" }],
 ];
@@ -701,11 +724,12 @@ const out = {
     contractPersonalMethods: contractMethods.length,
   },
   serverOnlyMethods,
-  items: items.map(({ file, ...rest }) => rest),
+  items: items.map(({ file: _file, ...rest }) => rest),
 };
-writeFileSync(OUT, `${JSON.stringify(out, null, 2)}\n`);
-const formatter = join(repo, "node_modules/.bin/vp");
-if (existsSync(formatter)) execFileSync(formatter, ["fmt", OUT], { stdio: "ignore" });
+NodeFS.writeFileSync(OUT, `${JSON.stringify(out, null, 2)}\n`);
+const formatter = NodePath.join(repo, "node_modules/.bin/vp");
+if (NodeFS.existsSync(formatter))
+  NodeChildProcess.execFileSync(formatter, ["fmt", OUT], { stdio: "ignore" });
 
 if (LIST)
   for (const it of items.filter((i) => i.kind === LIST || i.status === LIST || i.pr === LIST))

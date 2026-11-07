@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/decider.questionAttachments.test.ts b/apps/server/src/orchestration/decider.questionAttachments.test.ts
+index 53e87d7593cc054ed1e5867e8e1325576098d702..0c58553d3818049f7be2d98d0cb6bd17420b61df 100644
+--- a/apps/server/src/orchestration/decider.questionAttachments.test.ts
++++ b/apps/server/src/orchestration/decider.questionAttachments.test.ts
+@@ -7,7 +7,7 @@ import {
+   ThreadId,
+   type OrchestrationReadModel,
+ } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ 

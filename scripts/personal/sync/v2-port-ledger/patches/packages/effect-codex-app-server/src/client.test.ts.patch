@@ -1,0 +1,16 @@
+diff --git a/packages/effect-codex-app-server/src/client.test.ts b/packages/effect-codex-app-server/src/client.test.ts
+index f7eca6207ca715d0fbb9c634fe47606d0b93d108..dc6422f8d332903842915172abbe36b0d777b5d6 100644
+--- a/packages/effect-codex-app-server/src/client.test.ts
++++ b/packages/effect-codex-app-server/src/client.test.ts
+@@ -4,9 +4,9 @@ import * as Path from "effect/Path";
+ import * as Effect from "effect/Effect";
+ import * as Ref from "effect/Ref";
+ import * as Scope from "effect/Scope";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ 
+ import * as CodexClient from "./client.ts";

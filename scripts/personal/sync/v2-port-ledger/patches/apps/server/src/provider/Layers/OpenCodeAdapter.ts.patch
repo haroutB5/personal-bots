@@ -1,0 +1,512 @@
+diff --git a/apps/server/src/provider/Layers/OpenCodeAdapter.ts b/apps/server/src/provider/Layers/OpenCodeAdapter.ts
+index 34ebd1b544fb46dc3da13530bfd55da6e3f2785c..c8b4e697429cef42cdf4d528d878d5b2db66dd2a 100644
+--- a/apps/server/src/provider/Layers/OpenCodeAdapter.ts
++++ b/apps/server/src/provider/Layers/OpenCodeAdapter.ts
+@@ -9,13 +9,14 @@ import {
+   RuntimeItemId,
+   RuntimeRequestId,
+   ThreadId,
++  type ThreadTokenUsageSnapshot,
+   type ToolLifecycleItemType,
+   type TurnTokenUsage,
+   TurnId,
+   type UserInputQuestion,
+ } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -35,6 +36,10 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+ import { resolveAttachmentPath } from "../../attachmentStore.ts";
+ import { ServerConfig } from "../../config.ts";
+ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
++import {
++  botStateDenyEnabled,
++  buildOpenCodeBotPermissionRules,
++} from "../../personal/secrets/botProtectedPaths.ts";
+ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+ import {
+   ProviderAdapterProcessError,
+@@ -43,8 +48,13 @@ import {
+   ProviderAdapterSessionNotFoundError,
+   ProviderAdapterValidationError,
+ } from "../Errors.ts";
+-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
++import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
+ import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
++import {
++  PERSONAL_BOT_OPENCODE_AGENTS,
++  personalBotOpenCodeEnvironment,
++} from "../opencodeBotIsolation.ts";
++import { openCodeRetryInfo } from "./openCodeRetryInfo.ts";
+ import {
+   buildOpenCodePermissionRules,
+   OpenCodeRuntime,
+@@ -53,6 +63,7 @@ import {
+   openCodeRuntimeErrorDetail,
+   loadOpenCodeCommands,
+   parseOpenCodeModelSlug,
++  type ParsedOpenCodeModelSlug,
+   runOpenCodeSdk,
+   toOpenCodeFileParts,
+   toOpenCodePermissionReply,
+@@ -342,6 +353,15 @@ interface OpenCodeSessionContext {
+   readonly server: OpenCodeServerConnection;
+   readonly directory: string;
+   openCodeSessionId: string;
++  /** Started for a personal bot: isolated config, built-in agents only. */
++  readonly personalBot: boolean;
++  /**
++   * The start input's bot instructions: the per-turn `system` fallback for a
++   * turn that arrives without its own.
++   */
++  readonly systemInstructions: string | undefined;
++  /** A retry wait was put on the session and must be cleared once work resumes. */
++  announcedRetry: boolean;
+   readonly relatedSessionIds: Set<string>;
+   readonly resolvedRequestIds: Set<string>;
+   readonly autoRepliedRequestIds: Set<string>;
+@@ -354,6 +374,10 @@ interface OpenCodeSessionContext {
+   // until native removal or session teardown, but do not retain other part payloads.
+   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
+   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
++  /** The model of the turn in flight: names the catalog entry that holds its context limit. */
++  activeModel: ParsedOpenCodeModelSlug | undefined;
++  /** Context limit per `provider/model`; `undefined` once looked up means the catalog has none. */
++  readonly contextLimits: Map<string, number | undefined>;
+   activeTurnId: TurnId | undefined;
+   activeAgent: string | undefined;
+   activeVariant: string | undefined;
+@@ -416,17 +440,57 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
+   };
+ }
+ 
++/** Returns whether the step was new to the turn (a repeated part update counts once). */
+ function accumulateOpenCodeStepUsage(
+   accumulator: OpenCodeTurnTokenUsageAccumulator,
+   part: OpenCodeStepUsage,
+-): void {
+-  if (accumulator.partIds.has(part.id)) return;
++): boolean {
++  if (accumulator.partIds.has(part.id)) return false;
+   accumulator.partIds.add(part.id);
+   accumulator.inputTokens += part.tokens.input + part.tokens.cache.read + part.tokens.cache.write;
+   accumulator.cachedInputTokens += part.tokens.cache.read;
+   accumulator.cacheCreationTokens += part.tokens.cache.write;
+   accumulator.outputTokens += part.tokens.output + part.tokens.reasoning;
+   accumulator.reasoningTokens += part.tokens.reasoning;
++  return true;
++}
++
++function openCodeTokenCount(value: unknown): number {
++  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
++}
++
++/**
++ * The context meter number for one OpenCode step: the prompt side of that
++ * step (input + cache read + cache write), which is what the model held in
++ * context for it. The turn sum would count the same history once per step.
++ * `undefined` when the step reports no prompt tokens, so nothing is guessed.
++ */
++function openCodeThreadTokenUsageSnapshot(
++  usage: OpenCodeTurnTokenUsageAccumulator,
++  step: OpenCodeStepUsage,
++  contextLimit: number | undefined,
++): ThreadTokenUsageSnapshot | undefined {
++  const cached = openCodeTokenCount(step.tokens.cache.read);
++  const cacheWrite = openCodeTokenCount(step.tokens.cache.write);
++  const prompt = openCodeTokenCount(step.tokens.input) + cached + cacheWrite;
++  if (prompt <= 0) {
++    return undefined;
++  }
++  const reasoning = openCodeTokenCount(step.tokens.reasoning);
++  const output = openCodeTokenCount(step.tokens.output) + reasoning;
++  const maxTokens = contextLimit !== undefined && contextLimit > 0 ? contextLimit : undefined;
++  const usedTokens = maxTokens !== undefined ? Math.min(prompt, maxTokens) : prompt;
++  const totalProcessedTokens = usage.inputTokens + usage.outputTokens;
++  return {
++    usedTokens,
++    lastUsedTokens: usedTokens,
++    ...(totalProcessedTokens > usedTokens ? { totalProcessedTokens } : {}),
++    inputTokens: prompt,
++    ...(cached > 0 ? { cachedInputTokens: cached } : {}),
++    ...(output > 0 ? { outputTokens: output } : {}),
++    ...(reasoning > 0 ? { reasoningOutputTokens: reasoning } : {}),
++    ...(maxTokens !== undefined ? { maxTokens } : {}),
++  };
+ }
+ 
+ function takeOpenCodeTurnTokenUsage(
+@@ -462,6 +526,11 @@ export interface OpenCodeAdapterLiveOptions {
+   readonly environment?: NodeJS.ProcessEnv;
+   readonly nativeEventLogPath?: string;
+   readonly nativeEventLogger?: EventNdjsonLogger;
++  /**
++   * The app-owned `XDG_CONFIG_HOME` personal-bot sessions run under (see
++   * `opencodeBotIsolation.ts`). Absent means bot sessions refuse to start.
++   */
++  readonly personalBotConfigHome?: string;
+ }
+ 
+ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+@@ -951,6 +1020,17 @@ export function makeOpenCodeAdapter(
+     const path = yield* Path.Path;
+     const sameDirectory = (left: string, right: string) =>
+       isSameOpenCodeDirectory(fileSystem, path, left, right);
++    // A bot's deny rules come last: the last matching rule wins, so they hold
++    // over the mode's `*` allow. Best effort, see botProtectedPaths.
++    const sessionPermissionRules = (
++      runtimeMode: Parameters<typeof buildOpenCodePermissionRules>[0],
++      personalBot: boolean,
++    ) => [
++      ...buildOpenCodePermissionRules(runtimeMode),
++      ...(personalBot && botStateDenyEnabled()
++        ? buildOpenCodeBotPermissionRules(serverConfig)
++        : []),
++    ];
+     const nativeEventLogger =
+       options?.nativeEventLogger ??
+       (options?.nativeEventLogPath !== undefined
+@@ -1109,6 +1189,66 @@ export function makeOpenCodeAdapter(
+       }
+     });
+ 
++    // The model catalog's context limit for the turn's model, read once per
++    // session and model. A catalog that is unreachable or lists no limit leaves
++    // the meter without a maximum rather than guessing one.
++    const resolveOpenCodeContextLimit = Effect.fn("resolveOpenCodeContextLimit")(function* (
++      context: OpenCodeSessionContext,
++    ) {
++      const model = context.activeModel;
++      if (!model) {
++        return undefined;
++      }
++      const key = `${model.providerID}/${model.modelID}`;
++      if (context.contextLimits.has(key)) {
++        return context.contextLimits.get(key);
++      }
++      const limit = yield* runOpenCodeSdk("provider.list", (signal) =>
++        context.client.provider.list(undefined, { signal }),
++      ).pipe(
++        Effect.map((result) => {
++          const provider = result.data?.all.find((entry) => entry.id === model.providerID);
++          const value = provider?.models[model.modelID]?.limit?.context;
++          return typeof value === "number" && Number.isFinite(value) && value > 0
++            ? Math.round(value)
++            : undefined;
++        }),
++        Effect.timeout("3 seconds"),
++        Effect.orElseSucceed(() => undefined),
++      );
++      context.contextLimits.set(key, limit);
++      return limit;
++    });
++
++    // The context meter: one event per finished step with that step's prompt
++    // size. Only steps that count toward the turn get here, so subagent and
++    // other-session steps never move the main agent's number.
++    const emitOpenCodeThreadTokenUsage = Effect.fn("emitOpenCodeThreadTokenUsage")(function* (
++      context: OpenCodeSessionContext,
++      turnId: TurnId | undefined,
++      step: OpenCodeStepUsage,
++      raw: unknown,
++    ) {
++      const usage = context.turnTokenUsage;
++      if (!usage) {
++        return;
++      }
++      const contextLimit = yield* resolveOpenCodeContextLimit(context);
++      const snapshot = openCodeThreadTokenUsageSnapshot(usage, step, contextLimit);
++      if (!snapshot) {
++        return;
++      }
++      yield* emit({
++        ...(yield* buildEventBase({
++          threadId: context.session.threadId,
++          ...(turnId ? { turnId } : {}),
++          raw,
++        })),
++        type: "thread.token-usage.updated",
++        payload: { usage: snapshot },
++      });
++    });
++
+     const completeOpenCodeTurn = Effect.fn("completeOpenCodeTurn")(function* (
+       context: OpenCodeSessionContext,
+       turnId: TurnId,
+@@ -2375,12 +2515,18 @@ export function makeOpenCodeAdapter(
+               usage.assistantOwnershipByMessageId.set(event.properties.info.id, ownership);
+               if (ownership !== "unknown") {
+                 const steps = usage.unresolvedStepsByMessageId.get(event.properties.info.id);
++                let latestCounted: OpenCodeStepUsage | undefined;
+                 if (ownership === "owned" && steps) {
+                   for (const step of steps.values()) {
+-                    accumulateOpenCodeStepUsage(usage, step);
++                    if (accumulateOpenCodeStepUsage(usage, step)) {
++                      latestCounted = step;
++                    }
+                   }
+                 }
+                 usage.unresolvedStepsByMessageId.delete(event.properties.info.id);
++                if (turnId && latestCounted) {
++                  yield* emitOpenCodeThreadTokenUsage(context, turnId, latestCounted, event);
++                }
+               }
+             }
+             for (const part of context.textPartsByMessageId
+@@ -2454,7 +2600,9 @@ export function makeOpenCodeAdapter(
+             const usage = context.turnTokenUsage;
+             const ownership = usage.assistantOwnershipByMessageId.get(part.messageID);
+             if (ownership === "owned") {
+-              accumulateOpenCodeStepUsage(usage, part);
++              if (accumulateOpenCodeStepUsage(usage, part)) {
++                yield* emitOpenCodeThreadTokenUsage(context, turnId, part, event);
++              }
+             } else if (
+               ownership === "unknown" ||
+               (ownership === undefined &&
+@@ -2603,6 +2751,20 @@ export function makeOpenCodeAdapter(
+             });
+           }
+ 
++          // Work resumed after a wait: take the wait off the session.
++          if (event.properties.status.type === "busy" && context.announcedRetry) {
++            context.announcedRetry = false;
++            yield* emit({
++              ...(yield* buildEventBase({
++                threadId: context.session.threadId,
++                turnId,
++                raw: event,
++              })),
++              type: "session.state.changed",
++              payload: { state: "running", reason: "opencode_retry_cleared" },
++            });
++          }
++
+           if (event.properties.status.type === "retry") {
+             yield* emit({
+               ...(yield* buildEventBase({
+@@ -2616,10 +2778,28 @@ export function makeOpenCodeAdapter(
+                 detail: event.properties.status,
+               },
+             });
++            // OpenCode keeps retrying on its own, possibly for a long time:
++            // put the wait on the session so the thread reads "Rate limited"
++            // or "Retrying", not "Working".
++            context.announcedRetry = true;
++            yield* emit({
++              ...(yield* buildEventBase({
++                threadId: context.session.threadId,
++                turnId,
++                raw: event,
++              })),
++              type: "session.state.changed",
++              payload: {
++                state: "running",
++                reason: "opencode_retry",
++                retry: openCodeRetryInfo(event.properties.status),
++              },
++            });
+             break;
+           }
+ 
+           if (event.properties.status.type === "idle" && turnId) {
++            context.announcedRetry = false;
+             if (context.cancellation?.turnId === turnId) {
+               context.cancellation.deferredIdleEvent = event;
+               break;
+@@ -2663,6 +2843,7 @@ export function makeOpenCodeAdapter(
+             }
+           }
+           yield* cancelIdleReconciliation(context);
++          context.announcedRetry = false;
+           const terminalCancellation =
+             activeTurnId !== undefined && cancellation?.turnId === activeTurnId
+               ? cancellation
+@@ -2844,6 +3025,27 @@ export function makeOpenCodeAdapter(
+           deleteContextIfCurrent(existing);
+         }
+ 
++        // A bot never joins a server it does not own: an external server
++        // carries the owner's config and never gets the app's MCP server.
++        const personalBot = input.personalBot === true;
++        const personalBotConfigHome = options?.personalBotConfigHome;
++        if (personalBot && serverUrl.trim().length > 0) {
++          return yield* new ProviderAdapterValidationError({
++            provider: PROVIDER,
++            operation: "startSession",
++            issue:
++              "Bots can't use an external OpenCode server. Clear the OpenCode server URL in Settings > Providers.",
++          });
++        }
++        if (personalBot && personalBotConfigHome === undefined) {
++          return yield* new ProviderAdapterValidationError({
++            provider: PROVIDER,
++            operation: "startSession",
++            issue:
++              "OpenCode could not prepare the bots' private settings folder, so bots can't run.",
++          });
++        }
++
+         const started = yield* Effect.gen(function* () {
+           const sessionScope = yield* Scope.make();
+           const startedExit = yield* Effect.exit(
+@@ -2852,15 +3054,25 @@ export function makeOpenCodeAdapter(
+               // we provide below — closing `sessionScope` kills the child
+               // process automatically. No manual `server.close()` needed.
+               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
++              // Device variables and a bot's PB_SECRET_* reach the server
++              // process, and through it every shell command it runs.
++              const sessionEnvironment = McpProviderSession.withProviderSessionEnvironment(
++                options?.environment ?? process.env,
++                mcpSession,
++              );
+               const server = yield* openCodeRuntime.connectToOpenCodeServer({
+                 binaryPath,
+                 directory,
+                 serverUrl,
+                 ...(serverPassword ? { serverPassword } : {}),
+-                environment: McpProviderSession.withAgentDeviceEnvironment(
+-                  options?.environment ?? process.env,
+-                  mcpSession,
+-                ),
++                environment:
++                  personalBot && personalBotConfigHome !== undefined
++                    ? personalBotOpenCodeEnvironment({
++                        base: sessionEnvironment,
++                        configHome: personalBotConfigHome,
++                        model: input.modelSelection?.model,
++                      })
++                    : sessionEnvironment,
+               });
+               const client = openCodeRuntime.createOpenCodeSdkClient({
+                 baseUrl: server.url,
+@@ -2914,7 +3126,7 @@ export function makeOpenCodeAdapter(
+                   yield* runOpenCodeSdk("session.update", () =>
+                     client.session.update({
+                       sessionID: reusable.id,
+-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
++                      permission: sessionPermissionRules(input.runtimeMode, personalBot),
+                     }),
+                   );
+                   return { openCodeSession: reusable, created: false };
+@@ -2941,7 +3153,7 @@ export function makeOpenCodeAdapter(
+                   yield* runOpenCodeSdk("session.update", () =>
+                     client.session.update({
+                       sessionID: forked.id,
+-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
++                      permission: sessionPermissionRules(input.runtimeMode, personalBot),
+                     }),
+                   );
+                   return { openCodeSession: forked, created: true };
+@@ -2955,7 +3167,7 @@ export function makeOpenCodeAdapter(
+                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
+                   client.session.create({
+                     ...(input.title ? { title: input.title } : {}),
+-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
++                    permission: sessionPermissionRules(input.runtimeMode, personalBot),
+                   }),
+                 );
+                 if (!createdSession.data) {
+@@ -3009,6 +3221,9 @@ export function makeOpenCodeAdapter(
+           server: started.server,
+           directory,
+           openCodeSessionId: started.openCodeSession.id,
++          personalBot,
++          systemInstructions: input.systemInstructions,
++          announcedRetry: false,
+           relatedSessionIds: new Set([started.openCodeSession.id]),
+           resolvedRequestIds: new Set(),
+           autoRepliedRequestIds: new Set(),
+@@ -3019,6 +3234,8 @@ export function makeOpenCodeAdapter(
+           textPartsByMessageId: new Map(),
+           messageRoleById: new Map(),
+           turnTokenUsage: undefined,
++          activeModel: undefined,
++          contextLimits: new Map(),
+           activeTurnId: undefined,
+           activeAgent: undefined,
+           activeVariant: undefined,
+@@ -3118,7 +3335,26 @@ export function makeOpenCodeAdapter(
+       }
+ 
+       const text = input.input?.trim();
+-      const commandMatch = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
++      // FORK PIN against upstream 0b83045d0 "feat(providers): expose native
++      // slash commands across clients (#11519)". Bot sessions never take the
++      // native command path. `session.command` accepts no per-prompt system
++      // addendum, and that addendum is where a personal bot's persona rides
++      // (`personalBotSystemInstructions`), so a message that merely starts with
++      // "/" and happens to name a published command would answer as the raw
++      // model — silently. The published catalog is also not limited to
++      // PERSONAL_BOT_OPENCODE_AGENTS, so a command could reach an agent the
++      // bot's isolation excludes. Keeping bot text on the prompt path fixes
++      // both at once and fails safe: a new upstream command path inherits the
++      // pin for free, whereas teaching `session.command` to carry instructions
++      // would have to be re-done on every such change.
++      //
++      // The owner's own (non-bot) threads keep upstream's behaviour unchanged.
++      // A future sync that flattens this fails the paired test
++      // "keeps a bot's slash text on the prompt path with its instructions"
++      // in OpenCodeAdapter.test.ts. See docs/internals/providers.md.
++      const commandMatch = context.personalBot
++        ? undefined
++        : text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+       const nativeCommand = commandMatch
+         ? (yield* loadOpenCodeCommands(context.client).pipe(
+             Effect.timeout("10 seconds"),
+@@ -3166,7 +3402,14 @@ export function makeOpenCodeAdapter(
+           // prompt into the running session, so the active turn id is reused.
+           const steeringTurnId = context.activeTurnId;
+           const turnId = steeringTurnId ?? freshTurnId;
+-          const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
++          const requestedAgent = getModelSelectionStringOptionValue(modelSelection, "agent");
++          // A bot's server has only the built-in agents; the owner's are not there.
++          const agent =
++            context.personalBot &&
++            requestedAgent !== undefined &&
++            !PERSONAL_BOT_OPENCODE_AGENTS.has(requestedAgent)
++              ? undefined
++              : requestedAgent;
+           const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
+           const pendingIdleReconciliation = context.pendingIdleReconciliation;
+           const priorAwaitingBusy = context.awaitingBusyAfterInterruption;
+@@ -3205,6 +3448,7 @@ export function makeOpenCodeAdapter(
+             context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
+           }
+           context.turnTokenUsage?.promptMessageIds.add(messageId);
++          context.activeModel = parsedModel;
+           context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
+           context.activeVariant = variant;
+           if (steeringTurnId === undefined) {
+@@ -3281,10 +3525,15 @@ export function makeOpenCodeAdapter(
+                     ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+                     ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+                     // OpenCode appends this after its own agent/provider prompts.
+-                    system: buildRuntimeInstructions({
+-                      harness: "OpenCode",
+-                      model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+-                    }),
++                    // Its instructions slot is per prompt, so a bot's persona and
++                    // app rules ride on every turn (falling back to the start's).
++                    system: withBotInstructions(
++                      buildRuntimeInstructions({
++                        harness: "OpenCode",
++                        model: `${parsedModel.providerID}/${parsedModel.modelID}`,
++                      }),
++                      input.systemInstructions ?? context.systemInstructions,
++                    ),
+                     parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+                   },
+                   { signal },
+@@ -3979,7 +4228,7 @@ export function makeOpenCodeAdapter(
+           yield* runOpenCodeSdk("session.update", () =>
+             context.client.session.update({
+               sessionID: forkedSessionId,
+-              permission: buildOpenCodePermissionRules(context.session.runtimeMode),
++              permission: sessionPermissionRules(context.session.runtimeMode, context.personalBot),
+             }),
+           ).pipe(Effect.mapError(toRequestError));
+           yield* clearPendingOpenCodeRequests(context, { type: "session.fork" });

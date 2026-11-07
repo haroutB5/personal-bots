@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
+index d95e2251763029fe5ebf3a3c9c8688d32f30d70b..0c25f86699986b3c366829d95b138a412692356e 100644
+--- a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
++++ b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
+@@ -18,7 +18,7 @@ import {
+   EMPTY_ENVIRONMENT_THREAD_STATE,
+ } from "@t3tools/client-runtime/state/threads";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+ import {
+   computeStableMessagesTimelineRows,
+   computeMessageDurationStart,

@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/preview/PreviewAutomationHosts.test.tsx b/apps/web/src/components/preview/PreviewAutomationHosts.test.tsx
+index 542b84907b6e705698aac438ceac0eb46c920db6..b26f25bb79b02b93c45688a984a64dc0911a570b 100644
+--- a/apps/web/src/components/preview/PreviewAutomationHosts.test.tsx
++++ b/apps/web/src/components/preview/PreviewAutomationHosts.test.tsx
+@@ -10,7 +10,7 @@ import {
+ } from "@t3tools/contracts";
+ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { act } from "react";
+ import { create, type ReactTestRenderer } from "react-test-renderer";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

@@ -1,0 +1,293 @@
+diff --git a/apps/web/src/components/ChatMarkdown.tsx b/apps/web/src/components/ChatMarkdown.tsx
+index ea02607cc11520b8c7ba3710ba0e312b013e8ecb..8a077927a7ed66c86e3873fc6b660962c57fbfbf 100644
+--- a/apps/web/src/components/ChatMarkdown.tsx
++++ b/apps/web/src/components/ChatMarkdown.tsx
+@@ -54,7 +54,7 @@ import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-li
+ import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+ import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import React, {
+   Children,
+   Suspense,
+@@ -233,6 +233,10 @@ interface ChatMarkdownProps {
+       text nests under the heading that introduces it, such as a chat message's
+       author. Rendered tags and their styling are unchanged. */
+   headingLevelOffset?: number | undefined;
++  /** Claims a file chip before the right panel: return true when a host shell
++      has opened the file itself (the personal chat preview sheet). Absent, the
++      chip keeps its existing editor/panel/media behaviour. */
++  onOpenFile?: ((request: ChatMarkdownFileOpenRequest) => boolean) | undefined;
+ }
+ 
+ export interface ChatMarkdownContextReference {
+@@ -241,6 +245,23 @@ export interface ChatMarkdownContextReference {
+   label: string;
+ }
+ 
++export interface ChatMarkdownFileOpenRequest {
++  path: string;
++  line: number | undefined;
++  label: string;
++}
++
++/**
++ * Hands a file chip to a host shell. True means the shell opened the file
++ * itself (the personal chat preview sheet), so the right panel is skipped.
++ */
++export function openFileThroughChatPreview(
++  onOpenFile: ((request: ChatMarkdownFileOpenRequest) => boolean) | undefined,
++  request: ChatMarkdownFileOpenRequest,
++): boolean {
++  return onOpenFile?.(request) === true;
++}
++
+ export function canUseMarkdownFileShellActions(
+   environmentId: EnvironmentId | null,
+   remoteOpenMode: RemoteOpenMode,
+@@ -376,7 +397,7 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
+  * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits one-character
+  * markers. Wider markers can extend past it and get clipped by a collapsed
+  * message's overflow. Widen the gutter to fit the widest marker, including a
+- * negative marker's minus sign.
++ * negative marker's minus sign, the period, and the trailing space.
+  */
+ function orderedListGutterStyle(
+   itemCount: number,
+@@ -387,11 +408,12 @@ function orderedListGutterStyle(
+   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
+   const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
+   if (markerWidth <= 1) return undefined;
+-  return { "--list-gutter": `${markerWidth + 1}ch` };
++  return { "--list-gutter": `${markerWidth + 2}ch` };
+ }
+ 
+ type MarkdownImageHastNode = {
+   type?: string;
++  value?: string;
+   tagName?: string;
+   properties?: Record<string, unknown>;
+   children?: MarkdownImageHastNode[];
+@@ -446,6 +468,54 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
+   });
+ }
+ 
++/** Keep unmatched inline `<A>` placeholders from opening an HTML link over later blocks. */
++function rehypePreserveBareAnchorPlaceholders() {
++  return (tree: MarkdownImageHastNode) => {
++    const anchors: Array<MarkdownImageHastNode | null> = [];
++    let rawTextTag: string | undefined;
++    const visit = (node: MarkdownImageHastNode) => {
++      if (node.type === "raw" && typeof node.value === "string") {
++        // Raw blocks can contain several tags. Consume whole tags, quoted attributes,
++        // and comments so text resembling a closing anchor cannot pair a placeholder.
++        const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
++        let offset = 0;
++        while (rawTextTag !== "plaintext") {
++          // Raw text ends at its closing tag even inside comment-looking text.
++          const matcher = rawTextTag ? new RegExp(`</${rawTextTag}\\s*>`, "gi") : tags;
++          matcher.lastIndex = offset;
++          const match = matcher.exec(node.value);
++          if (!match) break;
++          const [tag] = match;
++          offset = matcher.lastIndex;
++          if (rawTextTag) {
++            rawTextTag = undefined;
++            continue;
++          }
++          if (tag.startsWith("<!--")) continue;
++          const closing = /^<\/([a-z]+)\s*>$/i.exec(tag)?.[1]?.toLowerCase();
++          const opening = /^<([a-z]+)(?:\s|\/?>)/i.exec(tag)?.[1]?.toLowerCase();
++          if (
++            opening &&
++            /^(?:script|style|textarea|title|xmp|iframe|noembed|noframes|plaintext)$/.test(opening)
++          ) {
++            rawTextTag = opening;
++          } else if (opening === "a") {
++            anchors.push(node.value === tag && /^<a\s*\/?>$/i.test(tag) ? node : null);
++          } else if (closing === "a") {
++            anchors.pop();
++          }
++        }
++      }
++      node.children?.forEach(visit);
++    };
++
++    visit(tree);
++    for (const anchor of anchors) {
++      if (anchor) anchor.type = "text";
++    }
++  };
++}
++
+ /** Carries authored image source metadata through the sanitizer to the image renderer. */
+ function rehypePreserveImageSourceMeta() {
+   return (tree: MarkdownImageHastNode) => {
+@@ -512,6 +582,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
+ ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+ 
+ const CHAT_MARKDOWN_REHYPE_PLUGINS = [
++  rehypePreserveBareAnchorPlaceholders,
+   rehypeRaw,
+   rehypePreserveImageSourceMeta,
+   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+@@ -1232,7 +1303,7 @@ interface MarkdownFileLinkProps {
+   theme: "light" | "dark";
+   threadRef?: ScopedThreadRef | undefined;
+   onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+-  onOpenInPanel: (panelPath: string, line: number | undefined) => void;
++  onOpenInPanel: (panelPath: string, line: number | undefined, label: string) => void;
+   openInEditorMenuLabel: string;
+   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+   onOpenMedia?: (() => void) | undefined;
+@@ -1446,12 +1517,19 @@ function expandableMarkdownImageProps(
+ function ChatMarkdownMediaUnavailableLabel(props: {
+   readonly alt: string;
+   readonly kind?: "image" | "video" | undefined;
++  /** Why the bytes could not be shown, such as the path that is missing. */
++  readonly detail?: string | undefined;
+ }) {
+   const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
+   return (
+-    <span className="inline-flex items-center gap-1.5">
+-      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+-      {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
++    <span className="inline-flex max-w-full flex-col items-center gap-1">
++      <span className="inline-flex items-center gap-1.5">
++        <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
++        {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
++      </span>
++      {props.detail ? (
++        <span className="text-[11px] leading-snug break-words opacity-80">{props.detail}</span>
++      ) : null}
+     </span>
+   );
+ }
+@@ -1504,6 +1582,7 @@ function ChatMarkdownImage(props: {
+   /** Null while the URL is being resolved; the last decoded image stays up. */
+   readonly src: string | null;
+   readonly sourceFailed?: boolean | undefined;
++  readonly failureDetail?: string | undefined;
+   readonly alt: string;
+   readonly copyMarkdown: string | undefined;
+   readonly standalone: boolean;
+@@ -1605,7 +1684,7 @@ function ChatMarkdownImage(props: {
+       >
+         {failed ? (
+           <span className="flex size-full items-center justify-center p-2 text-center text-xs text-muted-foreground">
+-            <ChatMarkdownMediaUnavailableLabel alt={props.alt} />
++            <ChatMarkdownMediaUnavailableLabel alt={props.alt} detail={props.failureDetail} />
+           </span>
+         ) : src !== null ? (
+           <img
+@@ -1714,6 +1793,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
+   // The server reads the pixel size from the file header, so the slot can be
+   // the image's final box instead of a 16:9 guess. An authored size wins; a
+   // caller's height cap shrinks the box while keeping the ratio.
++  const failureDetail =
++    assetUrl._tag !== "Failure"
++      ? undefined
++      : assetUrl.protectedFile === true
++        ? `Not shown by the file safety rules${path ? `: ${path}` : ""}`
++        : assetUrl.notFound === true
++          ? path
++            ? `File not found at ${path}`
++            : "File not found"
++          : undefined;
+   const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
+   const maxHeightRem = props.maxHeightRem ?? 30;
+   const style =
+@@ -1765,6 +1854,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
+       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
+       src={src}
+       sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
++      failureDetail={failureDetail}
+       alt={props.alt}
+       copyMarkdown={props.copyMarkdown}
+       standalone={props.standalone ?? true}
+@@ -2018,7 +2108,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
+ 
+   const handleOpenInFilePreview = useCallback(() => {
+     if (threadRef && panelPath) {
+-      onOpenInPanel(panelPath, line);
++      onOpenInPanel(panelPath, line, label);
+       return;
+     }
+     if (onOpenMedia) {
+@@ -2026,7 +2116,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
+       return;
+     }
+     handleOpenInEditor();
+-  }, [handleOpenInEditor, line, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
++  }, [handleOpenInEditor, label, line, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
+ 
+   const handleOpenInBrowser = useCallback(() => {
+     if (!onOpenInBrowser) {
+@@ -2336,6 +2426,7 @@ function useChatMarkdownState({
+   renderContextReference,
+   headingLevelOffset = 0,
+   githubMedia = false,
++  onOpenFile,
+ }: ChatMarkdownProps) {
+   const { resolvedTheme } = useTheme();
+   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
+@@ -2613,14 +2704,18 @@ function useChatMarkdownState({
+   );
+   // A bare filename resolves to the workspace root, which is rarely where the
+   // file is, so ask the index before opening. Absolute host paths open as-is.
++  // A host shell that can show the file (the personal chat preview sheet)
++  // claims it first; the desktop right panel is untouched unless it declines.
+   const openFileInPanel = useCallback(
+-    (panelPath: string, line: number | undefined) => {
++    (panelPath: string, line: number | undefined, label: string) => {
+       if (!threadRef) return;
+       // Claimed on every open so a synchronous one supersedes a lookup already
+       // in flight.
+       const isLatestLookup = claimWorkspaceBasenameLookup();
+-      const openAt = (path: string) =>
++      const openAt = (path: string) => {
++        if (openFileThroughChatPreview(onOpenFile, { path, line, label })) return;
+         useRightPanelStore.getState().openFile(threadRef, path, line);
++      };
+       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
+         openAt(panelPath);
+         return;
+@@ -2631,7 +2726,7 @@ function useChatMarkdownState({
+         openAt(match ?? panelPath);
+       })();
+     },
+-    [cwd, findWorkspaceBasenameMatch, threadRef],
++    [cwd, findWorkspaceBasenameMatch, onOpenFile, threadRef],
+   );
+   const revealMarkdownFileInFileManager = useCallback(
+     async (fileLinkMeta: MarkdownFileLinkMeta) => {
+@@ -2664,10 +2759,18 @@ function useChatMarkdownState({
+           fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
+         ) !== null;
+       // Media outside the workspace keeps the expanded preview; other host
+-      // files (a report in a temp dir) open read-only in the files panel.
++      // files (a report in a temp dir) open read-only in the files panel. A
++      // host shell with its own file sheet (the personal chat) shows every
++      // file, media included, so it takes the absolute path too.
++      // `~/` stays as written when the shell has its own sheet: the server
++      // knows its home folder, the browser cannot always infer it from the cwd.
+       const panelPath =
+         fileLinkMeta.workspaceRelativePath ??
+-        (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
++        ((!canPreviewMedia || onOpenFile !== undefined) && isAbsolutePath(fileLinkMeta.filePath)
++          ? fileLinkMeta.filePath
++          : onOpenFile !== undefined && /^~(\/|$)/.test(fileLinkMeta.filePath)
++            ? fileLinkMeta.filePath
++            : null);
+ 
+       return (
+         <MarkdownFileLink
+@@ -2711,6 +2814,7 @@ function useChatMarkdownState({
+       openFileInPanel,
+       openInPreferredEditor,
+       openMarkdownFileInPreview,
++      onOpenFile,
+       openMarkdownMedia,
+       preferredEditorMenuLabel,
+       resolvedTheme,

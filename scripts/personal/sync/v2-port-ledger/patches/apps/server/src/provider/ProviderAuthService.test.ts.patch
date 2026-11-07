@@ -1,0 +1,53 @@
+diff --git a/apps/server/src/provider/Layers/ProviderAuthService.test.ts b/apps/server/src/provider/Layers/ProviderAuthService.test.ts
+index 8430ad3e1319d3b8d2c1b935ff04274172e461bb..9ab3bd90c50e6dabe35a75169641b851ba9b930a 100644
+--- a/apps/server/src/provider/Layers/ProviderAuthService.test.ts
++++ b/apps/server/src/provider/Layers/ProviderAuthService.test.ts
+@@ -116,6 +116,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function*
+     sharedBusy?: boolean;
+     sharedBusyEffect?: Effect.Effect<boolean>;
+     responds?: boolean;
++    opens?: boolean;
+     beforeLogout?: Effect.Effect<void>;
+     beforeStop?: Effect.Effect<void>;
+     beforeListSessions?: Effect.Effect<void>;
+@@ -149,6 +150,14 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function*
+     ...(input.sharedCredentials
+       ? { credentialBinding: { owner: "provider" as const, key: "shared" } }
+       : {}),
++    ...(input.opens
++      ? {
++          openOnLaptop: Effect.fn(function* (ownerSessionId, requestedFlowId) {
++            yield* checkOwner(ownerSessionId, requestedFlowId, "openOnLaptop");
++            actions.push("open-on-laptop");
++          }),
++        }
++      : {}),
+     ...(input.responds
+       ? {
+           respond: Effect.fn(function* (ownerSessionId, request) {
+@@ -415,6 +424,25 @@ describe("ProviderAuthService", () => {
+       assert.include(error.detail, "does not accept");
+     }),
+   );
++  it.effect("opens the sign-in page through the owner's controller only", () =>
++    Effect.gen(function* () {
++      const { service, actions } = yield* makeHarness({ opens: true });
++      yield* service.start({ instanceId }, owner);
++      const rejected = yield* service
++        .openOnLaptop({ instanceId, flowId }, otherOwner)
++        .pipe(Effect.flip);
++      assert.strictEqual(rejected.operation, "openOnLaptop");
++      assert.notInclude(actions, "open-on-laptop");
++      yield* service.openOnLaptop({ instanceId, flowId }, owner);
++      assert.strictEqual(actions.at(-1), "open-on-laptop");
++
++      const unsupported = yield* makeHarness();
++      const error = yield* unsupported.service
++        .openOnLaptop({ instanceId, flowId }, owner)
++        .pipe(Effect.flip);
++      assert.include(error.detail, "not available for this provider");
++    }),
++  );
+   it.effect("stops routed sessions before sign-in, including for a disabled instance", () =>
+     Effect.gen(function* () {
+       const { service, actions, sessions } = yield* makeHarness({

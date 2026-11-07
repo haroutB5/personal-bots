@@ -12,7 +12,7 @@ import {
   PersonalRoutinesError,
 } from "@t3tools/contracts";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import {
   deletePersonalFiles,
   deletePersonalLogins,
@@ -26,7 +26,7 @@ import type * as PersonalRoutineService from "./routines/PersonalRoutineService.
 import type * as PersonalLoginService from "./secrets/PersonalLoginService.ts";
 import { personalMemoryTestLayer as memoryLayer } from "./test/personalReadsTestLayer.ts";
 
-const MemoryLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const MemoryLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 describe("deletePersonalFiles", () => {
   it.effect("deletes each file once, in order, and reports the ones refused", () =>

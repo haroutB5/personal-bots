@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/cli/auth.ts b/apps/server/src/cli/auth.ts
+index f37c65eac9edf05f05bb4a4f4bac5df0e8d1b05e..b9c2ae9d8189b41683bbf87d5cb385b1496bc9e5 100644
+--- a/apps/server/src/cli/auth.ts
++++ b/apps/server/src/cli/auth.ts
+@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as References from "effect/References";
+-import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
++import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+ 
+ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+ 

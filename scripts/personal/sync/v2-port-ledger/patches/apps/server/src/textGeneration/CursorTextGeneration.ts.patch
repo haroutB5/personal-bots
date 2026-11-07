@@ -1,0 +1,16 @@
+diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts
+index ab7bee7e64374ceb752895cafc993cadacf54d3f..874f2ba0d4ecbfcc26a196dd6ebd8ca7da1cfc27 100644
+--- a/apps/server/src/textGeneration/CursorTextGeneration.ts
++++ b/apps/server/src/textGeneration/CursorTextGeneration.ts
+@@ -1,9 +1,9 @@
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import { type CursorSettings, type ModelSelection } from "@t3tools/contracts";
+ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";

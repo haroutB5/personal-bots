@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/Drivers/GrokSkills.ts b/apps/server/src/provider/Drivers/GrokSkills.ts
+index 36391e3d20089c361a8a72d22b19b17015c12b3e..9d0d45d4820eeb00489610a194db308ffd3ab68a 100644
+--- a/apps/server/src/provider/Drivers/GrokSkills.ts
++++ b/apps/server/src/provider/Drivers/GrokSkills.ts
+@@ -19,7 +19,7 @@ import type { GrokSettings, ServerProviderSkill } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+-import { ChildProcess } from "effect/unstable/process";
++import { ChildProcess } from "effect/process";
+ import { resolveSpawnCommand } from "@t3tools/shared/shell";
+ 
+ import { spawnAndCollect } from "../providerSnapshot.ts";

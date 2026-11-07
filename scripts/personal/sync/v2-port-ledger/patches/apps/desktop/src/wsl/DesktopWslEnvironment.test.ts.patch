@@ -1,0 +1,13 @@
+diff --git a/apps/desktop/src/wsl/DesktopWslEnvironment.test.ts b/apps/desktop/src/wsl/DesktopWslEnvironment.test.ts
+index e261524f9ac9c501362bb5831e5462b44a6a608e..a3cb739be0f636cae7c56f9b1a99269cf470ce51 100644
+--- a/apps/desktop/src/wsl/DesktopWslEnvironment.test.ts
++++ b/apps/desktop/src/wsl/DesktopWslEnvironment.test.ts
+@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+ import * as TestClock from "effect/testing/TestClock";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import {
+   buildWslRuntimeInstallScript,

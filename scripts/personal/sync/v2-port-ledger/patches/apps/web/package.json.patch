@@ -1,0 +1,50 @@
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 5209d306ca04c138da64337e21efa8bd32fe5266..efe0747c63c2630b0bc950f9300b2dfd83e5d6ae 100644
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,8 +8,10 @@
+     "dev": "vp dev",
+     "build": "vp build",
+     "preview": "vp preview",
+-    "typecheck": "tsc --noEmit",
+-    "test": "vp test run --passWithNoTests --project unit"
++    "typecheck": "node ../../scripts/personal/node/typecheck-lean.mjs",
++    "test": "vp test run --passWithNoTests --project unit",
++    "remotion:studio": "remotion studio src/features/personal/avatarRemotion/index.ts",
++    "remotion:render": "remotion render src/features/personal/avatarRemotion/index.ts"
+   },
+   "dependencies": {
+     "@base-ui/react": "^1.4.1",
+@@ -22,6 +24,7 @@
+     "@dnd-kit/utilities": "^3.2.2",
+     "@effect/atom-react": "catalog:",
+     "@formkit/auto-animate": "^0.9.0",
++    "@hbots/personal-client": "workspace:*",
+     "@legendapp/list": "catalog:",
+     "@noble/hashes": "catalog:",
+     "@pierre/diffs": "catalog:",
+@@ -61,6 +64,7 @@
+   "devDependencies": {
+     "@effect/platform-node": "catalog:",
+     "@effect/vitest": "catalog:",
++    "@remotion/cli": "4.0.524",
+     "@rolldown/plugin-babel": "^0.2.0",
+     "@tailwindcss/vite": "^4.0.0",
+     "@tanstack/router-plugin": "^1.161.0",
+@@ -68,7 +72,7 @@
+     "@types/compression": "^1.8.1",
+     "@types/culori": "^4.0.1",
+     "@types/mdast": "^4.0.4",
+-    "@types/react": "~19.3.0",
++    "@types/react": "~19.2.14",
+     "@types/react-dom": "~19.2.3",
+     "@types/react-test-renderer": "19.1.0",
+     "@vercel/config": "^0.3.0",
+@@ -77,6 +81,7 @@
+     "compression": "^1.8.1",
+     "jsdom": "^30.0.1",
+     "react-test-renderer": "19.2.6",
++    "remotion": "4.0.524",
+     "tailwindcss": "^4.0.0",
+     "unified": "^11.0.5",
+     "vite": "catalog:",

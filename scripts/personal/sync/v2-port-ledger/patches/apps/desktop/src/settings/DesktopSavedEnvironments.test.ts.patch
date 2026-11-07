@@ -1,0 +1,48 @@
+diff --git a/apps/desktop/src/settings/DesktopSavedEnvironments.test.ts b/apps/desktop/src/settings/DesktopSavedEnvironments.test.ts
+index b1e467869e8e8a542449767f04ade4ad72785966..e72a22f5b96cf1694e4e0324c12061ff20ea185d 100644
+--- a/apps/desktop/src/settings/DesktopSavedEnvironments.test.ts
++++ b/apps/desktop/src/settings/DesktopSavedEnvironments.test.ts
+@@ -1,8 +1,8 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Layer from "effect/Layer";
+@@ -206,9 +206,7 @@ describe("DesktopSavedEnvironments", () => {
+     withSavedEnvironments(
+       Effect.gen(function* () {
+         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+-        yield* seedSavedEnvironmentRegistry(
+-          Encoding.encodeBase64(textEncoder.encode("enc:bearer-token")),
+-        );
++        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("enc:bearer-token")));
+ 
+         assert.deepEqual(
+           yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+@@ -246,9 +244,7 @@ describe("DesktopSavedEnvironments", () => {
+     withSavedEnvironments(
+       Effect.gen(function* () {
+         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+-        yield* seedSavedEnvironmentRegistry(
+-          Encoding.encodeBase64(textEncoder.encode("enc:bearer-token")),
+-        );
++        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("enc:bearer-token")));
+ 
+         assert.deepEqual(
+           yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+@@ -265,9 +261,7 @@ describe("DesktopSavedEnvironments", () => {
+       Effect.gen(function* () {
+         const environment = yield* DesktopEnvironment.DesktopEnvironment;
+         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+-        yield* seedSavedEnvironmentRegistry(
+-          Encoding.encodeBase64(textEncoder.encode("enc:bearer-token")),
+-        );
++        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("enc:bearer-token")));
+ 
+         const error = yield* savedEnvironments
+           .getSecret(savedRegistryRecord.environmentId)

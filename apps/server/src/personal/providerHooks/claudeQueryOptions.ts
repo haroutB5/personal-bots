@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type {
@@ -9,8 +9,11 @@ import type {
   SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 
-import type { BotProtectedPathsInput } from "../secrets/botProtectedPaths.ts";
-import { buildClaudeBotPermissionDeny, botStateDenyEnabled } from "../secrets/botProtectedPaths.ts";
+import type { BotProtectedPathsInput } from "@t3tools/provider-core/server/botProtectedPaths";
+import {
+  botStateDenyEnabled,
+  buildClaudeBotPermissionDeny,
+} from "@t3tools/provider-core/server/botProtectedPaths";
 import {
   botSubagentModelEnvironment,
   exploreSubagentAgents,
@@ -77,9 +80,9 @@ export function largeFileReadRefusalMessage(input: {
   const resolved = NodePath.isAbsolute(rawPath)
     ? rawPath
     : NodePath.resolve(input.cwd ?? process.cwd(), rawPath);
-  let stats: NodeFs.Stats;
+  let stats: NodeFS.Stats;
   try {
-    stats = NodeFs.statSync(resolved);
+    stats = NodeFS.statSync(resolved);
   } catch {
     // A missing file or a directory is the Read tool's own error to report.
     return undefined;
@@ -91,7 +94,7 @@ export function largeFileReadRefusalMessage(input: {
     statBytes: stats.size,
     readText: () => {
       try {
-        return NodeFs.readFileSync(resolved, "utf8");
+        return NodeFS.readFileSync(resolved, "utf8");
       } catch {
         return undefined;
       }

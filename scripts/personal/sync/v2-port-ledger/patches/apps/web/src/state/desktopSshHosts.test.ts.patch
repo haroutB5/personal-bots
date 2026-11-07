@@ -1,0 +1,14 @@
+diff --git a/apps/web/src/state/desktopSshHosts.test.ts b/apps/web/src/state/desktopSshHosts.test.ts
+index 39958ac6e475e02a18e07bdbf834d81576285ad3..4b6b60250e4700d93b676d2ea9b08e627b818d99 100644
+--- a/apps/web/src/state/desktopSshHosts.test.ts
++++ b/apps/web/src/state/desktopSshHosts.test.ts
+@@ -1,7 +1,7 @@
+ import type { DesktopDiscoveredSshHost } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import { AtomRegistry } from "effect/unstable/reactivity";
+-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
++import { AtomRegistry } from "effect/reactivity";
++import * as AsyncResult from "effect/reactivity/AsyncResult";
+ import { describe, expect, it, vi } from "vite-plus/test";
+ 
+ import { createDesktopSshHostsStateAtom, filterDiscoveredSshHosts } from "./desktopSshHosts";

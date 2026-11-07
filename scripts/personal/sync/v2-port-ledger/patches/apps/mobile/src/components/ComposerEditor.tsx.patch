@@ -1,0 +1,12 @@
+diff --git a/apps/mobile/src/components/ComposerEditor.tsx b/apps/mobile/src/components/ComposerEditor.tsx
+index a697ad6bc11f5f81c1de5900bff6bb830e87c142..e3eeecf07bc88bbaba1bb3c237808f80482847fa 100644
+--- a/apps/mobile/src/components/ComposerEditor.tsx
++++ b/apps/mobile/src/components/ComposerEditor.tsx
+@@ -1,6 +1,6 @@
+ import { ComposerContextId } from "@t3tools/contracts";
+ import { useAtomValue } from "@effect/atom-react";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useEffect, useMemo, useRef, useState } from "react";
+ import { Alert } from "react-native";
+ import type { EnvironmentId } from "@t3tools/contracts";

@@ -3,8 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemoryWorker } from "../persistence/Layers/Sqlite.ts";
-import { PersonalProjectionRelationsV1Live } from "./engine/PersonalProjectionRelationsV1Live.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { PersonalProjectionRelationsV2Live } from "./engine/PersonalProjectionRelationsV2Live.ts";
+import { seedV2Thread } from "./test/v2ProjectionSeed.ts";
 import {
   personalThreadLinkIntentKey,
   repairPersonalThreadLinks,
@@ -15,7 +16,7 @@ import {
  * thread and its bot link. Runs on the same worker path as production.
  */
 
-const testLayer = Layer.merge(SqlitePersistenceMemoryWorker, PersonalProjectionRelationsV1Live);
+const testLayer = Layer.merge(SqlitePersistence.layerMemory, PersonalProjectionRelationsV2Live);
 
 const at = "2026-10-18T03:00:00.000Z";
 
@@ -42,13 +43,14 @@ const seed = (input: {
       `;
     }
     if (input.projection !== "missing") {
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, deleted_at)
-        VALUES (
-          ${input.threadId}, 'project-1', 'QA chat', ${at}, ${at},
-          ${input.projection === "deleted" ? at : null}
-        )
-      `;
+      yield* seedV2Thread({
+        threadId: input.threadId,
+        projectId: "project-1",
+        title: "QA chat",
+        createdAt: at,
+        updatedAt: at,
+        deletedAt: input.projection === "deleted" ? at : null,
+      });
     }
     if (input.link) {
       yield* sql`

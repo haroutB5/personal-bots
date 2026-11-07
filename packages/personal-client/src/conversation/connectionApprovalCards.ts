@@ -5,18 +5,13 @@ import * as DateTime from "effect/DateTime";
  * What this device did with an approval it showed. `personalConnectionApprovals.list`
  * returns only rows still pending, so a settled card reads its ending from the
  * decision this screen itself sent. An approval that left `pending` without this
- * device answering it — another phone, an expiry, the task being cancelled — is
- * "closed", because this device genuinely does not know which of those happened.
  */
 export type ConnectionApprovalOutcome = "approved" | "denied";
 
 /**
  * A gated vendor call waiting on the owner, in the state the transcript should
  * show it.
- *
  * The pending variant carries the whole approval because every word the owner
- * reads — `summary`, `targetResources` — is server-authored from validated
- * arguments. Nothing here is the model's description of what it is about to do.
  */
 export type ConnectionApprovalCardItem =
   | {

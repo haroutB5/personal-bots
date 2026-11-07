@@ -4,7 +4,7 @@ import * as NodeSqlite from "node:sqlite";
 import { describe, expect, it } from "@effect/vitest";
 
 import { taskChatAutoArchiveCandidatesSql } from "./taskChatAutoArchivePolicy.ts";
-import { PERSONAL_V1_RELATIONS } from "./engine/PersonalProjectionRelationsV1Live.ts";
+import { PERSONAL_V2_RELATIONS } from "./engine/PersonalProjectionRelationsV2Live.ts";
 
 /**
  * The candidate SQL run against a real in-memory database, so the rule that a
@@ -18,20 +18,24 @@ const SCHEMA = `
     thread_id TEXT PRIMARY KEY, bot_id TEXT, created_at TEXT,
     archived_at TEXT, auto_archived_at TEXT, last_viewed_at TEXT
   );
-  CREATE TABLE projection_threads (
-    thread_id TEXT PRIMARY KEY, title TEXT, archived_at TEXT, deleted_at TEXT,
-    pinned_at TEXT, settled_override TEXT,
-    pending_approval_count INTEGER, pending_user_input_count INTEGER
+  CREATE TABLE orchestration_v2_projection_threads (
+    thread_id TEXT PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT,
+    archived_at TEXT, deleted_at TEXT, provider_instance_id TEXT, payload_json TEXT
   );
-  CREATE TABLE projection_thread_sessions (
-    thread_id TEXT PRIMARY KEY, status TEXT, active_turn_id TEXT
+  CREATE TABLE orchestration_v2_projection_runtime_requests (
+    runtime_request_id TEXT PRIMARY KEY, thread_id TEXT, kind TEXT, status TEXT
+  );
+  CREATE TABLE orchestration_v2_projection_runs (
+    run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, status TEXT,
+    requested_at TEXT, provider_instance_id TEXT, payload_json TEXT
   );
   CREATE TABLE personal_tasks (
     task_id TEXT PRIMARY KEY, thread_id TEXT, parent_task_id TEXT, source TEXT,
     status TEXT, created_at TEXT, completed_at TEXT, updated_at TEXT
   );
-  CREATE TABLE projection_thread_messages (
-    thread_id TEXT, created_at TEXT, role TEXT, message_id TEXT
+  CREATE TABLE orchestration_v2_projection_messages (
+    message_id TEXT PRIMARY KEY, thread_id TEXT, role TEXT, streaming INTEGER,
+    created_at TEXT, updated_at TEXT, payload_json TEXT
   );
   CREATE TABLE personal_routines (thread_id TEXT PRIMARY KEY);
   CREATE TABLE personal_group_members (thread_id TEXT PRIMARY KEY);
@@ -57,15 +61,11 @@ function addChat(db: NodeSqlite.DatabaseSync, threadId: string): void {
      VALUES (?, 'bot-devops', ?, NULL, NULL, NULL)`,
   ).run(threadId, CHAT_CREATED);
   db.prepare(
-    `INSERT INTO projection_threads
-       (thread_id, title, archived_at, deleted_at, pinned_at, settled_override,
-        pending_approval_count, pending_user_input_count)
-     VALUES (?, 'Prepare hbots 1.66.25', NULL, NULL, NULL, NULL, 0, 0)`,
-  ).run(threadId);
-  db.prepare(
-    `INSERT INTO projection_thread_sessions (thread_id, status, active_turn_id)
-     VALUES (?, 'ready', NULL)`,
-  ).run(threadId);
+    `INSERT INTO orchestration_v2_projection_threads
+       (thread_id, title, created_at, updated_at, archived_at, deleted_at, provider_instance_id,
+        payload_json)
+     VALUES (?, 'Prepare hbots 1.66.25', ?, ?, NULL, NULL, 'codex', '{}')`,
+  ).run(threadId, CHAT_CREATED, CHAT_CREATED);
 }
 
 function addTask(
@@ -89,7 +89,7 @@ function addTask(
 
 function candidateThreadIds(db: NodeSqlite.DatabaseSync): ReadonlyArray<string> {
   const rows = db
-    .prepare(taskChatAutoArchiveCandidatesSql(PERSONAL_V1_RELATIONS))
+    .prepare(taskChatAutoArchiveCandidatesSql(PERSONAL_V2_RELATIONS))
     .all() as unknown as ReadonlyArray<{
     readonly threadId: string;
   }>;

@@ -1,0 +1,49 @@
+diff --git a/apps/server/src/provider/Layers/claudeUsageLimits.ts b/apps/server/src/provider/Layers/claudeUsageLimits.ts
+index b67645102e5aaa16f42e90bcffaa44f80f2ab800..6bc043e2d3388c0b27762a26725d681051c30576 100644
+--- a/apps/server/src/provider/Layers/claudeUsageLimits.ts
++++ b/apps/server/src/provider/Layers/claudeUsageLimits.ts
+@@ -11,6 +11,7 @@
+  * @module provider/Layers/claudeUsageLimits
+  */
+ import type { SDKControlGetUsageResponse, SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
++import { windowHasReset } from "@t3tools/shared/usageLimits";
+ import type {
+   ProviderUsageLimitsUpdate,
+   ServerProviderUsageLimits,
+@@ -161,7 +162,10 @@ export function claudeUsageResponseToLimits(input: {
+   const { response, checkedAt } = input;
+   if (!response.rate_limits_available || !response.rate_limits) {
+     return {
+-      limits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
++      limits: makeUnavailableUsageLimits({
++        checkedAt,
++        reason: response.rate_limits_available ? "probeFailed" : "unsupported",
++      }),
+       names: { overageIncluded: undefined },
+     };
+   }
+@@ -189,6 +193,24 @@ export function claudeUsageResponseToLimits(input: {
+   };
+ }
+ 
++/**
++ * A cached `get_usage` response names a window whose reset has passed, so it
++ * no longer says what is used: the next read must go to the CLI. Without this
++ * the capabilities cache could hand the re-read after a reset the spent
++ * reading from before it, stamped as new.
++ */
++export function claudeUsageResponseHasPassedReset(
++  response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">,
++  nowMs: number,
++): boolean {
++  const { limits } = claudeUsageResponseToLimits({
++    response,
++    // Only the windows are read here; the stamp is not used.
++    checkedAt: "1970-01-01T00:00:00.000Z",
++  });
++  return limits.windows.some((window) => windowHasReset(window, nowMs));
++}
++
+ /** Probe-side helper: map the response and remember the scoped names for events. */
+ export const recordClaudeUsageResponse = (
+   namesRef: Ref.Ref<ClaudeScopedLimitNames>,

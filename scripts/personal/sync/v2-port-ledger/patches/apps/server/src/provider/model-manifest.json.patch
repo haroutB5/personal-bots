@@ -1,0 +1,109 @@
+diff --git a/apps/server/src/provider/model-manifest.json b/apps/server/src/provider/model-manifest.json
+index 089d2605ca458477eb32fb73300937f31c3e5d12..dd5359d670d75962f571f88f45e4e335ed06f7d2 100644
+--- a/apps/server/src/provider/model-manifest.json
++++ b/apps/server/src/provider/model-manifest.json
+@@ -66,6 +66,16 @@
+       "t3CodeRange": ">=0.0.42",
+       "recommendedRange": "=1.1.1",
+       "ranges": [{ "range": "=1.1.1", "status": "supported" }]
++    },
++    {
++      "driver": "deepseek",
++      "t3CodeRange": ">=0.0.42",
++      "recommendedRange": ">=2.1.280",
++      "ranges": [
++        { "range": ">=2.1.280", "status": "supported" },
++        { "range": ">=2.1.111 <2.1.280", "status": "graceful" },
++        { "range": "<2.1.111", "status": "unsupported" }
++      ]
+     }
+   ],
+   "currentModels": {
+@@ -77,7 +87,13 @@
+       "gpt-daybreak-red-latest"
+     ],
+     "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5"],
+-    "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
++    "antigravity": [
++      "gemini-3.8-flash-high",
++      "gemini-3.8-flash-medium",
++      "gemini-3.8-flash-low",
++      "gemini-4-argon"
++    ],
++    "deepseek": ["deepseek-flash"]
+   },
+   "providers": {
+     "claudeAgent": {
+@@ -777,24 +793,63 @@
+     },
+     "antigravity": {
+       "defaults": {
+-        "chat": "gemini-3.8-flash-high"
++        "chat": "gemini-3.8-flash"
+       },
+       "profiles": {},
+       "models": [
+         {
+-          "slug": "gemini-3.8-flash-high",
+-          "name": "Gemini 3.8 Flash (High)",
++          "slug": "gemini-3.8-flash",
++          "name": "Gemini 3.8 Flash",
+           "status": "current"
+         },
+         {
+-          "slug": "gemini-3.8-flash-medium",
+-          "name": "Gemini 3.8 Flash (Medium)",
++          "slug": "gemini-4-argon",
++          "name": "Gemini 4 Argon",
+           "status": "current"
+-        },
++        }
++      ]
++    },
++    "deepseek": {
++      "defaults": {
++        "chat": "deepseek-flash"
++      },
++      "profiles": {
++        "flash-1m": {
++          "capabilities": {
++            "optionDescriptors": [
++              {
++                "id": "effort",
++                "label": "Reasoning",
++                "type": "select",
++                "options": [
++                  { "id": "low", "label": "Low" },
++                  { "id": "high", "label": "High", "isDefault": true },
++                  { "id": "max", "label": "Max" }
++                ]
++              },
++              {
++                "id": "contextWindow",
++                "label": "Context Window",
++                "type": "select",
++                "options": [{ "id": "1m", "label": "1M", "isDefault": true }]
++              }
++            ]
++          },
++          "adapter": {
++            "claudeCode": {
++              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
++              "contextWindowTokens": { "1m": 1000000 }
++            }
++          }
++        }
++      },
++      "models": [
+         {
+-          "slug": "gemini-3.8-flash-low",
+-          "name": "Gemini 3.8 Flash (Low)",
+-          "status": "current"
++          "slug": "deepseek-flash",
++          "name": "DeepSeek V4.1 Flash",
++          "aliases": ["deepseek-v4-flash", "vision-exp", "flash"],
++          "status": "current",
++          "profile": "flash-1m"
+         }
+       ]
+     }

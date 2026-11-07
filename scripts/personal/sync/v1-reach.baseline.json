@@ -1,19 +1,4 @@
 {
-  "note": "Appendix B census after A12, minus the callers ported in A2 to A11. Direct entries are found by the import and table detectors; indirect entries reach v1 through another personal module and carry the reason. The extras outside the three V1Live files are named in qa/hbots-v2-port-A6b-A8/REPORT.md. The A12 hook file is the one-line turn-context call site the 3a stop point allows.",
-  "files": [
-    "apps/server/src/personal/PersonalBotRepository.ts",
-    "apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts",
-    "apps/server/src/personal/engine/PersonalEngineV1Live.ts",
-    "apps/server/src/personal/engine/PersonalProjectionRelationsV1Live.ts",
-    "apps/server/src/personal/engine/PersonalProvidersV1Live.ts",
-    "apps/server/src/personal/performance/botAttribution.ts",
-    "apps/server/src/personal/secrets/PersonalSessionAccess.ts",
-    "apps/server/src/personal/threadTextPreviews.ts",
-    "apps/server/src/personal/turnContext/PersonalTurnContext.ts"
-  ],
-  "indirectReasons": {
-    "apps/server/src/personal/PersonalBotRepository.ts": "builds the PersonalProjectionRelationsV1Live layer until B1 swaps it for V2Live",
-    "apps/server/src/personal/performance/botAttribution.ts": "reaches v1 through PersonalBotRepository types",
-    "apps/server/src/personal/secrets/PersonalSessionAccess.ts": "reaches v1 through PersonalBotRepository"
-  }
+  "files": [],
+  "indirectReasons": {}
 }

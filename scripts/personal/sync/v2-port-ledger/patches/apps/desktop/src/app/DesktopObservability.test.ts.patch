@@ -1,0 +1,21 @@
+diff --git a/apps/desktop/src/app/DesktopObservability.test.ts b/apps/desktop/src/app/DesktopObservability.test.ts
+index e23d78aa21614e76fed468201b6a7f1d5645fa1a..0202eb6d90c30706c44d27d98a9a993f7ee3e207 100644
+--- a/apps/desktop/src/app/DesktopObservability.test.ts
++++ b/apps/desktop/src/app/DesktopObservability.test.ts
+@@ -1,13 +1,13 @@
+ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as ConfigProvider from "effect/ConfigProvider";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Schema from "effect/Schema";
+-import * as HttpClient from "effect/unstable/http/HttpClient";
+-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
++import * as HttpClient from "effect/http/HttpClient";
++import * as HttpClientResponse from "effect/http/HttpClientResponse";
+ 
+ import * as DesktopConfig from "./DesktopConfig.ts";
+ import * as DesktopEnvironment from "./DesktopEnvironment.ts";

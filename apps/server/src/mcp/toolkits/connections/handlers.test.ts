@@ -16,6 +16,7 @@ import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskServic
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { ConnectionsToolkitHandlersLive } from "./handlers.ts";
 import { ConnectionsToolkit } from "./tools.ts";
+import { mcpThreadScope } from "../../../personal/testing/mcpThreadScope.ts";
 
 /** Every string in the encoded results, on one line: what the model would read. */
 const text = (value: unknown) =>
@@ -134,14 +135,14 @@ const run = (input: {
       layer,
     ),
     McpInvocationContext,
-    {
+    mcpThreadScope({
       environmentId: EnvironmentId.make("env"),
       threadId: ThreadId.make("thread"),
       providerSessionId: "session",
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(input.capability ? (["bots"] as const) : []),
       issuedAt: 1,
-    },
+    }),
   );
 };
 

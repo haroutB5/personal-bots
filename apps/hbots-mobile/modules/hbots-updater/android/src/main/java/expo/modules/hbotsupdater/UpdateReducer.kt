@@ -8,6 +8,32 @@ object UpdateReducer {
     event: UpdateEvent,
     installedCode: Long,
     now: Long,
+  ): Pair<UpdateRecord, List<UpdateEffect>> =
+    withPermissionNudge(record, step(record, event, installedCode, now))
+
+  private fun withPermissionNudge(
+    before: UpdateRecord,
+    result: Pair<UpdateRecord, List<UpdateEffect>>,
+  ): Pair<UpdateRecord, List<UpdateEffect>> {
+    val (after, effects) = result
+    val state = after.state
+    return when {
+      state is UpdateState.NeedsPermission && after.permissionNotifiedCode != state.target.code ->
+        after.copy(permissionNotifiedCode = state.target.code) to
+          (effects + UpdateEffect.PostNeedsPermission(state.target.version))
+      before.state is UpdateState.NeedsPermission &&
+        state !is UpdateState.NeedsPermission &&
+        UpdateEffect.ClearNotification !in effects ->
+        after to (effects + UpdateEffect.ClearNotification)
+      else -> after to effects
+    }
+  }
+
+  private fun step(
+    record: UpdateRecord,
+    event: UpdateEvent,
+    installedCode: Long,
+    now: Long,
   ): Pair<UpdateRecord, List<UpdateEffect>> = when (event) {
     is UpdateEvent.Started -> started(record, event, installedCode, now)
     is UpdateEvent.Offered -> offered(record, event, installedCode, now, setLastCheckAt = true)
@@ -252,6 +278,7 @@ object UpdateReducer {
       lastCheckAt = null,
       lastOffer = null,
       notifiedCode = record.notifiedCode,
+      permissionNotifiedCode = record.permissionNotifiedCode,
       sessionGeneration = maxOf(record.sessionGeneration, event.generation),
     ) to listOf(
       UpdateEffect.CancelIdleInstall,
@@ -266,6 +293,7 @@ object UpdateReducer {
       lastCheckAt = record.lastCheckAt,
       lastOffer = null,
       notifiedCode = record.notifiedCode,
+      permissionNotifiedCode = record.permissionNotifiedCode,
       sessionGeneration = record.sessionGeneration + 1,
     ) to listOf(
       UpdateEffect.CancelIdleInstall,

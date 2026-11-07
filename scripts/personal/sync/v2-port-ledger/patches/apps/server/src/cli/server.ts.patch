@@ -1,0 +1,11 @@
+diff --git a/apps/server/src/cli/server.ts b/apps/server/src/cli/server.ts
+index bc4b3f45706cfad0a41fb3314f10cce4a4454711..171b314d3d2bff6c211dd235a1b28c7132fc1539 100644
+--- a/apps/server/src/cli/server.ts
++++ b/apps/server/src/cli/server.ts
+@@ -1,5 +1,5 @@
+ import * as Effect from "effect/Effect";
+-import { Command, GlobalFlag } from "effect/unstable/cli";
++import { Command, GlobalFlag } from "effect/cli";
+ 
+ import { ServerConfig, type StartupPresentation } from "../config.ts";
+ import { runServer } from "../server.ts";

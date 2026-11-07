@@ -1,0 +1,56 @@
+diff --git a/apps/server/src/bin.ts b/apps/server/src/bin.ts
+index e30870aac8738755469107781d04784d282b06f2..d1189110fe625c54aa2c0db22311221122cb7807 100644
+--- a/apps/server/src/bin.ts
++++ b/apps/server/src/bin.ts
+@@ -1,9 +1,9 @@
+ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import { Argument, Command } from "effect/unstable/cli";
+-import * as CliError from "effect/unstable/cli/CliError";
++import { Argument, Command } from "effect/cli";
++import * as CliError from "effect/cli/CliError";
+ 
+ import * as NetService from "@t3tools/shared/Net";
+ import packageJson from "../package.json" with { type: "json" };
+@@ -14,8 +14,10 @@ import { pairCommand } from "./cli/pair.ts";
+ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
+ import { sharedServerCommandFlags } from "./cli/config.ts";
+ import { isEntrypoint } from "./entrypoint.ts";
++import { installAsyncConsoleFileRedirect } from "./observability/asyncConsoleFile.ts";
+ import { projectCommand } from "./cli/project.ts";
+ import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
++import { secretsCommand } from "./cli/secrets.ts";
+ import { serviceCommand } from "./cli/service.ts";
+ import { uninstallCommand } from "./cli/uninstall.ts";
+ import { updateCommand } from "./cli/update.ts";
+@@ -74,6 +76,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
+       themeCommand,
+       traceCommand,
+       triageCommand,
++      secretsCommand,
+       cloudEnabled ? connectCommand : connectUnavailableCommand,
+     ]),
+   );
+@@ -87,9 +90,15 @@ if (
+     runtimeMain: import.meta.main,
+   })
+ ) {
+-  Command.run(cli, { version: packageJson.version }).pipe(
+-    Effect.scoped,
+-    Effect.provide(CliRuntimeLayer),
+-    NodeRuntime.runMain,
++  // The release launcher redirects stdout and stderr into the server log file,
++  // and Node writes to file handles synchronously: one log line would hold the
++  // event loop for the disk's latency (seconds under load). Swap the write for
++  // an async one before anything logs. No-op for TTYs, pipes and `pair.ps1`.
++  installAsyncConsoleFileRedirect();
++  NodeRuntime.runMain(
++    Effect.provide(
++      Effect.scoped(Command.run(cli, { version: packageJson.version })),
++      CliRuntimeLayer,
++    ),
+   );
+ }

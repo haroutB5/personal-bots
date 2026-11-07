@@ -145,4 +145,3 @@ export const botTakesVoiceCalls = (bot: { readonly lead?: boolean | undefined })
  * The old name, for callers that still say "allows". It answers the same
  * question, so a missed call site cannot quietly keep the old meaning.
  */
-export const botAllowsVoiceCalls = botTakesVoiceCalls;

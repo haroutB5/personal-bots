@@ -1,0 +1,12 @@
+diff --git a/apps/mobile/src/state/composer-attachment-uploads.ts b/apps/mobile/src/state/composer-attachment-uploads.ts
+index dec31f9ce0399cd33b2196bdb4fcf3a53f0d097a..52bcd1bc678a47fd41f904449cac2f8935b5c84d 100644
+--- a/apps/mobile/src/state/composer-attachment-uploads.ts
++++ b/apps/mobile/src/state/composer-attachment-uploads.ts
+@@ -1,6 +1,6 @@
+ import { useAtomValue } from "@effect/atom-react";
+ import type { EnvironmentId } from "@t3tools/contracts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { useEffect, useRef } from "react";
+ 
+ import { prepareTurnAttachments } from "../lib/attachmentUpload";

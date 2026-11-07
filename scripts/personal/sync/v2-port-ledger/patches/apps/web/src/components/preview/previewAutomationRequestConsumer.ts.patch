@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/preview/previewAutomationRequestConsumer.ts b/apps/web/src/components/preview/previewAutomationRequestConsumer.ts
+index 89a9387e4af6dc78c819fab05dbf3fa2687f0baa..b3177ee4360ccb4a10d31ebd7ca92f267bb4c97f 100644
+--- a/apps/web/src/components/preview/previewAutomationRequestConsumer.ts
++++ b/apps/web/src/components/preview/previewAutomationRequestConsumer.ts
+@@ -4,7 +4,7 @@ import type {
+   PreviewAutomationResponse,
+   PreviewAutomationStreamEvent,
+ } from "@t3tools/contracts";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import {
+   PreviewAutomationOperationError,

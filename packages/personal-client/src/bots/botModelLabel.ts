@@ -1,8 +1,6 @@
 import {
   botEffectiveModelSelection,
   botFallbackActive,
-  DEEPSEEK_AGENT_MODE_OPTION_ID,
-  isDeepSeekModelId,
   type ModelSelection,
   PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
   PERSONAL_FALLBACK_REASON_SCHEDULE,
@@ -19,6 +17,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 
+import { DEEPSEEK_AGENT_MODE_OPTION_ID, isDeepSeekModelId } from "./deepseekModels.ts";
 import { providerModelCapabilities } from "./providerModelCapabilities.ts";
 
 /** Claude calls the effort option `effort`, Codex `reasoningEffort`, OpenCode `variant`. */
@@ -31,9 +30,6 @@ const AGENT_MODE_OPTION_ID = DEEPSEEK_AGENT_MODE_OPTION_ID;
  * The agent mode suffix a label carries, or null for the default (Standard).
  * Only a DeepSeek bot on the DeepSeek Harness engine has the option at all, so
  * every other bot's label is unchanged.
- *
- * The descriptor is read here rather than through `botFormModel`, which
- * re-exports this module's effort ids: importing it back would make a cycle.
  */
 function agentModeSuffix(
   selection: ModelSelection,
@@ -99,10 +95,6 @@ export function unlistedModelName(slug: string): string {
  * The short model line beside a bot's name: "Opus 5.5 medium", "Sonnet 5",
  * "GPT-6 Astra medium". The model's name as the picker shows it, without the
  * "Claude" every Claude model repeats, plus the chosen effort (or OpenCode
- * variant) when one is set; a bot on the model's default effort shows none.
- * A model the provider does not list (not loaded yet, or retired) falls back
- * to its id, or to a readable Claude name ("Haiku 5.5") when the id is one.
- * Null without a model.
  */
 export function botModelLabel(
   selection: ModelSelection,
@@ -156,9 +148,6 @@ export function shortModelName(name: string): string {
  * The label for a pinned tile, 72px wide: "Opus 5.5 · M", "Sonnet 5.5 · H",
  * "GPT-6 Astra · M", "Haiku 4.5" (no effort set). The effort is L, M, H, X or
  * Max; an effort with no abbreviation (an OpenCode variant such as "minimal")
- * is left out rather than guessed. A model the provider does not list keeps
- * its id, or gets a readable Claude name ("Haiku 5.5") when the id is one, and
- * the tile then shrinks or cuts it. Null without a model.
  */
 export function botModelShortLabel(
   selection: ModelSelection,
@@ -202,8 +191,6 @@ export const SCHEDULED_MODEL_SHORT_LABEL = "sched";
  * "Scheduled, DeepSeek peak until 11:00": a scheduled DeepSeek model never runs
  * on DeepSeek inside a peak window (the server's peak switch replaces it with
  * Sonnet 5.5 High on the same `schedule` row), so the note carries both facts
- * instead of reading plain "Scheduled model" with no hint of the peak (1.66.49
- * finding 2).
  */
 export const SCHEDULED_PEAK_LABEL = "Scheduled, DeepSeek peak";
 
@@ -268,9 +255,6 @@ function formatLocalTime(atMs: number, nowMs: number, timeZone: string | undefin
  * Why a bot is on its fallback model, for a title or an accessible name:
  * "on fallback until about 14:30 (Codex usage limit)", or "DeepSeek peak until
  * 11:00" while the DeepSeek peak switch has it. A scheduled DeepSeek model
- * inside a peak window reads "Scheduled, DeepSeek peak until 11:00". The time is
- * in the device's own zone and is left out when the provider gave no reset time.
- * Null while the bot is on its own model.
  */
 export function fallbackNoteLabel(
   bot: BotFallbackFields,
@@ -346,14 +330,6 @@ export function botActiveModelLabel(
  * The short model label for a bot: what it runs on right now, ending
  * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback"),
  * "· peak" while the DeepSeek peak switch has it ("Sonnet 5.5 · H · peak"), or
- * "· sched" while its model schedule has it ("Opus 5.5 · M · sched"). A
- * scheduled DeepSeek model inside a peak window ends "· peak": that is the
- * switch the bot is actually on.
- *
- * The peak note is the short form on purpose: this label sits on the Bots rows,
- * the chat header, task cards and 72px pinned tiles, where "· DeepSeek peak
- * until 11:00" was cut at 390 px (1.66.44 QA). The full wording stays on
- * {@link fallbackNoteLabel}, which those places read out to assistive tech.
  */
 export function botActiveModelShortLabel(
   bot: BotWithFallback,

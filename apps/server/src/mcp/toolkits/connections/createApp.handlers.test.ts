@@ -29,6 +29,7 @@ import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskServic
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { ConnectionsToolkitHandlersLive } from "./handlers.ts";
 import { ConnectionsToolkit } from "./tools.ts";
+import { mcpThreadScope } from "../../../personal/testing/mcpThreadScope.ts";
 
 /**
  * The model-facing half of `create_app`.
@@ -142,14 +143,18 @@ const harness = (createApp: Partial<CreateApp.PersonalCreateAppService["Service"
 const invoke = <A>(effect: Effect.Effect<A, never, never>) => effect;
 
 const withContext = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.provideService(effect, McpInvocationContext, {
-    environmentId: EnvironmentId.make("env"),
-    threadId: ThreadId.make("thread"),
-    providerSessionId: "session",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    capabilities: new Set(["bots"] as const),
-    issuedAt: 1,
-  });
+  Effect.provideService(
+    effect,
+    McpInvocationContext,
+    mcpThreadScope({
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      providerSessionId: "session",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["bots"] as const),
+      issuedAt: 1,
+    }),
+  );
 
 describe("create_app toolkit", () => {
   it.effect("hands back the server's plan text and the note that ends the turn", () => {

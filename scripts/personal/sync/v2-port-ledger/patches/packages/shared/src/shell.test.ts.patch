@@ -1,0 +1,193 @@
+diff --git a/packages/shared/src/shell.test.ts b/packages/shared/src/shell.test.ts
+index 6c89e49d017f6e1b83642fb19bbd43f8466801fb..3d26e342b164e7caad523ace5d2bd9c2464a82ce 100644
+--- a/packages/shared/src/shell.test.ts
++++ b/packages/shared/src/shell.test.ts
+@@ -1,11 +1,15 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++// @effect-diagnostics nodeBuiltinImport:off - real temp files back the spawn-resolution cache tests
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it as effectIt } from "@effect/vitest";
+ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as TestClock from "effect/testing/TestClock";
+-import { describe, expect, it, vi } from "vite-plus/test";
++import * as NodeFS from "node:fs";
++import * as NodeOS from "node:os";
++import * as NodePath from "node:path";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+ 
+ import {
+   CommandAvailability,
+@@ -22,7 +26,11 @@ import {
+   resolveCommandPath,
+   resolveKnownWindowsCliDirs,
+   resolveSpawnCommand,
++  resolveSpawnExecutableWithNode,
++  resolveSpawnExecutableWithNodeAsync,
+   resolveWindowsEnvironment,
++  spawnAsyncResolveEnabled,
++  spawnResolutionCache,
+   SpawnExecutableResolution,
+   WindowsShellEnvironment,
+   withPathDirectoryListings,
+@@ -510,7 +518,158 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
+   );
+ });
+ 
++describe("resolveSpawnExecutableWithNode", () => {
++  const windowsEnv = (dir: string) => ({ PATH: dir, PATHEXT: ".EXE;.CMD" });
++  let dir = "";
++  let now = 1_000_000;
++
++  beforeEach(() => {
++    spawnResolutionCache.clear();
++    dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-cache-"));
++    now = 1_000_000;
++    vi.spyOn(Date, "now").mockImplementation(() => now);
++  });
++
++  afterEach(() => {
++    vi.restoreAllMocks();
++    NodeFS.rmSync(dir, { recursive: true, force: true });
++  });
++
++  it("memoizes a PATH walk so a repeat resolution never touches the disk", () => {
++    const executable = NodePath.join(dir, "tool.CMD");
++    NodeFS.writeFileSync(executable, "");
++    expect(resolveSpawnExecutableWithNode("tool", "win32", windowsEnv(dir))).toBe(executable);
++    // The file vanishing proves the second answer came from the cache.
++    NodeFS.rmSync(executable);
++    expect(resolveSpawnExecutableWithNode("tool", "win32", windowsEnv(dir))).toBe(executable);
++  });
++
++  it("caches a not-found outcome for the TTL, then probes again", () => {
++    expect(resolveSpawnExecutableWithNode("late", "win32", windowsEnv(dir))).toBeUndefined();
++    const executable = NodePath.join(dir, "late.CMD");
++    NodeFS.writeFileSync(executable, "");
++    expect(resolveSpawnExecutableWithNode("late", "win32", windowsEnv(dir))).toBeUndefined();
++    now += 30_001;
++    expect(resolveSpawnExecutableWithNode("late", "win32", windowsEnv(dir))).toBe(executable);
++  });
++
++  it("expires a cached hit after the TTL", () => {
++    const executable = NodePath.join(dir, "aging.CMD");
++    NodeFS.writeFileSync(executable, "");
++    expect(resolveSpawnExecutableWithNode("aging", "win32", windowsEnv(dir))).toBe(executable);
++    NodeFS.rmSync(executable);
++    expect(resolveSpawnExecutableWithNode("aging", "win32", windowsEnv(dir))).toBe(executable);
++    now += 30_001;
++    expect(resolveSpawnExecutableWithNode("aging", "win32", windowsEnv(dir))).toBeUndefined();
++  });
++
++  it("re-walks when PATH changes between calls", () => {
++    const executable = NodePath.join(dir, "moved.CMD");
++    NodeFS.writeFileSync(executable, "");
++    expect(resolveSpawnExecutableWithNode("moved", "win32", windowsEnv(dir))).toBe(executable);
++    NodeFS.rmSync(executable);
++    expect(
++      resolveSpawnExecutableWithNode("moved", "win32", {
++        ...windowsEnv(dir),
++        PATH: `${dir}\\other`,
++      }),
++    ).toBeUndefined();
++  });
++
++  it("never caches an explicit path", () => {
++    const executable = NodePath.join(dir, "explicit.CMD");
++    NodeFS.writeFileSync(executable, "");
++    expect(resolveSpawnExecutableWithNode(executable, "win32", windowsEnv(dir))).toBe(executable);
++    NodeFS.rmSync(executable);
++    expect(resolveSpawnExecutableWithNode(executable, "win32", windowsEnv(dir))).toBeUndefined();
++    expect(spawnResolutionCache.size).toBe(0);
++  });
++});
++
++describe("resolveSpawnExecutableWithNodeAsync", () => {
++  let root = "";
++
++  beforeEach(() => {
++    spawnResolutionCache.clear();
++    root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-async-"));
++  });
++
++  afterEach(() => {
++    vi.restoreAllMocks();
++    NodeFS.rmSync(root, { recursive: true, force: true });
++  });
++
++  it("finds what the synchronous walk finds, in the same PATH and PATHEXT order", async () => {
++    const empty = NodePath.join(root, "empty");
++    const first = NodePath.join(root, "first");
++    const second = NodePath.join(root, "second");
++    for (const dir of [empty, first, second]) NodeFS.mkdirSync(dir);
++    NodeFS.writeFileSync(NodePath.join(first, "tool.CMD"), "");
++    NodeFS.writeFileSync(NodePath.join(first, "tool.EXE"), "");
++    NodeFS.writeFileSync(NodePath.join(second, "tool.EXE"), "");
++    NodeFS.mkdirSync(NodePath.join(first, "dir.EXE"));
++    NodeFS.writeFileSync(NodePath.join(second, "dir.EXE"), "");
++    NodeFS.writeFileSync(NodePath.join(second, "plain.txt"), "");
++    const env = { PATH: `${empty};"${first}";;${second}`, PATHEXT: ".EXE;.CMD" };
++
++    for (const command of [
++      "tool",
++      "tool.cmd",
++      "dir",
++      "plain.txt",
++      "missing",
++      NodePath.join(second, "tool"),
++    ]) {
++      spawnResolutionCache.clear();
++      const synchronous = resolveSpawnExecutableWithNode(command, "win32", env);
++      spawnResolutionCache.clear();
++      expect(await resolveSpawnExecutableWithNodeAsync(command, "win32", env)).toBe(synchronous);
++    }
++    expect(await resolveSpawnExecutableWithNodeAsync("tool", "win32", env)).toBe(
++      NodePath.join(first, "tool.EXE"),
++    );
++  });
++
++  it("shares the synchronous resolver's cache", async () => {
++    const executable = NodePath.join(root, "shared.EXE");
++    NodeFS.writeFileSync(executable, "");
++    const env = { PATH: root, PATHEXT: ".EXE" };
++    expect(await resolveSpawnExecutableWithNodeAsync("shared", "win32", env)).toBe(executable);
++    NodeFS.rmSync(executable);
++    expect(resolveSpawnExecutableWithNode("shared", "win32", env)).toBe(executable);
++    expect(await resolveSpawnExecutableWithNodeAsync("shared", "win32", env)).toBe(executable);
++  });
++
++  it("is on unless T3CODE_SPAWN_ASYNC_RESOLVE switches it off", () => {
++    expect(spawnAsyncResolveEnabled({})).toBe(true);
++    expect(spawnAsyncResolveEnabled({ T3CODE_SPAWN_ASYNC_RESOLVE: "on" })).toBe(true);
++    for (const value of ["off", "0", "false", "no", " OFF "]) {
++      expect(spawnAsyncResolveEnabled({ T3CODE_SPAWN_ASYNC_RESOLVE: value })).toBe(false);
++    }
++  });
++});
++
+ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
++  it.effect("resolves a command shim from PATH with the default resolver", () =>
++    Effect.gen(function* () {
++      spawnResolutionCache.clear();
++      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-shim-"));
++      const shim = NodePath.join(dir, "shimmed.cmd");
++      NodeFS.writeFileSync(shim, "");
++      try {
++        const command = yield* resolveSpawnCommand("shimmed", ["x"], {
++          env: { PATH: dir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
++        }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
++        expect(command.shell).toBe(true);
++        expect(command.command.toLowerCase()).toContain("shimmed.cmd");
++        expect(command.command).toContain(NodePath.basename(dir));
++      } finally {
++        NodeFS.rmSync(dir, { recursive: true, force: true });
++        spawnResolutionCache.clear();
++      }
++    }),
++  );
++
+   it.effect("runs Windows executables directly without a shell", () =>
+     Effect.gen(function* () {
+       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {

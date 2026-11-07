@@ -1,0 +1,13 @@
+diff --git a/packages/effect-codex-app-server/src/client.ts b/packages/effect-codex-app-server/src/client.ts
+index d4ff21b8c59e86ee6c5db0a3c5b2c9aec2a3c315..6b77db0e8baca02cbf407114acabfba8dc9cf2da 100644
+--- a/packages/effect-codex-app-server/src/client.ts
++++ b/packages/effect-codex-app-server/src/client.ts
+@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
+ import * as Scope from "effect/Scope";
+ import * as Stdio from "effect/Stdio";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ import * as CodexRpc from "./_generated/meta.gen.ts";
+ import * as CodexError from "./errors.ts";

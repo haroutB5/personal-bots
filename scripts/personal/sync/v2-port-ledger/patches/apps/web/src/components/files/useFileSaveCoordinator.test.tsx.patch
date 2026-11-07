@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/components/files/useFileSaveCoordinator.test.tsx b/apps/web/src/components/files/useFileSaveCoordinator.test.tsx
+index 603f97cf1f2641add0b4650e94c3fd7b1e55f746..8f49798ceebabc22ffd63bf855a8d0a1500d893f 100644
+--- a/apps/web/src/components/files/useFileSaveCoordinator.test.tsx
++++ b/apps/web/src/components/files/useFileSaveCoordinator.test.tsx
+@@ -1,5 +1,5 @@
+ import { EnvironmentId } from "@t3tools/contracts";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { act, StrictMode } from "react";
+ import { create, type ReactTestRenderer } from "react-test-renderer";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

@@ -1,0 +1,26 @@
+diff --git a/infra/relay/src/environments/ManagedEndpointProvider.ts b/infra/relay/src/environments/ManagedEndpointProvider.ts
+index 892ac09a6e50aed57319a5da18809bef03b8020d..4ee6869df03dbe3a0d1688a7c5ea6b0a30fdbbfe 100644
+--- a/infra/relay/src/environments/ManagedEndpointProvider.ts
++++ b/infra/relay/src/environments/ManagedEndpointProvider.ts
+@@ -2,10 +2,10 @@ import * as Alchemy from "alchemy";
+ import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Arr from "effect/Array";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Hex from "effect/encoding/Hex";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+@@ -910,7 +910,7 @@ export const make = Effect.gen(function* () {
+           ),
+         )
+         .pipe(
+-          Effect.map(Encoding.encodeHex),
++          Effect.map(Hex.encode),
+           Effect.mapError(
+             (cause) =>
+               new ManagedEndpointProvisioningFailed({

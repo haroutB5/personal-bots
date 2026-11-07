@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/pullRequest/GitLabPullRequestCli.test.ts b/apps/server/src/pullRequest/GitLabPullRequestCli.test.ts
+index daa85ee9eb8fe0981c244fa5466363c1d23c4c86..76fb1059b91d68848566e88c541bedb271d03c19 100644
+--- a/apps/server/src/pullRequest/GitLabPullRequestCli.test.ts
++++ b/apps/server/src/pullRequest/GitLabPullRequestCli.test.ts
+@@ -1,7 +1,7 @@
+ import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+ import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";

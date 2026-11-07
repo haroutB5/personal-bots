@@ -1,0 +1,10 @@
+diff --git a/apps/mobile/src/state/acknowledged-thread-messages.ts b/apps/mobile/src/state/acknowledged-thread-messages.ts
+index 0ceeb490302e7d1351a8484c79a195d073573849..6dd9ca8c36fd46b7c4d9f1fd7e66453685ff4008 100644
+--- a/apps/mobile/src/state/acknowledged-thread-messages.ts
++++ b/apps/mobile/src/state/acknowledged-thread-messages.ts
+@@ -1,4 +1,4 @@
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ import { appAtomRegistry } from "./atom-registry";
+ import type { QueuedThreadMessage } from "./thread-outbox-model";
+ 

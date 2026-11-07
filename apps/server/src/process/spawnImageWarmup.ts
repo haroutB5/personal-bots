@@ -1,27 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - worker_threads and fs.promises have no Effect equivalent here, and the warm-up runs beside the fiber that will spawn.
 /**
- * Keeps the first launch of a big program off the event loop (Windows).
- *
- * `child_process.spawn` is synchronous: libuv calls CreateProcessW on the
- * calling thread. The first time Windows starts a program file it has not
- * checked yet (a new or updated provider CLI, or after it drops its check
- * results without the file changing), it checks the whole image inside
- * CreateProcessW. Measured on this laptop with fresh copies: 4.1-4.3 s for the
- * 271 MB claude.exe, then 3-9 ms once checked. Opening or reading the file
- * first does not help; only starting it does. On the live server these
- * launches held the event loop 3.4-5.4 s (stalls on 15 Oct 2026 at 04:00,
- * 06:26, 07:09, 11:02, 12:36 and 12:41, all in `spawn`).
- *
- * Before the server starts a program of at least {@link SPAWN_WARMUP_MIN_BYTES}
- * on Windows, the program is started once on a worker thread and ended the
- * moment it exists, before it runs its own code, so Windows checks it there.
- * The real launch then takes milliseconds. A program is warmed again when its
- * file changes (size, mtime, file id) or {@link SPAWN_WARMUP_TTL_MS} after its
- * last warm-up, because Windows can drop a check result while the file stays
- * the same. Everything fails open: a warm-up that errors, times out or is
- * switched off leaves the launch exactly as it was.
- *
- * Kill switch: `T3CODE_SPAWN_WARMUP=off`.
+ * Starts a big program once on a worker thread before the server spawns it
+ * (Windows), so the first-launch image check runs off the event loop. Fails
+ * open, and `T3CODE_SPAWN_WARMUP=off` disables it.
  *
  * @module process/spawnImageWarmup
  */
@@ -29,6 +10,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeWorkerThreads from "node:worker_threads";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   resolveSpawnExecutableWithNodeAsync,
   spawnAsyncResolveEnabled,
@@ -40,12 +22,12 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 /** Smaller programs are checked in a few milliseconds (git.exe, taskkill.exe, cmd.exe). */
-export const SPAWN_WARMUP_MIN_BYTES = 16 * 1024 * 1024;
-export const SPAWN_WARMUP_TTL_MS = 5 * 60_000;
+const SPAWN_WARMUP_MIN_BYTES = 16 * 1024 * 1024;
+const SPAWN_WARMUP_TTL_MS = 5 * 60_000;
 /** A warm-up that takes longer is given up on, and the launch goes ahead as before. */
-export const SPAWN_WARMUP_TIMEOUT_MS = 30_000;
+const SPAWN_WARMUP_TIMEOUT_MS = 30_000;
 /** Warm-ups at least this long are logged, so the live logs show what was kept off the loop. */
-export const SPAWN_WARMUP_LOG_MS = 250;
+const SPAWN_WARMUP_LOG_MS = 250;
 const MAX_TRACKED_PROGRAMS = 256;
 
 export type SpawnWarmupOutcome =
@@ -190,7 +172,7 @@ export interface SpawnImageWarmer {
 }
 
 export function makeSpawnImageWarmer(options: SpawnImageWarmerOptions = {}): SpawnImageWarmer {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HostProcess.Platform.defaultValue();
   const enabled = options.enabled ?? (() => spawnWarmupEnabled());
   const minBytes = options.minBytes ?? SPAWN_WARMUP_MIN_BYTES;
   const ttlMs = options.ttlMs ?? SPAWN_WARMUP_TTL_MS;
@@ -260,7 +242,7 @@ export function makeSpawnImageWarmer(options: SpawnImageWarmerOptions = {}): Spa
 }
 
 /** The server's one warmer: every spawn site shares what has been warmed. */
-export const spawnImageWarmer = makeSpawnImageWarmer();
+const spawnImageWarmer = makeSpawnImageWarmer();
 
 const logSlowWarmup = (file: string, result: SpawnWarmupResult) =>
   result.ms >= SPAWN_WARMUP_LOG_MS
@@ -331,7 +313,7 @@ const WARMING_SPAWNER = Symbol.for("t3code/process/spawnImageWarmup");
 export const withSpawnImageWarmup = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   warmer: SpawnImageWarmer = spawnImageWarmer,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HostProcess.Platform.defaultValue(),
 ): ChildProcessSpawner.ChildProcessSpawner["Service"] => {
   if (WARMING_SPAWNER in spawner) return spawner;
   return Object.assign(

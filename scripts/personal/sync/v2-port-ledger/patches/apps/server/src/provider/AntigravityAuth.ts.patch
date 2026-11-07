@@ -1,0 +1,125 @@
+diff --git a/apps/server/src/provider/AntigravityAuth.ts b/apps/server/src/provider/AntigravityAuth.ts
+index 170e5c32f47a60cb34124e03e4e11cbbfc861d29..1169db1bb3e0af2d982e3f0abdda88bd5ed319c1 100644
+--- a/apps/server/src/provider/AntigravityAuth.ts
++++ b/apps/server/src/provider/AntigravityAuth.ts
+@@ -5,7 +5,7 @@ import {
+ } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+ import * as Clock from "effect/Clock";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -28,6 +28,11 @@ import {
+   forwardAntigravityCallback,
+   validateAntigravityCallbackUrl,
+ } from "./antigravityCallback.ts";
++import {
++  isHttpsUrl,
++  openInDefaultBrowser,
++  type OpenInDefaultBrowser,
++} from "./openDefaultBrowser.ts";
+ import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
+ 
+ const AUTH_TIMEOUT_MS = 300_000;
+@@ -83,6 +88,8 @@ export interface AntigravityAuthOptions<
+   ) => Effect.Effect<void>;
+   readonly onSignedOut: Effect.Effect<void>;
+   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
++  /** Opens the active flow's link in the laptop's default browser. Tests inject a fake. */
++  readonly openInDefaultBrowser?: OpenInDefaultBrowser;
+   /** False for API key methods, which authenticate without a Google sign-in page. */
+   readonly usesBrowser?: boolean;
+ }
+@@ -127,6 +134,42 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
+     : "Antigravity could not authenticate with the configured credentials.";
+ }
+ 
++/**
++ * The cause class and a short reason for the one WARN a failed sign-in logs.
++ * Never the error message, URLs, codes or tokens: only the error class, the
++ * ACP method and the JSON-RPC code.
++ */
++function describeAuthFailure(cause: Cause.Cause<unknown>): string {
++  // Runtime boundaries may promote ACP failures to defects. Inspect both
++  // channels, but never stringify an error or its payload.
++  const failure = Cause.findErrorOption(cause);
++  const error = Option.isSome(failure)
++    ? failure.value
++    : cause.reasons.find(Cause.isDieReason)?.defect;
++  if (error === undefined) return Cause.hasInterrupts(cause) ? "interrupted" : "defect";
++  if (isAcpRequestError(error)) {
++    const method =
++      typeof error.method === "string" && /^[A-Za-z][A-Za-z/]{0,63}$/.test(error.method)
++        ? error.method
++        : "unknown";
++    return `AcpRequestError method=${method} code=${error.code}`;
++  }
++  if (isSetupError(error)) return `ProviderSetupError operation=${error.operation}`;
++  if (error instanceof Error) {
++    // Some runtime defects have only message/stack, with no ACP metadata.
++    // Report that absence explicitly; neither field is safe to log or parse.
++    const name =
++      /^(Error|TypeError|RangeError|SyntaxError|ReferenceError|URIError|EvalError)$/.test(
++        error.name,
++      )
++        ? error.name
++        : "Error";
++    return `${name} method=unavailable code=unavailable`;
++  }
++  const tag = (error as { readonly _tag?: unknown } | null)?._tag;
++  return typeof tag === "string" && /^[A-Za-z]{1,64}$/.test(tag) ? tag : "unknown error";
++}
++
+ /** Owns one instance's explicit sign-in and all process admission around sign-out. */
+ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
+   Runtime extends AntigravityAuthRuntime,
+@@ -223,6 +266,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
+         activeFlow = undefined;
+         operation = "idle";
+         flow.pending = undefined;
++        if (Exit.isFailure(result)) {
++          yield* Effect.logWarning(
++            `Antigravity sign-in failed for ${options.instanceId} (${describeAuthFailure(result.cause)}).`,
++          );
++        }
+         yield* publishFlow(flow, {
+           ...flow.state,
+           phase: Exit.isSuccess(result) ? "succeeded" : "failed",
+@@ -433,6 +481,35 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
+       }
+       return pending.flow.state;
+     }),
++    openOnLaptop: Effect.fn("AntigravityAuth.openOnLaptop")(function* (ownerSessionId, flowId) {
++      // Only the link this owner's active flow already holds; the client sends
++      // an id, never a URL. It is never logged.
++      const url = yield* lock.withPermits(1)(
++        Effect.gen(function* () {
++          const flow = yield* requireFlow(ownerSessionId, flowId, "openOnLaptop");
++          const authorizationUrl = flow.pending?.authorizationUrl;
++          if (authorizationUrl === undefined || flow.callbackSent) {
++            return yield* setupError(
++              "openOnLaptop",
++              "The Google sign-in link is not ready or was already used.",
++            );
++          }
++          if (!isHttpsUrl(authorizationUrl)) {
++            return yield* setupError("openOnLaptop", "The Google sign-in link cannot be opened.");
++          }
++          return authorizationUrl;
++        }),
++      );
++      yield* (options.openInDefaultBrowser ?? openInDefaultBrowser)(url).pipe(
++        Effect.mapError(() =>
++          setupError(
++            "openOnLaptop",
++            "Could not open the sign-in page on the laptop. Use the link instead.",
++          ),
++        ),
++      );
++      yield* Effect.logInfo(`opened sign-in page on laptop (${options.instanceId})`);
++    }),
+     cancel: Effect.fn("AntigravityAuth.cancel")(function* (ownerSessionId, flowId) {
+       const flow = yield* lock.withPermits(1)(requireFlow(ownerSessionId, flowId, "cancel"));
+       yield* stopFlow(flow, "cancelled", "Google sign-in was cancelled.");

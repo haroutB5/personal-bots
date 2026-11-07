@@ -1,0 +1,13 @@
+diff --git a/apps/server/scripts/measure-pr-preview.ts b/apps/server/scripts/measure-pr-preview.ts
+index b7938edcac763a6e4e17d348575ce13d18ee0f90..5989c0ebd27883a2e9174656420e484a1ace1ebb 100644
+--- a/apps/server/scripts/measure-pr-preview.ts
++++ b/apps/server/scripts/measure-pr-preview.ts
+@@ -4,7 +4,7 @@
+ // CLI-generated GraphQL
+ // queries are replayed with rateLimit.cost, outside the timed section, to measure
+ // their cost without confusing other applications' traffic with this process's.
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import * as Console from "effect/Console";
+ import * as Layer from "effect/Layer";

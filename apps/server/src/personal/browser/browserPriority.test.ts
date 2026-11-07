@@ -3,7 +3,7 @@ import * as NodeOS from "node:os";
 import { assert, describe, it } from "@effect/vitest";
 
 import type { ProcessEntry } from "../../provider/processTree.ts";
-import { BOT_PROCESS_PRIORITY_ENV } from "../../provider/botProcessPriority.ts";
+import { BOT_PROCESS_PRIORITY_ENV } from "@t3tools/provider-core/server/botProcessPriority";
 import { keepBrowserPriorityNormal, ourBrowserProcesses } from "./browserPriority.ts";
 
 const SERVER = 100;

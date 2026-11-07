@@ -1,0 +1,29 @@
+diff --git a/apps/server/src/auth/dpop.ts b/apps/server/src/auth/dpop.ts
+index 5e026f584273f011650b334cd6ba5652d7153aa8..0f8bad143bcb1d27fbbedc4a5d73a2f7e337c986 100644
+--- a/apps/server/src/auth/dpop.ts
++++ b/apps/server/src/auth/dpop.ts
+@@ -3,12 +3,12 @@ import {
+   verifyDpopProof,
+ } from "@t3tools/shared/dpop";
+ import type { DpopFailureReason } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64Url from "effect/encoding/Base64Url";
+ import * as Option from "effect/Option";
+-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
++import * as HttpServerRequest from "effect/http/HttpServerRequest";
+ 
+ import {
+   ServerAuthDpopReplayKeyCalculationError,
+@@ -89,7 +89,7 @@ export const verifyRequestDpopProof = (input: {
+       Effect.flatMap((crypto) =>
+         crypto.digest("SHA-256", new TextEncoder().encode(`${result.thumbprint}:${result.jti}`)),
+       ),
+-      Effect.map(Encoding.encodeBase64Url),
++      Effect.map(Base64Url.encode),
+       Effect.mapError(
+         (cause) =>
+           new ServerAuthDpopReplayKeyCalculationError({

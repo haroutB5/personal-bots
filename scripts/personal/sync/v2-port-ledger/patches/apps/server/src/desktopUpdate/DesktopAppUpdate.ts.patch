@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/desktopUpdate/DesktopAppUpdate.ts b/apps/server/src/desktopUpdate/DesktopAppUpdate.ts
+index dc29375f0a470ab46ea637e71fd1213d8a5d23d0..4879b7a5a3a58d6ebc53bc11342a8e7a382ccf9e 100644
+--- a/apps/server/src/desktopUpdate/DesktopAppUpdate.ts
++++ b/apps/server/src/desktopUpdate/DesktopAppUpdate.ts
+@@ -6,7 +6,7 @@ import {
+   type ServerSelfUpdateResult,
+ } from "@t3tools/contracts";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";

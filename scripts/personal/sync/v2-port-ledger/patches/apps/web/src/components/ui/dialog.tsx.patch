@@ -1,0 +1,20 @@
+diff --git a/apps/web/src/components/ui/dialog.tsx b/apps/web/src/components/ui/dialog.tsx
+index 463cedd79fba1dce45611fba4226b472e0423c14..407133f74bdd81560af94791066ad642f6f12755 100644
+--- a/apps/web/src/components/ui/dialog.tsx
++++ b/apps/web/src/components/ui/dialog.tsx
+@@ -1,5 +1,6 @@
+ "use client";
+ 
++import { withBackClose } from "~/components/ui/back-closing-root";
+ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+ import { XIcon } from "lucide-react";
+ import { cn } from "~/lib/utils";
+@@ -13,7 +14,7 @@ import {
+ } from "~/components/ui/dialog-styles";
+ import { ScrollArea } from "~/components/ui/scroll-area";
+ 
+-const Dialog = DialogPrimitive.Root;
++const Dialog = withBackClose(DialogPrimitive.Root);
+ 
+ const DialogPortal = DialogPrimitive.Portal;
+ 

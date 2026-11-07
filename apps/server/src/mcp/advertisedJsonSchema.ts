@@ -1,5 +1,5 @@
 import * as Predicate from "effect/Predicate";
-import { McpSchema, Tool } from "effect/ai";
+import { Tool } from "effect/ai";
 
 type Json = unknown;
 type JsonObject = { [key: string]: Json };
@@ -96,27 +96,11 @@ const compact = (schema: Json, optional: boolean): Json => {
   return result;
 };
 
-/** `PERSONAL_MCP_COMPACT_SCHEMAS=off` (or `T3CODE_PERSONAL_...`) advertises the full schemas again. */
-export const compactSchemasEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => {
-  const value = (env.PERSONAL_MCP_COMPACT_SCHEMAS ?? env.T3CODE_PERSONAL_MCP_COMPACT_SCHEMAS)
-    ?.trim()
-    .toLowerCase();
-  return value === undefined || !["off", "0", "false", "no", "disabled"].includes(value);
-};
-
 /**
- * A tool's JSON input schema as T3 advertises it. Drops JSON noise that every thread pays for:
+ * The input schema T3 advertises for a tool. Drops JSON noise that every thread pays for:
  * `additionalProperties: true`, safe-integer bounds, nested `anyOf`, JSON-string fallbacks, and
  * the `null` branch of optional properties. A tagged union of objects becomes one object.
  * Decoding still uses the full schema, so each tag's own required fields still apply.
  */
-export const compactJsonSchema = <A>(schema: A): A => compact(schema, false) as A;
-
-/** The input schema T3 advertises for a tool (see `compactJsonSchema`). */
-export const advertisedJsonSchema = (tool: Tool.Any) => compactJsonSchema(Tool.getJsonSchema(tool));
-
-/** The same MCP tool definition with its input schema compacted; unchanged when switched off. */
-export const advertisedMcpTool = (tool: McpSchema.Tool): McpSchema.Tool =>
-  tool.inputSchema === undefined || !compactSchemasEnabled()
-    ? tool
-    : new McpSchema.Tool({ ...tool, inputSchema: compactJsonSchema(tool.inputSchema) });
+export const advertisedJsonSchema = (tool: Tool.Any) =>
+  compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;

@@ -8,10 +8,13 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { seedV2Message, seedV2ProviderThread, seedV2Thread } from "./test/v2ProjectionSeed.ts";
 
-const testLayer = PersonalBotRepository.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const testLayer = PersonalBotRepository.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+);
 
 const decodeCreateBot = Schema.decodeSync(PersonalBotRepository.CreatePersonalBotInput);
 const decodeInsertThreadLink = Schema.decodeSync(
@@ -27,13 +30,14 @@ const insertMessage = (input: {
   readonly createdAt: string;
 }) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT INTO projection_thread_messages (
-        message_id, thread_id, role, text, is_streaming, created_at, updated_at
-      ) VALUES (${input.messageId}, ${threadId}, ${input.role}, ${input.text}, 0,
-        ${input.createdAt}, ${input.createdAt})
-    `;
+    yield* seedV2Thread({ threadId, createdAt: "2026-09-13T20:38:00.000Z" });
+    yield* seedV2Message({
+      messageId: input.messageId,
+      threadId,
+      role: input.role,
+      text: input.text,
+      createdAt: input.createdAt,
+    });
   });
 
 // The bot form's "Allow voice calls": off for a new bot, and the switch round-trips.
@@ -156,15 +160,15 @@ it.effect("a bot with hidden previews sends no message text over the list", () =
     yield* repository.insertThreadLink(
       decodeInsertThreadLink({ botId, threadId, createdAt: "2026-10-05T20:38:00.000Z" }),
     );
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT INTO projection_thread_messages (
-        message_id, thread_id, role, text, context_json, is_streaming, created_at, updated_at
-      ) VALUES ('m-secret', ${threadId}, 'assistant',
-        'No alerts. Portfolio £27,636 at 21:06 (Kraken)',
-        '{"version":1,"records":[{"kind":"personal-task-turn","title":"Kraken check"}]}', 0,
-        '2026-10-05T20:38:02.000Z', '2026-10-05T20:38:02.000Z')
-    `;
+    yield* seedV2Thread({ threadId, createdAt: "2026-10-05T20:38:00.000Z" });
+    yield* seedV2Message({
+      messageId: "m-secret",
+      threadId,
+      role: "assistant",
+      text: "No alerts. Portfolio £27,636 at 21:06 (Kraken)",
+      context: { version: 1, records: [{ kind: "personal-task-turn", title: "Kraken check" }] },
+      createdAt: "2026-10-05T20:38:02.000Z",
+    });
 
     const shown = yield* repository.listThreadLinks();
     expect(shown[0]?.newestMessage).toMatchObject({
@@ -243,16 +247,20 @@ it.effect("previews only each bot's two newest eligible chats", () =>
       if (archivedLink) {
         yield* sql`UPDATE personal_bot_threads SET archived_at = ${updatedAt} WHERE thread_id = ${id}`;
       }
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, archived_at)
-        VALUES (${id}, 'project-1', ${id}, '2026-09-13T20:39:00.000Z', ${updatedAt},
-          ${archivedThread ? updatedAt : null})
-      `;
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (${`m-${id}`}, ${id}, 'assistant', ${`text of ${id}`}, 0, ${updatedAt}, ${updatedAt})
-      `;
+      yield* seedV2Thread({
+        threadId: id,
+        title: id,
+        createdAt: "2026-09-13T20:39:00.000Z",
+        updatedAt,
+        archivedAt: archivedThread ? updatedAt : null,
+      });
+      yield* seedV2Message({
+        messageId: `m-${id}`,
+        threadId: id,
+        role: "assistant",
+        text: `text of ${id}`,
+        createdAt: updatedAt,
+      });
       if (relay) {
         yield* sql`
           INSERT INTO personal_groups (group_id, name, thread_id, max_bot_turns, created_at, updated_at)
@@ -279,7 +287,7 @@ it.effect("previews only each bot's two newest eligible chats", () =>
     });
     // Archive counts match rows with a visible shell and never include relays.
     yield* sql`UPDATE personal_bot_threads SET archived_at = '2026-09-14T00:00:00.000Z' WHERE thread_id IN ('t-relay', 't-second')`;
-    yield* sql`UPDATE projection_threads SET deleted_at = '2026-09-14T00:00:00.000Z' WHERE thread_id = 't-second'`;
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-09-14T00:00:00.000Z' WHERE thread_id = 't-second'`;
     expect(yield* repository.listArchivedChatCounts()).toEqual([{ botId, count: 1 }]);
   }).pipe(Effect.provide(testLayer)),
 );
@@ -289,7 +297,6 @@ it.effect("previews only each bot's two newest eligible chats", () =>
 // reports chats by their last message, never by updated_at.
 it.effect("ranks previews and reports lastActivityAt by the last message, not updated_at", () =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
     const botId = PersonalBotId.make("bot-activity");
     yield* repository.createBot(
@@ -327,16 +334,21 @@ it.effect("ranks previews and reports lastActivityAt by the last message, not up
           createdAt: "2026-09-25T19:56:00.000Z",
         }),
       );
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${id}, 'project-1', ${id}, '2026-09-25T19:56:00.000Z', ${updatedAt})
-      `;
+      yield* seedV2Thread({
+        threadId: id,
+        title: id,
+        createdAt: "2026-09-25T19:56:00.000Z",
+        updatedAt,
+      });
       if (messageAt !== null) {
-        yield* sql`
-          INSERT INTO projection_thread_messages (
-            message_id, thread_id, role, text, is_streaming, created_at, updated_at
-          ) VALUES (${`m-${id}`}, ${id}, 'assistant', ${`text of ${id}`}, 0, ${messageAt}, ${updatedAt})
-        `;
+        yield* seedV2Message({
+          messageId: `m-${id}`,
+          threadId: id,
+          role: "assistant",
+          text: `text of ${id}`,
+          createdAt: messageAt,
+          updatedAt,
+        });
       }
     }
 
@@ -369,7 +381,6 @@ it.effect("ranks previews and reports lastActivityAt by the last message, not up
 // message instead would make every one of them a permanent chip.
 it.effect("reports the owner's own newest message, never an app-written turn", () =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
     const botId = PersonalBotId.make("bot-owner-message");
     yield* repository.createBot(
@@ -398,16 +409,10 @@ it.effect("reports the owner's own newest message, never an app-written turn", (
           createdAt: "2026-09-25T19:56:00.000Z",
         }),
       );
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${id}, 'project-1', ${id}, '2026-09-25T19:56:00.000Z', '2026-09-25T19:56:00.000Z')
-      `;
+      yield* seedV2Thread({ threadId: id, title: id, createdAt: "2026-09-25T19:56:00.000Z" });
     }
-    const message = (id: string, messageId: string, role: string, createdAt: string) => sql`
-      INSERT INTO projection_thread_messages (
-        message_id, thread_id, role, text, is_streaming, created_at, updated_at
-      ) VALUES (${messageId}, ${id}, ${role}, 'text', 0, ${createdAt}, ${createdAt})
-    `;
+    const message = (id: string, messageId: string, role: string, createdAt: string) =>
+      seedV2Message({ messageId, threadId: id, role, text: "text", createdAt });
     // The owner wrote twice; the newest one wins. An app-written turn in
     // between must not: its message id starts with `personal-`.
     yield* message("t-owner", "owner-1", "user", "2026-09-25T20:00:00.000Z");
@@ -463,15 +468,14 @@ it.effect(
             createdAt: "2026-09-25T19:56:00.000Z",
           }),
         );
-        yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${id}, 'project-1', ${id}, '2026-09-25T19:56:00.000Z', '2026-09-25T19:56:00.000Z')
-      `;
-        yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (${`owner-${id}`}, ${id}, 'user', 'text', 0, '2026-09-25T20:00:00.000Z', '2026-09-25T20:00:00.000Z')
-      `;
+        yield* seedV2Thread({ threadId: id, title: id, createdAt: "2026-09-25T19:56:00.000Z" });
+        yield* seedV2Message({
+          messageId: `owner-${id}`,
+          threadId: id,
+          role: "user",
+          text: "text",
+          createdAt: "2026-09-25T20:00:00.000Z",
+        });
       }
       yield* sql`UPDATE personal_bot_threads SET archived_at = '2026-09-26T00:00:00.000Z' WHERE thread_id = 't-archived'`;
 
@@ -539,23 +543,13 @@ it.effect("lists each bot chat's provider session for process attribution", () =
         createdAt: "2026-10-13T00:00:00.000Z",
       }),
     );
-    // A real Claude row: the session id the CLI carries lives in the cursor,
-    // not in `projection_thread_sessions.provider_session_id` (empty on live,
-    // which is what made the tab attribute nothing).
-    yield* sql`
-      INSERT INTO provider_session_runtime (
-        thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json
-      )
-      VALUES (
-        ${perfThread}, 'claudeAgent', 'claudeAgent', 'full-access', 'running',
-        '2026-10-13T00:01:00.000Z',
-        '{"threadId":"thread-perf","resume":"d74b867f-dfb5-4e23-bb85-7deac41c86c4","resumeSessionAt":"1a874895-d0db-41d7-8b94-fa1ed16f35e3"}'
-      )
-    `;
-    yield* sql`
-      INSERT INTO projection_thread_sessions (thread_id, status, updated_at)
-      VALUES (${perfThread}, 'running', '2026-10-13T00:01:00.000Z')
-    `;
+    // The session id the CLI carries is the provider thread's native id.
+    yield* seedV2Thread({ threadId: perfThread, createdAt: "2026-10-13T00:00:00.000Z" });
+    yield* seedV2ProviderThread({
+      threadId: perfThread,
+      driver: "claudeAgent",
+      nativeId: "d74b867f-dfb5-4e23-bb85-7deac41c86c4",
+    });
     // A chat with no session row (nothing running) stays out; so does an
     // archived one, and one whose bot was deleted.
     const idleThread = ThreadId.make("thread-perf-idle");
@@ -579,15 +573,12 @@ it.effect("lists each bot chat's provider session for process attribution", () =
       WHERE thread_id = ${archivedThread}
     `;
     // The archived chat has a running Codex session of its own, and stays out.
-    yield* sql`
-      INSERT INTO provider_session_runtime (
-        thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json
-      )
-      VALUES (
-        ${archivedThread}, 'codex', 'codex', 'full-access', 'running',
-        '2026-10-13T00:01:00.000Z', '{"threadId":"01a13577-61ae-7c22-93fa-9c636f634c89"}'
-      )
-    `;
+    yield* seedV2Thread({ threadId: archivedThread, createdAt: "2026-10-13T00:00:00.000Z" });
+    yield* seedV2ProviderThread({
+      threadId: archivedThread,
+      driver: "codex",
+      nativeId: "01a13577-61ae-7c22-93fa-9c636f634c89",
+    });
 
     const sessions = yield* repository.listBotProviderSessions();
     expect(sessions).toHaveLength(1);

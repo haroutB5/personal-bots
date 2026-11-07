@@ -3,6 +3,7 @@
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Option from "effect/Option";
 
 import {
@@ -841,15 +842,20 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
       return capped.kept.slice(0, Math.max(0, limit));
     }).pipe(Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<PersonalMemoryEntry>)));
 
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
   return {
-    search,
-    similar,
+    search: asRead(search),
+    similar: asRead(similar),
     confirmPreferencesSent,
-    contextForThread,
-    turnContext,
-    rulesForApps,
-    rulesUsage,
-    preferencesForBot,
+    contextForThread: asRead(contextForThread),
+    turnContext: asRead(turnContext),
+    rulesForApps: asRead(rulesForApps),
+    rulesUsage: asRead(rulesUsage),
+    preferencesForBot: asRead(preferencesForBot),
   };
 };
 

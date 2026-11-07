@@ -1,0 +1,17 @@
+diff --git a/apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts b/apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts
+index 11c0fcc97cd0893351fb4019582fd2246dfa42e6..6e8132d0d67e939b9a650d7c573d5d4e7fd34ec0 100644
+--- a/apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts
++++ b/apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts
+@@ -1,10 +1,10 @@
+ import { assert, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+ 
+ import * as ServerConfig from "../config.ts";

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/cloud/ManagedEndpointRuntime.test.ts b/apps/server/src/cloud/ManagedEndpointRuntime.test.ts
+index 71677a43d6b8411ae13aac832c004b055d3c65a2..aebefed787c1d623d6dcb974701ba5dfd8e46a3d 100644
+--- a/apps/server/src/cloud/ManagedEndpointRuntime.test.ts
++++ b/apps/server/src/cloud/ManagedEndpointRuntime.test.ts
+@@ -11,7 +11,7 @@ import * as Queue from "effect/Queue";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+ import * as TestClock from "effect/testing/TestClock";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
+ import * as RelayClient from "@t3tools/shared/relayClient";
+ 

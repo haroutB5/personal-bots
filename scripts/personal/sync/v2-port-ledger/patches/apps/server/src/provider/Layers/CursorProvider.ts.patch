@@ -1,0 +1,52 @@
+diff --git a/apps/server/src/provider/Layers/CursorProvider.ts b/apps/server/src/provider/Layers/CursorProvider.ts
+index dfaa8ffe338e2f6f3342b742d08189f77e6e3d7f..470d1da58cd1f4de04da2b167401f84ecb78924f 100644
+--- a/apps/server/src/provider/Layers/CursorProvider.ts
++++ b/apps/server/src/provider/Layers/CursorProvider.ts
+@@ -12,7 +12,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
+ import { causeErrorTag } from "@t3tools/shared/observability";
+ import * as Cache from "effect/Cache";
+ import * as Duration from "effect/Duration";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+@@ -24,9 +24,9 @@ import * as Result from "effect/Result";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+ import * as SubscriptionRef from "effect/SubscriptionRef";
+-import { HttpClient } from "effect/unstable/http";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import { HttpClient } from "effect/http";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import {
+   createModelCapabilities,
+   getProviderOptionBooleanSelectionValue,
+@@ -132,6 +132,9 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
+       ...provider,
+       getSnapshot,
+       refresh: provider.refresh.pipe(Effect.andThen(getSnapshot)),
++      ...(provider.refreshLatest === undefined
++        ? {}
++        : { refreshLatest: provider.refreshLatest.pipe(Effect.andThen(getSnapshot)) }),
+       streamChanges: Stream.merge(
+         provider.streamChanges.pipe(Stream.map(() => undefined)),
+         SubscriptionRef.changes(workspaces).pipe(Stream.map(() => undefined)),
+@@ -1243,6 +1246,7 @@ export const enrichCursorSnapshot = (input: {
+   readonly snapshot: ServerProvider;
+   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+   readonly enableProviderUpdateChecks?: boolean;
++  readonly forceLatestVersionRefresh?: boolean;
+   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
+   readonly httpClient: HttpClient.HttpClient;
+@@ -1256,6 +1260,7 @@ export const enrichCursorSnapshot = (input: {
+ 
+   return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
+     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
++    forceLatestVersionRefresh: input.forceLatestVersionRefresh === true,
+   }).pipe(
+     Effect.provideService(HttpClient.HttpClient, input.httpClient),
+     Effect.flatMap((enrichedSnapshot) =>

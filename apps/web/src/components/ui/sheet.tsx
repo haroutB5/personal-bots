@@ -1,23 +1,20 @@
-"use client";
-
-import { withBackClose } from "~/components/ui/back-closing-root";
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
-const Sheet = withBackClose(SheetPrimitive.Root);
+function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
+  return (
+    <ControlledOpenContext value={props.open}>
+      <SheetPrimitive.Root {...props} />
+    </ControlledOpenContext>
+  );
+}
 
 const SheetPortal = SheetPrimitive.Portal;
 
-// The personal sheets render their own close button (features/personal).
-function SheetClose(props: SheetPrimitive.Close.Props) {
-  return <SheetPrimitive.Close data-slot="sheet-close" {...props} />;
-}
-
-// Sheets are docked panels, not dialogs: their layer (--z-sheet) sits under dialogs that open
-// from inside them and under anything the app floats above panels.
 function SheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   return (
     <SheetPrimitive.Backdrop
@@ -63,9 +60,6 @@ function SheetPopup({
   showCloseButton = true,
   keepMounted = false,
   transitionDurationMs,
-  // Personal sheets restyle and force the backdrop (features/personal/*Sheet.tsx).
-  backdropClassName,
-  forceBackdrop = false,
   side = "right",
   variant = "default",
   style,
@@ -74,9 +68,6 @@ function SheetPopup({
   showCloseButton?: boolean;
   keepMounted?: boolean;
   transitionDurationMs?: number;
-  backdropClassName?: string;
-  /** Render the backdrop even when base-ui considers this dialog nested (it skips it by default). */
-  forceBackdrop?: boolean;
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
 }) {
@@ -89,12 +80,11 @@ function SheetPopup({
   return (
     <SheetPortal keepMounted={keepMounted}>
       <SheetBackdrop
-        forceRender={forceBackdrop}
-        className={cn(
-          instant &&
-            "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!",
-          backdropClassName,
-        )}
+        className={
+          instant
+            ? "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!"
+            : undefined
+        }
         style={transitionStyle}
       />
       <SheetViewport side={side} variant={variant}>
@@ -116,6 +106,7 @@ function SheetPopup({
             className,
           )}
           data-slot="sheet-popup"
+          render={keepMounted ? undefined : renderRetainedPopup}
           style={{ ...transitionStyle, ...style }}
           {...props}
         >
@@ -151,7 +142,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
 function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
-      className={cn("font-semibold text-xl leading-none", className)}
+      className={cn("font-semibold text-xl leading-snug", className)}
       data-slot="sheet-title"
       {...props}
     />
@@ -170,7 +161,6 @@ function SheetDescription({ className, ...props }: SheetPrimitive.Description.Pr
 
 export {
   Sheet,
-  SheetClose,
   SheetPortal,
   SheetBackdrop,
   SheetBackdrop as SheetOverlay,

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/providerSnapshot.test.ts b/apps/server/src/provider/providerSnapshot.test.ts
+index 5c45362daa74e101fd2acb4ead1a5aea1accb408..32d8649d269960eade5376e1a3f43d93a3758bc2 100644
+--- a/apps/server/src/provider/providerSnapshot.test.ts
++++ b/apps/server/src/provider/providerSnapshot.test.ts
+@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ import {
+   isCommandMissingCause,

@@ -1,0 +1,20 @@
+diff --git a/apps/server/src/provider/opencodeRuntime.environment.test.ts b/apps/server/src/provider/opencodeRuntime.environment.test.ts
+index 680032de06b47e387a407e8ddd1ca853a9412f2e..fc6e5f1837505b204459acc929787edf94e731a0 100644
+--- a/apps/server/src/provider/opencodeRuntime.environment.test.ts
++++ b/apps/server/src/provider/opencodeRuntime.environment.test.ts
+@@ -1,5 +1,5 @@
+ import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it as effectIt } from "@effect/vitest";
+ import {
+   HostProcessEnvironment,
+@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as TestClock from "effect/testing/TestClock";
+-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
++import { FetchHttpClient, HttpClient } from "effect/http";
+ import { describe, expect, it } from "vite-plus/test";
+ 
+ import {

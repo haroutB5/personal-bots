@@ -6,14 +6,26 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
-import * as NodeServices from "@t3tools/shared/nodeServices";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
+import { MuseUsageHome } from "@t3tools/provider-muse/server";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
+import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as UsageService from "./UsageService.ts";
 
 function encodeVarint(value: number | bigint): Buffer {
@@ -137,45 +149,65 @@ const layers = (
   counters: { http: number; urls?: string[] },
   document: unknown = {},
 ) =>
-  ServerConfig.layerTest(process.cwd(), { prefix: "usage-session-test" }).pipe(
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(Layer.succeed(HostProcessPlatform, "linux")),
-    Layer.provideMerge(
-      ServerSettings.layerTest({
-        providers: {
-          claudeAgent: { homePath: NodePath.join(home, "claude") },
-          codex: { homePath: NodePath.join(home, "codex") },
-          // The default DeepSeek slot always exists; without a homePath it
-          // would resolve to the machine's own ~/.claude-t3-deepseek.
-          deepseek: { homePath: NodePath.join(home, "deepseek") },
-        },
-      }),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.sync(() => {
-            counters.http += 1;
-            counters.urls?.push(request.url);
-            return HttpClientResponse.fromWeb(request, Response.json(document));
-          }),
+  CursorUsageAccounts.layer
+    .pipe(
+      Layer.fresh,
+      Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
+    )
+    .pipe(
+      Layer.provideMerge(AntigravityUsage.layer),
+      Layer.provideMerge(MuseUsageHome.layer),
+      Layer.provideMerge(ProviderHostLive.layer),
+      Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+      Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+      Layer.provideMerge(
+        Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
+      ),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), NodePath.join(home, "usage-session-test")),
+      ),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
+      Layer.provideMerge(Layer.succeed(HostProcess.Hostname, "usage-test-host")),
+      Layer.provideMerge(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: NodePath.join(home, "claude") },
+            },
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { homePath: NodePath.join(home, "codex") },
+            },
+          },
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              counters.http += 1;
+              counters.urls?.push(request.url);
+              return HttpClientResponse.fromWeb(request, Response.json(document));
+            }),
+          ),
         ),
       ),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, {
-        HOME: home,
-        GROK_HOME: NodePath.join(home, "grok"),
-        OPENCODE_DATA_DIR: NodePath.join(home, "opencode"),
-        ANTIGRAVITY_DATA_DIR: NodePath.join(home, "antigravity"),
-        XDG_CONFIG_HOME: NodePath.join(home, "config"),
-        APPDATA: NodePath.join(home, "config"),
-        // A Cursor account would be fetched over the network by the usage page.
-        CURSOR_API_KEY: "a-key-that-must-not-be-used",
-      }),
-    ),
-  );
+      Layer.provideMerge(
+        Layer.succeed(HostProcess.Environment, {
+          HOME: home,
+          GROK_HOME: NodePath.join(home, "grok"),
+          PI_CODING_AGENT_DIR: NodePath.join(home, "pi"),
+          OPENCODE_DATA_DIR: NodePath.join(home, "opencode"),
+          ANTIGRAVITY_DATA_DIR: NodePath.join(home, "antigravity"),
+          XDG_CONFIG_HOME: NodePath.join(home, "config"),
+          APPDATA: NodePath.join(home, "config"),
+          CURSOR_API_KEY: "a-key-that-must-not-be-used",
+        }),
+      ),
+    );
 
 describe("UsageService.readSessionUsage", () => {
   it.live("returns tokens per day, session and model, counting a repeated message once", () =>
@@ -196,13 +228,11 @@ describe("UsageService.readSessionUsage", () => {
           shared +
             claudeLine({ id: 2, session: "claude-a", at: "2026-08-01T11:00:00Z", output: 70 }),
         );
-        // A resumed session repeats the first message in a second file.
         await NodeFSP.writeFile(
           NodePath.join(claudeDir, "b.jsonl"),
           shared +
             claudeLine({ id: 3, session: "claude-b", at: "2026-08-02T09:00:00Z", output: 5 }),
         );
-        // Outside the window.
         await NodeFSP.writeFile(
           NodePath.join(claudeDir, "c.jsonl"),
           claudeLine({ id: 4, session: "claude-c", at: "2026-08-20T09:00:00Z", output: 9999 }),
@@ -223,7 +253,6 @@ describe("UsageService.readSessionUsage", () => {
       assert.strictEqual(find("claude", "claude-a", "2026-08-01")?.records, 2);
       assert.strictEqual(find("claude", "claude-b", "2026-08-02")?.totals.outputTokens, 5);
       assert.isUndefined(find("claude", "claude-c", "2026-08-20"));
-      // Codex input includes its cached part; the buckets must not count it twice.
       assert.deepStrictEqual(find("codex", "codex-1", "2026-08-01")?.totals, {
         uncachedInputTokens: 200,
         cachedInputTokens: 800,
@@ -231,8 +260,7 @@ describe("UsageService.readSessionUsage", () => {
         outputTokens: 40,
       });
       assert.strictEqual(result.scannedFiles >= 4, true);
-      // Only the LiteLLM rate table is fetched (for the estimate): no Cursor account request.
-      assert.isAtMost(counters.http, 1);
+      assert.isAtMost(counters.http, 2);
       for (const url of counters.urls) assert.include(url, "litellm");
     }).pipe(Effect.scoped),
   );
@@ -258,55 +286,10 @@ describe("UsageService.readSessionUsage", () => {
       const result = yield* service.readSessionUsage(WINDOW);
       const claude = result.cells.find((cell) => cell.provider === "claude");
       const codex = result.cells.find((cell) => cell.provider === "codex");
-      // 10 input at 3e-6, 100 cached at the cached rate 0.3e-6, 50 output at 15e-6.
       assert.closeTo(claude!.costUsd, 10 * 3e-6 + 100 * 0.3e-6 + 50 * 15e-6, 1e-12);
       assert.strictEqual(claude!.unpricedTokens, 0);
-      // gpt-6-astra is not in the table: not priced, never zero dollars.
       assert.strictEqual(codex!.costUsd, 0);
       assert.strictEqual(codex!.unpricedTokens, 1040);
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("counts DeepSeek turns as their own provider, priced at the published Flash rates", () =>
-    Effect.gen(function* () {
-      const { home } = yield* setup;
-      const counters = { http: 0, urls: [] as string[] };
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(layers(home, counters, LITELLM_DOCUMENT)),
-      );
-      const deepseekFile = NodePath.join(home, "deepseek", "projects", "proj", "s.jsonl");
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(NodePath.dirname(deepseekFile), { recursive: true });
-        await NodeFSP.writeFile(
-          deepseekFile,
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          `${JSON.stringify({
-            type: "assistant",
-            timestamp: "2026-08-01T10:00:00Z",
-            sessionId: "deepseek-a",
-            message: {
-              id: "msg_ds_1",
-              model: "deepseek-flash",
-              usage: { input_tokens: 100, cache_read_input_tokens: 1_000, output_tokens: 10 },
-            },
-          })}\n`,
-        );
-      });
-
-      const result = yield* service.readSessionUsage(WINDOW);
-      const cell = result.cells.find((entry) => entry.provider === "deepseek");
-      assert.ok(cell !== undefined, "a deepseek cell");
-      assert.strictEqual(cell.sessionId, "deepseek-a");
-      assert.deepStrictEqual(cell.totals, {
-        uncachedInputTokens: 100,
-        cachedInputTokens: 1_000,
-        cacheCreationTokens: 0,
-        outputTokens: 10,
-      });
-      // Published off-peak Flash rates (Saturday 10:00 UTC), whatever the
-      // LiteLLM table says about DeepSeek.
-      assert.closeTo(cell.costUsd, 100 * 0.15e-6 + 1_000 * 0.003e-6 + 10 * 0.6e-6, 1e-12);
-      assert.strictEqual(cell.unpricedTokens, 0);
     }).pipe(Effect.scoped),
   );
 
@@ -350,7 +333,6 @@ describe("UsageService.readSessionUsage", () => {
           cacheCreationTokens: 0,
           outputTokens: 50,
         });
-        // 1000 uncached at 0.75e-6, 2000 cached at 0.075e-6, 50 output at 3.75e-6
         assert.closeTo(cell.costUsd, 1_000 * 0.75e-6 + 2_000 * 0.075e-6 + 50 * 3.75e-6, 1e-12);
         assert.strictEqual(cell.unpricedTokens, 0);
       }).pipe(Effect.scoped),

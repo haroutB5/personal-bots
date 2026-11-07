@@ -270,7 +270,7 @@ export function primaryUsageRecovered(input: SwitchBackInput): boolean {
     input.freshAfterMs === undefined ||
     usage === undefined ||
     usage.unavailable ||
-    usage.refreshFailed ||
+    usage.refreshFailed !== undefined ||
     usage.fullReadAt !== usage.checkedAt
   ) {
     return false;

@@ -1,0 +1,316 @@
+diff --git a/apps/server/src/provider/Layers/CodexAdapter.ts b/apps/server/src/provider/Layers/CodexAdapter.ts
+index 64c7012c4a92e09c4da88c853fb026c06fbd7ade..b959295f3e2541d819f1f0907d83ebad65aa65c2 100644
+--- a/apps/server/src/provider/Layers/CodexAdapter.ts
++++ b/apps/server/src/provider/Layers/CodexAdapter.ts
+@@ -34,14 +34,17 @@ import {
+ } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as NodeCrypto from "node:crypto";
+-import * as Crypto from "effect/Crypto";
++import * as NodeOS from "node:os";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Exit from "effect/Exit";
+ import * as Fiber from "effect/Fiber";
++import * as FileSystem from "effect/FileSystem";
++import * as Path from "effect/Path";
+ import * as Queue from "effect/Queue";
+ import * as Schema from "effect/Schema";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import * as CodexErrors from "effect-codex-app-server/errors";
+ import * as EffectCodexSchema from "effect-codex-app-server/schema";
+ 
+@@ -58,6 +61,8 @@ import {
+   type ProviderAdapterError,
+ } from "../Errors.ts";
+ import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
++import type { ProviderAdapterStopOptions } from "../Services/ProviderAdapter.ts";
++import { terminateDescendants } from "../processTree.ts";
+ import { resolveAttachmentPath } from "../../attachmentStore.ts";
+ import { ServerConfig } from "../../config.ts";
+ import {
+@@ -70,12 +75,23 @@ import {
+   type CodexSessionRuntimeShape,
+ } from "./CodexSessionRuntime.ts";
+ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+-import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
++import {
++  listOwnerCodexSkillFiles,
++  PERSONAL_BOT_CODEX_APP_SERVER_ARGS,
++  personalBotCodexSkillArgs,
++  personalBotCodexSkillsSwitchOn,
++  resolveCodexLaunchArgs,
++} from "./codexLaunchArgs.ts";
++import { logUnloadableBotPluginSkills } from "../botPluginSkillDiagnostics.ts";
++import { resolvePersonalBotPluginSkillDirs } from "../botPluginSkillRoots.ts";
++import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
++import { codexShellOutputArgs, codexTaskAutoCompactArgs } from "../personalBotContextLimits.ts";
+ import {
+   type CodexRateLimitSnapshot,
+   codexRateLimitsToUpdate,
+   codexUsageLimitMessage,
+   mergeCodexRateLimits,
++  codexUsageLimitResetAt,
+ } from "./codexUsageLimits.ts";
+ const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
+ const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
+@@ -107,6 +123,8 @@ export interface CodexAdapterLiveOptions {
+   readonly onManagedConnectionRevoked?: Effect.Effect<void>;
+   readonly nativeEventLogPath?: string;
+   readonly nativeEventLogger?: EventNdjsonLogger;
++  /** Where the owner's Codex skills live; defaults to the Codex home and `~/.agents`. */
++  readonly ownerSkillRoots?: ReadonlyArray<string>;
+ }
+ 
+ interface CodexAdapterSessionContext {
+@@ -749,7 +767,14 @@ function itemTitle(
+     }
+     const computerUseTitle = computerUseToolTitle(item, presentation);
+     if (computerUseTitle) return computerUseTitle;
+-    return `${item.server} · ${item.tool}`;
++    // Plain words for what the bot is doing; only a hostname is ever read out
++    // of the arguments. The old `${server} · ${tool}` stays as the fallback.
++    const label = mcpToolStepLabel({
++      server: item.server,
++      tool: item.tool,
++      arguments: asUnknownRecord(item.arguments),
++    });
++    return label ?? `${item.server} · ${item.tool}`;
+   }
+   switch (itemType) {
+     case "assistant_message":
+@@ -2247,6 +2272,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+   options?: CodexAdapterLiveOptions,
+ ) {
+   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
++  const fileSystem = yield* FileSystem.FileSystem;
++  const path = yield* Path.Path;
+   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+   const crypto = yield* Crypto.Crypto;
+   const serverConfig = yield* Effect.service(ServerConfig);
+@@ -2261,6 +2288,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
++  const ownerSkillRoots = (): ReadonlyArray<string> => {
++    if (options?.ownerSkillRoots !== undefined) return options.ownerSkillRoots;
++    const configuredHome =
++      codexConfig.homePath || (options?.environment ?? process.env).CODEX_HOME || "~/.codex";
++    const codexHome =
++      configuredHome === "~" || /^~[\\/]/.test(configuredHome)
++        ? path.join(NodeOS.homedir(), configuredHome.slice(2))
++        : configuredHome;
++    return [path.join(codexHome, "skills"), path.join(NodeOS.homedir(), ".agents", "skills")];
++  };
+ 
+   const startSession: CodexAdapterShape["startSession"] = (input) =>
+     Effect.scoped(
+@@ -2303,6 +2340,72 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+             ? getCodexServiceTierOptionValue(input.modelSelection)
+             : undefined;
+         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
++        // A personal bot's own plugin skills (its folder and the shared one),
++        // the same ones a Claude or DeepSeek bot loads. Codex gets them by
++        // naming the folders to its app-server; the owner's own skill roots
++        // stay off below. The kill switch restores a bot with no skills.
++        const personalBotSkillRoots =
++          input.personalBot === true &&
++          personalBotCodexSkillsSwitchOn(options?.environment ?? process.env)
++            ? yield* resolvePersonalBotPluginSkillDirs({
++                baseDir: serverConfig.baseDir,
++                botId: input.personalBotId,
++              }).pipe(
++                Effect.provideService(FileSystem.FileSystem, fileSystem),
++                Effect.provideService(Path.Path, path),
++              )
++            : [];
++        // Codex refuses an unparsable skill (a UTF-8 BOM does it) and reports
++        // it only inside its own `skills/list` answer, which a bot session
++        // never asks for. Check the same folders here, before naming them, so
++        // the broken skill is logged instead of silently missing.
++        if (personalBotSkillRoots.length > 0) {
++          yield* logUnloadableBotPluginSkills({
++            botId: input.personalBotId,
++            skillDirs: personalBotSkillRoots,
++          }).pipe(
++            Effect.provideService(FileSystem.FileSystem, fileSystem),
++            Effect.provideService(Path.Path, path),
++          );
++        }
++        const appServerArgs = [
++          ...(mcpSession
++            ? [
++                "-c",
++                `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
++                "-c",
++                'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
++              ]
++            : []),
++          // No path deny for bots here, deliberately. A bot runs full-access
++          // (`danger-full-access`), which Codex's sandbox cannot restrict. A
++          // `[permissions.<id>.filesystem]` profile with `"<path>" = "none"`
++          // is ignored once thread/start sends the legacy `sandbox` value
++          // (measured on 0.160.1: activePermissionProfile stays null), and
++          // without that value the Windows backend refuses to start the thread
++          // ("cannot enforce split filesystem read restrictions"). So the
++          // secrets, state.sqlite and logs are not protected from a Codex bot.
++          ...(input.personalBot === true
++            ? [
++                ...PERSONAL_BOT_CODEX_APP_SERVER_ARGS,
++                ...personalBotCodexSkillArgs(
++                  yield* listOwnerCodexSkillFiles(ownerSkillRoots()).pipe(
++                    Effect.provideService(FileSystem.FileSystem, fileSystem),
++                    Effect.provideService(Path.Path, path),
++                  ),
++                ),
++              ]
++            : []),
++          // A delegated-task or routine chat compacts at 150k tokens; the
++          // owner's own chats keep Codex's default (PERSONAL_TASK_AUTO_COMPACT=off for all).
++          // A bot's tool output past ~12k chars (3000 tokens) is cut in the
++          // middle with a marker (PERSONAL_BOT_SHELL_OUTPUT_CAP=off for Codex's own).
++          ...codexShellOutputArgs({ personalBot: input.personalBot === true }),
++          ...codexTaskAutoCompactArgs({
++            personalBot: input.personalBot === true,
++            personalTaskChat: input.personalTaskChat === true,
++          }),
++        ];
+         const runtimeInput: CodexSessionRuntimeOptions = {
+           threadId: input.threadId,
+           providerInstanceId: boundInstanceId,
+@@ -2310,6 +2413,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+           ...(options?.models ? { models: options.models } : {}),
+           binaryPath: effectiveConfig.binaryPath,
+           launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment),
++          ...(personalBotSkillRoots.length > 0 ? { extraSkillRoots: personalBotSkillRoots } : {}),
+           ...(effectiveEnvironment ? { environment: effectiveEnvironment } : {}),
+           ...(effectiveConfig.homePath ? { homePath: effectiveConfig.homePath } : {}),
+           ...(isCodexResumeCursorSchema(input.resumeCursor)
+@@ -2329,15 +2433,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+                   ),
+                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                 },
+-                appServerArgs: [
+-                  "-c",
+-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+-                  "-c",
+-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+-                ],
+                 mcpCapabilities: mcpSession.capabilities,
+               }
+             : {}),
++          ...(appServerArgs.length > 0 ? { appServerArgs } : {}),
+         };
+         const turnTokenUsage = makeCodexTurnTokenUsageState();
+         // Codex reports a usage-limit stop as OpenAI's own sentence, which on a
+@@ -2423,6 +2522,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+               yield* options.onManagedConnectionRevoked;
+             let usageLimitError: ProviderRuntimeEvent | undefined;
+             let usageLimitMessage: string | undefined;
++            let usageLimitRetry:
++              | {
++                  readonly kind: "rate_limited";
++                  readonly retryAt?: string;
++                  readonly reason: string;
++                }
++              | undefined;
+             if (event.method === "turn/completed") {
+               const completedPayload = readPayload(
+                 EffectCodexSchema.V2TurnCompletedNotification,
+@@ -2445,6 +2551,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+                 };
+               } else if (turnError?.codexErrorInfo === "usageLimitExceeded") {
+                 usageLimitMessage = codexUsageLimitMessage(rateLimits, event.createdAt);
++                const resetAt = codexUsageLimitResetAt(rateLimits, event.createdAt);
++                usageLimitRetry = {
++                  kind: "rate_limited",
++                  ...(resetAt !== undefined ? { retryAt: resetAt } : {}),
++                  reason: "usageLimitExceeded",
++                };
+                 usageLimitError = {
+                   ...runtimeEventBase(event, event.threadId),
+                   type: "runtime.error",
+@@ -2479,6 +2591,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+                       : usageLimitMessage
+                         ? { errorMessage: usageLimitMessage }
+                         : {}),
++                    ...(usageLimitRetry ? { retry: usageLimitRetry } : {}),
+                     tokenUsage: completeCodexTurnTokenUsage(
+                       turnTokenUsage,
+                       String(runtimeEvent.turnId),
+@@ -2629,6 +2742,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+           : {}),
+         ...(serviceTier ? { serviceTier } : {}),
+         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
++        ...(input.followUp !== undefined ? { followUp: input.followUp } : {}),
++        ...(input.messageId !== undefined ? { clientUserMessageId: input.messageId } : {}),
++        ...(input.systemInstructions !== undefined
++          ? { systemInstructions: input.systemInstructions }
++          : {}),
+         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
+       })
+       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
+@@ -2755,10 +2873,26 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+ 
+   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
+     session: CodexAdapterSessionContext,
++    stopOptions?: ProviderAdapterStopOptions,
+   ) {
+     if (session.stopped) {
+       return;
+     }
++    // Before the app-server goes: once it exits, the commands it started lose
++    // their parent link and can no longer be found from its PID.
++    if (stopOptions?.terminateProcesses === true && session.runtime.processId !== undefined) {
++      const appServerPid = yield* session.runtime.processId;
++      if (appServerPid !== undefined) {
++        const ended = yield* terminateDescendants(appServerPid);
++        yield* Effect.logInfo("codex.session.processes-terminated", {
++          threadId: session.threadId,
++          appServerPid,
++          found: ended.found.map((entry) => `${entry.pid}:${entry.name}`).join(","),
++          killed: ended.killed.join(","),
++          snapshotFailed: ended.snapshotFailed,
++        });
++      }
++    }
+     session.stopped = true;
+     sessions.delete(session.threadId);
+     yield* session.runtime.close.pipe(Effect.ignore);
+@@ -2766,13 +2900,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
+   });
+ 
+-  const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
++  const stopSession: CodexAdapterShape["stopSession"] = (threadId, stopOptions) =>
+     Effect.gen(function* () {
+       const session = sessions.get(threadId);
+       if (!session) {
+         return;
+       }
+-      yield* stopSessionInternal(session);
++      yield* stopSessionInternal(session, stopOptions);
+     });
+ 
+   const listSessions: CodexAdapterShape["listSessions"] = () =>
+@@ -2786,7 +2920,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+     Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
+ 
+   const stopAll: CodexAdapterShape["stopAll"] = () =>
+-    Effect.forEach(Array.from(sessions.values()), stopSessionInternal, {
++    Effect.forEach(Array.from(sessions.values()), (session) => stopSessionInternal(session), {
+       concurrency: 1,
+       discard: true,
+     }).pipe(Effect.asVoid);
+@@ -2804,6 +2938,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+     capabilities: {
+       sessionModelSwitch: "in-session",
+       promptlessTurnContinuation: true,
++      // turn/start mid-turn queues a turn of its own; the owner's message is
++      // taken in when that turn starts.
++      userMessageDelivery: "turn-started",
+     },
+     startSession,
+     sendTurn,

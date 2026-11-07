@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/cli/config.test.ts b/apps/server/src/cli/config.test.ts
+index 42932b92700822ad911bb7fdf7b4f903b6a1514b..c50ec15798b66c4033c56b8cca8f0f7c29e3fa66 100644
+--- a/apps/server/src/cli/config.test.ts
++++ b/apps/server/src/cli/config.test.ts
+@@ -19,7 +19,7 @@ import {
+ import * as NetService from "@t3tools/shared/Net";
+ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { deriveServerPaths } from "../config.ts";
+ import { resolveServerConfig } from "./config.ts";
+ 

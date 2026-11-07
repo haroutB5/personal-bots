@@ -1,4 +1,4 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -10,28 +10,30 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
+  MessageId,
   PersonalBotId,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 import * as PersonalTaskChatArchive from "./PersonalTaskChatArchiveService.ts";
 import { TASK_CHAT_AUTO_ARCHIVE_IDLE_MS } from "./taskChatAutoArchivePolicy.ts";
+import { personalTestDatabase } from "./test/personalReadsTestLayer.ts";
+import { seedV2Message, seedV2Run, seedV2Thread } from "./test/v2ProjectionSeed.ts";
 
 const MIN = 60_000;
 /** When the chats are made (the task starts); everything else is relative. */
 const T0 = Date.parse("2026-09-28T18:00:00.000Z");
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const BOT = PersonalBotId.make("bot-backend");
+const TEST_PROJECT_ID = ProjectId.make("personal-test-project");
+const INSTANCE = ProviderInstanceId.make("claudeAgent");
 
 interface LiveShell {
   session: { status: string; activeTurnId: string | null } | null;
@@ -40,10 +42,11 @@ interface LiveShell {
 }
 
 interface Harness {
-  readonly dispatched: Array<OrchestrationCommand>;
+  readonly dispatched: Array<PersonalEngine.PersonalStopInput>;
   readonly shells: Map<string, LiveShell>;
-  /** The engine's domain event stream (set once the layer is built). */
-  events: Queue.Queue<OrchestrationEvent> | null;
+  readonly titles: Map<string, string>;
+  /** The engine's v2 personal event stream (set once the layer is built). */
+  events: Queue.Queue<PersonalEngine.PersonalThreadEvent> | null;
   /** Runs when the sweep reads a chat's live state, before it archives. */
   beforeShell: Effect.Effect<unknown> | null;
 }
@@ -51,65 +54,88 @@ interface Harness {
 const makeHarness = (): Harness => ({
   dispatched: [],
   shells: new Map(),
+  titles: new Map(),
   events: null,
   beforeShell: null,
 });
 
+/** A test-local PersonalEngine: only the calls this service and the bot service make. */
+const makeEngineLayer = (harness: Harness) =>
+  Layer.effect(
+    PersonalEngine.PersonalEngine,
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<PersonalEngine.PersonalThreadEvent>();
+      harness.events = events;
+      const shape = {
+        createProject: (input: PersonalEngine.CreateProjectInput) =>
+          Effect.succeed(input.projectId ?? TEST_PROJECT_ID),
+        createThread: (input: PersonalEngine.CreateThreadInput) =>
+          Effect.succeed(input.threadId ?? ThreadId.make("created-thread")),
+        getProject: (_projectId: ProjectId) =>
+          Effect.succeed(
+            Option.some({
+              id: TEST_PROJECT_ID,
+              workspaceRoot: process.cwd(),
+            } satisfies PersonalEngine.PersonalProjectView),
+          ),
+        listProjects: () => Effect.succeed([] as ReadonlyArray<PersonalEngine.PersonalProjectView>),
+        updateMeta: (input: PersonalEngine.PersonalUpdateMetaInput) =>
+          Effect.sync(() => {
+            if (input.title !== undefined) harness.titles.set(input.threadId, input.title);
+          }),
+        getThread: (threadId: ThreadId) =>
+          Effect.gen(function* () {
+            // Runs every time, as the projection read does.
+            yield* harness.beforeShell ?? Effect.void;
+            const shell = harness.shells.get(threadId);
+            if (shell === undefined) return Option.none();
+            return Option.some({
+              id: threadId,
+              title: harness.titles.get(threadId) ?? String(threadId),
+              projectId: TEST_PROJECT_ID,
+              modelSelection: { instanceId: INSTANCE, model: "claude" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              archivedAt: null,
+              session:
+                shell.session === null
+                  ? null
+                  : ({
+                      threadId,
+                      ...shell.session,
+                    } as never),
+              backgroundLiveness: shell.backgroundLiveness as never,
+              latestTurn:
+                shell.latestTurnCompletedAt === null
+                  ? null
+                  : { completedAt: shell.latestTurnCompletedAt },
+            } as unknown as PersonalEngine.PersonalThreadView);
+          }),
+        stop: (input: PersonalEngine.PersonalStopInput) =>
+          Effect.sync(() => {
+            harness.dispatched.push(input);
+          }),
+        events: Stream.fromQueue(events),
+      };
+      return shape as unknown as PersonalEngine.PersonalEngineShape;
+    }),
+  );
+
 /**
  * The real bot service (so the archive is the manual one) and the real
- * repository over an in-memory database; the engine records what it is
- * sent and the projection answers from the harness.
+ * repository over an in-memory database; the engine is an in-memory v2 double
+ * that answers live state and records what it is sent.
  */
 const makeLayer = (harness: Harness) =>
   PersonalTaskChatArchive.layer.pipe(
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(
-      Layer.effect(
-        OrchestrationEngine.OrchestrationEngineService,
-        Effect.gen(function* () {
-          const events = yield* Queue.unbounded<OrchestrationEvent>();
-          harness.events = events;
-          return {
-            dispatch: (command: OrchestrationCommand) =>
-              Effect.sync(() => {
-                harness.dispatched.push(command);
-                return { sequence: harness.dispatched.length };
-              }),
-            streamDomainEvents: Stream.fromQueue(events),
-          } as unknown as OrchestrationEngine.OrchestrationEngineShape;
-        }),
-      ),
-    ),
+    Layer.provideMerge(makeEngineLayer(harness)),
+    Layer.provideMerge(personalTestDatabase),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed([]),
       }),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.suspend(() => harness.beforeShell ?? Effect.void).pipe(
-            Effect.flatMap(() =>
-              Effect.sync(() => {
-                const shell = harness.shells.get(threadId);
-                if (shell === undefined) return Option.none();
-                return Option.some({
-                  id: threadId,
-                  session: shell.session === null ? null : { threadId, ...shell.session },
-                  backgroundLiveness: shell.backgroundLiveness,
-                  latestTurn:
-                    shell.latestTurnCompletedAt === null
-                      ? null
-                      : { completedAt: shell.latestTurnCompletedAt },
-                });
-              }),
-            ),
-          ),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-task-archive-test-" }),
@@ -154,20 +180,28 @@ const seed = (harness: Harness, chats: ReadonlyArray<ChatSpec>) =>
       instructions: "",
       avatarShape: "blob",
       avatarColor: "#1A73E8",
-      modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude" },
+      modelSelection: { instanceId: INSTANCE, model: "claude" },
     });
     for (const chat of chats) {
       const threadId = ThreadId.make(chat.id);
       yield* bots.createThread({ botId: BOT, threadId });
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, pinned_at)
-        VALUES (${chat.id}, 'project', ${chat.id}, ${iso(T0)}, ${iso(T0)}, ${chat.pinned === true ? iso(T0) : null})
-      `;
+      yield* seedV2Thread({
+        threadId: chat.id,
+        title: chat.id,
+        instanceId: INSTANCE,
+        createdAt: iso(T0),
+        pinnedAt: chat.pinned === true ? iso(T0) : null,
+      });
+      harness.titles.set(chat.id, chat.id);
       const status = chat.sessionStatus ?? "ready";
-      yield* sql`
-        INSERT INTO projection_thread_sessions (thread_id, status, active_turn_id, updated_at)
-        VALUES (${chat.id}, ${status}, ${status === "running" ? "turn-live" : null}, ${iso(T0)})
-      `;
+      if (status === "running") {
+        yield* seedV2Run({
+          runId: "turn-live",
+          threadId: chat.id,
+          instanceId: INSTANCE,
+          requestedAt: iso(T0),
+        });
+      }
       harness.shells.set(chat.id, {
         session: { status, activeTurnId: status === "running" ? "turn-live" : null },
         backgroundLiveness: null,
@@ -213,10 +247,13 @@ const seed = (harness: Harness, chats: ReadonlyArray<ChatSpec>) =>
         [`${chat.id}-reply`, "assistant", TASK_DONE_MS],
       ];
       for (const [messageId, role, atMs] of messages) {
-        yield* sql`
-          INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
-          VALUES (${messageId}, ${chat.id}, ${role}, 'text', 0, ${iso(atMs)}, ${iso(atMs)})
-        `;
+        yield* seedV2Message({
+          messageId,
+          threadId: chat.id,
+          role,
+          text: "text",
+          createdAt: iso(atMs),
+        });
       }
       if (chat.routine === true) {
         yield* sql`
@@ -246,10 +283,7 @@ const archivedIds = Effect.gen(function* () {
   return rows.map((row) => row.threadId);
 });
 
-const sessionStops = (harness: Harness) =>
-  harness.dispatched.flatMap((command) =>
-    command.type === "thread.session.stop" ? [command] : [],
-  );
+const sessionStops = (harness: Harness) => harness.dispatched;
 
 const sweepAt = (ms: number) =>
   Effect.gen(function* () {
@@ -270,16 +304,17 @@ const linkState = (threadId: string) =>
     return row;
   });
 
-/** A turn-start event as the engine publishes it; only what the listener reads matters. */
-const turnStartEvent = (threadId: string, commandId: string, sequence: number) =>
-  ({
-    sequence,
-    type: "thread.turn-start-requested",
-    commandId,
-    aggregateKind: "thread",
-    aggregateId: threadId,
-    payload: { threadId, messageId: `${commandId}-message`, createdAt: iso(T0) },
-  }) as unknown as OrchestrationEvent;
+/** A turn-start event as the v2 engine publishes it; only what the listener reads matters. */
+const turnStartEvent = (
+  threadId: string,
+  commandId: string,
+  _sequence: number,
+): PersonalEngine.PersonalThreadEvent => ({
+  _tag: "TurnStartRequested",
+  threadId: ThreadId.make(threadId),
+  messageId: MessageId.make(`${commandId}-message`),
+  interactionMode: "default",
+});
 
 /** Lets the forked listener catch up with what was offered. */
 const settle = <R>(check: Effect.Effect<boolean, never, R>) =>
@@ -294,16 +329,13 @@ const settle = <R>(check: Effect.Effect<boolean, never, R>) =>
 /** A turn requested at `requestedMs` and still running on the chat. */
 const runTurn = (threadId: string, requestedMs: number) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, checkpoint_files_json)
-      VALUES (${threadId}, ${`${threadId}-turn`}, 'running', ${iso(requestedMs)}, ${iso(requestedMs)}, '[]')
-    `;
-    yield* sql`
-      UPDATE projection_thread_sessions
-      SET status = 'running', active_turn_id = ${`${threadId}-turn`}
-      WHERE thread_id = ${threadId}
-    `;
+    yield* seedV2Run({
+      runId: `${threadId}-turn`,
+      threadId,
+      ordinal: 99,
+      instanceId: INSTANCE,
+      requestedAt: iso(requestedMs),
+    });
   });
 
 describe("PersonalTaskChatArchive", () => {
@@ -420,7 +452,7 @@ describe("PersonalTaskChatArchive", () => {
 
         expect(yield* sweepAt(TASK_DONE_MS + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(1);
         expect(yield* archivedIds).toEqual(["chat-done"]);
-        // Same as a manual archive: the session is stopped and its commands ended.
+        // Same as a manual archive: the session is stopped.
         expect(sessionStops(harness)).toEqual([
           expect.objectContaining({ threadId: "chat-done", terminateProcesses: true }),
         ]);

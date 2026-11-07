@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off globalDateInEffect:off preferSchemaOverJson:off - local-time dates as Codex prints them; stored verdicts are asserted on verbatim.
+import type { PersonalServerProvider as ServerProvider } from "../engine/PersonalProviders.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -6,7 +7,6 @@ import {
   type OrchestrationThreadShell,
   type PersonalBot,
   type ProviderSession,
-  type ServerProvider,
   type ServerProviderSmokeCheck,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";

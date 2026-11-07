@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/environment/ServerEnvironment.ts b/apps/server/src/environment/ServerEnvironment.ts
+index d58c014d86e85a21c28e6e50093caf21c707049f..2df4c0b4eec5ccef33fabb99ad169dd57899d3f0 100644
+--- a/apps/server/src/environment/ServerEnvironment.ts
++++ b/apps/server/src/environment/ServerEnvironment.ts
+@@ -6,7 +6,7 @@ import {
+ } from "@t3tools/contracts";
+ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";

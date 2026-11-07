@@ -1,0 +1,20 @@
+diff --git a/apps/server/src/mcp/McpSessionRegistry.ts b/apps/server/src/mcp/McpSessionRegistry.ts
+index 50441df96a635f77540702f173ba3c4a20e6677b..8e2dd256795245474fb5a562fb4dd9124b19f4c2 100644
+--- a/apps/server/src/mcp/McpSessionRegistry.ts
++++ b/apps/server/src/mcp/McpSessionRegistry.ts
+@@ -1,12 +1,12 @@
+ import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+ import * as Clock from "effect/Clock";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as SynchronizedRef from "effect/SynchronizedRef";
+-import { HttpServer } from "effect/unstable/http";
+-import * as NetAddress from "effect/unstable/net/NetAddress";
++import { HttpServer } from "effect/http";
++import * as NetAddress from "effect/net/NetAddress";
+ 
+ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+ import * as McpInvocationContext from "./McpInvocationContext.ts";

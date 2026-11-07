@@ -1,0 +1,12 @@
+diff --git a/apps/mobile/src/features/files/sourceHighlightingState.test.ts b/apps/mobile/src/features/files/sourceHighlightingState.test.ts
+index 50b4eec41b0dd5c4bcb99756f75b53ee4a92182b..e17a94c5bb5f14c4b604a07c220880eb0be73f77 100644
+--- a/apps/mobile/src/features/files/sourceHighlightingState.test.ts
++++ b/apps/mobile/src/features/files/sourceHighlightingState.test.ts
+@@ -1,5 +1,5 @@
+-import { AtomRegistry } from "effect/unstable/reactivity";
+-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
++import { AtomRegistry } from "effect/reactivity";
++import * as AsyncResult from "effect/reactivity/AsyncResult";
+ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+ 
+ import {

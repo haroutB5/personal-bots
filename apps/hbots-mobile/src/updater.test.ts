@@ -22,7 +22,11 @@ const RELEASE = {
 
 describe("updater generation", () => {
   it("sends the session generation with an offer", async () => {
-    const auth = { apkUrl: "https://relay.example.test/apk", bearer: "tok" };
+    const auth = {
+      apkUrl: "https://relay.example.test/apk",
+      bearer: "tok",
+      authMethod: "bearer" as const,
+    };
 
     await offerUpdate(RELEASE, auth, false, 4);
 

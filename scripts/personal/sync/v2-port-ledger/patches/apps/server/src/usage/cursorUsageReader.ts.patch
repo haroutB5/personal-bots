@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/usage/cursorUsageReader.ts b/apps/server/src/usage/cursorUsageReader.ts
+index 573506d818a163cc4dcb988fa693c66665e8e674..2313e674e23897237becfee77f2cd2494909830e 100644
+--- a/apps/server/src/usage/cursorUsageReader.ts
++++ b/apps/server/src/usage/cursorUsageReader.ts
+@@ -253,7 +253,7 @@ export async function readCursorAccountUsage(
+           sessionId,
+           totals,
+           reportedCostUsd,
+-          fast: false,
++          speed: "standard",
+           dedupeKey: `cursor-account:${accountKey}:${key}:${occurrence}`,
+         });
+       }

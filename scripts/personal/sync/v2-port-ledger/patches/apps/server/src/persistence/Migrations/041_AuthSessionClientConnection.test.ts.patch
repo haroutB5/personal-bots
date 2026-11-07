@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.test.ts b/apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.test.ts
+index 4f106de404a0c2a40927cb7d3dee3f99e1889116..90467511e67860a9390e4fb2c8f141c1374117e5 100644
+--- a/apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.test.ts
++++ b/apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.test.ts
+@@ -1,7 +1,7 @@
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { runMigrations } from "../Migrations.ts";
+ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";

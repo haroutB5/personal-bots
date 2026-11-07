@@ -1,0 +1,13 @@
+diff --git a/apps/desktop/src/preview/BrowserSession.test.ts b/apps/desktop/src/preview/BrowserSession.test.ts
+index 45000736c558e9834c2920c5a8df0c47b570d367..3d7b62c419dc6da4d62acdd0e40ff838d1993592 100644
+--- a/apps/desktop/src/preview/BrowserSession.test.ts
++++ b/apps/desktop/src/preview/BrowserSession.test.ts
+@@ -1,6 +1,6 @@
+ import { assert, describe, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
+-import * as Crypto from "effect/Crypto";
++import * as NodeServices from "@t3tools/shared/nodeServices";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as PlatformError from "effect/PlatformError";

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/usage/cliproxyApi.ts b/apps/server/src/usage/cliproxyApi.ts
+index 6bfd3fe4772e3769f5359c8521a3690cc2da1108..04307f21282b8b248d1342c918165a4ffa8d4921 100644
+--- a/apps/server/src/usage/cliproxyApi.ts
++++ b/apps/server/src/usage/cliproxyApi.ts
+@@ -10,7 +10,7 @@ import {
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as Schema from "effect/Schema";
+-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ 
+ import { codexPlanLabel } from "../provider/Layers/CodexProvider.ts";
+ import { codexRateLimitsToLimits } from "../provider/Layers/codexUsageLimits.ts";

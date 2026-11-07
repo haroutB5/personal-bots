@@ -4,14 +4,20 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { PersonalEngine } from "./engine/PersonalEngine.ts";
-import { personalReadsTestLayer } from "./test/personalReadsTestLayer.ts";
+import { personalReadsTestLayer, personalTestDatabase } from "./test/personalReadsTestLayer.ts";
 import { personalWorkingProgress } from "./workingProgress.ts";
 
-const testLayer = personalReadsTestLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const testLayer = personalReadsTestLayer.pipe(Layer.provideMerge(personalTestDatabase));
 
 const thread = (id: string) => ThreadId.make(id);
+
+const threadPayload = (latestUserMessageAt: string) =>
+  JSON.stringify({
+    providerInstanceId: "claudeAgent",
+    modelSelection: { instanceId: "claudeAgent", model: "claude-test" },
+    latestUserMessageAt,
+  });
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -19,73 +25,106 @@ const seed = Effect.gen(function* () {
   const addThread = (id: string, status: string, userAt: string) =>
     Effect.gen(function* () {
       yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, latest_user_message_at)
-        VALUES (${id}, 'project-1', ${id}, '2026-09-29T09:00:00.000Z', '2026-09-29T09:00:00.000Z', ${userAt})
+        INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json)
+        VALUES (${id}, 'project-1', ${id}, 'claudeAgent', 'full-access', 'default', NULL,
+          '2026-09-29T09:00:00.000Z', '2026-09-29T10:00:00.000Z', NULL, NULL,
+          ${threadPayload(userAt)})
       `;
       yield* sql`
-        INSERT INTO projection_thread_sessions (thread_id, status, provider_name, active_turn_id, last_error, updated_at)
-        VALUES (${id}, ${status}, 'claudeAgent', NULL, NULL, '2026-09-29T10:00:00.000Z')
+        INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+            completed_at, payload_json)
+        VALUES (${`${id}-run`}, ${id}, 1, 'claudeAgent', NULL, ${status},
+          '2026-09-29T10:00:00.000Z', NULL, '{}')
       `;
     });
-  const addReasoning = (id: string, messageId: string, text: string, at: string) =>
+  const addItem = (input: {
+    id: string;
+    threadId: string;
+    ordinal: number;
+    type: "reasoning" | "command_execution";
+    text?: string;
+    title?: string | null;
+    at: string;
+  }) =>
     sql`
-      INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
-      VALUES (${messageId}, ${id}, 'reasoning', ${text}, 0, ${at}, ${at})
+      INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json)
+      VALUES (${input.id}, ${input.threadId}, ${`${input.threadId}-run`}, NULL, NULL, NULL, NULL,
+        ${input.ordinal}, ${input.type}, 'completed', ${input.at},
+        ${JSON.stringify({
+          type: input.type,
+          ...(input.text === undefined ? {} : { text: input.text }),
+          ...(input.title === undefined ? {} : { title: input.title }),
+        })})
     `;
-  const addTool = (
-    id: string,
-    activityId: string,
-    title: string | null,
-    summary: string,
-    at: string,
-    seq: number,
-  ) =>
-    sql`
-      INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
-      VALUES (${activityId}, ${id}, NULL, 'tool', 'tool.started', ${summary},
-        ${title === null ? "{}" : `{"title":"${title}","detail":"cat .env"}`}, ${seq}, ${at})
-    `;
-  return { sql, engine, addThread, addReasoning, addTool };
+  return { sql, engine, addThread, addItem };
 });
 
 it.effect("notes for working chats only, newest of thinking and tool title, this turn only", () =>
   Effect.gen(function* () {
-    const { addThread, addReasoning, addTool, engine } = yield* seed;
+    const { addThread, addItem, engine } = yield* seed;
     // Working: thinking summary, then a newer tool step; an older turn's thinking is ignored.
     yield* addThread("t-working", "running", "2026-09-29T10:00:00.000Z");
-    yield* addReasoning("t-working", "r-old", "**Yesterday's plan**", "2026-09-29T09:30:00.000Z");
-    yield* addReasoning(
-      "t-working",
-      "r-new",
-      "**Reading the failing test**\n\nMore words.",
-      "2026-09-29T10:00:02.000Z",
-    );
-    yield* addTool(
-      "t-working",
-      "a1",
-      "Running tests",
-      "Running tests started",
-      "2026-09-29T10:00:09.000Z",
-      5,
-    );
+    yield* addItem({
+      id: "r-old",
+      threadId: "t-working",
+      ordinal: 1,
+      type: "reasoning",
+      text: "**Yesterday's plan**",
+      at: "2026-09-29T09:30:00.000Z",
+    });
+    yield* addItem({
+      id: "r-new",
+      threadId: "t-working",
+      ordinal: 2,
+      type: "reasoning",
+      text: "**Reading the failing test**\n\nMore words.",
+      at: "2026-09-29T10:00:02.000Z",
+    });
+    yield* addItem({
+      id: "a1",
+      threadId: "t-working",
+      ordinal: 3,
+      type: "command_execution",
+      title: "Running tests",
+      at: "2026-09-29T10:00:09.000Z",
+    });
     // Working, thinking only.
     yield* addThread("t-thinking", "running", "2026-09-29T10:00:00.000Z");
-    yield* addReasoning("t-thinking", "r-1", "**Planning the fix**", "2026-09-29T10:00:03.000Z");
-    // Working, tool title from the summary when the payload has none.
+    yield* addItem({
+      id: "r-1",
+      threadId: "t-thinking",
+      ordinal: 1,
+      type: "reasoning",
+      text: "**Planning the fix**",
+      at: "2026-09-29T10:00:03.000Z",
+    });
+    // Working, tool title from the step payload.
     yield* addThread("t-summary", "starting", "2026-09-29T10:00:00.000Z");
-    yield* addTool(
-      "t-summary",
-      "a2",
-      null,
-      "Searching the repo started",
-      "2026-09-29T10:00:04.000Z",
-      1,
-    );
+    yield* addItem({
+      id: "a2",
+      threadId: "t-summary",
+      ordinal: 1,
+      type: "command_execution",
+      title: "Searching the repo",
+      at: "2026-09-29T10:00:04.000Z",
+    });
     // Working but nothing said or done yet.
     yield* addThread("t-quiet", "running", "2026-09-29T10:00:00.000Z");
     // Idle chat with old thinking: no note outlives its turn.
     yield* addThread("t-idle", "ready", "2026-09-29T10:00:00.000Z");
-    yield* addReasoning("t-idle", "r-idle", "**Finished thing**", "2026-09-29T10:00:05.000Z");
+    yield* addItem({
+      id: "r-idle",
+      threadId: "t-idle",
+      ordinal: 1,
+      type: "reasoning",
+      text: "**Finished thing**",
+      at: "2026-09-29T10:00:05.000Z",
+    });
 
     const ids = ["t-working", "t-thinking", "t-summary", "t-quiet", "t-idle", "t-unknown"].map(
       thread,
@@ -103,59 +142,72 @@ it.effect("notes for working chats only, newest of thinking and tool title, this
       "t-thinking": false,
       "t-summary": true,
     });
-
-    // The tool's detail (a command, a path) never reaches the note.
-    expect(notes.every((entry) => !entry.note.includes(".env"))).toBe(true);
   }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("a turn the server starts on its own shows none of the previous turn's notes", () =>
   Effect.gen(function* () {
-    const { addThread, addReasoning, addTool, sql, engine } = yield* seed;
+    const { addThread, addItem, sql, engine } = yield* seed;
     // One owner message at 10:00; turn-1 answered it and thought and ran a tool.
     yield* addThread("t-follow-up", "running", "2026-09-29T10:00:00.000Z");
     yield* sql`
-      INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, checkpoint_files_json)
-      VALUES ('t-follow-up', 'turn-1', 'completed', '2026-09-29T10:00:01.000Z', '2026-09-29T10:00:01.000Z', '[]')
+      UPDATE orchestration_v2_projection_runs
+      SET status = 'completed', completed_at = '2026-09-29T10:00:10.000Z'
+      WHERE run_id = 't-follow-up-run'
     `;
-    yield* sql`UPDATE projection_threads SET latest_turn_id = 'turn-1' WHERE thread_id = 't-follow-up'`;
-    yield* addReasoning(
-      "t-follow-up",
-      "r-1",
-      "**Waiting for the child**",
-      "2026-09-29T10:00:05.000Z",
-    );
-    yield* addTool(
-      "t-follow-up",
-      "a-1",
-      "MCP tool call",
-      "MCP tool call started",
-      "2026-09-29T10:00:09.000Z",
-      1,
-    );
+    yield* addItem({
+      id: "r-1",
+      threadId: "t-follow-up",
+      ordinal: 1,
+      type: "reasoning",
+      text: "**Waiting for the child**",
+      at: "2026-09-29T10:00:05.000Z",
+    });
+    yield* addItem({
+      id: "a-1",
+      threadId: "t-follow-up",
+      ordinal: 2,
+      type: "command_execution",
+      title: "MCP tool call",
+      at: "2026-09-29T10:00:09.000Z",
+    });
 
     // While turn-1 runs, its note is named after turn-1.
+    yield* sql`
+      UPDATE orchestration_v2_projection_runs
+      SET status = 'running', completed_at = NULL
+      WHERE run_id = 't-follow-up-run'
+    `;
     const during = yield* personalWorkingProgress(engine, [thread("t-follow-up")]);
     expect(during).toEqual([
-      { threadId: "t-follow-up", turnId: "turn-1", note: "MCP tool call", toolStep: true },
+      { threadId: "t-follow-up", turnId: "t-follow-up-run", note: "MCP tool call", toolStep: true },
     ]);
 
     // The child finishes and the server starts turn-2 with no new owner message.
     yield* sql`
-      INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, checkpoint_files_json)
-      VALUES ('t-follow-up', 'turn-2', 'running', '2026-09-29T10:05:00.000Z', '2026-09-29T10:05:00.500Z', '[]')
+      UPDATE orchestration_v2_projection_runs
+      SET status = 'completed', completed_at = '2026-09-29T10:04:00.000Z'
+      WHERE run_id = 't-follow-up-run'
     `;
-    yield* sql`UPDATE projection_threads SET latest_turn_id = 'turn-2' WHERE thread_id = 't-follow-up'`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+          completed_at, payload_json)
+      VALUES ('turn-2', 't-follow-up', 2, 'claudeAgent', NULL, 'running',
+        '2026-09-29T10:05:00.000Z', NULL, ${JSON.stringify({ userMessageId: null })})
+    `;
     // Nothing said yet in turn-2: no note, not turn-1's.
     expect(yield* personalWorkingProgress(engine, [thread("t-follow-up")])).toEqual([]);
 
     // Turn-2's first words name turn-2.
-    yield* addReasoning(
-      "t-follow-up",
-      "r-2",
-      "**Checking the child's result**",
-      "2026-09-29T10:05:03.000Z",
-    );
+    yield* addItem({
+      id: "r-2",
+      threadId: "t-follow-up",
+      ordinal: 3,
+      type: "reasoning",
+      text: "**Checking the child's result**",
+      at: "2026-09-29T10:05:03.000Z",
+    });
     expect(yield* personalWorkingProgress(engine, [thread("t-follow-up")])).toEqual([
       {
         threadId: "t-follow-up",

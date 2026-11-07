@@ -1,0 +1,26 @@
+diff --git a/apps/server/src/cloud/CliState.test.ts b/apps/server/src/cloud/CliState.test.ts
+index d59b89875e79d6825eca2d2b6fa8a454260195c8..6be6f949b261cb5ffb32c27b024068a39fbde3cb 100644
+--- a/apps/server/src/cloud/CliState.test.ts
++++ b/apps/server/src/cloud/CliState.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+@@ -8,6 +8,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+ import { ServerConfig } from "../config.ts";
+ import * as CliState from "./CliState.ts";
+ import {
++  CLOUD_ENDPOINT_HTTP_BASE_URL,
+   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+   CLOUD_LINKED_USER_ID,
+@@ -25,6 +26,7 @@ const persistedCloudLinkSecrets = [
+   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+   CLOUD_MINT_PUBLIC_KEY,
+   CLOUD_ENDPOINT_RUNTIME_CONFIG,
++  CLOUD_ENDPOINT_HTTP_BASE_URL,
+   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+   PUBLISH_AGENT_ACTIVITY_SECRET,
+ ] as const;

@@ -2,11 +2,11 @@ import {
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   PersonalBotId,
   ThreadId,
-  type OrchestrationLatestTurn,
   type OrchestrationSession,
   type OrchestrationSessionProviderRetry,
   type PersonalBrowserStatus,
 } from "@t3tools/contracts";
+import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { TimelineEntry } from "./types.ts";

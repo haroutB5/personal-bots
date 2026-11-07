@@ -1,0 +1,246 @@
+diff --git a/apps/server/src/provider/Drivers/AntigravityDriver.ts b/apps/server/src/provider/Drivers/AntigravityDriver.ts
+index fb9c7041b5fdc849a7b256e2e663bcb0df230a31..93a4f71794dff8be3f899a2e52858aa24b24a14b 100644
+--- a/apps/server/src/provider/Drivers/AntigravityDriver.ts
++++ b/apps/server/src/provider/Drivers/AntigravityDriver.ts
+@@ -1,20 +1,29 @@
+ import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
+-import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
++import {
++  AntigravitySettings,
++  ProviderDriverKind,
++  ProviderSetupError,
++  type ServerProvider,
++} from "@t3tools/contracts";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import {
+   NodeRuntimeUnavailableError,
+   nodeRuntimeUnavailableMessage,
+ } from "@t3tools/shared/nodeRuntime";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Deferred from "effect/Deferred";
++import * as Clock from "effect/Clock";
++import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
++import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
++import { HttpClient } from "effect/http";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import type { AcpError } from "effect-acp/errors";
+ 
+ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+@@ -32,6 +41,7 @@ import {
+   antigravityAuthUsesBrowser,
+   buildAntigravityAcpSpawnInput,
+   isAntigravitySignInRequiredError,
++  makeAntigravityLauncherTree,
+   prepareAntigravityProfile,
+   resolveAntigravityInstanceDirectories,
+   type AntigravityAuthConfig,
+@@ -48,6 +58,13 @@ import {
+ } from "../acp/AntigravitySessionFiles.ts";
+ import { ProviderDriverError } from "../Errors.ts";
+ import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
++import {
++  readAntigravityUsageLimits,
++  withAntigravityQuotaHit,
++  type AntigravityQuotaHit,
++} from "../Layers/antigravityUsageLimits.ts";
++import { makeUsageLimits } from "../providerUsageLimits.ts";
++import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
+ import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
+ import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+ import * as ModelManifest from "../ModelManifest.ts";
+@@ -64,12 +81,32 @@ const DRIVER = ProviderDriverKind.make("antigravity");
+ const decodeSettings = Schema.decodeSync(AntigravitySettings);
+ const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+ 
++/**
++ * The usage limits after a quota hit: the spent window marked 100%, merged onto
++ * the windows already shown. The runtime update replaces the published windows,
++ * so starting from nothing would drop the figures for the other window until
++ * the next quota read.
++ */
++export function quotaHitUsageLimits(input: {
++  readonly shown: ServerProvider["usageLimits"];
++  readonly hit: AntigravityQuotaHit | undefined;
++  readonly checkedAt: string;
++  readonly nowMs: number;
++}) {
++  const base =
++    input.shown && !input.shown.unavailable && input.shown.windows.length > 0
++      ? makeUsageLimits({ checkedAt: input.checkedAt, windows: input.shown.windows })
++      : makeUsageLimits({ checkedAt: input.checkedAt, windows: [] });
++  return withAntigravityQuotaHit(base, input.hit, input.nowMs);
++}
++
+ export type AntigravityDriverEnv =
+   | AntigravityInstallation
+   | BackgroundPolicy.BackgroundPolicy
+   | ChildProcessSpawner.ChildProcessSpawner
+   | Crypto.Crypto
+   | FileSystem.FileSystem
++  | HttpClient.HttpClient
+   | ModelManifest.ModelManifest
+   | Path.Path
+   | ProviderEventLoggers
+@@ -86,6 +123,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
+     Effect.gen(function* () {
+       const crypto = yield* Crypto.Crypto;
+       const fileSystem = yield* FileSystem.FileSystem;
++      const httpClient = yield* HttpClient.HttpClient;
+       const path = yield* Path.Path;
+       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+       const serverConfig = yield* ServerConfig;
+@@ -225,8 +263,13 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
+                 ),
+               ),
+         );
++        // Sessions, sign-in and text generation all stop through this scope.
++        // End the launcher's child before the launcher stops, so nothing
++        // survives to hold the temp directory removed above.
++        const launcherTree = makeAntigravityLauncherTree(input.onProcessStarted);
+         const runtime = yield* makeAntigravityAcpRuntime({
+           ...input,
++          onProcessStarted: launcherTree.onProcessStarted,
+           authMethod: auth.authMethod,
+           childProcessSpawner: spawner,
+           spawn: buildAntigravityAcpSpawnInput({
+@@ -238,6 +281,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
+             runtimeTempDirectory,
+           }),
+         }).pipe(Effect.provideService(Crypto.Crypto, crypto));
++        yield* Effect.addFinalizer(() => launcherTree.terminate);
+         return {
+           ...runtime,
+           start: () =>
+@@ -318,11 +362,14 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
+           yield* runtime.drainEvents;
+         }).pipe(Effect.scoped);
+ 
++      const probedModelsOnceRef = yield* Ref.make(false);
+       const authFlow: AntigravityAuth = yield* makeAntigravityAuth({
+         instanceId,
+         makeRuntime: makeDisposableRuntime,
+         onAuthenticated: publishCatalog,
+-        onSignedOut: Effect.suspend(() => provider.onSignedOut),
++        onSignedOut: Effect.suspend(() =>
++          Ref.set(probedModelsOnceRef, false).pipe(Effect.andThen(provider.onSignedOut)),
++        ),
+         usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
+       });
+ 
+@@ -372,10 +419,57 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
+         };
+       });
+ 
++      let quotaHit: AntigravityQuotaHit | undefined;
++      const readUsageLimits = readAntigravityUsageLimits({
++        profileDirectory: directories.profile,
++        authMethod: auth.authMethod,
++        enabled: settings.enabled,
++      }).pipe(
++        Effect.provideService(FileSystem.FileSystem, fileSystem),
++        Effect.provideService(Path.Path, path),
++        Effect.provideService(HttpClient.HttpClient, httpClient),
++        // The runtime's own quota notice wins over a summary that still reads 0%.
++        Effect.flatMap((limits) =>
++          Clock.currentTimeMillis.pipe(
++            Effect.map((nowMs) => withAntigravityQuotaHit(limits, quotaHit, nowMs)),
++          ),
++        ),
++      );
++
++      const cacheFilePath = yield* resolveProviderStatusCachePath({
++        cacheDir: serverConfig.providerStatusCacheDir,
++        instanceId,
++      }).pipe(Effect.provideService(Path.Path, path));
++      const cachedProvider = yield* readProviderStatusCache(cacheFilePath).pipe(
++        Effect.provideService(FileSystem.FileSystem, fileSystem),
++        Effect.orElseSucceed(() => undefined),
++      );
++      const initialModels = cachedProvider?.models?.filter((model) => !model.isCustom) ?? [];
++
++      let runRefreshModels: (() => Effect.Effect<void, never, never>) | undefined;
++      const onProbeCompleted = (snapshot: ServerProvider): Effect.Effect<void, never, never> =>
++        Effect.gen(function* () {
++          if (
++            snapshot.enabled &&
++            snapshot.installed &&
++            snapshot.auth.status === "authenticated" &&
++            snapshot.models.length === 0
++          ) {
++            const alreadyProbed = yield* Ref.getAndSet(probedModelsOnceRef, true);
++            if (!alreadyProbed && runRefreshModels) {
++              yield* Effect.logInfo("Antigravity models empty after boot, probing in background");
++              yield* runRefreshModels();
++            }
++          }
++        });
++
+       const provider = yield* makeAntigravityProvider(settings, {
+         stampIdentity: classifyModels,
+         probe,
+         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
++        readUsageLimits,
++        initialModels,
++        onProbeCompleted,
+         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
+           Effect.provideService(FileSystem.FileSystem, fileSystem),
+           Effect.provideService(Path.Path, path),
+@@ -404,6 +498,39 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
+         onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
+         onAvailableCommands: provider.onAvailableCommands,
+         onAuthRequired: provider.onAuthRequired,
++        onQuotaReached: (hit) =>
++          Effect.gen(function* () {
++            const nowMs = yield* Clock.currentTimeMillis;
++            // The notice is model-visible text, so the card trusts it for at most
++            // five hours (a real longer limit shows the notice again on the next
++            // try), and the next normal turn clears it.
++            // The stated reset still says which window is spent: a 5-day reset is
++            // the weekly limit even though the card trusts it for five hours.
++            const capMs = nowMs + 5 * 60 * 60_000;
++            const statedMs = hit.retryAt === undefined ? Number.NaN : Date.parse(hit.retryAt);
++            quotaHit = {
++              retryAt: DateTime.formatIso(
++                DateTime.makeUnsafe(Number.isFinite(statedMs) ? statedMs : capMs),
++              ),
++              expiresAt: DateTime.formatIso(
++                DateTime.makeUnsafe(Number.isFinite(statedMs) ? Math.min(statedMs, capMs) : capMs),
++              ),
++            };
++            const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
++            const spent = quotaHitUsageLimits({
++              shown: (yield* provider.snapshot.getSnapshot).usageLimits,
++              hit: quotaHit,
++              checkedAt,
++              nowMs,
++            });
++            yield* provider.snapshot.applyUsageLimits({
++              windows: spent.unavailable ? [] : spent.windows,
++              checkedAt,
++            });
++          }),
++        onQuotaCleared: Effect.sync(() => {
++          quotaHit = undefined;
++        }),
+         ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
+       });
+       const textGeneration = yield* makeAntigravityTextGeneration({
+@@ -465,6 +592,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
+         ),
+       );
+ 
++      runRefreshModels = () => refreshModels().pipe(Effect.ignore);
++      yield* onProbeCompleted(yield* provider.snapshot.getSnapshot).pipe(Effect.forkScoped);
++
+       return {
+         instanceId,
+         driverKind: DRIVER,

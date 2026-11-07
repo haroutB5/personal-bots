@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { APP_SCOPING_ENV } from "./memoryApps.ts";
 import { RELEVANT_MAX_CHARS, RETRIEVAL_ENV } from "./memoryRetrieval.ts";
 import {
@@ -16,8 +16,9 @@ import {
   PersonalMemoryService,
 } from "./PersonalMemoryService.ts";
 import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
+import { seedV2Message, seedV2Thread } from "../test/v2ProjectionSeed.ts";
 
-const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const BOT_A = PersonalBotId.make("bot-a");
 const THREAD_A = ThreadId.make("thread-a");
@@ -53,27 +54,18 @@ const linkThread = (title: string, botName = "Dev Bot") =>
       INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
       VALUES (${THREAD_A}, ${BOT_A}, ${now})
     `;
-    yield* sql`
-      INSERT INTO projection_threads (
-        thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-        created_at, updated_at
-      )
-      VALUES (
-        ${THREAD_A}, 'project-1', ${title}, '{"instanceId":"codex","model":"m"}',
-        'full-access', 'default', ${now}, ${now}
-      )
-    `;
+    yield* seedV2Thread({
+      threadId: THREAD_A,
+      projectId: "project-1",
+      title,
+      createdAt: now,
+    });
   });
 
 const addMessage = (id: string, role: "user" | "assistant", text: string, secondsAgo: number) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const at = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { seconds: secondsAgo }));
-    yield* sql`
-      INSERT INTO projection_thread_messages
-        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-      VALUES (${id}, ${THREAD_A}, NULL, ${role}, ${text}, 0, ${at}, ${at})
-    `;
+    yield* seedV2Message({ messageId: id, threadId: THREAD_A, role, text, createdAt: at });
   });
 
 const saveRule = (content: string, apps?: ReadonlyArray<string>) =>

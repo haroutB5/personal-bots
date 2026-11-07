@@ -1,0 +1,13 @@
+diff --git a/packages/contracts/src/baseSchemas.ts b/packages/contracts/src/baseSchemas.ts
+index 2d40b92e526b95f1d45289443fa5affa24328466..4a31e671472f88d9e4ec91f7bfa349d5139208f4 100644
+--- a/packages/contracts/src/baseSchemas.ts
++++ b/packages/contracts/src/baseSchemas.ts
+@@ -127,7 +127,7 @@ export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Elem
+  * Construct a branded identifier. Enforces non-empty trimmed strings
+  */
+ const makeEntityId = <Brand extends string>(brand: Brand) => {
+-  return TrimmedNonEmptyString.pipe(Schema.brand(brand));
++  return TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand as never));
+ };
+ 
+ export const ThreadId = makeEntityId("ThreadId");
