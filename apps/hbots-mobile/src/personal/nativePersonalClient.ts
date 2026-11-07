@@ -27,6 +27,7 @@ import { createPersonalLoginsClient } from "@hbots/personal-client/logins/person
 import { createPersonalSecretsClient } from "@hbots/personal-client/secrets/personalSecrets";
 import { createPersonalConnectionsClient } from "@hbots/personal-client/connections/personalConnections";
 import { createPersonalSettingsClient } from "@hbots/personal-client/settings/personalSettings";
+import { createProviderSetupClient } from "@hbots/personal-client/settings/providerSetup";
 import { createPersonalComputerClient } from "@hbots/personal-client/computer/personalComputer";
 import {
   parseSystemSummary,
@@ -175,6 +176,7 @@ export interface NativePersonal {
   readonly automation: ReturnType<typeof createPersonalAutomationClient>;
   readonly groups: ReturnType<typeof createPersonalGroupsClient>;
   readonly settings: ReturnType<typeof createPersonalSettingsClient>;
+  readonly providers: ReturnType<typeof createProviderSetupClient>;
   readonly memory: ReturnType<typeof createPersonalMemoryClient>;
   readonly logins: ReturnType<typeof createPersonalLoginsClient>;
   readonly secrets: ReturnType<typeof createPersonalSecretsClient>;
@@ -313,6 +315,7 @@ export function createNativePersonal(
     },
   });
   const settings = createPersonalSettingsClient(runtime, client);
+  const providers = createProviderSetupClient(runtime, client);
   const memory = createPersonalMemoryClient(runtime, client);
   const logins = createPersonalLoginsClient(runtime, client);
   const secrets = createPersonalSecretsClient(runtime, client);
@@ -537,6 +540,7 @@ export function createNativePersonal(
     automation,
     groups,
     settings,
+    providers,
     memory,
     logins,
     secrets,

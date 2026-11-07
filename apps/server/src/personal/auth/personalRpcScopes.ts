@@ -36,6 +36,13 @@ export const PERSONAL_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalBotsSetProfile]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalBotsListFiles]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsRecheckProvider]: AuthOrchestrationOperateScope,
+  // Provider setup over the phone: reading the catalogue and the settings is a
+  // read; preparing an agent and running a test turn operate.
+  [WS_METHODS.providerCatalogList]: AuthOrchestrationReadScope,
+  [WS_METHODS.providerCatalogInstallFacts]: AuthOrchestrationReadScope,
+  [WS_METHODS.providerCatalogAdd]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerTestRun]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   // Owner-only, like every other write: no MCP tool reaches these.
   [WS_METHODS.personalBotsListRemoved]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsRestore]: AuthOrchestrationOperateScope,

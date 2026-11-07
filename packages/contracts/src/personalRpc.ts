@@ -5,6 +5,16 @@ import { ThreadId } from "./baseSchemas.ts";
 import { EnvironmentAuthorizationError } from "./auth.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderCatalogAddInput,
+  ProviderCatalogAddResult,
+  ProviderCatalogInstallFactsInput,
+  ProviderCatalogInstallPlan,
+  ProviderCatalogListInput,
+  ProviderCatalogListResult,
+} from "./providerCatalog.ts";
+import { ProviderSetupError, ProviderTestRunInput } from "./providerSetup.ts";
+import { ServerSettings } from "./settings.ts";
+import {
   PersonalBotsError,
   PersonalBot,
   PersonalBotArchiveThreadInput,
@@ -973,11 +983,45 @@ const WsPersonalPushAckInAppRpc = Rpc.make(WS_METHODS.personalPushAckInApp, {
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
 });
+const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
+// The phone's provider settings suite reads the catalogue and the settings the
+// desktop panel writes, then runs one test turn. Owner-facing, like the rest of
+// the provider setup RPCs; the catalogue is public registry data.
+const WsProviderCatalogListRpc = Rpc.make(WS_METHODS.providerCatalogList, {
+  payload: ProviderCatalogListInput,
+  success: ProviderCatalogListResult,
+  error: ProviderSetupRpcError,
+});
+const WsProviderCatalogInstallFactsRpc = Rpc.make(WS_METHODS.providerCatalogInstallFacts, {
+  payload: ProviderCatalogInstallFactsInput,
+  success: ProviderCatalogInstallPlan,
+  error: ProviderSetupRpcError,
+});
+const WsProviderCatalogAddRpc = Rpc.make(WS_METHODS.providerCatalogAdd, {
+  payload: ProviderCatalogAddInput,
+  success: ProviderCatalogAddResult,
+  error: ProviderSetupRpcError,
+});
+const WsProviderTestRunRpc = Rpc.make(WS_METHODS.providerTestRun, {
+  payload: ProviderTestRunInput,
+  success: Schema.Struct({}),
+  error: ProviderSetupRpcError,
+});
+const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
+  payload: Schema.Struct({}),
+  success: ServerSettings,
+  error: ProviderSetupRpcError,
+});
 /**
  * The personal side of the app: bots and their threads, files, tasks, groups,
  * secrets, logins, the browser, routines, memory and push.
  */
 export const WsPersonalRpcGroup = RpcGroup.make(
+  WsProviderCatalogListRpc,
+  WsProviderCatalogInstallFactsRpc,
+  WsProviderCatalogAddRpc,
+  WsProviderTestRunRpc,
+  WsServerGetSettingsRpc,
   WsPersonalBotsListRpc,
   WsPersonalBotsThreadShellsRpc,
   WsPersonalBotsThreadFullTextRpc,

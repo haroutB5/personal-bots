@@ -14,6 +14,14 @@ export const ProviderSetupInput = Schema.Struct({
 });
 export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
+/** Run the one-message test now; the verdict arrives on the provider's `smokeCheck`. */
+export const ProviderTestRunInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  /** Defaults to the provider's default model. */
+  model: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProviderTestRunInput = typeof ProviderTestRunInput.Type;
+
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 export const ProviderAuthMethod = Schema.Struct({
@@ -143,9 +151,11 @@ export const ProviderInstallState = Schema.Struct({
   operationId: Schema.NullOr(SetupOperationId),
   phase: Schema.Literals([
     "idle",
+    "resolving",
     "downloading",
     "extracting",
     "verifying",
+    "starting",
     "succeeded",
     "failed",
     "cancelled",

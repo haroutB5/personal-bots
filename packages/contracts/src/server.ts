@@ -26,8 +26,14 @@ import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
 import { ManagedPolicySummary } from "./managedPolicy.ts";
 import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
+import { ProviderCatalogId, ProviderCatalogSource } from "./providerCatalog.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
+import {
+  ServerProviderUsageBalance,
+  ServerProviderUsageLimits,
+  UsageLimitSourceSnapshots,
+} from "./providerUsageLimits.ts";
+import { ServerProviderSmokeCheck } from "./personalV1Wire.ts";
 import { ServerSettings } from "./settings.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
@@ -204,6 +210,28 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+/** What a personal provider's background updater is doing, or why it cannot act. */
+export const ServerProviderAutoUpdateStatus = Schema.Literals([
+  "managed",
+  "blocked",
+  "updating",
+  "updated",
+  "rolled_back",
+  "failed",
+  "waiting_for_limit",
+]);
+export type ServerProviderAutoUpdateStatus = typeof ServerProviderAutoUpdateStatus.Type;
+
+export const ServerProviderAutoUpdate = Schema.Struct({
+  status: ServerProviderAutoUpdateStatus,
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  fromVersion: Schema.NullOr(TrimmedNonEmptyString),
+  toVersion: Schema.NullOr(TrimmedNonEmptyString),
+  finishedAt: Schema.NullOr(IsoDateTime),
+  nextAttemptAt: Schema.NullOr(IsoDateTime),
+});
+export type ServerProviderAutoUpdate = typeof ServerProviderAutoUpdate.Type;
+
 export const ServerProvider = Schema.Struct({
   // Only instanceId is stable enough for provider routing.
   instanceId: ProviderInstanceId,
@@ -223,6 +251,9 @@ export const ServerProvider = Schema.Struct({
     Schema.Struct({
       canAuthenticate: Schema.Boolean,
       canInstall: Schema.Boolean,
+      canRemove: Schema.optionalKey(Schema.Boolean),
+      canTest: Schema.optionalKey(Schema.Boolean),
+      canOpenOnLaptop: Schema.optionalKey(Schema.Boolean),
       documentationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
     }),
   ),
@@ -262,9 +293,20 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
+  usageBalance: Schema.optional(ServerProviderUsageBalance),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  smokeCheck: Schema.optionalKey(ServerProviderSmokeCheck),
+  autoUpdate: Schema.optionalKey(ServerProviderAutoUpdate),
+  catalogId: Schema.optionalKey(Schema.NullOr(ProviderCatalogId)),
+  source: Schema.optionalKey(Schema.NullOr(ProviderCatalogSource)),
+  publisher: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  license: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  openSource: Schema.optionalKey(Schema.Boolean),
+  addedByUser: Schema.optionalKey(Schema.Boolean),
+  previousVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  showUsage: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

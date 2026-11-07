@@ -1,27 +1,10 @@
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider, ServerProviderUsageBalance } from "@t3tools/contracts";
 
 /**
- * The prepaid balance a DeepSeek provider snapshot carries. It follows the
- * DeepSeek provider contract (D1), which is not in `@t3tools/contracts` yet.
+ * The prepaid balance a DeepSeek provider snapshot carries. Kept as an alias so
+ * the usage card reads one name while the wire shape lives in the contracts.
  */
-export interface ServerProviderUsageBalanceWire {
-  readonly checkedAt: string;
-  readonly status: "ready" | "failed";
-  readonly balance?: {
-    readonly currency: string;
-    readonly totalBalance: number;
-    readonly grantedBalance: number;
-    readonly toppedUpBalance: number;
-    readonly isAvailable: boolean;
-    readonly fetchedAt: string;
-  };
-  readonly spent?: {
-    readonly costUsd: number;
-    readonly since: string;
-    readonly records: number;
-  };
-  readonly message?: string;
-}
+export type ServerProviderUsageBalanceWire = ServerProviderUsageBalance;
 
 export type ProviderWithUsageBalance = ServerProvider & {
   readonly usageBalance?: ServerProviderUsageBalanceWire | undefined;
