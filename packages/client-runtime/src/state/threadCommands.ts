@@ -5,7 +5,6 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
   WS_METHODS,
-  type CommandReceiptLookupInput,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -45,7 +44,6 @@ import {
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
-  readCommandReceipt,
   setThreadAutoSettle,
   settleThread,
   snoozeThread,
@@ -264,10 +262,6 @@ export function createThreadEnvironmentAtoms<R, E>(
       execute: startThreadTurn,
       scheduler,
       concurrency,
-    }),
-    commandReceipt: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:thread:command-receipt",
-      execute: (input: CommandReceiptLookupInput) => readCommandReceipt(input),
     }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",
