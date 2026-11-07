@@ -24,6 +24,8 @@ const decodeMarker = Schema.decodeUnknownOption(PersonalGroupMessageMarker);
 
 /**
  * The group-service marker behind a message, or null when there is none.
+ * The mirror of {@link readServerTurn} for groups: attribution rides on the
+ * message's own `context` (see `PERSONAL_GROUP_MESSAGE_CONTEXT_KIND`), so who
  */
 export function readGroupMarker(message: {
   readonly context?: OrchestrationMessageContext | undefined;
@@ -47,7 +49,9 @@ export function activeGroupMembers(group: PersonalGroup): PersonalGroup["members
 }
 
 /**
- * The member threads every group owns, so the Chats list can hide them.
+ * The member threads every group owns, so the Chats list can hide them from
+ * the bots' own chat lists: a member thread is the bot's private relay of the
+ * group, not a chat the owner started, and showing it would put the same
  */
 export function groupMemberThreadIds(groups: ReadonlyArray<PersonalGroup>): ReadonlySet<string> {
   const ids = new Set<string>();
@@ -116,6 +120,8 @@ export function filterGroups(
 
 /**
  * Newest activity in a group, in epoch ms.
+ * The group's own `updatedAt`, not the newest message's time:
+ * `PersonalBotThreadNewestMessage` carries no timestamp (it exists to preview
  */
 export function groupLastActivityMs(group: PersonalGroup, nowMs: number = Date.now()): number {
   const updatedMs = DateTime.toEpochMillis(group.updatedAt);
@@ -300,6 +306,8 @@ export interface GroupVoteCardModel {
 
 /**
  * The tally the owner is being asked to answer, or null.
+ * Only ever rendered for a round parked on `paused_vote`, which is exactly the
+ * status {@link groupRoundCard} returns null for, so the two cards can never
  */
 export function groupVoteCard(input: {
   readonly round: PersonalGroupRound | null;
@@ -359,6 +367,7 @@ export interface GroupDeleteCandidate {
 /**
  * The Delete group sheet's rows. Nothing starts ticked: the default keeps
  * every bot (a group-only bot moves back to the Bots list).
+ * Three things are named on a row, so the owner sees what ticking it would
  */
 export function groupDeleteCandidates(input: {
   readonly group: PersonalGroup;

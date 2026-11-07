@@ -204,7 +204,9 @@ function sameProvider(left: EnvironmentThreadShell, right: EnvironmentThreadShel
 }
 
 /**
- * A rate limit that has clearly passed, so the chat that recorded it must.
+ * A rate limit that has clearly passed, so the chat that recorded it must not
+ * speak for the bot. The server keeps a failed chat's session in `error` with
+ * its limit until that chat gets another turn, which a chat of an ended task
  */
 export function isRateLimitStale(
   shell: EnvironmentThreadShell,
@@ -519,7 +521,9 @@ export function buildBotSummaries(input: {
 
 /** Client-side search over bot names and their thread titles. */
 /**
- * What the Chats previews depend on, per bot: which thread is newest, and.
+ * What the Chats previews depend on, per bot: which thread is newest, and the
+ * message boundaries of that thread. Deliberately NOT the shell's
+ * `updatedAt`: the server bumps it on every streamed `message-sent` delta, so
  */
 export function previewRefreshKey(summaries: ReadonlyArray<BotSummary>): string {
   return summaries
@@ -558,7 +562,9 @@ function newestBoundary(fields: ReadonlyArray<string>): string {
 }
 
 /**
- * Whether the move from `previous` to `next` (two `previewRefreshKey`s) is.
+ * Whether the move from `previous` to `next` (two `previewRefreshKey`s) is a
+ * message boundary worth refetching `personalBots.list` for. A boundary moved
+ * on a bot's newest thread counts. A bot's newest thread changing to another
  */
 export function previewKeyAdvanced(previous: string, next: string): boolean {
   if (previous === next) return false;
@@ -590,7 +596,9 @@ export function filterBotSummaries(
 }
 
 /**
- * Splits the chats list into the pinned box and the list under it. A.
+ * Splits the chats list into the pinned box and the list under it. A working
+ * pin comes first, newest activity first among working pins, so the avatar
+ * strip at the top of the home follows the same rule as the rows under it
  */
 export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): {
   readonly pinned: ReadonlyArray<BotSummary>;

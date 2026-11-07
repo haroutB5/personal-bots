@@ -92,7 +92,9 @@ export function unlistedModelName(slug: string): string {
 }
 
 /**
- * The short model line beside a bot's name: "Opus 5.5 medium", "Sonnet.
+ * The short model line beside a bot's name: "Opus 5.5 medium", "Sonnet 5",
+ * "GPT-6 Astra medium". The model's name as the picker shows it, without the
+ * "Claude" every Claude model repeats, plus the chosen effort (or OpenCode
  */
 export function botModelLabel(
   selection: ModelSelection,
@@ -186,7 +188,9 @@ export const SCHEDULED_MODEL_LABEL = "Scheduled model";
 export const SCHEDULED_MODEL_SHORT_LABEL = "sched";
 
 /**
- * "Scheduled, DeepSeek peak until 11:00": a scheduled DeepSeek model never.
+ * "Scheduled, DeepSeek peak until 11:00": a scheduled DeepSeek model never runs
+ * on DeepSeek inside a peak window (the server's peak switch replaces it with
+ * Sonnet 5.5 High on the same `schedule` row), so the note carries both facts
  */
 export const SCHEDULED_PEAK_LABEL = "Scheduled, DeepSeek peak";
 
@@ -249,6 +253,8 @@ function formatLocalTime(atMs: number, nowMs: number, timeZone: string | undefin
 
 /**
  * Why a bot is on its fallback model, for a title or an accessible name:
+ * "on fallback until about 14:30 (Codex usage limit)", or "DeepSeek peak until
+ * 11:00" while the DeepSeek peak switch has it. A scheduled DeepSeek model
  */
 export function fallbackNoteLabel(
   bot: BotFallbackFields,
@@ -321,7 +327,9 @@ export function botActiveModelLabel(
 }
 
 /**
- * The short model label for a bot: what it runs on right now.
+ * The short model label for a bot: what it runs on right now, ending
+ * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback"),
+ * "· peak" while the DeepSeek peak switch has it ("Sonnet 5.5 · H · peak"), or
  */
 export function botActiveModelShortLabel(
   bot: BotWithFallback,

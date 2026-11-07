@@ -12,6 +12,8 @@ import { isOwnerChat, taskChatThreadIds } from "./ownerChats.ts";
 
 /**
  * Unread chats: the bot replied after the owner last had the chat open.
+ * The server decides it (`personalBots.list` marks a link `unread` from the
+ * newest assistant message against `last_viewed_at`, never on an archived
  */
 
 /**
@@ -50,7 +52,9 @@ export function isChatUnread(
 }
 
 /**
- * The unread chats by bot id. Bots with none are absent. A bot that.
+ * The unread chats by bot id. Bots with none are absent. A bot that shows
+ * unread chats ({@link showsUnreadChats}) counts every unread chat; any other
+ * bot counts only the chats the owner marked unread (or that woke from a
  */
 export function unreadChatsByBot(input: {
   readonly bots: ReadonlyArray<Pick<PersonalBot, "botId" | "lead">>;
@@ -92,6 +96,9 @@ export function unreadChatsByBot(input: {
 export function unreadChatsLabel(count: number): string {
   return `${count} unread ${count === 1 ? "chat" : "chats"}`;
 }
+
+// In memory only: a reload refetches the list, and by then the server has the
+// viewed time (written when the chat was left), so nothing needs persisting.
 
 let seenState: ChatSeenState = NO_CHAT_SEEN;
 const listeners = new Set<() => void>();

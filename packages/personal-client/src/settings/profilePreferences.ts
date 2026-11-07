@@ -2,10 +2,6 @@
  * Settings > Chat values the owner shares across devices. They live in the
  * server profile, not the device, so web and phone read one value. Only the
  * laptop-only column widths stay in local storage.
- *
- * A field absent from the profile means "never chosen", not "off": the clients
- * use the default, and the web app may import its pre-profile browser value
- * once. That is why nothing here writes a default to the server on read.
  */
 export const SHARED_PREFERENCE_DEFAULTS = {
   showToolSteps: false,
@@ -68,12 +64,8 @@ export function sharedPreferencesFromProfile(
 
 /**
  * The one-time move of the browser values onto the server.
- *
  * A null profile means no profile could be read (an older server, or none
  * yet), so nothing is imported and nothing is cleared: the browser value stays
- * the only copy. With a profile, a server value always wins; a missing one is
- * taken from the browser. Repeating the call after the write changes nothing,
- * because the profile now carries the value.
  */
 export function planSharedPreferenceImport(
   profile: StoredSharedPreferences | null,

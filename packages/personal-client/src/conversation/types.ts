@@ -1,3 +1,4 @@
+import type { PendingApproval } from "./wireTypes.ts";
 import type { WorkLogToolLifecycleStatus } from "@t3tools/client-runtime/work-log/presentation";
 import type {
   ChatAttachment,
@@ -12,7 +13,6 @@ import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
   OrchestrationThreadActivity,
-  PendingApproval,
 } from "./wireTypes.ts";
 
 /**

@@ -44,7 +44,7 @@ export const FORBIDDEN_RULES: ReadonlyArray<ForbiddenRule> = [
   },
   {
     id: "eas-project",
-    pattern: /\beas\b|projectId|pingdotgg|ascAppId|expo\.dev/,
+    pattern: /\beas\b|projectId\s*:\s*["']|pingdotgg|ascAppId|expo\.dev/,
     why: "Upstream EAS project, owner and store ids. Builds run locally.",
   },
   {

@@ -923,12 +923,12 @@ scripts/smoke-cli-archive.ts		content	4	B1	dropped	our only change at this path 
 scripts/sync-reference-repos.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 scripts/update-release-package-versions.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 vite.config.ts		content	83	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
-apps/hbots-mobile/src/App.tsx		content	0	C16	open	MAIN 1.66.122 full phone UI (chat, groups, settings, tasks, computer) parked; C16 phone app stands while Architect rules the C10-C16 deviation
-apps/hbots-mobile/src/shell/AppShell.tsx		content	0	C16	open	MAIN shell navigation and settings screens parked with the phone UI; C16 AppShell stands
-apps/hbots-mobile/src/pairing.ts		content	0	C11	open	MAIN's DPoP pairing client and shortId identity parked; C16 pairing stands until C11/E1 aligns the phone
-apps/hbots-mobile/src/personal/nativePersonalClient.ts		content	0	C16	open	MAIN shell cache, thread loader and settings clients parked; C16 polls personalBots.threadShells
-apps/hbots-mobile/src/personal/nativeSession.ts		content	0	C16	open	MAIN abort handling around makeWsRpcProtocolClient parked; C16 native session code stands
-apps/hbots-mobile/src/shell/BotsScreen.tsx		content	0	C16	open	MAIN group chats, working-now handoff and swipe actions parked; C16 BotsScreen stands
+apps/hbots-mobile/src/App.tsx		content	0	C16	done	M1b restored MAIN 1.66.122 App.tsx
+apps/hbots-mobile/src/shell/AppShell.tsx		content	0	C16	done	M1b restored MAIN 1.66.122 navigation and settings routes
+apps/hbots-mobile/src/pairing.ts		content	0	C11	done	M1b restored MAIN DPoP pairing, shortId and the refused-Bearer revoke
+apps/hbots-mobile/src/personal/nativePersonalClient.ts		content	0	C16	done	M1b restored MAIN clients over C16 runtime; shells read personalBots.threadShells and the chat reads U v2 threadDetail
+apps/hbots-mobile/src/personal/nativeSession.ts		content	0	C16	done	M1b restored MAIN abort handling over the merged RPC client
+apps/hbots-mobile/src/shell/BotsScreen.tsx		content	0	C16	done	M1b restored MAIN bots, groups and handoff rows over personalBots.threadShells
 apps/server/src/auth/RpcAuthorization.ts		content	0	C11	open	MAIN device scopes parked; C11 moves them to personal/auth/personalRpcScopes.ts
 apps/server/src/auth/RpcAuthorization.test.ts		content	0	C11	open	MAIN device scope tests parked with RpcAuthorization; C11 restores coverage
 apps/server/src/http.ts		content	0	C12	open	MAIN attachment upload endpoint header parked; C12 adds it with contracts assets.ts
@@ -943,7 +943,7 @@ apps/web/src/features/personal/usePersonalAutomation.ts		content	0	phase 4	open	
 apps/web/src/features/personal/usePersonalGroups.ts		content	0	phase 4	open	MAIN web group hook changes parked; web is out of scope
 apps/web/src/features/personal/useRemovedBots.ts		content	0	phase 4	open	MAIN web removed-bots hook changes parked; web is out of scope
 apps/web/src/pendingUserInput.ts		content	0	phase 4	open	MAIN web pending-input changes parked; web is out of scope
-packages/personal-client/src/bots/personalBots.ts		content	0	C16	open	MAIN bots list and thread changes parked; C16 reads shells through personalBots.threadShells
+packages/personal-client/src/bots/personalBots.ts		content	0	C16	done	M1b restored MAIN bots list, search, restore, tasks feed and thread changes on the merged contracts
 packages/contracts/src/rpc.ts		content	0	C11	open	MAIN device RPCs parked; C11 adds personalDevices RPCs in contracts personalRpc.ts
 packages/contracts/src/index.ts		content	0	C11	open	MAIN device and personal export lines parked; M1 exports personalDevices only
 packages/contracts/src/environment.test.ts		content	0	C11	open	MAIN shortId descriptor test parked; C11 restores it

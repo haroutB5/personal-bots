@@ -1,9 +1,21 @@
-import * as Redacted from "effect/Redacted";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { classifyFailure } from "./failure";
+import { AuthPhoneClientScopes } from "@t3tools/contracts";
+import * as Redacted from "effect/Redacted";
+
+import { classifyFailure, DpopRequiredError } from "./failure";
+import { failureFor } from "./onboarding/model";
 import { decodeTicket, openSocketUrl, pair } from "./pairing";
 import type { StoredSession } from "./session";
+
+vi.mock("./dpop", () => ({
+  createDpopProof: async () => ({ proof: "test-proof", thumbprint: "test-thumbprint" }),
+  loadOrCreateDpopKey: async () => ({
+    privateJwk: {},
+    publicJwk: {},
+    thumbprint: "test-thumbprint",
+  }),
+}));
 
 const BASE = "https://relay.example.test/";
 
@@ -18,7 +30,7 @@ const DESCRIPTOR = {
 const TOKEN = {
   access_token: "tok-1",
   issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-  token_type: "Bearer",
+  token_type: "DPoP",
   expires_in: 2_592_000,
   scope: "ws",
 };
@@ -67,22 +79,59 @@ describe("decodeTicket", () => {
 });
 
 describe("pair", () => {
-  it("exchanges the one-time token and returns a session for that environment", async () => {
-    routeFetch({
+  it("sends the phone proof and device label, then stores a bound session", async () => {
+    const fetchSpy = routeFetch({
       "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
       "/oauth/token": () => json(200, TOKEN),
     });
-    const session = await pair({
-      httpBaseUrl: BASE,
-      wsBaseUrl: "wss://relay.example.test/",
-      credential: "one-time",
-    });
+    const session = await pair(
+      {
+        httpBaseUrl: BASE,
+        wsBaseUrl: "wss://relay.example.test/",
+        credential: "one-time",
+      },
+      "Find X9 Pro",
+    );
     expect(session).toMatchObject({
       environmentId: "env-1",
       label: "Harout's laptop",
+      deviceLabel: "Find X9 Pro",
       accessToken: "tok-1",
+      authMethod: "dpop",
       httpBaseUrl: BASE,
     });
+    const exchange = fetchSpy.mock.calls.find(([target]) =>
+      String(target).endsWith("/oauth/token"),
+    );
+    expect(exchange?.[1]?.headers).toMatchObject({ dpop: "test-proof" });
+    const exchangeBody = new URLSearchParams(String(exchange?.[1]?.body));
+    expect(exchangeBody.get("client_label")).toBe("Find X9 Pro");
+    expect(exchangeBody.get("client_device_type")).toBe("mobile");
+    expect(exchangeBody.get("scope")).toBe(AuthPhoneClientScopes.join(" "));
+  });
+
+  it("refuses a Bearer answer and revokes that session", async () => {
+    const fetchSpy = routeFetch({
+      "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
+      "/oauth/token": () => json(200, { ...TOKEN, token_type: "Bearer" }),
+      "/api/auth/session/revoke": () => json(200, { revoked: true }),
+    });
+    const failure = await pair(
+      {
+        httpBaseUrl: BASE,
+        wsBaseUrl: "wss://relay.example.test/",
+        credential: "one-time",
+      },
+      "Find X9 Pro",
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(DpopRequiredError);
+    expect(failureFor(failure)).toBe("not-secure");
+
+    const revoke = fetchSpy.mock.calls.find(([target]) =>
+      String(target).endsWith("/api/auth/session/revoke"),
+    );
+    expect(revoke?.[1]?.method).toBe("POST");
+    expect(revoke?.[1]?.headers).toMatchObject({ authorization: "Bearer tok-1" });
   });
 
   it("reports a spent link as signed out", async () => {
@@ -90,11 +139,14 @@ describe("pair", () => {
       "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
       "/oauth/token": () => json(401, { code: "auth_invalid" }),
     });
-    const failure = await pair({
-      httpBaseUrl: BASE,
-      wsBaseUrl: "wss://relay.example.test/",
-      credential: "spent",
-    }).catch(classifyFailure);
+    const failure = await pair(
+      {
+        httpBaseUrl: BASE,
+        wsBaseUrl: "wss://relay.example.test/",
+        credential: "spent",
+      },
+      "Find X9 Pro",
+    ).catch(classifyFailure);
     expect(failure).toEqual({ kind: "authDead", reason: "unauthorized" });
   });
 });

@@ -1,4 +1,4 @@
-import { RpcClientError } from "effect/rpc/RpcClientError";
+import { RpcClientError } from "effect/rpc";
 
 export const SESSION_REVOKED_CLOSE_CODE = 4401;
 
@@ -33,6 +33,14 @@ export class RequestFailure extends Error {
   }
 }
 
+/** The server answered a pairing exchange without binding the token to the phone key. */
+export class DpopRequiredError extends Error {
+  constructor() {
+    super("The server issued a Bearer session to a phone.");
+    this.name = "DpopRequiredError";
+  }
+}
+
 export type Failure =
   | {
       readonly kind: "authDead";
@@ -63,7 +71,7 @@ function describeDetail(detail: FailureDetail): string {
 
 function isSessionRevokedClose(error: unknown): boolean {
   return (
-    error instanceof RpcClientError &&
+    error instanceof RpcClientError.RpcClientError &&
     error.reason._tag === "SocketCloseError" &&
     error.reason.code === SESSION_REVOKED_CLOSE_CODE
   );

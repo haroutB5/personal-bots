@@ -4,11 +4,6 @@ import type { KeyValueStore } from "../ports/keyValueStore.ts";
  * Kill switches for performance changes. Every optimization that changes
  * when or how work happens is on by default and can be turned off on one
  * device without a release:
- *
- *   localStorage.setItem("bots:perf-off", "preload-chat")   // comma-separated
- *
- * The perf bench uses the same key to measure each change on and off in one
- * build (scripts/personal/perf/README.md).
  */
 export const PERF_OFF_STORAGE_KEY = "bots:perf-off";
 

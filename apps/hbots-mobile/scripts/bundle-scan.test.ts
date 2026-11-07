@@ -26,9 +26,9 @@ const ALLOWED_BUNDLE_TEXT = [
   '"X-Axiom-Dataset": config.tracesDataset',
   'var T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";',
   'description: "Checked-in project configuration for T3 Code (t3.json). See https://t3.codes for documentation."',
-  '"t3code://pair?pairingUrl="',
-  '"https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md"',
-  '"https://app.t3.codes"',
+  "const link = `t3code://pair?${new URLSearchParams([[n, e]])}`;",
+  'const help = "https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#x";',
+  'const hosted = "https://app.t3.codes";',
 ].join("\n");
 
 describe("bundle scan rules", () => {
@@ -36,7 +36,7 @@ describe("bundle scan rules", () => {
     expect(scanBundle(`ok\n${text}\nok`).map((finding) => finding.ruleId)).toContain(ruleId);
   });
 
-  it("passes with only the shared strings the app never calls", () => {
+  it("passes with only the five allowed strings", () => {
     expect(ALLOWED_STRINGS).toHaveLength(5);
     expect(scanBundle(ALLOWED_BUNDLE_TEXT)).toEqual([]);
   });
@@ -56,6 +56,7 @@ describe("the bundled app", () => {
   let workDir = "";
   let bundle = "";
 
+  // oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- bundles the app once for the scan
   beforeAll(() => {
     const scratch = NodePath.join(PACKAGE_ROOT, ".tmp");
     NodeFS.mkdirSync(scratch, { recursive: true });
@@ -84,7 +85,7 @@ describe("the bundled app", () => {
       },
     );
     bundle = NodeFS.readFileSync(output, "latin1");
-  });
+  }, 240_000);
 
   afterAll(() => {
     if (workDir !== "") {

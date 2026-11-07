@@ -1,5 +1,6 @@
-import type { OrchestrationThreadActivity, PendingUserInput } from "./wireTypes.ts";
+import type { PendingUserInput } from "./wireTypes.ts";
 import type { UserInputQuestion } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "./wireTypes.ts";
 
 /** What the provider expects back: one answer per question id. */
 export type UserInputAnswers = Record<string, string | string[]>;
@@ -96,6 +97,8 @@ export function deriveUserInputResolutions(
 
 /**
  * The cards to render, oldest first.
+ * `seen` is every request this screen has shown so far: once a question is
+ * answered it leaves `pending`, and without that memory the card would vanish
  */
 export function deriveQuestionCards(
   pending: ReadonlyArray<PendingUserInput>,

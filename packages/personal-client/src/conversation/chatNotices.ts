@@ -65,8 +65,6 @@ export function isChatNoticeMessageId(messageId: string): boolean {
  * The bot's usage-limit fallback took over after the owner's last message: the
  * server wrote its "hit its usage limit, now on <fallback>" line above, and
  * the failed turn's red "Couldn't send" card would contradict it while the
- * fallback reply is on its way. Only notices after the owner's own message
- * count, so an old switch does not hide a later failure.
  */
 export function fallbackTookOverSinceLastOwnerMessage(
   messages: ReadonlyArray<{

@@ -338,6 +338,7 @@ function placeholderNotice(provider: ServerProvider, title: string): string | nu
 /**
  * One card per driver (Claude, Codex, DeepSeek) from the providers the config
  * stream already publishes. Drivers with no configured instance get no card.
+ * A provider with windows always shows them: the server keeps the last good
  */
 export function selectUsageCards(
   providers: ReadonlyArray<ServerProvider>,
@@ -409,6 +410,8 @@ export function selectUsageCards(
 
 /**
  * The DeepSeek card: the prepaid balance, or the quiet reason there is none.
+ * A reading keeps showing while the newest one fails (the server sends the
+ * last good numbers with `status: "failed"`), so `refreshFailure` says the
  */
 function deepSeekCard(provider: ProviderWithUsageBalance, title: string): UsageCard {
   const usageBalance = provider.usageBalance;
@@ -502,7 +505,9 @@ function formatSpentSince(sinceMs: number, nowMs: number): string {
 }
 
 /**
- * The DeepSeek spent figure as one line, used verbatim by the usage sheet.
+ * The DeepSeek spent figure as one line, used verbatim by the usage sheet card
+ * and the Team card so the two surfaces read identically: `Spent $0.97 since
+ * 10 Oct`. With no records to price it says so plainly, in the same words on
  */
 export function deepSeekSpendText(spent: UsageBalanceSpend | null, now: number): string {
   if (spent === null) return "No DeepSeek spend recorded yet.";
@@ -542,6 +547,8 @@ export function selectDeepSeekBalanceLine(
 
 /**
  * Whether opening the sheet should probe before believing what it shows.
+ * The sheet renders the provider snapshot the app already had, and a snapshot
+ * taken before any probe carries no windows at all — which used to render as
  */
 export const USAGE_STALE_AFTER_MS = 60_000;
 
@@ -555,7 +562,9 @@ export function usageNeedsRefreshOnOpen(cards: readonly UsageCard[], now: number
 }
 
 /**
- * The Bots list's own first reading. The server probes usage once at.
+ * The Bots list's own first reading. The server probes usage once at startup
+ * and then on its five-minute cadence, but a startup probe that could not read
+ * usage (the CLI is cold, the machine busy) leaves every bar reading "Not
  */
 export const USAGE_AUTO_PROBE_MIN_GAP_MS = 5 * 60_000;
 
@@ -590,6 +599,7 @@ export function usageAutoProbeDue(input: {
 /**
  * What a card that has never been read should say (a card with a reading keeps
  * its bars; see `selectUsageCards`).
+ * A probe in flight says so rather than reporting an absence as a fact: the
  */
 export function usageCardEmptyText(
   card: UsageCard,

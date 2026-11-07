@@ -8,20 +8,44 @@ import {
   createNativeStackNavigator,
   type NativeStackScreenProps,
 } from "@react-navigation/native-stack";
-import { IconChevronRight, IconSettings } from "@tabler/icons-react-native";
-import { useCallback, useEffect, useRef } from "react";
-import { BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { BackHandler, Linking, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AndroidRelease } from "../compat";
+import { chatComputerTarget } from "../chat/chatComputer";
+import { createChatEnvironment } from "../chat/chatEnvironment";
+import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
+import { BotFormScreen } from "../bots/BotFormScreen";
+import { BotThreadsScreen } from "../bots/BotThreadsScreen";
+import { GroupConversationScreen } from "../groups/GroupConversationScreen";
+import { NewGroupScreen } from "../groups/NewGroupScreen";
+import { NewTeamScreen } from "../teams/NewTeamScreen";
+import { RemovedBotsScreen } from "../teams/RemovedBotsScreen";
+import { TeamScreen } from "../teams/TeamScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
-import { UpdateSettings } from "../UpdateSettings";
 import { BotsScreen } from "./BotsScreen";
 import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
+import { FilesScreen } from "../files/FilesScreen";
+import { ChatScreen } from "../screens/ChatScreen";
+import { ChatsListScreen } from "../screens/ChatsListScreen";
+import { ComputerScreen } from "../computer/ComputerScreen";
+import { SettingsScreen } from "../settings/SettingsScreen";
+import { ThisPhoneScreen } from "../settings/ThisPhoneScreen";
+import { NotificationsScreen } from "../settings/NotificationsScreen";
+import { MemoryScreen } from "../settings/MemoryScreen";
+import { PasswordsScreen } from "../settings/PasswordsScreen";
+import { ApiKeysScreen } from "../settings/ApiKeysScreen";
+import { ConnectionsScreen } from "../settings/ConnectionsScreen";
+import { RoutineDetailScreen } from "../tasks/RoutineDetailScreen";
+import { RoutineFormScreen } from "../tasks/RoutineFormScreen";
+import { TaskDetailScreen } from "../tasks/TaskDetailScreen";
+import { TasksScreen } from "../tasks/TasksScreen";
+import { EmptyText } from "../tasks/TaskUi";
 
 export interface AppShellProps {
   readonly native: NativePersonal;
@@ -37,12 +61,25 @@ export interface AppShellProps {
 export type RootStackParamList = {
   Tabs: { readonly tab?: TabName } | undefined;
   Chat: { readonly botId: string; readonly threadId: string; readonly requestId?: string };
+  Chats: { readonly botId: string };
   Bot: { readonly botId: string };
+  BotNew: undefined;
+  BotEdit: { readonly botId: string };
+  Group: { readonly groupId: string };
+  GroupNew: undefined;
   Task: { readonly taskId: string };
   Routine: { readonly routineId: string };
+  RoutineForm: { readonly routineId?: string };
   Team: undefined;
+  TeamNew: undefined;
+  TeamRemoved: undefined;
   Settings: undefined;
+  SettingsNotifications: undefined;
   ThisPhone: undefined;
+  Memory: undefined;
+  Passwords: undefined;
+  ApiKeys: undefined;
+  Connections: undefined;
   Stop: undefined;
 };
 
@@ -96,38 +133,13 @@ function HeaderScreen({
   );
 }
 
-function SettingsScreen({ navigation }: NativeStackScreenProps<RootStackParamList, "Settings">) {
-  const insets = useSafeAreaInsets();
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <ScreenHeader title="Settings" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={styles.settingsBody}>
-        <View style={styles.group}>
-          <Pressable
-            onPress={() => navigation.navigate("ThisPhone")}
-            accessibilityRole="button"
-            accessibilityLabel="This phone"
-            style={styles.settingsRow}
-          >
-            <View style={styles.settingsIcon}>
-              <IconSettings size={20} color={tokens.text} strokeWidth={2} />
-            </View>
-            <Text style={styles.settingsTitle}>This phone</Text>
-            <IconChevronRight size={20} color={tokens.textTertiary} strokeWidth={2} />
-          </Pressable>
-        </View>
-      </ScrollView>
-    </View>
-  );
-}
-
-function ThisPhoneScreen({
+function ThisPhoneRoute({
   navigation,
   props,
 }: NativeStackScreenProps<RootStackParamList, "ThisPhone"> & { readonly props: AppShellProps }) {
   return (
-    <UpdateSettings
-      title="This phone"
+    <ThisPhoneScreen
+      native={props.native}
       installedVersion={props.installedVersion}
       snapshot={props.update}
       latest={props.latest}
@@ -146,6 +158,10 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Tabs", params: { tab: route.tab } };
     case "team":
       return { name: "Team" };
+    case "teamNew":
+      return { name: "TeamNew" };
+    case "teamRemoved":
+      return { name: "TeamRemoved" };
     case "chat":
       return {
         name: "Chat",
@@ -156,14 +172,36 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       };
     case "bot":
       return { name: "Bot", params: { botId: route.botId } };
+    case "botNew":
+      return { name: "BotNew" };
+    case "botEdit":
+      return { name: "BotEdit", params: { botId: route.botId } };
+    case "group":
+      return { name: "Group", params: { groupId: route.groupId } };
+    case "groupNew":
+      return { name: "GroupNew" };
     case "task":
       return { name: "Task", params: { taskId: route.taskId } };
     case "routine":
       return { name: "Routine", params: { routineId: route.routineId } };
     case "settings":
       return { name: "Settings" };
+    case "settingsNotifications":
+      return { name: "SettingsNotifications" };
+    case "settingsProvidersAdd":
+    case "settingsProvider":
+    case "settingsProviderCatalog":
+      return { name: "Settings" };
     case "thisPhone":
       return { name: "ThisPhone" };
+    case "memory":
+      return { name: "Memory" };
+    case "passwords":
+      return { name: "Passwords" };
+    case "apiKeys":
+      return { name: "ApiKeys" };
+    case "connections":
+      return { name: "Connections" };
     case "stop":
       return { name: "Stop" };
   }
@@ -171,6 +209,12 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
 
 function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
+  const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
+
+  useEffect(() => {
+    configureNativeOutbox(props.native);
+  }, [props.native]);
+  useNativeOutboxFlusher(props.native, chat);
 
   const openLink = useCallback((raw: string) => {
     const state = parseDeepLink(raw);
@@ -215,48 +259,206 @@ function Shell({ props }: { readonly props: AppShellProps }) {
             <TabsWithBots
               {...screenProps}
               native={props.native}
+              chat={chat}
               installedVersion={props.installedVersion}
+              update={props.update}
+              onOpenInstallPermission={props.onOpenPermission}
             />
           )}
         </Stack.Screen>
         <Stack.Screen name="Chat">
-          {({ navigation }) => (
-            <HeaderScreen title="Chat" onBack={() => navigation.goBack()}>
-              <Placeholder title="Chat" body="Messages will show here." />
-            </HeaderScreen>
+          {({ navigation, route }) => (
+            <ChatScreen
+              native={props.native}
+              chat={chat}
+              botId={route.params.botId}
+              threadId={route.params.threadId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+              onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
+              onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Chats">
+          {({ navigation, route }) => (
+            <ChatsListScreen
+              native={props.native}
+              chat={chat}
+              botId={route.params.botId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(threadId) =>
+                navigation.replace("Chat", { botId: route.params.botId, threadId })
+              }
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Bot">
+          {({ navigation, route }) => (
+            <BotThreadsScreen
+              native={props.native}
+              chat={chat}
+              botId={route.params.botId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(threadId) =>
+                navigation.navigate("Chat", { botId: route.params.botId, threadId })
+              }
+              onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="BotNew">
           {({ navigation }) => (
-            <HeaderScreen title="Bot" onBack={() => navigation.goBack()}>
-              <Placeholder title="Bot" body="Bot settings will show here." />
-            </HeaderScreen>
+            <BotFormScreen
+              native={props.native}
+              target={{ kind: "new" }}
+              onBack={() => navigation.goBack()}
+              onLeave={() => navigation.goBack()}
+              onDeleted={() => navigation.popToTop()}
+              onOpenTeam={() => navigation.navigate("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="BotEdit">
+          {({ navigation, route }) => (
+            <BotFormScreen
+              native={props.native}
+              target={{ kind: "edit", botId: route.params.botId }}
+              onBack={() => navigation.goBack()}
+              onLeave={() => navigation.goBack()}
+              onDeleted={() => navigation.popToTop()}
+              onOpenTeam={() => navigation.navigate("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Group">
+          {({ navigation, route }) => (
+            <GroupConversationScreen
+              native={props.native}
+              chat={chat}
+              groupId={route.params.groupId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+              onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="GroupNew">
+          {({ navigation }) => (
+            <NewGroupScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onCreated={(groupId) => navigation.replace("Group", { groupId })}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Task">
-          {({ navigation }) => (
-            <HeaderScreen title="Task" onBack={() => navigation.goBack()}>
-              <Placeholder title="Task" body="Task detail will show here." />
-            </HeaderScreen>
+          {({ navigation, route }) => (
+            <TaskDetailScreen
+              native={props.native}
+              taskId={route.params.taskId}
+              onBack={() => navigation.goBack()}
+              onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+              onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Routine">
-          {({ navigation }) => (
-            <HeaderScreen title="Routine" onBack={() => navigation.goBack()}>
-              <Placeholder title="Routine" body="Routine detail will show here." />
-            </HeaderScreen>
+          {({ navigation, route }) => (
+            <RoutineDetailScreen
+              native={props.native}
+              routineId={route.params.routineId}
+              onBack={() => navigation.goBack()}
+              onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+              onEdit={() => navigation.push("RoutineForm", { routineId: route.params.routineId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="RoutineForm">
+          {({ navigation, route }) => (
+            <RoutineFormRoute
+              native={props.native}
+              routineId={route.params?.routineId}
+              onBack={() => navigation.goBack()}
+              onSaved={(routineId) => navigation.replace("Routine", { routineId })}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Team">
           {({ navigation }) => (
-            <HeaderScreen title="Team" onBack={() => navigation.goBack()}>
-              <Placeholder title="Team" body="Your team will show here." />
-            </HeaderScreen>
+            <TeamScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onNewTeam={() => navigation.navigate("TeamNew")}
+              onNewBot={() => navigation.navigate("BotNew")}
+              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+              onOpenTask={(taskId) => navigation.navigate("Task", { taskId })}
+              onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+            />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="TeamNew">
+          {({ navigation }) => (
+            <NewTeamScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onCreated={() => navigation.replace("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="TeamRemoved">
+          {({ navigation }) => (
+            <RemovedBotsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Settings">
+          {({ navigation }) => (
+            <SettingsScreen
+              native={props.native}
+              installedVersion={props.installedVersion}
+              onBack={() => navigation.goBack()}
+              onOpenThisPhone={() => navigation.navigate("ThisPhone")}
+              onOpenTeam={() => navigation.navigate("Team")}
+              onOpenNewBot={() => navigation.navigate("BotNew")}
+              onOpenRemovedBots={() => navigation.navigate("TeamRemoved")}
+              onOpenNotifications={() => navigation.navigate("SettingsNotifications")}
+              onOpenMemory={() => navigation.navigate("Memory")}
+              onOpenPasswords={() => navigation.navigate("Passwords")}
+              onOpenApiKeys={() => navigation.navigate("ApiKeys")}
+              onOpenConnections={() => navigation.navigate("Connections")}
+              onOpenRoutines={() => undefined}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="SettingsNotifications">
+          {({ navigation }) => (
+            <NotificationsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Memory">
+          {({ navigation }) => (
+            <MemoryScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Passwords">
+          {({ navigation }) => (
+            <PasswordsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ApiKeys">
+          {({ navigation }) => (
+            <ApiKeysScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Connections">
+          {({ navigation }) => (
+            <ConnectionsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
         <Stack.Screen name="ThisPhone">
-          {(screenProps) => <ThisPhoneScreen {...screenProps} props={props} />}
+          {(screenProps) => <ThisPhoneRoute {...screenProps} props={props} />}
         </Stack.Screen>
         <Stack.Screen name="Stop">
           {({ navigation }) => (
@@ -270,11 +472,56 @@ function Shell({ props }: { readonly props: AppShellProps }) {
   );
 }
 
+function RoutineFormRoute({
+  native,
+  routineId,
+  onBack,
+  onSaved,
+}: {
+  readonly native: NativePersonal;
+  readonly routineId: string | undefined;
+  readonly onBack: () => void;
+  readonly onSaved: (routineId: string) => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const routines = native.automation.usePersonalRoutines(native.environmentId);
+  if (routineId !== undefined && routines.data === null) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <ScreenHeader title="Routine" onBack={onBack} />
+        <EmptyText>Loading…</EmptyText>
+      </View>
+    );
+  }
+  const routine =
+    routineId === undefined
+      ? null
+      : (routines.data?.routines.find((entry) => entry.routineId === routineId) ?? null);
+  if (routineId !== undefined && routine === null) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <ScreenHeader title="Routine" onBack={onBack} />
+        <EmptyText>This routine was not found.</EmptyText>
+      </View>
+    );
+  }
+  return <RoutineFormScreen native={native} routine={routine} onBack={onBack} onSaved={onSaved} />;
+}
+
 function TabsWithBots({
   native,
+  chat,
   installedVersion,
+  update,
+  onOpenInstallPermission,
   ...screenProps
-}: TabsProps & { readonly native: NativePersonal; readonly installedVersion: string }) {
+}: TabsProps & {
+  readonly native: NativePersonal;
+  readonly chat: ReturnType<typeof createChatEnvironment>;
+  readonly installedVersion: string;
+  readonly update: UpdateSnapshot | null;
+  readonly onOpenInstallPermission: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const tab = screenProps.route.params?.tab ?? "bots";
   const { navigation } = screenProps;
@@ -296,18 +543,31 @@ function TabsWithBots({
         {tab === "bots" ? (
           <BotsScreen
             native={native}
+            chat={chat}
             installedVersion={installedVersion}
+            update={update}
+            onOpenInstallPermission={onOpenInstallPermission}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
-            onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+            onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+            onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
+            onNewGroup={() => navigation.navigate("GroupNew")}
             onOpenTeam={() => navigation.navigate("Team")}
             onOpenSettings={() => navigation.navigate("Settings")}
           />
         ) : tab === "tasks" ? (
-          <Placeholder title="Tasks" body="Your tasks will show here." />
+          <TasksScreen
+            native={native}
+            onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+            onOpenRoutine={(routineId) => navigation.push("Routine", { routineId })}
+            onNewRoutine={() => navigation.navigate("RoutineForm", {})}
+          />
         ) : tab === "computer" ? (
-          <Placeholder title="Computer" body="The live computer view will show here." />
+          <ComputerScreen
+            native={native}
+            onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+          />
         ) : (
-          <Placeholder title="Files" body="Shared files will show here." />
+          <FilesScreen native={native} />
         )}
       </View>
       <BottomBar
@@ -355,5 +615,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: tokens.fillMuted,
   },
-  settingsTitle: { color: tokens.text, fontSize: 16, fontWeight: "500", flex: 1 },
+  settingsTitle: { color: tokens.text, fontSize: 16, fontWeight: "500" },
+  settingsText: { flex: 1, gap: 2 },
+  settingsDetail: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16 },
+  settingsBadge: {
+    minWidth: 24,
+    height: 24,
+    paddingHorizontal: 7,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: tokens.fillMuted,
+  },
+  settingsBadgeText: { color: tokens.text, fontSize: 12, fontWeight: "600" },
 });

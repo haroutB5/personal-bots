@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { botsHomeState } from "./botsHomeState";
+import { botsHomeState, botTapTarget } from "./botsHomeState";
 
 describe("Bots home states", () => {
   it("paints the cache before the live list", () => {
@@ -70,5 +70,15 @@ describe("Bots home states", () => {
         query: "planner",
       }),
     ).toBe("list");
+  });
+});
+
+describe("botTapTarget", () => {
+  it("opens the newest chat when the bot has one", () => {
+    expect(botTapTarget("thread-1")).toEqual({ kind: "chat", threadId: "thread-1" });
+  });
+
+  it("starts a new chat when the bot has none", () => {
+    expect(botTapTarget(null)).toEqual({ kind: "new-chat" });
   });
 });

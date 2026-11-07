@@ -18,6 +18,8 @@ import type {
  * bots surfaces own these copies so they do not reach into the client-runtime
  * pending-requests or orchestration shell modules, which follow the v2 shell.
  */
+export type ThreadTurnFollowUp = "steer" | "queue";
+
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
   readonly requestKind: ProviderRequestKind;

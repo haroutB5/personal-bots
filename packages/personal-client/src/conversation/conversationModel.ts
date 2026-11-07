@@ -1,3 +1,4 @@
+import type { PendingApproval, PendingUserInput } from "./wireTypes.ts";
 import { PROVIDER_DISPLAY_NAMES, type ProviderDriverKind } from "@t3tools/contracts";
 import type {
   OrchestrationSession,
@@ -8,6 +9,8 @@ import type {
   PersonalTask,
   PersonalLoginRequest,
 } from "@t3tools/contracts";
+import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
+import type { OrchestrationThreadActivity } from "./wireTypes.ts";
 import { classifyTurnFailure, isRefusedTurnInput } from "@t3tools/shared/turnFailure";
 
 import { formatContextWindowTokens } from "./contextWindowTokens.ts";
@@ -16,13 +19,7 @@ import type { VoiceCallTranscriptEntry } from "./voice/voiceCallApi.ts";
 import { VOICE_SUMMARY_WAIT_MS } from "./voice/callState.ts";
 import type { VoiceCallSummary } from "@t3tools/contracts";
 
-import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import type { ChatMessage, ProposedPlan, TimelineEntry, WorkLogEntry } from "./types.ts";
-import type {
-  OrchestrationThreadActivity,
-  PendingApproval,
-  PendingUserInput,
-} from "./wireTypes.ts";
 
 import { isServerTurnNotice, readChatNotice } from "./chatNotices.ts";
 import { readServerTurn, type ServerTurn, taskCreatedMs } from "./delegationModel.ts";
@@ -115,6 +112,8 @@ export function deriveConversationState(input: {
 
 /**
  * The opening stretch of a working turn, before the bot has produced anything:
+ * no reply text (reasoning traces do not count) and, when the caller has the
+ * thread's activities, no tool call either. Drives the avatar's `thinking`
  */
 export function isTurnThinking(input: {
   readonly session: Pick<OrchestrationSession, "status" | "activeTurnId"> | null;
@@ -142,6 +141,7 @@ export function isTurnThinking(input: {
 /**
  * The context size to show beside the bot's name, or null before the chat has
  * reported one.
+ * Shown at every size, not only a heavy chat: the number rides along with the
  */
 export function contextBadgeLabel(usedTokens: number | null | undefined): string | null {
   if (usedTokens === null || usedTokens === undefined) return null;
@@ -310,7 +310,9 @@ function redactSecrets(line: string): string {
 const START_FAILURE_FALLBACK = "the bot couldn't start a reply. Try again.";
 
 /**
- * The red line under a failed message. A turn that never started (the.
+ * The red line under a failed message. A turn that never started (the owner's
+ * message has no turn) reads "Couldn't send: <short reason>", the reason being
+ * the known failure's sentence or else the provider's own sanitised first line,
  */
 export function failedTurnError(input: {
   readonly raw: string;
@@ -366,7 +368,9 @@ export interface TurnErrorNotice {
 }
 
 /**
- * The notice under a failed or auto-retrying turn, or null when the chat.
+ * The notice under a failed or auto-retrying turn, or null when the chat has
+ * nothing to say. While the server retries by itself (a renewed session or a
+ * transient failure) the notice is neutral and offers no Retry; once the
  */
 export function turnErrorNotice(input: {
   readonly state: ConversationState;
@@ -416,6 +420,7 @@ export function turnErrorNotice(input: {
 /**
  * What the chat says about a failed reply the server is retrying by itself.
  * Null when no automatic retry is in play, so the caller keeps its own text.
+ * Honesty is the whole point of this function: while a retry is pending it
  */
 export function autoRetryNotice(
   retry: OrchestrationSessionProviderRetry | null | undefined,
@@ -618,7 +623,9 @@ export interface VoiceCallCardItem {
    */
   readonly startedAtMs: number;
   /**
-   * Epoch ms of the call's end, and where a finished card sits in the.
+   * Epoch ms of the call's end, and where a finished card sits in the timeline
+   * (Harout, 16 Oct, 1.66.61). The summary arrives a few seconds after the
+   * card, so this, not the start, decides how long a card without one is still
    */
   readonly endedAtMs: number;
   readonly live: boolean;
@@ -638,6 +645,8 @@ export interface VoiceCallCardItem {
 
 /**
  * Where a call card sits in the timeline.
+ * A finished call reads as the newest thing the moment it hangs up, so its card
+ * goes at the call's END: the messages the call relayed were written while it
  */
 export function callPlacementMs(card: Pick<VoiceCallCardItem, "live" | "endedAtMs">): number {
   return card.live ? Number.POSITIVE_INFINITY : card.endedAtMs;
@@ -646,6 +655,7 @@ export function callPlacementMs(card: Pick<VoiceCallCardItem, "live" | "endedAtM
 /**
  * Is a call card still waiting for its summary, i.e. worth asking the server
  * for again?
+ * Harout, 16 Oct: a call asked whether a court was free and the chat showed
  */
 export const voiceCallSummaryPending = (
   cards: ReadonlyArray<{
@@ -794,6 +804,8 @@ export function buildConversationItems(
 
 /**
  * When the bot last said something, in epoch ms, or null if it has not spoken.
+ * Drives the composer's "Queued" notice. A message sent mid-turn reaches the
+ * running turn as a steer, so the bot often answers it long before the turn
  */
 export function botLastSpokeAtMs(items: ReadonlyArray<ConversationItem>): number | null {
   for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -928,6 +940,7 @@ interface TimedCard {
 /**
  * Drops each settled card back into the transcript at the moment it happened,
  * and keeps every still-open one at the end.
+ * A question the owner has already answered is history: it belongs where the
  */
 function placeTimedCards(
   items: ReadonlyArray<ConversationItem>,
@@ -979,12 +992,15 @@ export function placeSecretRequestCards(
   return placeTimedCards(
     items,
     cards.map((card) => ({
-      item: { kind: "secret", id: `secret:${card.requestId}`, card } as const,
+      item: { kind: "secret", id: secretCardItemId(card.requestId), card } as const,
       atMs: card.createdAtMs,
       pending: card.kind === "pending",
     })),
   );
 }
+
+/** The feed row id of a secret card, used to bring its focused form into view. */
+export const secretCardItemId = (requestId: string): string => `secret:${requestId}`;
 
 export function placeLoginRequestCards(
   items: ReadonlyArray<ConversationItem>,

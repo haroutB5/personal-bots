@@ -6,9 +6,9 @@ import {
   type OrchestrationSessionProviderRetry,
   type PersonalBrowserStatus,
 } from "@t3tools/contracts";
+import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import type { TimelineEntry } from "./types.ts";
 
 import {

@@ -1,5 +1,7 @@
 /**
  * The one module that knows how the web app talks to the voice-call server.
+ * Backend owns `apps/server/**` and the contract (`feat/hbots-voice-calls`,
+ * `packages/contracts/src/personalVoiceCalls.ts`). Every server call the UI
  */
 import {
   type PersonalSecretSummary,
@@ -94,7 +96,9 @@ export function createVoiceCallApi<R, ER>(
   });
 
   /**
-   * The call's OWN chat while a call is running: the bot's status, whether.
+   * The call's OWN chat while a call is running: the bot's status, whether its
+   * turn is running, and the newest finished reply (redacted and capped on the
+   * server). `bot_status`, `latest_reply` and the turn end all read this, so the
    */
   const personalVoiceCallSnapshot = createEnvironmentRpcCommand(runtime, {
     label: "personal-voice-calls:snapshot",

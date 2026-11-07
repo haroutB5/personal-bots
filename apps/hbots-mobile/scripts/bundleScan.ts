@@ -33,8 +33,8 @@ export const BUNDLE_RULES: ReadonlyArray<BundleRule> = [
 ];
 
 /**
- * Lead decision, 1 Nov 2026: these come in through packages/shared and
- * packages/contracts and are never called by the app.
+ * Lead decision, 1 Nov 2026: exactly these two come in through
+ * packages/shared and packages/contracts and are never called by the app.
  */
 export const ALLOWED_STRINGS: ReadonlyArray<AllowedStrings> = [
   {
@@ -50,24 +50,24 @@ export const ALLOWED_STRINGS: ReadonlyArray<AllowedStrings> = [
     why: "Schema URL and description of the T3 project file contract.",
   },
   {
-    id: "pairing-app-link",
+    id: "shared-pairing-link-builder",
     ruleId: "upstream-deep-link",
     strings: ["t3code://pair?"],
-    why: "Link builder in shared/remote, bundled through the client-runtime connection barrel. The phone scans QR URLs and never opens the scheme.",
+    why: "The shared pairing-link builder. The phone never calls it.",
   },
   {
-    id: "connect-troubleshooting-link",
+    id: "shared-connect-troubleshooting-url",
     ruleId: "eas-owner",
     strings: [
       "https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md",
     ],
-    why: "Docs URL in the contracts connection error helper. The phone opens no upstream repository.",
+    why: "A help link in the shared connect error helper. The phone never renders it.",
   },
   {
-    id: "hosted-app-url",
+    id: "shared-hosted-app-url",
     ruleId: "upstream-host",
     strings: ["https://app.t3.codes"],
-    why: "Default hosted app URL in shared/connectAuth, bundled through the client-runtime connection barrel. The phone never opens it.",
+    why: "The hosted web app origin in shared connect auth. The phone never opens it.",
   },
 ];
 

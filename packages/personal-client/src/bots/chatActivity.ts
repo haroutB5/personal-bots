@@ -9,7 +9,9 @@ const parseMs = (value: string | null | undefined): number | null => {
 };
 
 /**
- * When a chat last had real conversation: the owner's last message.
+ * When a chat last had real conversation: the owner's last message, the
+ * latest turn starting or ending, the newest message the server reports for
+ * it (a relay routine posts without a turn), else when it was made. What the
  */
 export function chatActivityMs(
   shell: Pick<EnvironmentThreadShell, "createdAt" | "latestUserMessageAt" | "latestTurn">,
@@ -44,7 +46,9 @@ export function chatActivityMs(
 }
 
 /**
- * The last answer per shell. The Bots list sorts every bot's chats by.
+ * The last answer per shell. The Bots list sorts every bot's chats by this
+ * inside a comparator and rebuilds on every shell update while bots stream, so
+ * the same five date strings were parsed thousands of times a second (a
  */
 const activityMemo = new WeakMap<
   object,
