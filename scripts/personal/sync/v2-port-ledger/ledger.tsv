@@ -947,3 +947,6 @@ packages/personal-client/src/bots/personalBots.ts		content	0	C16	done	M1b restor
 packages/contracts/src/rpc.ts		content	0	C11	open	MAIN device RPCs parked; C11 adds personalDevices RPCs in contracts personalRpc.ts
 packages/contracts/src/index.ts		content	0	C11	open	MAIN device and personal export lines parked; M1 exports personalDevices only
 packages/contracts/src/environment.test.ts		content	0	C11	open	MAIN shortId descriptor test parked; C11 restores it
+apps/hbots-mobile/src/settings/DevicesScreen.tsx		added-broken	0	C11	open	M1b deferred the devices screen until C11 adds personalDevices.list and .revoke
+packages/personal-client/src/settings/devices.ts		added-broken	0	C11	open	M1b deferred the device row model until C11 adds the device RPCs
+packages/personal-client/src/settings/devices.test.ts		added-broken	0	C11	open	M1b deferred the device row tests until C11 adds the device RPCs
