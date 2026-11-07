@@ -10,6 +10,9 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import { decorateSecretStore } from "../personal/secrets/sealedSecretStore.ts";
+
+export { isEncryptedSecretName } from "../personal/secrets/sealedSecretStore.ts";
 
 const secretStoreErrorContext = {
   resource: Schema.String,
@@ -328,4 +331,12 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ServerSecretStore, make);
+export const layer = Layer.effect(
+  ServerSecretStore,
+  Effect.gen(function* () {
+    const base = yield* make;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* decorateSecretStore(base, { fileSystem, path });
+  }),
+);
