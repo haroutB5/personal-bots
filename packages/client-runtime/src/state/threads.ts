@@ -1123,6 +1123,16 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   };
 }
 
+/** Phase 4: the v2 history controller pages the open thread. */
+export function requestOlderThreadTurns(_environmentId: unknown, _threadId: unknown): boolean {
+  return false;
+}
+
+/** Phase 4: v2 keeps history paging in the controller, not in the shell. */
+export function threadHasOlderTurns(_state: unknown): boolean {
+  return false;
+}
+
 export * from "./archivedThreads.ts";
 export * from "./checkpointDiff.ts";
 export * as BoundedThreadSnapshotLoader from "./boundedThreadSnapshotHttp.ts";

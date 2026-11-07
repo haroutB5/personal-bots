@@ -1622,3 +1622,11 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
   }
   return available;
 }
+
+/** Phase 4: v2 interrupts carry the active run, not the v1 session. */
+export function buildRunningThreadTurnInterruptInput(
+  _thread: unknown,
+  _phase: unknown,
+): { readonly threadId: string; readonly turnId?: string } | null {
+  return null;
+}

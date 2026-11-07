@@ -1183,3 +1183,8 @@ export function deriveTimelineEntriesWithState(
   ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
   return { messages, proposedPlans, workEntries, entries };
 }
+
+/** Phase 4: v1 activity rows have no v2 projection yet. */
+export function deriveWorkLogEntries(_activities: unknown): WorkLogEntry[] {
+  return [];
+}

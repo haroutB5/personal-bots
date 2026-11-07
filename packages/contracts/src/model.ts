@@ -2,7 +2,24 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "./chatAttachment.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
+
+/** The DeepSeek option that selects agent mode. */
+export const DEEPSEEK_AGENT_MODE_OPTION_ID = "agentMode";
+/** The DeepSeek Harness rejects inline prompts over roughly 3 MiB. */
+export const DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The image cap one attachment may use for a turn on `model`: the DeepSeek
+ * Harness needs the small payload, every other provider gets the wire cap.
+ */
+export function imageByteLimitForModel(model: string | null | undefined): number {
+  const normalized = model?.trim().toLowerCase();
+  return normalized !== undefined && normalized.startsWith("deepseek")
+    ? DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES
+    : PROVIDER_SEND_TURN_MAX_IMAGE_BYTES;
+}
 
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
 export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;

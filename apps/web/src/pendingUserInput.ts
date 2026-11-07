@@ -11,6 +11,12 @@ import {
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
+export {
+  buildPendingUserInputAnswers,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
+} from "@t3tools/client-runtime/state/pending-user-input";
+
 export function projectPendingUserInputAnswer(
   answer: unknown,
   threadContexts: ReadonlyArray<ThreadContextRecord>,

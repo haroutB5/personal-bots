@@ -159,6 +159,10 @@ function SheetDescription({ className, ...props }: SheetPrimitive.Description.Pr
   );
 }
 
+function SheetClose({ className, ...props }: SheetPrimitive.Close.Props) {
+  return <SheetPrimitive.Close className={className} data-slot="sheet-close" {...props} />;
+}
+
 export {
   Sheet,
   SheetPortal,
@@ -169,4 +173,5 @@ export {
   SheetHeader,
   SheetTitle,
   SheetDescription,
+  SheetClose,
 };

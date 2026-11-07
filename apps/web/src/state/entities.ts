@@ -77,6 +77,18 @@ const EMPTY_UPDATED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
 const EMPTY_THREAD_HISTORY_ATOM = Atom.make<ThreadHistoryMeta>(EMPTY_THREAD_HISTORY_META).pipe(
   Atom.withLabel("web-thread-history:empty"),
 );
+const activeEnvironmentIdAtom = Atom.make<EnvironmentId | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-active-environment-id"),
+);
+
+export function useActiveEnvironmentId(): EnvironmentId | null {
+  return useAtomValue(activeEnvironmentIdAtom);
+}
+
+export function setActiveEnvironmentId(environmentId: EnvironmentId | null): void {
+  appAtomRegistry.set(activeEnvironmentIdAtom, environmentId);
+}
 
 export function useThreadRefs(enabled = true): ReadonlyArray<ScopedThreadRef> {
   return useAtomValue(enabled ? environmentThreadShells.threadRefsAtom : EMPTY_THREAD_REFS_ATOM);
@@ -175,6 +187,14 @@ export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThr
   return useAtomValue(
     ref === null ? EMPTY_THREAD_PROJECTION_ATOM : environmentThreadDetails.threadAtom(ref),
   );
+}
+
+/** Phase 4: the web personal screens still read the v1 detail shape. */
+export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread | null {
+  useAtomValue(
+    ref === null ? EMPTY_THREAD_PROJECTION_ATOM : environmentThreadDetails.threadAtom(ref),
+  );
+  return null;
 }
 
 /** The thread's structure, held through streamed assistant and reasoning text; see ThreadStructure. */
