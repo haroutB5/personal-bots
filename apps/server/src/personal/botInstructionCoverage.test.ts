@@ -74,9 +74,15 @@ describe("bot instruction coverage", () => {
         .filter((entry) => entry.carriesBotInstructions)
         .map((entry) => [entry.driverKind, entry.callSite]),
     );
+    const acp = "../../../../packages/provider-acp/src/server/adapter.ts";
     assert.deepEqual(callSites, {
+      acpRegistry: acp,
+      antigravity: acp,
       claudeAgent: "../orchestration-v2/Adapters/ClaudeAdapterV2.ts",
       codex: "CodexDeveloperInstructions.ts",
+      fx: acp,
+      grok: acp,
+      kiro: acp,
       opencode: "../../../../packages/provider-opencode/src/server/adapter.ts",
     });
   });
@@ -84,10 +90,9 @@ describe("bot instruction coverage", () => {
   // Regression pin for the v1.19.0 defect: these ACP adapters append only
   // buildRuntimeInstructions, never the bot's persona. If one of them is
   // wired up later, this fails and the contracts list must be updated with
-  // it (which the assertion above then re-derives). Antigravity was wired in
-  // 1.66.73 (the persona rides in the same text block on every prompt).
-  it("still reports the ACP providers as not carrying instructions", () => {
-    for (const kind of ["cursor", "grok"]) {
+  // it (which the assertion above then re-derives).
+  it("still reports the remaining ACP providers as not carrying instructions", () => {
+    for (const kind of ["cursor"]) {
       const entry = coverage.find((candidate) => candidate.driverKind === kind);
       if (entry === undefined) continue;
       assert.isFalse(

@@ -562,6 +562,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./mcpToolStepLabel": {
+      "types": "./src/mcpToolStepLabel.ts",
+      "import": "./src/mcpToolStepLabel.ts"
     }
   },
   "scripts": {

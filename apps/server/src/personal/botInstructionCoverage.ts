@@ -58,11 +58,24 @@ export interface DriverInstructionCoverage {
 
 const readFile = (file: string): string => NodeFS.readFileSync(file, "utf8");
 
+const PACKAGE_IMPORT_PATTERN = /from\s+"@t3tools\/([^"/]+)\/([^"]+)"/g;
+
 const localImportsOf = (file: string): ReadonlyArray<string> => {
   const directory = NodePath.dirname(file);
   const resolved: Array<string> = [];
   for (const match of readFile(file).matchAll(RELATIVE_IMPORT_PATTERN)) {
     const target = NodePath.resolve(directory, match[1]!);
+    if (NodeFS.existsSync(target)) resolved.push(target);
+  }
+  return resolved;
+};
+
+/** Workspace package imports, so a shared adapter (ACP) stays in the closure. */
+const packageImportsOf = (file: string, packagesDirectory: string): ReadonlyArray<string> => {
+  const resolved: Array<string> = [];
+  for (const match of readFile(file).matchAll(PACKAGE_IMPORT_PATTERN)) {
+    const subpath = match[2]!.endsWith(".ts") ? match[2]! : `${match[2]!}.ts`;
+    const target = NodePath.join(packagesDirectory, match[1]!, "src", subpath);
     if (NodeFS.existsSync(target)) resolved.push(target);
   }
   return resolved;
@@ -95,7 +108,11 @@ const driverKindOf = (file: string): string | undefined => {
  * and depth 2 (Codex), so a module that merely happens to sit far below an
  * adapter cannot make an uncovered provider look covered.
  */
-const findInstructionsCall = (entries: ReadonlyArray<string>, maxDepth: number): string | null => {
+const findInstructionsCall = (
+  entries: ReadonlyArray<string>,
+  maxDepth: number,
+  packagesDirectory: string,
+): string | null => {
   const seen = new Set<string>(entries);
   let frontier = [...entries];
   for (let depth = 0; depth <= maxDepth && frontier.length > 0; depth += 1) {
@@ -103,7 +120,10 @@ const findInstructionsCall = (entries: ReadonlyArray<string>, maxDepth: number):
     for (const file of frontier) {
       if (callsWithBotInstructions(readFile(file))) return file;
       if (depth === maxDepth) continue;
-      for (const imported of localImportsOf(file)) {
+      for (const imported of [
+        ...localImportsOf(file),
+        ...packageImportsOf(file, packagesDirectory),
+      ]) {
         if (seen.has(imported)) continue;
         seen.add(imported);
         next.push(imported);
@@ -124,8 +144,12 @@ export function scanDriverInstructionCoverage(
     readonly maxDepth?: number;
     /** Also scan package drivers, e.g. a `packages/provider-<name>/src/server/driver.ts` file. */
     readonly extraDriverFiles?: ReadonlyArray<string>;
+    /** Workspace packages root, for imports such as `@t3tools/provider-acp/server/adapter`. */
+    readonly packagesDirectory?: string;
   },
 ): ReadonlyArray<DriverInstructionCoverage> {
+  const packagesDirectory =
+    options?.packagesDirectory ?? NodePath.resolve(providerDirectory, "../../../../packages");
   const driversDirectory = NodePath.join(providerDirectory, "Drivers");
   const localDriverFiles = NodeFS.readdirSync(driversDirectory)
     .filter((name) => name.endsWith("Driver.ts") && !name.includes(".test."))
@@ -141,7 +165,7 @@ export function scanDriverInstructionCoverage(
     const adapterFiles = localImportsOf(driverFile).filter(
       (file) => /(?:^|\/)adapter\.ts$/.test(file) || /Adapter(?:V2)?\.ts$/.test(file),
     );
-    const callSite = findInstructionsCall(adapterFiles, options?.maxDepth ?? 3);
+    const callSite = findInstructionsCall(adapterFiles, options?.maxDepth ?? 3, packagesDirectory);
     coverage.push({
       driverKind,
       driverFile: NodePath.relative(providerDirectory, driverFile).replaceAll("\\", "/"),

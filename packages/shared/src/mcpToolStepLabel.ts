@@ -1,20 +1,7 @@
 /**
- * One plain-language line for an MCP tool step.
- *
- * The working indicator, the Bots list row and the voice call's `bot_status`
- * all read a tool step's TITLE (see `personalProgressNote`), and the providers
- * used to hand them the generic "MCP tool call". Harout's test on live 1.66.57
- * (16 Oct) asked for what the bot is actually doing: "Opening clubspark.com",
- * "Searching the web", "Handing work to QA".
- *
- * hbots' own `t3-code` tools get a hand-written line each; any other MCP tool
- * gets its tool name in words ("fetch_pr" -> "Fetch PR").
- *
- * Safety (the same rule as the progress note): only a bare HOSTNAME is ever
- * read out of a tool's arguments. Never a path, a query, a parameter, a header
- * or a value. `hostnameOf` parses the URL and then re-checks the result against
- * a strict DNS-host shape, so anything that is not a host is dropped and the
- * plain fallback line is used instead.
+ * One plain-language line for an MCP tool step, such as "Opening clubspark.com".
+ * Only a bare hostname is read from arguments; never a path, query or value.
+ * @module shared/mcpToolStepLabel
  */
 
 /** Servers whose tools get their own hand-written lines. */
@@ -47,7 +34,6 @@ const TOOL_NAME_ACRONYMS = new Set([
 
 /** The `t3-code` toolkit, one line each. */
 const HBOTS_TOOL_STEP_LABELS: Readonly<Record<string, string>> = {
-  // The shared browser.
   preview_open: "Opening the browser",
   preview_status: "Checking the browser",
   preview_snapshot: "Looking at the page",
@@ -67,7 +53,7 @@ const HBOTS_TOOL_STEP_LABELS: Readonly<Record<string, string>> = {
   preview_recording_stop: "Stopping the browser recording",
   close_browser: "Closing the browser",
   use_login: "Signing in to a site",
-  // The owner's real PC.
+
   computer_screenshot: "Looking at your screen",
   computer_zoom: "Looking closer at your screen",
   computer_click: "Clicking on your computer",
@@ -81,7 +67,7 @@ const HBOTS_TOOL_STEP_LABELS: Readonly<Record<string, string>> = {
   computer_move: "Moving the mouse on your computer",
   computer_cursor_position: "Finding the mouse pointer",
   computer_release: "Handing back your computer",
-  // Research and memory.
+
   search_web: "Searching the web",
   search_google: "Searching Google",
   search_products: "Searching for products",
@@ -90,7 +76,7 @@ const HBOTS_TOOL_STEP_LABELS: Readonly<Record<string, string>> = {
   search_memory: "Checking memory",
   save_memory: "Saving a note",
   forget_memory: "Forgetting a note",
-  // Bots, tasks and routines.
+
   delegate_task: "Handing work to another bot",
   steer_task: "Updating a task",
   stop_task: "Stopping a task",
@@ -110,7 +96,7 @@ const HBOTS_TOOL_STEP_LABELS: Readonly<Record<string, string>> = {
   notify_user: "Sending you a notification",
   call_vote: "Starting a vote",
   cast_vote: "Casting a vote",
-  // Apps, connections and pull requests.
+
   create_app: "Building a new app",
   create_app_status: "Checking the app build",
   list_connections: "Listing your connections",
@@ -118,12 +104,12 @@ const HBOTS_TOOL_STEP_LABELS: Readonly<Record<string, string>> = {
   link_pull_request: "Linking a pull request",
   unlink_pull_request: "Unlinking a pull request",
   list_thread_pull_requests: "Listing pull requests",
-  // Asking the owner.
+
   request_login: "Asking you to sign in",
   request_secret: "Asking you for a key",
   secret_request: "Using a saved key",
   request_browser_help: "Asking you for help in the browser",
-  // Devices.
+
   device_list: "Listing devices",
   device_open: "Opening a device",
   device_screenshot: "Looking at the device screen",

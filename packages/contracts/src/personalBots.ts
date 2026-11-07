@@ -38,8 +38,13 @@ import { UsageProviderKind } from "./usage.ts";
  * disagree in either direction.
  */
 export const BOT_INSTRUCTION_DRIVER_KINDS: ReadonlyArray<ProviderDriverKind> = [
+  ProviderDriverKind.make("acpRegistry"),
+  ProviderDriverKind.make("antigravity"),
   ProviderDriverKind.make("claudeAgent"),
   ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("fx"),
+  ProviderDriverKind.make("grok"),
+  ProviderDriverKind.make("kiro"),
   ProviderDriverKind.make("opencode"),
 ];
 

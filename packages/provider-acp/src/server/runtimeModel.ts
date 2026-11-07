@@ -10,6 +10,7 @@ import {
   deriveToolActivityPresentation,
   mergeToolActivityData,
 } from "@t3tools/shared/toolActivity";
+import { mcpToolStepLabel } from "@t3tools/shared/mcpToolStepLabel";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
@@ -811,6 +812,18 @@ function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecyc
   }
 }
 
+/**
+ * The plain step line for an MCP tool call named `mcp__<server>__<tool>`;
+ * undefined for a provider's own title, which stays as it is.
+ */
+function mcpStepLabelForAcpTitle(title: string | undefined, rawInput: unknown): string | undefined {
+  if (title === undefined || !title.toLowerCase().startsWith("mcp__")) return undefined;
+  return mcpToolStepLabel({
+    tool: title,
+    ...(isRecord(rawInput) ? { arguments: rawInput } : {}),
+  });
+}
+
 function makeToolCallState(
   input: {
     readonly toolCallId: string;
@@ -837,9 +850,14 @@ function makeToolCallState(
   const command = extractToolCallCommand(input.rawInput, title, kind);
   const extractedContent = extractTextContentFromToolCallContent(input.content);
   const textContent = extractedContent.text;
+  // ACP agents title an MCP call with its model-facing name, so read it the
+  // same way the Claude and Codex adapters do; a provider's own title stays.
+  const displayTitle = mcpStepLabelForAcpTitle(title, input.rawInput) ?? title;
   const normalizedTitle =
-    title && title.toLowerCase() !== "terminal" && title.toLowerCase() !== "tool call"
-      ? title
+    displayTitle &&
+    displayTitle.toLowerCase() !== "terminal" &&
+    displayTitle.toLowerCase() !== "tool call"
+      ? displayTitle
       : undefined;
   const data: Record<string, unknown> = { toolCallId };
   if (input.name != null) data.name = input.name;
@@ -875,7 +893,7 @@ function makeToolCallState(
   }
   const fallbackDetail = command ?? normalizedTitle ?? textContent;
   const hasPresentationSeed =
-    title !== undefined ||
+    displayTitle !== undefined ||
     kind !== undefined ||
     command !== undefined ||
     normalizedTitle !== undefined ||
@@ -883,10 +901,10 @@ function makeToolCallState(
   const presentation = hasPresentationSeed
     ? deriveToolActivityPresentation({
         itemType: canonicalItemTypeFromAcpToolKind(kind),
-        title,
+        title: displayTitle,
         detail: fallbackDetail,
         data,
-        fallbackSummary: title ?? "Tool",
+        fallbackSummary: displayTitle ?? "Tool",
       })
     : undefined;
   const status = normalizeToolCallStatus(input.status, options?.fallbackStatus);

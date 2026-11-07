@@ -89,7 +89,7 @@ apps/server/integration/orchestrationEngine.integration.test.ts		modify-delete	1
 apps/server/integration/orphanedProviderSessionStartup.integration.test.ts		modify-delete	15	C4	dropped	v1 startup reconcile replaced by orchestration-v2 ProviderRuntimeRecoveryService and RestartContinuation; the personal half is covered by PersonalTurnContext.sessionInstructions and the continuation model selection
 apps/server/integration/providerService.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/package.json		content	5	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
-apps/server/scripts/acp-mock-agent.ts		content	544	C8	open	ACP mock for steer and busy-refusal tests
+apps/server/scripts/acp-mock-agent.ts		content	544	C8	dropped	v2 uses AcpRegistryAdapterV2.testkit.ts and packages/effect-acp/test/fixtures/acp-mock-peer.ts; the v1 script has no caller
 apps/server/scripts/cli.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/scripts/measure-pr-preview.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/assets/AssetAccess.test.ts		content	202	C12	open	follows apps/server/src/assets/AssetAccess.ts
@@ -308,7 +308,7 @@ apps/server/src/personal/engine/PersonalEngineV1Live.ts		added-broken	854	C1	don
 apps/server/src/personal/engine/PersonalProvidersV1.test.ts		added-broken	323	C9	open	provider port types (C9)
 apps/server/src/personal/engine/PersonalProvidersV1Live.ts		added-broken	195	C9	open	provider port types (C9)
 apps/server/src/personal/groups/PersonalGroupService.test.ts		added-broken	2724	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
-apps/server/src/personal/leadBots/leadBotGeminiEffort.test.ts		added-broken	62	C8	open	Antigravity effort (C8)
+apps/server/src/personal/leadBots/leadBotGeminiEffort.test.ts		added-broken	62	C8	done	C8: test restored; buildAntigravityModelsFromSession now exposes thinking_level as the shared effort descriptor
 apps/server/src/personal/memory/PersonalMemoryService.apps.test.ts		added-broken	769	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/memory/PersonalMemoryService.listPage.test.ts		added-broken	166	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/memory/PersonalMemoryService.replace.test.ts		added-broken	1428	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
@@ -358,12 +358,12 @@ apps/server/src/project/NewProject.test.ts		modify-delete	1	B1	dropped	our only 
 apps/server/src/project/ProjectSetupScriptRunner.test.ts		content	1	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
 apps/server/src/project/RepositoryIdentityResolver.test.ts		content	171	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
 apps/server/src/project/RepositoryIdentityResolver.ts		content	70	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
-apps/server/src/provider/AntigravityAuth.test.ts		content	231	C5-C9	open	area C5-C9
-apps/server/src/provider/AntigravityAuth.ts		content	78	C5-C9	open	area C5-C9
-apps/server/src/provider/AntigravityInstallation.test.ts		content	72	C5-C9	open	area C5-C9
-apps/server/src/provider/AntigravityInstallation.ts		content	106	C5-C9	open	area C5-C9
-apps/server/src/provider/AntigravityProvider.test.ts	apps/server/src/provider/Layers/AntigravityProvider.test.ts	content	145	C5-C9	open	area C5-C9
-apps/server/src/provider/AntigravityProvider.ts	apps/server/src/provider/Layers/AntigravityProvider.ts	content	61	C5-C9	open	area C5-C9
+apps/server/src/provider/AntigravityAuth.test.ts		content	231	C5-C9	dropped	v1 auth suite; antigravityAuthSupport.test.ts and the provider tests cover the v2 path
+apps/server/src/provider/AntigravityAuth.ts		content	78	C5-C9	done	v2 module present and wired by AntigravityDriver
+apps/server/src/provider/AntigravityInstallation.test.ts		content	72	C5-C9	done	v2 module and test present
+apps/server/src/provider/AntigravityInstallation.ts		content	106	C5-C9	done	v2 module present
+apps/server/src/provider/AntigravityProvider.test.ts	apps/server/src/provider/Layers/AntigravityProvider.test.ts	content	145	C5-C9	done	v2 module and test present
+apps/server/src/provider/AntigravityProvider.ts	apps/server/src/provider/Layers/AntigravityProvider.ts	content	61	C5-C9	done	C8: thinking levels map to the shared effort descriptor again
 apps/server/src/provider/ClaudeModelCatalog.test.ts		content	133	C5-C9	done	catalog merge and parse helpers ported; suite passes
 apps/server/src/provider/ClaudeModelCatalog.ts		content	129	C5-C9	done	parse/format/merge discovered models and claudeCatalogHasModel ported from the parked hunk
 apps/server/src/provider/ClaudeProvider.ts	apps/server/src/provider/Layers/ClaudeProvider.ts	content	84	C5-C9	done	usage read timeout, failure log and probeFailed usage message ported; warmSpawnImage is C15
@@ -379,8 +379,8 @@ apps/server/src/provider/CodexProvider.test.ts		content	1	C6	done	C6: skills/lis
 apps/server/src/provider/CodexProvider.ts	apps/server/src/provider/Layers/CodexProvider.ts	content	31	C5-C9	done	C6: logCodexSkillsListErrors ported
 apps/server/src/provider/DeepSeekModelCatalog.test.ts		added-broken	89	D1	open	G6 park; DeepSeek model catalog (D1)
 apps/server/src/provider/DeepSeekModelCatalog.ts		added-broken	233	D1	open	G6 park; DeepSeek model catalog (D1)
-apps/server/src/provider/Drivers/AntigravityDriver.test.ts		content	58	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/AntigravityDriver.ts		content	134	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/AntigravityDriver.test.ts		content	58	C5-C9	done	v2 module and test present
+apps/server/src/provider/Drivers/AntigravityDriver.ts		content	134	C5-C9	done	v2 module present
 apps/server/src/provider/Drivers/ClaudeDriver.ts		content	154	C5-C9	done	installed-CLI model discovery, discovered catalog merge and post-reset capability cache invalidation ported
 apps/server/src/provider/Drivers/ClaudeExecutable.ts		content	5	C5-C9	done	v2 already resolves the SDK executable; async off-loop resolution is C15
 apps/server/src/provider/Drivers/ClaudeModelDiscovery.test.ts		added-broken	19	C5-C9	done	restored with the discovery module; suite passes
@@ -402,14 +402,14 @@ apps/server/src/provider/Drivers/DeepSeekEnvironment.ts		added-broken	228	C5-C9	
 apps/server/src/provider/Drivers/GrokDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/GrokDriver.ts		modify-delete	10	C5-C9	open	area C5-C9
 apps/server/src/provider/Drivers/OpenCodeDriver.ts		modify-delete	83	C5-C9	dropped	driver moved to packages/provider-opencode; the v2 driver wires createOpenCodeAdapterV2 and resolveCodexLaunchArgs equivalents, and the parked hunk is upstream import churn
-apps/server/src/provider/Drivers/RegistryAcpDriver.test.ts		added-broken	258	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/RegistryAcpDriver.ts		added-broken	398	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/RegistryAcpLocalProof.test.ts		added-broken	196	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/RegistryAcpDriver.test.ts		added-broken	258	C5-C9	done	v2 home is packages/provider-acp-registry/src/server with its own tests
+apps/server/src/provider/Drivers/RegistryAcpDriver.ts		added-broken	398	C5-C9	done	v2 home is packages/provider-acp-registry/src/server/adapter.ts
+apps/server/src/provider/Drivers/RegistryAcpLocalProof.test.ts		added-broken	196	C5-C9	dropped	local proof needs a real registry agent; the v2 package tests and app replay suite cover the protocol
 apps/server/src/provider/EventNdjsonLogger.test.ts	apps/server/src/provider/Layers/EventNdjsonLogger.test.ts	content	217	C5-C9	open	area C5-C9
 apps/server/src/provider/EventNdjsonLogger.ts	apps/server/src/provider/Layers/EventNdjsonLogger.ts	content	289	C5-C9	open	area C5-C9
 apps/server/src/provider/GrokProvider.test.ts	apps/server/src/provider/Layers/GrokProvider.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/Layers/AntigravityAdapter.test.ts		modify-delete	314	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/AntigravityAdapter.ts		modify-delete	183	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/AntigravityAdapter.test.ts		modify-delete	314	C5-C9	dropped	v2 AntigravityAdapterV2.test.ts and the provider-acp tests own the adapter
+apps/server/src/provider/Layers/AntigravityAdapter.ts		modify-delete	183	C5-C9	done	C8: AntigravityAdapterV2 with the shared ACP persona, quota notice and effort mapping
 apps/server/src/provider/Layers/ClaudeAdapter.botDeny.test.ts		added-broken	205	C5-C9	dropped	v1 adapter test; buildClaudeBotPermissionDeny is covered by personal/secrets/botProtectedPaths.test.ts
 apps/server/src/provider/Layers/ClaudeAdapter.test.ts		modify-delete	1630	C5-C9	dropped	v1 adapter suite; ClaudeAdapterV2.test.ts and claudeQueryOptions.test.ts cover the ported behaviour
 apps/server/src/provider/Layers/ClaudeAdapter.ts		modify-delete	551	C5-C9	dropped	v1 adapter replaced by orchestration-v2/Adapters/ClaudeAdapterV2.ts; personal options live in personal/providerHooks/claudeQueryOptions.ts
@@ -432,10 +432,10 @@ apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	C5-C9
 apps/server/src/provider/Layers/DeepSeekProvider.ts		added-broken	545	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/GrokAdapter.test.ts		modify-delete	48	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/GrokAdapter.ts		modify-delete	16	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/NativeAcpAdapter.test.ts		added-broken	826	C5-C9	open	G2 park; follows NativeAcpAdapter.ts
-apps/server/src/provider/Layers/NativeAcpAdapter.ts		added-broken	1261	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/NativeAcpSteerHandoff.test.ts		added-broken	141	C5-C9	open	G2 park; ACP steer handoff
-apps/server/src/provider/Layers/NativeAcpStopRetry.test.ts		added-broken	86	C5-C9	open	G2 park; ACP stop retry
+apps/server/src/provider/Layers/NativeAcpAdapter.test.ts		added-broken	826	C5-C9	dropped	v2 packages/provider-acp/src/server owns the native ACP adapter and its tests
+apps/server/src/provider/Layers/NativeAcpAdapter.ts		added-broken	1261	C5-C9	done	C8: the v2 home is packages/provider-acp/src/server/adapter.ts, now with the bot persona
+apps/server/src/provider/Layers/NativeAcpSteerHandoff.test.ts		added-broken	141	C5-C9	dropped	v2 provider-acp steer tests own the behaviour
+apps/server/src/provider/Layers/NativeAcpStopRetry.test.ts		added-broken	86	C5-C9	dropped	v2 provider-acp stop and retry tests own the behaviour
 apps/server/src/provider/Layers/OpenCodeAdapter.test.ts		modify-delete	668	C5-C9	dropped	v1 adapter suite; the package has 175 tests and the app replay suite 100, all green on C7
 apps/server/src/provider/Layers/OpenCodeAdapter.ts		modify-delete	269	C5-C9	done	C7: persona, per-bot config-home isolation and state deny rules ported to packages/provider-opencode (v2 adapter); the v1 adapter carries the persona
 apps/server/src/provider/Layers/OpenCodeProvider.test.ts		modify-delete	44	C5-C9	dropped	v2 provider snapshot tests live in packages/provider-opencode/src/server; the v1 provider layer no longer exists
@@ -448,10 +448,10 @@ apps/server/src/provider/Layers/ProviderService.ts		modify-delete	250	C5-C9	open
 apps/server/src/provider/Layers/ProviderSessionDirectory.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Layers/ProviderSessionReaper.test.ts		modify-delete	3	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/ProviderSessionReaper.ts		modify-delete	2	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/RegistryAcpAdapter.test.ts		added-broken	317	C8	open	G2 park; ACP registry adapter (C8)
-apps/server/src/provider/Layers/RegistryAcpAdapter.ts		added-broken	69	C8	open	G6 park; ACP registry adapter (C8)
-apps/server/src/provider/Layers/antigravityUsageLimits.test.ts		added-broken	465	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/antigravityUsageLimits.ts		added-broken	489	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/RegistryAcpAdapter.test.ts		added-broken	317	C8	dropped	v2 AcpRegistryAdapterV2.test.ts owns the registry adapter with 2424 lines
+apps/server/src/provider/Layers/RegistryAcpAdapter.ts		added-broken	69	C8	done	C8: the v2 registry path is AcpRegistryAdapterV2 plus packages/provider-acp-registry
+apps/server/src/provider/Layers/antigravityUsageLimits.test.ts		added-broken	465	C5-C9	done	v2 home is AntigravityUsage.ts with the provider tests
+apps/server/src/provider/Layers/antigravityUsageLimits.ts		added-broken	489	C5-C9	done	v2 home is apps/server/src/provider/Drivers/AntigravityUsage.ts
 apps/server/src/provider/Layers/codexLaunchArgs.test.ts		modify-delete	22	C5-C9	done	C6: personal-bot switch and skill-args tests ported
 apps/server/src/provider/Layers/openCodeUsageLimits.ts		modify-delete	11	C5-C9	done	C7: the console key is read from OpenCode 2's stored credentials in usageLimits.ts, with the opencode-go fallback
 apps/server/src/provider/Layers/resetCreditCoordinator.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -466,24 +466,24 @@ apps/server/src/provider/Services/ProviderAdapter.ts		modify-delete	39	C5-C9	ope
 apps/server/src/provider/Services/ProviderRegistry.ts		modify-delete	32	C5-C9	open	area C5-C9
 apps/server/src/provider/Services/ProviderService.ts		modify-delete	12	C5-C9	open	area C5-C9
 apps/server/src/provider/Services/ServerProvider.ts		modify-delete	21	C5-C9	open	area C5-C9
-apps/server/src/provider/acp/AcpCoreRuntimeEvents.ts		modify-delete	30	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AcpCoreRuntimeEvents.ts		modify-delete	30	C5-C9	done	v2 provider-acp runtime owns the events
 apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/AcpNativeLogging.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/AcpNativeLogging.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/acp/AcpRuntimeModel.test.ts		modify-delete	148	C5-C9	open	area C5-C9
-apps/server/src/provider/acp/AcpRuntimeModel.ts		modify-delete	64	C5-C9	open	area C5-C9
-apps/server/src/provider/acp/AcpSessionRuntime.ts		modify-delete	60	C5-C9	open	area C5-C9
-apps/server/src/provider/acp/AntigravityAcpSupport.test.ts		content	308	C5-C9	open	area C5-C9
-apps/server/src/provider/acp/AntigravityAcpSupport.ts		content	136	C5-C9	open	area C5-C9
+apps/server/src/provider/acp/AcpRuntimeModel.test.ts		modify-delete	148	C5-C9	dropped	v2 packages/provider-acp/src/server/runtimeModel.test.ts owns it
+apps/server/src/provider/acp/AcpRuntimeModel.ts		modify-delete	64	C5-C9	done	C8: v2 runtimeModel.ts, with the T3 MCP step label ported
+apps/server/src/provider/acp/AcpSessionRuntime.ts		modify-delete	60	C5-C9	done	C8: v2 AcpSessionRuntime plus lowerBotProcessPriorityEffect at the spawn
+apps/server/src/provider/acp/AntigravityAcpSupport.test.ts		content	308	C5-C9	done	v2 module and test present
+apps/server/src/provider/acp/AntigravityAcpSupport.ts		content	136	C5-C9	done	v2 module present
 apps/server/src/provider/acp/CursorAcpCliProbe.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/CursorAcpSupport.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/DshAcpSupport.test.ts		added-broken	682	C5-C9	open	area C5-C9
 apps/server/src/provider/acp/DshAcpSupport.ts		added-broken	1049	C5-C9	open	area C5-C9
 apps/server/src/provider/acp/GrokAcpCliProbe.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/XAiAcpExtension.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/antigravityAuthSupport.test.ts		content	192	C5-C9	open	area C5-C9
-apps/server/src/provider/antigravityAuthSupport.ts		content	95	C5-C9	open	area C5-C9
-apps/server/src/provider/antigravityRelease.ts		content	42	C5-C9	open	area C5-C9
+apps/server/src/provider/antigravityAuthSupport.test.ts		content	192	C5-C9	done	v2 module and test present
+apps/server/src/provider/antigravityAuthSupport.ts		content	95	C5-C9	done	v2 module present
+apps/server/src/provider/antigravityRelease.ts		content	42	C5-C9	done	v2 module present
 apps/server/src/provider/botPluginSkillDiagnostics.test.ts		added-broken	201	C6	done	C6: added-broken file restored and ported to the v2 path
 apps/server/src/provider/botPluginSkillDiagnostics.ts		added-broken	162	C6	done	C6: added-broken file restored
 apps/server/src/provider/botPluginSkillRoots.ts		added-broken	91	C5-C9	open	area C5-C9
@@ -602,8 +602,8 @@ apps/server/src/usage/UsageLimitSources.ts		content	30	C14	open	DeepSeek, Antigr
 apps/server/src/usage/UsageService.sessionUsage.test.ts		added-broken	398	C14	open	G2 park; UsageService row is C14
 apps/server/src/usage/UsageService.test.ts		content	281	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
 apps/server/src/usage/UsageService.ts		content	399	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
-apps/server/src/usage/antigravityUsageReader.test.ts		added-broken	301	C8	open	test of an Appendix A hook file
-apps/server/src/usage/antigravityUsageReader.ts		modify-delete	75	C8	open	hook file listed in Appendix A
+apps/server/src/usage/antigravityUsageReader.test.ts		added-broken	301	C8	done	C8: the v2 reader test is apps/server/src/provider/Drivers/antigravityUsageReader.test.ts
+apps/server/src/usage/antigravityUsageReader.ts		modify-delete	75	C8	done	C8: apps/server/src/provider/Drivers/antigravityUsageReader.ts owns it, with dedupe and the PERSONAL_ANTIGRAVITY_USAGE_DEDUPE switch
 apps/server/src/usage/botUsage.test.ts		added-broken	354	B1	done	G8 restored the test at B1 against U's UsageRecord; the reader returns in C14
 apps/server/src/usage/botUsage.ts		added-broken	246	B1	done	G8 restored the file at B1 against U's UsageRecord; readSessionUsage returns in C14
 apps/server/src/usage/cliproxyApi.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries

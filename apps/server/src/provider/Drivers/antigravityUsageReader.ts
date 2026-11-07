@@ -258,10 +258,21 @@ const readDatabase = Effect.fn("readDatabase")(function* (
         )
       : [];
     return yield* decode(() =>
-      usageCandidates(sessionId, generations, steps, trajectoryTimestamp, fallbackTimestamp),
+      usageCandidates(
+        sessionId,
+        generations,
+        steps,
+        trajectoryTimestamp,
+        fallbackTimestamp,
+        antigravityUsageDedupeEnabled(),
+      ),
     );
   }).pipe(sql.withTransaction);
 });
+
+/** One generation is written as a step, a generation and a retry copy; `=off` counts each. */
+const antigravityUsageDedupeEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  env.PERSONAL_ANTIGRAVITY_USAGE_DEDUPE !== "off";
 
 function usageCandidates(
   sessionId: string,
@@ -269,6 +280,7 @@ function usageCandidates(
   steps: ReadonlyArray<{ idx: number; entry: Metadata }>,
   trajectoryTimestamp: number | null,
   fallbackTimestamp: number,
+  dedupe: boolean,
 ): UsageCandidate[] {
   const records: UsageCandidate[] = [];
   const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry.model]));
@@ -294,10 +306,12 @@ function usageCandidates(
           0
         )
           continue;
-        const keys = ([11, 12, 7] as const).flatMap((key) => {
-          const id = textAt(usage, key);
-          return id ? [`antigravity:${key}:${id}`] : [];
-        });
+        const keys = dedupe
+          ? ([11, 12, 7] as const).flatMap((key) => {
+              const id = textAt(usage, key);
+              return id ? [`antigravity:${key}:${id}`] : [];
+            })
+          : [];
         const record: UsageRecord = {
           provider: "antigravity",
           sessionId,

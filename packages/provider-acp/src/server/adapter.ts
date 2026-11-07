@@ -114,7 +114,10 @@ import {
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  withBotInstructions,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -7991,13 +7994,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const sessionSetup = yield* Ref.get(activeSessionSetup);
             prompt.push({
               type: "text",
-              text: buildRuntimeInstructions({
-                harness: flavor.runtimeHarness ?? driver,
-                model: turnInput.modelSelection.model,
-                pullRequestLinking:
-                  sessionSetup === null ||
-                  flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
-              }),
+              text: withBotInstructions(
+                buildRuntimeInstructions({
+                  harness: flavor.runtimeHarness ?? driver,
+                  model: turnInput.modelSelection.model,
+                  pullRequestLinking:
+                    sessionSetup === null ||
+                    flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !==
+                      true,
+                }),
+                input.systemInstructions,
+              ),
             });
           }
           return {

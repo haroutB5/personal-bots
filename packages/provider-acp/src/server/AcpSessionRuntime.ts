@@ -32,6 +32,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { lowerBotProcessPriorityEffect } from "@t3tools/provider-core/server/botProcessPriority";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
 import {
@@ -1470,6 +1471,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           }),
       ),
     );
+
+  yield* lowerBotProcessPriorityEffect(Number(child.pid), "acp");
 
   // Detached children can keep stdout open, delaying protocol termination.
   if (scopeUnit !== undefined) {

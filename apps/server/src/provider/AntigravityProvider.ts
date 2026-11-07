@@ -64,9 +64,11 @@ function thinkingCapabilities(config: ThinkingConfig | null | undefined, observe
     ? acpProviderOptionDescriptors({ configOptions: [config], modeState: undefined })[0]
     : undefined;
   if (descriptor?.type !== "select") return EMPTY_MODEL_CAPABILITIES;
+  // Native families expose thinking levels through the shared effort descriptor.
+  const effort = { ...descriptor, id: "effort" };
   // Another model's selected level is not this model's default.
-  const { currentValue: _currentValue, ...unobserved } = descriptor;
-  return createModelCapabilities({ optionDescriptors: [observed ? descriptor : unobserved] });
+  const { currentValue: _currentValue, ...unobserved } = effort;
+  return createModelCapabilities({ optionDescriptors: [observed ? effort : unobserved] });
 }
 
 export function buildAntigravityModelsFromSession(

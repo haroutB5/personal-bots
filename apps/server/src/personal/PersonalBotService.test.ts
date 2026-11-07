@@ -29,7 +29,7 @@ const DEFAULT_VOICE_CALLS = {
 
 const makeProviderSnapshot = (input: {
   readonly instanceId: string;
-  readonly driver: "claudeAgent" | "codex" | "grok";
+  readonly driver: "claudeAgent" | "codex" | "cursor" | "grok";
   readonly defaultModel: string;
   /** Listed after the default, like the catalog does. */
   readonly otherModels?: ReadonlyArray<string>;
@@ -92,8 +92,8 @@ const codexSnapshot = () =>
   });
 
 /** A ready provider whose adapter drops `systemInstructions` (ACP; no persona). */
-const grokSnapshot = () =>
-  makeProviderSnapshot({ instanceId: "grok", driver: "grok", defaultModel: "grok-4" });
+const cursorSnapshot = () =>
+  makeProviderSnapshot({ instanceId: "cursor", driver: "cursor", defaultModel: "cursor-1" });
 
 interface EngineCall {
   readonly type: "createProject" | "createThread" | "updateMeta" | "deleteThread" | "stop";
@@ -447,10 +447,10 @@ it.effect(
 it.effect(
   "seeding skips a provider that cannot carry bot instructions and waits for one that can",
   () => {
-    // Grok is ready and would be `available[0]`, but its ACP adapter never
+    // Cursor is ready and would be `available[0]`, but its ACP adapter never
     // passes `systemInstructions`, so a bot seeded onto it would answer as
     // the bare model with no name and no app rules.
-    const context = makeContext([grokSnapshot()]);
+    const context = makeContext([cursorSnapshot()]);
     return Effect.gen(function* () {
       const service = yield* PersonalBotService.PersonalBotService;
       expect(yield* service.seedDefaultsIfNeeded).toEqual([]);
