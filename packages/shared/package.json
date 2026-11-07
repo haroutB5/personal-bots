@@ -439,10 +439,6 @@
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
-    "./nodeSqliteWorker": {
-      "types": "./src/nodeSqliteWorker.ts",
-      "import": "./src/nodeSqliteWorker.ts"
-    },
     "./stallContext": {
       "types": "./src/stallContext.ts",
       "import": "./src/stallContext.ts"

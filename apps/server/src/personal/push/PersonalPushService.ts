@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -1827,6 +1828,11 @@ export const make = Effect.gen(function* () {
       };
     }).pipe(storageFailure("history"));
 
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
   return {
     publicKey,
     getSettings,
@@ -1846,7 +1852,7 @@ export const make = Effect.gen(function* () {
     notifyProviderBroken,
     notifyDeepSeekBalanceLow,
     notifyTeamBotChange,
-    sentSince,
+    sentSince: asRead(sentSince),
     sweep: kick,
     drain: worker.drain,
     start,

@@ -788,7 +788,6 @@ export default defineConfig({
           "apps/web/src/routes/_personal*.tsx",
           "apps/web/src/hooks/useTheme.ts",
           "packages/contracts/src/personal*.ts",
-          "packages/shared/src/nodeSqliteWorker.test.ts",
           "packages/shared/src/observability.asyncSink.test.ts",
           "scripts/personal/**",
           "scripts/lib/cli-external-packages.test.ts",
