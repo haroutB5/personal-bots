@@ -1,6 +1,14 @@
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
+import * as CodexSchema from "effect-codex-app-server/schema";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  logCodexSkillsListErrors,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -152,4 +160,44 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+const decodeSkillsListResponse = Schema.decodeUnknownSync(CodexSchema.V2SkillsListResponse);
+
+it.effect("warns once for each skill Codex refused in `skills/list`", () => {
+  const lines: Array<Record<string, unknown>> = [];
+  const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
+    if (logLevel !== "Warn") return;
+    const [text, fields] = Array.isArray(message) ? message : [message, {}];
+    lines.push({ text: String(text), ...((fields ?? {}) as Record<string, unknown>) });
+  });
+  const response = decodeSkillsListResponse({
+    data: [
+      {
+        cwd: "/work",
+        errors: [
+          {
+            path: "/work/.agents/skills/bom/SKILL.md",
+            message: "missing YAML frontmatter delimited by ---",
+          },
+        ],
+        skills: [],
+      },
+      { cwd: "/other", errors: [], skills: [] },
+    ],
+  });
+
+  return logCodexSkillsListErrors(response).pipe(
+    Effect.map(() => {
+      assert.deepStrictEqual(lines, [
+        {
+          text: "Codex skill failed to load",
+          cwd: "/work",
+          path: "/work/.agents/skills/bom/SKILL.md",
+          reason: "missing YAML frontmatter delimited by ---",
+        },
+      ]);
+    }),
+    Effect.provide(Logger.layer([sink], { mergeWithExisting: false })),
+  );
 });

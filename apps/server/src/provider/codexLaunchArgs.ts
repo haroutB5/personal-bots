@@ -1,3 +1,7 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
@@ -36,4 +40,84 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
   }
 
   return execArgs;
+};
+
+/**
+ * Turns off the owner's apps, plugins and Codex memories for a bot. `mcp_servers`
+ * cannot be cleared this way because Codex deep-merges `-c` tables.
+ */
+export const PERSONAL_BOT_CODEX_APP_SERVER_ARGS: ReadonlyArray<string> = [
+  "-c",
+  "features.apps=false",
+  "-c",
+  "features.plugins=false",
+  "-c",
+  "features.memories=false",
+];
+
+/**
+ * Turns off the owner's own Codex skills (`~/.codex/skills`, `~/.agents/skills`)
+ * for a personal bot. Codex has no switch for user-scoped skills, but it
+ * honours `skills.config` entries keyed by each skill's full `SKILL.md` path.
+ * JSON string escaping is valid TOML basic-string escaping.
+ */
+export const personalBotCodexSkillArgs = (
+  skillFiles: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  skillFiles.length === 0
+    ? []
+    : [
+        "-c",
+        `skills.config=[${skillFiles
+          .map((path) => `{path=${JSON.stringify(path)},enabled=false}`)
+          .join(",")}]`,
+      ];
+
+/**
+ * Kill switch for a Codex bot's own plugin skills. On (unset) a bot's session
+ * names its own and the shared plugin skill folders to Codex; `off` and its
+ * aliases restore the previous behaviour, where a personal Codex bot has no
+ * skills at all. Read when a bot session starts.
+ */
+const PERSONAL_BOT_CODEX_SKILLS_ENV = "PERSONAL_BOT_CODEX_SKILLS";
+const PERSONAL_BOT_CODEX_SKILLS_OFF = new Set(["off", "0", "false", "no", "disabled"]);
+
+export const personalBotCodexSkillsSwitchOn = (
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean =>
+  !PERSONAL_BOT_CODEX_SKILLS_OFF.has(
+    environment[PERSONAL_BOT_CODEX_SKILLS_ENV]?.trim().toLowerCase() ?? "",
+  );
+
+/**
+ * `SKILL.md` files under the given skill roots, skipping dot-folders (Codex's
+ * bundled `.system` skills are part of Codex, not the owner's add-ons). A
+ * missing or unreadable root lists nothing.
+ */
+export const listOwnerCodexSkillFiles = Effect.fn("listOwnerCodexSkillFiles")(function* (
+  roots: ReadonlyArray<string>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const files: Array<string> = [];
+  for (const root of roots) {
+    const entries = yield* fileSystem
+      .readDirectory(root, { recursive: true })
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const entry of entries) {
+      const segments = entry.split(/[\\/]/);
+      if (segments.at(-1) !== "SKILL.md") continue;
+      if (segments.some((segment) => segment.startsWith("."))) continue;
+      files.push(path.join(root, entry));
+    }
+  }
+  return files.toSorted();
+});
+
+export const codexSessionAppServerArgs = (
+  appServerArgs: ReadonlyArray<string> | undefined,
+  launchArgs: string | undefined,
+) => {
+  const launchAppServerArgs = codexAppServerArgs(launchArgs);
+  return appServerArgs ? [...launchAppServerArgs, ...appServerArgs] : launchAppServerArgs;
 };

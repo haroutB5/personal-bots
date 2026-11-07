@@ -31,6 +31,40 @@ describe("buildCodexAdditionalContext", () => {
   });
 });
 
+describe("Codex bot context", () => {
+  it("sends the bot persona as its own entry, not inside the runtime entry", () => {
+    const context = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: false },
+      "BOT PERSONA",
+    );
+
+    NodeAssert.ok(context.t3_code_bot_01?.value.includes("BOT PERSONA"));
+    NodeAssert.ok(!context.t3_code_runtime?.value.includes("BOT PERSONA"));
+  });
+
+  it("splits a long persona under the per-entry cap with its position", () => {
+    const persona = Array.from({ length: 400 }, (_, index) => `Rule ${index}: stay concise.`).join(
+      "\n",
+    );
+    const context = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: false },
+      persona,
+    );
+    const botEntries = Object.entries(context).filter(([key]) => key.startsWith("t3_code_bot_"));
+
+    NodeAssert.ok(botEntries.length > 1);
+    for (const [key, entry] of botEntries) {
+      NodeAssert.ok(
+        Buffer.byteLength(entry.value, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+        key,
+      );
+    }
+    NodeAssert.ok(botEntries[0]?.[1].value.startsWith("[bot instructions, part 1 of "));
+  });
+});
+
 describe("Codex runtime context", () => {
   it("describes Markdown media support in the runtime context in both modes", () => {
     {

@@ -48,6 +48,8 @@ import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -255,6 +257,64 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
   );
+
+  it.effect("carries the bot persona into the runtime context", () =>
+    Effect.gen(function* () {
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-persona",
+        codexInput: [{ type: "text", text: "hello" }],
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        hasT3Mcp: true,
+        systemInstructions: "BOT PERSONA",
+      });
+
+      assert.include(params.additionalContext?.["t3_code_bot_01"]?.value ?? "", "BOT PERSONA");
+      assert.notInclude(params.additionalContext?.["t3_code_runtime"]?.value ?? "", "BOT PERSONA");
+    }),
+  );
+
+  it.effect("names a bot's extra skill roots to Codex", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+      const client = {
+        request: (method: string, params: unknown) =>
+          Effect.sync(() => {
+            calls.push({ method, params });
+            return {};
+          }),
+      } as unknown as Parameters<typeof CodexAdapterV2.registerCodexExtraSkillRoots>[0];
+
+      yield* CodexAdapterV2.registerCodexExtraSkillRoots(client, ["/skills/shared", "/skills/bot"]);
+
+      assert.deepEqual(calls, [
+        {
+          method: "skills/extraRoots/set",
+          params: { extraRoots: ["/skills/shared", "/skills/bot"] },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("logs a refused skill-root set and keeps the session running", () => {
+    const lines: Array<string> = [];
+    const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
+      if (logLevel !== "Warn") return;
+      const [text] = Array.isArray(message) ? message : [message];
+      lines.push(String(text));
+    });
+    return Effect.gen(function* () {
+      const client = {
+        request: () => Effect.fail("refused"),
+      } as unknown as Parameters<typeof CodexAdapterV2.registerCodexExtraSkillRoots>[0];
+
+      yield* CodexAdapterV2.registerCodexExtraSkillRoots(client, ["/skills/bot"]);
+
+      assert.deepEqual(lines, [
+        "Codex refused this bot's own skill roots; its plugin skills will be missing.",
+      ]);
+    }).pipe(Effect.provide(Logger.layer([sink], { mergeWithExisting: false })));
+  });
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {
@@ -802,6 +862,8 @@ describe("CodexAdapterV2 process exit", () => {
         clientFactory: { open: () => Effect.succeed(client) },
         digest: yield* Digest.Digest,
         fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        homeDirectory: "/home/test",
         idAllocator: yield* IdAllocator.IdAllocatorV2,
         serverConfig: yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
           Effect.orDie,
@@ -968,6 +1030,8 @@ describe("CodexAdapterV2 session initialize", () => {
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         ...(compatibility === undefined ? {} : { compatibility }),
+        path: yield* Path.Path,
+        homeDirectory: "/home/test",
         clientFactory: {
           open: (openInput) =>
             Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
@@ -1298,6 +1362,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ...(onUsageLimits ? { onUsageLimits } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
+        path: yield* Path.Path,
+        homeDirectory: "/home/test",
         idAllocator,
         serverConfig,
         continuationRequests: {
@@ -5860,7 +5926,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal.threadDisposition, "reusable");
         if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")
-          assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
+          assert.equal(
+            terminal.failure.message,
+            "Codex usage limit reached. Send the message again once the limit resets.",
+          );
         if ("resetAfter" in scenario) {
           yield* Deferred.await(snapshotReceipt);
           assert.isFalse(
@@ -6000,9 +6069,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(terminal.failure.code, "responseTooManyFailedAttempts");
           assert.equal(terminal.threadDisposition, "reusable");
           const notificationClass = notificationStatus === 429 ? "usage_limit" : "provider_error";
+          // A usage-limit stop always names the limit and its reset, not the provider sentence.
+          const usageLimitMessage =
+            "Codex usage limit reached. Send the message again once the limit resets.";
           assert.equal(
             terminal.failure.message,
-            expectedClass === notificationClass ? additionalDetails : message,
+            expectedClass === "usage_limit"
+              ? usageLimitMessage
+              : expectedClass === notificationClass
+                ? additionalDetails
+                : message,
           );
           if (willRetry) assert.equal(terminal.retry?.attempt, 1);
         }).pipe(

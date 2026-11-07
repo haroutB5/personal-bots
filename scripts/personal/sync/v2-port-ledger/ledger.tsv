@@ -371,12 +371,12 @@ apps/server/src/provider/CodexChatGptAuth.test.ts		content	2	B1	dropped	our only
 apps/server/src/provider/CodexChatGptAuth.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/CodexChatGptHandoff.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/CodexChatGptModels.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/CodexDeveloperInstructions.ts		content	68	C5-C9	open	area C5-C9
+apps/server/src/provider/CodexDeveloperInstructions.ts		content	68	C5-C9	done	C6: persona entries split under Codex's per-entry cap
 apps/server/src/provider/CodexInstallation.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/CodexInstallation.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/CodexManagedRuntime.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/CodexProvider.test.ts		content	1	C6	open	G14 took MERGE_HEAD; our Codex test hunk returns with C6
-apps/server/src/provider/CodexProvider.ts	apps/server/src/provider/Layers/CodexProvider.ts	content	31	C5-C9	open	area C5-C9
+apps/server/src/provider/CodexProvider.test.ts		content	1	C6	done	C6: skills/list warning test ported to the v2 path
+apps/server/src/provider/CodexProvider.ts	apps/server/src/provider/Layers/CodexProvider.ts	content	31	C5-C9	done	C6: logCodexSkillsListErrors ported
 apps/server/src/provider/DeepSeekModelCatalog.test.ts		added-broken	89	D1	open	G6 park; DeepSeek model catalog (D1)
 apps/server/src/provider/DeepSeekModelCatalog.ts		added-broken	233	D1	open	G6 park; DeepSeek model catalog (D1)
 apps/server/src/provider/Drivers/AntigravityDriver.test.ts		content	58	C5-C9	open	area C5-C9
@@ -388,7 +388,7 @@ apps/server/src/provider/Drivers/ClaudeModelDiscovery.ts		added-broken	176	C5-C9
 apps/server/src/provider/Drivers/ClaudeSkills.test.ts		content	54	C5-C9	done	frontmatter repair already present on v2; suite passes
 apps/server/src/provider/Drivers/ClaudeSkills.ts		content	22	C5-C9	done	frontmatter repair present; parser exported for the shared refusal reason
 apps/server/src/provider/Drivers/CodexDriver.test.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/Drivers/CodexDriver.ts		content	23	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/CodexDriver.ts		content	23	C5-C9	dropped	v2 driver already wires createCodexAdapterV2 and resolveCodexLaunchArgs; the parked hunk is upstream import churn with no personal behaviour
 apps/server/src/provider/Drivers/CodexHomeLayout.ts		content	4	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/src/provider/Drivers/CodexManagedProvider.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/CursorDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -414,12 +414,12 @@ apps/server/src/provider/Layers/ClaudeAdapter.botDeny.test.ts		added-broken	205	
 apps/server/src/provider/Layers/ClaudeAdapter.test.ts		modify-delete	1630	C5-C9	dropped	v1 adapter suite; ClaudeAdapterV2.test.ts and claudeQueryOptions.test.ts cover the ported behaviour
 apps/server/src/provider/Layers/ClaudeAdapter.ts		modify-delete	551	C5-C9	dropped	v1 adapter replaced by orchestration-v2/Adapters/ClaudeAdapterV2.ts; personal options live in personal/providerHooks/claudeQueryOptions.ts
 apps/server/src/provider/Layers/ClaudeCapabilitiesProbe.test.ts		modify-delete	55	C5-C9	dropped	v1 probe; provider/ClaudeCapabilitiesProbe.test.ts covers the v2 probe
-apps/server/src/provider/Layers/CodexAdapter.test.ts		modify-delete	430	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/CodexAdapter.ts		modify-delete	150	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CodexAdapter.test.ts		modify-delete	430	C5-C9	dropped	v1 adapter suite; CodexAdapterV2.test.ts owns the same behaviour with 491 cases
+apps/server/src/provider/Layers/CodexAdapter.ts		modify-delete	150	C5-C9	done	C6: skill roots, terminate, priority and launch args ported to CodexAdapterV2
 apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/Layers/CodexSessionRuntime.test.ts		modify-delete	128	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/CodexSessionRuntime.ts		modify-delete	148	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/CodexTurnSteer.integration.test.ts		added-broken	157	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/CodexSessionRuntime.test.ts		modify-delete	128	C5-C9	done	C6: skill-root and turn-param cases ported to CodexAdapterV2.test.ts and CodexDeveloperInstructions.test.ts
+apps/server/src/provider/Layers/CodexSessionRuntime.ts		modify-delete	148	C5-C9	done	C6: extra skill roots, priority and terminate ported to CodexAdapterV2
+apps/server/src/provider/Layers/CodexTurnSteer.integration.test.ts		added-broken	157	C5-C9	dropped	v2 adapter owns steering; CodexAdapterV2.test.ts carries 15 steer cases and C6 changes no steer path
 apps/server/src/provider/Layers/CursorAdapter.test.ts		modify-delete	42	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/CursorAdapter.ts		modify-delete	16	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/CursorProvider.test.ts		modify-delete	15	C5-C9	open	area C5-C9
@@ -452,7 +452,7 @@ apps/server/src/provider/Layers/RegistryAcpAdapter.test.ts		added-broken	317	C8	
 apps/server/src/provider/Layers/RegistryAcpAdapter.ts		added-broken	69	C8	open	G6 park; ACP registry adapter (C8)
 apps/server/src/provider/Layers/antigravityUsageLimits.test.ts		added-broken	465	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/antigravityUsageLimits.ts		added-broken	489	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/codexLaunchArgs.test.ts		modify-delete	22	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/codexLaunchArgs.test.ts		modify-delete	22	C5-C9	done	C6: personal-bot switch and skill-args tests ported
 apps/server/src/provider/Layers/openCodeUsageLimits.ts		modify-delete	11	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/resetCreditCoordinator.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/ModelManifest.test.ts		content	24	C5-C9	open	area C5-C9
@@ -484,8 +484,8 @@ apps/server/src/provider/acp/XAiAcpExtension.test.ts		modify-delete	1	B1	dropped
 apps/server/src/provider/antigravityAuthSupport.test.ts		content	192	C5-C9	open	area C5-C9
 apps/server/src/provider/antigravityAuthSupport.ts		content	95	C5-C9	open	area C5-C9
 apps/server/src/provider/antigravityRelease.ts		content	42	C5-C9	open	area C5-C9
-apps/server/src/provider/botPluginSkillDiagnostics.test.ts		added-broken	201	C6	open	G6 park; Codex plugin skill roots (C6)
-apps/server/src/provider/botPluginSkillDiagnostics.ts		added-broken	162	C6	open	G6 park; Codex plugin skill roots (C6)
+apps/server/src/provider/botPluginSkillDiagnostics.test.ts		added-broken	201	C6	done	C6: added-broken file restored and ported to the v2 path
+apps/server/src/provider/botPluginSkillDiagnostics.ts		added-broken	162	C6	done	C6: added-broken file restored
 apps/server/src/provider/botPluginSkillRoots.ts		added-broken	91	C5-C9	open	area C5-C9
 apps/server/src/provider/botProcessPriority.spawnSites.test.ts		added-broken	193	C5-C9	open	area C5-C9
 apps/server/src/provider/builtInDrivers.ts		content	7	C5-C9	open	area C5-C9
@@ -520,9 +520,9 @@ apps/server/src/provider/catalog/transport.ts		added-broken	244	C5-C9	open	the r
 apps/server/src/provider/claudeResetCredits.test.ts	apps/server/src/provider/Layers/claudeResetCredits.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/claudeUsageLimits.test.ts	apps/server/src/provider/Layers/claudeUsageLimits.test.ts	content	55	C5-C9	open	area C5-C9
 apps/server/src/provider/claudeUsageLimits.ts	apps/server/src/provider/Layers/claudeUsageLimits.ts	content	23	C5-C9	open	area C5-C9
-apps/server/src/provider/codexLaunchArgs.ts	apps/server/src/provider/Layers/codexLaunchArgs.ts	content	80	C5-C9	open	area C5-C9
-apps/server/src/provider/codexUsageLimits.test.ts	apps/server/src/provider/Layers/codexUsageLimits.test.ts	content	33	C5-C9	open	area C5-C9
-apps/server/src/provider/codexUsageLimits.ts	apps/server/src/provider/Layers/codexUsageLimits.ts	content	31	C5-C9	open	area C5-C9
+apps/server/src/provider/codexLaunchArgs.ts	apps/server/src/provider/Layers/codexLaunchArgs.ts	content	80	C5-C9	done	C6: personal-bot app-server args, skill args and owner skill listing ported
+apps/server/src/provider/codexUsageLimits.test.ts	apps/server/src/provider/Layers/codexUsageLimits.test.ts	content	33	C5-C9	done	C6: usage-limit wording tests ported
+apps/server/src/provider/codexUsageLimits.ts	apps/server/src/provider/Layers/codexUsageLimits.ts	content	31	C5-C9	done	C6: usage-limit wording ported
 apps/server/src/provider/dshUsageLedger.test.ts		added-broken	254	D1	open	G6 park; DeepSeek usage ledger (D1)
 apps/server/src/provider/dshUsageLedger.ts		added-broken	349	D1	open	G6 park; DeepSeek usage ledger (D1)
 apps/server/src/provider/model-manifest.json		content	65	C5-C9	open	area C5-C9

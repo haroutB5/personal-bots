@@ -218,6 +218,11 @@ import {
   type PersonalClaudeQueryOptions,
 } from "../../personal/providerHooks/claudeQueryOptions.ts";
 import type { BotProtectedPathsInput } from "../../personal/secrets/botProtectedPaths.ts";
+import {
+  PERSONAL_BOT_ID_PATTERN,
+  PERSONAL_BOT_PLUGINS_DIR,
+  PERSONAL_BOT_SHARED_PLUGIN,
+} from "../../provider/botPluginSkillRoots.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -2027,11 +2032,6 @@ const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSett
 );
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
-
-/** The bot plugin folders under `<baseDir>/bot-plugins`. */
-const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
-const PERSONAL_BOT_SHARED_PLUGIN = "_shared";
-const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 // Keep in sync with OrchestratorToolkit Tool.Readonly annotations; ClaudeAdapterV2.test.ts checks this.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [

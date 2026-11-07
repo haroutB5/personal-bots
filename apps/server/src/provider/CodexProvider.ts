@@ -324,6 +324,26 @@ function appendCustomCodexModels(
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
+/**
+ * Codex reports a `SKILL.md` it cannot parse only inside `skills/list.errors`;
+ * one WARN per refused file, in the same words the bot plugin check uses.
+ */
+export const logCodexSkillsListErrors = (
+  response: CodexSchema.V2SkillsListResponse,
+): Effect.Effect<void> =>
+  Effect.forEach(
+    response.data.flatMap((entry) =>
+      entry.errors.map((error) => ({ cwd: entry.cwd, path: error.path, reason: error.message })),
+    ),
+    (error) =>
+      Effect.logWarning("Codex skill failed to load", {
+        cwd: error.cwd,
+        path: error.path,
+        reason: error.reason,
+      }),
+    { discard: true },
+  );
+
 function parseCodexSkillsListResponse(
   response: CodexSchema.V2SkillsListResponse,
   cwd: string,
@@ -600,6 +620,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     { concurrency: "unbounded" },
   );
 
+  if (skillsResponse) {
+    yield* logCodexSkillsListErrors(skillsResponse);
+  }
+
   return {
     account: accountResponse,
     ...(rateLimits ? { rateLimits } : {}),
@@ -652,6 +676,7 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
 }) {
   const { client } = yield* withCodexAppServerClient(input);
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
+  yield* logCodexSkillsListErrors(skillsResponse);
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
 });
 

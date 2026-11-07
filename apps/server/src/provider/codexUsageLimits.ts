@@ -186,6 +186,68 @@ export function mergeCodexRateLimits(
   };
 }
 
+/** Coarse remaining wait, matching how the usage rows read: `5d 5h`, `3h 20m`, `12m`. */
+function formatCodexUsageLimitWait(waitMs: number): string {
+  const totalMinutes = Math.ceil(waitMs / 60_000);
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
+  if (hours === 0) return `${totalMinutes}m`;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}
+
+function codexUsageLimitNextStep(rateLimitReachedType: string | null | undefined): string {
+  switch (rateLimitReachedType) {
+    case "workspace_owner_credits_depleted":
+    case "workspace_member_credits_depleted":
+      return " The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.";
+    case "workspace_owner_usage_limit_reached":
+    case "workspace_member_usage_limit_reached":
+      return " The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.";
+    default:
+      return " Send the message again once the limit resets.";
+  }
+}
+
+function latestExhaustedReset(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atMs: number,
+): { readonly kind: ServerProviderUsageWindow["kind"]; readonly resetMs: number } | null {
+  const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
+  let latest: {
+    readonly kind: ServerProviderUsageWindow["kind"];
+    readonly resetMs: number;
+  } | null = null;
+  for (const window of windows) {
+    if (window.usedPercent < 100 || !window.resetsAt) continue;
+    const resetMs = Date.parse(window.resetsAt);
+    if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= (latest?.resetMs ?? -Infinity))
+      continue;
+    latest = { kind: window.kind, resetMs };
+  }
+  return latest;
+}
+
+/**
+ * The message a usage-limit stop shows instead of the provider sentence, which
+ * on a Business workspace blames credits for a window that simply ran out. The
+ * window named is the exhausted one that has yet to reset, latest first; `atIso`
+ * is the stopping event's timestamp, not the wall clock.
+ */
+export function codexUsageLimitMessage(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atIso: string,
+): string {
+  const atMs = Date.parse(atIso);
+  const latest = latestExhaustedReset(snapshot, atMs);
+  const reset =
+    latest === null
+      ? ""
+      : ` The ${latest.kind} limit resets in ${formatCodexUsageLimitWait(latest.resetMs - atMs)}.`;
+  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+}
+
 /** All exhausted windows must reset before a continuation can run. */
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
