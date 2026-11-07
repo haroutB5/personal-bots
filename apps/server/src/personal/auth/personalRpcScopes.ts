@@ -1,5 +1,7 @@
 import {
   type AuthEnvironmentScope,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   WS_METHODS,
@@ -19,8 +21,9 @@ export const PERSONAL_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalBotsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsThreadShells]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsSubscribeThreadShells]: AuthOrchestrationReadScope,
-  [WS_METHODS.personalDevicesList]: AuthOrchestrationReadScope,
-  [WS_METHODS.personalDevicesRevoke]: AuthOrchestrationOperateScope,
+  // Same scopes as the HTTP twins, GET /api/auth/clients and revokeClient.
+  [WS_METHODS.personalDevicesList]: AuthAccessReadScope,
+  [WS_METHODS.personalDevicesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.personalBotsThreadFullText]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalBotsUpdate]: AuthOrchestrationOperateScope,

@@ -1,5 +1,8 @@
 import {
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
+  type AuthEnvironmentScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
@@ -11,6 +14,7 @@ import {
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSessionId,
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
@@ -407,3 +411,46 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
+
+describe("personal device authorization", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag) => tag !== WS_METHODS.personalDevicesList && tag !== WS_METHODS.personalDevicesRevoke,
+    ),
+  );
+  const handlers = Layer.mergeAll(
+    group.toLayerHandler(WS_METHODS.personalDevicesList, () => Effect.succeed({ devices: [] })),
+    group.toLayerHandler(WS_METHODS.personalDevicesRevoke, () => Effect.succeed({ revoked: true })),
+  );
+  const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+    RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer(scopes))),
+    );
+  const revokeInput = { sessionId: AuthSessionId.make("another-session") };
+
+  it.effect("refuses both device RPCs with only orchestration scopes", () =>
+    Effect.gen(function* () {
+      const client = yield* clientWith([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+      expect(yield* client[WS_METHODS.personalDevicesList]({}).pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthAccessReadScope,
+      });
+      expect(
+        yield* client[WS_METHODS.personalDevicesRevoke](revokeInput).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthAccessWriteScope,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("allows access scopes to list and revoke devices", () =>
+    Effect.gen(function* () {
+      const client = yield* clientWith([AuthAccessReadScope, AuthAccessWriteScope]);
+      expect(yield* client[WS_METHODS.personalDevicesList]({})).toEqual({ devices: [] });
+      expect(yield* client[WS_METHODS.personalDevicesRevoke](revokeInput)).toEqual({
+        revoked: true,
+      });
+    }).pipe(Effect.scoped),
+  );
+});
