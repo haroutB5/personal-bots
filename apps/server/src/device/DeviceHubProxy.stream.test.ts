@@ -14,6 +14,7 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
@@ -60,6 +61,11 @@ it.effect("preserves binary input and admission frames through the real socket p
                 hub: { origin: `http://127.0.0.1:${address.port}` },
               }),
           } as DeviceService.DeviceService["Service"]),
+        ),
+        Layer.provide(
+          Layer.succeed(SessionStore.SessionStore, {
+            awaitInvalidation: () => Effect.never,
+          } as unknown as SessionStore.SessionStore["Service"]),
         ),
       ),
     );

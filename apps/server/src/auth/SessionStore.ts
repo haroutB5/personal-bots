@@ -66,6 +66,13 @@ export interface VerifiedWebSocketTicket extends VerifiedSession {
   readonly audience?: AuthWebSocketTicketUse;
 }
 
+export type SessionRenewal = "sliding" | "fixed";
+
+export type RenewOutcome =
+  | { readonly _tag: "Renewed"; readonly token: string; readonly expiresAt: DateTime.Utc }
+  | { readonly _tag: "NotDue"; readonly expiresAt: DateTime.Utc }
+  | { readonly _tag: "NotRenewable" };
+
 export type SessionCredentialChange =
   | {
       readonly type: "clientUpserted";
@@ -380,12 +387,20 @@ export class SessionStore extends Context.Service<
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
+      readonly renewal?: SessionRenewal;
       readonly runtimeModeCeiling?: RuntimeMode;
       readonly peerLink?: boolean;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
+    /**
+     * Slide a session's expiry forward while it is in use. Renews at most once
+     * a day (or once per half lifetime for shorter sessions). `NotDue` carries
+     * the current expiry; `NotRenewable` means this credential must be replaced
+     * by its issuer instead.
+     */
+    readonly renew: (token: string) => Effect.Effect<RenewOutcome, SessionCredentialInternalError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
       input?: {
@@ -427,6 +442,46 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+const SESSION_RENEWAL_INTERVAL = Duration.days(1);
+
+export type SessionGrant =
+  | "one-time-token"
+  | "desktop-bootstrap"
+  | "cloud-connect"
+  | "cli"
+  | "dev-token";
+
+export type SessionPolicy = {
+  readonly ttl: Duration.Duration;
+  readonly renewal: SessionRenewal;
+};
+
+/**
+ * The grant decides the lifetime and whether the session may slide. The method
+ * only decides the response token type, so a direct pairing slides over Bearer
+ * and DPoP alike while relay and machine credentials stay fixed.
+ */
+export const sessionPolicyForGrant = (input: {
+  readonly grant: SessionGrant;
+  readonly method: ServerAuthSessionMethod;
+}): SessionPolicy => {
+  switch (input.grant) {
+    case "one-time-token":
+      return { ttl: DEFAULT_SESSION_TTL, renewal: "sliding" };
+    case "cloud-connect":
+      return { ttl: Duration.hours(1), renewal: "fixed" };
+    case "desktop-bootstrap":
+    case "dev-token":
+      // A proof-bound machine session kept its 1 hour life before sliding
+      // sessions existed; only direct pairing earned the longer DPoP life.
+      return {
+        ttl: input.method === "dpop-access-token" ? Duration.hours(1) : DEFAULT_SESSION_TTL,
+        renewal: "fixed",
+      };
+    case "cli":
+      return { ttl: DEFAULT_SESSION_TTL, renewal: "fixed" };
+  }
+};
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -436,6 +491,7 @@ const SessionClaims = Schema.Struct({
   scopes: AuthEnvironmentScopes,
   method: Schema.Literals(["browser-session-cookie", "bearer-access-token", "dpop-access-token"]),
   jkt: Schema.optionalKey(Schema.String),
+  renewal: Schema.optionalKey(Schema.Literal("sliding")),
   rtc: Schema.optionalKey(RuntimeMode),
   /** Signed, so a client cannot shed its peer link's limits. */
   plk: Schema.optionalKey(Schema.Literal(1)),
@@ -660,6 +716,7 @@ const make = Effect.gen(function* () {
         scopes: input?.scopes ?? AuthStandardClientScopes,
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
+        ...(input?.renewal === "sliding" ? { renewal: "sliding" as const } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
         ...(input?.peerLink === true ? { plk: 1 as const } : {}),
         iat: issuedAt.epochMilliseconds,
@@ -845,6 +902,95 @@ const make = Effect.gen(function* () {
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
         ...(claims.plk === 1 ? { peerLink: true as const } : {}),
       } satisfies VerifiedSession;
+    },
+  );
+
+  const renew: SessionStore["Service"]["renew"] = Effect.fn("SessionStore.renew")(
+    function* (token) {
+      // The reusable dev session has a fixed far-future expiry and no claims.
+      if (devAuth?.matches(token)) {
+        return { _tag: "NotRenewable" } satisfies RenewOutcome;
+      }
+      const [encodedPayload, signature] = token.split(".");
+      if (!encodedPayload || !signature || !(yield* signer.verify(encodedPayload, signature))) {
+        return { _tag: "NotRenewable" } satisfies RenewOutcome;
+      }
+      const decoded = yield* Effect.option(
+        decodeSessionClaims(base64UrlDecodeUtf8(encodedPayload)),
+      );
+      if (Option.isNone(decoded)) {
+        return { _tag: "NotRenewable" } satisfies RenewOutcome;
+      }
+      const claims = decoded.value;
+      const renewal =
+        claims.renewal ?? (claims.method === "browser-session-cookie" ? "sliding" : "fixed");
+      if (renewal !== "sliding") {
+        return { _tag: "NotRenewable" } satisfies RenewOutcome;
+      }
+      const expiresAt = DateTime.make(claims.exp);
+      if (Option.isNone(expiresAt)) {
+        return { _tag: "NotRenewable" } satisfies RenewOutcome;
+      }
+      const now = yield* DateTime.now;
+      const lifetimeMs = claims.exp - claims.iat;
+      const renewAfterMs = Math.min(lifetimeMs / 2, Duration.toMillis(SESSION_RENEWAL_INTERVAL));
+      if (claims.exp <= now.epochMilliseconds) {
+        return { _tag: "NotRenewable" } satisfies RenewOutcome;
+      }
+      if (now.epochMilliseconds - claims.iat < renewAfterMs) {
+        return { _tag: "NotDue", expiresAt: expiresAt.value } satisfies RenewOutcome;
+      }
+
+      const nextExpiresAt = DateTime.add(now, { milliseconds: lifetimeMs });
+      const renewedClaims: SessionClaims = {
+        ...claims,
+        iat: now.epochMilliseconds,
+        exp: nextExpiresAt.epochMilliseconds,
+      };
+      const renewedToken = yield* encodeClaims(renewedClaims).pipe(
+        Effect.map(base64UrlEncode),
+        Effect.flatMap((payload) =>
+          signer
+            .sign(payload)
+            .pipe(Effect.map((renewedSignature) => `${payload}.${renewedSignature}`)),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new SessionCredentialIssueError({
+              sessionId: claims.sid,
+              cause: new SessionClaimsEncodingError({
+                sessionId: claims.sid,
+                operation: "encode_session_claims",
+                cause,
+              }),
+            }),
+        ),
+      );
+      const extended = yield* authSessions
+        .extendExpiry({ sessionId: claims.sid, expiresAt: nextExpiresAt, now })
+        .pipe(
+          Effect.mapError(
+            (cause) => new SessionCredentialIssueError({ sessionId: claims.sid, cause }),
+          ),
+        );
+      if (!extended) {
+        return { _tag: "NotRenewable" } satisfies RenewOutcome;
+      }
+      yield* loadActiveSession(claims.sid).pipe(
+        Effect.flatMap((session) =>
+          Option.isSome(session) ? emitUpsert(session.value) : Effect.void,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logError("Failed to publish renewed-session auth update.").pipe(
+            Effect.annotateLogs({ sessionId: claims.sid, cause }),
+          ),
+        ),
+      );
+      return {
+        _tag: "Renewed",
+        token: renewedToken,
+        expiresAt: nextExpiresAt,
+      } satisfies RenewOutcome;
     },
   );
 
@@ -1071,6 +1217,10 @@ const make = Effect.gen(function* () {
         while (true) {
           const rows = yield* Effect.forEach(chain, readRow);
           if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          // A renewal slides this same row, so the loop must read its new expiry
+          // instead of waking at the expiry the socket opened with.
+          const latest = rows[rows.length - 1];
+          if (latest !== undefined && Option.isSome(latest)) current = latest.value;
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
@@ -1103,6 +1253,7 @@ const make = Effect.gen(function* () {
     legacyCookieName,
     issue,
     verify,
+    renew,
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,

@@ -79,6 +79,7 @@ import {
 import * as CliTokenManager from "./CliTokenManager.ts";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+  CLOUD_ENDPOINT_HTTP_BASE_URL,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
@@ -88,6 +89,7 @@ import {
   encodeConfirmedOriginJson,
   encodeEndpointRuntimeConfigJson,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
+  persistRelayEndpoint,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   readRelayConnection,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -789,6 +791,12 @@ const make = Effect.gen(function* () {
       );
       yield* secrets.remove(CLOUD_LINK_REVOKED);
       yield* secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
+      // Managed links advertise the tunnel origin; a manual link drops the
+      // stored one so `t3 pair --connect` cannot hand out a local address.
+      yield* persistRelayEndpoint(
+        secrets,
+        payload.endpointRuntime ?? { providerKind: "manual", httpBaseUrl: "" },
+      );
       yield* awarenessRelay.requestCatchUp();
       if (endpointRuntimeJson !== null) {
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(endpointRuntimeJson));
@@ -1321,6 +1329,7 @@ const make = Effect.gen(function* () {
           yield* Effect.all(
             [
               secrets.remove(CLOUD_LINKED_USER_ID),
+              secrets.remove(CLOUD_ENDPOINT_HTTP_BASE_URL),
               secrets.remove(RELAY_URL_SECRET),
               secrets.remove(RELAY_ISSUER_SECRET),
               secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),

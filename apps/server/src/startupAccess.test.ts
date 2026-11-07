@@ -1,10 +1,18 @@
 import type * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as ServerConfig from "./config.ts";
 import {
   acceptsPrivateNetworkConnection,
+  formatHeadlessServeLogOutput,
+  prepareHeadlessServeOutput,
   resolveHeadlessConnectionString,
+  shouldPrintStartupToken,
 } from "./startupAccess.ts";
 
 const ipv4 = (address: string, internal = false): NodeOS.NetworkInterfaceInfo => ({
@@ -73,3 +81,80 @@ describe("acceptsPrivateNetworkConnection", () => {
     expect(accepts(undefined, "192.168.1.31")).toBe(false);
   });
 });
+
+const QR_BLOCKS = /[█▀▄]/;
+
+it("prints the startup token only to an interactive console or on the explicit override", () => {
+  expect(shouldPrintStartupToken({ isTTY: true }, {})).toBe(true);
+  expect(shouldPrintStartupToken({ isTTY: false }, {})).toBe(false);
+  expect(shouldPrintStartupToken({}, {})).toBe(false);
+  expect(shouldPrintStartupToken({}, { T3CODE_STARTUP_PRINT_TOKEN: "on" })).toBe(true);
+  expect(shouldPrintStartupToken({}, { T3CODE_STARTUP_PRINT_TOKEN: "off" })).toBe(false);
+});
+
+it("formats the non-console output with the connection string and a pair.ps1 hint only", () => {
+  const output = formatHeadlessServeLogOutput("http://192.168.1.42:3773");
+
+  expect(output).toContain("Connection string: http://192.168.1.42:3773");
+  expect(output).toContain("pair.ps1");
+  expect(output).not.toContain("Token:");
+  expect(output).not.toContain("Pairing URL");
+  expect(output).not.toContain("#token=");
+  expect(QR_BLOCKS.test(output)).toBe(false);
+});
+
+const runPrepare = (printToken: boolean) => {
+  let issued = 0;
+  const auth = {
+    issueStartupPairingCredential: () =>
+      Effect.sync(() => {
+        issued += 1;
+        return {
+          id: "link-1",
+          credential: "SECRETPAIRCODE",
+          label: undefined,
+          expiresAt: undefined,
+        };
+      }),
+  } as unknown as EnvironmentAuth.EnvironmentAuth["Service"];
+  const httpServer = HttpServer.make({
+    address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 4123),
+    serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+  });
+  const config = {
+    host: "127.0.0.1",
+    port: 3773,
+  } as unknown as ServerConfig.ServerConfig["Service"];
+  return prepareHeadlessServeOutput(printToken).pipe(
+    Effect.provideService(EnvironmentAuth.EnvironmentAuth, auth),
+    Effect.provideService(HttpServer.HttpServer, httpServer),
+    Effect.provideService(ServerConfig.ServerConfig, config),
+    Effect.map((output) => ({ output, issued })),
+  );
+};
+
+it.effect("a console start prints the token, the pairing URL and the QR code", () =>
+  Effect.gen(function* () {
+    const { output, issued } = yield* runPrepare(true);
+
+    expect(issued).toBe(1);
+    expect(output).toContain("Connection string: http://127.0.0.1:4123");
+    expect(output).toContain("Token: SECRETPAIRCODE");
+    expect(output).toContain("Pairing URL: http://127.0.0.1:4123/pair#token=SECRETPAIRCODE");
+    expect(QR_BLOCKS.test(output)).toBe(true);
+  }),
+);
+
+it.effect("a start with output going to a file never contains or mints the credential", () =>
+  Effect.gen(function* () {
+    const { output, issued } = yield* runPrepare(false);
+
+    expect(issued).toBe(0);
+    expect(output).toContain("Connection string: http://127.0.0.1:4123");
+    expect(output).toContain("pair.ps1");
+    expect(output).not.toContain("SECRETPAIRCODE");
+    expect(output).not.toContain("Token:");
+    expect(output).not.toContain("#token=");
+    expect(QR_BLOCKS.test(output)).toBe(false);
+  }),
+);

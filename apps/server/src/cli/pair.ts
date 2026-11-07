@@ -29,6 +29,8 @@ import { Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { CLOUD_ENDPOINT_HTTP_BASE_URL } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -81,6 +83,53 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
     ].join("\n");
   }
 }
+
+export class ConnectEndpointMissingError extends Schema.TaggedError<ConnectEndpointMissingError>()(
+  "ConnectEndpointMissingError",
+  { baseDir: Schema.String },
+) {
+  override get message(): string {
+    return [
+      `No T3 Connect public URL is stored for ${this.baseDir}.`,
+      "Run `t3 connect link`, then start the server so it provisions the tunnel, and pair again.",
+    ].join("\n");
+  }
+}
+
+export class ConflictingPairTargetsError extends Schema.TaggedError<ConflictingPairTargetsError>()(
+  "ConflictingPairTargetsError",
+  {},
+) {
+  override get message(): string {
+    return "Choose one of --connect or --tailscale.";
+  }
+}
+
+/**
+ * The relay records the tunnel origin as a URL; older relays may send a bare
+ * host. Either way pairing goes over HTTPS at that origin.
+ */
+const resolveConnectPairingBaseUrl = (stored: string): string => {
+  const trimmed = stored.trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return new URL(withScheme).origin;
+};
+
+const readConnectPairingBaseUrl = Effect.fn("pair.readConnectPairingBaseUrl")(function* (
+  config: ServerConfig.ServerConfig["Service"],
+) {
+  const stored = yield* Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    return yield* secrets.get(CLOUD_ENDPOINT_HTTP_BASE_URL);
+  }).pipe(Effect.provide(ServerSecretStore.layer.pipe(Layer.provide(ServerConfig.layer(config)))));
+  const value = Option.map(stored, (bytes) => new TextDecoder().decode(bytes).trim()).pipe(
+    Option.filter((text) => text.length > 0),
+  );
+  if (Option.isNone(value)) {
+    return yield* new ConnectEndpointMissingError({ baseDir: config.baseDir });
+  }
+  return resolveConnectPairingBaseUrl(value.value);
+});
 
 export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
   "IncompatibleServerProtocolError",
@@ -477,6 +526,11 @@ const tailscaleFlag = Flag.Boolean("tailscale").pipe(
   Flag.withDefault(false),
 );
 
+const connectFlag = Flag.Boolean("connect").pipe(
+  Flag.withDescription("Pair through the T3 Connect public URL stored for this server."),
+  Flag.withDefault(false),
+);
+
 const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale is enabled."),
@@ -488,6 +542,7 @@ export const pairCommand = Command.make("pair", {
   scopes: authScopesFlag(AuthStandardClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
+  connect: connectFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
@@ -498,6 +553,10 @@ export const pairCommand = Command.make("pair", {
     Effect.gen(function* () {
       const cliLogLevel = yield* GlobalFlag.LogLevel;
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
+
+      if (flags.connect && flags.tailscale) {
+        return yield* new ConflictingPairTargetsError();
+      }
 
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
       // Each protocol keeps auth in its own database, so a token minted here
@@ -511,9 +570,12 @@ export const pairCommand = Command.make("pair", {
         });
       }
 
+      const config = yield* makePairServerConfig({ target, logLevel });
       const notes: Array<string> = [];
       let pairingBaseUrl: string;
-      if (flags.tailscale) {
+      if (flags.connect) {
+        pairingBaseUrl = yield* readConnectPairingBaseUrl(config);
+      } else if (flags.tailscale) {
         // Serve stays on after this command exits, so refuse before turning it on.
         const policy = yield* ManagedPolicy.ManagedPolicy.pipe(Effect.provide(ManagedPolicy.layer));
         if (!ManagedLimits.allowsRemoteClients(policy)) {
@@ -546,7 +608,6 @@ export const pairCommand = Command.make("pair", {
         }
       }
 
-      const config = yield* makePairServerConfig({ target, logLevel });
       const issued = yield* mintPairingLink({
         config,
         scopes: flags.scopes,

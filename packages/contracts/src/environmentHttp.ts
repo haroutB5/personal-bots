@@ -118,6 +118,8 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
 
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
+  "session_not_renewable",
+  "session_not_revocable",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -368,6 +370,10 @@ const EnvironmentSessionRevokeErrors = [
   EnvironmentOperationForbiddenError,
   EnvironmentInternalError,
 ] as const;
+const EnvironmentOwnSessionErrors = [
+  EnvironmentOperationForbiddenError,
+  EnvironmentInternalError,
+] as const;
 const EnvironmentProjectSnapshotErrors = [
   EnvironmentScopeRequiredError,
   EnvironmentInternalError,
@@ -554,6 +560,20 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       success: AuthSessionState,
       error: [EnvironmentInternalError],
     }),
+  )
+  .add(
+    HttpApiEndpoint.post("renewSession", "/api/auth/session/renew", {
+      headers: OptionalBearerHeaders,
+      success: AuthAccessTokenResult,
+      error: EnvironmentOwnSessionErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("revokeSession", "/api/auth/session/revoke", {
+      headers: OptionalBearerHeaders,
+      success: AuthClientSessionRevokeResult,
+      error: EnvironmentOwnSessionErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.post("browserSession", "/api/auth/browser-session", {

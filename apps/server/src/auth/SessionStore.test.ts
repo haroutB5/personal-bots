@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -49,6 +50,36 @@ const layerSessionStore = (
     Layer.provide(layerServerEnvironment(environmentId)),
     Layer.provide(layerServerConfig(overrides)),
   );
+
+const LegacySessionClaims = Schema.Struct({
+  v: Schema.Literal(1),
+  kind: Schema.Literal("session"),
+  sid: Schema.String,
+  sub: Schema.String,
+  scopes: Schema.Array(Schema.String),
+  method: Schema.String,
+  jkt: Schema.optionalKey(Schema.String),
+  iat: Schema.Number,
+  exp: Schema.Number,
+});
+const SessionClaimsWithRenewal = Schema.Struct({
+  v: Schema.Literal(1),
+  kind: Schema.Literal("session"),
+  sid: Schema.String,
+  sub: Schema.String,
+  scopes: Schema.Array(Schema.String),
+  method: Schema.String,
+  jkt: Schema.optionalKey(Schema.String),
+  renewal: Schema.Literal("sliding"),
+  iat: Schema.Number,
+  exp: Schema.Number,
+});
+const decodeLegacySessionClaims = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(LegacySessionClaims),
+);
+const decodeSessionClaimsWithRenewal = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(SessionClaimsWithRenewal),
+);
 
 const relaySessionInput = {
   subject: "managed-relay-bootstrap",
@@ -231,6 +262,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
+  it.effect("keeps a slid session's socket past its first expiry", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const sliding = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "phone",
+        renewal: "sliding",
+      });
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(sliding.sessionId)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      // The daily interval; the renewal re-signs this same session id.
+      yield* TestClock.adjust(Duration.days(1));
+      const renewed = yield* sessions.renew(sliding.token);
+      expect(renewed._tag).toBe("Renewed");
+      // The row moved, so the socket must survive the original expiry.
+      yield* TestClock.adjust(Duration.days(29));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* sessions.revoke(sliding.sessionId);
+      yield* Fiber.join(watcher);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>
@@ -393,6 +451,129 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
         ),
       ),
     ),
+  );
+
+  it.effect("slides a browser session's expiry forward while it is in use", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ subject: "phone" });
+
+      const beforeDue = yield* sessions.renew(issued.token);
+      expect(beforeDue._tag).toBe("NotDue");
+      if (beforeDue._tag !== "NotDue") return;
+      expect(beforeDue.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+
+      yield* TestClock.adjust(Duration.days(29));
+      const renewed = yield* sessions.renew(issued.token);
+      expect(renewed._tag).toBe("Renewed");
+      if (renewed._tag !== "Renewed") return;
+      expect(renewed.expiresAt.epochMilliseconds).toBe(
+        issued.expiresAt.epochMilliseconds + Duration.toMillis(Duration.days(29)),
+      );
+      // Renewal is at most once a day per token.
+      const renewedAgain = yield* sessions.renew(renewed.token);
+      expect(renewedAgain._tag).toBe("NotDue");
+      if (renewedAgain._tag !== "NotDue") return;
+      expect(renewedAgain.expiresAt.epochMilliseconds).toBe(renewed.expiresAt.epochMilliseconds);
+
+      // Past the original 30 days, only the renewed credential still works.
+      yield* TestClock.adjust(Duration.days(2));
+      expect(yield* Effect.flip(sessions.verify(issued.token))).toMatchObject({
+        _tag: "SessionTokenExpiredError",
+      });
+      const verified = yield* sessions.verify(renewed.token);
+      expect(verified.sessionId).toBe(issued.sessionId);
+      expect(verified.subject).toBe("phone");
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId);
+      yield* sessions.verifyWebSocketToken(websocket.token);
+      expect((yield* sessions.listActive()).map((session) => session.sessionId)).toEqual([
+        issued.sessionId,
+      ]);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("renews a sliding bearer session after the daily interval and moves the row", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "phone",
+        renewal: "sliding",
+      });
+
+      yield* TestClock.adjust(Duration.hours(23));
+      const beforeDue = yield* sessions.renew(issued.token);
+      expect(beforeDue._tag).toBe("NotDue");
+      if (beforeDue._tag !== "NotDue") return;
+      expect(beforeDue.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+
+      yield* TestClock.adjust(Duration.hours(2));
+      const renewed = yield* sessions.renew(issued.token);
+      expect(renewed._tag).toBe("Renewed");
+      if (renewed._tag !== "Renewed") return;
+      expect(renewed.expiresAt.epochMilliseconds).toBe(
+        issued.expiresAt.epochMilliseconds + Duration.toMillis(Duration.hours(25)),
+      );
+      const verified = yield* sessions.verify(renewed.token);
+      expect(verified.sessionId).toBe(issued.sessionId);
+      expect(verified.method).toBe("bearer-access-token");
+      const row = (yield* sessions.listActive()).find(
+        (session) => session.sessionId === issued.sessionId,
+      );
+      expect(row?.expiresAt.epochMilliseconds).toBe(renewed.expiresAt.epochMilliseconds);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps the pre-change behaviour for tokens without a renewal claim", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const legacyCookie = yield* sessions.issue({ subject: "legacy-phone" });
+      const legacyBearer = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "legacy-cli",
+      });
+
+      yield* TestClock.adjust(Duration.days(2));
+
+      expect((yield* sessions.renew(legacyCookie.token))._tag).toBe("Renewed");
+      expect((yield* sessions.renew(legacyBearer.token))._tag).toBe("NotRenewable");
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("a token carrying the renewal claim still decodes under the pre-change schema", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "phone",
+        renewal: "sliding",
+      });
+      const [encodedPayload] = issued.token.split(".");
+      if (!encodedPayload) return Effect.die("issued token has no payload");
+      const payload = Buffer.from(encodedPayload, "base64url").toString("utf8");
+      const decodedWithRenewal = yield* decodeSessionClaimsWithRenewal(payload);
+      expect(decodedWithRenewal.renewal).toBe("sliding");
+      const decodedLegacy = yield* decodeLegacySessionClaims(payload);
+      expect(decodedLegacy.sid).toBe(issued.sessionId);
+      expect(decodedLegacy.method).toBe("bearer-access-token");
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
+
+  it.effect("does not renew fixed, revoked, expired or malformed sessions", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const bearer = yield* sessions.issue({ method: "bearer-access-token", subject: "cli" });
+      const revoked = yield* sessions.issue({ subject: "revoked" });
+      const expired = yield* sessions.issue({ subject: "expired", ttl: Duration.days(2) });
+      yield* sessions.revoke(revoked.sessionId);
+
+      yield* TestClock.adjust(Duration.days(3));
+
+      expect((yield* sessions.renew(bearer.token))._tag).toBe("NotRenewable");
+      expect((yield* sessions.renew(revoked.token))._tag).toBe("NotRenewable");
+      expect((yield* sessions.renew(expired.token))._tag).toBe("NotRenewable");
+      expect((yield* sessions.renew("not-a-session-token"))._tag).toBe("NotRenewable");
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect("atomically replaces active sessions with the same subject and method", () =>

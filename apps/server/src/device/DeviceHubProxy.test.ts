@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import type * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
@@ -24,8 +25,11 @@ const fixture = (
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
   upstream?: DeviceHost.DeviceHostReady["upstream"],
+  upstreamResponse: () => Response = () =>
+    new Response("frame", { headers: { "set-cookie": "upstream=1" } }),
 ) => {
   let finalized = 0;
+  let revokeWatches = 0;
   const requests: string[] = [];
   const headers: Array<Readonly<Record<string, string>>> = [];
   const client = HttpClient.make((request, _url, signal) =>
@@ -36,10 +40,7 @@ const fixture = (
         finalized++;
       });
       if (fail) return yield* Effect.die(new Error("upstream failed"));
-      return HttpClientResponse.fromWeb(
-        request,
-        new Response("frame", { headers: { "set-cookie": "upstream=1" } }),
-      );
+      return HttpClientResponse.fromWeb(request, upstreamResponse());
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
@@ -58,6 +59,12 @@ const fixture = (
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
       ),
       Layer.provideMerge(
+        Layer.succeed(SessionStore.SessionStore, {
+          awaitInvalidation: () =>
+            Effect.sync(() => void revokeWatches++).pipe(Effect.andThen(Effect.never)),
+        } as unknown as SessionStore.SessionStore["Service"]),
+      ),
+      Layer.provideMerge(
         Layer.succeed(DeviceService.DeviceService, {
           currentReadiness: () =>
             Effect.succeed({
@@ -72,7 +79,13 @@ const fixture = (
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, headers, finalized: () => finalized };
+  return {
+    handler,
+    requests,
+    headers,
+    finalized: () => finalized,
+    revokeWatches: () => revokeWatches,
+  };
 };
 
 describe("device hub proxy", () => {
@@ -85,6 +98,23 @@ describe("device hub proxy", () => {
     expect(await response.text()).toBe("frame");
     expect(requests).toEqual(["http://hub.test/api/devices"]);
     expect(finalized()).toBe(1);
+  });
+
+  it("forwards a fixed-length body intact without watching the session for revoke", async () => {
+    const body = "x".repeat(4096);
+    const { handler, revokeWatches } = fixture(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      undefined,
+      () => new Response(body, { headers: { "content-length": String(body.length) } }),
+    );
+    const response = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/api/screenshot"),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(body);
+    expect(revokeWatches()).toBe(0);
   });
 
   it.each(["/vendor/serve-sim/helper/ws", "/vendor/serve-emu/ws"])(

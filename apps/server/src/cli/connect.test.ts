@@ -20,7 +20,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { acquireRelayClientForLink } from "./connect.ts";
+import { acquireRelayClientForLink, type CloudCliStatus, formatCloudStatus } from "./connect.ts";
 
 const managedExecutable = {
   status: "available",
@@ -162,3 +162,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     );
   },
 );
+
+it("shows the stored public URL in connect status text and JSON", () => {
+  const status: CloudCliStatus = {
+    desired: true,
+    authenticated: true,
+    linked: true,
+    revoked: false,
+    cloudUserId: "user_123",
+    relayUrl: "https://relay.example.test",
+    endpointUrl: "https://bots-abc.t3.example",
+    publishAgentActivity: false,
+    relayClient: { status: "missing", version: RelayClient.CLOUDFLARED_VERSION },
+    linkMode: "managed",
+    reachability: null,
+  };
+
+  assert.include(formatCloudStatus(status), "  Public URL: https://bots-abc.t3.example");
+  const json = JSON.parse(formatCloudStatus(status, { json: true })) as {
+    readonly endpointUrl: string | null;
+  };
+  assert.equal(json.endpointUrl, "https://bots-abc.t3.example");
+
+  const unlinked = { ...status, linked: false, endpointUrl: null };
+  assert.include(formatCloudStatus(unlinked), "  Public URL: not provisioned");
+});

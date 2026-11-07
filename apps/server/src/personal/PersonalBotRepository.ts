@@ -344,6 +344,15 @@ export class PersonalBotRepository extends Context.Service<
       ReadonlyArray<PersonalBotThread>,
       PersonalBotRepositoryError
     >;
+    /** Every open bot chat id, for the shell stream's first snapshot. */
+    readonly listOpenThreadIds: () => Effect.Effect<
+      ReadonlyArray<ThreadId>,
+      PersonalBotRepositoryError
+    >;
+    /** The subset of `threadIds` that is an open bot chat right now. */
+    readonly openThreadIds: (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<ReadonlySet<ThreadId>, PersonalBotRepositoryError>;
     /** Archived chats with a visible shell, excluding group relays. */
     readonly listArchivedChatCounts: () => Effect.Effect<
       ReadonlyArray<{ readonly botId: string; readonly count: number }>,
@@ -2000,6 +2009,29 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const listOpenThreadIds: PersonalBotRepository["Service"]["listOpenThreadIds"] = () =>
+    sql<{ readonly threadId: string }>`
+      SELECT thread_id AS "threadId"
+      FROM personal_bot_threads
+      WHERE archived_at IS NULL
+    `.pipe(
+      Effect.map((rows) => rows.map((row) => ThreadId.make(row.threadId))),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listOpenThreadIds:query")),
+    );
+
+  const openThreadIds: PersonalBotRepository["Service"]["openThreadIds"] = (threadIds) =>
+    threadIds.length === 0
+      ? Effect.succeed(new Set<ThreadId>())
+      : sql<{ readonly threadId: string }>`
+          SELECT thread_id AS "threadId"
+          FROM personal_bot_threads
+          WHERE archived_at IS NULL
+            AND ${sql.in("thread_id", threadIds)}
+        `.pipe(
+          Effect.map((rows) => new Set(rows.map((row) => ThreadId.make(row.threadId)))),
+          Effect.mapError(toPersistenceSqlError("PersonalBotRepository.openThreadIds:query")),
+        );
+
   // The unread baseline is written once, the first time a list runs on a
   // database without one; after that the flag skips the write.
   let unreadSinceWritten = false;
@@ -2213,6 +2245,8 @@ export const make = Effect.gen(function* () {
     searchMessages: asRead(searchMessages),
     deleteThreadLink,
     listThreadLinks: asRead(listThreadLinks),
+    listOpenThreadIds: asRead(listOpenThreadIds),
+    openThreadIds: asRead(openThreadIds),
     listArchivedChatCounts: asRead(listArchivedChatCounts),
     listBotProviderSessions: asRead(listBotProviderSessions),
     listOpenChatTitles: asRead(listOpenChatTitles),

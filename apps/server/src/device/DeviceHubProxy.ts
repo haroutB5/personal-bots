@@ -17,6 +17,11 @@ import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import { authenticateMediaRequest } from "../auth/http.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
+import {
+  endStreamWhenSessionRevoked,
+  serveUntilSessionRevoked,
+} from "../personal/auth/sessionRevocationClose.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
@@ -132,6 +137,7 @@ const pumpFrames =
 const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  until: Effect.Effect<void>,
   extraHeaders: Readonly<Record<string, string>> = {},
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
@@ -168,9 +174,14 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  const body = headers["content-type"]?.startsWith("multipart/x-mixed-replace")
+  const stream = headers["content-type"]?.startsWith("multipart/x-mixed-replace")
     ? repeatStillFrame(response.stream)
     : response.stream;
+  // A body with a Content-Length is bounded, so only unbounded streams (mjpeg, avcc, events) pay for the revoke watch.
+  const body =
+    response.headers["content-length"] === undefined
+      ? yield* endStreamWhenSessionRevoked({ stream, until })
+      : stream;
   return HttpServerResponse.stream(body, {
     status: response.status,
     headers,
@@ -200,9 +211,19 @@ const handler = Effect.gen(function* () {
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticateMediaRequest(
+  const session = yield* authenticateMediaRequest(
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
   );
+  const sessions = yield* SessionStore.SessionStore;
+  const until = sessions
+    .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
+    .pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Failed to watch a device hub session for revocation.").pipe(
+          Effect.annotateLogs({ sessionId: session.sessionId, cause }),
+        ),
+      ),
+    );
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {
@@ -220,14 +241,18 @@ const handler = Effect.gen(function* () {
   }
   const upstreamUrl = routed?.url ?? `${ready.hub.origin}${hubPath}${search}`;
   if (upgrade) {
-    return yield* proxyWebSocket(
-      request,
-      upstreamUrl.replace(/^http/, "ws"),
-      routed?.protocols,
-      routed?.headers,
-    );
+    return yield* serveUntilSessionRevoked({
+      sessionId: session.sessionId,
+      serve: proxyWebSocket(
+        request,
+        upstreamUrl.replace(/^http/, "ws"),
+        routed?.protocols,
+        routed?.headers,
+      ),
+      until,
+    });
   }
-  return yield* proxyHttp(request, upstreamUrl, routed?.headers);
+  return yield* proxyHttp(request, upstreamUrl, until, routed?.headers);
 });
 
 export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);

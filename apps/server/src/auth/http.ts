@@ -1,5 +1,7 @@
 import {
   authScopeRequiredResponse,
+  AuthAccessTokenType,
+  type AuthAccessTokenResult,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
   AuthGrantScope,
@@ -10,6 +12,7 @@ import {
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
+  type EnvironmentOperationForbiddenReason,
   EnvironmentRequestInvalidError,
   type EnvironmentRequestInvalidReason,
   EnvironmentResourceNotFoundError,
@@ -19,7 +22,7 @@ import {
   EnvironmentAuthenticatedPrincipal,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
-import { parseOAuthScope } from "@t3tools/shared/oauthScope";
+import { encodeOAuthScope, parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -134,7 +137,7 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
-function failEnvironmentOperationForbidden(reason: "current_session_revoke_not_allowed") {
+function failEnvironmentOperationForbidden(reason: EnvironmentOperationForbiddenReason) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
@@ -199,23 +202,6 @@ export const failEnvironmentInternal =
     return yield* new EnvironmentInternalError({ code: "internal_error", reason, traceId });
   });
 
-const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
-  Effect.fromResult(
-    Cookies.set(Cookies.empty, cookieName, token, {
-      expires: DateTime.toDate(expiresAt),
-      httpOnly: true,
-      path: "/",
-      sameSite: "lax",
-    }),
-  ).pipe(
-    Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
-    Effect.flatMap((cookies) =>
-      HttpEffect.appendPreResponseHandler((_request, response) =>
-        Effect.succeed(HttpServerResponse.mergeCookies(response, cookies)),
-      ),
-    ),
-  );
-
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -273,25 +259,68 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const result = yield* serverAuth.getSessionState(request);
-            const credential = EnvironmentAuth.selectRequestCredential(
-              request,
-              sessions.cookieName,
-              sessions.legacyCookieName,
-            );
-            if (
-              credential?.source === "legacy-cookie" &&
-              result.authenticated &&
-              result.sessionMethod === "browser-session-cookie" &&
-              result.expiresAt
-            ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
-              yield* appendCredentialResponseHeaders;
-            }
-            return result;
+            return yield* serverAuth.getSessionState(request);
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
+          ),
+        ),
+      )
+      .handle(
+        "renewSession",
+        Effect.fn("environment.auth.renewSession")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const session = yield* EnvironmentAuthenticatedPrincipal;
+          const credential = EnvironmentAuth.selectRequestCredential(
+            request,
+            sessions.cookieName,
+            sessions.legacyCookieName,
+          );
+          if (
+            session.method === "browser-session-cookie" ||
+            (credential?.source !== "bearer" && credential?.source !== "dpop")
+          ) {
+            return yield* failEnvironmentOperationForbidden("session_not_renewable");
+          }
+          const outcome = yield* sessions
+            .renew(credential.token)
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("access_token_issuance_failed", cause),
+              ),
+            );
+          if (outcome._tag === "NotRenewable") {
+            return yield* failEnvironmentOperationForbidden("session_not_renewable");
+          }
+          yield* appendCredentialResponseHeaders;
+          const now = yield* DateTime.now;
+          return {
+            access_token: outcome._tag === "Renewed" ? outcome.token : credential.token,
+            issued_token_type: AuthAccessTokenType,
+            token_type: session.method === "dpop-access-token" ? "DPoP" : "Bearer",
+            expires_in: Math.max(
+              0,
+              Math.floor((outcome.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1_000),
+            ),
+            scope: encodeOAuthScope([...session.scopes]),
+          } satisfies AuthAccessTokenResult;
+        }),
+      )
+      .handle(
+        "revokeSession",
+        Effect.fn("environment.auth.revokeSession")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* EnvironmentAuthenticatedPrincipal;
+            if (session.method === "browser-session-cookie") {
+              return yield* failEnvironmentOperationForbidden("session_not_revocable");
+            }
+            const revoked = yield* serverAuth.revokeSession(session.sessionId);
+            return { revoked };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("client_session_revoke_failed", error),
           ),
         ),
       )

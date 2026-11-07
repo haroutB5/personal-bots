@@ -35,6 +35,7 @@ import {
   PersonalBotsListResult,
   PersonalBotThreadShellsInput,
   PersonalBotThreadShellsResult,
+  PersonalBotThreadShellStreamItem,
   PersonalThreadFullTextInput,
   PersonalThreadFullTextResult,
   PersonalBotThread,
@@ -306,6 +307,15 @@ const WsPersonalBotsThreadShellsRpc = Rpc.make(WS_METHODS.personalBotsThreadShel
   success: PersonalBotThreadShellsResult,
   error: PersonalBotsRpcError,
 });
+const WsPersonalBotsSubscribeThreadShellsRpc = Rpc.make(
+  WS_METHODS.personalBotsSubscribeThreadShells,
+  {
+    payload: Schema.Struct({}),
+    success: PersonalBotThreadShellStreamItem,
+    error: PersonalBotsRpcError,
+    stream: true,
+  },
+);
 const WsPersonalBotsThreadFullTextRpc = Rpc.make(WS_METHODS.personalBotsThreadFullText, {
   payload: PersonalThreadFullTextInput,
   success: PersonalThreadFullTextResult,
@@ -1024,6 +1034,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsPersonalBotsListRpc,
   WsPersonalBotsThreadShellsRpc,
+  WsPersonalBotsSubscribeThreadShellsRpc,
   WsPersonalBotsThreadFullTextRpc,
   WsPersonalBotsCreateRpc,
   WsPersonalBotsUpdateRpc,

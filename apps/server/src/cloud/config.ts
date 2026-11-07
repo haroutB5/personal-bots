@@ -16,6 +16,9 @@ export const RELAY_URL_SECRET = "cloud-relay-url";
 export const RELAY_ISSUER_SECRET = "cloud-relay-issuer";
 export const RELAY_ENVIRONMENT_CREDENTIAL_SECRET = "cloud-relay-environment-credential";
 export const PUBLISH_AGENT_ACTIVITY_SECRET = "cloud-publish-agent-activity";
+// Public tunnel origin the relay issued for this environment. Not secret; kept
+// beside the other link state so every unlink path clears it with them.
+export const CLOUD_ENDPOINT_HTTP_BASE_URL = "cloud-endpoint-http-base-url";
 export const HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET = "cloud-hold-webhooks-while-offline";
 export const CLOUD_LINK_REVOKED = "cloud-link-revoked";
 
@@ -98,3 +101,19 @@ export const readRelayConnection = Effect.all([
 export const readHoldWebhooksWhileOffline = readSecretString(
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
 ).pipe(Effect.map((value) => value === "true"));
+
+/**
+ * Keeps the relay-issued public origin so `t3 connect status` and
+ * `t3 pair --connect` can show where the environment is reachable. A manual
+ * endpoint is only the local origin, so nothing is kept for it.
+ */
+export const persistRelayEndpoint = Effect.fn("environment.cloud.persistRelayEndpoint")(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  endpoint: { readonly providerKind: string; readonly httpBaseUrl: string },
+) {
+  if (endpoint.providerKind === "manual") {
+    yield* secrets.remove(CLOUD_ENDPOINT_HTTP_BASE_URL);
+    return;
+  }
+  yield* secrets.set(CLOUD_ENDPOINT_HTTP_BASE_URL, new TextEncoder().encode(endpoint.httpBaseUrl));
+});

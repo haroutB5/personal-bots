@@ -204,6 +204,8 @@ import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import { makePersonalWsHandlers } from "./personal/ws/handlers.ts";
+import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import { serveUntilSessionRevoked } from "./personal/auth/sessionRevocationClose.ts";
 import { makePersonalWsSessionPrewarmer } from "./personal/ws/services.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
@@ -3518,6 +3520,7 @@ export const layer = Layer.unwrap(
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const npmRelease = yield* NpmRelease.NpmRelease;
+    const personalPush = yield* PersonalPushService.PersonalPushService;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
@@ -3644,17 +3647,29 @@ export const layer = Layer.unwrap(
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () =>
-            Effect.raceFirst(
-              framedRpcWebSocketHttpEffect,
-              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
-                Effect.as(HttpServerResponse.empty()),
-                Effect.catchTags({
-                  SessionCredentialVerificationError: (error) =>
-                    failEnvironmentInternal("internal_error", error),
-                }),
+            serveUntilSessionRevoked({
+              sessionId: session.sessionId,
+              serve: framedRpcWebSocketHttpEffect,
+              until: sessions
+                .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logError("Failed to watch a websocket session for revocation.").pipe(
+                      Effect.annotateLogs({ sessionId: session.sessionId, cause }),
+                    ),
+                  ),
+                ),
+            }),
+          () =>
+            sessions
+              .markDisconnected(session.sessionId)
+              .pipe(
+                Effect.andThen(
+                  viewing.reported
+                    ? personalPush.dropConnection(viewing.connectionId)
+                    : Effect.void,
+                ),
               ),
-            ),
-          () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(
         Effect.catchTags({

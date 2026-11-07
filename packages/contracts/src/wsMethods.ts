@@ -175,6 +175,7 @@ export const WS_METHODS = {
   personalBotsDeleteThread: "personalBots.deleteThread",
   personalBotsArchiveThreads: "personalBots.archiveThreads",
   personalBotsThreadShells: "personalBots.threadShells",
+  personalBotsSubscribeThreadShells: "personalBots.subscribeThreadShells",
   personalBotsThreadFullText: "personalBots.threadFullText",
   personalBotsUpdateThreads: "personalBots.updateThreads",
   personalBotsSearchMessages: "personalBots.searchMessages",
@@ -270,7 +271,6 @@ export const WS_METHODS = {
   personalLoginsSetSensitive: "personalLogins.setSensitive",
   personalLoginsDeleteMany: "personalLogins.deleteMany",
 
-  // personal browser
   personalBrowserStatus: "personalBrowser.status",
   personalBrowserTakeControl: "personalBrowser.takeControl",
   personalBrowserReturnToAgent: "personalBrowser.returnToAgent",

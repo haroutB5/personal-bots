@@ -15,6 +15,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpServer } from "effect/http";
 import * as Etag from "effect/http/Etag";
@@ -36,6 +37,7 @@ import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectHttp from "./http.ts";
+import { CLOUD_ENDPOINT_HTTP_BASE_URL } from "./config.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -289,4 +291,45 @@ describe("link proof over a non-loopback desktop transport", () => {
       expect(response.status).toBe(401);
     }),
   );
+});
+
+describe("persistRelayEndpoint", () => {
+  it.effect("keeps the tunnel origin for managed links and drops it for manual ones", () => {
+    const values = new Map<string, Uint8Array>();
+    const store: ServerSecretStore.ServerSecretStore["Service"] = {
+      get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, value);
+        }),
+      create: () => Effect.die("unused"),
+      getOrCreateRandom: () => Effect.die("unused"),
+      remove: (name) =>
+        Effect.sync(() => {
+          values.delete(name);
+        }),
+    };
+    const stored = () => {
+      const bytes = values.get(CLOUD_ENDPOINT_HTTP_BASE_URL);
+      return bytes === undefined ? null : new TextDecoder().decode(bytes);
+    };
+
+    return Effect.gen(function* () {
+      yield* ConnectHttp.persistRelayEndpoint(store, {
+        httpBaseUrl: "https://bots-abc.t3.example",
+        wsBaseUrl: "wss://bots-abc.t3.example",
+        providerKind: "cloudflare_tunnel",
+      });
+      expect(stored()).toBe("https://bots-abc.t3.example");
+
+      // A publish-only relink reports the local origin as a manual endpoint;
+      // advertising that as the public URL would hand out an unreachable link.
+      yield* ConnectHttp.persistRelayEndpoint(store, {
+        httpBaseUrl: "http://127.0.0.1:3773",
+        wsBaseUrl: "ws://127.0.0.1:3773",
+        providerKind: "manual",
+      });
+      expect(stored()).toBeNull();
+    });
+  });
 });
