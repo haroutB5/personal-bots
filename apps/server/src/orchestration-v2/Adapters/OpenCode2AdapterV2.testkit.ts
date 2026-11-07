@@ -232,6 +232,7 @@ export const replayServer = (
                   borrowers.current -= 1;
                 }),
             ),
+      withBotConnection: (_input, use) => use(connection),
     });
   });
 

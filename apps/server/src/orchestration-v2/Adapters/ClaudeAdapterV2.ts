@@ -217,7 +217,7 @@ import {
   personalClaudeQueryOptions,
   type PersonalClaudeQueryOptions,
 } from "../../personal/providerHooks/claudeQueryOptions.ts";
-import type { BotProtectedPathsInput } from "../../personal/secrets/botProtectedPaths.ts";
+import type { BotProtectedPathsInput } from "@t3tools/provider-core/server/botProtectedPaths";
 import {
   PERSONAL_BOT_ID_PATTERN,
   PERSONAL_BOT_PLUGINS_DIR,

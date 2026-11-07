@@ -44,6 +44,11 @@ import {
   type ProbedOpenCode,
 } from "./versionProbe.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
+import { ensurePersonalBotOpenCodeHome } from "./opencodeBotIsolation.ts";
+import {
+  botStateDenyEnabled,
+  buildOpenCodeBotPermissionRules,
+} from "@t3tools/provider-core/server/botProtectedPaths";
 import * as OpenCode2Client from "./v2/OpenCode2Client.ts";
 import * as OpenCode2Server from "./v2/OpenCode2Server.ts";
 import {
@@ -279,12 +284,34 @@ export const OpenCodeDriver: ProviderDriver<
           }),
       ),
     );
+    const botConfigHome = yield* ensurePersonalBotOpenCodeHome(host.paths.stateDir).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not prepare the OpenCode bots settings folder.", { cause }).pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    );
+    const personalBotPermissionRules = botStateDenyEnabled()
+      ? buildOpenCodeBotPermissionRules({
+          stateDir: host.paths.stateDir,
+          dbPath: host.paths.dbPath,
+          secretsDir: host.paths.secretsDir,
+          logsDir: host.paths.logsDir,
+        }).map((rule) => ({
+          action: rule.permission,
+          resource: rule.pattern,
+          effect: rule.action,
+        }))
+      : [];
     const openCode2Server = yield* OpenCode2Server.make({
       binaryPath: effectiveConfig.binaryPath,
       serverUrl: effectiveConfig.serverUrl,
       serverPassword: effectiveConfig.serverPassword,
       directory: host.paths.cwd,
       environment: processEnv,
+      ...(botConfigHome === undefined ? {} : { botConfigHome }),
     }).pipe(
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
       Effect.provideService(
@@ -295,7 +322,7 @@ export const OpenCodeDriver: ProviderDriver<
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       v1: openCodeV1Adapter,
-      v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
+      v2: yield* OpenCode2AdapterV2.make(instanceId, { personalBotPermissionRules }).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     });

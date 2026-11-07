@@ -19,6 +19,14 @@
       "types": "./src/server/attachmentPrompt.ts",
       "import": "./src/server/attachmentPrompt.ts"
     },
+    "./server/botProcessPriority": {
+      "types": "./src/server/botProcessPriority.ts",
+      "import": "./src/server/botProcessPriority.ts"
+    },
+    "./server/botProtectedPaths": {
+      "types": "./src/server/botProtectedPaths.ts",
+      "import": "./src/server/botProtectedPaths.ts"
+    },
     "./server/auth": {
       "types": "./src/server/auth.ts",
       "import": "./src/server/auth.ts"

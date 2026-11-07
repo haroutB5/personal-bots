@@ -1,35 +1,15 @@
 /**
- * Server files a personal bot's coding session must not read or change, and
- * the ones it must not change:
- * - `secretsDir` (the sealed secret files and the data-encryption key, which
- *   lives inside it): no read, no write.
- * - the SQLite database and its sidecars: no write (Edit/Write tools and the
- *   file commands Claude Code recognizes). Reading stays open on purpose: the
- *   dev team reads the live database and logs to confirm releases and debug.
- * - the logs: no deny at all (they are masked before they are written).
- * Bots run as the same OS user as the server, so this is a best-effort deny
- * built on each provider's own permission engine, not an OS boundary: a shell
- * command that writes the database is not stopped (a separate OS user for the
- * server is the real fix). This module is pure: it turns the paths into the
- * rule syntax each provider reads.
- *
- * Per provider (what is enforced is stated at each builder):
- * - Claude Code: `permissions.deny` rules, enforced in every permission mode.
- * - OpenCode: session permission rules appended last (last match wins).
- * - Codex: nothing here. A bot session runs `danger-full-access`, which the
- *   sandbox cannot restrict, and the permission-profile `none` entries that
- *   could deny reads are ignored once the legacy `sandbox` value is sent (and
- *   on Windows the default sandbox backend refuses to start with them); see
- *   `CodexAdapter.ts`.
- *
- * Case: Windows paths are case-insensitive on disk, but only OpenCode (on
- * win32) and PowerShell rules compare case-insensitively. The Claude Bash rules
- * emit the drive letter in both cases; other letter-case differences, 8.3 short
- * names and junction targets that rename a folder are not covered.
- *
- * @module personal/secrets/botProtectedPaths
+ * Server files a bot must not read or change: secrets read-write denied, the
+ * SQLite database and sidecars write-denied (reads stay open), logs not denied.
+ * Best effort: each provider's permission engine, not an OS boundary.
+ * @module provider/botProtectedPaths
  */
-import type { ServerDerivedPaths } from "../../config.ts";
+export interface BotProtectedPathsInput {
+  readonly stateDir: string;
+  readonly dbPath: string;
+  readonly secretsDir: string;
+  readonly logsDir: string;
+}
 
 /**
  * Kill switch: `PERSONAL_BOT_STATE_DENY=off` (also 0 / false / no, and the
@@ -43,11 +23,6 @@ export const botStateDenyEnabled = (env: NodeJS.ProcessEnv = process.env): boole
   return raw === undefined || !["off", "0", "false", "no"].includes(raw);
 };
 
-export type BotProtectedPathsInput = Pick<
-  ServerDerivedPaths,
-  "stateDir" | "dbPath" | "secretsDir" | "logsDir"
->;
-
 export interface BotProtectedPath {
   readonly path: string;
   /** A directory protects everything under it; a file protects only itself. */
@@ -57,7 +32,7 @@ export interface BotProtectedPath {
 }
 
 /** SQLite files next to the database: write-ahead log, shared memory, rollback journal. */
-export const BOT_PROTECTED_DB_SIDECAR_SUFFIXES = ["-wal", "-shm", "-journal"] as const;
+const BOT_PROTECTED_DB_SIDECAR_SUFFIXES = ["-wal", "-shm", "-journal"] as const;
 
 /** How many trailing segments the tail rules keep: specific enough to stay out of unrelated folders. */
 const TAIL_SEGMENT_COUNT = 3;
@@ -146,11 +121,8 @@ function escapeGitignore(text: string): string {
 }
 
 /**
- * The path as a Claude Code `Read`/`Edit` rule anchor: `//` is the filesystem
- * root, and Windows `C:\Users\x` is normalized to `/c/Users/x` before matching
- * (https://code.claude.com/docs/en/permissions, "Read and Edit"). Relative
- * paths and UNC shares return undefined, so no rule is emitted that could be
- * silently ignored.
+ * The path as a Claude Code `Read`/`Edit` rule anchor: `//` is the root and
+ * Windows drives normalize to `/c/...`. Relative paths and UNC return undefined.
  */
 export function claudeFileRuleAnchor(path: string): string | undefined {
   const parsed = parseAbsolutePath(path);
@@ -166,23 +138,10 @@ export function claudeTailRuleAnchor(path: string): string | undefined {
 }
 
 /**
- * Claude Code `permissions.deny` rules for a bot session (flag settings, so
- * they hold with `settingSources: []`). Measured on Windows with CLI 2.1.291
- * under `--permission-mode bypassPermissions` against a mock API; limits:
- * - `Read(path)` and `Edit(path)` rules cover the built-in file tools. A Read
- *   deny also blocks Edit and Write on the path, and Grep and Glob honor the
- *   Read rules. `Write(path)`, `Glob(path)` and `Grep(path)` rules are accepted
- *   but never consulted, so none are emitted.
- * - Read/Edit rules also apply to the file commands Claude Code recognizes in
- *   Bash and PowerShell (`cat`, `Get-Content`, `cp`, `Copy-Item`, redirects)
- *   when they name the file. They do not apply to `python -c` or any script
- *   that opens the file itself.
- * - `Bash(*text*)` and `PowerShell(*text*)` match command text containing the
- *   path (or its tail), in any subcommand. They are string matches, not a
- *   boundary: a path built in code, an environment variable, a glob, an 8.3
- *   short name, or `open('../x/secrets')` inside a script is not matched.
- * - Deny rules apply in every permission mode, `bypassPermissions` and `auto`
- *   included (https://code.claude.com/docs/en/permission-modes).
+ * Claude Code `permissions.deny` rules for a bot, in flag settings so they hold
+ * with `settingSources: []` and in every mode. Read/Edit cover the file tools
+ * and recognized file commands; Bash/PowerShell rules are string matches, not
+ * a boundary.
  */
 export function buildClaudeBotPermissionDeny(paths: BotProtectedPathsInput): Array<string> {
   const rules: Array<string> = [];
@@ -221,7 +180,11 @@ export function buildClaudeBotPermissionDeny(paths: BotProtectedPathsInput): Arr
   return [...new Set(rules)];
 }
 
-/** The slice of OpenCode's `PermissionRuleset` entry this module emits. */
+/**
+ * OpenCode session permission rules for a bot, appended after the mode's rules
+ * (last match wins, so they override a full-access `*` allow). Patterns are
+ * full-string wildcards; bash rules are string matches, not a boundary.
+ */
 export interface OpenCodeDenyRule {
   readonly permission: string;
   readonly pattern: string;
@@ -229,25 +192,9 @@ export interface OpenCodeDenyRule {
 }
 
 /**
- * OpenCode session permission rules for a bot, to append after the mode's
- * rules (the last matching rule wins, so a `*` allow in full-access mode is
- * overridden). Patterns are full-string wildcards (`*` any text, `?` one
- * character); on win32 both sides have `\` turned into `/` and compare
- * case-insensitively (OpenCode `util/wildcard.ts`).
- * - `edit` (edit, write and patch): the path, `<dir>/*`, and the same for the
- *   tail segments (`*<tail>`, `*<tail>/*`), for the secrets folder and the
- *   database files. `read` and `list` get the same patterns for the secrets
- *   folder only: the database and logs stay readable.
- * - `external_directory`: the folders and `<dir>/*`, which also gates the
- *   path arguments of the bash commands OpenCode parses and of glob and grep.
- *   A file in the state directory has no folder rule of its own, so the
- *   SQLite files rely on `read`/`edit`.
- * - `bash`: `*path*` and `*tail*` against the command text, a string match
- *   only. It does not catch variables, globs, 8.3 names or code that builds
- *   the path.
- * Not measured against a running OpenCode: the evidence is the docs, the
- * pattern matcher source and the SDK types.
- * https://opencode.ai/docs/permissions/
+ * OpenCode session permission rules for a bot, appended after the mode's rules
+ * (last match wins, so they override a full-access `*` allow). Patterns are
+ * full-string wildcards; bash rules are string matches, not a boundary.
  */
 export function buildOpenCodeBotPermissionRules(
   paths: BotProtectedPathsInput,

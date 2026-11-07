@@ -58,7 +58,10 @@ import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  withBotInstructions,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -664,7 +667,15 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
       };
 };
 
-export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
+export interface OpenCode2AdapterOptions {
+  /** Deny rules for a bot's state and secrets, appended after the mode's rules. */
+  readonly personalBotPermissionRules?: ReadonlyArray<Permission.Rule> | undefined;
+}
+
+export const make = Effect.fn("OpenCode2Adapter.make")(function* (
+  instanceId: ProviderInstanceId,
+  options: OpenCode2AdapterOptions = {},
+) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -676,19 +687,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const mcpServerNameFor = (threadId: string) =>
     t3McpServerName(threadId).pipe(Effect.provideService(Digest.Digest, crypto));
 
-  const borrow = Effect.gen(function* () {
+  const borrow = Effect.fn("OpenCode2Adapter.borrow")(function* (
+    botEnvironment: OpenCode2Server.OpenCode2BotEnvironment | undefined,
+  ) {
     const lent = yield* Deferred.make<
       OpenCode2Server.OpenCode2Connection,
       OpenCodeRuntime.OpenCodeRuntimeError
     >();
-    yield* server
-      .withConnection((connection) =>
-        Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),
-      )
-      .pipe(
-        Effect.catch((error) => Deferred.fail(lent, error)),
-        Effect.forkScoped,
-      );
+    const lend = (connection: OpenCode2Server.OpenCode2Connection) =>
+      Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never));
+    const connected =
+      botEnvironment === undefined
+        ? server.withConnection(lend)
+        : server.withBotConnection(botEnvironment, lend);
+    yield* connected.pipe(
+      Effect.catch((error) => Deferred.fail(lent, error)),
+      Effect.forkScoped,
+    );
     return yield* Deferred.await(lent);
   });
 
@@ -697,6 +712,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     initial: {
       readonly connection: OpenCode2Server.OpenCode2Connection;
       readonly scope: Scope.Closeable;
+      readonly botEnvironment: OpenCode2Server.OpenCode2BotEnvironment | undefined;
     },
   ) {
     let connection = initial.connection;
@@ -2675,7 +2691,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Release the borrow on every failure, including reconnect interruption, so spawned servers can idle-stop.
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
-        const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
+        const next = yield* borrow(initial.botEnvironment).pipe(
+          Effect.provideService(Scope.Scope, scope),
+        );
         return { next, stream: yield* next.events };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
@@ -2830,12 +2848,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
-      return sessionRules(
+      const rules = sessionRules(
         policy,
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
       );
+      return input.personal?.personalBot === true
+        ? [...rules, ...(options.personalBotPermissionRules ?? [])]
+        : rules;
     });
 
     const writeRules = Effect.fnUntraced(function* (state: ThreadState, policy: RulesPolicy) {
@@ -3133,7 +3154,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (mcpAvailable) state.mcp = wanted;
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        withBotInstructions(
+          buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+          input.systemInstructions,
+        ),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
       ]
         .filter((part) => part !== undefined && part.length > 0)
@@ -4143,8 +4167,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       function* (input) {
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
-        const connection = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return yield* openSession(input, { connection, scope });
+        const personal = input.personal;
+        const mcpSession =
+          personal?.personalBot === true ? yield* mcpSessions.read(input.threadId) : undefined;
+        const botEnvironment: OpenCode2Server.OpenCode2BotEnvironment | undefined =
+          personal?.personalBot === true
+            ? {
+                model: input.modelSelection.model,
+                ...(personal.secretEnvironment === undefined
+                  ? {}
+                  : { personalSecretEnvironment: personal.secretEnvironment }),
+                ...(mcpSession?.agentDeviceEnvironment === undefined
+                  ? {}
+                  : { agentDeviceEnvironment: mcpSession.agentDeviceEnvironment }),
+              }
+            : undefined;
+        const connection = yield* borrow(botEnvironment).pipe(
+          Effect.provideService(Scope.Scope, scope),
+        );
+        return yield* openSession(input, { connection, scope, botEnvironment });
       },
       (effect, input) =>
         effect.pipe(

@@ -1,20 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Starts every bot provider process below normal priority (Windows
- * BelowNormal, Linux nice 10 + idle I/O class).
- *
- * The shared browser's live view lagged while bots ran CPU-heavy builds and
- * test suites: the server (AboveNormal) and Chrome (Normal) competed with a
- * `vp build` that also ran at Normal. A Windows child inherits its parent's
- * priority class only when the parent is Idle or BelowNormal, otherwise it
- * starts at Normal. So the provider process itself is lowered right after it
- * is spawned, by its known PID, and every shell command, build and test it
- * starts afterwards inherits BelowNormal. The server and the browser are not
- * touched here.
- *
- * `PERSONAL_BOT_PROCESS_PRIORITY=normal` (also `off`, `0`, `false`) turns this
- * off and restores the earlier behaviour.
- *
+ * Lowers every bot provider process below normal (Windows BelowNormal, Linux
+ * nice 10 + idle I/O) so it cannot starve the server or browser. Children
+ * inherit it. `PERSONAL_BOT_PROCESS_PRIORITY=normal|off|0|false` disables it.
  * @module provider/botProcessPriority
  */
 import * as NodeChildProcess from "node:child_process";
@@ -103,17 +91,16 @@ export function lowerBotProcessPriority(
  * Effect form for the spawn sites. A failure is logged as a warning, except a
  * process that is already gone, which is routine and stays quiet.
  */
-export const lowerBotProcessPriorityEffect = (
+export const lowerBotProcessPriorityEffect = Effect.fn("lowerBotProcessPriorityEffect")(function* (
   pid: number | undefined,
   provider: string,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const result = lowerBotProcessPriority(pid);
-    if (result.status === "failed" && result.code !== "ESRCH") {
-      yield* Effect.logWarning("Could not lower bot process priority.", {
-        provider,
-        pid,
-        error: result.message,
-      });
-    }
-  });
+) {
+  const result = lowerBotProcessPriority(pid);
+  if (result.status === "failed" && result.code !== "ESRCH") {
+    yield* Effect.logWarning("Could not lower bot process priority.", {
+      provider,
+      pid,
+      error: result.message,
+    });
+  }
+});

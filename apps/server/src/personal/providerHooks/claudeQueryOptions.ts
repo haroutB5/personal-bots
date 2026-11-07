@@ -9,8 +9,11 @@ import type {
   SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 
-import type { BotProtectedPathsInput } from "../secrets/botProtectedPaths.ts";
-import { buildClaudeBotPermissionDeny, botStateDenyEnabled } from "../secrets/botProtectedPaths.ts";
+import type { BotProtectedPathsInput } from "@t3tools/provider-core/server/botProtectedPaths";
+import {
+  botStateDenyEnabled,
+  buildClaudeBotPermissionDeny,
+} from "@t3tools/provider-core/server/botProtectedPaths";
 import {
   botSubagentModelEnvironment,
   exploreSubagentAgents,

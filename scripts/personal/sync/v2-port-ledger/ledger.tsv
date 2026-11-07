@@ -401,7 +401,7 @@ apps/server/src/provider/Drivers/DeepSeekEnvironment.test.ts		added-broken	248	D
 apps/server/src/provider/Drivers/DeepSeekEnvironment.ts		added-broken	228	C5-C9	open	area C5-C9
 apps/server/src/provider/Drivers/GrokDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/GrokDriver.ts		modify-delete	10	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/OpenCodeDriver.ts		modify-delete	83	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/OpenCodeDriver.ts		modify-delete	83	C5-C9	dropped	driver moved to packages/provider-opencode; the v2 driver wires createOpenCodeAdapterV2 and resolveCodexLaunchArgs equivalents, and the parked hunk is upstream import churn
 apps/server/src/provider/Drivers/RegistryAcpDriver.test.ts		added-broken	258	C5-C9	open	area C5-C9
 apps/server/src/provider/Drivers/RegistryAcpDriver.ts		added-broken	398	C5-C9	open	area C5-C9
 apps/server/src/provider/Drivers/RegistryAcpLocalProof.test.ts		added-broken	196	C5-C9	open	area C5-C9
@@ -436,9 +436,9 @@ apps/server/src/provider/Layers/NativeAcpAdapter.test.ts		added-broken	826	C5-C9
 apps/server/src/provider/Layers/NativeAcpAdapter.ts		added-broken	1261	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/NativeAcpSteerHandoff.test.ts		added-broken	141	C5-C9	open	G2 park; ACP steer handoff
 apps/server/src/provider/Layers/NativeAcpStopRetry.test.ts		added-broken	86	C5-C9	open	G2 park; ACP stop retry
-apps/server/src/provider/Layers/OpenCodeAdapter.test.ts		modify-delete	668	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/OpenCodeAdapter.ts		modify-delete	269	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/OpenCodeProvider.test.ts		modify-delete	44	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/OpenCodeAdapter.test.ts		modify-delete	668	C5-C9	dropped	v1 adapter suite; the package has 175 tests and the app replay suite 100, all green on C7
+apps/server/src/provider/Layers/OpenCodeAdapter.ts		modify-delete	269	C5-C9	done	C7: persona, per-bot config-home isolation and state deny rules ported to packages/provider-opencode (v2 adapter); the v1 adapter carries the persona
+apps/server/src/provider/Layers/OpenCodeProvider.test.ts		modify-delete	44	C5-C9	dropped	v2 provider snapshot tests live in packages/provider-opencode/src/server; the v1 provider layer no longer exists
 apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts		modify-delete	264	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/ProviderInstanceRegistryLive.ts		modify-delete	43	C5-C9	open	area C5-C9
@@ -453,7 +453,7 @@ apps/server/src/provider/Layers/RegistryAcpAdapter.ts		added-broken	69	C8	open	G
 apps/server/src/provider/Layers/antigravityUsageLimits.test.ts		added-broken	465	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/antigravityUsageLimits.ts		added-broken	489	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/codexLaunchArgs.test.ts		modify-delete	22	C5-C9	done	C6: personal-bot switch and skill-args tests ported
-apps/server/src/provider/Layers/openCodeUsageLimits.ts		modify-delete	11	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/openCodeUsageLimits.ts		modify-delete	11	C5-C9	done	C7: the console key is read from OpenCode 2's stored credentials in usageLimits.ts, with the opencode-go fallback
 apps/server/src/provider/Layers/resetCreditCoordinator.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/ModelManifest.test.ts		content	24	C5-C9	open	area C5-C9
 apps/server/src/provider/ModelManifest.ts		content	7	C5-C9	open	area C5-C9
@@ -526,12 +526,12 @@ apps/server/src/provider/codexUsageLimits.ts	apps/server/src/provider/Layers/cod
 apps/server/src/provider/dshUsageLedger.test.ts		added-broken	254	D1	open	G6 park; DeepSeek usage ledger (D1)
 apps/server/src/provider/dshUsageLedger.ts		added-broken	349	D1	open	G6 park; DeepSeek usage ledger (D1)
 apps/server/src/provider/model-manifest.json		content	65	C5-C9	open	area C5-C9
-apps/server/src/provider/opencode2.live.test.ts		added-broken	197	C7	open	G2 park; live OpenCode 2 probe
-apps/server/src/provider/opencode2.test.ts		added-broken	214	C5-C9	open	area C5-C9
-apps/server/src/provider/opencode2.ts		added-broken	641	C5-C9	open	area C5-C9
+apps/server/src/provider/opencode2.live.test.ts		added-broken	197	C7	dropped	live test needs a real OpenCode CLI and the user's account; package OpenCode2Server/Client tests cover the protocol and the app replay suite covers sessions
+apps/server/src/provider/opencode2.test.ts		added-broken	214	C5-C9	dropped	v1 opencode2 client suite; its behaviour lives in packages/provider-opencode/src/server/v2 tests
+apps/server/src/provider/opencode2.ts		added-broken	641	C5-C9	dropped	v1 opencode2 client; packages/provider-opencode/src/server/v2/{adapter,OpenCode2Client,OpenCode2Server}.ts is the v2 home
 apps/server/src/provider/opencodeRuntime.environment.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/opencodeRuntime.inventory.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/opencodeRuntime.ts		modify-delete	3	C5-C9	open	area C5-C9
+apps/server/src/provider/opencodeRuntime.ts		modify-delete	3	C5-C9	done	C7: bot process priority ported to packages/provider-opencode/src/server/OpenCodeRuntime.ts for both spawn sites
 apps/server/src/provider/probeBackoff.test.ts		added-broken	72	C9	open	G6 park; managed provider backoff (C9)
 apps/server/src/provider/probeBackoff.ts		added-broken	62	C9	open	G6 park; managed provider backoff (C9)
 apps/server/src/provider/providerCompatibility.test.ts		content	13	C5-C9	open	area C5-C9
@@ -595,7 +595,7 @@ apps/server/src/textGeneration/CursorTextGeneration.ts		modify-delete	2	B1	dropp
 apps/server/src/textGeneration/DeepSeekTextGeneration.ts		added-broken	98	D1	open	G6 park; DeepSeek text generation (D1)
 apps/server/src/textGeneration/GrokTextGeneration.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/GrokTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/textGeneration/OpenCode2TextGeneration.ts		added-broken	259	C7	open	OpenCode 2 text generation
+apps/server/src/textGeneration/OpenCode2TextGeneration.ts		added-broken	259	C7	dropped	no personal behaviour in the hunk; packages/provider-opencode/src/server/v2/textGeneration.ts is the v2 home
 apps/server/src/textGeneration/TextGeneration.ts		content	17	C5	done	service exposes the optional structured generator from provider-core
 apps/server/src/usage-transcript-worker.ts		added-broken	25	C14	open	G14 park; usage transcript worker (C14)
 apps/server/src/usage/UsageLimitSources.ts		content	30	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
@@ -609,8 +609,8 @@ apps/server/src/usage/botUsage.ts		added-broken	246	B1	done	G8 restored the file
 apps/server/src/usage/cliproxyApi.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/usage/cliproxyApi.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/usage/cursorUsageReader.ts		modify-delete	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
-apps/server/src/usage/opencodeUsageReader.test.ts		added-broken	142	C7	open	test of an Appendix A hook file
-apps/server/src/usage/opencodeUsageReader.ts		modify-delete	129	C7	open	hook file listed in Appendix A
+apps/server/src/usage/opencodeUsageReader.test.ts		added-broken	142	C7	dropped	v2 usage reads the same records from the OpenCode 2 SQLite store; packages/provider-opencode/src/server/usage.test.ts owns the cases
+apps/server/src/usage/opencodeUsageReader.ts		modify-delete	129	C7	dropped	v2 usage.ts is the home: it reads OpenCode 2's SQLite store through the shared worker, so no personal reader is left to port
 apps/server/src/usage/usageAggregation.test.ts		content	3	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/src/usage/usagePricing.test.ts		content	163	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
 apps/server/src/usage/usagePricing.ts		content	226	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff

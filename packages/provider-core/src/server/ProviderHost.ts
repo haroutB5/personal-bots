@@ -16,6 +16,9 @@ export interface ProviderHostPaths {
   readonly cwd: string;
   readonly baseDir: string;
   readonly stateDir: string;
+  readonly dbPath: string;
+  readonly secretsDir: string;
+  readonly logsDir: string;
   readonly providerStatusCacheDir: string;
   /** Where chat attachments are stored; agents that sandbox file reads must be granted it. */
   readonly attachmentsDir: string;

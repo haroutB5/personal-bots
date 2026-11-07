@@ -1,27 +1,14 @@
 /**
- * Personal-bot isolation for OpenCode sessions.
- *
- * OpenCode layers its config: the global dir (`$XDG_CONFIG_HOME/opencode`, the
- * owner's MCP servers, agents and plugins), then project files, then
- * `OPENCODE_CONFIG_DIR` / `OPENCODE_CONFIG` / `OPENCODE_CONFIG_CONTENT`. The
- * last three only ADD a layer (measured on 1.18.29 with `opencode debug
- * config`: the owner's MCP servers and agents stayed loaded), so a bot session
- * instead gets its own `XDG_CONFIG_HOME`, an app-owned directory that holds no
- * owner add-ons. Auth and history live in the data dir, which does not move.
- * The disable flags drop what OpenCode reads outside its config dir
- * (`~/.claude` and `~/.agents` skills and prompts, project config).
- *
- * `XDG_CONFIG_HOME` would otherwise reach every command the bot runs (gh and
- * git read it), so the bots config home ships a `shell.env` plugin that hands
- * shell commands the owner's own value back.
- *
+ * A bot's OpenCode session gets its own XDG_CONFIG_HOME with no owner MCP
+ * servers, agents or plugins, flags that drop outside config, and a shell.env
+ * plugin that gives its shell commands the owner's own XDG value back.
  * @module provider/opencodeBotIsolation
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-export const PERSONAL_BOT_OPENCODE_ENVIRONMENT = {
+const PERSONAL_BOT_OPENCODE_ENVIRONMENT = {
   OPENCODE_DISABLE_CLAUDE_CODE: "1",
   OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
   OPENCODE_DISABLE_PROJECT_CONFIG: "1",
@@ -30,10 +17,7 @@ export const PERSONAL_BOT_OPENCODE_ENVIRONMENT = {
 } as const;
 
 /** The owner's own `XDG_CONFIG_HOME` ("" when unset), read back by the plugin below. */
-export const OWNER_XDG_CONFIG_HOME_ENV = "T3_OWNER_XDG_CONFIG_HOME";
-
-/** OpenCode's built-in primary agents; the owner's own agents do not exist for a bot. */
-export const PERSONAL_BOT_OPENCODE_AGENTS: ReadonlySet<string> = new Set(["build", "plan"]);
+const OWNER_XDG_CONFIG_HOME_ENV = "T3_OWNER_XDG_CONFIG_HOME";
 
 const PLUGIN_FILE_SEGMENTS = ["opencode", "plugin", "t3-restore-owner-env.js"] as const;
 

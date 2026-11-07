@@ -77,6 +77,7 @@ describe("bot instruction coverage", () => {
     assert.deepEqual(callSites, {
       claudeAgent: "../orchestration-v2/Adapters/ClaudeAdapterV2.ts",
       codex: "CodexDeveloperInstructions.ts",
+      opencode: "../../../../packages/provider-opencode/src/server/adapter.ts",
     });
   });
 

@@ -18,6 +18,7 @@ import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
+import { ensurePersonalBotOpenCodeHome } from "../opencodeBotIsolation.ts";
 
 // Shapes and content types observed on `opencode serve` 2.0.18 (pid and port replaced). 1.x
 // answers /api/info with its web UI: 200 text/html.
@@ -208,6 +209,56 @@ describe("OpenCode2Server spawned server", () => {
       assert.strictEqual(first.version, "2.0.18");
       assert.strictEqual(first.external, false);
       assert.strictEqual(second.client, first.client);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          OpenCode2Client.layer,
+          OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+        ).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.live("gives a bot its own server from the bots config home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const platform = yield* HostProcess.Platform;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode2-bot-" });
+      const isWindows = platform === "win32";
+      const binaryPath = path.join(directory, isWindows ? "opencode.cmd" : "opencode");
+      const scriptPath = path.join(directory, "opencode.mjs");
+      yield* fs.writeFileString(scriptPath, FAKE_SERVER);
+      yield* fs.writeFileString(
+        binaryPath,
+        isWindows
+          ? `@echo off\r\n"${yield* HostProcess.ExecutablePath}" "${scriptPath}" %*\r\n`
+          : `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
+      );
+      if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
+      const botConfigHome = yield* ensurePersonalBotOpenCodeHome(directory);
+
+      const server = yield* OpenCode2Server.make({
+        binaryPath,
+        serverUrl: "",
+        serverPassword: "",
+        directory,
+        environment: yield* HostProcess.Environment,
+        botConfigHome,
+      });
+      const owner = yield* server.withConnection((connection) => Effect.succeed(connection));
+      const bot = yield* server.withBotConnection({ model: "opencode/big-pickle" }, (connection) =>
+        Effect.succeed(connection),
+      );
+
+      assert.strictEqual(bot.version, "2.0.18");
+      assert.strictEqual(bot.external, false);
+      assert.notStrictEqual(bot.url, owner.url);
     }).pipe(
       Effect.scoped,
       Effect.provide(

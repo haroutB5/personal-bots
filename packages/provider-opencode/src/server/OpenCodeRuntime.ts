@@ -33,6 +33,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotProbe";
+import { lowerBotProcessPriorityEffect } from "@t3tools/provider-core/server/botProcessPriority";
 import * as NetService from "@t3tools/shared/Net";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -438,6 +439,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
       );
+      yield* lowerBotProcessPriorityEffect(Number(child.pid), "opencode");
       const terminateCommandGroup =
         hostPlatform === "win32"
           ? child.kill({ killSignal: "SIGKILL" }).pipe(Effect.asVoid)
@@ -555,6 +557,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         ),
       );
 
+    yield* lowerBotProcessPriorityEffect(Number(child.pid), "opencode");
     const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
       hostPlatform === "win32"
         ? child.kill({ killSignal: signal, forceKillAfter: "1 second" }).pipe(Effect.asVoid)

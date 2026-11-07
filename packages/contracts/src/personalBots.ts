@@ -40,6 +40,7 @@ import { UsageProviderKind } from "./usage.ts";
 export const BOT_INSTRUCTION_DRIVER_KINDS: ReadonlyArray<ProviderDriverKind> = [
   ProviderDriverKind.make("claudeAgent"),
   ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("opencode"),
 ];
 
 /**

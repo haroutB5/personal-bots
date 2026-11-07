@@ -32,7 +32,7 @@ import {
 } from "../../provider/codexLaunchArgs.ts";
 import { logUnloadableBotPluginSkills } from "../../provider/botPluginSkillDiagnostics.ts";
 import { resolvePersonalBotPluginSkillDirs } from "../../provider/botPluginSkillRoots.ts";
-import { lowerBotProcessPriorityEffect } from "../../provider/botProcessPriority.ts";
+import { lowerBotProcessPriorityEffect } from "@t3tools/provider-core/server/botProcessPriority";
 import { terminateDescendants } from "../../provider/processTree.ts";
 import {
   codexShellOutputArgs,

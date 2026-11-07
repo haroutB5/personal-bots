@@ -6,10 +6,14 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as P from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Scope from "effect/Scope";
 import * as HttpClientError from "effect/http/HttpClientError";
+
+import { withProviderSessionEnvironment } from "@t3tools/provider-core/server/mcpSession";
 
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
+import { personalBotOpenCodeEnvironment } from "../opencodeBotIsolation.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
 const INFO_TIMEOUT = "5 seconds";
@@ -20,12 +24,23 @@ export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly external: boolean;
 }
 
+export interface OpenCode2BotEnvironment {
+  readonly model?: string | undefined;
+  readonly personalSecretEnvironment?: Readonly<Record<string, string>> | undefined;
+  readonly agentDeviceEnvironment?: Readonly<Record<string, string>> | undefined;
+}
+
 export class OpenCode2Server extends Context.Service<
   OpenCode2Server,
   {
     readonly withConnection: <A, E, R>(
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
+    /** A bot's own server: the bots config home, never the owner's. */
+    readonly withBotConnection: <A, E, R>(
+      input: OpenCode2BotEnvironment,
+      use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R | Scope.Scope>;
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
@@ -115,8 +130,11 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   readonly serverPassword: string;
   readonly directory: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly botConfigHome?: string | undefined;
 }) {
   const opencode = yield* OpenCode2Client.OpenCode2Client;
+  const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+  const random = yield* SecureRandom.SecureRandom;
   const connectTo = Effect.fn("OpenCode2Server.connectTo")(function* (
     url: string,
     password: Redacted.Redacted,
@@ -132,6 +150,13 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
       latest = connection;
       return connection.version;
     });
+  const refuseBotOnExternalServer = Effect.fail(
+    new OpenCodeRuntime.OpenCodeRuntimeError({
+      operation: "server.start",
+      detail:
+        "Bots can't use an external OpenCode server. Clear the OpenCode server URL in Settings > Providers.",
+    }),
+  );
 
   const serverUrl = input.serverUrl.trim();
   if (serverUrl.length > 0) {
@@ -144,6 +169,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
           Effect.flatMap(use),
         );
       }),
+      withBotConnection: () => refuseBotOnExternalServer,
     });
   }
 
@@ -154,6 +180,42 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     environment: serverEnvironment(input.environment, password),
     verify: (url) => connectTo(url, password, false).pipe(Effect.flatMap(remember)),
   });
+  const withBotConnection = Effect.fn("OpenCode2Server.withBotConnection")(function* <A, E, R>(
+    botInput: OpenCode2BotEnvironment,
+    use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
+  ): Effect.fn.Return<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R | Scope.Scope> {
+    if (input.botConfigHome === undefined) {
+      return yield* new OpenCodeRuntime.OpenCodeRuntimeError({
+        operation: "server.start",
+        detail: "OpenCode could not prepare the bots' private settings folder, so bots can't run.",
+      });
+    }
+    const botPassword = yield* generatePassword.pipe(
+      Effect.provideService(SecureRandom.SecureRandom, random),
+    );
+    const environment = personalBotOpenCodeEnvironment({
+      base: withProviderSessionEnvironment(input.environment, {
+        ...(botInput.agentDeviceEnvironment === undefined
+          ? {}
+          : { agentDeviceEnvironment: botInput.agentDeviceEnvironment }),
+        ...(botInput.personalSecretEnvironment === undefined
+          ? {}
+          : { personalSecretEnvironment: botInput.personalSecretEnvironment }),
+      }),
+      configHome: input.botConfigHome,
+      model: botInput.model,
+    });
+    const botOwner = yield* OpenCodeServerOwner.make({
+      binaryPath: input.binaryPath,
+      directory: input.directory,
+      environment: serverEnvironment(environment, botPassword),
+      verify: (url) =>
+        connectTo(url, botPassword, false).pipe(Effect.map((connection) => connection.version)),
+    }).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
+    return yield* botOwner.withServer((server) =>
+      connectTo(server.url, botPassword, false).pipe(Effect.flatMap(use)),
+    );
+  });
   return OpenCode2Server.of({
     withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
       return owner.withServer((server) =>
@@ -162,5 +224,6 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
       );
     }),
+    withBotConnection,
   });
 });
