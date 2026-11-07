@@ -7,6 +7,7 @@ import * as PersonalConnectionApprovalService from "../connections/approvalServi
 import * as PersonalConnectionService from "../connections/service.ts";
 import { PersonalProvidersV2Live } from "../engine/PersonalProvidersV2Live.ts";
 import { layer as PersonalPrewarmSessionLayer } from "../engine/PersonalPrewarmSession.ts";
+import { layer as PersonalProviderSessionsLayer } from "../engine/PersonalProviderSessions.ts";
 import * as PersonalLeadBots from "../leadBots/PersonalLeadBotService.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "../memory/PersonalMemoryTidyService.ts";
@@ -53,7 +54,11 @@ export type PersonalWsServices = Effect.Success<ReturnType<typeof makePersonalWs
 
 /** The per-chat prewarm debounce outlives one connection, like the services above. */
 export const makePersonalWsSessionPrewarmer = makePersonalSessionPrewarmer().pipe(
-  Effect.provide(PersonalProvidersV2Live.pipe(Layer.provideMerge(PersonalPrewarmSessionLayer))),
+  Effect.provide(
+    PersonalProvidersV2Live.pipe(
+      Layer.provideMerge(Layer.merge(PersonalPrewarmSessionLayer, PersonalProviderSessionsLayer)),
+    ),
+  ),
 );
 
 /** The exact service instances the ws handlers must share with the server. */

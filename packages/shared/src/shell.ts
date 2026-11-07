@@ -116,6 +116,68 @@ function resolveSpawnExecutableWithNode(
   return undefined;
 }
 
+async function isExecutableFileAsync(
+  candidate: string,
+  platform: NodeJS.Platform,
+  windowsPathExtensions: ReadonlyArray<string>,
+  extname: (path: string) => string,
+): Promise<boolean> {
+  try {
+    if (!(await NodeFS.promises.stat(candidate)).isFile()) return false;
+    if (platform === "win32") {
+      return windowsPathExtensions.includes(extname(candidate).toUpperCase());
+    }
+    await NodeFS.promises.access(candidate, NodeFS.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** {@link resolveSpawnExecutableWithNode} with its stat probes on the libuv thread pool. */
+export async function resolveSpawnExecutableWithNodeAsync(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
+  const candidates = resolveCommandCandidates(
+    command,
+    platform,
+    windowsPathExtensions,
+    path.extname,
+  );
+  const firstExecutable = async (paths: ReadonlyArray<string>) => {
+    const found = await Promise.all(
+      paths.map((candidate) =>
+        isExecutableFileAsync(candidate, platform, windowsPathExtensions, path.extname),
+      ),
+    );
+    const index = found.indexOf(true);
+    return index === -1 ? undefined : paths[index];
+  };
+
+  if (command.includes("/") || command.includes("\\")) {
+    return firstExecutable(candidates);
+  }
+
+  for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
+    const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
+    if (normalizedPathEntry.length === 0) continue;
+    const candidatePath = await firstExecutable(
+      candidates.map((candidate) => path.join(normalizedPathEntry, candidate)),
+    );
+    if (candidatePath !== undefined) return candidatePath;
+  }
+  return undefined;
+}
+
+export function spawnAsyncResolveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.T3CODE_SPAWN_ASYNC_RESOLVE?.trim().toLowerCase();
+  return !(value === "off" || value === "0" || value === "false" || value === "no");
+}
+
 export const SpawnExecutableResolution = Context.Reference<SpawnExecutableResolver>(
   "@t3tools/shared/shell/SpawnExecutableResolution",
   {
@@ -914,7 +976,10 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     resolvedExecutable = cached.resolvedPath;
   } else {
-    const found = resolveExecutable(command, platform, env);
+    const found =
+      resolveExecutable === resolveSpawnExecutableWithNode && spawnAsyncResolveEnabled()
+        ? yield* Effect.promise(() => resolveSpawnExecutableWithNodeAsync(command, platform, env))
+        : resolveExecutable(command, platform, env);
     resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
     if (!explicitPath && resolvedExecutable !== null) {
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);

@@ -24,7 +24,7 @@ import type * as Stream from "effect/Stream";
 
 import type { PersonalProvidersError } from "./errors.ts";
 
-/** U dropped `smokeCheck` from ServerProvider; the port carries it until C9 restores it on v2. */
+/** U dropped `smokeCheck` from ServerProvider; the port overlays it from `setSmokeCheck`. */
 export type PersonalServerProvider = ServerProvider & {
   readonly smokeCheck?: ServerProviderSmokeCheck;
 };

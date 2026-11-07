@@ -25,6 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -902,7 +903,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   );
 
   const pollIfRetained = Ref.get(stateRef).pipe(
-    Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
+    Effect.flatMap((state) =>
+      state.retainCount > 0 ? pollTick().pipe(withStallJob("job:port-scan")) : Effect.void,
+    ),
   );
   yield* Effect.forkScoped(pollIfRetained.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
 

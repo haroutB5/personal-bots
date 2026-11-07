@@ -2,9 +2,13 @@
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
@@ -22,6 +26,87 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
   }).pipe(Effect.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+  const answeringRunner = (
+    calls: Array<ReadonlyArray<string>>,
+    answer: { readonly code: number; readonly timedOut: boolean },
+  ) =>
+    Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          return {
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(answer.code),
+            timedOut: answer.timedOut,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+
+  const resolveWithAnswer = (
+    answer: { readonly code: number; readonly timedOut: boolean },
+    options: RepositoryIdentityResolver.RepositoryIdentityResolverOptions = {},
+  ) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repository-identity-" });
+      const calls: Array<ReadonlyArray<string>> = [];
+      const resolver = yield* RepositoryIdentityResolver.make(options).pipe(
+        Effect.provide(answeringRunner(calls, answer)),
+      );
+      return { cwd, calls, resolver };
+    });
+
+  it.effect("caches git's not-a-repository answer until its own TTL expires", () =>
+    Effect.gen(function* () {
+      const { cwd, calls, resolver } = yield* resolveWithAnswer(
+        { code: 128, timedOut: false },
+        { notARepositoryCacheTtl: Duration.millis(50) },
+      );
+      for (const _attempt of [1, 2, 3]) expect(yield* resolver.resolve(cwd)).toBeNull();
+      expect(calls).toEqual([["-C", cwd, "rev-parse", "--show-toplevel"]]);
+
+      yield* TestClock.adjust(Duration.millis(120));
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      expect(calls).toHaveLength(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not re-run git at a non-repository every minute, and refresh bypasses it", () =>
+    Effect.gen(function* () {
+      const { cwd, calls, resolver } = yield* resolveWithAnswer({ code: 128, timedOut: false });
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      for (const _minute of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(yield* resolver.resolve(cwd)).toBeNull();
+      }
+      expect(calls).toHaveLength(1);
+
+      expect(yield* resolver.resolve(cwd, { refresh: true })).toBeNull();
+      expect(calls).toHaveLength(2);
+
+      yield* TestClock.adjust(Duration.minutes(21));
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      expect(calls).toHaveLength(3);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    ["a timed out lookup", { code: 1, timedOut: true }],
+    ["an unexpected exit code", { code: 1, timedOut: false }],
+  ] as const)("retries on the next resolve after %s", ([, answer]) =>
+    Effect.gen(function* () {
+      const { cwd, calls, resolver } = yield* resolveWithAnswer(answer);
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      expect(calls).toHaveLength(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

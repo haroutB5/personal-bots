@@ -19,9 +19,12 @@ const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Minute-by-minute sweeps need cached hits; clone, publish and PR discovery force refresh.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+// Only a `git init` turns "not a repository" into a repository, and clone or publish force a refresh.
+const DEFAULT_NOT_A_REPOSITORY_CACHE_TTL = Duration.minutes(20);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
+  readonly notARepositoryCacheTtl?: Duration.Input;
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
@@ -137,6 +140,10 @@ class RepositoryIdentityCacheKey extends Data.Class<{
   readonly isBare: boolean;
 }> {}
 
+class GitRootUnavailable extends Data.TaggedError("GitRootUnavailable") {}
+
+const GIT_NOT_A_REPOSITORY_EXIT_CODE = 128;
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -150,7 +157,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
       Effect.orElseSucceed(() => true),
     );
-    if (!isFolder) return null;
+    if (!isFolder) return yield* new GitRootUnavailable();
 
     // git is always a real executable; cmd shell mode would split spaced paths on re-tokenization.
     const topLevelResult = yield* processRunner
@@ -162,7 +169,13 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       })
       .pipe(Effect.option);
     if (topLevelResult._tag === "None" || topLevelResult.value.timedOut) {
-      return null;
+      return yield* new GitRootUnavailable();
+    }
+    if (
+      topLevelResult.value.code !== 0 &&
+      topLevelResult.value.code !== GIT_NOT_A_REPOSITORY_EXIT_CODE
+    ) {
+      return yield* new GitRootUnavailable();
     }
     if (topLevelResult.value.code === 0) {
       const rootPath = topLevelResult.value.stdout.trim();
@@ -206,7 +219,9 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
           timeoutBehavior: "timedOutResult",
         })
         .pipe(Effect.option);
-      if (bareResult._tag === "None" || bareResult.value.timedOut) return null;
+      if (bareResult._tag === "None" || bareResult.value.timedOut) {
+        return yield* new GitRootUnavailable();
+      }
       if (bareResult.value.code !== 0) continue;
 
       const [isBare, rootPath = ""] = bareResult.value.stdout
@@ -265,14 +280,28 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       onFailure: () => Duration.zero,
     });
 
-  const repositoryRootCache = yield* Cache.makeWith<string, RepositoryIdentityCacheKey | null>(
+  const notARepositoryCacheTtl =
+    options.notARepositoryCacheTtl ?? DEFAULT_NOT_A_REPOSITORY_CACHE_TTL;
+
+  const repositoryRootCache = yield* Cache.makeWith<
+    string,
+    RepositoryIdentityCacheKey | null,
+    GitRootUnavailable
+  >(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
       ),
-    { capacity: cacheCapacity, timeToLive },
+    {
+      capacity: cacheCapacity,
+      timeToLive: Exit.match({
+        onSuccess: (value) =>
+          value === null ? notARepositoryCacheTtl : DEFAULT_POSITIVE_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
   );
 
   const repositoryIdentityCache = yield* Cache.makeWith<
@@ -293,7 +322,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-      const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+      const cacheKeyResult = yield* Cache.get(repositoryRootCache, cwd).pipe(Effect.option);
+      const cacheKey = cacheKeyResult._tag === "Some" ? cacheKeyResult.value : null;
       if (cacheKey === null) return null;
       if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
       return yield* Cache.get(repositoryIdentityCache, cacheKey);

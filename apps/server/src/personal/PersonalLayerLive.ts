@@ -3,6 +3,8 @@ import * as Layer from "effect/Layer";
 
 import * as StrandedTurnStarts from "./orchestration/strandedTurnStarts.ts";
 import { forkParked } from "../serverActivation.ts";
+import { layer as PersonalPrewarmSessionLayer } from "./engine/PersonalPrewarmSession.ts";
+import { layer as PersonalProviderSessionsLayer } from "./engine/PersonalProviderSessions.ts";
 import { PersonalProvidersV2Live } from "./engine/PersonalProvidersV2Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
@@ -200,5 +202,9 @@ export const PersonalRuntimeLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PersonalBotRepository.layer),
   Layer.provideMerge(PersonalLayerWithCallSummaryLive),
   // The provider port sits below every personal consumer.
-  Layer.provideMerge(PersonalProvidersV2Live),
+  Layer.provideMerge(
+    PersonalProvidersV2Live.pipe(
+      Layer.provideMerge(Layer.merge(PersonalPrewarmSessionLayer, PersonalProviderSessionsLayer)),
+    ),
+  ),
 );

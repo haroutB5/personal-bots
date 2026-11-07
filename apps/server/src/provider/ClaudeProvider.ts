@@ -42,6 +42,7 @@ import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/Clau
 import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import { warmSpawnImage } from "../process/spawnImageWarmup.ts";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -407,6 +408,7 @@ const probeClaudeCapabilities = (
           ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
         })
       : 0;
+    yield* warmSpawnImage(executablePath);
     return yield* Effect.tryPromise({
       try: async () => {
         const q = claudeQuery({

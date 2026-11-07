@@ -156,6 +156,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { warmSpawnImage } from "../../process/spawnImageWarmup.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
@@ -1284,6 +1285,9 @@ export const layerQueryRunner: Layer.Layer<
             });
             return child;
           };
+          if (options.pathToClaudeCodeExecutable !== undefined) {
+            yield* warmSpawnImage(options.pathToClaudeCodeExecutable);
+          }
           const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
             Effect.try({
               try: () =>

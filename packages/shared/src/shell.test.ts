@@ -14,7 +14,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyShellEnvironment,
@@ -31,8 +31,10 @@ import {
   readEnvironmentFromWindowsShell,
   resolveCommandPath,
   resolveSpawnCommand,
+  resolveSpawnExecutableWithNodeAsync,
   resolveWindowsEnvironment,
   runsGitWithoutConsole,
+  spawnAsyncResolveEnabled,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
   withPathDirectoryListings,
@@ -751,7 +753,82 @@ describe("npmShimExecutable", () => {
   });
 });
 
+describe("resolveSpawnExecutableWithNodeAsync", () => {
+  let root = "";
+
+  beforeEach(() => {
+    root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-async-"));
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("walks PATH in order, skipping directories and files without the executable bit", async () => {
+    const empty = NodePath.join(root, "empty");
+    const first = NodePath.join(root, "first");
+    const second = NodePath.join(root, "second");
+    for (const dir of [empty, first, second]) NodeFS.mkdirSync(dir);
+    NodeFS.mkdirSync(NodePath.join(first, "tool"));
+    NodeFS.writeFileSync(NodePath.join(first, "inert"), "", { mode: 0o644 });
+    NodeFS.writeFileSync(NodePath.join(second, "tool"), "", { mode: 0o755 });
+    NodeFS.writeFileSync(NodePath.join(second, "inert"), "", { mode: 0o755 });
+    const env = { PATH: `${empty}:"${first}"::${second}` };
+
+    expect(await resolveSpawnExecutableWithNodeAsync("tool", "linux", env)).toBe(
+      NodePath.join(second, "tool"),
+    );
+    expect(await resolveSpawnExecutableWithNodeAsync("inert", "linux", env)).toBe(
+      NodePath.join(second, "inert"),
+    );
+    expect(await resolveSpawnExecutableWithNodeAsync("missing", "linux", env)).toBeUndefined();
+    expect(
+      await resolveSpawnExecutableWithNodeAsync(NodePath.join(second, "tool"), "linux", env),
+    ).toBe(NodePath.join(second, "tool"));
+  });
+
+  it("finds an executable bit on POSIX and ignores a plain file", async () => {
+    const bin = NodePath.join(root, "bin");
+    NodeFS.mkdirSync(bin);
+    NodeFS.writeFileSync(NodePath.join(bin, "runnable"), "", { mode: 0o755 });
+    NodeFS.writeFileSync(NodePath.join(bin, "inert"), "", { mode: 0o644 });
+    expect(await resolveSpawnExecutableWithNodeAsync("runnable", "linux", { PATH: bin })).toBe(
+      NodePath.join(bin, "runnable"),
+    );
+    expect(
+      await resolveSpawnExecutableWithNodeAsync("inert", "linux", { PATH: bin }),
+    ).toBeUndefined();
+  });
+
+  it("is on unless T3CODE_SPAWN_ASYNC_RESOLVE switches it off", () => {
+    expect(spawnAsyncResolveEnabled({})).toBe(true);
+    expect(spawnAsyncResolveEnabled({ T3CODE_SPAWN_ASYNC_RESOLVE: "on" })).toBe(true);
+    for (const value of ["off", "0", "false", "no", " OFF "]) {
+      expect(spawnAsyncResolveEnabled({ T3CODE_SPAWN_ASYNC_RESOLVE: value })).toBe(false);
+    }
+  });
+});
+
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "resolves a command shim from PATH with the default resolver",
+    () =>
+      Effect.gen(function* () {
+        const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-shim-"));
+        const shim = NodePath.join(dir, "shimmed.cmd");
+        NodeFS.writeFileSync(shim, "");
+        try {
+          const command = yield* resolveSpawnCommand("shimmed", ["x"], {
+            env: { PATH: dir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+          expect(command.shell).toBe(true);
+          expect(command.command.toLowerCase()).toContain("shimmed.cmd");
+        } finally {
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }
+      }),
+  );
+
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {

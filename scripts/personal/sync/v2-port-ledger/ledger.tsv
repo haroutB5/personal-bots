@@ -158,8 +158,8 @@ apps/server/src/device/DeviceHubProxy.ts		content	32	C11	open	session renew and 
 apps/server/src/device/DeviceMultiHost.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/device/DeviceService.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/device/DeviceService.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/device/LocalDeviceHost.test.ts		content	63	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
-apps/server/src/device/LocalDeviceHost.ts		content	12	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/device/LocalDeviceHost.test.ts		content	63	C15	done	C15: Linux has no AppData SDK candidate; two tests, one fails without the hunk
+apps/server/src/device/LocalDeviceHost.ts		content	12	C15	done	C15: Linux Android SDK path ported; the other hunks are in U already
 apps/server/src/device/SshDeviceHost.test.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/device/SshDeviceHost.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/device/localSshDeviceHost.test.ts		content	10	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -287,7 +287,7 @@ apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broke
 apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	done	C14: per-bot token usage tests against UsageService.readSessionUsage
 apps/server/src/personal/PersonalChatResumeService.test.ts		added-broken	675	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalFiles.test.ts		added-broken	299	C10	dropped	the v1 harness imports the deleted OrchestrationEngine and ProjectionSnapshotQuery; the file handler is covered by the app HTTP tests
-apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	dropped	the v1 harness imports the deleted v1 orchestration services; the v2 service has no direct suite, reported open
+apps/server/src/personal/PersonalModelFallbackService.test.ts		added-broken	2601	C9	done	C15: replaced by a direct v2 suite of 11 tests on the v2 test layer
 apps/server/src/personal/PersonalTaskChatArchiveService.test.ts		added-broken	727	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalTurnRetryService.test.ts		added-broken	557	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/agentContextBudget.test.ts		added-broken	74	C4	done	ported to the v2 turn context and engine; targeted suite passes
@@ -341,13 +341,13 @@ apps/server/src/personal/turnContext/PersonalTurnContext.ts		added-broken	285	C4
 apps/server/src/personal/voiceCalls/PersonalVoiceCallService.test.ts		added-broken	1586	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/voiceCalls/PersonalVoiceCallSummaryService.test.ts		added-broken	1049	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/workingProgress.test.ts		added-broken	169	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
-apps/server/src/preview/PortScanner.ss.test.ts		added-broken	98	C15	open	G2 park; PortScanner row is C15
+apps/server/src/preview/PortScanner.ss.test.ts		added-broken	98	C15	dropped	U scans /proc for the no-lsof Linux path, so the ss parser is not ported; deviates from the E.6 wording and is reported
 apps/server/src/preview/PortScanner.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/preview/PortScanner.ts		content	72	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/preview/PortScanner.ts		content	72	C15	done	C15: the stall wrap is ported; the ss parser is dropped
 apps/server/src/process/externalLauncher.test.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/process/externalLauncher.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/process/spawnImageWarmup.test.ts		added-broken	278	C15	open	G14 park; image warmup off-loop (C15)
-apps/server/src/process/spawnImageWarmup.ts		added-broken	363	C15	open	G14 park; image warmup off-loop (C15)
+apps/server/src/process/spawnImageWarmup.test.ts		added-broken	278	C15	done	C15: image warmup runs off the loop, wired in server.ts and the Claude adapters
+apps/server/src/process/spawnImageWarmup.ts		added-broken	363	C15	done	C15: image warmup runs off the loop, wired in server.ts and the Claude adapters
 apps/server/src/processRunner.test.ts		content	28	B1	dropped	follows apps/server/src/processRunner.ts
 apps/server/src/processRunner.ts		content	19	B1	dropped	only upstream commits (#N) on our side, each present in U
 apps/server/src/project/AgentSessionImporter.test.ts		content	10	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
@@ -356,8 +356,8 @@ apps/server/src/project/AgentSessionScanner.test.ts		content	2	B1	dropped	our li
 apps/server/src/project/AgentSessionScanner.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/project/NewProject.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/project/ProjectSetupScriptRunner.test.ts		content	1	B1	dropped	our lines only stub v1 service methods or provide personal layers to a v1 harness
-apps/server/src/project/RepositoryIdentityResolver.test.ts		content	171	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
-apps/server/src/project/RepositoryIdentityResolver.ts		content	70	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/project/RepositoryIdentityResolver.test.ts		content	171	C15	done	C15: resolver ported with its tests
+apps/server/src/project/RepositoryIdentityResolver.ts		content	70	C15	done	C15: resolver ported with its tests
 apps/server/src/provider/AntigravityAuth.test.ts		content	231	C5-C9	dropped	v1 auth suite; antigravityAuthSupport.test.ts and the provider tests cover the v2 path
 apps/server/src/provider/AntigravityAuth.ts		content	78	C5-C9	done	v2 module present and wired by AntigravityDriver
 apps/server/src/provider/AntigravityInstallation.test.ts		content	72	C5-C9	done	v2 module and test present
@@ -490,33 +490,33 @@ apps/server/src/provider/botPluginSkillRoots.ts		added-broken	91	C5-C9	done	C6: 
 apps/server/src/provider/botProcessPriority.spawnSites.test.ts		added-broken	193	C5-C9	dropped	the v1 spawners are gone; priority is wired at CodexAdapterV2, OpenCodeRuntime, AcpSessionRuntime and claudeProcessSpawner, each with unit tests
 apps/server/src/provider/builtInDrivers.ts		content	7	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/builtInProviderCatalog.ts		content	1	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
-apps/server/src/provider/catalog/INTEGRATION.md		added-broken	110	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/ProviderCatalog.test.ts		added-broken	476	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/ProviderCatalog.ts		added-broken	465	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/acpSmoke.test.ts		added-broken	93	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/acpSmoke.ts		added-broken	112	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/archive.test.ts		added-broken	328	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/archive.ts		added-broken	465	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/archiveFixtures.ts		added-broken	143	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/catalogLive.test.ts		added-broken	143	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/entries.test.ts		added-broken	264	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/entries.ts		added-broken	322	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/errors.ts		added-broken	96	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/fixtures/registry-2026-10-20.json		added-broken	1270	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/index.ts		added-broken	17	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/installer.test.ts		added-broken	1061	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/installer.ts		added-broken	1299	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/launch.ts		added-broken	149	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/overlay.ts		added-broken	96	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/plan.ts		added-broken	218	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/provider-catalog-overlay.json		added-broken	69	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/registry.test.ts		added-broken	370	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/registry.ts		added-broken	297	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/registryAuth.ts		added-broken	116	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/registryModels.ts		added-broken	73	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/registryProbe.ts		added-broken	310	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/transport.test.ts		added-broken	291	C15	open	the provider catalog is not C5-C9; assigned to C15
-apps/server/src/provider/catalog/transport.ts		added-broken	244	C15	open	the provider catalog is not C5-C9; assigned to C15
+apps/server/src/provider/catalog/INTEGRATION.md		added-broken	110	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/ProviderCatalog.test.ts		added-broken	476	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/ProviderCatalog.ts		added-broken	465	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/acpSmoke.test.ts		added-broken	93	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/acpSmoke.ts		added-broken	112	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/archive.test.ts		added-broken	328	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/archive.ts		added-broken	465	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/archiveFixtures.ts		added-broken	143	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/catalogLive.test.ts		added-broken	143	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/entries.test.ts		added-broken	264	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/entries.ts		added-broken	322	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/errors.ts		added-broken	96	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/fixtures/registry-2026-10-20.json		added-broken	1270	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/index.ts		added-broken	17	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/installer.test.ts		added-broken	1061	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/installer.ts		added-broken	1299	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/launch.ts		added-broken	149	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/overlay.ts		added-broken	96	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/plan.ts		added-broken	218	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/provider-catalog-overlay.json		added-broken	69	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/registry.test.ts		added-broken	370	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/registry.ts		added-broken	297	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/registryAuth.ts		added-broken	116	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/registryModels.ts		added-broken	73	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/registryProbe.ts		added-broken	310	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/transport.test.ts		added-broken	291	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
+apps/server/src/provider/catalog/transport.ts		added-broken	244	C15	dropped	C15: the catalog has 88 type errors on the v2 stack and no v2 caller; patches kept for a later wave
 apps/server/src/provider/claudeResetCredits.test.ts	apps/server/src/provider/Layers/claudeResetCredits.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/claudeUsageLimits.test.ts	apps/server/src/provider/Layers/claudeUsageLimits.test.ts	content	55	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/claudeUsageLimits.ts	apps/server/src/provider/Layers/claudeUsageLimits.ts	content	23	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
@@ -541,8 +541,8 @@ apps/server/src/provider/providerMaintenance.test.ts		modify-delete	113	C5-C9	dr
 apps/server/src/provider/providerMaintenance.ts		modify-delete	67	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
 apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
-apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	dropped	the v1 one-message probe needs three deleted helpers; PersonalProvidersV2Live.smokeTestFor stays stubbed, reported open
-apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	dropped	same: the v1 probe is not on the v2 adapter surface; the smoke verdict path remains open
+apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	dropped	C15: the probe is rebuilt as PersonalProvidersV2Live.smokeTestFor on the structured generator, tested in PersonalProvidersV2.test.ts
+apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	dropped	C15: the probe is rebuilt as PersonalProvidersV2Live.smokeTestFor on the structured generator, tested in PersonalProvidersV2.test.ts
 apps/server/src/provider/providerStatusCache.test.ts		content	90	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/providerStatusCache.ts		content	58	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/secretEventRedaction.test.ts		added-broken	128	C12	open	G6 park; log redaction (C12)
@@ -623,12 +623,12 @@ apps/server/src/usage/usageTranscripts.test.ts		modify-delete	24	B1	dropped	ever
 apps/server/src/usage/usageTranscripts.ts		modify-delete	69	C9+D6	open	hook file listed in Appendix A
 apps/server/src/vcs/GitVcsDriver.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/GitVcsDriverCore.test.ts		content	9	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/vcs/GitVcsDriverCore.ts		content	42	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/vcs/GitVcsDriverCore.ts		content	42	C15	dropped	U resolveSpawnCommand already resolves git, and the PATH walk it uses is now off the loop
 apps/server/src/vcs/VcsDriverRegistry.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/VcsProcess.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/VcsProvisioningService.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/VcsStatusBroadcaster.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/vcs/gitSpawnExecutable.test.ts		added-broken	26	C15	open	G2 park; shell PATH walk (C15)
+apps/server/src/vcs/gitSpawnExecutable.test.ts		added-broken	26	C15	dropped	the helper it tests is not in U; resolveSpawnCommand covers the case
 apps/server/src/workspace/WorkspaceFileSystem.test.ts		content	195	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/workspace/WorkspaceFileSystem.ts		content	151	C12	open	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
 apps/server/src/workspace/WorkspaceSearchIndex.test.ts		content	68	B1	dropped	every commit on our side is an upstream cherry-pick U already has
@@ -836,7 +836,7 @@ packages/client-runtime/src/state/threads.ts		content	12	C16	open	personal-clien
 packages/client-runtime/src/work-log/presentation.ts		content	9	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
 packages/contracts/src/assets.ts		content	26	C12	open	landed-PR retarget (Appendix H.4): C12
 packages/contracts/src/baseSchemas.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/contracts/src/device.ts		content	3	C15	open	landed-PR retarget (Appendix H.4): C15
+packages/contracts/src/device.ts		content	3	C15	dropped	U already carries the shortened device contract
 packages/contracts/src/environmentHttp.ts		content	38	C11	open	landed-PR retarget (Appendix H.4): C11
 packages/contracts/src/model.ts		content	59	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/orchestration.test.ts		modify-delete	79	D1	open	landed-PR retarget (Appendix H.4): D1
@@ -884,16 +884,16 @@ packages/shared/src/dpop.ts		content	6	B1	dropped	our only change at this path i
 packages/shared/src/httpObservability.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/shared/src/nodeServices.ts		modify-delete	16	B1	dropped	superseded by 4cabfdaab7; U imports @effect/platform-node/NodeServices
 packages/shared/src/nodeSqliteClient.test.ts		content	82	B1	dropped	only upstream commits (#N) on our side, each present in U
-packages/shared/src/nodeSqliteClient.ts		content	218	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/nodeSqliteClient.ts		content	218	C15	done	C15: slow-op note ported; the single-worker connection is dropped because U runs writer, reader and checkpoint workers, so nodeSqliteWorker.ts stays unused
 packages/shared/src/observability.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/shared/src/observability.ts		content	49	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/observability.ts		content	49	C15	dropped	U already carries the change
 packages/shared/src/otelEnvironment.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/shared/src/relayClient.test.ts		content	58	B1	dropped	only upstream commits (#N) on our side, each present in U
 packages/shared/src/relayClient.ts		content	12	B1	dropped	only upstream commits (#N) on our side, each present in U
 packages/shared/src/relayTracing.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/shared/src/schemaJson.ts		content	33	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/shared/src/shell.test.ts		content	161	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
-packages/shared/src/shell.ts		content	163	C15	open	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/shell.test.ts		content	161	C15	done	C15: async executable walk, partial port
+packages/shared/src/shell.ts		content	163	C15	done	C15: async executable walk, partial port; U already carries the cache
 packages/shared/src/usageLimits.test.ts		content	36	C14	done	C14: reset-window reads
 packages/shared/src/usageLimits.ts		content	55	C14	done	C14: windowAsOf treats a passed reset as 0 percent used
 packages/source-control-azure-devops/src/server/AzureDevOpsCli.test.ts	apps/server/src/sourceControl/AzureDevOpsCli.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries

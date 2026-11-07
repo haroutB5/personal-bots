@@ -15,6 +15,7 @@ import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
+import { resetStallContextForTests, SLOW_OP_MIN_MS, snapshotStallWindow } from "./stallContext.ts";
 
 const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
@@ -115,6 +116,19 @@ layer("NodeSqliteClient", (it) => {
       yield* sql`INSERT INTO created_after_prepare_failure VALUES ('recovered')`;
       assert.deepEqual(yield* select, [{ name: "recovered" }]);
       assert.deepEqual(yield* select.values, [["recovered"]]);
+    }),
+  );
+
+  it.effect("records a statement that held the event loop as a slow main-thread SQL op", () =>
+    Effect.gen(function* () {
+      resetStallContextForTests();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 8000000) SELECT count(*) AS total FROM n`;
+      const { ops } = snapshotStallWindow(0, Number.MAX_SAFE_INTEGER);
+      const slow = ops.find((op) => op.kind === "sql");
+      assert(slow !== undefined);
+      assert.isAtLeast(slow.ms, SLOW_OP_MIN_MS);
+      assert.include(slow.label, "WITH RECURSIVE");
     }),
   );
 

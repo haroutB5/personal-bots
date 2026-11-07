@@ -153,11 +153,15 @@ const androidSdk = Effect.gen(function* () {
     : [
         path.join(home, "Library", "Android", "sdk"),
         path.join(home, "Android", "Sdk"),
-        path.join(
-          environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
-          "Android",
-          "Sdk",
-        ),
+        ...(windows
+          ? [
+              path.join(
+                environment.LOCALAPPDATA?.trim() || path.join(home, "AppData", "Local"),
+                "Android",
+                "Sdk",
+              ),
+            ]
+          : []),
       ];
   for (const root of candidates) {
     const sdk = yield* inspect(root);

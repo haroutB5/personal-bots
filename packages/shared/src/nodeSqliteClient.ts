@@ -27,6 +27,8 @@ import type { Borrower, Connection } from "effect/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 
+import { noteSlowOp } from "./stallContext.ts";
+
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
 export interface SqliteClientConfig {
@@ -996,6 +998,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
           let arrays = false;
           let result: Exit.Exit<ReadonlyArray<unknown>, SqlError>;
           try {
+            const startedAt = performance.now();
             const value = withClassification(classification, () => {
               statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
               if (hasRows(statement)) {
@@ -1006,6 +1009,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
               const result = statement.run(...(params as any));
               return mode === "raw" ? (result as unknown as ReadonlyArray<unknown>) : [];
             });
+            noteSlowOp("sql", startedAt, value.length, () => statement.sourceSQL);
             result = Exit.succeed(value);
           } catch (cause) {
             result = Exit.fail(

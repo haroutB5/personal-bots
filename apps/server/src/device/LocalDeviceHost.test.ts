@@ -387,6 +387,54 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  it.effect("searches the Linux home folder and never an AppData path", () =>
+    Effect.gen(function* () {
+      const root = "/home/harout/Android/Sdk";
+      const probes: string[] = [];
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, { HOME: "/home/harout", PATH: "" }),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: (file) =>
+              Effect.sync(() => {
+                probes.push(file);
+                return file === `${root}/platform-tools/adb`;
+              }),
+          }),
+        ),
+        Effect.provide(NodePath.layerPosix),
+      );
+      expect(sdk).toMatchObject({ root, adb: true });
+      expect(probes.some((file) => file.includes("AppData"))).toBe(false);
+    }),
+  );
+
+  it.effect("does not invent an AppData SDK location when a Linux host has none", () =>
+    Effect.gen(function* () {
+      const probes: string[] = [];
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, { HOME: "/home/harout", PATH: "" }),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: (file) =>
+              Effect.sync(() => {
+                probes.push(file);
+                return false;
+              }),
+          }),
+        ),
+        Effect.provide(NodePath.layerPosix),
+      );
+      expect(sdk.root).toBeNull();
+      expect(probes.length).toBeGreaterThan(0);
+      expect(probes.some((file) => file.includes("AppData"))).toBe(false);
+    }),
+  );
+
   it.effect("discovers the standard macOS SDK without ANDROID_HOME", () =>
     Effect.gen(function* () {
       const root = "/test/home/Library/Android/sdk";
