@@ -7,6 +7,7 @@ import { layer as PersonalProviderSessionsLayer } from "./engine/PersonalProvide
 import { PersonalProvidersV2Live } from "./engine/PersonalProvidersV2Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
+import * as PersonalBotShellStream from "./PersonalBotShellStream.ts";
 import * as PersonalBotTokenUsage from "./PersonalBotTokenUsageService.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalClaudeCodeReview from "./claudeCodeReview/PersonalClaudeCodeReview.ts";
@@ -154,7 +155,8 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   // task service does, so they sit above both and below the seed.
   Layer.provideMerge(PersonalGroupsDispatcherLive),
   Layer.provideMerge(PersonalGroupService.layerLive),
-  Layer.provideMerge(PersonalBotsSeedLive),
+  // The phone's live shell stream consumes the bot service and its engine.
+  Layer.provideMerge(Layer.mergeAll(PersonalBotShellStream.layer, PersonalBotsSeedLive)),
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),
 );

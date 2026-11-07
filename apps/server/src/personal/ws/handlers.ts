@@ -1,6 +1,7 @@
 import {
   EnvironmentAuthorizationError,
   PersonalBotsError,
+  ThreadId,
   WS_METHODS,
   WsPersonalRpcGroup,
 } from "@t3tools/contracts";
@@ -25,6 +26,7 @@ import { deletePersonalChat } from "../deletePersonalChat.ts";
 import { deletePersonalGroup } from "../deletePersonalGroup.ts";
 import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalDesktop from "../desktop/PersonalDesktop.ts";
+import * as PersonalBotShellStream from "../PersonalBotShellStream.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as PersonalGroupService from "../groups/PersonalGroupService.ts";
 import * as PersonalLeadBots from "../leadBots/PersonalLeadBotService.ts";
@@ -81,6 +83,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const sql = yield* SqlClient.SqlClient;
     const personalEngine = yield* PersonalEngine.PersonalEngine;
     const personalBots = yield* PersonalBotService.PersonalBotService;
+    const personalBotShellStream = yield* PersonalBotShellStream.PersonalBotShellStream;
     const personalBotTokenUsage = yield* PersonalBotTokenUsage.PersonalBotTokenUsage;
     const personalTasks = yield* PersonalTaskService.PersonalTaskService;
     const personalGroups = yield* PersonalGroupService.PersonalGroupService;
@@ -128,8 +131,10 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
           Effect.gen(function* () {
             const ids = yield* listBotThreadIds(input);
             if (ids.size === 0) return { threads: [] };
-            const threads = yield* personalEngine.shellSnapshot({ unsettledOnly: false });
-            return { threads: threads.filter((thread) => ids.has(thread.id)) };
+            const threads = yield* personalEngine.threadShells(
+              [...ids].map((threadId) => ThreadId.make(threadId)),
+            );
+            return { threads };
           }).pipe(
             Effect.provideService(SqlClient.SqlClient, sql),
             Effect.mapError(
@@ -140,6 +145,12 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
                 }),
             ),
           ),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalBotsSubscribeThreadShells]: (_input) =>
+        observeRpcStream(
+          WS_METHODS.personalBotsSubscribeThreadShells,
+          personalBotShellStream.subscribe,
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalBotsThreadFullText]: (input) =>

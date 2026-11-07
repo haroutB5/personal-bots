@@ -386,6 +386,7 @@ const makeEngine = (harness: Harness) =>
       workingSnapshot: () => Effect.succeed([]),
       liveTaskIds: () => Effect.succeed([]),
       shellSnapshot: () => Effect.succeed([]),
+      threadShells: () => Effect.succeed([]),
       events: Stream.never,
     });
   });

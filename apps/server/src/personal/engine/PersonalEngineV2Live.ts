@@ -22,6 +22,7 @@ import {
   type OrchestrationSession,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1001,12 +1002,8 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => []),
     );
 
-  const shellSnapshot = (input: {
-    readonly unsettledOnly: boolean;
-  }): Effect.Effect<ReadonlyArray<OrchestrationThreadShellV1Wire>, PersonalEngineError> =>
+  const toV1Shells = (shells: ReadonlyArray<Parameters<typeof toV1ThreadShell>[0]>) =>
     Effect.gen(function* () {
-      const snapshot = yield* threads.getShellSnapshot({ unsettledOnly: input.unsettledOnly });
-      const shells = [...snapshot.threads, ...snapshot.archivedThreads];
       if (shells.length === 0) return [];
       const ids = shells.map((shell) => shell.id);
       const drivers = yield* sql<{ readonly threadId: string; readonly driver: string | null }>`
@@ -1034,7 +1031,27 @@ const make = Effect.gen(function* () {
           titleState: null,
         });
       });
+    });
+
+  const shellSnapshot = (input: {
+    readonly unsettledOnly: boolean;
+  }): Effect.Effect<ReadonlyArray<OrchestrationThreadShellV1Wire>, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const snapshot = yield* threads.getShellSnapshot({ unsettledOnly: input.unsettledOnly });
+      return yield* toV1Shells([...snapshot.threads, ...snapshot.archivedThreads]);
     }).pipe(Effect.mapError(engineError("shellSnapshot")));
+
+  const threadShells = (
+    threadIds: ReadonlyArray<ThreadId>,
+  ): Effect.Effect<ReadonlyArray<OrchestrationThreadShellV1Wire>, PersonalEngineError> =>
+    Effect.gen(function* () {
+      if (threadIds.length === 0) return [];
+      const snapshot = yield* threads.getShellSnapshot({ threadIds: [...threadIds] });
+      return yield* toV1Shells([...snapshot.threads, ...snapshot.archivedThreads]);
+    }).pipe(
+      NodeSqliteClient.readOnly,
+      Effect.mapError(engineError("threadShells")),
+    );
 
   const shape: PersonalEngineShape = {
     createProject,
@@ -1068,6 +1085,7 @@ const make = Effect.gen(function* () {
     workingSnapshot,
     liveTaskIds,
     shellSnapshot,
+    threadShells,
     events: threads.streamDomainEvents.pipe(
       Stream.flatMap((event) =>
         Stream.fromIterableEffect(toPersonalEvents(event, eventState, eventContext)),

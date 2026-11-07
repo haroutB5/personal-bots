@@ -612,6 +612,27 @@ export const PersonalBotThreadShellsResult = Schema.Struct({
 });
 export type PersonalBotThreadShellsResult = typeof PersonalBotThreadShellsResult.Type;
 
+/**
+ * One item on `personalBots.subscribeThreadShells`. A snapshot opens every
+ * stream and replaces the phone's map; an upsert is idempotent; a removed
+ * item names chats that left the open bot list (archived or deleted).
+ */
+export const PersonalBotThreadShellStreamItem = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("snapshot"),
+    threads: Schema.Array(OrchestrationThreadShell),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("upsert"),
+    threads: Schema.Array(OrchestrationThreadShell),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("removed"),
+    threadIds: Schema.Array(ThreadId),
+  }),
+]);
+export type PersonalBotThreadShellStreamItem = typeof PersonalBotThreadShellStreamItem.Type;
+
 /** The whole text behind previews a thread read sent (see `textPreviews`). */
 export const PERSONAL_THREAD_FULL_TEXT_MAX = 50;
 

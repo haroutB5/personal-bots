@@ -4,9 +4,11 @@
  * @module personal/testing/personalWsMocks
  */
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import * as PersonalBotShellStream from "../PersonalBotShellStream.ts";
 import * as PersonalBotTokenUsage from "../PersonalBotTokenUsageService.ts";
 import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalConnectionApprovalService from "../connections/approvalService.ts";
@@ -30,6 +32,7 @@ import * as PersonalVoiceSampleService from "../voiceCalls/PersonalVoiceSampleSe
 export const layerUnusedPersonalWsServices = Layer.mergeAll(
   Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
   Layer.mock(PersonalBotService.PersonalBotService)({}),
+  Layer.mock(PersonalBotShellStream.PersonalBotShellStream)({ subscribe: Stream.empty }),
   Layer.mock(PersonalBotTokenUsage.PersonalBotTokenUsage)({}),
   Layer.mock(PersonalBrowser.PersonalBrowser)({}),
   Layer.mock(PersonalConnectionApprovalService.PersonalConnectionApprovalService)({}),

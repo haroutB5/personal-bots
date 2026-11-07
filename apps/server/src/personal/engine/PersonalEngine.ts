@@ -398,6 +398,10 @@ export interface PersonalEngineShape {
   readonly shellSnapshot: (input: {
     readonly unsettledOnly: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationThreadShellV1Wire>, PersonalEngineError>;
+  /** The named chats' shells, read by id instead of scanning every thread. */
+  readonly threadShells: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationThreadShellV1Wire>, PersonalEngineError>;
   readonly events: Stream.Stream<PersonalThreadEvent>;
 }
 

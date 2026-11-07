@@ -440,6 +440,7 @@ const makeEngine = (harness: Harness) =>
       workingSnapshot: () => Effect.succeed([]),
       liveTaskIds: (threadId) => Effect.sync(() => [...(harness.background.get(threadId) ?? [])]),
       shellSnapshot: () => Effect.succeed([]),
+      threadShells: () => Effect.succeed([]),
       events: Stream.never,
     });
   });
