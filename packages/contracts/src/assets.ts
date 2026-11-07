@@ -17,6 +17,13 @@ const ASSET_PATH_MAX_LENGTH = 1024;
  */
 export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
 
+/**
+ * Every answer from the attachment upload route carries this header. A gateway
+ * error (a Cloudflare 502, a proxy 503) does not, so the phone can tell the
+ * endpoint refusing the bytes from a network path that never reached it.
+ */
+export const ATTACHMENT_UPLOAD_ENDPOINT_HEADER = "x-hbots-upload-endpoint";
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
@@ -30,6 +37,15 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
+  // One host file named by a chat link. The path resolves like the chat shows
+  // it: workspace, then home folder, `~/`, or a mapped Windows path. `inline`
+  // serves the types a browser can show (image, PDF, HTML, audio, video);
+  // `download` serves any type as an attachment, never rendered.
+  Schema.TaggedStruct("host-file", {
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.Literals(["inline", "download"]),
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
@@ -192,9 +208,24 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
   },
 ) {
   override get message(): string {
-    return this.resource._tag === "media-file" || this.resource._tag === "draft-workspace-file"
+    // Draft resources serve absolute paths through the same host-media
+    // validation as media files, so they share its message.
+    return this.resource._tag === "media-file" ||
+      this.resource._tag === "draft-workspace-file" ||
+      this.resource._tag === "host-file"
       ? "Only images, videos, audio, HTML, and PDF files can be previewed."
       : "Only browser documents and images can be previewed.";
+  }
+}
+
+export class AssetProtectedFileError extends Schema.TaggedError<AssetProtectedFileError>()(
+  "AssetProtectedFileError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "This file holds credentials or machine state and is never shown or downloaded.";
   }
 }
 
@@ -206,7 +237,7 @@ export class AssetWorkspaceAssetInspectionError extends Schema.TaggedError<Asset
   },
 ) {
   override get message(): string {
-    return this.resource._tag === "media-file"
+    return this.resource._tag === "media-file" || this.resource._tag === "host-file"
       ? "Failed to inspect the media file."
       : "Failed to inspect the workspace asset.";
   }
@@ -221,7 +252,7 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   },
 ) {
   override get message(): string {
-    return this.resource._tag === "media-file"
+    return this.resource._tag === "media-file" || this.resource._tag === "host-file"
       ? "Media file was not found."
       : this.resource._tag === "tool-output-image"
         ? "Tool output image was not found."
@@ -315,6 +346,7 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceRootNormalizationError,
   AssetWorkspacePathValidationError,
   AssetPreviewTypeValidationError,
+  AssetProtectedFileError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceResolutionError,

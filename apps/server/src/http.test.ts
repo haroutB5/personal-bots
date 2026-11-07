@@ -63,7 +63,7 @@ describe("MCP app asset responses", () => {
           expect(response.headers.get("etag")).toBeNull();
           expect(response.headers.get("last-modified")).toBeNull();
           expect(response.headers.get("content-security-policy")).toBe(
-            "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+            "sandbox allow-scripts allow-forms allow-popups allow-downloads allow-modals",
           );
           expect(yield* Effect.promise(() => response.text())).toBe(
             method === "HEAD" ? "" : expected,
@@ -787,7 +787,8 @@ describe("assetResponseHeaders", () => {
       assetResponseHeaders("/attachments/upload.bin", { mimeType: "text/html" }),
     ).toMatchObject({
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+      "Content-Security-Policy":
+        "sandbox allow-scripts allow-forms allow-popups allow-downloads allow-modals",
     });
   });
 

@@ -263,7 +263,8 @@ const requiredScopesForRpcCall = (
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
-      resource._tag === "draft-workspace-file"
+      resource._tag === "draft-workspace-file" ||
+      resource._tag === "host-file"
         ? AuthFilesystemReadScope
         : AuthOrchestrationReadScope,
     ];

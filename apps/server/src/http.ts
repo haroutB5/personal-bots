@@ -2,6 +2,7 @@ import * as Mime from "effect/http/Mime";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  ATTACHMENT_UPLOAD_ENDPOINT_HEADER,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
@@ -59,9 +60,11 @@ const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 // Opaque origin blocks cookies, storage and API access while allowing scripts.
-// Agent HTML can open without a click, so disallow blocking modals.
+// Agent HTML can open without a click, so disallow blocking modals. `allow-modals`
+// stays because a rendered host page may need `alert`/`confirm`; `allow-downloads`
+// because a preview can offer its own file. Neither grants same-origin access.
 const HTML_CONTENT_SECURITY_POLICY =
-  "sandbox allow-scripts allow-forms allow-popups allow-downloads";
+  "sandbox allow-scripts allow-forms allow-popups allow-downloads allow-modals";
 
 // Proxies may strip disposition; force document-capable downloads to octet-stream.
 const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
@@ -466,18 +469,21 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
   `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const answeredHeaders = { [ATTACHMENT_UPLOAD_ENDPOINT_HEADER]: "1" };
+    const answered = (body: string, status: number) =>
+      HttpServerResponse.text(body, { status, headers: answeredHeaders });
     const url = requestUrl(request);
     if (Option.isNone(url)) {
-      return HttpServerResponse.text("Bad Request", { status: 400 });
+      return answered("Bad Request", 400);
     }
 
     const token = url.value.pathname.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
     if (!token) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
+      return answered("Not Found", 404);
     }
     const claims = yield* validateAttachmentUploadToken(token);
     if (!claims) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
+      return answered("Not Found", 404);
     }
 
     const contentLengthHeader = request.headers["content-length"];
@@ -486,17 +492,15 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
       (!Number.isInteger(Number(contentLengthHeader)) ||
         Number(contentLengthHeader) !== claims.sizeBytes)
     ) {
-      return HttpServerResponse.text("Content-Length must match the upload size.", {
-        status: 400,
-      });
+      return answered("Content-Length must match the upload size.", 400);
     }
 
     // Keep the request stream in the route scope until the response is sent.
     const bodyPull = yield* Stream.toPull(request.stream);
     const stored = yield* storeAttachmentUpload(claims, Stream.fromPull(Effect.succeed(bodyPull)));
     return stored.ok
-      ? HttpServerResponse.empty({ status: 204 })
-      : HttpServerResponse.text(stored.detail, { status: stored.status });
+      ? HttpServerResponse.empty({ status: 204, headers: answeredHeaders })
+      : answered(stored.detail, stored.status);
   }),
 );
 

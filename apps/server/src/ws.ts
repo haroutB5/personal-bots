@@ -657,6 +657,8 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceProtectedFileError":
+      return { failure: "protected_file", resolvedPath: error.resolvedPath };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -3062,6 +3064,14 @@ export const layerWsRpc = (
               return yield* issueAssetUrl({ resource: input.resource });
             }
             if (input.resource._tag === "draft-workspace-file") {
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                workspaceRoot: input.resource.cwd,
+              });
+            }
+            if (input.resource._tag === "host-file") {
+              // The link names its own chat folder; the file is checked against
+              // the same deny list as every host read.
               return yield* issueAssetUrl({
                 resource: input.resource,
                 workspaceRoot: input.resource.cwd,

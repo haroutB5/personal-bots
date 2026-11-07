@@ -274,6 +274,69 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("refuses credential files at the lexical path and the real path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const home = yield* makeTempDir;
+        yield* writeTextFile(cwd, ".env", "SECRET=1");
+        yield* writeTextFile(cwd, "config/auth.json", "{}");
+        yield* writeTextFile(cwd, "bot/userdata/state.sqlite", "db");
+        yield* writeTextFile(cwd, "bot/userdata/attachments/ok.txt", "fine");
+        yield* writeTextFile(cwd, ".env.example", "SECRET=");
+        yield* writeTextFile(home, ".ssh/id_ed25519", "key");
+
+        const readAsHome = (input: { cwd: string; relativePath: string }) =>
+          workspaceFileSystem
+            .readFile(input)
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+        for (const relativePath of [
+          ".env",
+          "config/auth.json",
+          "bot/userdata/state.sqlite",
+          path.join(home, ".ssh/id_ed25519"),
+          "~/.ssh/id_ed25519",
+        ]) {
+          const error = yield* readAsHome({ cwd, relativePath }).pipe(Effect.flip);
+          expect(error, relativePath).toBeInstanceOf(
+            WorkspaceFileSystem.WorkspaceProtectedFileError,
+          );
+        }
+
+        const attachment = yield* readAsHome({
+          cwd,
+          relativePath: "bot/userdata/attachments/ok.txt",
+        });
+        const template = yield* readAsHome({ cwd, relativePath: ".env.example" });
+        expect(attachment.contents).toBe("fine");
+        expect(template.contents).toBe("SECRET=");
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a harmless-looking symlink that points at a credential file",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "config/auth.json", "{}");
+          yield* fileSystem.symlink(
+            path.join(cwd, "config", "auth.json"),
+            path.join(cwd, "harmless.md"),
+          );
+
+          const error = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath: "harmless.md" })
+            .pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceProtectedFileError);
+        }),
+    );
+
     it.effect("does not read server state files", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

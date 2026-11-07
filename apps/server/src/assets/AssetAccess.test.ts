@@ -7,6 +7,7 @@ import {
   AssetAccessError,
   AssetCreateUrlInput,
   AssetPreviewTypeValidationError,
+  AssetResource,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   TurnItemId,
@@ -239,9 +240,6 @@ describe("AssetAccess", () => {
         ["archive.tar", "application/x-tar"],
         ["archive.gz", "application/gzip"],
         ["archive.tgz", "application/gzip"],
-        ["data.sqlite", "application/vnd.sqlite3"],
-        ["data.sqlite3", "application/vnd.sqlite3"],
-        ["data.db", "application/vnd.sqlite3"],
       ] as const) {
         const filePath = path.join(outside, name);
         yield* fs.writeFileString(filePath, "media");
@@ -662,20 +660,28 @@ describe("AssetAccess", () => {
       const alias = path.join(root, "alias");
       yield* fs.symlink(stateFile, alias);
       const threadId = ThreadId.make("thread-1");
-      for (const resource of [
-        { _tag: "media-file", threadId, path: stateFile, disposition: "attachment" },
-        { _tag: "media-file", threadId, path: alias, disposition: "attachment" },
-        {
-          _tag: "media-file",
-          threadId,
-          path: path.join(config.secretsDir, "..", "secrets", "example.bin"),
-          disposition: "attachment",
-        },
-        { _tag: "media-file", threadId, path: config.dbPath },
-        { _tag: "draft-workspace-file", cwd: config.stateDir, path: "statev2.sqlite" },
+      const statePath = path.join(config.secretsDir, "..", "secrets", "example.bin");
+      for (const [resource, expected] of [
+        [
+          { _tag: "media-file", threadId, path: stateFile, disposition: "attachment" },
+          "AssetProtectedFileError",
+        ],
+        [
+          { _tag: "media-file", threadId, path: alias, disposition: "attachment" },
+          "AssetWorkspaceAssetNotFoundError",
+        ],
+        [
+          { _tag: "media-file", threadId, path: statePath, disposition: "attachment" },
+          "AssetProtectedFileError",
+        ],
+        [{ _tag: "media-file", threadId, path: config.dbPath }, "AssetProtectedFileError"],
+        [
+          { _tag: "draft-workspace-file", cwd: config.stateDir, path: "statev2.sqlite" },
+          "AssetProtectedFileError",
+        ],
       ] as const) {
         const error = yield* issueAssetUrl({ resource }).pipe(Effect.flip);
-        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+        expect(error._tag, resource._tag).toBe(expected);
       }
 
       const icon = path.join(config.baseDir, "icon.png");
@@ -1011,9 +1017,6 @@ describe("AssetAccess", () => {
         "tar",
         "gz",
         "tgz",
-        "sqlite",
-        "sqlite3",
-        "db",
         "docx",
         "xlsx",
         "pptx",
@@ -1111,9 +1114,6 @@ describe("AssetAccess", () => {
         "tar",
         "gz",
         "tgz",
-        "sqlite",
-        "sqlite3",
-        "db",
       ]) {
         const name = `preview.${extension}`;
         const filePath = path.join(assetsDirectory, name);
@@ -1587,6 +1587,94 @@ describe("AssetAccess", () => {
         const encoded = yield* encodeAssetAccessError(error);
         expect(encoded).not.toContain(url);
       }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses credential files for every resource that reads the host", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-host-secret-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.makeDirectory(path.join(home, ".ssh"));
+      yield* fs.writeFileString(path.join(home, ".ssh", "id_rsa"), "key");
+      yield* fs.writeFileString(path.join(cwd, ".env"), "SECRET=1");
+      yield* fs.writeFileString(path.join(cwd, "bot-token.png"), "png");
+      if (symlinksSupported) {
+        yield* fs.symlink(
+          path.join(home, ".ssh", "id_rsa"),
+          path.join(home, "harmless-report.pdf"),
+        );
+      }
+
+      const issueAsHome = (resource: AssetResource) =>
+        issueAssetUrl({ resource, workspaceRoot: cwd }).pipe(
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
+
+      const requested = [
+        ".ssh/id_rsa",
+        "~/.ssh/id_rsa",
+        "bot-token.png",
+        "work/.env",
+        ...(symlinksSupported ? ["harmless-report.pdf"] : []),
+      ];
+      for (const requestedPath of requested) {
+        for (const resource of [
+          { _tag: "host-file", cwd, path: requestedPath, disposition: "download" },
+          { _tag: "host-file", cwd, path: requestedPath, disposition: "inline" },
+          {
+            _tag: "media-file",
+            threadId: ThreadId.make("thread-1"),
+            path: path.join(home, requestedPath),
+          },
+          {
+            _tag: "draft-workspace-file",
+            cwd,
+            path: requestedPath.startsWith("~") ? requestedPath : path.join(home, requestedPath),
+          },
+        ] as const) {
+          const error = yield* issueAsHome(resource).pipe(Effect.flip);
+          expect(error._tag, `${resource._tag} ${requestedPath}`).toBe("AssetProtectedFileError");
+        }
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves a host file as a download while inline previews keep their type gate", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-host-download-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(home, "data.bin"), "bytes");
+      yield* fs.writeFileString(path.join(home, "page.html"), "<script>alert(1)</script>");
+
+      const issueAsHome = (name: string, disposition: "inline" | "download") =>
+        issueAssetUrl({
+          resource: { _tag: "host-file", cwd, path: name, disposition },
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+      const download = yield* issueAsHome("data.bin", "download");
+      expect(download.sourcePath).toBe(path.join(yield* fs.realPath(home), "data.bin"));
+      const token = download.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(token, "data.bin")).toMatchObject({
+        kind: "file",
+        download: true,
+        fileName: "data.bin",
+      });
+
+      const inline = yield* issueAsHome("data.bin", "inline").pipe(Effect.flip);
+      expect(inline).toBeInstanceOf(AssetPreviewTypeValidationError);
+
+      const html = yield* issueAsHome("page.html", "download");
+      const htmlToken = html.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(htmlToken, "page.html")).toMatchObject({ download: true });
+
+      const missing = yield* issueAsHome("nope.bin", "download").pipe(Effect.flip);
+      expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
     }).pipe(Effect.provide(layerTest)),
   );
 });

@@ -22,6 +22,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
+import { protectedHostReadPath } from "../personal/workspace/hostReadGuard.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -100,11 +101,25 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   }
 }
 
+export class WorkspaceProtectedFileError extends Schema.TaggedError<WorkspaceProtectedFileError>()(
+  "WorkspaceProtectedFileError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Workspace file '${this.relativePath}' in '${this.workspaceRoot}' holds credentials or machine state and is never shown.`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspaceProtectedFileError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -355,15 +370,38 @@ export const make = Effect.gen(function* () {
         relativePath: input.relativePath,
       });
     }
+    const protectedPath = protectedHostReadPath({
+      requestedPath: target.relativePath,
+      resolvedPath: realTargetPath,
+    });
+    if (protectedPath !== null) {
+      return yield* new WorkspaceProtectedFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: protectedPath,
+      });
+    }
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking opens prevent FIFO hangs before stat rejects them; Windows lacks the flag.
-        try: () =>
-          NodeFSP.open(
+        // O_NOFOLLOW and the dev/ino check pin the opened file to the resolved one: a symlink
+        // swapped in between the realpath and the open is refused instead of read.
+        try: async () => {
+          const before = await NodeFSP.lstat(realTargetPath, { bigint: true });
+          const handle = await NodeFSP.open(
             realTargetPath,
-            NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
-          ),
+            NodeFS.constants.O_RDONLY |
+              (NodeFS.constants.O_NOFOLLOW ?? 0) |
+              (NodeFS.constants.O_NONBLOCK ?? 0),
+          );
+          const after = await handle.stat({ bigint: true });
+          if (after.isFile() && (after.dev !== before.dev || after.ino !== before.ino)) {
+            await handle.close();
+            throw new Error(`File changed while opening '${realTargetPath}'.`);
+          }
+          return handle;
+        },
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,

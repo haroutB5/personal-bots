@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetProtectedFileError,
   AssetSourceControlMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
@@ -56,7 +57,9 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
+import { isProtectedHostPath } from "../workspace/HostFilePaths.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { hostFileCandidates } from "../personal/assets/hostFileAsset.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
@@ -354,6 +357,8 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     readonly workspaceRoot: string | undefined;
     readonly resource: AssetResource;
     readonly expiresAt: number;
+    /** Serve any file type as an attachment, not only the previewable ones. */
+    readonly download?: boolean;
   }) {
     const path = yield* Path.Path;
     // Resolving a network path makes Windows sign in to its host with the
@@ -361,6 +366,9 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     // Windows reads a `\\?\` path as written, `..` included, so the lookup gets
     // the resolved path this check approved.
     const requestedPath = path.resolve(input.requestedPath);
+    if (isProtectedHostPath(input.requestedPath) || isProtectedHostPath(requestedPath)) {
+      return yield* new AssetProtectedFileError({ resource: input.resource });
+    }
     if (
       isNetworkPath(input.requestedPath) &&
       (input.workspaceRoot === undefined ||
@@ -387,8 +395,13 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         checkedPath: input.requestedPath,
       });
     }
+    // A link through a symlink must not reach a protected file either.
+    if (isProtectedHostPath(canonicalFile)) {
+      return yield* new AssetProtectedFileError({ resource: input.resource });
+    }
     const download =
-      input.resource._tag === "media-file" && input.resource.disposition === "attachment";
+      input.download === true ||
+      (input.resource._tag === "media-file" && input.resource.disposition === "attachment");
     if (!download && hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
@@ -459,6 +472,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             }),
         ),
       );
+    if (isProtectedHostPath(resolved.absolutePath)) {
+      return yield* new AssetProtectedFileError({ resource: input.resource });
+    }
     const isDraftMedia =
       input.resource._tag === "draft-workspace-file" &&
       (isWorkspaceAudioPreviewPath(resolved.relativePath) ||
@@ -484,6 +500,10 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
       });
+    }
+    // A workspace file reached through a symlink must not be a credential either.
+    if (isProtectedHostPath(canonicalFile)) {
+      return yield* new AssetProtectedFileError({ resource: input.resource });
     }
     if (isDraftMedia) {
       return yield* finalizeAbsoluteMediaFileAsset({
@@ -571,6 +591,42 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       });
       claims = finalized.claims;
       fileName = finalized.fileName;
+      imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
+      break;
+    }
+    case "host-file": {
+      const homeDir = yield* HostProcess.HomeDirectory;
+      const candidates = hostFileCandidates({
+        path: input.resource.path,
+        cwd: input.resource.cwd,
+        homeDir,
+      });
+      let requestedPath: string | null = null;
+      for (const candidate of candidates) {
+        if (isProtectedHostPath(candidate)) {
+          return yield* new AssetProtectedFileError({ resource: input.resource });
+        }
+        const found = yield* resolveCanonicalFile(candidate).pipe(Effect.orElseSucceed(() => null));
+        if (found !== null) {
+          requestedPath = candidate;
+          break;
+        }
+      }
+      requestedPath ??= candidates[0] ?? null;
+      if (requestedPath === null) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      const finalized = yield* finalizeAbsoluteMediaFileAsset({
+        requestedPath,
+        workspaceRoot: input.resource.cwd,
+        resource: input.resource,
+        expiresAt,
+        download: input.resource.disposition === "download",
+      });
+      claims = finalized.claims;
+      fileName = finalized.fileName;
+      sourcePath = finalized.claims.filePath;
       imageDimensions = finalized.imageDimensions;
       fileRevision = finalized.fileRevision;
       break;
