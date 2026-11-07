@@ -4,6 +4,7 @@ import { DONE_ITEMS, MERGED_PRS } from "./parity";
 
 const A1_A2_ITEMS = [
   "screen:routes/_personal.tsx#personal",
+  "screen:PersonalUnreachableScreen.tsx#personalunreachablescreen",
   "action:PersonalShell.tsx#edge-swipe-back",
   "action:useChatSwipeBack.tsx#edge-swipe-back",
   "screen:routes/_personal.bots.tsx#bots",
@@ -21,6 +22,7 @@ const A1_A2_ITEMS = [
   "rpc:personalBotsTokenUsage",
   "rpc:personalBotsWorkingProgress",
   "rpc:personalBotsThreadShells",
+  "rpc:personalBotsSubscribeThreadShells",
 ];
 
 const A12_ITEMS = [

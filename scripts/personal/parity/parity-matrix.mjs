@@ -608,7 +608,10 @@ const RPC_RULES = [
   [/^personalPush(ReportViewing|ReportForeground)$/, { pr: "N1" }],
   [/^personalPush(InApp|AckInApp)$/, { pr: "A2" }],
   [/^personalPush/, { pr: "A14" }],
-  [/^personalBots(List|GetProfile|WorkingProgress|ThreadShells|TokenUsage)$/, { pr: "A2" }],
+  [
+    /^personalBots(List|GetProfile|WorkingProgress|ThreadShells|SubscribeThreadShells|TokenUsage)$/,
+    { pr: "A2" },
+  ],
   [/^personalBots(CreateThread|ArchiveThreads?|DeleteThreads?|UpdateThreads)$/, { pr: "A3" }],
   [/^personalBots(ThreadFullText|SearchMessages|PrewarmThread)$/, { pr: "A4" }],
   [/^personalBots(Create|Update|Delete|RecheckProvider)$/, { pr: "A9" }],
