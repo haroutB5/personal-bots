@@ -1,3 +1,4 @@
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -11,8 +12,16 @@ const providerDirectory = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../provider",
 );
+const packagesDirectory = NodePath.resolve(providerDirectory, "../../../../packages");
+/** Drivers upstream moved into packages; their adapter sits beside the driver. */
+const packageDriverFiles = NodeFS.readdirSync(packagesDirectory)
+  .filter((name) => name.startsWith("provider-"))
+  .map((name) => NodePath.join(packagesDirectory, name, "src/server/driver.ts"))
+  .filter((file) => NodeFS.existsSync(file));
 
-const coverage = scanDriverInstructionCoverage(providerDirectory);
+const coverage = scanDriverInstructionCoverage(providerDirectory, {
+  extraDriverFiles: packageDriverFiles,
+});
 const sorted = (kinds: ReadonlyArray<string>): ReadonlyArray<string> => [...kinds].sort();
 
 describe("bot instruction coverage", () => {
@@ -66,12 +75,8 @@ describe("bot instruction coverage", () => {
         .map((entry) => [entry.driverKind, entry.callSite]),
     );
     assert.deepEqual(callSites, {
-      claudeAgent: "Layers/ClaudeAdapter.ts",
+      claudeAgent: "../orchestration-v2/Adapters/ClaudeAdapterV2.ts",
       codex: "CodexDeveloperInstructions.ts",
-      opencode: "Layers/OpenCodeAdapter.ts",
-      deepseek: "Layers/ClaudeAdapter.ts",
-      antigravity: "Layers/AntigravityAdapter.ts",
-      registry: "Layers/NativeAcpAdapter.ts",
     });
   });
 

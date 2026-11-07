@@ -6,6 +6,7 @@ import type {
   TextGenerationError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type * as Schema from "effect/Schema";
 
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
 import type { ThreadTitleForkSource } from "./textGenerationPrompts.ts";
@@ -131,4 +132,17 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+}
+
+/**
+ * A tool-less one-shot JSON answer. Only the Claude driver offers it (personal
+ * fork), so it sits beside the shared six operations instead of widening
+ * `keyof ProviderTextGeneration` for every driver.
+ */
+export interface ProviderStructuredGeneration {
+  readonly generateStructured?: <S extends Schema.Top>(input: {
+    readonly prompt: string;
+    readonly outputSchema: S;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
 }

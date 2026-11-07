@@ -213,6 +213,11 @@ import {
   normalizeMcpText,
 } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import {
+  personalClaudeQueryOptions,
+  type PersonalClaudeQueryOptions,
+} from "../../personal/providerHooks/claudeQueryOptions.ts";
+import type { BotProtectedPathsInput } from "../../personal/secrets/botProtectedPaths.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -1778,6 +1783,8 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   /** The bot persona and app rules for a personal thread's session. */
   readonly systemInstructions?: string;
+  /** The personal-bot query options, when this session is a bot's chat. */
+  readonly personal?: PersonalClaudeQueryOptions;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -1836,7 +1843,30 @@ export function makeClaudeQueryOptions(input: {
           ...compactQuerySettings,
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
+  // The bot's own settings win over the owner's CLI settings: an isolated
+  // session, the task-chat compaction window, the Read guard and deny rules.
+  const personalSettings = input.personal?.settings;
+  const settingsWithPersonal =
+    personalSettings === undefined || Object.keys(personalSettings).length === 0
+      ? effectiveQuerySettings
+      : typeof effectiveQuerySettings === "string" || effectiveQuerySettings === undefined
+        ? ({ ...personalSettings } as ClaudeSdkSettings)
+        : ({ ...effectiveQuerySettings, ...personalSettings } as ClaudeSdkSettings);
+  const queryEnvironment =
+    input.personal?.env === undefined
+      ? input.environment
+      : { ...input.environment, ...input.personal.env };
+  const disallowedTools = input.personal?.disallowedTools ?? input.disallowedTools;
+  const queryMcpServers = input.mcpServers ?? input.personal?.mcpServers;
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const personalHooks = input.personal?.hooks;
+  const deviceHooks = deviceInstructions
+    ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
+    : undefined;
+  const queryHooks =
+    personalHooks === undefined && deviceHooks === undefined
+      ? undefined
+      : { ...personalHooks, ...deviceHooks };
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -1856,7 +1886,7 @@ export function makeClaudeQueryOptions(input: {
     ...threadIdentity,
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
-    ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
+    ...(disallowedTools === undefined ? {} : { disallowedTools: [...disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
@@ -1865,16 +1895,16 @@ export function makeClaudeQueryOptions(input: {
       ? {
           thinking: { type: "adaptive" as const, display: "summarized" as const },
           settings:
-            typeof effectiveQuerySettings === "string"
-              ? effectiveQuerySettings
+            typeof settingsWithPersonal === "string"
+              ? settingsWithPersonal
               : {
-                  ...effectiveQuerySettings,
+                  ...settingsWithPersonal,
                   showThinkingSummaries: true,
                 },
         }
-      : effectiveQuerySettings === undefined
+      : settingsWithPersonal === undefined
         ? {}
-        : { settings: effectiveQuerySettings }),
+        : { settings: settingsWithPersonal }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.supportedDialogKinds === undefined
@@ -1883,8 +1913,14 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    ...(input.environment === undefined ? {} : { env: input.environment }),
-    ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+    ...(queryEnvironment === undefined ? {} : { env: queryEnvironment }),
+    ...(queryMcpServers === undefined ? {} : { mcpServers: queryMcpServers }),
+    ...(input.personal?.settingSources === undefined
+      ? {}
+      : { settingSources: [...input.personal.settingSources] }),
+    ...(input.personal?.strictMcpConfig === true ? { strictMcpConfig: true } : {}),
+    ...(input.personal?.plugins === undefined ? {} : { plugins: input.personal.plugins }),
+    ...(input.personal?.agents === undefined ? {} : { agents: input.personal.agents }),
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -1902,10 +1938,9 @@ export function makeClaudeQueryOptions(input: {
         ),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
+      ...input.personal?.systemPrompt,
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
+    ...(queryHooks === undefined ? {} : { hooks: queryHooks }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -1993,6 +2028,11 @@ const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSett
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 
+/** The bot plugin folders under `<baseDir>/bot-plugins`. */
+const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
+const PERSONAL_BOT_SHARED_PLUGIN = "_shared";
+const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
 // Keep in sync with OrchestratorToolkit Tool.Readonly annotations; ClaudeAdapterV2.test.ts checks this.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
@@ -2024,6 +2064,8 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** Changes when the session credential rotates, without putting the token in argv. */
+  readonly credentialKey?: string;
 } {
   const session = input.mcpSession;
   if (session === undefined) {
@@ -2032,14 +2074,16 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  const authorization = McpProviderSession.claudeMcpAuthorization(session);
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    credentialKey: session.authorizationHeader,
     mcpServers: {
       "t3-code": {
         type: "http",
         url: session.endpoint,
         headers: {
-          Authorization: session.authorizationHeader,
+          Authorization: authorization.header,
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
@@ -3033,6 +3077,7 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+    readonly credentialKey?: string;
   },
 ): string {
   return JSON.stringify({
@@ -3043,6 +3088,7 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    credentialKey: mcpOverrides.credentialKey,
   });
 }
 
@@ -4866,6 +4912,11 @@ export interface ClaudeAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  /** Where bot plugins and the host's protected paths live; personal sessions only. */
+  readonly personalConfig?: {
+    readonly baseDir: string;
+    readonly protectedPaths: BotProtectedPathsInput;
+  };
 }
 
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
@@ -4899,6 +4950,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   ).pipe(Effect.provideService(Path.Path, path));
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
+  /** The folder when it holds a Claude plugin manifest. */
+  const pluginDirWithManifest = (pluginDir: string) =>
+    fileSystem.exists(path.join(pluginDir, ".claude-plugin", "plugin.json")).pipe(
+      Effect.orElseSucceed(() => false),
+      Effect.map((hasManifest) => (hasManifest ? pluginDir : undefined)),
+    );
+  /**
+   * The shared plugin folder (`<baseDir>/bot-plugins/_shared`), then the bot's
+   * own (`<baseDir>/bot-plugins/<botId>`), each only when it has a manifest.
+   */
+  const resolvePersonalBotPluginDirs = Effect.fn("ClaudeAdapterV2.resolvePersonalBotPluginDirs")(
+    function* (botId: string | undefined) {
+      const baseDir = adapterOptions.personalConfig?.baseDir;
+      if (baseDir === undefined) return [];
+      const pluginsRoot = path.join(baseDir, PERSONAL_BOT_PLUGINS_DIR);
+      const shared = yield* pluginDirWithManifest(
+        path.join(pluginsRoot, PERSONAL_BOT_SHARED_PLUGIN),
+      );
+      const own =
+        botId === undefined || !PERSONAL_BOT_ID_PATTERN.test(botId)
+          ? undefined
+          : yield* pluginDirWithManifest(path.join(pluginsRoot, botId));
+      return [shared, own].filter((dir): dir is string => dir !== undefined);
+    },
+  );
   const customHome =
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
@@ -10923,6 +10999,50 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
+          const personalSession = input.personal;
+          const personalQueryOptions =
+            personalSession?.personalBot === true
+              ? personalClaudeQueryOptions({
+                  personalBot: true,
+                  personalTaskChat: personalSession.personalTaskChat,
+                  model: turnInput.modelSelection.model,
+                  modelCatalog,
+                  configuredAutoCompactWindow: adapterOptions.settings.autoCompactWindow,
+                  protectedPaths: adapterOptions.personalConfig?.protectedPaths ?? {
+                    stateDir: "",
+                    dbPath: "",
+                    secretsDir: "",
+                    logsDir: "",
+                  },
+                  pluginDirs: yield* resolvePersonalBotPluginDirs(personalSession.personalBotId),
+                  hasMcpSession: mcpSession !== undefined,
+                })
+              : undefined;
+          const mcpAuthorization =
+            mcpSession === undefined
+              ? undefined
+              : McpProviderSession.claudeMcpAuthorization(mcpSession);
+          const baseEnvironment = McpProviderSession.withProviderSessionEnvironment(
+            claudeQueryEnvironment(
+              adapterOptions.environment,
+              turnInput.appThread,
+              turnInput.appThread.lineage.relationshipToParent === "subagent"
+                ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
+                : undefined,
+            ),
+            {
+              ...(mcpSession?.agentDeviceEnvironment === undefined
+                ? {}
+                : { agentDeviceEnvironment: mcpSession.agentDeviceEnvironment }),
+              ...(personalSession?.secretEnvironment === undefined
+                ? {}
+                : { personalSecretEnvironment: personalSession.secretEnvironment }),
+            },
+          );
+          const sessionEnvironment = {
+            ...baseEnvironment,
+            ...mcpAuthorization?.environment,
+          };
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog,
@@ -10936,13 +11056,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(launchArgSettings === undefined
               ? {}
               : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
-            environment: claudeQueryEnvironment(
-              adapterOptions.environment,
-              turnInput.appThread,
-              turnInput.appThread.lineage.relationshipToParent === "subagent"
-                ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
-                : undefined,
-            ),
+            environment: sessionEnvironment,
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}
@@ -10965,6 +11079,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(input.systemInstructions === undefined
               ? {}
               : { systemInstructions: input.systemInstructions }),
+            ...(personalQueryOptions === undefined ? {} : { personal: personalQueryOptions }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const resolvedTurnCwd = yield* fileSystem
@@ -12392,6 +12507,10 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
+      personalConfig: {
+        baseDir: serverConfig.baseDir,
+        protectedPaths: serverConfig,
+      },
       fileSystem,
       path,
       random,

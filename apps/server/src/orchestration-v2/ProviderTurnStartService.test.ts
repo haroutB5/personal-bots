@@ -137,6 +137,13 @@ function startWithMissingWorktree(
       Layer.mergeAll(
         Layer.succeed(PersonalTurnContext, {
           sessionInstructions: () => Effect.succeed(Option.some("BOT PERSONA")),
+          sessionPersonal: () =>
+            Effect.succeed({
+              personalBot: true,
+              personalBotId: "bot-1",
+              personalTaskChat: false,
+              secretEnvironment: undefined,
+            }),
           isPersonalBotThread: () => Effect.succeed(true),
           uniqueTitle: ({ title }: { readonly title: string }) => Effect.succeed(title),
           prepareTurn: (turn: { readonly text: string }) =>
@@ -932,6 +939,13 @@ function makeLocalCommandHarness(input: {
       Layer.mergeAll(
         Layer.succeed(PersonalTurnContext, {
           sessionInstructions: () => Effect.succeed(Option.some("BOT PERSONA")),
+          sessionPersonal: () =>
+            Effect.succeed({
+              personalBot: true,
+              personalBotId: "bot-1",
+              personalTaskChat: false,
+              secretEnvironment: undefined,
+            }),
           isPersonalBotThread: () => Effect.succeed(true),
           uniqueTitle: ({ title }: { readonly title: string }) => Effect.succeed(title),
           prepareTurn: (turn: { readonly text: string }) =>

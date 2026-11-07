@@ -162,6 +162,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly initialNativeThreadId?: string;
     readonly initialProviderItemIdentityVersion?: 2;
     readonly systemInstructions?: string;
+    readonly personal?: ProviderAdapter.ProviderAdapterV2PersonalSession;
   }) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
     ProviderSessionManagerV2Error
@@ -2223,6 +2224,7 @@ export const layerWithOptions = (
                   ...(input.systemInstructions === undefined
                     ? {}
                     : { systemInstructions: input.systemInstructions }),
+                  ...(input.personal === undefined ? {} : { personal: input.personal }),
                 })
                 .pipe(
                   Effect.provideService(Scope.Scope, sessionScope),

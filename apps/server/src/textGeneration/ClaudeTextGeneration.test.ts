@@ -419,23 +419,26 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("does not report the raw result JSON when a failed run writes nothing to stderr", () =>
+  it.effect("answers a tool-less structured prompt through generateStructured", () =>
     withFakeClaudeEnv(
-      { output: JSON.stringify(structuredOutputFailure), exitCode: 1 },
+      {
+        output: JSON.stringify({ structured_output: { verdict: "keep" } }),
+        cwdMustNotBe: process.cwd(),
+        stdinMustContain: "decide this memory entry",
+      },
       (textGeneration) =>
         Effect.gen(function* () {
-          const error = yield* Effect.flip(
-            textGeneration.generateThreadTitle({
-              cwd: process.cwd(),
-              message: "Name this thread",
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("claudeAgent"),
-                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
-              },
-            }),
-          );
-
-          expect(error.detail).toBe(`Claude CLI command failed: ${structuredOutputError}`);
+          const generate = textGeneration.generateStructured;
+          expect(generate).toBeDefined();
+          const answer = yield* generate!({
+            prompt: "decide this memory entry",
+            outputSchema: Schema.Struct({ verdict: Schema.String }),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+          expect(answer.verdict).toBe("keep");
         }),
     ),
   );

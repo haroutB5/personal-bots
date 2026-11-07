@@ -33,6 +33,7 @@ import { personalBotSystemInstructions } from "../personalBotInstructions.ts";
 import { isPersonalTaskMessageId } from "../personalThreadTitles.ts";
 import { uniqueAutomaticTitle } from "../personalChatTitles.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
+import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
 import * as PersonalVoiceCallRepository from "../voiceCalls/PersonalVoiceCallRepository.ts";
 import { voiceCallSummaryContextPacked } from "../voiceCalls/voiceCallSummaryContext.ts";
 
@@ -61,8 +62,17 @@ export interface PreparedPersonalTurn {
   readonly onSent: (delivery: "full" | "reduced" | "none" | undefined) => Effect.Effect<void>;
 }
 
+/** The personal half of a provider session, read once when the session opens. */
+export interface PersonalSession {
+  readonly personalBot: boolean;
+  readonly personalBotId: string | undefined;
+  readonly personalTaskChat: boolean;
+  readonly secretEnvironment: Readonly<Record<string, string>> | undefined;
+}
+
 export interface PersonalTurnContextShape {
   readonly sessionInstructions: (threadId: ThreadId) => Effect.Effect<Option.Option<string>>;
+  readonly sessionPersonal: (threadId: ThreadId) => Effect.Effect<PersonalSession>;
   readonly isPersonalBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
   readonly uniqueTitle: (input: {
     readonly threadId: ThreadId;
@@ -85,6 +95,7 @@ export class PersonalTurnContext extends Context.Service<
 
 export const makePersonalTurnContext = (deps: {
   readonly personalBots: PersonalBotRepository.PersonalBotRepository["Service"];
+  readonly personalSessions: Option.Option<PersonalSessionAccess.PersonalSessionAccess["Service"]>;
   readonly personalMemory: Option.Option<PersonalMemoryService.PersonalMemoryService["Service"]>;
   readonly voiceCalls: PersonalVoiceCallRepository.PersonalVoiceCallRepository["Service"];
   readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThreadShell">;
@@ -99,6 +110,44 @@ export const makePersonalTurnContext = (deps: {
           threadId,
           cause: Cause.pretty(cause),
         }).pipe(Effect.as(Option.none<string>())),
+      ),
+    );
+
+  const noPersonalSession: PersonalSession = {
+    personalBot: false,
+    personalBotId: undefined,
+    personalTaskChat: false,
+    secretEnvironment: undefined,
+  };
+
+  const sessionPersonal = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const access = Option.isSome(deps.personalSessions)
+        ? yield* deps.personalSessions.value.forThread(threadId)
+        : undefined;
+      const facts = yield* deps.personalBots
+        .getChatFacts({ threadId })
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const linked = Option.isSome(facts);
+      const botId = access?.botId ?? (linked ? facts.value.botId : null);
+      const secretEnvironment =
+        access !== undefined && Object.keys(access.environment).length > 0
+          ? access.environment
+          : undefined;
+      return {
+        personalBot: linked || botId !== null,
+        personalBotId: botId === null ? undefined : String(botId),
+        personalTaskChat: linked ? facts.value.taskChat || facts.value.routineChat : false,
+        secretEnvironment,
+      } satisfies PersonalSession;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logDebug("personal session lookup failed; treating it as not personal", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(noPersonalSession)),
       ),
     );
 
@@ -222,15 +271,22 @@ export const makePersonalTurnContext = (deps: {
       };
     });
 
-  return { sessionInstructions, isPersonalBotThread, uniqueTitle, prepareTurn };
+  return { sessionInstructions, sessionPersonal, isPersonalBotThread, uniqueTitle, prepareTurn };
 };
 
 const make = Effect.gen(function* () {
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
+  const personalSessions = yield* Effect.serviceOption(PersonalSessionAccess.PersonalSessionAccess);
   const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
   const voiceCalls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   const projectionStore = yield* ProjectionStoreV2;
-  return makePersonalTurnContext({ personalBots, personalMemory, voiceCalls, projectionStore });
+  return makePersonalTurnContext({
+    personalBots,
+    personalSessions,
+    personalMemory,
+    voiceCalls,
+    projectionStore,
+  });
 });
 
 export const layer = Layer.effect(PersonalTurnContext, make);

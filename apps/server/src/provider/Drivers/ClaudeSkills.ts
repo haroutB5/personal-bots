@@ -22,7 +22,8 @@ type ClaudeSkillRoot = {
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
-type SkillFrontmatter =
+/** Exported so every provider path can report the same refusal reason. */
+export type SkillFrontmatter =
   | { readonly kind: "missing" }
   | { readonly kind: "malformed" }
   | {

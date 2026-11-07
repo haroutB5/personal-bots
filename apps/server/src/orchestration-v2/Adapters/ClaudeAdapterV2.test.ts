@@ -531,7 +531,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       type: "http",
       url: "http://127.0.0.1:43123/mcp",
       headers: {
-        Authorization: "Bearer secret-claude-token",
+        Authorization: "Bearer ${T3_MCP_TOKEN}",
       },
       timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
     },
@@ -559,14 +559,26 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       allowedTools: [...ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS],
     });
 
-    assert.deepEqual(overrides, {
-      allowedTools: [
-        ...ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
-        ...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
-      ],
-      mcpServers: T3_MCP_SERVERS,
-    });
+    assert.deepEqual(overrides.allowedTools, [
+      ...ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
+      ...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
+    ]);
+    assert.deepEqual(overrides.mcpServers, T3_MCP_SERVERS);
+    assert.equal(overrides.credentialKey, "Bearer secret-claude-token");
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
+  });
+
+  it("keeps the MCP token off the command line unless PERSONAL_MCP_TOKEN_ON_ARGV=1", () => {
+    const session = mcpSessionFor(ThreadId.make("thread-claude-mcp-token"));
+    const offArgv = McpProviderSession.claudeMcpAuthorization(session, {});
+    assert.equal(offArgv.header, "Bearer ${T3_MCP_TOKEN}");
+    assert.deepEqual(offArgv.environment, { T3_MCP_TOKEN: "secret-claude-token" });
+
+    const onArgv = McpProviderSession.claudeMcpAuthorization(session, {
+      PERSONAL_MCP_TOKEN_ON_ARGV: "1",
+    });
+    assert.equal(onArgv.header, "Bearer secret-claude-token");
+    assert.deepEqual(onArgv.environment, {});
   });
 
   it("invalidates live-query reuse when MCP credentials rotate", () => {
@@ -635,12 +647,13 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     });
     assert.deepEqual(overrides, {
       allowedTools: ["Read", "mcp__t3-code__*"],
+      credentialKey: "Bearer secret-claude-token",
       mcpServers: {
         "t3-code": {
           type: "http",
           url: "http://127.0.0.1:43123/mcp",
           headers: {
-            Authorization: "Bearer secret-claude-token",
+            Authorization: "Bearer ${T3_MCP_TOKEN}",
           },
           timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
         },

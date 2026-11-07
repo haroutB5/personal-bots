@@ -1,0 +1,83 @@
+import { describe, expect, it } from "@effect/vitest";
+
+import type { ClaudeModelCatalog } from "../../provider/ClaudeModelCatalog.ts";
+import { personalClaudeQueryOptions } from "./claudeQueryOptions.ts";
+
+const modelEntry = (slug: string) => ({
+  model: { slug, name: slug, isCustom: false, capabilities: { optionDescriptors: [] } },
+  runtime: {},
+  compatibility: {},
+});
+
+const MODEL_CATALOG: ClaudeModelCatalog = {
+  models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"].map(modelEntry),
+};
+
+const SWITCHES = [
+  "PERSONAL_READ_LARGE_GUARD",
+  "PERSONAL_EXPLORE_MODEL",
+  "PERSONAL_SUBAGENT_MODEL",
+] as const;
+
+const withSwitches = <T>(values: Readonly<Record<string, string>>, run: () => T): T => {
+  const previous = new Map<string, string | undefined>();
+  for (const name of SWITCHES) previous.set(name, process.env[name]);
+  for (const name of SWITCHES) delete process.env[name];
+  Object.assign(process.env, values);
+  try {
+    return run();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+};
+
+const input = (model: string) => ({
+  personalBot: true,
+  personalTaskChat: false,
+  model,
+  modelCatalog: MODEL_CATALOG,
+  configuredAutoCompactWindow: undefined,
+  protectedPaths: {
+    stateDir: "/state",
+    dbPath: "/state/state.sqlite",
+    secretsDir: "/state/secrets",
+    logsDir: "/state/logs",
+  },
+  pluginDirs: [],
+  hasMcpSession: false,
+});
+
+describe("personalClaudeQueryOptions", () => {
+  it("registers the Read guard by default and drops it with PERSONAL_READ_LARGE_GUARD=off", () => {
+    const on = withSwitches({}, () => personalClaudeQueryOptions(input("claude-sonnet-5-5")));
+    expect(on.hooks?.PreToolUse?.[0]?.matcher).toBe("Read");
+
+    const off = withSwitches({ PERSONAL_READ_LARGE_GUARD: "off" }, () =>
+      personalClaudeQueryOptions(input("claude-sonnet-5-5")),
+    );
+    expect(off.hooks).toBeUndefined();
+  });
+
+  it("runs Explore on Haiku 5.5 by default and leaves it alone with PERSONAL_EXPLORE_MODEL=off", () => {
+    const on = withSwitches({}, () => personalClaudeQueryOptions(input("claude-sonnet-5-5")));
+    expect(on.agents?.Explore?.model).toBe("claude-haiku-5-5");
+
+    const off = withSwitches({ PERSONAL_EXPLORE_MODEL: "off" }, () =>
+      personalClaudeQueryOptions(input("claude-sonnet-5-5")),
+    );
+    expect(off.agents).toBeUndefined();
+  });
+
+  it("runs model-less subagents on Sonnet 5.5 by default and drops the override with PERSONAL_SUBAGENT_MODEL=off", () => {
+    const on = withSwitches({}, () => personalClaudeQueryOptions(input("claude-opus-5-5")));
+    expect(on.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe("claude-sonnet-5-5");
+
+    const off = withSwitches({ PERSONAL_SUBAGENT_MODEL: "off" }, () =>
+      personalClaudeQueryOptions(input("claude-opus-5-5")),
+    );
+    expect(off.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+  });
+});

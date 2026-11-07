@@ -49,6 +49,7 @@ const harness = (input: {
       getChatTitleScope: () =>
         Effect.succeed(Option.some({ archived: false, peerTitles: ["Main"] })),
     } as unknown as PersonalBotRepository.PersonalBotRepository["Service"],
+    personalSessions: Option.none(),
     personalMemory: Option.some({
       contextForThread: () =>
         Effect.succeed({

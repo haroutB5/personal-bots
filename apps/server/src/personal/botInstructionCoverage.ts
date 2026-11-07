@@ -40,6 +40,7 @@ const callsWithBotInstructions = (source: string): boolean =>
   INSTRUCTIONS_CALL.test(source) && !INSTRUCTIONS_DECLARATION.test(source);
 
 const DRIVER_KIND_PATTERN = /ProviderDriverKind\.make\(\s*"([^"]+)"\s*\)/;
+const DRIVER_KIND_CONSTANT_PATTERN = /\b([A-Z][A-Z0-9_]*_DRIVER_KIND)\b/;
 const RELATIVE_IMPORT_PATTERN = /from\s+"(\.[^"]+\.ts)"/g;
 
 export interface DriverInstructionCoverage {
@@ -65,6 +66,26 @@ const localImportsOf = (file: string): ReadonlyArray<string> => {
     if (NodeFS.existsSync(target)) resolved.push(target);
   }
   return resolved;
+};
+
+/**
+ * A driver declares its kind inline, or imports a `*_DRIVER_KIND` constant
+ * from a sibling module (fx does the latter).
+ */
+const driverKindOf = (file: string): string | undefined => {
+  const source = readFile(file);
+  const direct = DRIVER_KIND_PATTERN.exec(source)?.[1];
+  if (direct !== undefined) return direct;
+  const constant = DRIVER_KIND_CONSTANT_PATTERN.exec(source)?.[1];
+  if (constant === undefined) return undefined;
+  const declaration = new RegExp(
+    `export const ${constant} = ProviderDriverKind\\.make\\(\\s*"([^"]+)"\\s*\\)`,
+  );
+  for (const imported of localImportsOf(file)) {
+    const match = declaration.exec(readFile(imported));
+    if (match !== null) return match[1];
+  }
+  return undefined;
 };
 
 /**
@@ -99,19 +120,27 @@ const findInstructionsCall = (entries: ReadonlyArray<string>, maxDepth: number):
  */
 export function scanDriverInstructionCoverage(
   providerDirectory: string,
-  options?: { readonly maxDepth?: number },
+  options?: {
+    readonly maxDepth?: number;
+    /** Also scan package drivers, e.g. a `packages/provider-<name>/src/server/driver.ts` file. */
+    readonly extraDriverFiles?: ReadonlyArray<string>;
+  },
 ): ReadonlyArray<DriverInstructionCoverage> {
   const driversDirectory = NodePath.join(providerDirectory, "Drivers");
-  const driverFiles = NodeFS.readdirSync(driversDirectory)
+  const localDriverFiles = NodeFS.readdirSync(driversDirectory)
     .filter((name) => name.endsWith("Driver.ts") && !name.includes(".test."))
-    .sort();
+    .sort()
+    .map((name) => NodePath.join(driversDirectory, name));
+  const driverFiles = [...localDriverFiles, ...(options?.extraDriverFiles ?? [])].filter((file) =>
+    NodeFS.existsSync(file),
+  );
   const coverage: Array<DriverInstructionCoverage> = [];
-  for (const name of driverFiles) {
-    const driverFile = NodePath.join(driversDirectory, name);
-    const source = readFile(driverFile);
-    const driverKind = DRIVER_KIND_PATTERN.exec(source)?.[1];
+  for (const driverFile of driverFiles) {
+    const driverKind = driverKindOf(driverFile);
     if (driverKind === undefined) continue;
-    const adapterFiles = localImportsOf(driverFile).filter((file) => file.endsWith("Adapter.ts"));
+    const adapterFiles = localImportsOf(driverFile).filter(
+      (file) => /(?:^|\/)adapter\.ts$/.test(file) || /Adapter(?:V2)?\.ts$/.test(file),
+    );
     const callSite = findInstructionsCall(adapterFiles, options?.maxDepth ?? 3);
     coverage.push({
       driverKind,

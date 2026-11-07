@@ -21,7 +21,7 @@ import {
 
 export const TranscriptionPostProcessingOutput = Schema.Struct({ transcription: Schema.String });
 
-export type Operation = keyof ProviderTextGeneration;
+export type Operation = keyof ProviderTextGeneration | "generateStructured";
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;

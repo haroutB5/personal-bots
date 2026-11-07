@@ -200,6 +200,7 @@ import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import { PersonalServerLayerLive } from "./personal/PersonalServerLayerLive.ts";
 import { layer as PersonalTurnContextLayer } from "./personal/turnContext/PersonalTurnContext.ts";
+import { layer as PersonalSessionAccessLayer } from "./personal/secrets/PersonalSessionAccess.ts";
 import { personalHttpRoutesLayer } from "./personal/http/routes.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -671,7 +672,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
-  Layer.provideMerge(PersonalTurnContextLayer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  Layer.provideMerge(
+    PersonalTurnContextLayer.pipe(
+      Layer.provide(ProjectionStoreV2.layer),
+      Layer.provide(PersonalSessionAccessLayer),
+    ),
+  ),
   Layer.provideMerge(PersonalServerLayerLive),
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),

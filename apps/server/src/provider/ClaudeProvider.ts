@@ -31,7 +31,6 @@ import {
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -206,6 +205,29 @@ function claudeAuthStatus(
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 // Native CLI startup on Windows can exceed the shared probe deadline.
 const CLAUDE_VERSION_CHECK_TIMEOUT_MS = 20_000;
+
+// `get_usage` reads the network while a cold CLI settles, and it runs off the
+// UI path, so a longer budget costs nothing visible.
+const CLAUDE_USAGE_READ_TIMEOUT_MS = CAPABILITIES_PROBE_TIMEOUT_MS;
+
+const MAX_LOGGED_ERROR_LENGTH = 300;
+
+/** One line for the log: a timeout, or the SDK's own error text, shortened. */
+function describeProbeFailure(failure: unknown): string {
+  if (Cause.isTimeoutError(failure)) {
+    return "timed out";
+  }
+  const cause = Cause.isUnknownError(failure) ? failure.cause : failure;
+  const text =
+    cause instanceof Error
+      ? `${cause.name}: ${cause.message}`
+      : typeof cause === "object" && cause !== null && "message" in cause
+        ? String(cause.message)
+        : String(cause);
+  return text.length > MAX_LOGGED_ERROR_LENGTH
+    ? `${text.slice(0, MAX_LOGGED_ERROR_LENGTH)}…`
+    : text;
+}
 
 const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
@@ -413,6 +435,7 @@ const probeClaudeCapabilities = (
         // Only the rate limits are read, so skip the local transcript scan that fills
         // `behaviors`: with a few GB of transcripts it outlasts the deadline.
         const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
+        const usageStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
         const usageResult = includeUsage
           ? yield* Effect.tryPromise({
               try: () =>
@@ -420,8 +443,18 @@ const probeClaudeCapabilities = (
                   skipBehaviors: true,
                 }),
               catch: (cause) => new ClaudeCapabilitiesProbeSdkError({ operation: "usage", cause }),
-            }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
+            }).pipe(Effect.timeout(CLAUDE_USAGE_READ_TIMEOUT_MS), Effect.result)
           : undefined;
+        if (usageResult !== undefined && Result.isFailure(usageResult)) {
+          // The provider then publishes `probeFailed`; without this line the
+          // cause was invisible and a 40-minute outage left no trace.
+          yield* Effect.logWarning("Claude usage read failed; keeping the last good reading.", {
+            timedOut: Cause.isTimeoutError(usageResult.failure),
+            timeoutMs: CLAUDE_USAGE_READ_TIMEOUT_MS,
+            elapsedMs: DateTime.toEpochMillis(yield* DateTime.now) - usageStartedAt,
+            error: describeProbeFailure(usageResult.failure),
+          });
+        }
         const usage =
           usageResult && Result.isSuccess(usageResult)
             ? {
@@ -521,6 +554,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
   resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  /** Models the installed CLI knows but the manifest may not list yet, keyed by CLI version. */
+  resolveInstalledModelCatalog?: (
+    cliVersion: string,
+  ) => Effect.Effect<ClaudeModelCatalog, never, never>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -618,8 +655,18 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
+  const installedModelCatalog =
+    parsedVersion && resolveInstalledModelCatalog
+      ? yield* resolveInstalledModelCatalog(parsedVersion)
+      : modelCatalog;
+  const updateRequiredModels = resolveClaudeUpdateRequiredModels(
+    installedModelCatalog,
+    parsedVersion,
+  );
+  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(
+    installedModelCatalog,
+    parsedVersion,
+  );
 
   const probeResult = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
@@ -630,8 +677,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
   const models = claudeProviderModels(
     [
-      ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-      ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
+      ...resolveClaudeModelsForVersion(installedModelCatalog, parsedVersion),
+      ...claudeReportedModels(
+        installedModelCatalog,
+        claudeSettings.customModels,
+        capabilities?.models,
+      ),
     ],
     claudeSettings.customModels,
   );
@@ -658,6 +709,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
             ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
             : "Claude Agent CLI failed while checking account status."
           : "Could not verify Claude authentication status from initialization result.",
+        // The SDK probe that reads usage never got that far. Saying so, rather
+        // than omitting usage, keeps the last good reading and earns the early retry.
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "Claude could not be started to read usage",
+        }),
       },
     });
   }
@@ -701,7 +759,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
   const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+    ? makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Claude did not return its usage",
+      })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,

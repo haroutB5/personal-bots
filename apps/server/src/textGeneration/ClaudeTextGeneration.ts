@@ -9,6 +9,7 @@ import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
+import type { ProviderStructuredGeneration } from "@t3tools/provider-core/server/textGeneration";
 import {
   normalizeCliError,
   toJsonSchemaObject,
@@ -201,7 +202,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       noSessionPersistence: boolean,
     ) {
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" || operation === "generateStructured"
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -344,5 +345,19 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
   });
 
-  return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson);
+  const generateStructured: NonNullable<ProviderStructuredGeneration["generateStructured"]> = (
+    input,
+  ) =>
+    runClaudeJson({
+      operation: "generateStructured",
+      cwd: "",
+      prompt: input.prompt,
+      outputSchema: input.outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+  return {
+    ...TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson),
+    generateStructured,
+  };
 });

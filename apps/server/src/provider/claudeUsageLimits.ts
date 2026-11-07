@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import { windowHasReset } from "@t3tools/shared/usageLimits";
 import {
   clampPercent,
   makeUnavailableUsageLimits,
@@ -223,3 +224,21 @@ export const recordClaudeUsageResponse = (
   const { limits, names } = claudeUsageResponseToLimits(input);
   return Ref.set(namesRef, names).pipe(Effect.as(limits));
 };
+
+/**
+ * A cached `get_usage` response names a window whose reset has passed, so it
+ * no longer says what is used: the next read must go to the CLI. Without this
+ * the capabilities cache could hand the re-read after a reset the spent
+ * reading from before it, stamped as new.
+ */
+export function claudeUsageResponseHasPassedReset(
+  response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">,
+  nowMs: number,
+): boolean {
+  const { limits } = claudeUsageResponseToLimits({
+    response,
+    // Only the windows are read here; the stamp is not used.
+    checkedAt: "1970-01-01T00:00:00.000Z",
+  });
+  return limits.windows.some((window) => windowHasReset(window, nowMs));
+}

@@ -793,6 +793,9 @@ export const layer: Layer.Layer<
             yield* personalTurnContext.value.sessionInstructions(projection.thread.id),
           )
         : undefined;
+      const personalSession = Option.isSome(personalTurnContext)
+        ? yield* personalTurnContext.value.sessionPersonal(projection.thread.id)
+        : undefined;
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
@@ -800,6 +803,20 @@ export const layer: Layer.Layer<
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
           ...(systemInstructions === undefined ? {} : { systemInstructions }),
+          ...(personalSession?.personalBot === true
+            ? {
+                personal: {
+                  personalBot: true,
+                  ...(personalSession.personalBotId === undefined
+                    ? {}
+                    : { personalBotId: personalSession.personalBotId }),
+                  personalTaskChat: personalSession.personalTaskChat,
+                  ...(personalSession.secretEnvironment === undefined
+                    ? {}
+                    : { secretEnvironment: personalSession.secretEnvironment }),
+                },
+              }
+            : {}),
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),

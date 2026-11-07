@@ -177,7 +177,7 @@ apps/server/src/git/GitWorkflowService.ts		content	1	B1	dropped	every commit on 
 apps/server/src/http.test.ts		content	20	C12	open	c1a7c4bd14 cases for the browser credential store deny list and pinned host file reads
 apps/server/src/mcp/McpDeviceToolkit.test.ts		content	7	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/mcp/McpHttpServer.test.ts		content	206	C13	open	shared browser leases, browser error text, richer computer actions, shorter tool copy
-apps/server/src/mcp/McpProviderSession.ts		modify-delete	54	C5	open	hook file listed in Appendix A
+apps/server/src/mcp/McpProviderSession.ts		modify-delete	54	C5	done	ported to provider-core mcpSession.ts: token off argv with PERSONAL_MCP_TOKEN_ON_ARGV and personal secret env, tested in ClaudeAdapterV2.test.ts
 apps/server/src/mcp/McpSecretGuard.ts		content	1	C13	open	advertisedMcpTool stripped at B1; C13 restores the compact schema
 apps/server/src/mcp/McpSessionRegistry.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/mcp/McpSessionRegistry.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -323,8 +323,8 @@ apps/server/src/personal/personalBotInstructions.test.ts		added-broken	170	C4	do
 apps/server/src/personal/personalChatTitles.test.ts		added-broken	458	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/personalShellSlim.test.ts		added-broken	121	C3	done	ported to the v2 shell shape; the slim rule reads the mapped v1 shell
 apps/server/src/personal/personalThreadLinkRepair.test.ts		added-broken	161	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
-apps/server/src/personal/providerHooks/claudeQueryOptions.test.ts		added-broken	84	C5	open	G6 park; Claude query options (C5)
-apps/server/src/personal/providerHooks/claudeQueryOptions.ts		added-broken	207	C5	open	G6 park; Claude query options (C5)
+apps/server/src/personal/providerHooks/claudeQueryOptions.test.ts		added-broken	84	C5	done	restored with the hook; Read guard and both model kill switches tested
+apps/server/src/personal/providerHooks/claudeQueryOptions.ts		added-broken	207	C5	done	restored and called from ClaudeAdapterV2.makeClaudeQueryOptions
 apps/server/src/personal/push/PersonalPushService.test.ts		added-broken	2197	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts		added-broken	622	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/routines/PersonalRoutineService.test.ts		added-broken	1753	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
@@ -364,9 +364,9 @@ apps/server/src/provider/AntigravityInstallation.test.ts		content	72	C5-C9	open	
 apps/server/src/provider/AntigravityInstallation.ts		content	106	C5-C9	open	area C5-C9
 apps/server/src/provider/AntigravityProvider.test.ts	apps/server/src/provider/Layers/AntigravityProvider.test.ts	content	145	C5-C9	open	area C5-C9
 apps/server/src/provider/AntigravityProvider.ts	apps/server/src/provider/Layers/AntigravityProvider.ts	content	61	C5-C9	open	area C5-C9
-apps/server/src/provider/ClaudeModelCatalog.test.ts		content	133	C5-C9	open	area C5-C9
-apps/server/src/provider/ClaudeModelCatalog.ts		content	129	C5-C9	open	area C5-C9
-apps/server/src/provider/ClaudeProvider.ts	apps/server/src/provider/Layers/ClaudeProvider.ts	content	84	C5-C9	open	area C5-C9
+apps/server/src/provider/ClaudeModelCatalog.test.ts		content	133	C5-C9	done	catalog merge and parse helpers ported; suite passes
+apps/server/src/provider/ClaudeModelCatalog.ts		content	129	C5-C9	done	parse/format/merge discovered models and claudeCatalogHasModel ported from the parked hunk
+apps/server/src/provider/ClaudeProvider.ts	apps/server/src/provider/Layers/ClaudeProvider.ts	content	84	C5-C9	done	usage read timeout, failure log and probeFailed usage message ported; warmSpawnImage is C15
 apps/server/src/provider/CodexChatGptAuth.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/CodexChatGptAuth.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/CodexChatGptHandoff.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -381,12 +381,12 @@ apps/server/src/provider/DeepSeekModelCatalog.test.ts		added-broken	89	D1	open	G
 apps/server/src/provider/DeepSeekModelCatalog.ts		added-broken	233	D1	open	G6 park; DeepSeek model catalog (D1)
 apps/server/src/provider/Drivers/AntigravityDriver.test.ts		content	58	C5-C9	open	area C5-C9
 apps/server/src/provider/Drivers/AntigravityDriver.ts		content	134	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/ClaudeDriver.ts		content	154	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/ClaudeExecutable.ts		content	5	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/ClaudeModelDiscovery.test.ts		added-broken	19	C5-C9	open	G2 park; follows ClaudeModelDiscovery.ts
-apps/server/src/provider/Drivers/ClaudeModelDiscovery.ts		added-broken	176	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/ClaudeSkills.test.ts		content	54	C5-C9	open	area C5-C9
-apps/server/src/provider/Drivers/ClaudeSkills.ts		content	22	C5-C9	open	area C5-C9
+apps/server/src/provider/Drivers/ClaudeDriver.ts		content	154	C5-C9	done	installed-CLI model discovery, discovered catalog merge and post-reset capability cache invalidation ported
+apps/server/src/provider/Drivers/ClaudeExecutable.ts		content	5	C5-C9	done	v2 already resolves the SDK executable; async off-loop resolution is C15
+apps/server/src/provider/Drivers/ClaudeModelDiscovery.test.ts		added-broken	19	C5-C9	done	restored with the discovery module; suite passes
+apps/server/src/provider/Drivers/ClaudeModelDiscovery.ts		added-broken	176	C5-C9	done	restored; ClaudeDriver reads the installed binary and merges its models
+apps/server/src/provider/Drivers/ClaudeSkills.test.ts		content	54	C5-C9	done	frontmatter repair already present on v2; suite passes
+apps/server/src/provider/Drivers/ClaudeSkills.ts		content	22	C5-C9	done	frontmatter repair present; parser exported for the shared refusal reason
 apps/server/src/provider/Drivers/CodexDriver.test.ts		content	5	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/CodexDriver.ts		content	23	C5-C9	open	area C5-C9
 apps/server/src/provider/Drivers/CodexHomeLayout.ts		content	4	B1	dropped	every commit on our side is an upstream cherry-pick U already has
@@ -410,10 +410,10 @@ apps/server/src/provider/EventNdjsonLogger.ts	apps/server/src/provider/Layers/Ev
 apps/server/src/provider/GrokProvider.test.ts	apps/server/src/provider/Layers/GrokProvider.test.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Layers/AntigravityAdapter.test.ts		modify-delete	314	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/AntigravityAdapter.ts		modify-delete	183	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ClaudeAdapter.botDeny.test.ts		added-broken	205	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ClaudeAdapter.test.ts		modify-delete	1630	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ClaudeAdapter.ts		modify-delete	551	C5-C9	open	area C5-C9
-apps/server/src/provider/Layers/ClaudeCapabilitiesProbe.test.ts		modify-delete	55	C5-C9	open	area C5-C9
+apps/server/src/provider/Layers/ClaudeAdapter.botDeny.test.ts		added-broken	205	C5-C9	dropped	v1 adapter test; buildClaudeBotPermissionDeny is covered by personal/secrets/botProtectedPaths.test.ts
+apps/server/src/provider/Layers/ClaudeAdapter.test.ts		modify-delete	1630	C5-C9	dropped	v1 adapter suite; ClaudeAdapterV2.test.ts and claudeQueryOptions.test.ts cover the ported behaviour
+apps/server/src/provider/Layers/ClaudeAdapter.ts		modify-delete	551	C5-C9	dropped	v1 adapter replaced by orchestration-v2/Adapters/ClaudeAdapterV2.ts; personal options live in personal/providerHooks/claudeQueryOptions.ts
+apps/server/src/provider/Layers/ClaudeCapabilitiesProbe.test.ts		modify-delete	55	C5-C9	dropped	v1 probe; provider/ClaudeCapabilitiesProbe.test.ts covers the v2 probe
 apps/server/src/provider/Layers/CodexAdapter.test.ts		modify-delete	430	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/CodexAdapter.ts		modify-delete	150	C5-C9	open	area C5-C9
 apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -587,8 +587,8 @@ apps/server/src/telemetry/Identify.ts		content	3	B1	dropped	our only change at t
 apps/server/src/terminal/Manager.test.ts		content	6	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/terminal/Manager.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/terminal/OutputProtocol.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/textGeneration/ClaudeTextGeneration.test.ts		content	274	C5	open	Haiku background model and generateStructured, used by memory tidy and summaries
-apps/server/src/textGeneration/ClaudeTextGeneration.ts		content	91	C5	open	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/textGeneration/ClaudeTextGeneration.test.ts		content	274	C5	done	generateStructured case added; fails without the port
+apps/server/src/textGeneration/ClaudeTextGeneration.ts		content	91	C5	done	structured one-shot generation ported from the parked hunk
 apps/server/src/textGeneration/CodexTextGeneration.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/CursorTextGeneration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/CursorTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -596,7 +596,7 @@ apps/server/src/textGeneration/DeepSeekTextGeneration.ts		added-broken	98	D1	ope
 apps/server/src/textGeneration/GrokTextGeneration.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/GrokTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/OpenCode2TextGeneration.ts		added-broken	259	C7	open	OpenCode 2 text generation
-apps/server/src/textGeneration/TextGeneration.ts		content	17	C5	open	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/textGeneration/TextGeneration.ts		content	17	C5	done	service exposes the optional structured generator from provider-core
 apps/server/src/usage-transcript-worker.ts		added-broken	25	C14	open	G14 park; usage transcript worker (C14)
 apps/server/src/usage/UsageLimitSources.ts		content	30	C14	open	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
 apps/server/src/usage/UsageService.sessionUsage.test.ts		added-broken	398	C14	open	G2 park; UsageService row is C14
@@ -843,8 +843,8 @@ packages/contracts/src/orchestration.test.ts		modify-delete	79	D1	open	landed-PR
 packages/contracts/src/orchestration.ts		modify-delete	121	D1	open	landed-PR retarget (Appendix H.4): D1
 packages/contracts/src/personalV1Wire.test.ts		added-broken	36	C3	done	ported with a frozen v1 JSON Schema fixture generated at 6357e13b38
 packages/contracts/src/previewAutomation.ts		content	253	C13	open	landed-PR retarget (Appendix H.4): C13
-packages/contracts/src/provider.test.ts		content	6	C5	open	landed-PR retarget (Appendix H.4): C5
-packages/contracts/src/provider.ts		content	71	C5	open	landed-PR retarget (Appendix H.4): C5
+packages/contracts/src/provider.test.ts		content	6	C5	dropped	v1 provider wire test; personal flags are tested at the v2 adapter input
+packages/contracts/src/provider.ts		content	71	C5	dropped	v1 provider wire replaced by ProviderAdapterV2OpenSessionInput.personal and systemInstructions
 packages/contracts/src/providerRuntime.ts		content	26	C9	open	landed-PR retarget (Appendix H.4): C9
 packages/contracts/src/providerSetup.ts		content	33	C9	open	landed-PR retarget (Appendix H.4): C9
 packages/contracts/src/providerUsageLimits.ts		content	115	C14	open	landed-PR retarget (Appendix H.4): C14

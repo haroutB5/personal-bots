@@ -1,5 +1,6 @@
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -23,7 +24,10 @@ import {
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
-import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
+import {
+  makeClaudeScopedLimitNames,
+  claudeUsageResponseHasPassedReset,
+} from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
@@ -35,7 +39,8 @@ import {
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
-import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import { mergeDiscoveredClaudeModels, resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -51,9 +56,12 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
+import { resolveClaudeSdkExecutablePath } from "./ClaudeExecutable.ts";
+import { discoverClaudeModelSlugs } from "./ClaudeModelDiscovery.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -103,14 +111,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const path = yield* Path.Path;
     // The server cwd is $HOME in packaged desktop builds, and `claude`
     // wrappers that scope themselves to their cwd refuse to run there.
-    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const { stateDir, providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const catalogService = yield* ModelCatalog.ModelCatalog;
-    const modelCatalog = catalogService
-      .current(DRIVER_KIND)
-      .pipe(Effect.map(resolveClaudeModelCatalog));
+    const discoveredModelSlugs = yield* Ref.make<ReadonlyArray<string>>([]);
+    const modelCatalog = Effect.all([
+      catalogService.current(DRIVER_KIND),
+      Ref.get(discoveredModelSlugs),
+    ]).pipe(
+      Effect.map(([catalog, discoveredSlugs]) =>
+        mergeDiscoveredClaudeModels(resolveClaudeModelCatalog(catalog), discoveredSlugs),
+      ),
+    );
     const processEnv = yield* mergeClaudeProcessEnvironment(config, environment, process.env);
     const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
@@ -146,6 +160,32 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+    const modelDiscoveryCachePath = path.join(
+      providerStatusCacheDir,
+      "claude-model-discovery.json",
+    );
+    const resolveInstalledModelCatalog = (cliVersion: string) =>
+      Effect.fn("ClaudeDriver.resolveInstalledModelCatalog")(function* () {
+        const claudeEnvironment = yield* makeClaudeEnvironment(effectiveConfig, processEnv);
+        const sdkExecutablePath = yield* resolveClaudeSdkExecutablePath(
+          effectiveConfig.binaryPath,
+          claudeEnvironment,
+        );
+        const platform = yield* HostProcess.Platform;
+        const resolveExecutable = yield* SpawnExecutableResolution;
+        const executablePath =
+          resolveExecutable(sdkExecutablePath, platform, claudeEnvironment) ?? sdkExecutablePath;
+        const slugs = yield* discoverClaudeModelSlugs({
+          executablePath,
+          cliVersion,
+          cachePath: modelDiscoveryCachePath,
+        });
+        yield* Ref.set(discoveredModelSlugs, slugs);
+        return yield* modelCatalog;
+      })().pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -231,7 +271,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       stateDir,
       processEnv,
     );
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+    // A cached reading taken before a usage reset is out of date the moment
+    // the reset passes (the probe loop re-reads just after one), so it is
+    // dropped and the CLI asked again rather than served for the rest of the TTL.
+    const readCapabilityProbe = Effect.gen(function* () {
+      const cached = yield* Cache.get(capabilitiesProbeCache, capabilitiesCacheKey);
+      const now = yield* Clock.currentTimeMillis;
+      if (
+        cached?.capabilities.usage === undefined ||
+        !claudeUsageResponseHasPassedReset(cached.capabilities.usage, now)
+      ) {
+        return cached;
+      }
+      yield* Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey);
+      return yield* Cache.get(capabilitiesProbeCache, capabilitiesCacheKey);
+    });
+    const resolveCapabilities = readCapabilityProbe.pipe(
       Effect.map((result) => result.capabilities),
     );
 
@@ -252,6 +307,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
+              resolveInstalledModelCatalog,
             ),
           ),
           Effect.tap((provider) =>

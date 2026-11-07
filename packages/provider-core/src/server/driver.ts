@@ -19,7 +19,7 @@ import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
 import type { ProviderDriverError } from "./errors.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { ProviderStructuredGeneration, ProviderTextGeneration } from "./textGeneration.ts";
 import type { ProviderUsageReader } from "./usage.ts";
 
 export interface ProviderDriverMetadata {
@@ -50,7 +50,7 @@ export interface ProviderInstance {
     ProviderDriverError
   >;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
-  readonly textGeneration: ProviderTextGeneration;
+  readonly textGeneration: ProviderTextGeneration & ProviderStructuredGeneration;
   readonly auth?: ProviderAuthController;
   readonly acpSessionManagement?: {
     readonly listSessions: (input: {

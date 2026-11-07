@@ -14,7 +14,10 @@ import {
   fallbackTextGenerationModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import type {
+  ProviderStructuredGeneration,
+  ProviderTextGeneration,
+} from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -37,9 +40,10 @@ export type {
   TranscriptionPostProcessingResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
-  "t3/textGeneration/TextGeneration",
-) {}
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  ProviderTextGeneration & ProviderStructuredGeneration
+>()("t3/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
   | "generateCommitMessage"

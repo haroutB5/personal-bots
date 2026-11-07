@@ -455,6 +455,18 @@ export const ProviderAdapterV2Error = Schema.Union([
 ]);
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
+/** The personal half of a provider session, read once when the session opens. */
+export interface ProviderAdapterV2PersonalSession {
+  /** True for a chat linked to a bot, including a bot's task chat. */
+  readonly personalBot: boolean;
+  /** The bot that owns the chat, when one does. */
+  readonly personalBotId?: string;
+  /** A chat made for a delegated task or a routine run. */
+  readonly personalTaskChat: boolean;
+  /** `PB_SECRET_<NAME>` variables an env-mode secret grants this session. */
+  readonly secretEnvironment?: Readonly<Record<string, string>>;
+}
+
 export interface ProviderAdapterV2OpenSessionInput {
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
@@ -465,6 +477,12 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly initialProviderItemIdentityVersion?: 2;
   /** The bot persona and app rules a personal thread's session carries. */
   readonly systemInstructions?: string;
+  /**
+   * The personal half of the session, read once by the personal layer: whether
+   * this is a bot chat or a task chat, the bot's id, and the env-mode secrets
+   * its process may see. Omitted for every non-personal thread.
+   */
+  readonly personal?: ProviderAdapterV2PersonalSession;
 }
 
 export interface ProviderAdapterV2EnsureThreadInput {

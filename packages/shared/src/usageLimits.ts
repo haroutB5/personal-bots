@@ -634,6 +634,12 @@ function resetMillis(window: ServerProviderUsageWindow): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
+/** True once the clock has passed the window's reset, so its reading no longer applies. */
+export function windowHasReset(window: ServerProviderUsageWindow, now: number): boolean {
+  const resetsAt = resetMillis(window);
+  return resetsAt !== null && resetsAt <= now;
+}
+
 export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null || window.windowDurationMins === undefined) return null;
