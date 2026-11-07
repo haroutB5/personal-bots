@@ -773,4 +773,81 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+
+  it.effect("keeps usage windows when the probe's auth is unknown", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const windows = [
+          { id: "five_hour", kind: "session" as const, label: "Session", usedPercent: 10 },
+        ];
+        const base = {
+          ...refreshedSnapshot,
+          auth: { status: "authenticated" as const, email: "a@example.test" },
+          usageLimits: { checkedAt: "2026-04-10T00:00:01.000Z", windows },
+        } satisfies ServerProvider;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(base),
+          checkProvider: Effect.succeed({
+            ...base,
+            auth: { status: "unknown" as const },
+            checkedAt: "2026-04-10T00:00:03.000Z",
+            usageLimits: {
+              checkedAt: "2026-04-10T00:00:03.000Z",
+              windows: [],
+              unavailable: { reason: "probeFailed" as const },
+            },
+          }),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        const unknown = yield* provider.refresh;
+        assert.deepStrictEqual(unknown.usageLimits?.windows, windows);
+        assert.strictEqual(unknown.usageLimits?.refreshFailed !== undefined, true);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("clears usage windows on a real account switch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const windows = [
+          { id: "five_hour", kind: "session" as const, label: "Session", usedPercent: 10 },
+        ];
+        const base = {
+          ...refreshedSnapshot,
+          auth: { status: "authenticated" as const, email: "a@example.test" },
+          usageLimits: { checkedAt: "2026-04-10T00:00:01.000Z", windows },
+        } satisfies ServerProvider;
+        const failedLimits = {
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" as const },
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(base),
+          checkProvider: Effect.succeed({
+            ...base,
+            auth: { status: "authenticated" as const, email: "b@example.test" },
+            checkedAt: "2026-04-10T00:00:04.000Z",
+            usageLimits: failedLimits,
+          }),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        const switched = yield* provider.refresh;
+        assert.strictEqual(switched.auth.email, "b@example.test");
+        assert.deepStrictEqual(switched.usageLimits, failedLimits);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
 });

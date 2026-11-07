@@ -173,14 +173,17 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(kept?.unavailable).toBeUndefined();
   });
 
-  it("clears the reading when the provider reports no usage at all", () => {
+  it("keeps the last good reading when the probe returned nothing", () => {
     expect(
       resolveUsageLimitsAfterProbe({
         published,
         probed: undefined,
         context: { checkedAt: probeAt, installed: true, enabled: true },
       }),
-    ).toBeUndefined();
+    ).toEqual({
+      ...published,
+      refreshFailed: { at: probeAt, message: "usage came back empty" },
+    });
   });
 
   it("prefers the probe's own reason and never leaves the note without a time", () => {

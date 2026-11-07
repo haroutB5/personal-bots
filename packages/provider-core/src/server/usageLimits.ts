@@ -172,15 +172,15 @@ export function resolveUsageLimitsAfterProbe(input: {
       ? probed
       : { ...probed, fullReadAt: probed.checkedAt };
   }
-  if (probed === undefined) return undefined;
   const lastGood =
     published !== undefined && published.unavailable === undefined && published.windows.length > 0;
   if (!lastGood) return probed;
   const reason =
     shortProbeFailureReason(probed?.unavailable?.message) ??
     shortProbeFailureReason(context?.message) ??
-    (probed.unavailable === undefined ? "usage came back empty" : undefined);
-  const at = context?.checkedAt ?? probed.checkedAt;
+    (probed?.unavailable === undefined ? "usage came back empty" : undefined);
+  const at = context?.checkedAt ?? probed?.checkedAt;
+  if (at === undefined) return published;
   return {
     ...published,
     refreshFailed: { at, ...(reason ? { message: reason } : {}) },

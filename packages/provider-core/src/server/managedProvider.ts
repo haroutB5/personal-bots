@@ -176,21 +176,18 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
-        const accountUnverified =
-          probedSnapshot.auth.status === "unknown" && previous.status !== "unknown";
-        const usageLimits =
-          switchedAccount || accountUnverified
-            ? probedSnapshot.usageLimits
-            : resolveUsageLimitsAfterProbe({
-                published: state.snapshot.usageLimits,
-                probed: probedSnapshot.usageLimits,
-                context: {
-                  checkedAt: probedSnapshot.checkedAt,
-                  message: probedSnapshot.message,
-                  enabled: probedSnapshot.enabled,
-                  installed: probedSnapshot.installed,
-                },
-              });
+        const usageLimits = switchedAccount
+          ? probedSnapshot.usageLimits
+          : resolveUsageLimitsAfterProbe({
+              published: state.snapshot.usageLimits,
+              probed: probedSnapshot.usageLimits,
+              context: {
+                checkedAt: probedSnapshot.checkedAt,
+                message: probedSnapshot.message,
+                enabled: probedSnapshot.enabled,
+                installed: probedSnapshot.installed,
+              },
+            });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
         const snapshot = withUsageLimits(
