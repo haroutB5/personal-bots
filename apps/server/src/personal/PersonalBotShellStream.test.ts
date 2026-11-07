@@ -11,7 +11,10 @@ import * as Stream from "effect/Stream";
 import { OrchestrationEventStore } from "../persistence/OrchestrationEventStore.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
-import { PersonalBotShellStream, layer as shellStreamLayer } from "./PersonalBotShellStream.ts";
+import {
+  PersonalBotShellStream,
+  layer as shellStreamLayer,
+} from "./PersonalBotShellStream.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
 
 const thread = (id: string, title: string) =>
@@ -79,7 +82,11 @@ it.effect("a snapshot opens the stream, then one coalesced upsert for a bot chat
       ["bot-thread", thread("bot-thread", "Researcher")],
       ["other-thread", thread("other-thread", "Not a bot chat")],
     ]),
-    events: [appEvent("bot-thread", 1), appEvent("bot-thread", 2), appEvent("other-thread", 3)],
+    events: [
+      appEvent("bot-thread", 1),
+      appEvent("bot-thread", 2),
+      appEvent("other-thread", 3),
+    ],
     linkChanges: [],
   };
   return Effect.gen(function* () {

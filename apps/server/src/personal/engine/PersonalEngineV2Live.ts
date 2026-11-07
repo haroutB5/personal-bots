@@ -1048,7 +1048,10 @@ const make = Effect.gen(function* () {
       if (threadIds.length === 0) return [];
       const snapshot = yield* threads.getShellSnapshot({ threadIds: [...threadIds] });
       return yield* toV1Shells([...snapshot.threads, ...snapshot.archivedThreads]);
-    }).pipe(NodeSqliteClient.readOnly, Effect.mapError(engineError("threadShells")));
+    }).pipe(
+      NodeSqliteClient.readOnly,
+      Effect.mapError(engineError("threadShells")),
+    );
 
   const shape: PersonalEngineShape = {
     createProject,
