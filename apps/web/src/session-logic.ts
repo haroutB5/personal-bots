@@ -1145,3 +1145,41 @@ export function deriveCanInterruptRunningThread(
 }
 
 export type { TurnDiffSummary };
+
+function timelineEntryFromMessage(message: ChatMessage): TimelineEntry {
+  return { id: message.id, kind: "message", createdAt: message.createdAt, message };
+}
+
+function timelineEntryFromProposedPlan(proposedPlan: ProposedPlan): TimelineEntry {
+  return {
+    id: proposedPlan.id,
+    kind: "proposed-plan",
+    createdAt: proposedPlan.createdAt,
+    proposedPlan,
+  };
+}
+
+function timelineEntryFromWork(workEntry: WorkLogEntry): TimelineEntry {
+  return { id: workEntry.id, kind: "work", createdAt: workEntry.createdAt, entry: workEntry };
+}
+
+export function deriveTimelineEntriesWithState(
+  messages: ReadonlyArray<ChatMessage>,
+  proposedPlans: ReadonlyArray<ProposedPlan>,
+  workEntries: ReadonlyArray<WorkLogEntry>,
+  _previous: TimelineEntriesProjection | null = null,
+): TimelineEntriesProjection {
+  const foldedAnswerMessageIds = new Set(
+    workEntries.flatMap((entry) =>
+      entry.questionAnswer ? [`async-answer:${entry.questionAnswer.requestId}`] : [],
+    ),
+  );
+  const entries = [
+    ...messages
+      .filter((message) => message.role !== "user" || !foldedAnswerMessageIds.has(message.id))
+      .map(timelineEntryFromMessage),
+    ...proposedPlans.map(timelineEntryFromProposedPlan),
+    ...workEntries.map(timelineEntryFromWork),
+  ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return { messages, proposedPlans, workEntries, entries };
+}

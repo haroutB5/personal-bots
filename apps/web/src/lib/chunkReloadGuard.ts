@@ -24,3 +24,13 @@ export function clearChunkReloadGuard(getStorage: () => Storage = () => window.s
     getStorage().removeItem(CHUNK_RELOAD_GUARD_KEY);
   } catch {}
 }
+
+export function peekChunkReloadGuard(
+  getStorage: () => Storage = () => window.sessionStorage,
+): boolean {
+  try {
+    return getStorage().getItem(CHUNK_RELOAD_GUARD_KEY) === "1";
+  } catch {
+    return true;
+  }
+}

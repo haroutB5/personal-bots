@@ -8,7 +8,10 @@ import type {
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import * as DateTime from "effect/DateTime";
-import { derivePendingRequests, deriveUserInputHistory } from "./pendingRequests";
+import {
+  derivePendingRequests,
+  deriveUserInputHistory,
+} from "@t3tools/client-runtime/pending-requests";
 import type { PendingUserInput } from "@hbots/personal-client/conversation/wireTypes";
 import {
   placeDelegationCards,

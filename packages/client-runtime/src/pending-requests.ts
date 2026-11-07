@@ -1,18 +1,42 @@
 import {
   ApprovalRequestId,
+  type EventId,
   ProviderApprovalOption,
   ProviderRequestKind,
+  type TurnId,
   UserInputQuestion,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import type {
-  OrchestrationThreadActivity,
-  PendingApproval,
-  PendingUserInput,
-} from "@hbots/personal-client/conversation/wireTypes";
+export interface PendingApproval {
+  readonly requestId: ApprovalRequestId;
+  readonly requestKind: ProviderRequestKind;
+  readonly createdAt: string;
+  readonly detail?: string;
+  readonly appName?: string;
+  readonly options?: ReadonlyArray<ProviderApprovalOption>;
+}
+
+export interface PendingUserInput {
+  readonly requestId: ApprovalRequestId;
+  readonly createdAt: string;
+  readonly questions: ReadonlyArray<UserInputQuestion>;
+  readonly dismissible: boolean;
+}
+
+/** The activity fields this reducer reads; the client's thread activity satisfies it. */
+export interface OrchestrationThreadActivity {
+  readonly id: EventId;
+  readonly tone: "info" | "tool" | "approval" | "error";
+  readonly kind: string;
+  readonly summary: string;
+  readonly payload: unknown;
+  readonly turnId: TurnId | null;
+  readonly sequence?: number | undefined;
+  readonly createdAt: string;
+}
 
 const isRequestId = Schema.is(ApprovalRequestId);
 const isProviderRequestKind = Schema.is(ProviderRequestKind);
@@ -34,7 +58,7 @@ const decodeQuestion = Schema.decodeUnknownOption(
 );
 
 /** Older activities use native request types instead of a request kind. */
-export function requestKindFromRequestType(requestType: unknown): ProviderRequestKind | null {
+function requestKindFromRequestType(requestType: unknown): ProviderRequestKind | null {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":

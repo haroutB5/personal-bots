@@ -538,6 +538,10 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./pending-requests": {
+      "types": "./src/pending-requests.ts",
+      "default": "./src/pending-requests.ts"
     }
   },
   "scripts": {
