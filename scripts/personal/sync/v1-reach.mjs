@@ -1,16 +1,10 @@
-// v1 reach: every personal file still built on the orchestrator v1 surface.
+// v1 reach: personal files that still read one of the five v1 projection tables.
 //
-//   node scripts/personal/sync/v1-reach.mjs <repo> --trunk <ref> --upstream <ref> --base <ref> [--list] [--json]
+//   node scripts/personal/sync/v1-reach.mjs <repo> [--list] [--json] [--baseline <path>]
 //
-// Two mechanical detectors, scoped to the personal layer:
-//   imports  a relative or @t3tools/contracts import that exists on trunk and is
-//            gone at upstream (the v2 port deleted the module)
-//   tables   a read of one of the five v1 projection tables
-//
-// Files that reach v1 only through another personal module (TaskCore,
-// PersonalGroupService, PersonalBotRepository) cannot be found by either rule.
-// They stay in the baseline as indirect entries with the reason, so the report
-// is the whole Appendix B census and a new direct hit fails the check.
+// The import detector retired at M1b: tsc already fails on a missing module.
+// The tables check stays because a query can read a dropped table with no type
+// error. The baseline is empty on the merged tree.
 //
 // Exit codes: 0 census matches the baseline, 1 unexpected or stale entry,
 // 2 usage or git error.
@@ -37,59 +31,6 @@ export const isPersonalPath = (path) =>
   !path.includes("/test/") &&
   (path.includes("/personal/") || /^packages\/contracts\/src\/personal[A-Za-z]*\.ts$/.test(path));
 
-const resolveRelativeImport = (from, spec, trunkFiles) => {
-  const joined = NodePath.posix.normalize(NodePath.posix.join(NodePath.posix.dirname(from), spec));
-  const candidates = [
-    joined,
-    `${joined}.ts`,
-    `${joined}.tsx`,
-    joined.replace(/\.js$/, ".ts"),
-    `${joined}/index.ts`,
-  ];
-  return candidates.find((candidate) => trunkFiles.has(candidate)) ?? null;
-};
-
-/**
- * One file's broken-import evidence. Pure: the caller supplies the file sets.
- * `source` is the file text at trunk.
- */
-export const brokenImportsFor = ({
-  file,
-  source,
-  trunkFiles,
-  upstreamFiles,
-  baseFiles,
-  resolveImport,
-}) => {
-  const rows = [];
-  for (const match of source.matchAll(/(?:from|import)\s*\(?\s*"([^"]+)"/g)) {
-    const spec = match[1];
-    const target = resolveImport(file, spec, trunkFiles);
-    if (target === null || upstreamFiles.has(target)) {
-      continue;
-    }
-    // A module we added ourselves is not a v1 loss; the file itself is.
-    if (baseFiles.has(target)) {
-      rows.push({ path: file, kind: "imports", detail: target });
-    }
-  }
-  return rows;
-};
-
-export const resolveImportTarget = (from, spec, trunkFiles) => {
-  if (spec.startsWith(".")) {
-    return resolveRelativeImport(from, spec, trunkFiles);
-  }
-  if (spec.startsWith("@t3tools/contracts/")) {
-    return resolveRelativeImport(
-      "packages/contracts/src/x.ts",
-      `./${spec.slice("@t3tools/contracts/".length)}`,
-      trunkFiles,
-    );
-  }
-  return null;
-};
-
 export const tableReadsFor = ({ file, source }) => {
   const rows = [];
   for (const table of V1_TABLES) {
@@ -111,10 +52,8 @@ export const censusFiles = (rows) => {
 };
 
 /**
- * Compare the detectors with the committed baseline.
- * `expected` is the baseline map path -> reason for indirect entries (null for
- * a direct baseline entry). `exists` checks that a baseline path is still in
- * the repo so a moved file cannot hide.
+ * Compare the detector with the committed baseline. `expected` maps a direct
+ * path to null. `exists` checks a baseline path is still in the repo.
  */
 export const classifyReach = ({ census, expected, exists }) => {
   const direct = [...census.keys()];
@@ -167,32 +106,17 @@ const parseArgs = (argv) => {
   if (repo === undefined || repo.startsWith("--")) {
     throw new Error("first argument must be the repo path");
   }
-  const options = {
-    repo,
-    trunk: "HEAD",
-    upstream: "upstream/main",
-    base: "2679d279ce",
-    list: false,
-    json: false,
-    baseline: DEFAULT_BASELINE_PATH,
-  };
+  const options = { repo, list: false, json: false, baseline: DEFAULT_BASELINE_PATH };
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--list") {
       options.list = true;
     } else if (arg === "--json") {
       options.json = true;
-    } else if (
-      arg === "--trunk" ||
-      arg === "--upstream" ||
-      arg === "--base" ||
-      arg === "--baseline"
-    ) {
+    } else if (arg === "--baseline") {
       const next = argv[index + 1];
-      if (next === undefined) {
-        throw new Error(`${arg} needs a value`);
-      }
-      options[arg.slice(2)] = next;
+      if (next === undefined) throw new Error("--baseline needs a value");
+      options.baseline = next;
       index += 1;
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -208,41 +132,24 @@ const main = () => {
   } catch (error) {
     console.error(`v1-reach: ${error.message}`);
     console.error(
-      "Usage: node scripts/personal/sync/v1-reach.mjs <repo> --trunk <ref> --upstream <ref> --base <ref> [--list] [--json]",
+      "Usage: node scripts/personal/sync/v1-reach.mjs <repo> [--list] [--json] [--baseline <path>]",
     );
     process.exit(2);
   }
 
-  const list = (ref) =>
-    new Set(git(options.repo, "ls-tree", "-r", "--name-only", ref).split("\n").filter(Boolean));
-
-  let trunkFiles;
-  let upstreamFiles;
-  let baseFiles;
+  let files;
   try {
-    trunkFiles = list(options.trunk);
-    upstreamFiles = list(options.upstream);
-    baseFiles = list(options.base);
+    files = new Set(
+      git(options.repo, "ls-tree", "-r", "--name-only", "HEAD").split("\n").filter(Boolean),
+    );
   } catch (error) {
-    console.error(`v1-reach: cannot read refs: ${error.message}`);
+    console.error(`v1-reach: cannot read HEAD: ${error.message}`);
     process.exit(2);
   }
 
-  const scope = [...trunkFiles].filter(isPersonalPath);
   const rows = [];
-  for (const file of scope) {
-    const source = git(options.repo, "show", `${options.trunk}:${file}`);
-    rows.push(
-      ...brokenImportsFor({
-        file,
-        source,
-        trunkFiles,
-        upstreamFiles,
-        baseFiles,
-        resolveImport: resolveImportTarget,
-      }),
-      ...tableReadsFor({ file, source }),
-    );
+  for (const file of [...files].filter(isPersonalPath)) {
+    rows.push(...tableReadsFor({ file, source: git(options.repo, "show", `HEAD:${file}`) }));
   }
 
   const census = censusFiles(rows);
@@ -254,13 +161,10 @@ const main = () => {
     process.exit(2);
   }
 
-  const exists = (path) => trunkFiles.has(path);
-  const result = classifyReach({ census, expected, exists });
+  const result = classifyReach({ census, expected, exists: (path) => files.has(path) });
 
   if (options.list) {
-    for (const path of [...expected.keys()].sort()) {
-      console.log(path);
-    }
+    for (const path of [...expected.keys()].sort()) console.log(path);
     process.exit(result.unexpected.length === 0 && result.stale.length === 0 ? 0 : 1);
   }
 
@@ -283,28 +187,20 @@ const main = () => {
       `v1 reach: ${result.total} personal files (${result.direct.length} direct, ${result.indirect.length} indirect)`,
     );
     for (const [path, evidence] of census) {
-      for (const item of evidence) {
-        console.log(`  ${path}\t${item.kind}\t${item.detail}`);
-      }
+      for (const item of evidence) console.log(`  ${path}\t${item.kind}\t${item.detail}`);
     }
-    for (const entry of result.indirect) {
-      console.log(`  ${entry.path}\tindirect\t${entry.reason}`);
-    }
+    for (const entry of result.indirect) console.log(`  ${entry.path}\tindirect\t${entry.reason}`);
   }
 
   if (result.unexpected.length > 0) {
     console.error(
       `v1-reach: ${result.unexpected.length} file(s) reach v1 but are not in the baseline:`,
     );
-    for (const path of result.unexpected) {
-      console.error(`  ${path}`);
-    }
+    for (const path of result.unexpected) console.error(`  ${path}`);
   }
   if (result.stale.length > 0) {
     console.error(`v1-reach: ${result.stale.length} baseline file(s) no longer exist:`);
-    for (const path of result.stale) {
-      console.error(`  ${path}`);
-    }
+    for (const path of result.stale) console.error(`  ${path}`);
   }
   process.exit(result.unexpected.length === 0 && result.stale.length === 0 ? 0 : 1);
 };
