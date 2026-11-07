@@ -20,6 +20,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerConfig from "./config.ts";
+import { secretRedactor } from "./personal/secrets/secretRedaction.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ServerLogger from "./serverLogger.ts";
 import {
@@ -194,6 +195,39 @@ describe("ServerLoggerLive", () => {
       assert.include(body, "wsTicket=<redacted>&dpop=<redacted>");
       assert.notInclude(body, "ticket-secret");
       assert.notInclude(body, "proof-secret");
+    }),
+  );
+
+  it.effect("masks a saved key in the console, the span and the OTLP export", () =>
+    Effect.gen(function* () {
+      const name = "C12_LOGGER_TEST_KEY";
+      const key = "sk-live-LoggerTest0123456789";
+      secretRedactor.set(name, key);
+      yield* Effect.addFinalizer(() => Effect.sync(() => secretRedactor.remove(name)));
+
+      const printed = yield* printThroughConsole({ token: key, detail: `failed with ${key}` });
+      assert.include(printed, `[secret ${name}]`);
+      assert.notInclude(printed, key);
+
+      const traced = yield* logInSpanThrough(
+        {},
+        Effect.logWarning("provider refused", { token: key }),
+      );
+      const events = JSON.stringify(
+        traced.spans.flatMap((span) =>
+          span.events.map(([eventName, , attributes]) => [eventName, attributes]),
+        ),
+      );
+      assert.include(events, `[secret ${name}]`);
+      assert.notInclude(events, key);
+
+      const { requests } = yield* logInSpanThrough(
+        { otlpLogsUrl: "https://collector.example.com/v1/logs" },
+        Effect.logWarning("provider refused", { token: key }),
+      );
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(body, `[secret ${name}]`);
+      assert.notInclude(body, key);
     }),
   );
 
