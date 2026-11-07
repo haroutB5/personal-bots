@@ -43,7 +43,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { PersonalEngine } from "../engine/PersonalEngine.ts";
 import { PersonalEngineV2Live } from "../engine/PersonalEngineV2Live.ts";
-import { PersonalProjectionRelationsV1Live } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import { PersonalProjectionRelationsV2Live } from "../engine/PersonalProjectionRelationsV2Live.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -276,14 +276,14 @@ const makeChainLayer = (provider: FakeProvider, name: string) => {
     Layer.provide(threadManagement),
     Layer.provide(projectService(projects)),
     Layer.provide(base),
-    Layer.provide(PersonalProjectionRelationsV1Live),
+    Layer.provide(PersonalProjectionRelationsV2Live),
     Layer.provide(database),
   );
   return PersonalTaskService.layer.pipe(
     Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(PersonalBotService.layerRequiringEngine.pipe(Layer.provideMerge(engine))),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(PersonalProjectionRelationsV1Live),
+    Layer.provideMerge(PersonalProjectionRelationsV2Live),
     Layer.provideMerge(database),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({

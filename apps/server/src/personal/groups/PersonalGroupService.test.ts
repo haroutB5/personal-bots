@@ -2185,7 +2185,7 @@ it("the group marker survives persistence decoding and never reaches the provide
     speaker: { kind: "bot", botId: PersonalBotId.make("bot-dev"), name: "Dev" },
   };
   const context = PersonalGroupService.personalGroupMessageContext(marker);
-  // Same codec as projection_thread_messages.context_json, i.e. a replay.
+  // The message context codec, i.e. a replay.
   const codec = Schema.fromJsonString(OrchestrationMessageContext);
   const decoded = Schema.decodeUnknownSync(codec)(Schema.encodeSync(codec)(context));
   const record = decoded.records[0]!;

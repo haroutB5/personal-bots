@@ -1,6 +1,5 @@
-import type { OrchestrationShellSnapshot, ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
-import { EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
 import {
   type ConnectionCatalogEntry,
   type PreparedConnection,
@@ -11,11 +10,6 @@ import {
   PrimaryConnectionTarget,
   type SupervisorConnectionState,
 } from "@t3tools/client-runtime/connection";
-import {
-  ShellSnapshotLoader,
-  type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
-import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
 import {
@@ -75,28 +69,6 @@ const offlineState = (generation: number, attempt: number): SupervisorConnection
   retryAt: null,
 });
 
-/**
- * The shell snapshot is large and changes with every streamed message, so it
- * is not written to SecureStore. A1's cold paint comes from the capped chats
- * snapshot; activity lands with the socket a moment later.
- */
-function makeShellCache() {
-  return EnvironmentCacheStore.of({
-    loadShell: () => Effect.succeed(Option.none()),
-    saveShell: () => Effect.void,
-    loadThread: () => Effect.succeed(Option.none()),
-    saveThread: () => Effect.void,
-    removeThread: () => Effect.void,
-    loadServerConfig: () => Effect.succeed(Option.none()),
-    saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
-    saveVcsRefs: () => Effect.void,
-    removeVcsRefs: () => Effect.void,
-    clearVcsRefs: () => Effect.void,
-    clear: () => Effect.void,
-  });
-}
-
 function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
   const [value, setValue] = useState<A>(() => Effect.runSync(SubscriptionRef.get(ref)));
   useEffect(() => {
@@ -110,20 +82,13 @@ function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
   return value;
 }
 
-export type NativePersonalRuntime =
-  | EnvironmentRegistry
-  | EnvironmentCacheStore
-  | ShellSnapshotLoader;
+export type NativePersonalRuntime = EnvironmentRegistry.EnvironmentRegistry;
 
 export interface NativePersonal {
   readonly environmentId: EnvironmentId;
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
   readonly bots: ReturnType<typeof createPersonalBotsClient>;
-  readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
-  readonly shellsOf: (
-    snapshot: OrchestrationShellSnapshot | null,
-  ) => ReadonlyArray<EnvironmentThreadShell>;
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
   readonly readSystemSummary: () => Promise<SystemSummary | null>;
   readonly useConnectionState: () => SupervisorConnectionState;
@@ -165,7 +130,7 @@ export function createNativePersonal(
   );
   const providersRef = Effect.runSync(SubscriptionRef.make<ReadonlyArray<ServerProvider>>([]));
 
-  const supervisor = EnvironmentSupervisor.of({
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target,
     state: stateRef,
     session: sessionRef,
@@ -175,14 +140,16 @@ export function createNativePersonal(
     retryNow: Effect.void,
   });
 
-  const registry = EnvironmentRegistry.of({
+  const registry = EnvironmentRegistry.EnvironmentRegistry.of({
     entries: entriesRef,
     networkStatus: networkRef,
     start: Effect.void,
-    register: () => Effect.void,
-    registerPlatform: () => Effect.void,
+    register: () => Effect.succeed(false),
+    assertKnownAddress: () => Effect.void,
     reconcilePlatform: () => Effect.void,
     remove: () => Effect.void,
+    removeRoute: () => Effect.void,
+    reorderRoutes: () => Effect.void,
     removeRelayEnvironments: () => Effect.void,
     retryNow: () => Effect.void,
     setEnabled: () => Effect.void,
@@ -197,34 +164,23 @@ export function createNativePersonal(
         : Stream.fail(new EnvironmentNotRegisteredError({ environmentId: requested })),
     run: (requested, effect) =>
       requested === environmentId
-        ? Effect.provideService(effect, EnvironmentSupervisor, supervisor)
+        ? Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor)
         : Effect.fail(new EnvironmentNotRegisteredError({ environmentId: requested })),
     runStream: ((requested, stream) =>
       requested === environmentId
-        ? Stream.provideService(stream, EnvironmentSupervisor, supervisor)
+        ? Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor)
         : Stream.fail(
             new EnvironmentNotRegisteredError({ environmentId: requested }),
-          )) as EnvironmentRegistry["Service"]["runStream"],
+          )) as EnvironmentRegistry.EnvironmentRegistry["Service"]["runStream"],
     followStream: ((requested, stream) =>
       requested === environmentId
-        ? Stream.provideService(stream, EnvironmentSupervisor, supervisor)
+        ? Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor)
         : Stream.fail(
             new EnvironmentNotRegisteredError({ environmentId: requested }),
-          )) as EnvironmentRegistry["Service"]["followStream"],
+          )) as EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"],
   });
 
-  const cache = makeShellCache();
-  const loader = ShellSnapshotLoader.of({
-    load: () => Effect.succeed(Option.none()),
-  });
-
-  const runtime = Atom.runtime(
-    Layer.mergeAll(
-      Layer.succeed(EnvironmentRegistry, registry),
-      Layer.succeed(EnvironmentCacheStore, cache),
-      Layer.succeed(ShellSnapshotLoader, loader),
-    ),
-  );
+  const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry));
 
   const host = {
     useActiveEnvironmentId: () => environmentId,
@@ -232,7 +188,6 @@ export function createNativePersonal(
   };
   const client = createPersonalClient(runtime, ports, host);
   const bots = createPersonalBotsClient(runtime, client);
-  const shell = createEnvironmentShellAtoms(runtime);
 
   let disposed = false;
   let current: NativeSession | null = null;
@@ -324,9 +279,6 @@ export function createNativePersonal(
     runtime,
     client,
     bots,
-    shell,
-    shellsOf: (snapshot) =>
-      snapshot === null ? [] : snapshot.threads.map((thread) => ({ ...thread, environmentId })),
     useProviders: () => useRefValue(providersRef),
     readSystemSummary: async () => {
       const controller = new AbortController();

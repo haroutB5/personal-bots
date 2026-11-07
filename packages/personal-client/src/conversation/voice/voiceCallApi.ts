@@ -1,20 +1,5 @@
 /**
  * The one module that knows how the web app talks to the voice-call server.
- *
- * Backend owns `apps/server/**` and the contract (`feat/hbots-voice-calls`,
- * `packages/contracts/src/personalVoiceCalls.ts`). Every server call the UI
- * makes is named here, so the rest of the voice feature depends on these
- * helpers and never on a transport: swapping an RPC, changing a tag or moving
- * an endpoint is a change to this file alone.
- *
- * Nothing secret ever passes through the browser: the server mints a
- * short-lived single-use Live token per call and the client hands that to
- * Google. The Gemini API key is saved as an ordinary brokered key (name
- * `GEMINI_API_KEY`, origin `https://generativelanguage.googleapis.com`, header
- * `x-goog-api-key`), so the settings row writes it through the same secret
- * store the Passwords and API-keys screens use and never reads a value back.
- *
- * @module features/personal/voice/voiceCallApi
  */
 import {
   type PersonalSecretSummary,
@@ -71,7 +56,9 @@ export function finishedCallListInput(input: VoiceCallFinishInput): VoiceCallLis
   return { threadId: input.threadId };
 }
 
-export function createVoiceCallApi<R, ER>(runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>) {
+export function createVoiceCallApi<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+) {
   /** Opens a call and mints its Live token. */
   const personalVoiceCallStart = createEnvironmentRpcCommand(runtime, {
     label: "personal-voice-calls:start",
@@ -107,13 +94,7 @@ export function createVoiceCallApi<R, ER>(runtime: Atom.AtomRuntime<EnvironmentR
   });
 
   /**
-   * The call's OWN chat while a call is running: the bot's status, whether its
-   * turn is running, and the newest finished reply (redacted and capped on the
-   * server). `bot_status`, `latest_reply` and the turn end all read this, so the
-   * voice can never see whatever chat happens to be on screen.
-   *
-   * A command, not a query: the call polls it once a second and wants the answer
-   * as of now, never a cached one.
+   * The call's OWN chat while a call is running: the bot's status, whether.
    */
   const personalVoiceCallSnapshot = createEnvironmentRpcCommand(runtime, {
     label: "personal-voice-calls:snapshot",

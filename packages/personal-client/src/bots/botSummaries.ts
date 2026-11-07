@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "./threadShell.ts";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   botTeam,
@@ -11,6 +11,7 @@ import {
   type PersonalBotThread,
   type PersonalBotThreadNewestMessage,
   type ServerProvider,
+  type ServerProviderSmokeCheck,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -137,7 +138,9 @@ export function taskCardBotLine(
 
 /** The bots' test message failed on the installed version; a verdict for another version says nothing. */
 export function isProviderBroken(
-  snapshot: Pick<ServerProvider, "version" | "smokeCheck">,
+  snapshot: Pick<ServerProvider, "version"> & {
+    readonly smokeCheck?: ServerProviderSmokeCheck | undefined;
+  },
 ): boolean {
   return (
     snapshot.smokeCheck?.status === "failed" && snapshot.smokeCheck.version === snapshot.version
@@ -201,22 +204,7 @@ function sameProvider(left: EnvironmentThreadShell, right: EnvironmentThreadShel
 }
 
 /**
- * A rate limit that has clearly passed, so the chat that recorded it must not
- * speak for the bot. The server keeps a failed chat's session in `error` with
- * its limit until that chat gets another turn, which a chat of an ended task
- * never does, and the bot has often replied since in other chats.
- *
- * Only a chat whose turn already failed (`error`) can be stale: one still
- * running is waiting on the provider's clock and keeps its limit. Stale when
- *  - the chat's task has ended (`endedTaskThreadIds`, every task of the chat
- *    failed, was cancelled or interrupted, or completed), or
- *  - the bot no longer runs on the provider the chat was limited on
- *    (`botProviderNames`, from {@link botProviderNames}): a limit is the old
- *    provider's account, so it says nothing about the one the bot switched to, or
- *  - a chat of the same bot on the same provider completed a turn after the
- *    limit was seen (`observedAt`, else the session's `updatedAt`).
- * `botShells` is every linked chat, archived ones too: a 48-hour auto-archive
- * must not bring the old limit back.
+ * A rate limit that has clearly passed, so the chat that recorded it must.
  */
 export function isRateLimitStale(
   shell: EnvironmentThreadShell,
@@ -531,14 +519,7 @@ export function buildBotSummaries(input: {
 
 /** Client-side search over bot names and their thread titles. */
 /**
- * What the Chats previews depend on, per bot: which thread is newest, and the
- * message boundaries of that thread. Deliberately NOT the shell's
- * `updatedAt`: the server bumps it on every streamed `message-sent` delta, so
- * keying the `personalBots.list` refetch on it refetched the whole list once
- * per chunk while any bot replied. This key moves when the owner sends a
- * message (`latestUserMessageAt`), a turn starts (`turnId`), the bot starts a
- * new message (`assistantMessageId`: commentary between tool calls is one
- * message each) and when the turn settles (`state`, `completedAt`).
+ * What the Chats previews depend on, per bot: which thread is newest, and.
  */
 export function previewRefreshKey(summaries: ReadonlyArray<BotSummary>): string {
   return summaries
@@ -577,13 +558,7 @@ function newestBoundary(fields: ReadonlyArray<string>): string {
 }
 
 /**
- * Whether the move from `previous` to `next` (two `previewRefreshKey`s) is a
- * message boundary worth refetching `personalBots.list` for. A boundary moved
- * on a bot's newest thread counts. A bot's newest thread changing to another
- * thread counts only when that thread has a newer message: on an app open the
- * newest thread also changes while group relays, tasks and thread shells are
- * still landing, and that cost a second and third list request per open.
- * Bots appearing or leaving come from the list itself, so they never count.
+ * Whether the move from `previous` to `next` (two `previewRefreshKey`s) is.
  */
 export function previewKeyAdvanced(previous: string, next: string): boolean {
   if (previous === next) return false;
@@ -615,12 +590,7 @@ export function filterBotSummaries(
 }
 
 /**
- * Splits the chats list into the pinned box and the list under it. A working
- * pin comes first, newest activity first among working pins, so the avatar
- * strip at the top of the home follows the same rule as the rows under it
- * (Harout, 17 Oct). The rest keep the box's own order: the dev lead, then the
- * assistant's, then any other pinned bot in the order it already had. Every
- * bot lands in exactly one of the two, so a pinned bot is never listed twice.
+ * Splits the chats list into the pinned box and the list under it. A.
  */
 export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): {
   readonly pinned: ReadonlyArray<BotSummary>;

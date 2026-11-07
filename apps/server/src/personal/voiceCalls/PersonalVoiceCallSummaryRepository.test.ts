@@ -17,6 +17,7 @@ import { PersonalBotId, ThreadId, type VoiceCallRecord } from "@t3tools/contract
 
 import { runMigrations } from "../../persistence/Migrations.ts";
 import * as PersonalVoiceCallRepository from "./PersonalVoiceCallRepository.ts";
+import { seedV2Message } from "../test/v2ProjectionSeed.ts";
 
 const SUMMARY = {
   summary: "He asked whether a court was free before his Saturday booking.",
@@ -63,7 +64,7 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
     });
 
   const setup = Effect.gen(function* () {
-    yield* runMigrations({ toMigrationInclusive: 111 });
+    yield* runMigrations();
     return yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   });
 
@@ -174,7 +175,6 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
   it.effect("gives the bot a call summary until it has been delivered to a turn", () =>
     Effect.gen(function* () {
       const repository = yield* setup;
-      const sql = yield* SqlClient.SqlClient;
       const chat = ThreadId.make("thread-turn");
       yield* insert({ callId: "t-1", threadId: chat, transcript: spoken("court three") });
       yield* repository.setSummary({ callId: "t-1", summary: SUMMARY });
@@ -192,14 +192,13 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
 
       // A reply written BEFORE the summary existed changes nothing: the bot
       // never saw those lines.
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (
-          'm-before', ${chat}, 'assistant', 'Earlier reply', 0,
-          '2026-10-15T16:00:00.000Z', '2026-10-15T16:00:00.000Z'
-        )
-      `;
+      yield* seedV2Message({
+        messageId: "m-before",
+        threadId: chat,
+        role: "assistant",
+        text: "Earlier reply",
+        createdAt: "2026-10-15T16:00:00.000Z",
+      });
       assert.equal((yield* repository.summariesForTurn({ threadId: chat, limit: 2 })).length, 1);
 
       // Delivered: now it is retired, and stays retired.

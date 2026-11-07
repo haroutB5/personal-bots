@@ -32,6 +32,7 @@ import {
   personalEngineTestLayer,
 } from "../test/personalEngineTestLayer.ts";
 import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
+import { seedV2Thread } from "../test/v2ProjectionSeed.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalPushService from "./PersonalPushService.ts";
 import { base64UrlEncode, type WebPushRequest } from "./webPushCrypto.ts";
@@ -1777,13 +1778,11 @@ it.effect("a bot_decides run that said notify still obeys the bot's mute", () =>
 
 /** The chat's own row: what a bot thread always has in production. */
 const chatRow = (threadId: ThreadId, title: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-      VALUES (${threadId}, 'project-1', ${title}, '2026-09-18T08:00:00.000Z',
-              '2026-09-18T08:00:00.000Z')
-    `;
+  seedV2Thread({
+    threadId,
+    projectId: "project-1",
+    title,
+    createdAt: "2026-09-18T08:00:00.000Z",
   });
 
 /**

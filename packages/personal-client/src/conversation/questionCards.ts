@@ -1,5 +1,5 @@
-import type { PendingUserInput } from "@t3tools/client-runtime/pending-requests";
-import type { OrchestrationThreadActivity, UserInputQuestion } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity, PendingUserInput } from "./wireTypes.ts";
+import type { UserInputQuestion } from "@t3tools/contracts";
 
 /** What the provider expects back: one answer per question id. */
 export type UserInputAnswers = Record<string, string | string[]>;
@@ -96,11 +96,6 @@ export function deriveUserInputResolutions(
 
 /**
  * The cards to render, oldest first.
- *
- * `seen` is every request this screen has shown so far: once a question is
- * answered it leaves `pending`, and without that memory the card would vanish
- * mid-tap with no record of what was chosen. Questions answered before this
- * screen mounted are not in `seen`, so old history stays out of the way.
  */
 export function deriveQuestionCards(
   pending: ReadonlyArray<PendingUserInput>,

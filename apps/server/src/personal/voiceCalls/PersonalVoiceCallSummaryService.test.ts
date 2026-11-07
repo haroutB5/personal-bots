@@ -48,6 +48,7 @@ import {
 import { VoiceCallHttp, type VoiceCallMintOutcome } from "./voiceCallGemini.ts";
 import { VOICE_CALL_GREETING_SUMMARY, parseVoiceCallSummary } from "./voiceCallSummary.ts";
 import { VoiceCallSummaryClaude } from "./voiceCallSummaryClaude.ts";
+import { seedV2Message } from "../test/v2ProjectionSeed.ts";
 
 const CTO_CHAT = ThreadId.make("thread-call-summary");
 const CTO_BOT = PersonalBotId.make("bot-cto");
@@ -368,7 +369,7 @@ const storedAttempts = (sql: SqlClient.SqlClient) =>
 describe("PersonalVoiceCallSummaryService.summarise", () => {
   it.effect("falls back to one Gemini text call when Claude cannot answer", () => {
     const calls: Array<HttpCall> = [];
-    return withService({ calls }, (service, sql) =>
+    return withService({ calls }, (service) =>
       Effect.gen(function* () {
         const summary = yield* service.summarise(CALL_ID);
         expect(summary).not.toBeNull();
@@ -834,20 +835,25 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
           },
         ],
       });
-    return withService({ calls }, (service, sql) =>
+    return withService({ calls }, (service) =>
       Effect.gen(function* () {
-        yield* sql`
-          INSERT INTO projection_thread_messages (
-            message_id, thread_id, role, text, is_streaming, created_at, updated_at, context_json
-          ) VALUES
-            ('m-relayed', ${CTO_CHAT}, 'user', 'Relayed by this call', 0,
-             '2026-10-16T14:00:30.000Z', '2026-10-16T14:00:30.000Z', ${relayContext(CALL_ID)}),
-            ('m-other-call', ${CTO_CHAT}, 'user', ${`Other call ${PRIVATE}`}, 0,
-             '2026-10-16T14:00:31.000Z', '2026-10-16T14:00:31.000Z',
-             ${relayContext("another-call-id")}),
-            ('m-typed', ${CTO_CHAT}, 'user', ${`Typed during the call ${PRIVATE}`}, 0,
-             '2026-10-16T14:00:32.000Z', '2026-10-16T14:00:32.000Z', NULL)
-        `;
+        for (const [messageId, text, createdAt, context] of [
+          [
+            "m-relayed",
+            "Relayed by this call",
+            "2026-10-16T14:00:30.000Z",
+            JSON.parse(relayContext(CALL_ID)) as unknown,
+          ],
+          [
+            "m-other-call",
+            `Other call ${PRIVATE}`,
+            "2026-10-16T14:00:31.000Z",
+            JSON.parse(relayContext("another-call-id")) as unknown,
+          ],
+          ["m-typed", `Typed during the call ${PRIVATE}`, "2026-10-16T14:00:32.000Z", undefined],
+        ] as const) {
+          yield* seedV2Message({ messageId, threadId: CTO_CHAT, text, createdAt, context });
+        }
         yield* service.summarise(CALL_ID);
         expect(calls).toHaveLength(1);
         const body = calls[0]!.request.body ?? "";
@@ -971,7 +977,7 @@ describe("PersonalVoiceCallSummaryService.sweep", () => {
   // them. The sweep must walk past them and still summarise the real call.
   it.effect("pages past permanently ineligible newer calls and reaches the older one", () => {
     const calls: Array<HttpCall> = [];
-    return withService({ calls }, (service, sql) =>
+    return withService({ calls }, (service) =>
       Effect.gen(function* () {
         // Five newer calls in a chat that had a sensitive site open: newer than
         // CALL_ID, so they fill the whole first page.

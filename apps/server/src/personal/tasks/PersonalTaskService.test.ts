@@ -39,9 +39,12 @@ import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
-import { PERSONAL_V1_RELATIONS } from "../engine/PersonalProjectionRelationsV1Live.ts";
-import { PersonalProjectionRelationsV1Live } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import {
+  PERSONAL_V2_RELATIONS,
+  PersonalProjectionRelationsV2Live,
+} from "../engine/PersonalProjectionRelationsV2Live.ts";
 import { personalStatusOf } from "../engine/PersonalThreadShellV2.ts";
+import { seedV2Message, seedV2Thread } from "../test/v2ProjectionSeed.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -473,7 +476,7 @@ const makeLayer = (
     Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(PersonalProjectionRelationsV1Live),
+    Layer.provideMerge(PersonalProjectionRelationsV2Live),
     Layer.provideMerge(engineLayer(harness).pipe(Layer.provide(database))),
     Layer.provideMerge(database),
     Layer.provideMerge(
@@ -1309,7 +1312,7 @@ it("the task-turn marker survives persistence decoding and never reaches the pro
     ],
   };
   const context = PersonalTaskService.personalTaskMessageContext(marker);
-  // Same codec as projection_thread_messages.context_json, i.e. a replay.
+  // The message context codec, i.e. a replay.
   const codec = Schema.fromJsonString(OrchestrationMessageContext);
   const decoded = Schema.decodeUnknownSync(codec)(Schema.encodeSync(codec)(context));
   const record = decoded.records[0]!;
@@ -2029,14 +2032,10 @@ describe("a task bound to a chat the owner archived", () => {
   const seedChats = (harness: Harness, chats: ReadonlyArray<readonly [ThreadId, string]>) =>
     Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
-      const sql = yield* SqlClient.SqlClient;
       const now = DateTime.formatIso(yield* DateTime.now);
       for (const [threadId, title] of chats) {
         yield* bots.createThread({ botId: botId("assistant"), threadId });
-        yield* sql`
-          INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-          VALUES (${threadId}, 'project', ${title}, ${now}, ${now})
-        `;
+        yield* seedV2Thread({ threadId, projectId: "project", title, createdAt: now });
         harness.titles.set(threadId, title);
         yield* setSession(
           harness,
@@ -4301,13 +4300,15 @@ describe("work record (1.60.41)", () => {
       return Effect.gen(function* () {
         yield* seedBots;
         const service = yield* PersonalTaskService.PersonalTaskService;
-        const sql = yield* SqlClient.SqlClient;
         const thread = ThreadId.make("history-thread");
         const other = ThreadId.make("other-thread");
-        const insert = (id: string, threadId: ThreadId, role: string, text: string, at: string) =>
-          sql`INSERT INTO projection_thread_messages
-          (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-          VALUES (${id}, ${threadId}, NULL, ${role}, ${text}, 0, ${at}, ${at})`;
+        const insert = (
+          id: string,
+          threadId: ThreadId,
+          role: "user" | "assistant" | "system",
+          text: string,
+          at: string,
+        ) => seedV2Message({ messageId: id, threadId, role, text, createdAt: at });
         yield* insert(
           "m1",
           thread,
@@ -4934,13 +4935,9 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
   ) =>
     Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
-      const sql = yield* SqlClient.SqlClient;
       const now = DateTime.formatIso(yield* DateTime.now);
       yield* bots.createThread({ botId: botId(bot), threadId, title });
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${threadId}, 'project', ${title}, ${now}, ${now})
-      `;
+      yield* seedV2Thread({ threadId, projectId: "project", title, createdAt: now });
       harness.titles.set(threadId, title);
       yield* setSession(
         harness,
@@ -5090,7 +5087,12 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
 
         // A deleted chat.
         yield* seedOwnerChat(harness, "chat-deleted" as ThreadId, "Gone");
-        yield* sql`UPDATE projection_threads SET deleted_at = ${"2026-10-01T00:00:00.000Z"} WHERE thread_id = 'chat-deleted'`;
+        yield* seedV2Thread({
+          threadId: "chat-deleted",
+          projectId: "project",
+          title: "Gone",
+          deletedAt: "2026-10-01T00:00:00.000Z",
+        });
         expect(yield* refusal("chat-deleted" as ThreadId)).toContain("was deleted");
 
         // A group member's relay thread.
@@ -5113,10 +5115,12 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         });
         yield* service.drain;
         const taskChat = threadOf(yield* reload(other.taskId));
-        yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${taskChat}, 'project', 'Some other job', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')
-      `;
+        yield* seedV2Thread({
+          threadId: taskChat,
+          projectId: "project",
+          title: "Some other job",
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
         expect(yield* refusal(taskChat)).toContain("made for a delegated task");
 
         // A routine's chat.
@@ -5159,10 +5163,12 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         yield* endTurn(harness, rootThread, turnId, "Handed over.");
         yield* service.drain;
         const controlChat = threadOf(yield* reload(control.taskId));
-        yield* sql`
-          INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-          VALUES (${controlChat}, 'project', 'Control job', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')
-        `;
+        yield* seedV2Thread({
+          threadId: controlChat,
+          projectId: "project",
+          title: "Control job",
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
         yield* runTurn(harness, CHAT, "Done in the chat.");
         yield* runTurn(harness, controlChat, "Done in its own chat.");
         yield* service.drain;
@@ -5170,7 +5176,7 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         expect((yield* reload(control.taskId)).status).toBe("completed");
 
         const candidates = yield* sql.unsafe<{ readonly threadId: string }>(
-          taskChatAutoArchiveCandidatesSql(PERSONAL_V1_RELATIONS),
+          taskChatAutoArchiveCandidatesSql(PERSONAL_V2_RELATIONS),
         );
         const candidateIds = candidates.map((row) => row.threadId);
         expect(candidateIds).toContain(controlChat);

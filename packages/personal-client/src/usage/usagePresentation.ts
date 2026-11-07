@@ -13,6 +13,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 
 import { formatUsd } from "./formatUsd.ts";
+import type { ProviderWithUsageBalance } from "./usageBalanceWire.ts";
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<string> = new Set();
 
@@ -337,17 +338,6 @@ function placeholderNotice(provider: ServerProvider, title: string): string | nu
 /**
  * One card per driver (Claude, Codex, DeepSeek) from the providers the config
  * stream already publishes. Drivers with no configured instance get no card.
- *
- * A provider with windows always shows them: the server keeps the last good
- * reading through a failed probe, a restart and a first probe still running,
- * so the card says how old it is and, when the newest refresh failed, why.
- * Only a provider never read falls back to `unavailable` or `not-reported`,
- * with the reason, and never 0%.
- *
- * DeepSeek has no windows: its card is the prepaid balance, with the same
- * keep-the-last-good behaviour behind it (the server keeps the numbers and
- * marks the newest read failed), and no balance at all when the key is
- * missing, which is final until one is added.
  */
 export function selectUsageCards(
   providers: ReadonlyArray<ServerProvider>,
@@ -419,17 +409,8 @@ export function selectUsageCards(
 
 /**
  * The DeepSeek card: the prepaid balance, or the quiet reason there is none.
- *
- * A reading keeps showing while the newest one fails (the server sends the
- * last good numbers with `status: "failed"`), so `refreshFailure` says the
- * refresh failed exactly as it does over kept windows. No reading at all is
- * final only without a key (nothing can ever be read until one is added),
- * which keeps the strip's own probing from asking forever.
- *
- * `balance.spent` rides the same reading: the API-price value of our own
- * transcript records, which stays null until there are records to price.
  */
-function deepSeekCard(provider: ServerProvider, title: string): UsageCard {
+function deepSeekCard(provider: ProviderWithUsageBalance, title: string): UsageCard {
   const usageBalance = provider.usageBalance;
   // The server writes `balance` only when it has numbers to show: the newest
   // reading when it succeeded, the last good one when it did not.
@@ -521,11 +502,7 @@ function formatSpentSince(sinceMs: number, nowMs: number): string {
 }
 
 /**
- * The DeepSeek spent figure as one line, used verbatim by the usage sheet card
- * and the Team card so the two surfaces read identically: `Spent $0.97 since
- * 10 Oct`. With no records to price it says so plainly, in the same words on
- * both surfaces, and never shows a zero standing in for a gap. The figure is
- * USD at the published rates even where the balance is in another currency.
+ * The DeepSeek spent figure as one line, used verbatim by the usage sheet.
  */
 export function deepSeekSpendText(spent: UsageBalanceSpend | null, now: number): string {
   if (spent === null) return "No DeepSeek spend recorded yet.";
@@ -565,18 +542,6 @@ export function selectDeepSeekBalanceLine(
 
 /**
  * Whether opening the sheet should probe before believing what it shows.
- *
- * The sheet renders the provider snapshot the app already had, and a snapshot
- * taken before any probe carries no windows at all — which used to render as
- * "Usage is not reported for this account yet", a claim nobody had checked.
- * Refreshing on open is what made the manual button appear to "fix" it.
- *
- * Old bars are the same claim: the sheet opened on a Claude reading seven
- * hours old ("Updated 7h") and showed it as current until the refresh button
- * was pressed (26 Sep). So any reading past a minute is probed on open.
- *
- * Fresh data is left alone so that reopening the sheet twice in a minute does
- * not spend a probe each time.
  */
 export const USAGE_STALE_AFTER_MS = 60_000;
 
@@ -590,23 +555,7 @@ export function usageNeedsRefreshOnOpen(cards: readonly UsageCard[], now: number
 }
 
 /**
- * The Bots list's own first reading. The server probes usage once at startup
- * and then on its five-minute cadence, but a startup probe that could not read
- * usage (the CLI is cold, the machine busy) leaves every bar reading "Not
- * reported" and doubles the wait for the next probe, so after a restart the
- * strip could stay empty for ten minutes until the sheet was opened (the
- * sheet probes on open). The list asks for the same probe itself:
- *
- * - whenever a card has no reading at all (the state right after such a
- *   restart, and a server that restarts under an open page), even when that
- *   failed probe was only seconds ago;
- * - whenever a window has reset since its card was read (the bars show it
- *   empty already; the read brings the new window's real numbers);
- * - on the first load of the app, a card whose reading is past a minute, by
- *   the sheet's rule ({@link usageNeedsRefreshOnOpen}); never because a good
- *   reading aged later: the server's own cadence keeps those fresh;
- * - never twice within one server probe interval, so a probe that keeps
- *   failing costs one attempt per interval, not one per render.
+ * The Bots list's own first reading. The server probes usage once at.
  */
 export const USAGE_AUTO_PROBE_MIN_GAP_MS = 5 * 60_000;
 
@@ -641,11 +590,6 @@ export function usageAutoProbeDue(input: {
 /**
  * What a card that has never been read should say (a card with a reading keeps
  * its bars; see `selectUsageCards`).
- *
- * A probe in flight says so rather than reporting an absence as a fact: the
- * two are indistinguishable in the snapshot, and only one of them is something
- * the owner can act on. A reason the provider gave (signed out, the probe's
- * failure) is shown as it is, not hidden behind "Checking…" once it is known.
  */
 export function usageCardEmptyText(
   card: UsageCard,

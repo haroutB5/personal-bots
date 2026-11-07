@@ -9,7 +9,7 @@ import type { HelperChild } from "./counterSample.ts";
 /**
  * The shapes below are the ones a real data root holds (read off the live
  * machine on 13 Oct 2026, read-only): the command lines the server's own
- * children carry, and the resume cursors `provider_session_runtime` stores
+ * children carry, and the resume cursors the provider-sessions relation holds
  * per provider. The fake CLI a throwaway root uses has none of this, which is
  * how the 1.66.37 bug reached live QA.
  */

@@ -23,7 +23,7 @@ import * as ThreadManagementService from "../../orchestration-v2/ThreadManagemen
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { PersonalEngineV2Live } from "../engine/PersonalEngineV2Live.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
-import { PERSONAL_V1_RELATIONS } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import { PERSONAL_V2_RELATIONS } from "../engine/PersonalProjectionRelationsV2Live.ts";
 import { layer as memoryLayer } from "../memory/PersonalMemoryService.ts";
 
 /** In-memory v2 database. The v1 projection tables still exist because B1 holds 063. */
@@ -59,7 +59,7 @@ export const personalReadsTestLayer = PersonalEngineV2Live.pipe(
   Layer.provide(readThreadsLayer),
   Layer.provide(projectsLayer),
   Layer.provide(eventSinkLayer),
-  Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V1_RELATIONS)),
+  Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V2_RELATIONS)),
 );
 
 /** PersonalMemoryService over the read ports above. Needs the test database. */

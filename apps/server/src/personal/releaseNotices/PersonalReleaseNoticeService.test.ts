@@ -30,6 +30,7 @@ import {
   type PersonalEngineHarness,
 } from "../test/personalEngineTestLayer.ts";
 import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
+import { seedV2Message, seedV2Thread } from "../test/v2ProjectionSeed.ts";
 import {
   PersonalReleaseNotices,
   RELEASE_NOTICE_DIR,
@@ -39,7 +40,6 @@ import {
 const CTO_CHAT = "thread-cto-chat";
 const PLAIN_THREAD = "thread-not-a-bot";
 const CHAT_CREATED = "2026-10-08T09:00:00.000Z";
-const MODEL_SELECTION = { instanceId: "claudeAgent", model: "claude-sonnet-5-5" };
 
 const makeLayer = (harness: PersonalEngineHarness) =>
   releaseNoticeLayer.pipe(
@@ -59,77 +59,20 @@ const makeLayer = (harness: PersonalEngineHarness) =>
     Layer.provideMerge(personalTestDatabase),
   );
 
-/**
- * One chat in the v1 projection the repository reads and the v2 projection the
- * engine reads. A deleted chat has no live v2 row: `getThread` returns none for
- * it, and only the soft-deleted projection row and its task outlive it.
- */
 const seedThread = (input: {
   readonly id: string;
   readonly title: string;
   readonly archivedAt?: string | null;
   readonly deletedAt?: string | null;
 }) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const archivedAt = input.archivedAt ?? null;
-    const deletedAt = input.deletedAt ?? null;
-    yield* sql`
-      INSERT OR REPLACE INTO projection_threads
-        (thread_id, project_id, title, created_at, updated_at, archived_at, deleted_at)
-      VALUES (${input.id}, 'project', ${input.title}, ${CHAT_CREATED}, ${CHAT_CREATED},
-        ${archivedAt}, ${deletedAt})
-    `;
-    yield* seedEngineThread(input);
-  });
-
-/**
- * The v2 row alone. A chat the repository must not count as one of the bot's
- * open chats (the CTO's own chat, a plain T3 thread) gets this: `getThread`
- * still reads it, while `listOpenChats` keeps reading the v1 tables.
- */
-const seedEngineThread = (input: {
-  readonly id: string;
-  readonly title: string;
-  readonly archivedAt?: string | null;
-  readonly deletedAt?: string | null;
-}) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const archivedAt = input.archivedAt ?? null;
-    if (input.deletedAt != null) return;
-    const payload = {
-      createdBy: "system",
-      creationSource: "server",
-      id: input.id,
-      projectId: "project",
-      title: input.title,
-      providerInstanceId: MODEL_SELECTION.instanceId,
-      modelSelection: MODEL_SELECTION,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      pullRequests: [],
-      activeProviderThreadId: null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: input.id },
-      forkedFrom: null,
-      createdAt: CHAT_CREATED,
-      updatedAt: CHAT_CREATED,
-      archivedAt,
-      settledOverride: null,
-      settledAt: null,
-      lastVisitedAt: null,
-      deletedAt: null,
-    };
-    yield* sql`
-      INSERT OR REPLACE INTO orchestration_v2_projection_threads
-        (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
-          active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json)
-      VALUES (${input.id}, 'project', ${input.title}, ${MODEL_SELECTION.instanceId},
-        'full-access', 'default', NULL, ${CHAT_CREATED}, ${CHAT_CREATED}, ${archivedAt}, NULL,
-        ${JSON.stringify(payload)})
-    `;
+  seedV2Thread({
+    threadId: input.id,
+    title: input.title,
+    instanceId: "claudeAgent",
+    model: "claude-sonnet-5-5",
+    createdAt: CHAT_CREATED,
+    archivedAt: input.archivedAt ?? null,
+    deletedAt: input.deletedAt ?? null,
   });
 
 /** The CTO's chat is a bot chat; PLAIN_THREAD is an ordinary T3 thread. */
@@ -147,8 +90,8 @@ const linkCtoChat = Effect.gen(function* () {
     INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
     VALUES (${CTO_CHAT}, 'bot-cto', ${now})
   `;
-  yield* seedEngineThread({ id: CTO_CHAT, title: "Main" });
-  yield* seedEngineThread({ id: PLAIN_THREAD, title: "Main" });
+  yield* seedThread({ id: CTO_CHAT, title: "Release hub" });
+  yield* seedThread({ id: PLAIN_THREAD, title: "Main" });
 });
 
 const inboxDir = Effect.map(ServerConfig.ServerConfig, (config) =>
@@ -415,10 +358,12 @@ describe("PersonalReleaseNotices", () => {
             deletedAt: chat.deleted === true ? created : null,
           });
           if (chat.lastMessageAt !== undefined) {
-            yield* sql`
-              INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
-              VALUES (${`${chat.id}-m`}, ${chat.id}, 'user', 'hi', 0, ${chat.lastMessageAt}, ${chat.lastMessageAt})
-            `;
+            yield* seedV2Message({
+              messageId: `${chat.id}-m`,
+              threadId: chat.id,
+              text: "hi",
+              createdAt: chat.lastMessageAt,
+            });
           }
           if (chat.taskChat === true || chat.deleted === true) {
             yield* sql`
@@ -449,14 +394,21 @@ describe("PersonalReleaseNotices", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const [row] = yield* sql<{ readonly title: string }>`
-          SELECT title FROM projection_threads WHERE thread_id = ${id}
+          SELECT title FROM orchestration_v2_projection_threads WHERE thread_id = ${id}
         `;
         return row?.title ?? null;
       });
 
-    const run = (chats: ReadonlyArray<ChatSeed>, target: string) =>
+    const run = (chats: ReadonlyArray<ChatSeed>, target: string, ctoChatOpen = true) =>
       Effect.gen(function* () {
         yield* linkCtoChat;
+        if (!ctoChatOpen) {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            UPDATE personal_bot_threads SET archived_at = '2026-10-01T00:00:00.000Z'
+            WHERE thread_id = ${CTO_CHAT}
+          `;
+        }
         yield* seedChats(chats);
         yield* writeNotice("20261008T120000Z-live.json", { ...BASE, threadId: target });
         const service = yield* PersonalReleaseNotices;
@@ -545,6 +497,7 @@ describe("PersonalReleaseNotices", () => {
           const outcomes = yield* run(
             [{ id: ARCHIVED_MAIN, title: "Main", archived: true }],
             ARCHIVED_MAIN,
+            false,
           );
 
           expect(outcomes).toHaveLength(1);

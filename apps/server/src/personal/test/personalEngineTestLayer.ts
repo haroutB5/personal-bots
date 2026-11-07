@@ -33,7 +33,7 @@ import {
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import { PersonalEngineV2Live } from "../engine/PersonalEngineV2Live.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
-import { PERSONAL_V1_RELATIONS } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import { PERSONAL_V2_RELATIONS } from "../engine/PersonalProjectionRelationsV2Live.ts";
 
 export const TEST_PROJECT_ID = ProjectId.make("personal-test-project");
 
@@ -80,19 +80,6 @@ const baseThread = (
     deletedAt: null,
   }) as unknown as OrchestrationV2AppThread;
 
-/** The v1 projection row the personal repository queries. */
-const insertV1Thread = (sql: SqlClient.SqlClient, thread: OrchestrationV2AppThread) =>
-  sql`
-    INSERT OR REPLACE INTO projection_threads
-      (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-        branch, worktree_path, created_at, updated_at, archived_at, deleted_at)
-    VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, ${JSON.stringify(thread.modelSelection)},
-      ${thread.runtimeMode}, ${thread.interactionMode}, ${thread.branch}, ${thread.worktreePath},
-      ${thread.createdAt as never}, ${thread.updatedAt as never},
-      ${thread.archivedAt === null ? null : (thread.archivedAt as never)},
-      ${thread.deletedAt === null ? null : (thread.deletedAt as never)})
-  `;
-
 const applyCommand = (harness: PersonalEngineHarness, command: OrchestrationV2ServerCommand) =>
   Effect.gen(function* () {
     harness.dispatched.push(command);
@@ -101,14 +88,15 @@ const applyCommand = (harness: PersonalEngineHarness, command: OrchestrationV2Se
       const thread = baseThread(command, nowIso());
       yield* sql`
         INSERT OR REPLACE INTO orchestration_v2_projection_threads
-          (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
-            active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json)
+          (thread_id, project_id, title, default_provider, provider_instance_id, runtime_mode,
+            interaction_mode, active_provider_thread_id, created_at, updated_at, archived_at,
+            deleted_at, payload_json)
         VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, ${thread.providerInstanceId},
+          ${thread.providerInstanceId},
           ${thread.runtimeMode}, ${thread.interactionMode}, NULL,
           ${thread.createdAt as never}, ${thread.updatedAt as never},
           NULL, NULL, ${threadPayload(thread)})
       `;
-      yield* insertV1Thread(sql, thread);
       return { sequence: harness.dispatched.length } as never;
     }
     if (command.type === "thread.metadata.update" && command.title !== undefined) {
@@ -118,10 +106,6 @@ const applyCommand = (harness: PersonalEngineHarness, command: OrchestrationV2Se
         SET title = ${command.title},
           updated_at = ${at},
           payload_json = json_set(payload_json, '$.title', ${command.title}, '$.updatedAt', ${at})
-        WHERE thread_id = ${command.threadId}
-      `;
-      yield* sql`
-        UPDATE projection_threads SET title = ${command.title}, updated_at = ${at}
         WHERE thread_id = ${command.threadId}
       `;
       return { sequence: harness.dispatched.length } as never;
@@ -155,11 +139,6 @@ const applyCommand = (harness: PersonalEngineHarness, command: OrchestrationV2Se
           ${JSON.stringify(message)})
       `;
       yield* sql`
-        INSERT OR REPLACE INTO projection_thread_messages
-          (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-        VALUES (${command.messageId}, ${command.threadId}, NULL, 'user', ${command.text}, 0, ${at}, ${at})
-      `;
-      yield* sql`
         INSERT OR REPLACE INTO orchestration_v2_projection_runs
           (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
             completed_at, payload_json)
@@ -173,10 +152,6 @@ const applyCommand = (harness: PersonalEngineHarness, command: OrchestrationV2Se
             payload_json = json_set(payload_json, '$.title', ${command.titleSeed})
           WHERE thread_id = ${command.threadId}
         `;
-        yield* sql`
-          UPDATE projection_threads SET title = ${command.titleSeed}
-          WHERE thread_id = ${command.threadId}
-        `;
       }
       return { sequence: harness.dispatched.length } as never;
     }
@@ -188,9 +163,6 @@ const applyCommand = (harness: PersonalEngineHarness, command: OrchestrationV2Se
           payload_json = json_set(payload_json, '$.archivedAt', ${at})
         WHERE thread_id = ${command.threadId}
       `;
-      yield* sql`
-        UPDATE projection_threads SET archived_at = ${at} WHERE thread_id = ${command.threadId}
-      `;
       return { sequence: harness.dispatched.length } as never;
     }
     if (command.type === "thread.delete") {
@@ -200,9 +172,6 @@ const applyCommand = (harness: PersonalEngineHarness, command: OrchestrationV2Se
         SET deleted_at = ${at},
           payload_json = json_set(payload_json, '$.deletedAt', ${at})
         WHERE thread_id = ${command.threadId}
-      `;
-      yield* sql`
-        UPDATE projection_threads SET deleted_at = ${at} WHERE thread_id = ${command.threadId}
       `;
       return { sequence: harness.dispatched.length } as never;
     }
@@ -271,7 +240,7 @@ export const personalEngineTestLayer = (harness: PersonalEngineHarness) =>
     Layer.provide(threadsLayer(harness)),
     Layer.provide(projectsLayer),
     Layer.provide(eventSinkLayer),
-    Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V1_RELATIONS)),
+    Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V2_RELATIONS)),
   );
 
 export const commandId = (value: string) => CommandId.make(value);

@@ -25,6 +25,7 @@ import * as PersonalBotService from "./PersonalBotService.ts";
 import * as PersonalTaskChatArchive from "./PersonalTaskChatArchiveService.ts";
 import { TASK_CHAT_AUTO_ARCHIVE_IDLE_MS } from "./taskChatAutoArchivePolicy.ts";
 import { personalTestDatabase } from "./test/personalReadsTestLayer.ts";
+import { seedV2Message, seedV2Run, seedV2Thread } from "./test/v2ProjectionSeed.ts";
 
 const MIN = 60_000;
 /** When the chats are made (the task starts); everything else is relative. */
@@ -184,16 +185,23 @@ const seed = (harness: Harness, chats: ReadonlyArray<ChatSpec>) =>
     for (const chat of chats) {
       const threadId = ThreadId.make(chat.id);
       yield* bots.createThread({ botId: BOT, threadId });
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, pinned_at)
-        VALUES (${chat.id}, 'project', ${chat.id}, ${iso(T0)}, ${iso(T0)}, ${chat.pinned === true ? iso(T0) : null})
-      `;
+      yield* seedV2Thread({
+        threadId: chat.id,
+        title: chat.id,
+        instanceId: INSTANCE,
+        createdAt: iso(T0),
+        pinnedAt: chat.pinned === true ? iso(T0) : null,
+      });
       harness.titles.set(chat.id, chat.id);
       const status = chat.sessionStatus ?? "ready";
-      yield* sql`
-        INSERT INTO projection_thread_sessions (thread_id, status, active_turn_id, updated_at)
-        VALUES (${chat.id}, ${status}, ${status === "running" ? "turn-live" : null}, ${iso(T0)})
-      `;
+      if (status === "running") {
+        yield* seedV2Run({
+          runId: "turn-live",
+          threadId: chat.id,
+          instanceId: INSTANCE,
+          requestedAt: iso(T0),
+        });
+      }
       harness.shells.set(chat.id, {
         session: { status, activeTurnId: status === "running" ? "turn-live" : null },
         backgroundLiveness: null,
@@ -239,10 +247,13 @@ const seed = (harness: Harness, chats: ReadonlyArray<ChatSpec>) =>
         [`${chat.id}-reply`, "assistant", TASK_DONE_MS],
       ];
       for (const [messageId, role, atMs] of messages) {
-        yield* sql`
-          INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
-          VALUES (${messageId}, ${chat.id}, ${role}, 'text', 0, ${iso(atMs)}, ${iso(atMs)})
-        `;
+        yield* seedV2Message({
+          messageId,
+          threadId: chat.id,
+          role,
+          text: "text",
+          createdAt: iso(atMs),
+        });
       }
       if (chat.routine === true) {
         yield* sql`
@@ -318,16 +329,13 @@ const settle = <R>(check: Effect.Effect<boolean, never, R>) =>
 /** A turn requested at `requestedMs` and still running on the chat. */
 const runTurn = (threadId: string, requestedMs: number) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, checkpoint_files_json)
-      VALUES (${threadId}, ${`${threadId}-turn`}, 'running', ${iso(requestedMs)}, ${iso(requestedMs)}, '[]')
-    `;
-    yield* sql`
-      UPDATE projection_thread_sessions
-      SET status = 'running', active_turn_id = ${`${threadId}-turn`}
-      WHERE thread_id = ${threadId}
-    `;
+    yield* seedV2Run({
+      runId: `${threadId}-turn`,
+      threadId,
+      ordinal: 99,
+      instanceId: INSTANCE,
+      requestedAt: iso(requestedMs),
+    });
   });
 
 describe("PersonalTaskChatArchive", () => {

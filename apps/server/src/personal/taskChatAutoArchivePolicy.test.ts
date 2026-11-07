@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 
 import { PERSONAL_TASK_TERMINAL_STATUSES } from "@t3tools/contracts";
 
-import { PERSONAL_V1_RELATIONS } from "./engine/PersonalProjectionRelationsV1Live.ts";
+import { PERSONAL_V2_RELATIONS } from "./engine/PersonalProjectionRelationsV2Live.ts";
 
 import {
   decideTaskChatArchive,
@@ -144,10 +144,10 @@ describe("finished task statuses", () => {
     expect(TASK_TERMINAL_STATUSES).toContain("interrupted");
     const list = "('completed', 'failed', 'interrupted', 'cancelled')";
     expect(TASK_CHAT_OPEN_WORK_SQL).toContain(`NOT IN ${list}`);
-    expect(taskChatAutoArchiveCandidatesSql(PERSONAL_V1_RELATIONS)).toContain(
+    expect(taskChatAutoArchiveCandidatesSql(PERSONAL_V2_RELATIONS)).toContain(
       `o.status NOT IN ${list}`,
     );
-    expect(taskChatAutoArchiveCandidatesSql(PERSONAL_V1_RELATIONS)).toContain(
+    expect(taskChatAutoArchiveCandidatesSql(PERSONAL_V2_RELATIONS)).toContain(
       `c.status NOT IN ${list}`,
     );
   });

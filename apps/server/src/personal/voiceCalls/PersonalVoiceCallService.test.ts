@@ -112,10 +112,6 @@ const seedChats = (
       [CTO_CHAT, "Main"],
       [OTHER_CHAT, "QA chat"],
     ] as const) {
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${threadId}, 'personal', ${title}, ${now}, ${now})
-      `;
       yield* seedEngineThread(threadId, title, now);
     }
     yield* sql`
@@ -169,10 +165,7 @@ const seedEngineThread = (threadId: ThreadId, title: string, at: string) =>
     `;
   });
 
-/**
- * One message in both projections: the v1 row the repository's activity read
- * uses, and the v2 row the engine's message reads use.
- */
+/** One message row in the v2 projection. */
 const insertMessage = (input: {
   readonly id: string;
   readonly threadId: ThreadId;
@@ -182,14 +175,6 @@ const insertMessage = (input: {
 }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT OR REPLACE INTO projection_thread_messages (
-        message_id, thread_id, role, text, is_streaming, created_at, updated_at
-      ) VALUES (
-        ${input.id}, ${input.threadId}, ${input.role}, ${input.text}, 0,
-        ${input.createdAt}, ${input.createdAt}
-      )
-    `;
     const payload = {
       createdBy: input.role === "user" ? "user" : "system",
       creationSource: "server",

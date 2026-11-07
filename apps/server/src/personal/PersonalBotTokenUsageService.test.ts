@@ -20,6 +20,7 @@ import type { BotUsageCell } from "../usage/botUsage.ts";
 import * as UsageService from "../usage/UsageService.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotTokenUsage from "./PersonalBotTokenUsageService.ts";
+import { seedV2ProviderThread } from "./test/v2ProjectionSeed.ts";
 
 const decodeCreateBot = Schema.decodeSync(PersonalBotRepository.CreatePersonalBotInput);
 const decodeInsertThreadLink = Schema.decodeSync(
@@ -81,7 +82,6 @@ function fakeScanner(options: { cells?: ReadonlyArray<BotUsageCell> } = {}) {
 
 const seedBots = Effect.gen(function* () {
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
-  const sql = yield* SqlClient.SqlClient;
   const ada = PersonalBotId.make("bot-ada");
   yield* repository.createBot(
     decodeCreateBot({
@@ -108,12 +108,11 @@ const seedBots = Effect.gen(function* () {
   yield* repository.insertThreadLink(
     decodeInsertThreadLink({ botId: ada, threadId, createdAt: "2026-09-13T20:38:00.000Z" }),
   );
-  yield* sql`
-    INSERT INTO provider_session_runtime
-      (thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json)
-    VALUES (${threadId}, 'claudeAgent', 'claudeAgent', 'full-access', 'running',
-      '2026-10-04T11:00:00.000Z', '{"resume":"claude-session-ada","turnCount":2}')
-  `;
+  yield* seedV2ProviderThread({
+    threadId: threadId,
+    driver: "claudeAgent",
+    nativeId: "claude-session-ada",
+  });
 });
 
 const harness = (scanner: ReturnType<typeof fakeScanner>) =>
@@ -388,7 +387,6 @@ it.effect("attributes Antigravity sessions to bots through resumeCursorJson", ()
   const scanner = fakeScanner({ cells: [AGY_CELL] });
   return Effect.gen(function* () {
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
-    const sql = yield* SqlClient.SqlClient;
     const geminiBot = PersonalBotId.make("bot-gemini");
     yield* repository.createBot(
       decodeCreateBot({
@@ -415,12 +413,11 @@ it.effect("attributes Antigravity sessions to bots through resumeCursorJson", ()
     yield* repository.insertThreadLink(
       decodeInsertThreadLink({ botId: geminiBot, threadId, createdAt: "2026-09-13T20:38:00.000Z" }),
     );
-    yield* sql`
-      INSERT INTO provider_session_runtime
-        (thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json)
-      VALUES (${threadId}, 'antigravity', 'antigravity', 'full-access', 'running',
-        '2026-10-04T11:00:00.000Z', '{"schemaVersion":1,"sessionId":"agy-session-gemini"}')
-    `;
+    yield* seedV2ProviderThread({
+      threadId: threadId,
+      driver: "antigravity",
+      nativeId: "agy-session-gemini",
+    });
 
     yield* TestClock.setTime(NOW_MS);
     const service = yield* PersonalBotTokenUsage.PersonalBotTokenUsage;
@@ -490,12 +487,11 @@ it.effect("attributes a finished session through provider session history", () =
     yield* repository.insertThreadLink(
       decodeInsertThreadLink({ botId: bot, threadId, createdAt: "2026-09-13T20:38:00.000Z" }),
     );
-    yield* sql`
-      INSERT INTO provider_session_runtime
-        (thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json)
-      VALUES (${threadId}, 'claudeAgent', 'claudeAgent', 'full-access', 'running',
-        '2026-10-04T11:00:00.000Z', '{"resume":"claude-session-new","turnCount":3}')
-    `;
+    yield* seedV2ProviderThread({
+      threadId: threadId,
+      driver: "claudeAgent",
+      nativeId: "claude-session-new",
+    });
     yield* sql`
       INSERT INTO provider_session_history (thread_id, provider_name, session_id, first_seen_at)
       VALUES (${threadId}, 'claudeAgent', 'claude-session-old', '2026-10-03T09:00:00.000Z')

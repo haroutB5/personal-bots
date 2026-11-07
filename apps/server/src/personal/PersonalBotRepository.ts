@@ -35,7 +35,7 @@ import {
 import type { PersonalBotPersona } from "./personalBotInstructions.ts";
 import { serverPerfOptimizationOn } from "./perfFlags.ts";
 import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
-import { PersonalProjectionRelationsV1Live } from "./engine/PersonalProjectionRelationsV1Live.ts";
+import { PersonalProjectionRelationsV2Live } from "./engine/PersonalProjectionRelationsV2Live.ts";
 
 export const CreatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
@@ -231,7 +231,7 @@ export interface PersonalBotProviderSession {
   /** The provider that owns the session (`claudeAgent`, `codex`, `opencode`, ...). */
   readonly providerName: string;
   /**
-   * `provider_session_runtime.resume_cursor_json`, as stored. The session id a
+   * the provider-sessions relation's `resume_cursor_json`, as stored. The session id a
    * Claude CLI carries on its command line lives in here (`$.resume`), not in
    * the sessions relation's `provider_session_id`, which is empty on a real
    * data root; `sessionIdFromResumeCursor` reads it for the provider at hand.
@@ -2230,5 +2230,5 @@ export const make = Effect.gen(function* () {
  * is chosen here, in one place.
  */
 export const layer = Layer.effect(PersonalBotRepository, make).pipe(
-  Layer.provideMerge(PersonalProjectionRelationsV1Live),
+  Layer.provideMerge(PersonalProjectionRelationsV2Live),
 );

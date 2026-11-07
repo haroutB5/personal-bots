@@ -37,6 +37,10 @@
       "types": "./src/bots/botSummaries.ts",
       "import": "./src/bots/botSummaries.ts"
     },
+    "./bots/threadShell": {
+      "types": "./src/bots/threadShell.ts",
+      "import": "./src/bots/threadShell.ts"
+    },
     "./bots/personalBots": {
       "types": "./src/bots/personalBots.ts",
       "import": "./src/bots/personalBots.ts"

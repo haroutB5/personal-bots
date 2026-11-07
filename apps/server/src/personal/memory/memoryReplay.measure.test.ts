@@ -23,7 +23,9 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { APP_SCOPING_ENV, detectActiveApps, MEMORY_APPS, mentionsApp } from "./memoryApps.ts";
 import { isStatusLike, RETRIEVAL_ENV } from "./memoryRetrieval.ts";
 import { PersonalMemoryService } from "./PersonalMemoryService.ts";
+import { PERSONAL_V2_RELATIONS } from "../engine/PersonalProjectionRelationsV2Live.ts";
 import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
+import { seedV2Message, seedV2Thread } from "../test/v2ProjectionSeed.ts";
 
 const LIVE_DB = process.env.HBOTS_MEMORY_REPLAY_DB;
 const OUT_DIR = process.env.HBOTS_MEMORY_REPLAY_OUT;
@@ -54,9 +56,9 @@ const readLive = (live: string) => {
     .prepare(
       `SELECT m.message_id AS id, m.thread_id AS tid, m.text AS text, m.created_at AS at,
          l.bot_id AS botId, COALESCE(t.title, '') AS title
-       FROM projection_thread_messages m
+       FROM ${PERSONAL_V2_RELATIONS.messages} m
        JOIN personal_bot_threads l ON l.thread_id = m.thread_id
-       LEFT JOIN projection_threads t ON t.thread_id = m.thread_id
+       LEFT JOIN ${PERSONAL_V2_RELATIONS.threads} t ON t.thread_id = m.thread_id
        WHERE m.role = 'user' AND m.message_id NOT LIKE 'personal-%' AND m.created_at > ?
        ORDER BY m.created_at DESC LIMIT 3000`,
     )
@@ -76,7 +78,7 @@ const readLive = (live: string) => {
     ...long.filter((_, index) => index % Math.ceil(long.length / 80) === 0),
   ];
   const previous = db.prepare(
-    `SELECT message_id AS id, role, substr(text, 1, 1500) AS text FROM projection_thread_messages
+    `SELECT message_id AS id, role, substr(text, 1, 1500) AS text FROM ${PERSONAL_V2_RELATIONS.messages}
      WHERE thread_id = ? AND created_at < ? AND role IN ('user','assistant')
      ORDER BY created_at DESC LIMIT 4`,
   );
@@ -172,27 +174,31 @@ describe.skipIf(LIVE_DB === undefined)("replay of real messages: before and afte
             insertedThreads.add(sample.threadId);
             yield* sql`INSERT OR IGNORE INTO personal_bot_threads (thread_id, bot_id, created_at)
               VALUES (${sample.threadId}, ${sample.botId}, '2026-10-01')`;
-            yield* sql`INSERT OR IGNORE INTO projection_threads (
-              thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-              created_at, updated_at
-            ) VALUES (${sample.threadId}, 'p', ${sample.title}, '{"instanceId":"codex","model":"m"}',
-              'full-access', 'default', '2026-10-01', '2026-10-01')`;
+            yield* seedV2Thread({
+              threadId: sample.threadId,
+              title: sample.title,
+              createdAt: "2026-10-01",
+            });
           }
           // Only this message and the four before it exist, as when it was sent.
-          yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${sample.threadId}`;
+          yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE thread_id = ${sample.threadId}`;
           let offset = sample.before.length + 1;
           for (const before of sample.before.toReversed()) {
             offset -= 1;
-            yield* sql`INSERT INTO projection_thread_messages
-              (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-              VALUES (${before.id}, ${sample.threadId}, NULL, ${before.role}, ${before.text}, 0,
-              ${new Date(Date.parse(sample.at) - offset * 1000).toISOString()},
-              ${new Date(Date.parse(sample.at) - offset * 1000).toISOString()})`;
+            yield* seedV2Message({
+              messageId: before.id,
+              threadId: sample.threadId,
+              role: before.role as "user" | "assistant",
+              text: before.text,
+              createdAt: new Date(Date.parse(sample.at) - offset * 1000).toISOString(),
+            });
           }
-          yield* sql`INSERT INTO projection_thread_messages
-            (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-            VALUES (${sample.messageId}, ${sample.threadId}, NULL, 'user', ${sample.text}, 0,
-            ${sample.at}, ${sample.at})`;
+          yield* seedV2Message({
+            messageId: sample.messageId,
+            threadId: sample.threadId,
+            text: sample.text,
+            createdAt: sample.at,
+          });
 
           const run = (legacy: boolean) =>
             Effect.gen(function* () {

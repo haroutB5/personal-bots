@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as StrandedTurnStarts from "./orchestration/strandedTurnStarts.ts";
 import { forkParked } from "../serverActivation.ts";
 import { layer as PersonalPrewarmSessionLayer } from "./engine/PersonalPrewarmSession.ts";
 import { layer as PersonalProviderSessionsLayer } from "./engine/PersonalProviderSessions.ts";
@@ -111,10 +110,6 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // Writes the one-line summary onto finished call cards: the boot sweep
     // doubles as the backfill, then it looks every 30 s (Harout, 16 Oct).
     yield* (yield* PersonalVoiceCallSummaryService.PersonalVoiceCallSummaryService).start();
-    // Additive boot repair: a pending turn-start row left by the last process
-    // can never be consumed (no provider session is running at boot), and one
-    // would otherwise stay "pending" with no turn id for good (QA 1.66.28).
-    yield* forkParked(StrandedTurnStarts.clearStrandedTurnStartsSafely);
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);

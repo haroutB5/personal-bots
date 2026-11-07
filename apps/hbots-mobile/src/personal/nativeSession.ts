@@ -1,11 +1,6 @@
-import { EnvironmentId } from "@t3tools/contracts";
-import { WS_METHODS } from "@t3tools/contracts";
+import { EnvironmentId, WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
 import type { ServerProvider } from "@t3tools/contracts";
-import {
-  makeWsRpcProtocolClient,
-  type RpcSession,
-  type WsRpcProtocolClient,
-} from "@t3tools/client-runtime/rpc";
+import type { RpcSession, WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -69,7 +64,7 @@ export async function connectNativeSession(
     Layer.provideMerge(Layer.succeed(Scope.Scope, scope)),
   );
   const runtime = makeManagedRuntime(protocolLayer);
-  const client: WsRpcProtocolClient = await runtime.runPromise(makeWsRpcProtocolClient);
+  const client: WsRpcProtocolClient = await runtime.runPromise(RpcClient.make(WsRpcGroup));
 
   const configFiber =
     onProviders === undefined
@@ -78,6 +73,7 @@ export async function connectNativeSession(
           client[WS_METHODS.subscribeServerConfig]({
             usageLimitsCommand: true,
             usageLimitSources: true,
+            workspaceSnapshotsOnDemand: true,
           }).pipe(
             Stream.runForEach((event) =>
               Effect.sync(() => {
@@ -97,7 +93,7 @@ export async function connectNativeSession(
           new ConnectionTransientError({ reason: "remote-unavailable", detail: String(cause) }),
       ),
     ),
-    subscribeServerConfig: (input) => client[WS_METHODS.subscribeServerConfig](input),
+    subscribeServerConfig: (input) => client[WS_METHODS.subscribeServerConfig](input ?? {}),
     ready: Effect.void,
     probe: client[WS_METHODS.serverGetConfig]({}).pipe(
       Effect.mapError(
@@ -106,6 +102,7 @@ export async function connectNativeSession(
       ),
       Effect.asVoid,
     ),
+    inboundFrames: Effect.succeed(0),
     closed: Deferred.await(disconnected),
   };
 

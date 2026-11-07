@@ -1,5 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 import {
   botStatus,
   buildBotSummaries,
@@ -21,7 +20,7 @@ import {
   currentProgressNote,
   currentTurnHasToolStep,
 } from "@hbots/personal-client/bots/workingProgress";
-import { isBotPinned, type ThreadId } from "@t3tools/contracts";
+import { isBotPinned, PERSONAL_BOT_THREADS_BATCH_MAX, type ThreadId } from "@t3tools/contracts";
 import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -37,6 +36,7 @@ import { SystemStatsLine } from "./SystemStatsLine";
 import { tokens } from "./tokens";
 
 const SKELETON_ROWS = 4;
+const SHELL_REFRESH_MS = 5_000;
 
 function statusColor(summary: BotSummary, now: number): string {
   return botStatus(summary, now).tone === "review" ? tokens.reviewText : tokens.textSecondary;
@@ -226,7 +226,6 @@ export function BotsScreen({
   const list = native.bots.usePersonalBotsList(environmentId);
   const routines = native.bots.usePersonalRoutinesList(environmentId);
   const providers = native.useProviders();
-  const shellState = useAtomValue(native.shell.stateValueAtom(environmentId));
   const connection = native.useConnectionState();
   const [snapshot, setSnapshot] = useState<ChatsSnapshot | null>(() =>
     readChatsSnapshot(native.client.ports.kv, environmentId),
@@ -244,50 +243,49 @@ export function BotsScreen({
 
   const refreshList = list.refresh;
   useEffect(() => {
-    if (
-      connection.phase === "connected" &&
-      shellState.status === "live" &&
-      refreshedGeneration.current !== connection.generation
-    ) {
+    if (connection.phase === "connected" && refreshedGeneration.current !== connection.generation) {
       refreshedGeneration.current = connection.generation;
       refreshList();
     }
-  }, [connection.generation, connection.phase, refreshList, shellState.status]);
+  }, [connection.generation, connection.phase, refreshList]);
 
-  const baseShells = useMemo<ReadonlyArray<EnvironmentThreadShell>>(
-    () => native.shellsOf(shellState.snapshot._tag === "Some" ? shellState.snapshot.value : null),
-    [native, shellState.snapshot],
-  );
-  // The slim shell leaves out archived bot chats. Ask for a linked chat only
-  // when its shell is genuinely missing, the same request the web makes.
-  const missingThreadIds = useMemo(() => {
-    if (list.data === null) return "";
-    const present = new Set(baseShells.map((shell) => shell.id as string));
-    return list.data.threads
-      .filter((link) => link.archivedAt === null && !present.has(link.threadId))
-      .map((link) => link.threadId as string)
-      .toSorted()
-      .join(",");
-  }, [baseShells, list.data]);
-  const extraShellsAtom = useMemo(
+  const linkedThreadIds = useMemo(
     () =>
-      missingThreadIds.length === 0
+      list.data === null
+        ? ""
+        : list.data.threads
+            .filter((link) => link.archivedAt === null)
+            .map((link) => link.threadId as string)
+            .toSorted()
+            .slice(0, PERSONAL_BOT_THREADS_BATCH_MAX)
+            .join(","),
+    [list.data],
+  );
+  const shellsAtom = useMemo(
+    () =>
+      linkedThreadIds.length === 0
         ? null
         : native.bots.personalBotsThreadShells({
             environmentId,
-            input: {
-              threadIds: missingThreadIds.split(",") as ThreadId[],
-            },
+            input: { threadIds: linkedThreadIds.split(",") as ThreadId[] },
           }),
-    [environmentId, missingThreadIds, native],
+    [environmentId, linkedThreadIds, native],
   );
-  const extraShells = native.client.useEnvironmentQuery(extraShellsAtom).data;
+  const shellsQuery = native.client.useEnvironmentQuery(shellsAtom);
+  const refreshShells = shellsQuery.refresh;
+  useEffect(() => {
+    if (shellsAtom === null || connection.phase !== "connected") return;
+    const timer = setInterval(() => {
+      refreshShells();
+      refreshList();
+    }, SHELL_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [connection.phase, refreshList, refreshShells, shellsAtom]);
+  const shellsData = shellsQuery.data;
   const shells = useMemo<ReadonlyArray<EnvironmentThreadShell>>(
     () =>
-      extraShells === null
-        ? baseShells
-        : [...baseShells, ...extraShells.threads.map((thread) => ({ ...thread, environmentId }))],
-    [baseShells, environmentId, extraShells],
+      shellsData === null ? [] : shellsData.threads.map((thread) => ({ ...thread, environmentId })),
+    [environmentId, shellsData],
   );
 
   const baseSummaries = useMemo(

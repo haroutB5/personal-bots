@@ -33,7 +33,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
-import { PersonalProjectionRelationsV1Live } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import { PersonalProjectionRelationsV2Live } from "../engine/PersonalProjectionRelationsV2Live.ts";
 import { personalStatusOf } from "../engine/PersonalThreadShellV2.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -410,7 +410,7 @@ const makeLayer = (
     Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(PersonalProjectionRelationsV1Live),
+    Layer.provideMerge(PersonalProjectionRelationsV2Live),
     Layer.provideMerge(engineLayer(harness).pipe(Layer.provide(database))),
     Layer.provideMerge(database),
     Layer.provideMerge(

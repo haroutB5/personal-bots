@@ -278,10 +278,10 @@ apps/server/src/persistence/ProjectionThreadPullRequests.ts		modify-delete	2	B1	
 apps/server/src/persistence/ProviderSessionRuntime.test.ts		added-broken	90	C10	dropped	the v1 provider_session_runtime table is deleted; v2 session state lives in orchestration_v2_projection_provider_sessions
 apps/server/src/persistence/Services/ProjectionThreadMessages.ts		modify-delete	25	C10	dropped	the v1 projection repository is deleted; v2 reads messages through ProjectionStore and PersonalEngine
 apps/server/src/persistence/Services/ProjectionThreadSessions.ts		modify-delete	5	C10	dropped	the v1 projection repository is deleted; provider retry rides on the v2 provider session and thread shell
-apps/server/src/personal/PersonalBotRepository.chatExtras.test.ts		added-broken	447	C16	open	chat-extras SQL reads v1 projection tables; C16 moves personal SQL off them
-apps/server/src/personal/PersonalBotRepository.groupPresence.test.ts		added-broken	189	C16	open	group-presence SQL reads v1 projection tables; C16 moves personal SQL off them
-apps/server/src/personal/PersonalBotRepository.test.ts		added-broken	670	C16	open	the repository suite runs on v1 projection tables; C16 moves personal SQL off them
-apps/server/src/personal/PersonalBotRepository.unread.test.ts		added-broken	258	C16	open	unread SQL reads v1 projection tables; C16 moves personal SQL off them
+apps/server/src/personal/PersonalBotRepository.chatExtras.test.ts		added-broken	447	C16	done	C16: ported to the v2 projection tables; seeds go through test/v2ProjectionSeed.ts and the suite is green
+apps/server/src/personal/PersonalBotRepository.groupPresence.test.ts		added-broken	189	C16	done	C16: ported to the v2 projection tables; seeds go through test/v2ProjectionSeed.ts and the suite is green
+apps/server/src/personal/PersonalBotRepository.test.ts		added-broken	670	C16	done	C16: ported to the v2 projection tables; seeds go through test/v2ProjectionSeed.ts and the suite is green
+apps/server/src/personal/PersonalBotRepository.unread.test.ts		added-broken	258	C16	done	C16: ported to the v2 projection tables; seeds go through test/v2ProjectionSeed.ts and the suite is green
 apps/server/src/personal/PersonalBotService.test.ts		added-broken	1143	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalBotService.workerInterrupt.test.ts		added-broken	206	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/PersonalBotTokenUsageService.test.ts		added-broken	531	C14	done	C14: per-bot token usage tests against UsageService.readSessionUsage
@@ -330,7 +330,7 @@ apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts		ad
 apps/server/src/personal/routines/PersonalRoutineService.test.ts		added-broken	1753	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/secrets/PersonalSecretService.test.ts		added-broken	2583	C12	open	sealed secrets (C12)
 apps/server/src/personal/taskTitleBackfill.test.ts		added-broken	409	C4	done	ported to the v2 turn context and engine; targeted suite passes
-apps/server/src/personal/tasks/PersonalTaskRepository.notify.test.ts		added-broken	130	C16	open	the task repository suite runs on v1 projection tables; C16 moves personal SQL off them
+apps/server/src/personal/tasks/PersonalTaskRepository.notify.test.ts		added-broken	130	C16	done	C16: ported to the v2 projection tables; seeds go through test/v2ProjectionSeed.ts and the suite is green
 apps/server/src/personal/tasks/PersonalTaskService.test.ts		added-broken	5487	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/tasks/taskProviderBoundary.test.ts		added-broken	1073	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/tasks/taskProviderChain.test.ts		added-broken	586	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
@@ -786,24 +786,24 @@ packages/client-runtime/src/connection/errors.test.ts		content	33	B1	dropped	eve
 packages/client-runtime/src/connection/errors.ts		content	14	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 packages/client-runtime/src/connection/registry.test.ts		content	40	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 packages/client-runtime/src/connection/resolver.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/connection/supervisor.test.ts		content	352	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
-packages/client-runtime/src/connection/supervisor.ts		content	173	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/connection/supervisor.test.ts		content	352	C16	dropped	U's EnvironmentSupervisor and its own supervisor tests stand; hbots-mobile now fakes the U service shape and imports no v1 entry point
+packages/client-runtime/src/connection/supervisor.ts		content	173	C16	dropped	U's EnvironmentSupervisor stands; hbots-mobile fakes the U service shape and imports no v1 entry point
 packages/client-runtime/src/connection/wakeups.ts		content	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 packages/client-runtime/src/errors/transport.test.ts		content	15	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 packages/client-runtime/src/errors/transport.ts		content	10	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 packages/client-runtime/src/operations/commands.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/operations/commands.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/pendingRequests.test.ts		modify-delete	69	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
-packages/client-runtime/src/pendingRequests.ts		modify-delete	39	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/pendingRequests.test.ts		modify-delete	69	C16	dropped	U deletes pending-requests; personal-client keeps its own PendingApproval and PendingUserInput types in conversation/wireTypes.ts
+packages/client-runtime/src/pendingRequests.ts		modify-delete	39	C16	dropped	U deletes pending-requests; personal-client keeps its own PendingApproval and PendingUserInput types in conversation/wireTypes.ts
 packages/client-runtime/src/platform/persistence.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/relay/managedRelayState.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/rpc/client.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/rpc/session.test.ts		content	45	B1	dropped	5d4d140d05 is upstream #15563, present in U; the rest is the Effect 4.1 codemod
-packages/client-runtime/src/rpc/session.ts		content	12	C16	open	027fdb6d28 omitProviderWorkspaceData; the bots surfaces drop 82% of the provider boot snapshot
+packages/client-runtime/src/rpc/session.ts		content	12	C16	dropped	U's subscribeServerConfig input carries workspaceSnapshotsOnDemand, which hbots-mobile now sets, so the bots surface still drops the per-cwd snapshots; omitProviderWorkspaceData is web-only
 packages/client-runtime/src/state/archivedThreads.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/archivedThreads.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/state/assets.test.ts		content	31	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
-packages/client-runtime/src/state/assets.ts		content	22	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/assets.test.ts		content	31	C16	dropped	the orchestration shell stream is dropped; the bots surfaces read thread shells through personalBots.threadShells
+packages/client-runtime/src/state/assets.ts		content	22	C16	dropped	the orchestration shell stream is dropped; the bots surfaces read thread shells through personalBots.threadShells
 packages/client-runtime/src/state/deviceHubAccess.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/entities.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/environmentHttpAuth.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -814,26 +814,26 @@ packages/client-runtime/src/state/preview.ts		content	1	B1	dropped	our only chan
 packages/client-runtime/src/state/projectCommands.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/review.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/runtime.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/state/server.ts		content	22	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/server.ts		content	22	C16	dropped	U's server state stands; hbots-mobile sets workspaceSnapshotsOnDemand on its own config subscription
 packages/client-runtime/src/state/session.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/state/shell-sync.test.ts		content	96	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/shell-sync.test.ts		content	96	C16	dropped	the orchestration shell stream is dropped; hbots-mobile polls personalBots.threadShells every 5s while connected
 packages/client-runtime/src/state/shell.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/state/shell.ts		content	9	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
-packages/client-runtime/src/state/shellSnapshotHttp.ts		content	52	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/shell.ts		content	9	C16	dropped	U reshapes EnvironmentThreadShell; personal-client defines its own in bots/threadShell.ts and hbots-mobile no longer imports state/shell
+packages/client-runtime/src/state/shellSnapshotHttp.ts		content	52	C16	dropped	hbots-mobile no longer loads a shell snapshot over HTTP; it fetches thread shells through personalBots.threadShells
 packages/client-runtime/src/state/sourceControl.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/terminal.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/threadCommands.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/threadCommands.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/threadDetail.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/state/threadReducer.test.ts		modify-delete	42	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
-packages/client-runtime/src/state/threadReducer.ts		modify-delete	9	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threadReducer.test.ts		modify-delete	42	C16	dropped	U deletes the thread reducer; no personal client reads it
+packages/client-runtime/src/state/threadReducer.ts		modify-delete	9	C16	dropped	U deletes the thread reducer; no personal client reads it
 packages/client-runtime/src/state/threadSearch.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/threadShell.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/state/threadSnapshotHttp.ts		content	63	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threadSnapshotHttp.ts		content	63	C16	dropped	no personal client loads a thread snapshot over HTTP; the open chat reads through the personal conversation RPCs
 packages/client-runtime/src/state/threads-atoms.test.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/threads-sync.test.ts		content	20	B1	dropped	every commit on our side is an upstream cherry-pick U already has
-packages/client-runtime/src/state/threads.ts		content	12	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
-packages/client-runtime/src/work-log/presentation.ts		content	9	C16	open	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threads.ts		content	12	C16	dropped	U's thread state stands; personal-client reads threads through personalBots RPCs
+packages/client-runtime/src/work-log/presentation.ts		content	9	C16	dropped	U's work-log presentation stands; personal-client's OrchestrationThreadActivity type lives in conversation/wireTypes.ts
 packages/contracts/src/assets.ts		content	26	C12	open	landed-PR retarget (Appendix H.4): C12
 packages/contracts/src/baseSchemas.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/device.ts		content	3	C15	dropped	U already carries the shortened device contract

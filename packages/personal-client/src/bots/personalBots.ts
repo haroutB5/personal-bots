@@ -31,7 +31,7 @@ import type { EnvironmentQueryView } from "../react/query.ts";
  * environment selection.
  */
 export function createPersonalBotsClient<R, ER, P>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   client: PersonalClient<R, ER, P>,
 ) {
   /** Shared key for the normal list and all of its mutation refreshes. */
@@ -330,6 +330,7 @@ export function createPersonalBotsClient<R, ER, P>(
       atom: null,
       updatedAt: null,
     });
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the chat read when the list reports a newer update for this open chat
     useEffect(() => {
       const old = previous.current;
       previous.current = { atom, updatedAt: listUpdatedAt };
@@ -339,6 +340,7 @@ export function createPersonalBotsClient<R, ER, P>(
         ((old.atom === atom && old.updatedAt !== listUpdatedAt) ||
           (old.atom !== atom && result.data !== null))
       ) {
+        // oxlint-disable-next-line react/exhaustive-effect-dependencies -- result.data and result.refresh are read as a pair; the view object itself is new every render
         result.refresh();
       }
     }, [atom, listUpdatedAt, result.data, result.refresh]);

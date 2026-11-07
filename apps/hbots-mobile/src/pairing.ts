@@ -4,6 +4,7 @@ import {
   AuthWebSocketTicketResult,
   ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { assertSameEnvironment } from "./failure";
@@ -35,7 +36,7 @@ export async function openSocketUrl(
     }),
   );
   const socketUrl = new URL("/ws", session.wsBaseUrl);
-  socketUrl.searchParams.set("wsTicket", ticket.ticket);
+  socketUrl.searchParams.set("wsTicket", Redacted.value(ticket.ticket));
   socketUrl.searchParams.set("clientSurface", "mobile");
   socketUrl.searchParams.set("clientDeviceType", "phone");
   socketUrl.searchParams.set("clientOs", "android");

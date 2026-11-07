@@ -1,10 +1,7 @@
-import type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
 import { PROVIDER_DISPLAY_NAMES, type ProviderDriverKind } from "@t3tools/contracts";
 import type {
-  OrchestrationLatestTurn,
   OrchestrationSession,
   OrchestrationSessionProviderRetry,
-  OrchestrationThreadActivity,
   PersonalBrowserStatus,
   PersonalChatNoticeMarker,
   PersonalGroupSystemEvent,
@@ -19,7 +16,13 @@ import type { VoiceCallTranscriptEntry } from "./voice/voiceCallApi.ts";
 import { VOICE_SUMMARY_WAIT_MS } from "./voice/callState.ts";
 import type { VoiceCallSummary } from "@t3tools/contracts";
 
+import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import type { ChatMessage, ProposedPlan, TimelineEntry, WorkLogEntry } from "./types.ts";
+import type {
+  OrchestrationThreadActivity,
+  PendingApproval,
+  PendingUserInput,
+} from "./wireTypes.ts";
 
 import { isServerTurnNotice, readChatNotice } from "./chatNotices.ts";
 import { readServerTurn, type ServerTurn, taskCreatedMs } from "./delegationModel.ts";
@@ -112,19 +115,6 @@ export function deriveConversationState(input: {
 
 /**
  * The opening stretch of a working turn, before the bot has produced anything:
- * no reply text (reasoning traces do not count) and, when the caller has the
- * thread's activities, no tool call either. Drives the avatar's `thinking`
- * pose; only meaningful while the conversation is `working`.
- *
- * `latestTurn.assistantMessageId` is the signal: the server and the client
- * reducer both set it on the turn's first assistant message (streaming or
- * not) and never clear it within the turn. A session that is running a turn
- * the shell has not caught up with yet (or still starting one) is thinking too.
- * The chats list has shells only, so on its own this reads a turn that goes
- * straight to tools as thinking until its first line of text; the list clears
- * that with the working-progress read's `toolStep` (`currentTurnHasToolStep`).
- * The conversation header, which has the activities, switches to working on
- * the first tool call.
  */
 export function isTurnThinking(input: {
   readonly session: Pick<OrchestrationSession, "status" | "activeTurnId"> | null;
@@ -152,11 +142,6 @@ export function isTurnThinking(input: {
 /**
  * The context size to show beside the bot's name, or null before the chat has
  * reported one.
- *
- * Shown at every size, not only a heavy chat: the number rides along with the
- * turn's own activities, so displaying it costs nothing, and a chat's weight is
- * worth watching before it is a problem (it drives cost per turn, and the point
- * at which compaction starts summarising detail away).
  */
 export function contextBadgeLabel(usedTokens: number | null | undefined): string | null {
   if (usedTokens === null || usedTokens === undefined) return null;
@@ -235,10 +220,6 @@ const DETAIL_MAX = 200;
  * A session error as the owner should read it: never a raw exception or stack
  * trace. Known failure kinds get a plain sentence; everything else a generic
  * one. The original first line survives as `detail`.
- *
- * `fallback` replaces the generic sentence for callers whose failure is not a
- * failed reply (answering a question, closing one), so the unrecognised case
- * still names what actually went wrong.
  */
 export function friendlyTurnError(
   raw: string,
@@ -329,11 +310,7 @@ function redactSecrets(line: string): string {
 const START_FAILURE_FALLBACK = "the bot couldn't start a reply. Try again.";
 
 /**
- * The red line under a failed message. A turn that never started (the owner's
- * message has no turn) reads "Couldn't send: <short reason>", the reason being
- * the known failure's sentence or else the provider's own sanitised first line,
- * so it is never a bare "something failed". A turn that started and then failed
- * keeps {@link friendlyTurnError}'s wording.
+ * The red line under a failed message. A turn that never started (the.
  */
 export function failedTurnError(input: {
   readonly raw: string;
@@ -389,12 +366,7 @@ export interface TurnErrorNotice {
 }
 
 /**
- * The notice under a failed or auto-retrying turn, or null when the chat has
- * nothing to say. While the server retries by itself (a renewed session or a
- * transient failure) the notice is neutral and offers no Retry; once the
- * failure is final it is red, reads "Couldn't send: …" for a message that
- * never got a turn, and offers Retry when the owner's own message is there to
- * re-send. The server clears the error on the next good turn, and so does this.
+ * The notice under a failed or auto-retrying turn, or null when the chat.
  */
 export function turnErrorNotice(input: {
   readonly state: ConversationState;
@@ -444,11 +416,6 @@ export function turnErrorNotice(input: {
 /**
  * What the chat says about a failed reply the server is retrying by itself.
  * Null when no automatic retry is in play, so the caller keeps its own text.
- *
- * Honesty is the whole point of this function: while a retry is pending it
- * says so and counts it, and once the attempts are spent it says they are
- * spent rather than leaving a hopeful "trying again" on screen forever. The
- * provider's own line is untouched either way, and stays under "Details".
  */
 export function autoRetryNotice(
   retry: OrchestrationSessionProviderRetry | null | undefined,
@@ -651,11 +618,7 @@ export interface VoiceCallCardItem {
    */
   readonly startedAtMs: number;
   /**
-   * Epoch ms of the call's end, and where a finished card sits in the timeline
-   * (Harout, 16 Oct, 1.66.61). The summary arrives a few seconds after the
-   * card, so this, not the start, decides how long a card without one is still
-   * worth asking for again: a 30-minute call used to be past that window before
-   * it had even ended (Astra re-check R4).
+   * Epoch ms of the call's end, and where a finished card sits in the.
    */
   readonly endedAtMs: number;
   readonly live: boolean;
@@ -675,17 +638,6 @@ export interface VoiceCallCardItem {
 
 /**
  * Where a call card sits in the timeline.
- *
- * A finished call reads as the newest thing the moment it hangs up, so its card
- * goes at the call's END: the messages the call relayed were written while it
- * ran, and the card with its summary and decision belongs under all of them.
- * Harout, 16 Oct (call e3a8c23c in chat 75c5ca85): the summary was stored 12 s
- * after the call and was correct, but the card sat at the call's START, above
- * his request, the bot's lines and the answer, so he never saw it up the chat.
- *
- * A live call is not history yet: it stays at the bottom (today the running card
- * is rendered outside the timeline, see LiveVoiceCallCard), so the chat it is
- * writing can never bury it.
  */
 export function callPlacementMs(card: Pick<VoiceCallCardItem, "live" | "endedAtMs">): number {
   return card.live ? Number.POSITIVE_INFINITY : card.endedAtMs;
@@ -694,15 +646,6 @@ export function callPlacementMs(card: Pick<VoiceCallCardItem, "live" | "endedAtM
 /**
  * Is a call card still waiting for its summary, i.e. worth asking the server
  * for again?
- *
- * Harout, 16 Oct: a call asked whether a court was free and the chat showed
- * nothing of it. The summary is written on the server a few seconds after the
- * card, so a card without one is polled for a while and then left alone.
- *
- * The window is measured from the call's END, never its start: a call may last
- * 30 minutes, and starting the clock at its start meant every longer call was
- * already stale when it ended and never refreshed, which was the original bug
- * (Astra re-check R4).
  */
 export const voiceCallSummaryPending = (
   cards: ReadonlyArray<{
@@ -851,12 +794,6 @@ export function buildConversationItems(
 
 /**
  * When the bot last said something, in epoch ms, or null if it has not spoken.
- *
- * Drives the composer's "Queued" notice. A message sent mid-turn reaches the
- * running turn as a steer, so the bot often answers it long before the turn
- * ends: keeping the notice up until then claims the bot has not seen a message
- * it has already replied to. Anything the bot emits after the message was sent
- * is proof that it has.
  */
 export function botLastSpokeAtMs(items: ReadonlyArray<ConversationItem>): number | null {
   for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -991,18 +928,6 @@ interface TimedCard {
 /**
  * Drops each settled card back into the transcript at the moment it happened,
  * and keeps every still-open one at the end.
- *
- * A question the owner has already answered is history: it belongs where the
- * bot asked it, so whatever the bot said next reads below it instead of above
- * it. A question still waiting for an answer is not history, and a bot that
- * asks and keeps working would bury it mid-transcript, so open cards stay last
- * (in ask order) where the scroller already parks the reader.
- *
- * Ordering is total and stable: cards sort by time then by id, and a card is
- * inserted after every row at or before its own time, so equal timestamps never
- * depend on map or query order. Day dividers are untouched — they were decided
- * in `buildConversationItems` from the entries' own gaps, and inserting a card
- * afterwards cannot invent or move one.
  */
 function placeTimedCards(
   items: ReadonlyArray<ConversationItem>,

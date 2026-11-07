@@ -1,5 +1,5 @@
 import type { PersonalBotThread } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "./threadShell.ts";
 import * as DateTime from "effect/DateTime";
 
 const parseMs = (value: string | null | undefined): number | null => {
@@ -9,15 +9,7 @@ const parseMs = (value: string | null | undefined): number | null => {
 };
 
 /**
- * When a chat last had real conversation: the owner's last message, the
- * latest turn starting or ending, the newest message the server reports for
- * it (a relay routine posts without a turn), else when it was made. What the
- * Bots list and a bot's chat list order by and show as "7m".
- *
- * Never the shell's `updatedAt`: any metadata write moves it. On 28 Sep two
- * 3-day-old chats jumped to the top of the Bots list as "Now" when upstream's
- * auto-settle settled them (settle after 3 days idle stamps updatedAt, and
- * its session stop adds more).
+ * When a chat last had real conversation: the owner's last message.
  */
 export function chatActivityMs(
   shell: Pick<EnvironmentThreadShell, "createdAt" | "latestUserMessageAt" | "latestTurn">,
@@ -52,11 +44,7 @@ export function chatActivityMs(
 }
 
 /**
- * The last answer per shell. The Bots list sorts every bot's chats by this
- * inside a comparator and rebuilds on every shell update while bots stream, so
- * the same five date strings were parsed thousands of times a second (a
- * quarter of the phone's main thread, 1.64.1 measurement). Every input is
- * checked against the memo, so a shell changed in place still recomputes.
+ * The last answer per shell. The Bots list sorts every bot's chats by.
  */
 const activityMemo = new WeakMap<
   object,

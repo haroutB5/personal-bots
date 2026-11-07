@@ -18,7 +18,7 @@ import * as ServerConfig from "../../config.ts";
 import { PersonalEngine } from "../engine/PersonalEngine.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
-import { PERSONAL_V1_RELATIONS } from "../engine/PersonalProjectionRelationsV1Live.ts";
+import { PERSONAL_V2_RELATIONS } from "../engine/PersonalProjectionRelationsV2Live.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { pushEventForTask } from "../push/PersonalPushService.ts";
@@ -76,7 +76,7 @@ const makeServicesLayer = (harness: RoutineHarness = makeHarness()) =>
         listProviders: () => Effect.succeed([]),
       }),
     ),
-    Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V1_RELATIONS)),
+    Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V2_RELATIONS)),
     Layer.provideMerge(recordingEngineLayer(harness)),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-routines-test-" }),
@@ -1272,19 +1272,11 @@ it.effect(
   },
 );
 
-/**
- * The titles a bot's open chats are listed by (the repository reads the v1
- * rows) and the titles the engine reports (the v2 rows). The harness has no
- * projector, so both are written here.
- */
+/** Names the chats the engine harness created. The harness has no projector. */
 const seedProjectedChats = (chats: ReadonlyArray<readonly [ThreadId, string]>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     for (const [threadId, title] of chats) {
-      yield* sql`
-        INSERT OR REPLACE INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${threadId}, 'project', ${title}, '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')
-      `;
       yield* sql`
         UPDATE orchestration_v2_projection_threads
         SET title = ${title}, payload_json = json_set(payload_json, '$.title', ${title})

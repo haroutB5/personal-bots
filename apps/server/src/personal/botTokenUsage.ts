@@ -5,7 +5,7 @@
  * windows. No I/O, so it is tested without a database or a transcript.
  *
  * A bot's chats are provider sessions. The session id each chat resumes lives
- * in `provider_session_runtime.resume_cursor_json` (Claude: `resume`, Codex:
+ * in the provider-sessions relation's `resume_cursor_json` (Claude: `resume`, Codex:
  * `threadId`, OpenCode: `sessionId`), and the chat belongs to a bot through
  * `personal_bot_threads`. A transcript session no live chat points to (a
  * deleted chat, work done outside the app) lands in "other".
@@ -52,9 +52,9 @@ export function isHiddenAntigravityModel(provider: UsageProviderKind, model: str
 /** A chat's provider session, as the database stores it. */
 export interface ChatSessionRow {
   readonly botId: string;
-  /** `provider_session_runtime.provider_name`. */
+  /** The provider-sessions relation's `provider_name`. */
   readonly providerName: string;
-  /** `provider_session_runtime.resume_cursor_json`. */
+  /** The provider-sessions relation's `resume_cursor_json`. */
   readonly resumeCursorJson: string | null;
   /** `provider_session_history.session_id`: a session this chat used earlier. */
   readonly sessionId?: string | null;

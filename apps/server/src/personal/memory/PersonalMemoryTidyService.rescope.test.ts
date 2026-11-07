@@ -15,6 +15,7 @@ import {
 } from "./PersonalMemoryTidyService.ts";
 import { MEMORY_AUTO_APPLY_ENV } from "./memoryAutoApply.ts";
 import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
+import { seedV2Thread } from "../test/v2ProjectionSeed.ts";
 
 // These tests are the cards mode, where every change waits for the owner's OK: the kill
 // switch. The automatic mode (the default) has its own tests in PersonalMemoryTidyService.auto.test.ts.
@@ -46,11 +47,12 @@ const setup = Effect.gen(function* () {
   ] as const) {
     yield* sql`INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
       VALUES (${thread}, ${BOT_A}, '2026-10-01')`;
-    yield* sql`INSERT INTO projection_threads (
-        thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-        created_at, updated_at
-      ) VALUES (${thread}, 'p', ${title}, '{"instanceId":"codex","model":"m"}',
-        'full-access', 'default', '2026-10-01', '2026-10-01')`;
+    yield* seedV2Thread({
+      threadId: thread,
+      title,
+      createdAt: "2026-10-01",
+      updatedAt: "2026-10-01",
+    });
   }
   const memory = yield* PersonalMemoryService;
   const save = (content: string, kind: "note" | "preference" = "preference") =>

@@ -1,3 +1,4 @@
+import * as Redacted from "effect/Redacted";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { classifyFailure } from "./failure";
@@ -57,7 +58,7 @@ describe("decodeTicket", () => {
     const wire = JSON.parse(
       '{"ticket":"abc123","expiresAt":"2026-11-01T16:40:00.000Z"}',
     ) as unknown;
-    expect(decodeTicket(wire).ticket).toBe("abc123");
+    expect(Redacted.value(decodeTicket(wire).ticket)).toBe("abc123");
   });
 
   it("rejects an empty ticket", () => {
