@@ -25,13 +25,13 @@ import {
   type PersonalSecretRequest,
   type PersonalTask,
   type ProviderApprovalDecision,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as Redacted from "effect/Redacted";
 import { ChevronLeft, Ellipsis, PanelRightClose, PanelRightOpen } from "lucide-react";
 
-import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logic";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
@@ -40,7 +40,6 @@ import {
   deriveTimelineEntries,
   deriveWorkLogEntries,
 } from "@hbots/personal-client/conversation/timeline";
-import { derivePhase } from "~/session-logic";
 import { useProject, useThreadDetail, useThreadStatus } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import {
@@ -125,6 +124,7 @@ import {
   placeLeadBotChangeCards,
   placeMemoryCards,
   resolveConversationHeaderName,
+  runningTurnInterruptInput,
   turnErrorNotice,
   type VoiceCallCardItem,
   voiceCallSummaryPending,
@@ -653,9 +653,8 @@ export function ConversationScreen({
       latestTurn: thread?.latestTurn ?? null,
       activities,
     });
-  const phase = derivePhase(thread?.session ?? null);
   // Stop depends on the thread alone, never on the bots list.
-  const interruptInput = buildRunningThreadTurnInterruptInput(thread, phase);
+  const interruptInput = runningTurnInterruptInput(thread);
   // "Working" drives the typing indicator; a turn parked on a provider wait
   // still occupies the composer (Stop, no send) without claiming progress.
   const working = conversationState === "working";
@@ -749,7 +748,7 @@ export function ConversationScreen({
     setRespondingIds((current) => new Set(current).add(requestId));
     const result = await respondToApproval({
       environmentId,
-      input: { threadId, requestId, decision },
+      input: { threadId, requestId: RuntimeRequestId.make(requestId), decision },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -771,7 +770,7 @@ export function ConversationScreen({
     setRespondingIds((current) => new Set(current).add(requestId));
     const result = await respondToUserInput({
       environmentId,
-      input: { threadId, requestId: requestId as ApprovalRequestId, answers },
+      input: { threadId, requestId: RuntimeRequestId.make(requestId), answers },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -795,7 +794,7 @@ export function ConversationScreen({
     setRespondingIds((current) => new Set(current).add(requestId));
     const result = await dismissUserInput({
       environmentId,
-      input: { threadId, requestId: requestId as ApprovalRequestId },
+      input: { threadId, requestId: RuntimeRequestId.make(requestId) },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -1076,7 +1075,7 @@ export function ConversationScreen({
   const loadEarlier =
     environmentId !== null && threadHasOlderTurns(threadState)
       ? {
-          loading: threadState.page._tag === "Some" && threadState.page.value.loadingOlder,
+          loading: threadState.history.loading,
           onLoad: () => {
             requestOlderThreadTurns(environmentId, threadId);
           },

@@ -450,7 +450,7 @@ export function GroupConversationScreen({
   const loadEarlier =
     environmentId !== null && threadId !== null && threadHasOlderTurns(threadState)
       ? {
-          loading: threadState.page._tag === "Some" && threadState.page.value.loadingOlder,
+          loading: threadState.history.loading,
           onLoad: () => {
             requestOlderThreadTurns(environmentId, threadId);
           },

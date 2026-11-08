@@ -8,6 +8,7 @@ import type {
   PersonalGroupSystemEvent,
   PersonalTask,
   PersonalLoginRequest,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import type { OrchestrationThreadActivity } from "./wireTypes.ts";
@@ -79,6 +80,13 @@ export function providerWaitState(
   if (retry.auto === "pending") return "retrying";
   if (retry.auto === "exhausted") return null;
   return retry.kind === "retrying" && running ? "retrying" : null;
+}
+
+/** Stop targets the thread, the way the phone does, and only while its turn runs. */
+export function runningTurnInterruptInput(
+  thread: { readonly id: ThreadId; readonly session: OrchestrationSession | null } | null,
+): { readonly threadId: ThreadId } | null {
+  return thread?.session?.status === "running" ? { threadId: thread.id } : null;
 }
 
 export function deriveConversationState(input: {

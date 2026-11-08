@@ -82,9 +82,6 @@ vi.mock("@t3tools/client-runtime/state/threads", () => ({
   requestOlderThreadTurns: () => {},
   threadHasOlderTurns: () => false,
 }));
-vi.mock("~/components/ChatView.logic", () => ({
-  buildRunningThreadTurnInterruptInput: () => null,
-}));
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuTrigger: ({
@@ -111,7 +108,6 @@ vi.mock("~/components/ui/menu", () => ({
   MenuSeparator: () => <hr />,
 }));
 vi.mock("~/lib/contextWindow", () => ({ deriveLatestContextWindowSnapshot: () => null }));
-vi.mock("~/session-logic", () => ({ derivePhase: () => "ready" }));
 vi.mock("~/state/lazyThreadShells", () => ({
   useLazyThreadShells: () => ({ pending: false }),
 }));
@@ -275,6 +271,7 @@ vi.mock("./conversationModel", () => ({
   // The pending-summary window only starts the 15-second refresh loop; these
   // tests have no call cards at all, so it is always false.
   voiceCallSummaryPending: () => false,
+  runningTurnInterruptInput: () => null,
   resolveConversationHeaderName: ({ botName }: { botName: string | null }) =>
     botName === null ? { status: "loading" } : { status: "ready", name: botName },
   // A final failed turn: Retry would show on an open chat.
