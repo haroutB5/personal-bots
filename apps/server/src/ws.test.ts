@@ -1354,6 +1354,94 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
   ),
 );
 
+it.effect.each([true, false] as const)(
+  "a usage refresh re-reads limits before probing (%s)",
+  (refreshUsage) =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const reread: string[] = [];
+      let probed = false;
+      const probe = Effect.sync(() => {
+        probed = true;
+        // A cached read served here would come back with a fresh "updated" time.
+        assert.deepEqual(reread, refreshUsage ? [instanceId] : []);
+        return [];
+      });
+      const instance = {
+        instanceId,
+        snapshot: {
+          refreshUsage: Effect.sync(() => {
+            reread.push(instanceId);
+          }),
+        },
+      };
+      const responses = yield* Queue.unbounded<unknown>();
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          refresh: () => probe,
+          refreshInstance: () => probe,
+        }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          listInstances: Effect.succeed([instance as never]),
+        }),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({ refresh: Effect.void }),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: process.cwd(),
+        }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      );
+      const server = yield* RpcServer.makeNoSerialization(
+        RpcGroup.make(WsServerRefreshProvidersRpc),
+        {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Exit" ? Queue.offer(responses, response.exit) : Effect.void,
+        },
+      ).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("usage-refresh-test"),
+              subject: "usage-refresh-test",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+            { secretReferences: true },
+            { connectionId: "test-viewing", reported: false },
+          ).pipe(Layer.provide(services)),
+        ),
+      );
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId("refresh"),
+        tag: WS_METHODS.serverRefreshProviders,
+        payload: refreshUsage ? { refreshUsage } : {},
+        headers: Headers.empty,
+      });
+      const exit = (yield* Queue.take(responses)) as { readonly _tag: string };
+      assert.equal(exit._tag, "Success");
+      assert.isTrue(probed);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
+);
+
 it.effect("a publish whose push fails still refreshes the new remote", () =>
   Effect.gen(function* () {
     const refreshes = yield* Queue.unbounded<string>();

@@ -912,6 +912,8 @@ export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,
   targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
   instanceId: Schema.optionalKey(ProviderInstanceId),
+  /** "Go back": an older `targetVersion` is allowed unless the manifest marks it broken. */
+  rollback: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 

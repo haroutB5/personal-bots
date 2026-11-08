@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -121,7 +121,7 @@ function PageHeader({ title, visible }: { title: string; visible: boolean }): JS
         to="/bots/settings"
         activeOptions={{ exact: true }}
         aria-label="Back to Settings"
-        className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       >
         <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
       </Link>
@@ -147,7 +147,7 @@ export function ProviderPageScreen({
   const providers = useAtomValue(primaryServerProvidersAtom);
   const list = usePersonalBotsList(environmentId);
   const snapshot = providers.find((candidate) => candidate.instanceId === instanceId);
-  const bots = useMemo(() => list.data?.bots ?? [], [list.data]);
+  const bots = list.data?.bots ?? [];
 
   if (environmentId === null || snapshot === undefined) {
     return (
@@ -254,6 +254,7 @@ function ProviderPageBody({
   const heroRef = useRef<HTMLDivElement>(null);
   const [heroVisible, setHeroVisible] = useState(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- an IntersectionObserver on the hero node drives the header title
   useEffect(() => {
     const node = heroRef.current;
     if (node === null || typeof IntersectionObserver === "undefined") return;
@@ -269,7 +270,7 @@ function ProviderPageBody({
   const smoke = currentSmoke(snapshot);
   const authNeeded = installed && providerNeedsSignIn(snapshot);
   const row: ProviderRow = withPendingAction(
-    providerRow({ snapshot, label, bots, install: install ?? null, now: new Date() }),
+    providerRow({ snapshot, label, bots, install: install ?? null, now: new Date(nowMs) }),
     pending,
   );
   const canTest = setup?.canTest === true;
@@ -280,9 +281,7 @@ function ProviderPageBody({
   // once setup was seen, so the page can say "ready" when the last step lands.
   const incomplete = !installed || installActive || startingInstall || authNeeded;
   const [setupSeen, setSetupSeen] = useState(incomplete);
-  useEffect(() => {
-    if (incomplete) setSetupSeen(true);
-  }, [incomplete]);
+  if (incomplete && !setupSeen) setSetupSeen(true);
   const steps = setupSteps({
     installed: installed && !startingInstall,
     installFailed: install?.phase === "failed",
@@ -305,6 +304,7 @@ function ProviderPageBody({
 
   // After the last sign-in step lands, the test runs by itself, once.
   const testStarted = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the server's provider test once the streamed setup state allows it
   useEffect(() => {
     if (!setupSeen || !canTest || !installed || authNeeded || !snapshot.enabled) return;
     if (smoke?.status === "passed" && smoke.manual === true) return;
@@ -324,14 +324,11 @@ function ProviderPageBody({
   ]);
 
   // "Fix" from the list opens the remap sheet once the provider is known.
-  const fixOpened = useRef(false);
-  useEffect(() => {
-    if (action !== "fix" || fixOpened.current) return;
-    if (row.state === "modelGone") {
-      fixOpened.current = true;
-      setSheet("remap");
-    }
-  }, [action, row.state]);
+  const [fixOpened, setFixOpened] = useState(false);
+  if (action === "fix" && !fixOpened && row.state === "modelGone") {
+    setFixOpened(true);
+    setSheet("remap");
+  }
 
   const run = async (
     pendingState: ProviderRowPending | null,
@@ -365,11 +362,9 @@ function ProviderPageBody({
     setSheet(null);
   };
   // The stream takes over once it reports the first phase.
-  useEffect(() => {
-    if (startingInstall && (installActive || install?.phase === "failed" || snapshot.installed)) {
-      setStartingInstall(false);
-    }
-  }, [startingInstall, installActive, install?.phase, snapshot.installed]);
+  if (startingInstall && (installActive || install?.phase === "failed" || snapshot.installed)) {
+    setStartingInstall(false);
+  }
 
   const tryInstallAgain = () =>
     void run(
@@ -396,9 +391,7 @@ function ProviderPageBody({
     setEnabledPending(next);
     instanceSettings.setEnabled(next);
   };
-  useEffect(() => {
-    if (enabledPending !== null && snapshot.enabled === enabledPending) setEnabledPending(null);
-  }, [enabledPending, snapshot.enabled]);
+  if (enabledPending !== null && snapshot.enabled === enabledPending) setEnabledPending(null);
 
   const usageShown = usagePending ?? !hiddenUsage.has(instanceId);
   const toggleUsage = async (visible: boolean) => {
@@ -444,8 +437,7 @@ function ProviderPageBody({
       () => updateProvider({ environmentId, input: { provider: driver, instanceId } }),
       `Couldn't start the ${label} update.`,
     );
-  const goBackVersion =
-    snapshot.previousVersion ?? install?.previousVersion ?? snapshot.smokeCheck?.previousVersion;
+  const goBackVersion = snapshot.previousVersion ?? snapshot.smokeCheck?.previousVersion;
   const onGoBack = () => {
     if (goBackVersion === undefined) return;
     void run(
@@ -791,7 +783,7 @@ function ProviderPageBody({
               <button
                 type="button"
                 onClick={() => setSheet("remove")}
-                className="flex min-h-12 w-full items-center gap-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 text-left text-[15px] font-semibold text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                className="flex min-h-12 w-full items-center gap-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 text-left text-[15px] font-semibold text-[var(--personal-error)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
               >
                 <Trash2 aria-hidden="true" className="size-5 shrink-0" strokeWidth={1.75} />
                 Remove {label}
@@ -1252,7 +1244,6 @@ function SetupCard({
                     instanceId={instanceId}
                     auth={auth}
                     providerLabel={label === "Antigravity" ? "Google" : label}
-                    canOpenOnLaptop={snapshot.setup?.canOpenOnLaptop === true}
                     autoStart={autoStartSignIn}
                   />
                 ) : kind === "key" && keyField !== undefined ? (
@@ -1620,7 +1611,7 @@ function OpenCodeServerRow({
         spellCheck={false}
         placeholder="http://127.0.0.1:4096"
         aria-invalid={problem !== null}
-        className="h-11 w-full min-w-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 font-mono text-[14px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        className="h-11 w-full min-w-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 font-mono text-[14px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       />
       {problem !== null ? (
         <p role="alert" className="mt-2 text-[14px] text-[var(--personal-error)]">

@@ -2513,6 +2513,21 @@ export const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
+            // A usage view's Refresh must re-read limits, not return the cached probe.
+            if (input.refreshUsage === true && input.refreshModels !== true) {
+              const instances = yield* providerInstances.listInstances;
+              yield* Effect.forEach(
+                instances.filter(
+                  (instance) =>
+                    input.instanceId === undefined || input.instanceId === instance.instanceId,
+                ),
+                (instance) =>
+                  (instance.snapshot.refreshUsage ?? Effect.void).pipe(
+                    Effect.ignoreCause({ log: true }),
+                  ),
+                { discard: true },
+              );
+            }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,

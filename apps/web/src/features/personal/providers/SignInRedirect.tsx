@@ -2,7 +2,7 @@ import type { JSX, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import type { EnvironmentId, ProviderAuthState, ProviderInstanceId } from "@t3tools/contracts";
-import { ClipboardPaste, Copy, ExternalLink, Laptop, Lock } from "lucide-react";
+import { ClipboardPaste, Copy, ExternalLink, Lock } from "lucide-react";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { serverEnvironment } from "~/state/server";
@@ -62,7 +62,7 @@ function SafariBar(): JSX.Element {
 /**
  * Step 2 of the setup card for a sign-in that ends on the laptop's own address
  * (Antigravity today): open the Google link, copy the address Safari then
- * shows and paste it here, or sign in on the laptop itself. The flow runs on
+ * shows and paste it here. The flow runs on
  * the server; this only draws its state and sends the pasted address. Nothing
  * pasted here is logged, and the field is dropped with the flow.
  */
@@ -71,33 +71,26 @@ export function SignInRedirect({
   instanceId,
   auth,
   providerLabel,
-  canOpenOnLaptop,
   autoStart = false,
-  onFinished,
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly auth: ProviderAuthState | null;
   readonly providerLabel: string;
-  readonly canOpenOnLaptop: boolean;
   /** Start the flow as soon as the screen opens (the list's Sign in button). */
   readonly autoStart?: boolean;
-  /** The flow ended in success: the page re-reads the provider. */
-  readonly onFinished?: () => void;
 }): JSX.Element {
   const options = { reportFailure: false, reportDefect: false };
   const startAuth = useAtomCommand(serverEnvironment.startProviderAuth, options);
   const completeAuth = useAtomCommand(serverEnvironment.completeProviderAuth, options);
   const cancelAuth = useAtomCommand(serverEnvironment.cancelProviderAuth, options);
-  const openOnLaptop = useAtomCommand(serverEnvironment.openProviderAuthOnLaptop, options);
 
-  const [busy, setBusy] = useState<"start" | "send" | "cancel" | "laptop" | null>(null);
+  const [busy, setBusy] = useState<"start" | "send" | "cancel" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [denied, setDenied] = useState(false);
   const [draft, setDraft] = useState({ flowId: null as string | null, value: "" });
   const [copied, setCopied] = useState(false);
-  const [openedOnLaptop, setOpenedOnLaptop] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [pasteRing, setPasteRing] = useState(false);
   const fieldRef = useRef<HTMLInputElement>(null);
@@ -107,6 +100,7 @@ export function SignInRedirect({
   const url = phase === "waiting" ? (auth?.authorizationUrl ?? null) : null;
   const value = draft.flowId === flowId ? draft.value : "";
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer refreshes the minutes-left line while the link is live
   useEffect(() => {
     if (url === null) return;
     const timer = setInterval(() => setNowMs(Date.now()), 15_000);
@@ -115,6 +109,7 @@ export function SignInRedirect({
 
   // Back from Safari: focus the field and ring Paste. The clipboard is never
   // read until the Paste button is tapped.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a visibilitychange listener focuses the field on return from Safari
   useEffect(() => {
     if (url === null) return;
     const onVisible = () => {
@@ -126,11 +121,8 @@ export function SignInRedirect({
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [url]);
 
-  useEffect(() => {
-    if (phase === "succeeded") onFinished?.();
-  }, [phase, onFinished]);
-
   const autoStarted = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the server sign-in flow once the screen opens with autoStart
   useEffect(() => {
     if (!autoStart || autoStarted.current || auth === null) return;
     // Waiting, verifying or done: a flow is already under way (or finished).
@@ -157,7 +149,6 @@ export function SignInRedirect({
   const start = async () => {
     setDenied(false);
     setFieldError(null);
-    setOpenedOnLaptop(false);
     await run(
       "start",
       () => startAuth({ environmentId, input: { instanceId } }),
@@ -222,16 +213,6 @@ export function SignInRedirect({
       () => cancelAuth({ environmentId, input: { instanceId, flowId } }),
       "Couldn't cancel the sign-in.",
     );
-  };
-
-  const onLaptop = async () => {
-    if (flowId === null) return;
-    const ok = await run(
-      "laptop",
-      () => openOnLaptop({ environmentId, input: { instanceId, flowId } }),
-      "Couldn't open the sign-in page on the laptop.",
-    );
-    if (ok) setOpenedOnLaptop(true);
   };
 
   const left = minutesLeft(auth?.expiresAt ?? null, nowMs);
@@ -434,29 +415,6 @@ export function SignInRedirect({
           {busy === "send" ? "Signing in…" : "Sign in"}
         </button>
       )}
-
-      {canOpenOnLaptop ? (
-        <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            onClick={() => void onLaptop()}
-            disabled={busy !== null}
-            className={`${BUTTON_QUIET} w-full justify-start gap-3 px-0 text-left text-[15px] font-medium`}
-          >
-            <Laptop aria-hidden="true" className="size-5 shrink-0" strokeWidth={1.75} />
-            <span className="min-w-0">Or sign in on this laptop, no copying</span>
-          </button>
-          {openedOnLaptop ? (
-            <p
-              role="status"
-              className="text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
-            >
-              Opened in the laptop's own browser. Choose your account there. This page moves on by
-              itself when you're done.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="flex items-center justify-between gap-3">
         <p className="text-[13px] text-[var(--personal-text-tertiary)]">
