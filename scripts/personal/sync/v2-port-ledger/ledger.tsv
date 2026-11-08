@@ -424,8 +424,8 @@ apps/server/src/provider/Layers/CursorAdapter.test.ts		modify-delete	42	C5-C9	dr
 apps/server/src/provider/Layers/CursorAdapter.ts		modify-delete	16	C5-C9	done	v2 home is packages/provider-cursor/src/server/adapter.ts
 apps/server/src/provider/Layers/CursorProvider.test.ts		modify-delete	15	C5-C9	dropped	v2 package tests own the Cursor provider
 apps/server/src/provider/Layers/CursorProvider.ts		modify-delete	9	C5-C9	done	v2 Cursor provider snapshot lives in the package
-apps/server/src/provider/Layers/DeepSeekAdapter.test.ts		added-broken	627	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/Layers/DeepSeekAdapter.ts		added-broken	236	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekAdapter.test.ts		added-broken	627	D3	done	Done: the nine claude-code wrapper cases live in packages/provider-deepseek/src/server/adapter.test.ts
+apps/server/src/provider/Layers/DeepSeekAdapter.ts		added-broken	236	D3	done	Done: v2 home is packages/provider-deepseek/src/server/adapter.ts, a wrapper over the app's createClaudeAdapterV2
 apps/server/src/provider/Layers/DeepSeekDshAdapter.test.ts		added-broken	1001	D5	done	Done: 16 cases and the event-map test land in packages/provider-deepseek/src/server/dshAdapter.test.ts
 apps/server/src/provider/Layers/DeepSeekDshAdapter.ts		added-broken	1724	D5	done	Done: v2 home is packages/provider-deepseek/src/server/dshAdapter.ts, a flavour over makeAcpAdapterV2
 apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	D2	done	Done: v2 home is packages/provider-deepseek/src/server/status.test.ts
