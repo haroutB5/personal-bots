@@ -11,7 +11,7 @@ import {
   type PersonalReplyQuote,
 } from "@t3tools/contracts";
 import type { ThreadTurnFollowUp } from "@hbots/personal-client/conversation/wireTypes";
-import type { ChatThread } from "./chatThread";
+import type { ChatThread } from "@hbots/personal-client/conversation/chatThread";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";

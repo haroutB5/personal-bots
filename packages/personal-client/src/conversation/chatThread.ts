@@ -6,15 +6,12 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import type {
-  EnvironmentThreadShell,
-  OrchestrationLatestTurn,
-} from "@hbots/personal-client/bots/threadShell";
+import type { EnvironmentThreadShell, OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
   OrchestrationThreadActivity,
-} from "@hbots/personal-client/conversation/wireTypes";
+} from "./wireTypes.ts";
 import type { OrchestrationSession } from "@t3tools/contracts";
 
 /**

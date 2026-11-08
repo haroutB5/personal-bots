@@ -21,7 +21,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useMemo } from "react";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { toChatThread, type ChatThread } from "./chatThread";
+import { toChatThread, type ChatThread } from "@hbots/personal-client/conversation/chatThread";
 
 export type ChatEnvironment = ReturnType<typeof createChatEnvironment>;
 

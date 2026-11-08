@@ -504,6 +504,10 @@
     "./conversation/wireTypes": {
       "types": "./src/conversation/wireTypes.ts",
       "import": "./src/conversation/wireTypes.ts"
+    },
+    "./conversation/chatThread": {
+      "types": "./src/conversation/chatThread.ts",
+      "import": "./src/conversation/chatThread.ts"
     }
   },
   "scripts": {
