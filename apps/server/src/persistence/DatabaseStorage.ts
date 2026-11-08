@@ -31,6 +31,29 @@ export class DatabaseStorage extends Context.Service<
   }
 >()("t3/persistence/DatabaseStorage") {}
 
+/**
+ * Runs one compaction pass. Completion is recorded only when the pass drained
+ * its fixed backlog; a pass that stopped early keeps its cursors for the next run.
+ */
+export const runCompaction = Effect.fn("DatabaseStorage.runCompaction")(function* (
+  maintenance: ProjectionMaintenance.ProjectionMaintenanceV2["Service"],
+  compactedAtPath: string,
+  betweenPages: Effect.Effect<void>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const result = yield* maintenance.pruneEventStore(betweenPages);
+  if (!result.drained) {
+    yield* Effect.logWarning("Orchestration history compaction left a backlog", result);
+    return result;
+  }
+  const completedAt = yield* Clock.currentTimeMillis;
+  yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
+  if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
+    yield* Effect.logInfo("Compacted orchestration history", result);
+  }
+  return result;
+});
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
@@ -107,12 +130,7 @@ const make = Effect.gen(function* () {
       yield* Effect.sleep((Number(elapsed) / 1_000_000) * 9);
       sliceStarted = yield* Clock.monotonicTimeNanos;
     });
-    const result = yield* maintenance.pruneEventStore(betweenPages);
-    const completedAt = yield* Clock.currentTimeMillis;
-    yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
-    if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
-      yield* Effect.logInfo("Compacted orchestration history", result);
-    }
+    yield* runCompaction(maintenance, compactedAtPath, betweenPages);
   }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning("Orchestration history compaction failed", { cause }),

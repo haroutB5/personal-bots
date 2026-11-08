@@ -437,3 +437,66 @@ it.effect("deletes imported legacy history in bounded batches with a rest betwee
     );
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("resumes a failed pass from the last completed page", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedLegacyImport(120);
+
+    const pages = yield* Ref.make(0);
+    const interrupted = yield* Effect.exit(
+      maintenance.pruneEventStore(
+        Ref.updateAndGet(pages, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 1 ? Effect.die(new Error("pass interrupted")) : Effect.void,
+          ),
+        ),
+      ),
+    );
+    assert.isTrue(interrupted._tag === "Failure");
+
+    assert.deepEqual(
+      yield* sql<{ readonly last_sequence: number }>`
+        SELECT last_sequence FROM orchestration_v2_projection_metadata
+        WHERE projection_name = 'event-log-compaction-legacy-events-cursor'
+      `,
+      [{ last_sequence: 50 }],
+    );
+
+    let firstPageCursor: number | undefined;
+    const recordFirstPage: Statement.Transformer = (statement) => {
+      const [query, params] = statement.compile();
+      if (
+        firstPageCursor === undefined &&
+        query.includes("INDEXED BY idx_orchestration_events_application_sequence") &&
+        query.includes("event.sequence >")
+      ) {
+        firstPageCursor = Number(params[0]);
+      }
+      return Effect.succeed(statement);
+    };
+    const resumed = yield* maintenance
+      .pruneEventStore()
+      .pipe(Effect.provideService(Statement.CurrentTransformer, recordFirstPage));
+
+    assert.equal(firstPageCursor, 50);
+    assert.equal(resumed.deletedEventCount, 70);
+    assert.isTrue(resumed.drained);
+    assert.deepEqual(
+      yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM orchestration_v2_projection_metadata
+        WHERE projection_name IN (
+          'event-log-compaction-events-cursor',
+          'event-log-compaction-legacy-events-cursor',
+          'event-log-compaction-receipts-cursor'
+        )
+      `,
+      [{ count: 0 }],
+    );
+    assert.deepEqual(
+      yield* sql`SELECT COUNT(*) AS count FROM orchestration_events WHERE stream_id = 'thread:legacy-batches'`,
+      [{ count: 0 }],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
