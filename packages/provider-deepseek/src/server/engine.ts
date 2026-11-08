@@ -1,4 +1,6 @@
 /** One DeepSeek instance runs on dsh or Claude Code; a kill switch forces Claude Code. */
+import * as NodeOS from "node:os";
+
 import type { DeepSeekSettings } from "../settings.ts";
 
 export type DeepSeekEngine = "dsh" | "claude-code";
@@ -12,6 +14,18 @@ export const DSH_RUNTIME_DIR_NAME = `dsh-${DSH_PINNED_VERSION}`;
 
 /** The harness home inside a data root: `<stateDir>/dsh`. */
 export const DSH_HOME_DIR_NAME = "dsh";
+
+/** `~/.personal-bots/runtimes/dsh-0.2.1-rc.3` — never inside a release folder. */
+export const defaultDshRuntimeDir = (): string =>
+  [NodeOS.homedir(), ".personal-bots", "runtimes", DSH_RUNTIME_DIR_NAME].join("/");
+
+/** The dsh entry point, run with hbots' own `node`. */
+export const dshRuntimeBinJs = (runtimeDir: string): string =>
+  [runtimeDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"].join("/");
+
+/** What the provider card says when the runtime is not installed. */
+export const DSH_RUNTIME_MISSING_MESSAGE =
+  "DeepSeek Harness runtime missing: run scripts/personal/install-dsh";
 
 const CLAUDE_CODE_VALUES = new Set(["claude-code", "off", "0", "false", "no"]);
 

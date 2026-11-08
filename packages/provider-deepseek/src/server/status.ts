@@ -4,6 +4,8 @@ import {
   type ServerProviderAuth,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
+import * as NodeProcess from "node:process";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,7 +25,15 @@ import {
 
 import { type DeepSeekModelCatalog, scopeDeepSeekModelCatalog } from "./catalog.ts";
 import { DEEPSEEK_AUTH_TOKEN_ENV } from "./environment.ts";
-import { resolveDeepSeekEngine, type DeepSeekEngine } from "./engine.ts";
+import {
+  DSH_PINNED_VERSION,
+  DSH_RUNTIME_MISSING_MESSAGE,
+  defaultDshRuntimeDir,
+  dshRuntimeBinJs,
+  resolveDeepSeekEngine,
+  type DeepSeekEngine,
+} from "./engine.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import type { DeepSeekSettings } from "../settings.ts";
 
 const DEEPSEEK_PRESENTATION = {
@@ -33,6 +43,11 @@ const DEEPSEEK_PRESENTATION = {
 } as const;
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
+
+/** The harness reports its prerelease pin, so this keeps `-rc.3`. */
+const DSH_VERSION_PATTERN = /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)\b/;
+const parseDshVersion = (output: string): string | null =>
+  output.match(DSH_VERSION_PATTERN)?.[1] ?? null;
 
 /**
  * Agent modes a DeepSeek bot may run in on the DeepSeek Harness (dsh) engine.
@@ -58,14 +73,6 @@ export const DEEPSEEK_DEFAULT_AGENT_MODE: DeepSeekDshAgentMode = "standard";
  */
 export const DEEPSEEK_KEY_MISSING_MESSAGE =
   "Set it in this instance's settings. Keys come from platform.deepseek.com.";
-
-/**
- * The D2 seam for the harness engine. The pinned runtime probe lands with the
- * harness adapter in D5; until then a dsh instance reports a warning instead
- * of claiming a runtime it has not checked.
- */
-export const DEEPSEEK_DSH_RUNTIME_PENDING_MESSAGE =
-  "The DeepSeek Harness runtime check lands with the harness adapter.";
 
 /**
  * The models as the picker sees them. On the dsh engine the Flash model gains
@@ -138,12 +145,16 @@ export const buildInitialDeepSeekProviderSnapshot = Effect.fn(
   });
 });
 
-const checkDeepSeekDshStatus = (
+const checkDeepSeekDshStatus = Effect.fn("DeepSeekProvider.checkDshStatus")(function* (
   settings: DeepSeekSettings,
   environment: NodeJS.ProcessEnv,
   checkedAt: string,
   models: ReadonlyArray<ServerProviderModel>,
-): ServerProviderDraft => {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Path.Path | FileSystem.FileSystem
+> {
   if (!settings.enabled) {
     return buildServerProvider({
       presentation: DEEPSEEK_PRESENTATION,
@@ -166,7 +177,7 @@ const checkDeepSeekDshStatus = (
   if (auth.status === "unauthenticated") {
     return buildServerProvider({
       presentation: DEEPSEEK_PRESENTATION,
-      enabled: true,
+      enabled: settings.enabled,
       checkedAt,
       models,
       probe: {
@@ -178,20 +189,94 @@ const checkDeepSeekDshStatus = (
       },
     });
   }
+  const path = yield* Path.Path;
+  const configuredRuntime = settings.dshRuntimePath.trim();
+  const runtimeDir = path.resolve(
+    configuredRuntime.length > 0
+      ? expandHomePath(configuredRuntime, NodeOS.homedir())
+      : defaultDshRuntimeDir(),
+  );
+  const versionResult = yield* Effect.gen(function* () {
+    const spawnCommand = yield* resolveSpawnCommand(
+      NodeProcess.execPath,
+      [dshRuntimeBinJs(runtimeDir), "--version"],
+      { env: environment },
+    );
+    return yield* spawnAndCollect(
+      NodeProcess.execPath,
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        env: environment,
+        shell: spawnCommand.shell,
+      }),
+    );
+  }).pipe(Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS), Effect.result);
+
+  if (Result.isFailure(versionResult)) {
+    const missing = isCommandMissingCause(versionResult.failure);
+    return buildServerProvider({
+      presentation: DEEPSEEK_PRESENTATION,
+      enabled: settings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        installed: !missing,
+        version: null,
+        status: "error",
+        auth,
+        message: missing
+          ? DSH_RUNTIME_MISSING_MESSAGE
+          : "Failed to run the DeepSeek Harness runtime check.",
+      },
+    });
+  }
+  if (Option.isNone(versionResult.success)) {
+    return buildServerProvider({
+      presentation: DEEPSEEK_PRESENTATION,
+      enabled: settings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth,
+        message: "The DeepSeek Harness runtime timed out during the health check.",
+      },
+    });
+  }
+  const output = versionResult.success.value;
+  const version = parseDshVersion(`${output.stdout}\n${output.stderr}`);
+  if (output.code !== 0 || version !== DSH_PINNED_VERSION) {
+    return buildServerProvider({
+      presentation: DEEPSEEK_PRESENTATION,
+      enabled: settings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth,
+        message:
+          version === null
+            ? "The DeepSeek Harness runtime is installed but did not report its version."
+            : `The DeepSeek Harness runtime at ${runtimeDir} is ${version}, not the pinned ${DSH_PINNED_VERSION}.`,
+      },
+    });
+  }
   return buildServerProvider({
     presentation: DEEPSEEK_PRESENTATION,
-    enabled: true,
+    enabled: settings.enabled,
     checkedAt,
     models,
     probe: {
       installed: true,
-      version: null,
-      status: "warning",
+      version,
+      status: "ready",
       auth,
-      message: DEEPSEEK_DSH_RUNTIME_PENDING_MESSAGE,
     },
   });
-};
+});
 
 export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatus")(function* (
   settings: DeepSeekSettings,
@@ -207,7 +292,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
   const engine = resolveDeepSeekEngine(settings, environment);
   const models = deepSeekModelsFromCatalog(scoped, engine);
   if (engine === "dsh") {
-    return checkDeepSeekDshStatus(settings, environment, checkedAt, models);
+    return yield* checkDeepSeekDshStatus(settings, environment, checkedAt, models);
   }
 
   if (!settings.enabled) {

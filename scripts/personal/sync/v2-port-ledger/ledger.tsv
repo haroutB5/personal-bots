@@ -426,8 +426,8 @@ apps/server/src/provider/Layers/CursorProvider.test.ts		modify-delete	15	C5-C9	d
 apps/server/src/provider/Layers/CursorProvider.ts		modify-delete	9	C5-C9	done	v2 Cursor provider snapshot lives in the package
 apps/server/src/provider/Layers/DeepSeekAdapter.test.ts		added-broken	627	D1	open	DeepSeek is the D series, not C5-C9
 apps/server/src/provider/Layers/DeepSeekAdapter.ts		added-broken	236	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/Layers/DeepSeekDshAdapter.test.ts		added-broken	1001	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/Layers/DeepSeekDshAdapter.ts		added-broken	1724	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekDshAdapter.test.ts		added-broken	1001	D5	done	Done: 16 cases and the event-map test land in packages/provider-deepseek/src/server/dshAdapter.test.ts
+apps/server/src/provider/Layers/DeepSeekDshAdapter.ts		added-broken	1724	D5	done	Done: v2 home is packages/provider-deepseek/src/server/dshAdapter.ts, a flavour over makeAcpAdapterV2
 apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	D2	done	Done: v2 home is packages/provider-deepseek/src/server/status.test.ts
 apps/server/src/provider/Layers/DeepSeekProvider.ts		added-broken	545	D2	done	Done: v2 home is packages/provider-deepseek/src/server/status.ts
 apps/server/src/provider/Layers/GrokAdapter.test.ts		modify-delete	48	C5-C9	dropped	v2 package tests own the Grok adapter
@@ -477,8 +477,8 @@ apps/server/src/provider/acp/AntigravityAcpSupport.test.ts		content	308	C5-C9	do
 apps/server/src/provider/acp/AntigravityAcpSupport.ts		content	136	C5-C9	done	v2 module present
 apps/server/src/provider/acp/CursorAcpCliProbe.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/CursorAcpSupport.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/provider/acp/DshAcpSupport.test.ts		added-broken	682	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/acp/DshAcpSupport.ts		added-broken	1049	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/acp/DshAcpSupport.test.ts		added-broken	682	D5	done	Done: the pure cases live in dshSupport.test.ts (D4); the runtime cases in dshAdapter.test.ts (D5)
+apps/server/src/provider/acp/DshAcpSupport.ts		added-broken	1049	D5	done	Done: pure half in packages/provider-deepseek/src/server/dshSupport.ts (D4), launch and runtime in dshRuntime.ts plus dshAdapter.ts (D5)
 apps/server/src/provider/acp/GrokAcpCliProbe.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/acp/XAiAcpExtension.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/antigravityAuthSupport.test.ts		content	192	C5-C9	done	v2 module and test present

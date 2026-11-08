@@ -14,7 +14,12 @@ import { botProtectedPaths } from "@t3tools/provider-core/server/botProtectedPat
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 import type { DeepSeekSettings } from "../settings.ts";
-import { DSH_PINNED_VERSION, DSH_RUNTIME_DIR_NAME } from "./engine.ts";
+import {
+  DSH_PINNED_VERSION,
+  DSH_RUNTIME_MISSING_MESSAGE,
+  defaultDshRuntimeDir,
+  dshRuntimeBinJs,
+} from "./engine.ts";
 import { DSH_DENY_PLUGIN_FILE, type DshDenyPluginInput } from "./dshSupport.ts";
 
 export interface DshRuntime {
@@ -24,9 +29,7 @@ export interface DshRuntime {
   readonly version: string;
 }
 
-/** `~/.personal-bots/runtimes/dsh-0.2.1-rc.3` — never inside a release folder. */
-export const defaultDshRuntimeDir = (): string =>
-  [NodeOS.homedir(), ".personal-bots", "runtimes", DSH_RUNTIME_DIR_NAME].join("/");
+export { DSH_RUNTIME_MISSING_MESSAGE, defaultDshRuntimeDir };
 
 /**
  * The installed dsh runtime: the instance's own path when it names one, else
@@ -43,14 +46,10 @@ export const resolveDshRuntime = Effect.fn("resolveDshRuntime")(function* (
   );
   return {
     runtimeDir,
-    binJs: path.join(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
+    binJs: dshRuntimeBinJs(runtimeDir),
     version: DSH_PINNED_VERSION,
   };
 });
-
-/** What the provider card says when the runtime is not installed or is another build. */
-export const DSH_RUNTIME_MISSING_MESSAGE =
-  "DeepSeek Harness runtime missing: run scripts/personal/install-dsh";
 
 /** The bot plugin folders under `<baseDir>/bot-plugins`. */
 const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
@@ -187,6 +186,63 @@ export const removeDshLaunchPatch = Effect.fn("removeDshLaunchPatch")(function* 
 });
 
 /**
+ * The two failures a skill loader hits before anything else: a leading UTF-8
+ * BOM (Node's decoder hides it) and frontmatter that is absent. The message
+ * matches the shared bot-plugin diagnostics so one server log line means the
+ * same thing on every engine.
+ */
+const dshSkillLoadFailure = (contents: string): string | undefined => {
+  if (contents.startsWith("\uFEFF")) {
+    return "the file starts with a UTF-8 BOM, so its frontmatter is not recognized (missing YAML frontmatter delimited by ---)";
+  }
+  return /^---[ \t]*\r?\n/.test(contents) ? undefined : "missing YAML frontmatter delimited by ---";
+};
+
+/**
+ * Says one WARN per `SKILL.md` the harness would drop. dsh skips an
+ * unreadable skill without a word, so a broken bot skill would otherwise be
+ * silently missing from the launch.
+ */
+export const warnUnloadableDshSkills = Effect.fn("warnUnloadableDshSkills")(function* (input: {
+  readonly botId: string | undefined;
+  readonly skillDirs: ReadonlyArray<string>;
+}): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const seen = new Set<string>();
+  for (const root of input.skillDirs) {
+    const entries = yield* fileSystem
+      .readDirectory(root)
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+    const candidates = [
+      path.join(root, "SKILL.md"),
+      ...[...entries]
+        .filter((entry) => !entry.startsWith("."))
+        .sort()
+        .map((entry) => path.join(root, entry, "SKILL.md")),
+    ];
+    for (const candidate of candidates) {
+      const skillPath = path.resolve(candidate);
+      if (seen.has(skillPath)) continue;
+      seen.add(skillPath);
+      const bytes = yield* fileSystem
+        .readFile(skillPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (bytes === undefined) continue;
+      const reason = dshSkillLoadFailure(
+        new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes),
+      );
+      if (reason === undefined) continue;
+      yield* Effect.logWarning("bot plugin skill failed to load", {
+        botId: input.botId ?? "unknown",
+        path: skillPath,
+        reason,
+      });
+    }
+  }
+});
+
+/**
  * Removes launch patches left behind by a session that never got to delete
  * its own (a crash, or the server being killed). They hold bot instructions,
  * not secrets, but a stale one describes a chat that is gone.
@@ -233,8 +289,10 @@ export const makeDshAcpRuntime = Effect.fn("makeDshAcpRuntime")(function* (
       ...runtimeOptions,
       clientInfo: { name: "t3-code", version: "0.0.0" },
       // dsh answers `authenticate` with an immediate success whatever the
-      // method id, so the id only has to be present.
+      // method id, so the id only has to be present. The recorded handshake
+      // authenticates before the session opens.
       authMethodId: "none",
+      authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
       clientCapabilities: {

@@ -17,3 +17,10 @@ export {
   DEEPSEEK_AUTH_TOKEN_ENV,
   makeDeepSeekEnvironment,
 } from "./server/environment.ts";
+export {
+  dshImageTooLargeText,
+  makeDeepSeekDshAdapter,
+  translateDshFailure,
+  type DeepSeekDshAdapterOptions,
+} from "./server/dshAdapter.ts";
+export { resolveDshRuntime, resolveDshSkillDirs, type DshRuntime } from "./server/dshRuntime.ts";
