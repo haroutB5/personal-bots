@@ -1,4 +1,5 @@
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { BotThreadsScreen } from "./BotThreadsScreen";
@@ -52,6 +53,7 @@ vi.mock("~/state/lazyThreadShells", () => ({
 }));
 vi.mock("~/state/entities", () => ({ useThreadDetail: () => null, useThreadShells: () => [] }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
+vi.mock("~/state/threads", () => ({ threadEnvironment: { updateMetadata: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => <span data-avatar="" /> }));
 vi.mock("./botModelLabel", () => ({
@@ -157,7 +159,6 @@ const row = (threadId: string, title: string, extra: Record<string, unknown> = {
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
     addEventListener: () => {},
     removeEventListener: () => {},

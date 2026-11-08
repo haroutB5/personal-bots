@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   completeConfirmDialogClose,
   readConfirmDialogState,
-  registerConfirmDialogHost,
+  subscribeConfirmDialogHost,
   resetConfirmDialogForTests,
   respondToConfirmDialog,
 } from "~/confirmDialog";
@@ -160,7 +160,7 @@ describe("webLifecycle", () => {
 
 describe("webConfirm", () => {
   it("shows title and body in the themed dialog and answers with the choice", async () => {
-    const release = registerConfirmDialogHost();
+    const release = subscribeConfirmDialogHost(() => {});
     const answer = webConfirm.confirm({
       title: "Delete bot",
       body: "This cannot be undone.",
@@ -180,7 +180,7 @@ describe("webConfirm", () => {
   });
 
   it("uses only the title when there is no body", async () => {
-    const release = registerConfirmDialogHost();
+    const release = subscribeConfirmDialogHost(() => {});
     const answer = webConfirm.confirm({ title: "Leave chat", destructive: false });
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",

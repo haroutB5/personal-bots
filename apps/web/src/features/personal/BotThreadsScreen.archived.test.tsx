@@ -1,4 +1,5 @@
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { BotThreadsScreen } from "./BotThreadsScreen";
@@ -53,6 +54,7 @@ vi.mock("~/state/entities", () => ({
   useThreadShells: () => [],
 }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
+vi.mock("~/state/threads", () => ({ threadEnvironment: { updateMetadata: {} } }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>
     command === ARCHIVE_COMMAND ? state.archive : state.otherCommand,
@@ -133,7 +135,6 @@ vi.mock("./usePersonalBackTarget", () => ({
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.archive = vi.fn(async () => ({ _tag: "Success", value: {} }));
   state.otherCommand = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.deleteChat = vi.fn(async () => ({ status: "cancelled" }));
