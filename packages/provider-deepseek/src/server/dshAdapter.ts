@@ -63,6 +63,7 @@ import {
   type DshRuntime,
 } from "./dshRuntime.ts";
 import { DSH_HOME_DIR_NAME } from "./engine.ts";
+import { flushDshUsageLedger } from "./usage.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("deepseek");
 
@@ -241,6 +242,7 @@ function makeDshFlavor(input: {
   readonly path: Path.Path;
 }): AcpAdapterV2Flavor {
   const { options, session, states, fileSystem, host, path } = input;
+  const dshHome = options.dshHome ?? path.join(host.paths.stateDir, DSH_HOME_DIR_NAME);
   /** Tools whose leaked markup this session removed, waiting for a log context. */
   const pendingTools = new Set<string>();
   const stateFor = (sessionId: string): ReplyState => {
@@ -272,7 +274,6 @@ function makeDshFlavor(input: {
         Effect.provideService(Path.Path, path),
       );
     const runtimeInfo: DshRuntime = yield* provideFs(resolveDshRuntime(options.settings));
-    const dshHome = options.dshHome ?? path.join(host.paths.stateDir, DSH_HOME_DIR_NAME);
     const skillDirs = yield* provideFs(
       resolveDshSkillDirs({
         baseDir: host.paths.baseDir,
@@ -455,7 +456,23 @@ function makeDshFlavor(input: {
     watchPromptOutcome: (sessionId) =>
       Effect.sync(() => {
         states.set(sessionId, freshReplyState());
-        return () => flushWarnings.pipe(Effect.as(undefined));
+        return () =>
+          Effect.gen(function* () {
+            yield* flushWarnings;
+            // The ledger is the turn's spend, so it lands before the terminal.
+            yield* Effect.sync(() =>
+              flushDshUsageLedger({ dshHome, rootSessionId: sessionId }),
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not append the DeepSeek usage ledger", {
+                  threadId: session.threadId,
+                  sessionId,
+                  cause,
+                }),
+              ),
+            );
+            return undefined;
+          });
       }),
     onSessionEvent: () => flushWarnings,
     promptFailure: (cause) => {

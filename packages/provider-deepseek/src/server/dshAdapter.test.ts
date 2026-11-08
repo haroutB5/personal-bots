@@ -5,6 +5,8 @@
  * read the v2 event projection a chat sees, not adapter internals.
  */
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -46,6 +48,7 @@ import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { DeepSeekSettings } from "../settings.ts";
 import { dshImageTooLargeText, makeDeepSeekDshAdapter, translateDshFailure } from "./dshAdapter.ts";
 import { dshTestAgentPath } from "./dshTestAgent.ts";
+import { parseDeepSeekLine } from "./usage.ts";
 
 const instanceId = ProviderInstanceId.make("deepseek-dsh-test");
 const threadId = ThreadId.make("dsh-thread");
@@ -100,7 +103,7 @@ const makeHarness = Effect.fn("makeDshHarness")(function* (options: HarnessOptio
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
   const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-agent-" });
-  const dshHome = path.join(baseDir, "dsh");
+  const dshHome = path.join(host.paths.stateDir, "dsh");
   const requestLog = path.join(baseDir, "requests.ndjson");
   const settings = decodeSettings({
     enabled: true,
@@ -247,6 +250,56 @@ const collectTurn = (session: ProviderAdapter.ProviderAdapterV2SessionRuntime) =
     Effect.map((events) => [...events]),
   );
 
+const dshLedgerStep = {
+  type: "assistant/message",
+  seq: 7,
+  time: 1791917108075,
+  data: {
+    turn: 1,
+    step: 7,
+    message: {
+      role: "assistant",
+      content: [],
+      source: { kind: "model", provider: "deepseek-official", model: "deepseek-flash" },
+      id: "dsh-ledger-message",
+    },
+    usage: { inputTokens: 5896, outputTokens: 4, cacheReadTokens: 128, cacheWriteTokens: 0 },
+  },
+};
+
+const writeDshSessionLog = (
+  dshHome: string,
+  steps: ReadonlyArray<Record<string, unknown>>,
+): string => {
+  const file = NodePath.join(
+    dshHome,
+    "sessions",
+    "--dsh-ledger--",
+    nativeSessionId,
+    "session.v4.jsonl.zstd",
+  );
+  NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+  const frame = (event: Record<string, unknown>) =>
+    NodeZlib.zstdCompressSync(Buffer.from(`${JSON.stringify(event)}\n`, "utf8"), {
+      params: { [NodeZlib.constants.ZSTD_c_checksumFlag]: 1 },
+    });
+  const header = {
+    type: "session",
+    version: 4,
+    id: nativeSessionId,
+    cwd: "/tmp/dsh-ledger-workspace",
+  };
+  NodeFS.writeFileSync(file, Buffer.concat([frame(header), ...steps.map(frame)]));
+  return file;
+};
+
+const ledgerLines = (file: string): ReadonlyArray<string> => {
+  if (!NodeFS.existsSync(file)) return [];
+  return NodeFS.readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0);
+};
+
 const assistantTexts = (
   events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
 ): ReadonlyArray<string> =>
@@ -359,6 +412,84 @@ it.layer(testLayer)("DeepSeekDshAdapter", (it) => {
         const text = JSON.stringify(events);
         expect(text).toContain("ECHO:HELLO DSH FALCON-42");
         expect(assistantTexts(events)).toEqual(["ECHO:HELLO DSH FALCON-42"]);
+      }).pipe(Effect.scoped);
+    }),
+  );
+
+  it.effect("writes one ledger line for a completed turn, before the terminal", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        writeDshSessionLog(harness.dshHome, [dshLedgerStep]);
+        const ledgerPath = NodePath.join(harness.dshHome, "usage", `${nativeSessionId}.jsonl`);
+        const session = yield* harness.adapter.openSession(openInput({}));
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection: { instanceId, model: "deepseek-flash" },
+          runtimePolicy,
+        });
+        yield* session.startTurn(yield* turnInput({ providerThread, text: "do the three steps" }));
+        let linesAtTerminal = -1;
+        const events = yield* session.events.pipe(
+          Stream.tap((event) =>
+            event.type === "turn.terminal"
+              ? Effect.sync(() => {
+                  linesAtTerminal = ledgerLines(ledgerPath).length;
+                })
+              : Effect.void,
+          ),
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.map((collected) => [...collected]),
+        );
+        const terminal = events.at(-1);
+        expect(terminal?.type).toBe("turn.terminal");
+        expect(terminal?.type === "turn.terminal" ? terminal.status : undefined).toBe("completed");
+        // The spend is on disk by the time the screen sees the terminal.
+        expect(linesAtTerminal).toBe(1);
+        const lines = ledgerLines(ledgerPath);
+        expect(lines).toHaveLength(1);
+        expect(parseDeepSeekLine(lines[0]!)).toEqual({
+          provider: "deepseek",
+          timestampMs: 1791917108075,
+          model: "deepseek-flash",
+          sessionId: nativeSessionId,
+          totals: {
+            uncachedInputTokens: 5896,
+            cachedInputTokens: 128,
+            cacheCreationTokens: 0,
+            outputTokens: 4,
+            reasoningTokens: 0,
+          },
+          reportedCostUsd: null,
+          speed: "standard",
+          dedupeKey: "dsh-ledger-message:mock-session-1:7",
+        });
+      }).pipe(Effect.scoped);
+    }),
+  );
+
+  it.effect("a resumed session does not append the same usage twice", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const ledgerPath = NodePath.join(harness.dshHome, "usage", `${nativeSessionId}.jsonl`);
+      const runTurn = (input: ReturnType<typeof openInput>) =>
+        Effect.gen(function* () {
+          const session = yield* harness.adapter.openSession(input);
+          const providerThread = yield* session.ensureThread({
+            threadId,
+            modelSelection: { instanceId, model: "deepseek-flash" },
+            runtimePolicy,
+          });
+          yield* session.startTurn(yield* turnInput({ providerThread, text: "hello" }));
+          yield* collectTurn(session);
+        }).pipe(Effect.scoped);
+      yield* Effect.gen(function* () {
+        writeDshSessionLog(harness.dshHome, [dshLedgerStep]);
+        yield* runTurn(openInput({}));
+        expect(ledgerLines(ledgerPath)).toHaveLength(1);
+        yield* runTurn(openInput({ initialNativeThreadId: nativeSessionId }));
+        expect(ledgerLines(ledgerPath)).toHaveLength(1);
       }).pipe(Effect.scoped);
     }),
   );

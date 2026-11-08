@@ -318,6 +318,30 @@ export function appendDshLedgerLines(ledgerPath: string, lines: ReadonlyArray<st
 }
 
 /**
+ * Appends the assistant steps one session log gained since its ledger's last
+ * seq. The ledger itself is the cursor, so a resume, a restart or a repeated
+ * flush at the same seq writes nothing. Returns the lines written.
+ */
+export function flushDshUsageLedger(input: {
+  readonly dshHome: string;
+  readonly rootSessionId: string;
+}): number {
+  const file = dshSessionFilePath(input.dshHome, input.rootSessionId);
+  if (file === undefined) return 0;
+  const bytes = readDshSessionBytes(file);
+  if (bytes === undefined) return 0;
+  const ledgerPath = NodePath.join(dshUsageDir(input.dshHome), `${input.rootSessionId}.jsonl`);
+  const lastSeq = readLedgerLastSeq(ledgerPath, input.rootSessionId);
+  const lines = decodeDshSessionFrames(bytes, 0).lines.flatMap((line) => {
+    const step = parseDshAssistantStep(line);
+    return step === null || step.seq <= lastSeq
+      ? []
+      : [dshStepToTranscriptLine({ step, rootSessionId: input.rootSessionId })];
+  });
+  return appendDshLedgerLines(ledgerPath, lines);
+}
+
+/**
  * One Claude-shaped ledger line as a DeepSeek record. Only the provider
  * differs, which selects DeepSeek's own pricing card.
  */
