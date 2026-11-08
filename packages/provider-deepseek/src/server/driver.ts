@@ -1,5 +1,5 @@
 /** DeepSeek's provider driver: one identity, one Flash catalog, two engines behind a seam. */
-import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -30,7 +30,6 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 
 import { DeepSeekSettings } from "../settings.ts";
 import { resolveDeepSeekModelCatalog } from "./catalog.ts";
@@ -38,29 +37,12 @@ import { DeepSeekEngineHost, makeDeepSeekEngineAdapter } from "./engineAdapter.t
 import { makeDeepSeekContinuationGroupKey, makeDeepSeekEnvironment } from "./environment.ts";
 import { resolveDeepSeekEngine } from "./engine.ts";
 import { buildInitialDeepSeekProviderSnapshot, checkDeepSeekProviderStatus } from "./status.ts";
+import { makeDeepSeekTextGeneration } from "./textGeneration.ts";
+import { deepSeekUsageReader, type DeepSeekUsageReaderEnv } from "./usage.ts";
 
 const decodeDeepSeekSettings = Schema.decodeSync(DeepSeekSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("deepseek");
-
-// Text generation lands in D6; every operation fails rather than pretending a model ran.
-const unsupportedTextGeneration: ProviderTextGeneration = (() => {
-  const unsupported = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail: "DeepSeek does not provide application text generation yet.",
-      }),
-    );
-  return {
-    generateCommitMessage: () => unsupported("generateCommitMessage"),
-    generatePrContent: () => unsupported("generatePrContent"),
-    generateBranchName: () => unsupported("generateBranchName"),
-    generateThreadTitle: () => unsupported("generateThreadTitle"),
-    generateReviewGuide: () => unsupported("generateReviewGuide"),
-    generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
-  };
-})();
 
 export type DeepSeekDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -77,7 +59,11 @@ export type DeepSeekDriverEnv =
 // and must rebuild the instance.
 const DEEPSEEK_REBUILD_IRRELEVANT_CONFIG_KEYS = ["peakSwitch"] as const;
 
-export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv> = {
+export const DeepSeekDriver: ProviderDriver<
+  DeepSeekSettings,
+  DeepSeekDriverEnv,
+  DeepSeekUsageReaderEnv
+> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "DeepSeek",
@@ -86,6 +72,7 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
   configSchema: DeepSeekSettings,
   defaultConfig: (): DeepSeekSettings => decodeDeepSeekSettings({}),
   rebuildIrrelevantConfigKeys: DEEPSEEK_REBUILD_IRRELEVANT_CONFIG_KEYS,
+  usage: deepSeekUsageReader,
   create: Effect.fn("DeepSeekDriver.create")(function* ({
     instanceId,
     displayName,
@@ -95,6 +82,7 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const host = yield* DeepSeekEngineHost;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const catalogService = yield* ModelCatalog.ModelCatalog;
@@ -119,6 +107,12 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
     const modelCatalog = Effect.map(
       catalogService.current(DRIVER_KIND),
       resolveDeepSeekModelCatalog,
+    );
+    const textGeneration = yield* makeDeepSeekTextGeneration(
+      host.createTextGeneration,
+      effectiveConfig,
+      deepSeekEnv,
+      catalogService.current(DRIVER_KIND),
     );
     const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
       Effect.succeed(
@@ -195,7 +189,7 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
       enabled,
       snapshot,
       orchestrationAdapter,
-      textGeneration: unsupportedTextGeneration,
+      textGeneration,
     } satisfies ProviderInstance;
   }),
 };

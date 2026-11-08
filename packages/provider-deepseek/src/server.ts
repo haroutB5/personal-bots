@@ -38,3 +38,44 @@ export {
   type DeepSeekDshAdapterOptions,
 } from "./server/dshAdapter.ts";
 export { resolveDshRuntime, resolveDshSkillDirs, type DshRuntime } from "./server/dshRuntime.ts";
+export {
+  appendDshLedgerLines,
+  decodeDshSessionFrames,
+  deepSeekUsageFormat,
+  deepSeekUsageReader,
+  dshSessionFilePath,
+  dshSessionsDir,
+  dshStepToTranscriptLine,
+  dshUsageDir,
+  findDshDescendantSessions,
+  parseDeepSeekLine,
+  parseDeepSeekRecord,
+  parseDshAssistantStep,
+  parseDshSessionHeader,
+  readDshSessionBytes,
+  readLedgerLastSeq,
+  type DeepSeekUsageReaderEnv,
+  type DshAssistantStep,
+  type DshFrameRead,
+} from "./server/usage.ts";
+export {
+  DEEPSEEK_TEXTGEN_EFFORT,
+  makeDeepSeekTextGeneration,
+  withLowEffortWhenAbsent,
+  type DeepSeekTextGenerationFactory,
+} from "./server/textGeneration.ts";
+export {
+  DEEPSEEK_BALANCE_CACHE_MS,
+  DEEPSEEK_BALANCE_RETRY_AFTER_FAILURE_MS,
+  DEEPSEEK_BALANCE_TIMEOUT_MS,
+  DEEPSEEK_BALANCE_URL,
+  DEEPSEEK_BALANCE_URL_ENV,
+  deepSeekBalanceEndpoint,
+  makeDeepSeekBalanceReader,
+  parseDeepSeekBalance,
+  type DeepSeekBalanceAmounts,
+  type DeepSeekBalanceFailureReason,
+  type DeepSeekBalanceRead,
+  type DeepSeekBalanceReader,
+  type DeepSeekBalanceReaderOptions,
+} from "./server/balance.ts";

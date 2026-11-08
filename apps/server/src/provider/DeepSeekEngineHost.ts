@@ -21,6 +21,7 @@ import * as ServerConfig from "../config.ts";
 import { forgetBotProviderProcess, registerBotProviderProcess } from "./botProviderProcesses.ts";
 import { resolveClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
 import * as ClaudeAdapterV2 from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { makeClaudeTextGeneration } from "../textGeneration/ClaudeTextGeneration.ts";
 
 export const layer = Layer.effect(
   DeepSeekEngineHost,
@@ -53,6 +54,16 @@ export const layer = Layer.effect(
           ),
           Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      createTextGeneration: (input) =>
+        makeClaudeTextGeneration(
+          input.settings,
+          input.environment,
+          Effect.map(input.providerCatalog, resolveClaudeModelCatalog),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
         ),
       registerProcess: (input) => {
         registerBotProviderProcess(input);

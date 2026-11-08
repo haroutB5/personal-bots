@@ -99,6 +99,7 @@ const markerAdapter = () =>
 const hostLayer = (createClaudeAdapter: DeepSeekEngineHostService["createClaudeAdapter"]) =>
   Layer.succeed(DeepSeekEngineHost, {
     createClaudeAdapter,
+    createTextGeneration: () => Effect.die("text generation is not used in this test"),
     registerProcess: () => {},
     forgetProcess: () => {},
   });

@@ -15,10 +15,13 @@ import type { DeepSeekSettings } from "../settings.ts";
 import { makeDeepSeekClaudeAdapter, type DeepSeekClaudeAdapterFactory } from "./adapter.ts";
 import { makeDeepSeekDshAdapter, type DeepSeekDshAdapterOptions } from "./dshAdapter.ts";
 import type { DeepSeekEngine } from "./engine.ts";
+import type { DeepSeekTextGenerationFactory } from "./textGeneration.ts";
 
 export interface DeepSeekEngineHostService {
   /** The app's `createClaudeAdapterV2`, already bound to its own services. */
   readonly createClaudeAdapter: DeepSeekClaudeAdapterFactory;
+  /** The app's Claude text-generation runtime, already bound to its own services. */
+  readonly createTextGeneration: DeepSeekTextGenerationFactory;
   readonly registerProcess: (input: {
     readonly threadId: string;
     readonly provider: string;
