@@ -415,6 +415,10 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./nodeSqliteWorker": {
+      "types": "./src/nodeSqliteWorker.ts",
+      "import": "./src/nodeSqliteWorker.ts"
+    },
     "./orchestrationV2BoundedSnapshot": {
       "types": "./src/orchestrationV2BoundedSnapshot.ts",
       "import": "./src/orchestrationV2BoundedSnapshot.ts"
