@@ -16,6 +16,7 @@ import {
   ThreadId,
   isProviderAvailable,
 } from "@t3tools/contracts";
+import { DeepSeekSettings } from "@t3tools/provider-deepseek/settings";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -206,11 +207,7 @@ const DEEPSEEK_DRIVER = "deepseek";
 const CLAUDE_DRIVER = "claudeAgent";
 
 /** Decodes one DeepSeek instance config; a non-DeepSeek config decodes to none. */
-/** The one DeepSeek instance setting read here; HEAD contracts settings.ts 777-848. Owner D1. */
-const DeepSeekPeakSetting = Schema.Struct({
-  peakSwitch: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-});
-const decodeDeepSeekSettings = Schema.decodeUnknownOption(DeepSeekPeakSetting);
+const decodeDeepSeekSettings = Schema.decodeUnknownOption(DeepSeekSettings);
 
 export const make = Effect.gen(function* () {
   const engine = yield* PersonalEngine.PersonalEngine;
