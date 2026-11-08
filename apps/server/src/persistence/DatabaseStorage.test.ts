@@ -200,6 +200,36 @@ it.live("retries a batch that loses the write lock and records completion", () =
   ).pipe(Effect.provide(fileStorageLayer)),
 );
 
+it.effect("records completion when the last legacy page ends below the head", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const timestampPath = path.join(path.dirname(config.dbPath), "compacted-at");
+
+    // A full legacy page, then a partial page whose last v1 sequence sits below
+    // a newer v2 head. The old cursor stopped at 120 and never reached 121.
+    yield* seedLegacyImport(120);
+    yield* sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        'event:storage-v2-head', 'thread', 'thread:storage-v2', 1,
+        'message.updated', '2026-10-17T00:00:00.000Z', 'server', '{"text":"v2"}', '{}', 2
+      )
+    `;
+
+    const result = yield* DatabaseStorage.runCompaction(maintenance, timestampPath, Effect.void);
+
+    assert.isTrue(result.drained);
+    assert.equal(result.deletedEventCount, 120);
+    assert.isTrue(yield* fs.exists(timestampPath));
+  }).pipe(Effect.provide(fileStorageLayer)),
+);
+
 it.effect("does not record completion when the pass reports a backlog", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startupTime);

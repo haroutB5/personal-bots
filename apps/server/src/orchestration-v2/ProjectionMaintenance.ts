@@ -239,7 +239,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             .pipe(retryLockTimeout);
           yield* Effect.yieldNow;
         }
-        const pageEnd = rows.at(-1)?.sequence ?? throughSequence;
+        const pageEnd = rows.length < PAGE_SIZE ? throughSequence : rows.at(-1)!.sequence;
         yield* writeMetadata(COMPACTION_EVENTS_CURSOR, pageEnd, now);
         // Rest after every page, including the last, so the next loop starts a fresh slice.
         yield* betweenPages;
@@ -288,7 +288,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           deletedEventCount += batch.length;
           yield* Effect.yieldNow;
         }
-        const pageEnd = rows.at(-1)?.sequence ?? throughSequence;
+        const pageEnd = rows.length < PAGE_SIZE ? throughSequence : rows.at(-1)!.sequence;
         yield* writeMetadata(COMPACTION_LEGACY_EVENTS_CURSOR, pageEnd, now);
         eventsCursor = pageEnd;
         yield* betweenPages;
@@ -325,7 +325,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           deletedReceiptCount += batch.length;
           yield* Effect.yieldNow;
         }
-        const pageEnd = rows.at(-1)?.row_id ?? throughReceiptRowId;
+        const pageEnd = rows.length < PAGE_SIZE ? throughReceiptRowId : rows.at(-1)!.row_id;
         yield* writeMetadata(COMPACTION_RECEIPTS_CURSOR, pageEnd, now);
         receiptsCursor = pageEnd;
         yield* betweenPages;
