@@ -576,6 +576,43 @@ chainTest("a multi-paragraph reply is the result in full, not its first paragrap
   }),
 );
 
+chainTest("a task waiting for the user resumes after the requested stop and completes", (h) =>
+  Effect.gen(function* () {
+    const root = yield* h.createRoot("resume-after-stop");
+    const thread = yield* h.threadOf(root);
+    yield* start(h, thread);
+    yield* h.tasks.waitForUser({ taskId: root.taskId }).pipe(Effect.orDie);
+    yield* say(h, thread, "I need the API key.");
+    yield* complete(h, thread);
+    yield* h.until(root, (d) => d.task.status === "waiting_for_user", "the task to wait");
+    const resumedAt = yield* Clock.currentTimeMillis;
+    yield* h.tasks
+      .resumeFromUser({
+        taskId: root.taskId,
+        noteId: "secret:resume-after-stop",
+        note: "The API key was stored. Continue.",
+        restartSession: true,
+      })
+      .pipe(Effect.orDie);
+    const deadline = resumedAt + 9_000;
+    while (h.provider.starts.length < 2) {
+      if ((yield* Clock.currentTimeMillis) > deadline) {
+        throw new Error("timed out waiting for the resumed provider turn");
+      }
+      yield* h.worker.drain();
+      yield* h.tasks.drain;
+      yield* Effect.sleep("20 millis");
+    }
+    yield* say(h, thread, "Continued with the key.");
+    yield* complete(h, thread);
+    const done = yield* h.until(root, (d) => d.task.status === "completed", "the task to complete");
+    const elapsed = (yield* Clock.currentTimeMillis) - resumedAt;
+    expect(elapsed).toBeLessThan(10_000);
+    expect(done.task.result?.summary).toBe("Continued with the key.");
+    expect(done.attempts.length).toBe(2);
+  }),
+);
+
 chainTest(
   "a duplicate turn.completed (same event id, then a new id) completes the task once with the same result",
   (h) =>

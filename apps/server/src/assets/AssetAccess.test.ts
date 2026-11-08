@@ -1004,6 +1004,21 @@ describe("AssetAccess", () => {
       }
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
+      yield* fileSystem.writeFileString(
+        path.join(root, "credentials.js"),
+        "module.exports = { token: 'secret' };",
+      );
+      const throughPage = yield* resolveAsset(token, "credentials.js").pipe(Effect.flip);
+      expect(throughPage._tag).toBe("AssetProtectedFileError");
+      const direct = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: path.join(root, "credentials.js"),
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(direct._tag).toBe("AssetProtectedFileError");
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
       for (const extension of [
         "odt",

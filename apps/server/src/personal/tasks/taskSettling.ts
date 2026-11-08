@@ -95,6 +95,8 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   const tryResume = Effect.fn("PersonalTaskService.tryResume")(function* (
     changed: Changed,
     task: PersonalTask,
+    /** The caller already stopped this thread's session; do not wait for a shell that never says so. */
+    options?: { readonly sessionStopped?: boolean },
   ) {
     if (!isWaitingForUser(task.status)) {
       return;
@@ -105,7 +107,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     }
     yield* closeStaleAttempts(task);
     if (task.threadId !== null && notes.some((note) => note.restartSession)) {
-      if (sessionIsAlive(yield* readSession(task.threadId))) {
+      if (options?.sessionStopped !== true && sessionIsAlive(yield* readSession(task.threadId))) {
         resumingThreadIds.add(task.threadId);
         return;
       }

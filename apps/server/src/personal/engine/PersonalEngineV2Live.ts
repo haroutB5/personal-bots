@@ -34,6 +34,7 @@ import * as Stream from "effect/Stream";
 import { ProjectService } from "../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
+import { PersonalProviderSessions } from "./PersonalProviderSessions.ts";
 import {
   PersonalEngine,
   type CreateProjectInput,
@@ -203,6 +204,7 @@ const toMessageView = (row: StoredMessage): PersonalMessageView => ({
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  const providerSessions = yield* Effect.serviceOption(PersonalProviderSessions);
   const projects = yield* ProjectService;
   const sql = yield* SqlClient.SqlClient;
 
@@ -488,6 +490,11 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         stopDelegatedTasks: false,
       });
+      // A parked thread has no turn to stop, so thread.stop leaves its provider
+      // session ready. Release the process too; the resume note needs a fresh one.
+      if (Option.isSome(providerSessions)) {
+        yield* providerSessions.value.stopSession({ threadId: input.threadId });
+      }
     }).pipe(Effect.mapError(engineError("stop")));
 
   const archive = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
@@ -1048,10 +1055,7 @@ const make = Effect.gen(function* () {
       if (threadIds.length === 0) return [];
       const snapshot = yield* threads.getShellSnapshot({ threadIds: [...threadIds] });
       return yield* toV1Shells([...snapshot.threads, ...snapshot.archivedThreads]);
-    }).pipe(
-      NodeSqliteClient.readOnly,
-      Effect.mapError(engineError("threadShells")),
-    );
+    }).pipe(NodeSqliteClient.readOnly, Effect.mapError(engineError("threadShells")));
 
   const shape: PersonalEngineShape = {
     createProject,

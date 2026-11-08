@@ -352,8 +352,9 @@ export class PersonalTaskService extends Context.Service<
     }) => Effect.Effect<PersonalTask, PersonalTasksError>;
     /**
      * Re-queues a user- or browser-waiting task with `note` as its next turn's
-     * opening. `restartSession` first stops the thread's provider session and
-     * queues only once it is gone, so the next turn runs in a fresh process.
+     * opening. `restartSession` stops the thread's provider session first, then
+     * queues without waiting for a stopped shell (v2 has none), so the next
+     * turn runs in a fresh process.
      */
     readonly resumeFromUser: (input: {
       readonly taskId: PersonalTaskId;

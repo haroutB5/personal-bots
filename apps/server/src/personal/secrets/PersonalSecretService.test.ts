@@ -345,15 +345,14 @@ describe("personal secret requests", () => {
         expect(fulfilled.status).toBe("fulfilled");
         expect(text(fulfilled)).not.toContain(SECRET_VALUE);
 
-        // The live session cannot take new env: it is stopped first, and the
-        // task waits for that before it queues.
+        // The live session cannot take new env: it is stopped first. The task
+        // queues at once; v2 has no stopped shell event to wait for.
         const stops = harness.dispatched.filter((command) => command.type === "thread.stop");
         expect(stops.map((command) => command.threadId)).toEqual([threadId]);
-        expect((yield* reload(task.taskId)).status).toBe("waiting_for_user");
+        expect((yield* reload(task.taskId)).status).toBe("queued");
         expect(turnStarts(harness).length).toBe(startsBefore);
 
-        const stoppedAt = DateTime.formatIso(yield* DateTime.now);
-        yield* setSession(harness, makeSession(threadId, "stopped", null, stoppedAt));
+        yield* tasks.drain;
         const resumed = turnStarts(harness).slice(startsBefore);
         expect(resumed.length).toBe(1);
         expect(resumed[0]!.threadId).toBe(threadId);
@@ -362,7 +361,9 @@ describe("personal secret requests", () => {
         );
         expect((yield* reload(task.taskId)).status).toBe("running");
 
-        // Once: another stop event, a sweep and a second fulfil change nothing.
+        // Once: a late stopped event, a sweep and a second fulfil change nothing.
+        const stoppedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* setSession(harness, makeSession(threadId, "stopped", null, stoppedAt));
         yield* setSession(harness, makeSession(threadId, "stopped", null, stoppedAt));
         yield* tasks.sweep;
         yield* tasks.drain;

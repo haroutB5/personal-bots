@@ -1087,5 +1087,17 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
   });
+  // An HTML token authorizes its page's siblings by containment alone; the deny
+  // list still applies to the joined path, and to the real path a symlink names.
+  if (workspaceFile !== null && isProtectedHostPath(workspaceFile)) {
+    return yield* new AssetProtectedFileError({
+      resource: {
+        _tag: "host-file",
+        cwd: claims.workspaceRoot,
+        path: workspaceFile,
+        disposition: "inline",
+      },
+    });
+  }
   return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;
 });
