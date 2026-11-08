@@ -9,6 +9,7 @@ import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
 import { modelShortName } from "@t3tools/provider-core/modelShortName";
 import { cursorClient } from "@t3tools/provider-cursor/client";
+import { deepSeekClient } from "@t3tools/provider-deepseek/client";
 import { fxClient } from "@t3tools/provider-fx/client";
 import { grokClient } from "@t3tools/provider-grok/client";
 import { kiroClient } from "@t3tools/provider-kiro/client";
@@ -32,6 +33,7 @@ export const providerClients = makeProviderClientRegistry([
     settingsSchema: ClaudeSettings,
   },
   cursorClient,
+  deepSeekClient,
   grokClient,
   fxClient,
   openCodeClient,

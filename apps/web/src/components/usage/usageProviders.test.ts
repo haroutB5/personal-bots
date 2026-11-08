@@ -1,6 +1,17 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { rankProvidersByMetric } from "./usageProviders";
+import { PROVIDER_PRESENTATION, rankProvidersByMetric } from "./usageProviders";
+
+describe("PROVIDER_PRESENTATION", () => {
+  it("shows DeepSeek with a label and its own driver", () => {
+    expect(PROVIDER_PRESENTATION.deepseek).toEqual({
+      label: "DeepSeek",
+      color: "#4d6bfe",
+      driverKind: ProviderDriverKind.make("deepseek"),
+    });
+  });
+});
 
 describe("rankProvidersByMetric", () => {
   it("ranks by the selected metric, highest first", () => {

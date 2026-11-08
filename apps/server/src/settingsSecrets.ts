@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
+import { deepSeekClient } from "@t3tools/provider-deepseek/client";
 import { grokClient } from "@t3tools/provider-grok/client";
 import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
@@ -33,6 +34,7 @@ const providerSecretFields = new Map([
   ["antigravity", secretSettingsFields(AntigravitySettings)],
   ...[
     cursorClient,
+    deepSeekClient,
     grokClient,
     kiroClient,
     museClient,

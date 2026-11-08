@@ -47,6 +47,11 @@ export const PROVIDER_PRESENTATION = {
     color: "#0866ff",
     driverKind: ProviderDriverKind.make("muse"),
   },
+  deepseek: {
+    label: "DeepSeek",
+    color: "#4d6bfe",
+    driverKind: ProviderDriverKind.make("deepseek"),
+  },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
