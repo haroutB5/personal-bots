@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   removeUpload: Symbol("remove-upload"),
   runAtomCommand: vi.fn(),
   readEnvironmentScope: vi.fn(),
-  readPreparedConnection: vi.fn(),
+  awaitPreparedConnection: vi.fn(),
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -50,7 +50,7 @@ vi.mock("../state/attachments", () => ({
 
 vi.mock("../state/session", () => ({
   readEnvironmentScope: mocks.readEnvironmentScope,
-  readPreparedConnection: mocks.readPreparedConnection,
+  awaitPreparedConnection: mocks.awaitPreparedConnection,
 }));
 
 import {
@@ -125,6 +125,13 @@ class TestXmlHttpRequest {
 const firstEnvironment = EnvironmentId.make("environment-1");
 const secondEnvironment = EnvironmentId.make("environment-2");
 
+/** Resolving the upload URL awaits the prepared connection, so the start-to-transfer hop is several ticks deep. */
+async function flushUploadStart(): Promise<void> {
+  for (let tick = 0; tick < 10; tick += 1) {
+    await Promise.resolve();
+  }
+}
+
 function makeImage(id: string): ComposerImageAttachment {
   const file = new File([new Uint8Array([1, 2, 3])], `${id}.png`, { type: "image/png" });
   return {
@@ -175,8 +182,8 @@ describe("attachmentUploadQueue", () => {
     mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: {} });
     mocks.runAtomCommand.mockReset();
     mocks.readEnvironmentScope.mockReset().mockReturnValue(true);
-    mocks.readPreparedConnection.mockReset();
-    mocks.readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://environment.test/" });
+    mocks.awaitPreparedConnection.mockReset();
+    mocks.awaitPreparedConnection.mockResolvedValue({ httpBaseUrl: "https://environment.test/" });
     mocks.runAtomCommand.mockImplementation(
       async (
         _registry: unknown,
@@ -224,7 +231,7 @@ describe("attachmentUploadQueue", () => {
 
     mocks.readEnvironmentScope.mockReturnValue(true);
     startAttachmentUpload({ environmentId: secondEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
     const settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[0]!.complete();
     await settled;
@@ -307,7 +314,7 @@ describe("attachmentUploadQueue", () => {
       },
     };
     startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
 
     const request = TestXmlHttpRequest.requests[0]!;
     expect(request.method).toBe("POST");
@@ -361,7 +368,7 @@ describe("attachmentUploadQueue", () => {
         image: file,
         draftTarget: draftId,
       });
-      await Promise.resolve();
+      await flushUploadStart();
 
       const settled = awaitAttachmentUploads([file.id]);
       TestXmlHttpRequest.requests[0]!.complete();
@@ -384,7 +391,7 @@ describe("attachmentUploadQueue", () => {
     const file = makeFile("restored");
     try {
       startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
-      await Promise.resolve();
+      await flushUploadStart();
       const settled = awaitAttachmentUploads([file.id]);
       TestXmlHttpRequest.requests[0]!.complete();
       await settled;
@@ -454,7 +461,7 @@ describe("attachmentUploadQueue", () => {
         image: replacement,
         draftTarget: draftId,
       });
-      await Promise.resolve();
+      await flushUploadStart();
       const settled = awaitAttachmentUploads([replacement.id]);
       TestXmlHttpRequest.requests[0]!.complete();
       await settled;
@@ -643,13 +650,13 @@ describe("attachmentUploadQueue", () => {
   it("restores the previous environment after a replacement upload fails", async () => {
     const image = makeImage("image-move");
     startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
     let settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[0]!.complete();
     await settled;
 
     startAttachmentUpload({ environmentId: secondEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
     settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[1]!.complete(500);
     await settled;
@@ -669,7 +676,7 @@ describe("attachmentUploadQueue", () => {
     }
     const otherEnvironmentImage = makeImage("image-other");
     startAttachmentUpload({ environmentId: secondEnvironment, image: otherEnvironmentImage });
-    await Promise.resolve();
+    await flushUploadStart();
 
     expect(TestXmlHttpRequest.requests).toHaveLength(4);
     const otherRequest = TestXmlHttpRequest.requests.find((request) =>
@@ -684,7 +691,7 @@ describe("attachmentUploadQueue", () => {
       ...images.slice(0, 3).map((image) => awaitAttachmentUploads([image.id])),
       awaitAttachmentUploads([otherEnvironmentImage.id]),
     ]);
-    await Promise.resolve();
+    await flushUploadStart();
     TestXmlHttpRequest.requests[4]!.complete();
     await awaitAttachmentUploads([images[3]!.id]);
   });

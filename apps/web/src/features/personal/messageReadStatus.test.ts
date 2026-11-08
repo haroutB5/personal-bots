@@ -2,15 +2,15 @@ import {
   EventId,
   MessageId,
   TurnId,
-  type OrchestrationLatestTurn,
   type OrchestrationMessageContext,
-  type OrchestrationThreadActivity,
   withPersonalFollowUp,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { OrchestrationLatestTurn } from "@hbots/personal-client/bots/threadShell";
 import { deriveWorkLogEntries } from "@hbots/personal-client/conversation/timeline";
 import type { ChatMessage } from "@hbots/personal-client/conversation/types";
+import type { OrchestrationThreadActivity } from "@hbots/personal-client/conversation/wireTypes";
 
 import type { ConversationItem } from "./conversationModel";
 import { deriveLatestMessageReadStatus, USER_MESSAGE_DELIVERED_KIND } from "./messageReadStatus";

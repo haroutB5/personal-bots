@@ -27,7 +27,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentCatalog } from "../connection/catalog";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
-import { readEnvironmentScope, readPreparedConnection } from "../state/session";
+import { awaitPreparedConnection, readEnvironmentScope } from "../state/session";
 import type { AttachmentUploadState, ReadyAttachmentUpload } from "./attachmentUploadState";
 
 const MAX_UPLOADS_PER_ENVIRONMENT = 3;
@@ -272,14 +272,17 @@ async function runUpload(job: UploadJob): Promise<void> {
       mimeType,
       sizeBytes: file.size,
     },
-    resolveUploadUrl: (relativeUrl) => {
+    // Awaited, not read: on a brand-new chat nothing else mounts the prepared
+    // connection, so a bare read answers null forever and the bytes never leave.
+    resolveUploadUrl: async (relativeUrl) => {
       if (
         job.cancelled ||
         !readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)
       ) {
         return null;
       }
-      const connection = readPreparedConnection(job.environmentId);
+      const connection = await awaitPreparedConnection(job.environmentId);
+      if (job.cancelled) return null;
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) =>

@@ -116,7 +116,9 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
             )
             .handle("revokePairingLink", () => unexpectedEndpoint("auth.revokePairingLink"))
             .handle("revokeClient", () => unexpectedEndpoint("auth.revokeClient"))
-            .handle("revokeOtherClients", () => unexpectedEndpoint("auth.revokeOtherClients")),
+            .handle("revokeOtherClients", () => unexpectedEndpoint("auth.revokeOtherClients"))
+            .handle("renewSession", () => unexpectedEndpoint("auth.renewSession"))
+            .handle("revokeSession", () => unexpectedEndpoint("auth.revokeSession")),
         ),
       ]),
       Effect.provideService(EnvironmentAuthenticatedAuth, authenticatedAuth),

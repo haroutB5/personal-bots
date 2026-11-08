@@ -85,10 +85,55 @@ export function usePreparedConnection(environmentId: EnvironmentId | null) {
   );
 }
 
+/** Null until some consumer mounts the atom. Use awaitPreparedConnection where null is a failure. */
 export function readPreparedConnection(environmentId: EnvironmentId) {
   return Option.getOrNull(
     appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
   );
+}
+
+type PreparedConnection = NonNullable<ReturnType<typeof readPreparedConnection>>;
+
+const PREPARED_CONNECTION_WAIT_MS = 10_000;
+
+/**
+ * The prepared connection, mounting the atom and waiting when no one else has.
+ * Subscribing starts the stream that publishes it, so this answers from a screen
+ * with nothing else bound to the environment. Null means the wait elapsed.
+ */
+export function awaitPreparedConnection(
+  environmentId: EnvironmentId,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<PreparedConnection | null> {
+  const atom = environmentSession.preparedConnectionValueAtom(environmentId);
+  const mounted = Option.getOrNull(appAtomRegistry.get(atom));
+  if (mounted !== null) return Promise.resolve(mounted);
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const finish = (connection: PreparedConnection | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      // Undefined when subscribe called back before returning; released below.
+      unsubscribe?.();
+      resolve(connection);
+    };
+    unsubscribe = appAtomRegistry.subscribe(
+      atom,
+      (value) => {
+        const connection = Option.getOrNull(value);
+        if (connection !== null) finish(connection);
+      },
+      { immediate: true },
+    );
+    if (settled) {
+      unsubscribe();
+      return;
+    }
+    timer = setTimeout(() => finish(null), options.timeoutMs ?? PREPARED_CONNECTION_WAIT_MS);
+  });
 }
 
 /** data survives SWR revalidation; isPending applies only before first resolve. */

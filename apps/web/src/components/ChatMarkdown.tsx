@@ -251,6 +251,23 @@ interface ChatMarkdownProps {
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
+  /** Claims a file chip before the right panel. True means a host shell (the personal chat
+      preview sheet) opened the file itself. */
+  onOpenFile?: ((request: ChatMarkdownFileOpenRequest) => boolean) | undefined;
+}
+
+export interface ChatMarkdownFileOpenRequest {
+  path: string;
+  line: number | undefined;
+  label: string;
+}
+
+/** Hands a file chip to a host shell. True means the shell opened it, so the right panel is skipped. */
+export function openFileThroughChatPreview(
+  onOpenFile: ((request: ChatMarkdownFileOpenRequest) => boolean) | undefined,
+  request: ChatMarkdownFileOpenRequest,
+): boolean {
+  return onOpenFile?.(request) === true;
 }
 
 export interface ChatMarkdownContextReference {
@@ -497,6 +514,7 @@ function useChatMarkdownState({
   headingLevelOffset = 0,
   sourceControlMedia = false,
   sourceControlMediaRepository,
+  onOpenFile,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -788,12 +806,18 @@ function useChatMarkdownState({
     });
     return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
   };
-  const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
+  const openFileInPanel = (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    panelPath: string,
+    label: string,
+  ) => {
     if (!threadRef) return;
     // Every open supersedes pending lookups, including synchronous opens.
     const isLatestLookup = claimWorkspaceBasenameLookup();
-    const openAt = (path: string) =>
+    const openAt = (path: string) => {
+      if (openFileThroughChatPreview(onOpenFile, { path, line: fileLinkMeta.line, label })) return;
       useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+    };
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
@@ -825,9 +849,20 @@ function useChatMarkdownState({
       mediaMimeTypeFromExtension(
         fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
       ) !== null;
+    // A host shell with its own file sheet shows every host file, media included.
     const panelPath =
       fileLinkMeta.workspaceRelativePath ??
-      (!canPreviewMedia && isHostPath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+      ((!canPreviewMedia || onOpenFile !== undefined) && isHostPath(fileLinkMeta.filePath)
+        ? fileLinkMeta.filePath
+        : null);
+    const label = fileLinkLabel(
+      {
+        path: fileLinkMeta.filePath,
+        ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+        ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+      },
+      fileLinkParentSuffixByPath,
+    );
 
     return (
       <MarkdownFileLink
@@ -838,14 +873,7 @@ function useChatMarkdownState({
         workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
         panelPath={panelPath}
         line={fileLinkMeta.line}
-        label={fileLinkLabel(
-          {
-            path: fileLinkMeta.filePath,
-            ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
-            ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
-          },
-          fileLinkParentSuffixByPath,
-        )}
+        label={label}
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
@@ -860,7 +888,7 @@ function useChatMarkdownState({
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
-        onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
+        onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path, label)}
         onOpenMedia={
           threadRef && canPreviewMedia
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)

@@ -5,7 +5,6 @@ import type {
   ToolActivityIcon,
   ToolActivitySource,
   ToolActivitySurface,
-  ToolLifecycleItemType,
   TurnId,
   UserInputAttachmentAnswerPayload,
 } from "@t3tools/contracts";
@@ -51,7 +50,6 @@ export interface WorkLogEntry {
   toolIcon?: ToolActivityIcon;
   toolSource?: ToolActivitySource;
   toolData?: unknown;
-  itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;

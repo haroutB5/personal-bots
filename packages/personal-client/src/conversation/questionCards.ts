@@ -3,7 +3,7 @@ import type { UserInputQuestion } from "@t3tools/contracts";
 import type { OrchestrationThreadActivity } from "./wireTypes.ts";
 
 /** What the provider expects back: one answer per question id. */
-export type UserInputAnswers = Record<string, string | string[]>;
+export type UserInputAnswers = Record<string, string | ReadonlyArray<string>>;
 
 /**
  * A question the bot asked, in the state the transcript should show it:
@@ -154,7 +154,7 @@ export function deriveQuestionCards(
  */
 export function describeAnswer(
   question: UserInputQuestion,
-  answer: string | string[] | undefined,
+  answer: string | ReadonlyArray<string> | undefined,
 ): ReadonlyArray<string> {
   if (answer === undefined) return [];
   const values = Array.isArray(answer) ? answer : [answer];
