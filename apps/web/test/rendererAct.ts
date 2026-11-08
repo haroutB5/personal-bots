@@ -1,6 +1,7 @@
-import { act as rendererAct } from "react-test-renderer";
+// react-test-renderer re-exports React.act; this import carries its generic type.
+import { act as rendererAct } from "react";
 
-const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
 
 const isThenable = (value: unknown): value is PromiseLike<unknown> =>
   typeof (value as PromiseLike<unknown> | null)?.then === "function";
@@ -20,7 +21,7 @@ export function act<T>(callback: () => T | Promise<T>): Promise<Awaited<T>> {
       const result = callback();
       async = isThenable(result);
       return result;
-    }) as PromiseLike<Awaited<T>>;
+    });
     if (!async) {
       restore();
       return Promise.resolve(pending);

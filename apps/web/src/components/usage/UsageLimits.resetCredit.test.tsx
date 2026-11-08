@@ -61,7 +61,7 @@ describe("resetCreditFailureText", () => {
 
 // The Limits tab (developer view) and the Bots usage sheet share this hook.
 describe("useResetCredit", () => {
-  const probe: { hook?: ReturnType<typeof useResetCredit> } = {};
+  const probe: { hook?: ReturnType<typeof useResetCredit> | undefined } = {};
   let renderer: ReactTestRenderer | undefined;
 
   function Probe() {

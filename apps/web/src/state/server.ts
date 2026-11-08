@@ -24,7 +24,6 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
-import { PROVIDER_WORKSPACE_DATA_OMITTED } from "../features/personal/providerCatalogScope";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
@@ -37,7 +36,6 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
-  omitProviderWorkspaceData: PROVIDER_WORKSPACE_DATA_OMITTED,
 });
 export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",

@@ -1,13 +1,7 @@
 /**
- * One provider's API key, as a real settings field.
- *
- * The owner sees a labelled, masked input instead of a `VARIABLE_NAME=value`
- * row: saving writes the same sensitive environment entry the hand-typed setup
- * used, so the server keeps redacting it and the encrypted secret store keeps
- * the value. Once saved the row says only that a key is saved — never the
- * value, nor any part of it — with Replace and Remove beside it.
- *
- * @module components/settings/ProviderApiKeyRow
+ * One provider's API key as a masked settings field. It writes the sensitive
+ * environment entry the hand-typed setup used. Once saved it only says a key is
+ * saved, never the value, with Replace and Remove beside it.
  */
 import type {
   ProviderInstanceEnvironmentVariable,
@@ -61,15 +55,18 @@ function ProviderApiKeyRowInner(
   const [replacing, setReplacing] = useState(false);
   const [savedAtMs, setSavedAtMs] = useState<number | null>(null);
 
-  // A key typed into the Variables row before this field existed may sit in
-  // settings.json in plain text (not sensitive). Move it into the secret store
-  // once, silently: the same value goes back marked sensitive, the server
-  // encrypts it and the file keeps only the redacted marker. It converges —
-  // after the write the entry is redacted, so its value is empty here.
+  // A key typed into the Variables row earlier may sit in settings.json in plain
+  // text. Write it back once marked sensitive; after that it is redacted, so the
+  // value here is empty and the write does not repeat.
   const plainEntry = providerApiKeyEntry(props.environment, field);
   const plainValue =
-    plainEntry !== undefined && plainEntry.sensitive !== true ? plainEntry.value : "";
+    plainEntry !== undefined &&
+    plainEntry.sensitive !== true &&
+    typeof plainEntry.value === "string"
+      ? plainEntry.value
+      : "";
   const { onChange, readOnly, environment } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Moves a plain-text key in the server's settings file into its secret store once.
   useEffect(() => {
     if (readOnly || plainValue.length === 0) return;
     onChange(withProviderApiKey(environment, field, plainValue));
@@ -145,6 +142,7 @@ function ProviderApiKeyRowInner(
           aria-label={field.label}
           autoComplete="new-password"
           autoFocus={field.required}
+          // oxlint-disable-next-line shadcn/no-restyle -- A pasted key reads in monospace so look-alike characters stay distinct.
           className="min-w-0 flex-1 font-mono"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {

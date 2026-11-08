@@ -25,7 +25,7 @@ describe("browser resume connections", () => {
     app.visibility("hidden");
     vi.advanceTimersByTime(10_000);
     app.visibility("visible");
-    expect(app.emit).toHaveBeenCalledExactlyOnceWith("application-active-reconnect");
+    expect(app.emit).toHaveBeenCalledExactlyOnceWith("application-active-long");
     app.cleanup();
   });
 
@@ -54,7 +54,7 @@ describe("browser resume connections", () => {
     const restore = Object.assign(new Event("pageshow"), { persisted: true });
     app.target.dispatchEvent(restore);
     app.target.dispatchEvent(restore);
-    expect(app.emit).toHaveBeenCalledExactlyOnceWith("application-active-reconnect");
+    expect(app.emit).toHaveBeenCalledExactlyOnceWith("application-active-long");
     app.cleanup();
     app.visibility("hidden");
     app.visibility("visible");

@@ -73,7 +73,7 @@ export function warmHighlighterWhenIdle(): () => void {
         .then((highlighter) => {
           if (stopped) return;
           try {
-            highlighter.codeToHast(code, { lang: language, theme });
+            highlighter.codeToHtml(code, { lang: language, theme });
           } catch {
             // A language the bundle lacks just stays cold.
           }

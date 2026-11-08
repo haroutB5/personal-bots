@@ -1,3 +1,5 @@
+// The provider types add CDPSession.send; the tests shard does not include vite.config.ts.
+/// <reference types="vite-plus/test/browser-playwright" />
 import { beforeEach } from "vite-plus/test";
 import { commands } from "vite-plus/test/browser";
 

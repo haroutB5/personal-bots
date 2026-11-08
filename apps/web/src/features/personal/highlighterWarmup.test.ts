@@ -5,7 +5,7 @@ vi.mock("~/lib/syntaxHighlighting", () => ({
   getSyntaxHighlighterPromise: async (language: string) => {
     highlight.languages.push(language);
     return {
-      codeToHast: (_code: string, options: { lang: string }) => {
+      codeToHtml: (_code: string, options: { lang: string }) => {
         highlight.calls.push(options.lang);
       },
     };
