@@ -9,6 +9,7 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   formatDuration,
@@ -17,7 +18,12 @@ import {
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  windowAsOf,
 } from "@t3tools/shared/usageLimits";
+import {
+  useHiddenUsageProviders,
+  usePersonalEnvironmentId,
+} from "~/features/personal/usePersonalBots";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useLayoutEffect, useState } from "react";
 
@@ -123,7 +129,7 @@ function WindowBar({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const remaining = remainingPercent(window);
+  const remaining = remainingPercent(windowAsOf(window, now));
   const timeLeft = paceRemainingPercent(window, now);
   const [barRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
@@ -215,7 +221,7 @@ export function LimitWindows({
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                {remainingPercent(windowAsOf(window, now))}% left
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />
@@ -236,6 +242,17 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   noCredit: "No reset credit left.",
   alreadyRedeemed: "That credit was already redeemed.",
 };
+
+/**
+ * What to say when a redeem fails. The server's typed error (for example a
+ * `UsageLimitSourceError`) sits inside the command's `Cause`, not on it.
+ */
+export function resetCreditFailureText(cause: Cause.Cause<unknown>): string {
+  const error = Cause.hasInterruptsOnly(cause) ? undefined : Cause.squash(cause);
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : "Could not use the reset credit.";
+}
 
 export function useResetCredit(
   environmentId: EnvironmentId,
@@ -258,11 +275,7 @@ export function useResetCredit(
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
     }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
-    );
+    setStatus(resetCreditFailureText(result.cause));
   };
 
   return { canManageProviders, confirming, setConfirming, busy, status, redeem };
@@ -377,11 +390,17 @@ export function UsageLimitsSection({
     [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
   );
   const isVisible = (driver: ServerProvider["driver"]) => !hiddenDrivers.has(driver);
+  // Providers the owner turned "Show usage" off for on the bots server stay hidden here too.
+  const personalEnvironmentId = usePersonalEnvironmentId();
+  const hiddenPersonalInstances = useHiddenUsageProviders(personalEnvironmentId);
   const selected = new Map(
     [...presentations].flatMap(([id, presentation]) => {
       if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(id)) return [];
       const config = presentation.serverConfig;
-      if (hiddenDrivers.size === 0 || config === null) return [[id, presentation] as const];
+      const hiddenInstances = id === personalEnvironmentId ? hiddenPersonalInstances : null;
+      if ((hiddenDrivers.size === 0 && !hiddenInstances?.size) || config === null) {
+        return [[id, presentation] as const];
+      }
       return [
         [
           id,
@@ -389,7 +408,10 @@ export function UsageLimitsSection({
             ...presentation,
             serverConfig: {
               ...config,
-              providers: config.providers.filter((provider) => isVisible(provider.driver)),
+              providers: config.providers.filter(
+                (provider) =>
+                  isVisible(provider.driver) && !hiddenInstances?.has(provider.instanceId),
+              ),
               usageLimitSources: config.usageLimitSources?.flatMap((source) => {
                 const accounts = source.accounts.filter((account) => isVisible(account.driver));
                 return accounts.length === 0 && source.accounts.length > 0

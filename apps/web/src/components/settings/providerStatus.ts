@@ -4,6 +4,8 @@ import type {
   ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
 
+import { providerApiKeyField } from "./providerApiKeys";
+
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
     dot: "bg-muted-foreground/50",
@@ -65,6 +67,14 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     };
   }
   if (provider.auth.status === "unauthenticated") {
+    // A provider whose only way in is an API key is waiting for one paste, not failing.
+    const apiKeyField = providerApiKeyField(provider.driver);
+    if (apiKeyField?.required === true) {
+      return {
+        headline: `Add your ${apiKeyField.label}`,
+        detail: provider.message ?? null,
+      };
+    }
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
       headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
@@ -172,11 +182,9 @@ export function getProviderVersionAdvisoryPresentation(
 
   return {
     title: label,
-    detail:
-      advisory.message ??
-      (versionLabel
-        ? `${label}: install ${versionLabel}.`
-        : `${label}: install the latest provider version.`),
+    detail: versionLabel
+      ? `${label}: ${versionLabel} is available.`
+      : (advisory.message ?? `${label}: install the latest provider version.`),
     updateCommand: advisory.updateCommand,
     emphasis: "normal" as const,
     targetVersion: null,

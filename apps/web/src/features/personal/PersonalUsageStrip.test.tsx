@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 
 import type { ServerProvider } from "@t3tools/contracts";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { PersonalUsageStrip, resetUsageAutoProbe } from "./PersonalUsageStrip";
@@ -18,6 +19,11 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.providers }));
+// Upstream gates consume behind AuthProvidersManageScope; the owner holds it.
+vi.mock("~/state/session", () => ({
+  useEnvironmentScope: () => true,
+  readEnvironmentScope: () => true,
+}));
 vi.mock("~/state/server", () => ({
   primaryServerProvidersAtom: {},
   serverEnvironment: {

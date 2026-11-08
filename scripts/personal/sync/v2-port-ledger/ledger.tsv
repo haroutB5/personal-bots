@@ -694,14 +694,14 @@ apps/web/src/components/settings/ProviderSettingsPanel.environment.test.tsx		mod
 apps/web/src/components/settings/ProviderSettingsPanel.tsx		content	1	phase 4	open	area phase 4
 apps/web/src/components/settings/SettingsScopeContext.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/settings/providerDriverMeta.ts		content	8	phase 4	open	area phase 4
-apps/web/src/components/settings/providerStatus.ts		content	14	phase 4	open	area phase 4
+apps/web/src/components/settings/providerStatus.ts		content	14	phase 4	done	Done: an API-key-only provider reads Add your <key>, and the update advisory names the available version; upstream auth label and Antigravity sign-in rows kept
 apps/web/src/components/sidebar/SidebarChrome.tsx		content	9	phase 4	open	area phase 4
 apps/web/src/components/ui/alert-dialog.tsx		content	2	phase 4	open	area phase 4
 apps/web/src/components/ui/dialog.tsx		content	2	phase 4	open	area phase 4
 apps/web/src/components/ui/menu.tsx		content	2	phase 4	open	area phase 4
 apps/web/src/components/ui/popover.tsx		content	2	phase 4	open	area phase 4
 apps/web/src/components/ui/sheet.tsx		content	20	phase 4	open	area phase 4
-apps/web/src/components/usage/UsageLimits.tsx		content	51	phase 4	open	area phase 4
+apps/web/src/components/usage/UsageLimits.tsx		content	51	phase 4	done	Done: resetCreditFailureText reads the typed error from the Cause, windows past reset read as full, and the bots server Show usage setting hides providers; upstream barColor already covers Antigravity
 apps/web/src/components/usage/UsageLimitsPooled.tsx		content	4	phase 4	open	area phase 4
 apps/web/src/components/usage/UsagePage.refresh.test.tsx		modify-delete	1	phase 4	open	area phase 4
 apps/web/src/components/usage/UsagePriceOverrides.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries

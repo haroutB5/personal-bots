@@ -3,7 +3,8 @@ import { createContext, useContext, type ReactElement, type ReactNode } from "re
 import { type EnvironmentId, ProviderInstanceId, ProviderSetupError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import PersonalResetCredits from "./PersonalResetCredits";
@@ -21,6 +22,11 @@ const state = vi.hoisted(() => ({
 // Never the real RPC: a redeem spends one of the owner's banked resets.
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => state.consume,
+}));
+// Upstream gates consume behind AuthProvidersManageScope; the owner holds it.
+vi.mock("~/state/session", () => ({
+  useEnvironmentScope: () => true,
+  readEnvironmentScope: () => true,
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: { consumeResetCredit: { label: "consumeResetCredit" } },
