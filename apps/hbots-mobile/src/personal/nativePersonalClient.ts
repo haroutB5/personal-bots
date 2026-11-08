@@ -1,10 +1,9 @@
-import type { ServerProvider, ThreadId } from "@t3tools/contracts";
-import { EnvironmentId, OrchestrationV2ThreadDetailSnapshot } from "@t3tools/contracts";
+import type { ServerProvider } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { Persistence } from "@t3tools/client-runtime/platform";
 import { ThreadSnapshotLoader } from "@t3tools/client-runtime/state/threads";
 import * as ExpoCrypto from "expo-crypto";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Schema from "effect/Schema";
 import {
   type ConnectionCatalogEntry,
   type PreparedConnection,
@@ -17,7 +16,6 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
-import { withOrchestrationProtocolHeader } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
 import { createPersonalAutomationClient } from "@hbots/personal-client/automation/automationClient";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
@@ -51,6 +49,7 @@ import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
 import { createNativeEnvironmentCache } from "./nativeCache";
 import { connectWithDeadline } from "./connectDeadline";
+import { threadSnapshotLoader } from "./threadSnapshotLoader";
 import { phoneHasInternet, resetNetworkClient } from "./networkReset";
 import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
@@ -107,41 +106,6 @@ const offlineState = (
 function makeShellCache() {
   return createNativeEnvironmentCache();
 }
-
-const decodeThreadSnapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadDetailSnapshot);
-
-const threadSnapshotLoader = (stored: StoredSession): ThreadSnapshotLoader["Service"] =>
-  ThreadSnapshotLoader.of({
-    load: (_prepared, threadId: ThreadId) =>
-      Effect.tryPromise({
-        try: async () => {
-          const response = await authorizedFetch(
-            stored,
-            new URL(
-              `/api/orchestration/threads/${encodeURIComponent(threadId)}/bounded`,
-              stored.httpBaseUrl,
-            ),
-            {
-              cache: "no-store",
-              headers: { ...withOrchestrationProtocolHeader({}) } as Record<string, string>,
-            },
-          );
-          if (response.status === 404) return { _tag: "missing" as const };
-          if (!response.ok) return { _tag: "unavailable" as const };
-          const snapshot = decodeThreadSnapshot((await response.json()) as unknown);
-          return {
-            _tag: "present" as const,
-            snapshot,
-            history: {
-              historyCursor: snapshot.historyCursor ?? null,
-              hasMoreHistory: snapshot.hasMoreHistory ?? false,
-              latestLocalTurnOrdinal: snapshot.latestLocalTurnOrdinal ?? null,
-            },
-          };
-        },
-        catch: () => null,
-      }).pipe(Effect.catch(() => Effect.succeed({ _tag: "unavailable" as const }))),
-  });
 
 function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
   const [value, setValue] = useState<A>(() => Effect.runSync(SubscriptionRef.get(ref)));

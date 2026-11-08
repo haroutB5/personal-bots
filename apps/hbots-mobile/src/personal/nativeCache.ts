@@ -40,6 +40,19 @@ function persistenceError(
 
 const decodeThreadSnapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadDetailSnapshot);
 
+export async function readCachedThread(
+  environmentId: string,
+  threadId: string,
+): Promise<Option.Option<ThreadSnapshot>> {
+  const file = threadFile(environmentId, threadId);
+  if (!file.exists) return Option.none();
+  return Option.some(decodeThreadSnapshot(JSON.parse(await file.text()) as unknown));
+}
+
+export function writeCachedThread(environmentId: string, snapshot: ThreadSnapshot): void {
+  threadFile(environmentId, snapshot.projection.thread.id).write(JSON.stringify(snapshot));
+}
+
 /**
  * A thread's last settled detail, kept as one file. A chat opened again in a
  * new run paints from here before the socket catches up, which is what keeps a
@@ -51,18 +64,12 @@ export function createNativeEnvironmentCache(): Persistence.EnvironmentCacheStor
     saveShell: () => Effect.void,
     loadThread: (environmentId, threadId: ThreadId) =>
       Effect.tryPromise({
-        try: async () => {
-          const file = threadFile(environmentId, threadId);
-          if (!file.exists) return Option.none<ThreadSnapshot>();
-          return Option.some(decodeThreadSnapshot(JSON.parse(await file.text()) as unknown));
-        },
+        try: () => readCachedThread(environmentId, threadId),
         catch: (cause) => persistenceError("load-thread", cause),
       }),
     saveThread: (environmentId, snapshot) =>
       Effect.try({
-        try: () => {
-          threadFile(environmentId, snapshot.projection.thread.id).write(JSON.stringify(snapshot));
-        },
+        try: () => writeCachedThread(environmentId, snapshot),
         catch: (cause) => persistenceError("save-thread", cause),
       }),
     removeThread: (environmentId, threadId) =>
