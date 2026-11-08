@@ -13,6 +13,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -38,6 +39,7 @@ import {
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import { miseVersionsNewerThan } from "../personal/providerUpdates/miseProviderMaintenance.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 // Native updaters (`claude update`) download a ~300 MB binary without printing
@@ -69,6 +71,8 @@ export interface ProviderMaintenanceRunnerShape {
           readonly provider: ProviderDriverKind;
           readonly instanceId?: ProviderInstanceId | undefined;
           readonly targetVersion?: string | undefined;
+          /** "Go back": an older `targetVersion` is allowed unless the manifest marks it broken. */
+          readonly rollback?: boolean | undefined;
         },
   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
 }
@@ -381,7 +385,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     );
 
-  const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
+  const runUpdateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
     const provider = typeof target === "string" ? target : target.provider;
@@ -390,6 +394,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ? defaultInstanceIdForDriver(provider)
         : (target.instanceId ?? defaultInstanceIdForDriver(provider));
     const targetVersion = typeof target === "string" ? undefined : target.targetVersion;
+    const rollback = typeof target === "string" ? false : target.rollback === true;
     const targetKey = `instance:${instanceId}`;
     const capabilities = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
       instanceId,
@@ -475,16 +480,39 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 provider,
                 candidateVersion,
               );
+            const providerSnapshot = (yield* providerRegistry.getProviders).find(
+              (candidate) => candidate.instanceId === instanceId,
+            );
+            // A release that exits 1 reports no version, so the rollback takes
+            // its targets from the install directory, never the binary.
+            const miseUninstallVersions =
+              rollback && targetVersion !== undefined && fresh.update?.lockKey === "mise"
+                ? miseVersionsNewerThan(fresh.installedVersions ?? [], targetVersion)
+                : [];
+            if (miseUninstallVersions.length > 0) {
+              yield* Effect.logInfo("mise rollback removes newer versions", {
+                instanceId,
+                targetVersion,
+                versions: miseUninstallVersions,
+              });
+            }
             const command =
               targetVersion !== undefined
-                ? makeTargetedProviderUpdateAction(fresh, targetVersion)
+                ? makeTargetedProviderUpdateAction(fresh, targetVersion, {
+                    uninstallVersions: miseUninstallVersions,
+                  })
                 : resolveLatestProviderUpdateAction(fresh, candidateVersion);
+            const recordedPreviousVersion = providerSnapshot?.smokeCheck?.previousVersion;
             const rejected =
-              targetVersion !== undefined
-                ? !command ||
-                  advisory?.recommendedVersion !== targetVersion ||
-                  advisory.status !== "supported"
-                : advisory?.status === "broken" || advisory?.status === "unsupported";
+              rollback && (targetVersion === undefined || targetVersion !== recordedPreviousVersion)
+                ? true
+                : targetVersion !== undefined
+                  ? !command ||
+                    (rollback
+                      ? advisory?.status === "broken" || advisory?.status === "unsupported"
+                      : advisory?.recommendedVersion !== targetVersion ||
+                        advisory.status !== "supported")
+                  : advisory?.status === "broken" || advisory?.status === "unsupported";
             if (rejected || !command) {
               return yield* finish(
                 makeUpdateState({
@@ -561,6 +589,14 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
+            if (fresh.update?.lockKey === "mise") {
+              yield* Effect.logInfo("mise update installed versions", {
+                instanceId,
+                targetVersion: candidateVersion,
+                before: fresh.installedVersions ?? [],
+                after: verified.installedVersions ?? [],
+              });
+            }
             yield* invalidateLatestProviderVersion(verified).pipe(
               Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             );
@@ -644,6 +680,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             : error,
         ),
       );
+  });
+
+  /**
+   * The command runs in a daemon fiber so a Settings page that closes mid
+   * update cannot cancel it and leave `updateState` running forever. The
+   * caller still waits for the result and receives its error.
+   */
+  const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
+    "ProviderMaintenanceRunner.updateProvider.daemon",
+  )(function* (target) {
+    const fiber = yield* Effect.forkDetach(runUpdateProvider(target));
+    return yield* Fiber.join(fiber);
   });
 
   return ProviderMaintenanceRunner.of({

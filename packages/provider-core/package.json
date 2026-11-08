@@ -75,6 +75,10 @@
       "types": "./src/server/managedProvider.ts",
       "import": "./src/server/managedProvider.ts"
     },
+    "./server/miseProviderMaintenance": {
+      "types": "./src/server/miseProviderMaintenance.ts",
+      "import": "./src/server/miseProviderMaintenance.ts"
+    },
     "./server/McpProviderSessions": {
       "types": "./src/server/McpProviderSessions.ts",
       "import": "./src/server/McpProviderSessions.ts"

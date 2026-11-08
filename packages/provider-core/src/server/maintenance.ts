@@ -19,6 +19,12 @@ export interface ProviderMaintenanceCapabilities {
   readonly installPath?: string;
   /** Displayed for manual updates; never executed by T3 Code. */
   readonly manualCommand?: string;
+  /**
+   * Stable versions installed under the tool directory. A release that cannot
+   * start reports no version, so a rollback takes the versions to remove from
+   * here instead of asking the binary.
+   */
+  readonly installedVersions?: ReadonlyArray<string>;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -28,4 +34,10 @@ export interface ProviderMaintenanceCommandAction {
   readonly lockKey: string;
   /** The provider's environment, including its PATH and custom home. */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * The `latest` alias a targeted mise install must move. Mise installs an
+   * older version without moving the alias, and the provider binary path
+   * follows that alias.
+   */
+  readonly latestPath?: string;
 }

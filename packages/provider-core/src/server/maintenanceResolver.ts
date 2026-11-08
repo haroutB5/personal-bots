@@ -32,6 +32,13 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { collectUint8StreamText } from "./collectStreamText.ts";
+import {
+  isStableMiseVersion,
+  listMiseInstalledVersions,
+  miseInstallDirFromLatestPath,
+  resolveMiseLatestVersion,
+  resolveMiseOwnership,
+} from "./miseProviderMaintenance.ts";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
@@ -127,6 +134,8 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
+  readonly latestPath?: string;
+  readonly installedVersions?: ReadonlyArray<string>;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcess.Platform.defaultValue();
   const update =
@@ -143,6 +152,7 @@ export function makeProviderMaintenanceCapabilities(input: {
           args: input.updateArgs,
           lockKey: input.updateLockKey,
           ...(input.env ? { env: input.env } : {}),
+          ...(input.latestPath ? { latestPath: input.latestPath } : {}),
         };
   return {
     provider: input.provider,
@@ -150,17 +160,69 @@ export function makeProviderMaintenanceCapabilities(input: {
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
     ...(input.lookupLatestVersion ? { lookupLatestVersion: input.lookupLatestVersion } : {}),
+    ...(input.installedVersions ? { installedVersions: input.installedVersions } : {}),
   };
 }
 
 export function makeTargetedProviderUpdateAction(
   capabilities: ProviderMaintenanceCapabilities,
   version: string,
+  options: {
+    /**
+     * Every version the update left above the good one. mise rebuilds every
+     * alias to the highest installed version after any install, so a rollback
+     * that only moves `latest` is undone by the next update of any tool.
+     */
+    readonly uninstallVersions?: ReadonlyArray<string>;
+  } = {},
 ): ProviderMaintenanceCommandAction | null {
   if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
   const update = capabilities.update;
+  if (!update) return null;
+  if (update.lockKey === "mise") {
+    const latestPath = update.latestPath;
+    if (!latestPath) return null;
+    const index = update.args.findIndex((arg) => arg.endsWith("@latest"));
+    if (index < 0) return null;
+    const toolSpec = update.args[index]!.slice(0, -"@latest".length);
+    if (toolSpec.length === 0) return null;
+    const shellQuote = (word: string) => quoteShellWord(word, HostProcess.Platform.defaultValue());
+    const uninstallVersions = [...new Set(options.uninstallVersions ?? [])].filter(
+      (candidate) => isStableMiseVersion(candidate) && candidate !== version,
+    );
+    const installDir = miseInstallDirFromLatestPath(latestPath);
+    const major = version.split(".")[0]!;
+    const minor = version.split(".")[1]!;
+    // Every alias mise rebuilds must end on the good version. A future release
+    // must not win `latest`, `2` or `2.1` on the next install of any tool.
+    const aliasCheck =
+      installDir === null
+        ? null
+        : `for alias in latest ${major} ${major}.${minor}; do ` +
+          `if [ -L ${shellQuote(installDir)}/"$alias" ]; then ` +
+          `target=$(readlink ${shellQuote(installDir)}/"$alias"); ` +
+          `case "$target" in ./${version}|${version}) ;; *) ` +
+          `echo "mise alias $alias points to $target, not ${version}" >&2; exit 1 ;; esac; ` +
+          `fi; done`;
+    const script = [
+      `[ -L ${shellQuote(latestPath)} ] || { echo "mise latest is not a symlink" >&2; exit 1; }`,
+      ...uninstallVersions.map(
+        (candidate) =>
+          `${shellQuote(update.executable)} uninstall ${shellQuote(toolSpec)}@${shellQuote(candidate)}`,
+      ),
+      `${shellQuote(update.executable)} install ${shellQuote(toolSpec)}@${version}`,
+      `ln -sfn ${shellQuote(version)} ${shellQuote(latestPath)}`,
+      ...(aliasCheck === null ? [] : [aliasCheck]),
+    ].join(" && ");
+    return {
+      ...update,
+      executable: "/bin/sh",
+      args: ["-c", script],
+      command: script,
+    };
+  }
   const packageName = capabilities.packageName;
-  if (!update || !packageName) return null;
+  if (!packageName) return null;
   if (
     !/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
       update.lockKey,
@@ -639,7 +701,20 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     (homebrew?.kind === "formula" && homebrew.name.toLowerCase() === "mise") ||
     (yield* isMiseWrapperScript(context))
   ) {
-    return manual;
+    const mise = yield* resolveMiseOwnership(context);
+    if (!mise) return manual;
+    return makeProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName,
+      updateExecutable: mise.misePath,
+      updateArgs: ["install", `${mise.toolSpec}@latest`],
+      updateLockKey: "mise",
+      updateCommand: `mise install ${mise.toolSpec}@latest`,
+      ...(context.platform === "win32" ? {} : { latestPath: `${mise.installDir}/latest` }),
+      // Mise's registry can lag npm, so only its own answer is installable.
+      latestVersion: yield* resolveMiseLatestVersion(mise, context.env),
+      installedVersions: yield* listMiseInstalledVersions(mise.installDir),
+    });
   }
   if (homebrew) {
     return (
