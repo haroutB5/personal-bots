@@ -14,8 +14,10 @@ import { TEST_FORMATS } from "./usageTestFormats.ts";
 import {
   listTranscriptFiles,
   readTranscriptRecords,
+  readTranscriptRecordsInline,
   transcriptLineGate,
 } from "./usageTranscriptReader.ts";
+import { readDeepSeekOnWorker } from "./usageTranscriptWorkerClient.ts";
 
 let dir: string;
 
@@ -75,6 +77,87 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
     },
   })}\n`;
 }
+
+function deepSeekLine(id: number, outputTokens: number): string {
+  return `${JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-08-01T10:00:00Z",
+    requestId: `root-session:${id}`,
+    sessionId: "root-session",
+    message: {
+      id: `msg_${id}`,
+      model: "deepseek-flash",
+      usage: { input_tokens: 5896, cache_read_input_tokens: 128, output_tokens: outputTokens },
+    },
+  })}\n`;
+}
+
+const deepSeekTotals = (result: {
+  records: ReadonlyArray<{ totals: Parameters<typeof totalTokens>[0] }>;
+}) =>
+  result.records.reduce(
+    (totals, record) => ({
+      tokens: totals.tokens + totalTokens(record.totals),
+      output: totals.output + record.totals.outputTokens,
+      cached: totals.cached + record.totals.cachedInputTokens,
+    }),
+    { tokens: 0, output: 0, cached: 0 },
+  );
+
+describe("DeepSeek transcript worker", () => {
+  it("returns the same totals with the worker on and off", async () => {
+    const path = NodePath.join(dir, "deepseek.jsonl");
+    await NodeFSP.writeFile(path, deepSeekLine(1, 5) + deepSeekLine(2, 7));
+
+    const inline = await readTranscriptRecordsInline(path, TEST_FORMATS.deepseek);
+    const worker = await readDeepSeekOnWorker(path);
+    assert.deepStrictEqual(worker, inline);
+
+    const previous = process.env.T3CODE_DEEPSEEK_SCAN_WORKER;
+    process.env.T3CODE_DEEPSEEK_SCAN_WORKER = "off";
+    try {
+      const off = await readTranscriptRecords(path, TEST_FORMATS.deepseek);
+      assert.deepStrictEqual(off, inline);
+    } finally {
+      if (previous === undefined) delete process.env.T3CODE_DEEPSEEK_SCAN_WORKER;
+      else process.env.T3CODE_DEEPSEEK_SCAN_WORKER = previous;
+    }
+
+    assert.isNotNull(inline);
+    assert.deepStrictEqual(deepSeekTotals(inline), {
+      tokens: 2 * (5896 + 128 + 0) + 12,
+      output: 12,
+      cached: 256,
+    });
+    assert.strictEqual(inline.records[0]?.provider, "deepseek");
+    assert.strictEqual(inline.records[0]?.model, "deepseek-flash");
+  });
+
+  it("keeps the worker's tail, append and rewrite results identical to inline", async () => {
+    const path = NodePath.join(dir, "deepseek-resume.jsonl");
+    await NodeFSP.writeFile(path, deepSeekLine(1, 5) + deepSeekLine(2, 7).trimEnd());
+    const first = await readDeepSeekOnWorker(path);
+    assert.deepStrictEqual(first, await readTranscriptRecordsInline(path, TEST_FORMATS.deepseek));
+    assert.isNotNull(first);
+    assert.strictEqual(first.tailRecords.length, 1);
+
+    await NodeFSP.appendFile(path, `\n${deepSeekLine(3, 11)}`);
+    const resumed = await readDeepSeekOnWorker(path, first.position);
+    assert.deepStrictEqual(
+      resumed,
+      await readTranscriptRecordsInline(path, TEST_FORMATS.deepseek, first.position),
+    );
+    assert.isTrue(resumed!.resumed);
+
+    await NodeFSP.writeFile(path, deepSeekLine(4, 25));
+    const rewritten = await readDeepSeekOnWorker(path, first.position);
+    assert.isFalse(rewritten!.resumed);
+    assert.deepStrictEqual(
+      rewritten,
+      await readTranscriptRecordsInline(path, TEST_FORMATS.deepseek, first.position),
+    );
+  });
+});
 
 describe("compressed transcripts", () => {
   it("discovers nested plain and zstd JSONL files within the requested window", async () => {

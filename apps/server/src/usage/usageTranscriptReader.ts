@@ -14,6 +14,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { createTranscriptJsonReader } from "../project/AgentSessionJson.ts";
+import { deepSeekUsageFormat } from "@t3tools/provider-deepseek/server/usage";
+import { readDeepSeekOnWorker } from "./usageTranscriptWorkerClient.ts";
 
 export interface TranscriptFile {
   readonly path: string;
@@ -161,6 +163,25 @@ export function transcriptLineGate(markers: readonly [string, ...string[]]) {
 
 /** Returns null on read failure; caching it as empty would hide usage until size/mtime changes. */
 export async function readTranscriptRecords<State>(
+  filePath: string,
+  format: TranscriptUsageFormat<State>,
+  resumeFrom?: TranscriptParsePosition,
+  options?: { readonly streamingThresholdBytes?: number },
+): Promise<TranscriptParseResult | null> {
+  if (format === deepSeekUsageFormat && process.env.T3CODE_DEEPSEEK_SCAN_WORKER !== "off") {
+    try {
+      return await readDeepSeekOnWorker(filePath, resumeFrom, options);
+    } catch {
+      // An unavailable worker must not turn previously readable usage into
+      // an empty cached result. Use the original reader for this call.
+      return readTranscriptRecordsInline(filePath, format, resumeFrom, options);
+    }
+  }
+  return readTranscriptRecordsInline(filePath, format, resumeFrom, options);
+}
+
+/** The same byte reader on the worker and on the kill-switch path. */
+export async function readTranscriptRecordsInline<State>(
   filePath: string,
   format: TranscriptUsageFormat<State>,
   resumeFrom?: TranscriptParsePosition,

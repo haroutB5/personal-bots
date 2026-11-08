@@ -3339,3 +3339,106 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+describe("DeepSeek usage", () => {
+  it.live("shows a DeepSeek ledger row with a non-zero cost", () =>
+    Effect.gen(function* () {
+      const { home } = yield* setup;
+      const prefix = "usage-deepseek-ledger";
+      const ledgerDir = NodePath.join(home, prefix, "userdata", "dsh", "usage");
+      const ledgerLine = (input: {
+        readonly id: string;
+        readonly timestamp: string;
+        readonly inputTokens: number;
+        readonly outputTokens: number;
+      }) =>
+        encodeUnknownJsonString({
+          type: "assistant",
+          timestamp: input.timestamp,
+          sessionId: "deepseek-root-session",
+          requestId: `deepseek-root-session:${input.id}`,
+          message: {
+            id: input.id,
+            model: "deepseek-flash",
+            usage: {
+              input_tokens: input.inputTokens,
+              cache_read_input_tokens: 128,
+              cache_creation_input_tokens: 0,
+              output_tokens: input.outputTokens,
+            },
+          },
+        }) + "\n";
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(ledgerDir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(ledgerDir, "deepseek-root-session.jsonl"),
+          ledgerLine({
+            id: "msg-1",
+            timestamp: "2026-08-01T10:00:00Z",
+            inputTokens: 5896,
+            outputTokens: 4,
+          }) +
+            ledgerLine({
+              id: "msg-2",
+              timestamp: "2026-08-01T11:00:00Z",
+              inputTokens: 1000,
+              outputTokens: 500,
+            }),
+        );
+      });
+      const settings = {
+        providerInstances: {
+          deepseek: {
+            driver: ProviderDriverKind.make("deepseek"),
+            config: {
+              enabled: true,
+              engine: "dsh",
+              homePath: NodePath.join(home, "deepseek-home"),
+            },
+          },
+        },
+      };
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        const source = summary.sources.find(
+          (entry) =>
+            entry.fingerprint.provider === "deepseek" &&
+            entry.fingerprint.resolvedHomePath.endsWith("/dsh/usage"),
+        );
+        assert.exists(source);
+        assert.strictEqual(source.status, "ok");
+        assert.strictEqual(source.scannedFiles, 1);
+        const buckets = summary.buckets.filter((bucket) => bucket.provider === "deepseek");
+        const costUsd = buckets.reduce((total, bucket) => total + bucket.costUsd, 0);
+        const tokens = buckets.reduce(
+          (total, bucket) =>
+            total +
+            bucket.totals.uncachedInputTokens +
+            bucket.totals.cachedInputTokens +
+            bucket.totals.outputTokens,
+          0,
+        );
+        assert.isAbove(costUsd, 0);
+        assert.isAbove(tokens, 0);
+        assert.strictEqual(
+          buckets.every((bucket) => bucket.costSource === "modelPriced"),
+          true,
+        );
+        console.log(
+          `DEEPSEEK_USAGE_PROOF ${JSON.stringify({
+            provider: source.fingerprint.provider,
+            dir: source.fingerprint.resolvedHomePath,
+            status: source.status,
+            scannedFiles: source.scannedFiles,
+            model: buckets[0]?.model,
+            costUsd,
+            tokens,
+            records: buckets.reduce((total, bucket) => total + bucket.records, 0),
+          })}`,
+        );
+        yield* service.awaitPersisted;
+      }).pipe(Effect.scoped, Effect.provide(layerService({ prefix, home, settings })));
+    }).pipe(Effect.scoped),
+  );
+});

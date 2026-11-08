@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { cursorRateModel } from "@t3tools/provider-cursor/server/accountUsage";
+import { parseDeepSeekRecord } from "@t3tools/provider-deepseek/server/usage";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import type { UsageSpeed } from "@t3tools/provider-core/server/usage";
 import {
@@ -326,5 +327,33 @@ describe("personal provider pricing", () => {
     const result = priced("gemini-3.8-flash-high", "antigravity", "2026-10-12T12:00:00.000Z");
     expect(result.costSource).toBe("modelPriced");
     expect(result.costUsd).toBeCloseTo(0.75 + 0.075 + 0.75 + 3.75, 9);
+  });
+
+  it("prices a parsed DeepSeek ledger record at its timestamp's card", () => {
+    const record = parseDeepSeekRecord({
+      type: "assistant",
+      timestamp: "2026-10-12T02:00:00.000Z",
+      sessionId: "root-session",
+      requestId: "root-session:1",
+      message: {
+        id: "msg-1",
+        model: "deepseek-flash",
+        usage: {
+          input_tokens: 1_000_000,
+          cache_read_input_tokens: 1_000_000,
+          cache_creation_input_tokens: 1_000_000,
+          output_tokens: 1_000_000,
+        },
+      },
+    });
+    expect(record).not.toBeNull();
+    const at = (timestampMs: number) => priceUsage(new Map(), { ...record!, timestampMs });
+
+    const peak = at(Date.parse("2026-10-12T02:00:00.000Z"));
+    expect(peak.costSource).toBe("modelPriced");
+    expect(peak.costUsd).toBeCloseTo(0.3 + 0.006 + 0.3 + 1.2, 9);
+
+    const offPeak = at(Date.parse("2026-10-12T12:00:00.000Z"));
+    expect(offPeak.costUsd).toBeCloseTo(0.15 + 0.003 + 0.15 + 0.6, 9);
   });
 });
