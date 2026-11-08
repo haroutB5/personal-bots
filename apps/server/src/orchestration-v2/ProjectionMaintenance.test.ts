@@ -17,6 +17,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -382,4 +383,57 @@ it.effect("keeps an anchor that a row appended during the pass borrows from", ()
       );
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+const seedLegacyImport = (count: number) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_legacy_imports (
+        thread_id, source_updated_at, shell_imported_at, transcript_imported_at, imported_message_count
+      ) VALUES ('thread:legacy-batches', '2026-10-17', '2026-10-17', '2026-10-17', 0)
+    `;
+    for (let index = 1; index <= count; index += 1) {
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${`event:legacy-batch:${index}`}, 'thread', 'thread:legacy-batches', ${index},
+          'message.updated', '2026-10-17T00:00:00.000Z', 'server', '{"text":"legacy"}', '{}', 1
+        )
+      `;
+    }
+  });
+
+it.effect("deletes imported legacy history in bounded batches with a rest between them", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedLegacyImport(120);
+
+    const deleteSizes: Array<number> = [];
+    const recordDeletes: Statement.Transformer = (statement) => {
+      const [query, params] = statement.compile();
+      if (query.startsWith("DELETE FROM orchestration_events")) deleteSizes.push(params.length);
+      return Effect.succeed(statement);
+    };
+    const pages = yield* Ref.make(0);
+    const result = yield* maintenance
+      .pruneEventStore(Ref.update(pages, (count) => count + 1))
+      .pipe(Effect.provideService(Statement.CurrentTransformer, recordDeletes));
+
+    assert.equal(result.deletedEventCount, 120);
+    // 120 rows at 5 rows a statement, so no delete can block the writer for seconds.
+    assert.deepEqual(
+      deleteSizes,
+      Array.from({ length: 24 }, () => 5),
+    );
+    // Three event pages and one empty receipt page each rest once.
+    assert.equal(yield* Ref.get(pages), 4);
+    assert.deepEqual(
+      yield* sql`SELECT COUNT(*) AS count FROM orchestration_events WHERE stream_id = 'thread:legacy-batches'`,
+      [{ count: 0 }],
+    );
+  }).pipe(Effect.provide(layerTest)),
 );

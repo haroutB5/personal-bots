@@ -42,6 +42,9 @@ export class ProjectionMaintenanceV2 extends Context.Service<
 const RETAINED_EVENT_HISTORY = Duration.days(1);
 // Small pages bound work on the reader worker and synchronous fallback.
 const PAGE_SIZE = 50;
+// A 50-row delete held the writer 1.5 to 2.2 s on the restored real copy. Bound
+// each delete to a handful of rows and yield, so no statement stalls the loop.
+const DELETE_BATCH_SIZE = 5;
 const REFERENCE_SCAN_WINDOW = 1000;
 
 type MetadataRow = {
@@ -145,7 +148,8 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         const candidates = rows.filter((row) => row.prunable === 1).map((row) => row.sequence);
         // Never hold a transaction or the reader lock across a yield or a rest.
         yield* Effect.yieldNow;
-        if (candidates.length > 0) {
+        for (let offset = 0; offset < candidates.length; offset += DELETE_BATCH_SIZE) {
+          const batch = candidates.slice(offset, offset + DELETE_BATCH_SIZE);
           deleted += yield* sql.withTransaction(
             Effect.gen(function* () {
               // Rows appended since the reference scan may borrow a prompt from a candidate.
@@ -167,7 +171,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
                 if (row.prompt_sequence !== null) referenced.add(row.prompt_sequence);
                 referencesThrough = Math.max(referencesThrough, row.sequence);
               }
-              const obsolete = candidates.filter((sequence) => !referenced.has(sequence));
+              const obsolete = batch.filter((sequence) => !referenced.has(sequence));
               if (obsolete.length === 0) return 0;
               yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
               return obsolete.length;
@@ -210,9 +214,10 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         `.pipe(NodeSqliteClient.readOnly);
         const obsolete = rows.filter((row) => row.imported === 1).map((row) => row.sequence);
         yield* Effect.yieldNow;
-        if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
-          deletedEventCount += obsolete.length;
+        for (let offset = 0; offset < obsolete.length; offset += DELETE_BATCH_SIZE) {
+          const batch = obsolete.slice(offset, offset + DELETE_BATCH_SIZE);
+          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(batch)}`;
+          deletedEventCount += batch.length;
           yield* Effect.yieldNow;
         }
         yield* betweenPages;
@@ -240,9 +245,10 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         `.pipe(NodeSqliteClient.readOnly);
         const obsolete = rows.filter((row) => row.imported === 1).map((row) => row.command_id);
         yield* Effect.yieldNow;
-        if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(obsolete)}`;
-          deletedReceiptCount += obsolete.length;
+        for (let offset = 0; offset < obsolete.length; offset += DELETE_BATCH_SIZE) {
+          const batch = obsolete.slice(offset, offset + DELETE_BATCH_SIZE);
+          yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(batch)}`;
+          deletedReceiptCount += batch.length;
           yield* Effect.yieldNow;
         }
         yield* betweenPages;
