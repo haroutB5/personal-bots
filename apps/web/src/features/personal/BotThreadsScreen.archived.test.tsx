@@ -47,11 +47,10 @@ vi.mock("~/components/ui/menu", () => ({
 }));
 vi.mock("~/state/lazyThreadShells", () => ({
   useLazyThreadShells: () => ({ pending: false }),
-  withLazyThreadShells: <A,>(atom: A) => atom,
 }));
+vi.mock("./useBotShells", () => ({ useBotShells: () => [] }));
 vi.mock("~/state/entities", () => ({
   useThreadDetail: () => null,
-  useThreadShells: () => [],
 }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
 vi.mock("~/state/threads", () => ({ threadEnvironment: { updateMetadata: {} } }));

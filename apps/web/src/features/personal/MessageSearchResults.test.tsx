@@ -1,6 +1,7 @@
 import type { EnvironmentId, PersonalBot, PersonalGroup } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { MessageSearchResults } from "./MessageSearchResults";
@@ -38,7 +39,7 @@ vi.mock("@tanstack/react-router", () => ({
     </a>
   ),
 }));
-vi.mock("~/state/entities", () => ({ useThreadShells: () => state.shells }));
+vi.mock("./useBotShells", () => ({ useBotShells: () => state.shells }));
 vi.mock("./useMessageSearch", () => ({ useMessageSearch: () => state.search }));
 vi.mock("./pendingMessageJump", () => ({
   requestMessageJump: (...args: unknown[]) => state.jump(...args),
@@ -81,7 +82,6 @@ const hit = (over: Record<string, unknown> = {}) => ({
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.search = { status: "ready", hits: [hit()], capped: false };
   state.shells = [];
   state.jump.mockReset();

@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type {
@@ -15,7 +15,8 @@ import { ChevronLeft } from "lucide-react";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { requestConfirmDialog } from "~/confirmDialog";
-import { useProject, useThreadShell } from "~/state/entities";
+import { useProject } from "~/state/entities";
+import { useLazyThreadShells } from "~/state/lazyThreadShells";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { ChatFilePreviewProvider, useChatFilePreview } from "./ChatFilePreview";
@@ -37,6 +38,7 @@ import {
   usePersonalTaskDetail,
   usePersonalTasks,
 } from "./usePersonalAutomation";
+import { useBotShell } from "./useBotShells";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useCloseTaskNotifications } from "./staleNotifications";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
@@ -45,9 +47,9 @@ import { WorkRecordCard } from "./WorkRecordCard";
 export const DETAIL_CARD =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4";
 export const PRIMARY_BUTTON =
-  "flex h-11 flex-1 items-center justify-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40";
+  "flex h-11 flex-1 items-center justify-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40";
 export const SECONDARY_BUTTON =
-  "flex h-11 flex-1 items-center justify-center rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-4 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40";
+  "flex h-11 flex-1 items-center justify-center rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-4 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40";
 
 export function DetailRow({
   label,
@@ -124,15 +126,14 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
   const relatedTasks = usePersonalRelatedTasks(environmentId, {
     taskIds: parentTaskId === null ? [taskId] : [taskId, parentTaskId],
   });
-  const tasks = useMemo(() => mergeTaskLists(taskFeed, relatedTasks), [taskFeed, relatedTasks]);
+  const tasks = mergeTaskLists(taskFeed, relatedTasks);
   const botsQuery = usePersonalBotsList(environmentId);
   const cancel = useAtomCommand(personalTaskCancel);
   const retry = useAtomCommand(personalTaskRetry);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const botById = useMemo(
-    () => new Map<string, PersonalBot>((botsQuery.data?.bots ?? []).map((bot) => [bot.botId, bot])),
-    [botsQuery.data],
+  const botById = new Map<string, PersonalBot>(
+    (botsQuery.data?.bots ?? []).map((bot) => [bot.botId, bot]),
   );
   const task = tasks?.get(taskId) ?? detail.data?.task;
   // Lists carry a result preview; the full result is the detail's, unless the
@@ -150,14 +151,12 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
   // File links in the result open in the same sheet as in a chat, resolved
   // against the task's own thread folder.
   const taskThreadId = task?.threadId ?? null;
-  const taskThreadRef = useMemo(
-    () =>
-      environmentId === null || taskThreadId === null
-        ? null
-        : scopeThreadRef(environmentId, taskThreadId),
-    [environmentId, taskThreadId],
-  );
-  const taskShell = useThreadShell(taskThreadRef);
+  useLazyThreadShells(environmentId, taskThreadId === null ? null : { threadIds: [taskThreadId] });
+  const taskShell = useBotShell(environmentId, taskThreadId);
+  const taskThreadRef =
+    environmentId === null || taskThreadId === null
+      ? null
+      : scopeThreadRef(environmentId, taskThreadId);
   const taskProject = useProject(
     environmentId !== null && taskShell !== null
       ? scopeProjectRef(environmentId, taskShell.projectId)
@@ -166,20 +165,17 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
   const taskCwd = taskShell?.worktreePath ?? taskProject?.workspaceRoot;
   const refreshDetail = detail.refresh;
   // Attempts come from personalTasks.get; refetch whenever the live task moves.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the personalTasks.get query in step with the live task feed, which the query cannot observe
   useEffect(() => {
     if (updatedAt !== null) refreshDetail();
   }, [updatedAt, refreshDetail]);
 
-  const children = useMemo(
-    () =>
-      [...(tasks?.values() ?? [])]
-        .filter((entry) => entry.parentTaskId === taskId)
-        .toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt),
-        ),
-    [tasks, taskId],
-  );
+  const children = [...(tasks?.values() ?? [])]
+    .filter((entry) => entry.parentTaskId === taskId)
+    .toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt),
+    );
 
   const header = (
     <header className="flex h-14 items-center gap-1">
@@ -187,7 +183,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
         to={backTarget.to === "/bots/team" ? backTarget.to : "/tasks"}
         activeOptions={{ exact: true }}
         aria-label={backTarget.to === "/bots/team" ? backTarget.label : "Back to Tasks"}
-        className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       >
         <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
       </Link>

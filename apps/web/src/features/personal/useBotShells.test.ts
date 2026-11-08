@@ -1,42 +1,39 @@
-import type { OrchestrationShellSnapshot, OrchestrationThreadShell } from "@t3tools/contracts";
+import { EnvironmentId, type OrchestrationThreadShell } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeLazyThreadShells } from "~/state/lazyThreadShells";
+import { mergeBotShells } from "./useBotShells";
+
+const environmentId = EnvironmentId.make("env-1");
 
 const shell = (id: string, title = id): OrchestrationThreadShell =>
   ({ id, title }) as unknown as OrchestrationThreadShell;
 
-const base = (threads: ReadonlyArray<OrchestrationThreadShell>): OrchestrationShellSnapshot =>
-  ({
-    snapshotSequence: 3,
-    projects: [],
-    threads,
-    updatedAt: "2026-10-26T00:00:00.000Z",
-  }) as OrchestrationShellSnapshot;
+const open = (threads: ReadonlyArray<OrchestrationThreadShell>) =>
+  new Map(threads.map((thread) => [thread.id, thread] as const));
 
-// The slim shell's archived chats come back on demand and join the snapshot.
-describe("mergeLazyThreadShells", () => {
-  it("appends asked-for shells the base lacks", () => {
-    const merged = mergeLazyThreadShells(base([shell("a")]), [[shell("b"), shell("c")]]);
-    expect(merged.threads.map((thread) => thread.id)).toEqual(["a", "b", "c"]);
-    expect(merged.snapshotSequence).toBe(3);
+// The stream carries open chats; archived ones come back on demand and join them.
+describe("mergeBotShells", () => {
+  it("lists the open chats, then the asked-for archived chats the stream lacks", () => {
+    const merged = mergeBotShells(environmentId, open([shell("a")]), [[shell("b"), shell("c")]]);
+    expect(merged.map((thread) => thread.id)).toEqual(["a", "b", "c"]);
+    expect(merged.every((thread) => thread.environmentId === environmentId)).toBe(true);
   });
 
-  it("keeps the base shell when both have the thread, since the stream keeps it current", () => {
-    const merged = mergeLazyThreadShells(base([shell("a", "live title")]), [
+  it("keeps the stream shell when both have the chat, since the stream keeps it current", () => {
+    const merged = mergeBotShells(environmentId, open([shell("a", "live title")]), [
       [shell("a", "stale title"), shell("b")],
       [shell("b", "second copy")],
     ]);
-    expect(merged.threads.map((thread) => [thread.id, thread.title])).toEqual([
+    expect(merged.map((thread) => [thread.id, thread.title])).toEqual([
       ["a", "live title"],
       ["b", "b"],
     ]);
   });
 
-  it("returns the base itself when nothing is added", () => {
-    const snapshot = base([shell("a")]);
-    expect(mergeLazyThreadShells(snapshot, [])).toBe(snapshot);
-    expect(mergeLazyThreadShells(snapshot, [[]])).toBe(snapshot);
-    expect(mergeLazyThreadShells(snapshot, [[shell("a")]])).toBe(snapshot);
+  it("shows archived chats before the stream's snapshot lands", () => {
+    expect(mergeBotShells(environmentId, null, [[shell("b")]]).map((thread) => thread.id)).toEqual([
+      "b",
+    ]);
+    expect(mergeBotShells(environmentId, null, [])).toEqual([]);
   });
 });

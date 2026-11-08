@@ -6,7 +6,8 @@ import {
   ThreadId,
   type PersonalBrowserStatus,
 } from "@t3tools/contracts";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../../test/rendererAct";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -66,7 +67,7 @@ vi.mock("./computerState", () => ({
 }));
 vi.mock("~/confirmDialog", () => ({ requestConfirmDialog: vi.fn(async () => true) }));
 vi.mock("../overlayInert", () => ({ inertOutside: vi.fn(() => vi.fn()) }));
-vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
+vi.mock("../useBotShells", () => ({ useBotShells: () => [] }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: () => ({ data: null, error: null, refresh: vi.fn() }),
 }));
@@ -180,7 +181,6 @@ const windowStub = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 const stubBrowserGlobals = () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("document", {
     visibilityState: "visible",
     body: { style: { overflow: "" } },
@@ -307,7 +307,6 @@ function touchEvent(pointerId: number, clientX: number, clientY: number) {
 
 describe("takeover keyboard", () => {
   const renderInControl = async (field: ReturnType<typeof makeField>) => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("document", {
       visibilityState: "visible",
       addEventListener: vi.fn(),
@@ -480,7 +479,6 @@ describe("page dialog", () => {
   };
 
   it("shows the page's dialog over the live view, answerable only in control", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("document", {
       visibilityState: "visible",
       addEventListener: vi.fn(),
@@ -503,7 +501,6 @@ describe("page dialog", () => {
   });
 
   it("answers OK, Cancel, and a prompt's text", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const onAnswer = vi.fn();
     await act(async () => {
       renderer = create(<PageDialogCard dialog={confirmDialog} canAnswer onAnswer={onAnswer} />);
@@ -531,7 +528,6 @@ describe("page dialog", () => {
   });
 
   it("words a leave-page dialog as leave or stay", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     await act(async () => {
       renderer = create(
         <PageDialogCard
@@ -612,7 +608,6 @@ describe("ComputerScreen back to chat", () => {
 
 describe("ComputerScreen full screen", () => {
   it("expands the browser over the app and exits without navigating away", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const listeners = new Map<
       string,
       (event: { key?: string; preventDefault: () => void }) => void
@@ -662,7 +657,6 @@ describe("ComputerScreen full screen", () => {
 
 describe("ComputerScreen Desktop segment", () => {
   const stubDocument = () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("document", {
       visibilityState: "visible",
       body: { style: { overflow: "" } },

@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 import type { PersonalBotThread } from "@t3tools/contracts";
 
 import { isThreadLive, isThreadRateLimited } from "./botSummaries";

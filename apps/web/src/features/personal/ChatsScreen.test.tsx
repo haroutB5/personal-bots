@@ -1,7 +1,8 @@
 import { PersonalBot, PersonalGroup } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { BotAvatar } from "./BotAvatar";
@@ -88,11 +89,10 @@ function stubWindow() {
     location: { reload: state.reload },
   });
   vi.stubGlobal("localStorage", localStorage);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 }
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
-vi.mock("~/state/entities", () => ({ useThreadShells: () => state.shells }));
+vi.mock("./useBotShells", () => ({ useBotShells: () => state.shells }));
 vi.mock("~/state/server", () => ({
   primaryServerProvidersAtom: {},
   serverEnvironment: { refreshProviders: { label: "refreshProviders" } },

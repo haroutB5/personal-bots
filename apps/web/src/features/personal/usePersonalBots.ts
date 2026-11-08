@@ -30,6 +30,7 @@ export const {
   personalProfileSet,
   usePersonalEnvironmentId,
   usePersonalBotsList,
+  usePersonalBotShells,
   usePersonalArchivedLinks,
   usePersonalFiles,
   usePersonalProfile,

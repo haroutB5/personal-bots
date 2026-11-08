@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 
 import { PersonalTask, PersonalTaskId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { TaskDetailScreen } from "./TaskDetailScreen";
@@ -77,6 +78,7 @@ vi.mock("./usePersonalBots", () => ({
   usePersonalBotsList: () => ({ data: { bots: [] } }),
 }));
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => null }));
+vi.mock("./useBotShells", () => ({ useBotShell: () => null }));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -88,7 +90,6 @@ const text = () => JSON.stringify(renderer!.toJSON());
 
 describe("TaskDetailScreen", () => {
   beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     state.relatedInputs = [];
     state.related = null;
   });

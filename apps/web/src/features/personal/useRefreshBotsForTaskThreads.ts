@@ -1,5 +1,5 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef } from "react";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
+import { useEffect, useRef, useState } from "react";
 
 import {
   PERSONAL_TASK_TERMINAL_STATUSES,
@@ -129,7 +129,8 @@ export function useRefreshBotsForTaskThreads(input: {
   readonly omitsArchived?: boolean;
 }): void {
   const { bots, links, tasks, refresh, shells, omitsArchived } = input;
-  const now = Date.now();
+  // Mount time is enough to tell a long-settled task from a fresh one.
+  const [now] = useState(Date.now);
   const unknownKey =
     [
       unknownTaskThreadsKey({ bots, links, tasks, now }),
@@ -139,6 +140,7 @@ export function useRefreshBotsForTaskThreads(input: {
       .filter((part) => part !== null)
       .join("|") || null;
   const lastKey = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the bots list query when the task feed names chats it lacks, and holds the retry timer until unmount
   useEffect(() => {
     if (unknownKey === null || lastKey.current === unknownKey) return;
     lastKey.current = unknownKey;

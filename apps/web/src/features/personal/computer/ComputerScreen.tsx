@@ -46,9 +46,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
-  useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -56,12 +54,14 @@ import {
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
-import { useThreadShells } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { AvatarOrbitLayer } from "../BotAvatar";
 import { isThreadLive } from "../botSummaries";
+import { useBotShells } from "../useBotShells";
 import { inertOutside } from "../overlayInert";
 import { useSystemSummary } from "../SystemStatsLine";
 import { usePersonalTasks } from "../usePersonalAutomation";
@@ -266,6 +266,7 @@ function resetKeyboardField(field: HTMLInputElement): void {
 
 function usePageVisible(): boolean {
   const [visible, setVisible] = useState(() => document.visibilityState === "visible");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens to the document visibilitychange event while mounted
   useEffect(() => {
     const update = () => setVisible(document.visibilityState === "visible");
     document.addEventListener("visibilitychange", update);
@@ -300,12 +301,14 @@ export function ComputerScreen({
       ? { auto: false, pinned: request }
       : stored;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the source choice to localStorage
   useEffect(() => {
     saveSourcePrefs(typeof window === "undefined" ? null : window.localStorage, prefs);
   }, [prefs]);
   const [shown, setShown] = useState<ComputerSource>(prefs.auto ? "browser" : prefs.pinned);
   const [tapAt, setTapAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the clock tick for the relative times while mounted
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), NOW_TICK_MS);
     return () => window.clearInterval(timer);
@@ -313,6 +316,7 @@ export function ComputerScreen({
 
   const [perfOpen, setPerfOpen] = useState(request === "performance");
   const [activityOpen, setActivityOpen] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands a files deep link to the parent, which owns the Files pane
   useEffect(() => {
     if (request === "files") onOpenFiles?.();
   }, [request, onOpenFiles]);
@@ -320,15 +324,11 @@ export function ComputerScreen({
   const [fullScreen, setFullScreen] = useState(false);
   const screenRef = useRef<HTMLDivElement | null>(null);
 
-  const events = useMemo(
-    () =>
-      mergeActivity([
-        ...feed.events.map(readBrowserEvent),
-        ...data.desktopEvents.map(readDesktopEvent),
-      ]),
-    [feed.events, data.desktopEvents],
-  );
-  const lastAction = useMemo(() => latestBotAction(events), [events]);
+  const events = mergeActivity([
+    ...feed.events.map(readBrowserEvent),
+    ...data.desktopEvents.map(readDesktopEvent),
+  ]);
+  const lastAction = latestBotAction(events);
 
   // ---- who is at which source -------------------------------------------
   const controller = status?.controller;
@@ -338,7 +338,7 @@ export function ComputerScreen({
   const [takeError, setTakeError] = useState<string | null>(null);
   const [paused, setPaused] = useState<SourceDriver | null>(null);
   const [deskControl, setDeskControl] = useState<DesktopControlState>(NO_DESK_CONTROL);
-  const onDeskControl = useCallback((next: DesktopControlState) => setDeskControl(next), []);
+  const onDeskControl = (next: DesktopControlState) => setDeskControl(next);
   const youDesktop = takeSource === "desktop" && deskControl.on;
   const desktopAvailable = desktopStatus?.available !== false;
 
@@ -375,16 +375,19 @@ export function ComputerScreen({
     desktopAvailable,
   });
   const [toast, setToast] = useState<string | null>(null);
-  const flash = useCallback((text: string) => {
+  const flash = (text: string) => {
     setToast(text);
-  }, []);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the toast timer
   useEffect(() => {
     if (toast === null) return;
     const timer = window.setTimeout(() => setToast(null), TOAST_MS);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the latest bot action to its source and flashes the switch toast
   useEffect(() => {
     if (resolved === shown) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- the switch and its toast land together, after the action is committed
     setShown(resolved);
     if (prefs.auto && controlSource === null && !helpOpen) {
       const text = followedToast(shown, resolved, lastAction?.botName ?? null);
@@ -405,17 +408,22 @@ export function ComputerScreen({
   // The other source's driver acted while it is not on screen: pulse its dot once.
   const [pulse, setPulse] = useState<ComputerSource | null>(null);
   const actionKey = lastAction === null ? null : `${lastAction.source}:${lastAction.at}`;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the pulse timer on the source a bot just acted on
   useEffect(() => {
     if (actionKey === null || lastAction === null || lastAction.source === shown) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- the pulse starts with its timer
     setPulse(lastAction.source);
     const timer = window.setTimeout(() => setPulse(null), 1400);
     return () => window.clearTimeout(timer);
     // `shown` is read at the moment of the action only.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- runs once per action; `lastAction` and `shown` are read at that moment only
   }, [actionKey]);
 
   // The unshown stage keeps its socket for a moment, then lets go.
   const [backgroundPaused, setBackgroundPaused] = useState<ComputerSource | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the unshown stage socket open for a moment, then releases it
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- a source switch reopens both sockets before the timer releases one
     setBackgroundPaused(null);
     const timer = window.setTimeout(
       () => setBackgroundPaused(shown === "browser" ? "desktop" : "browser"),
@@ -430,6 +438,7 @@ export function ComputerScreen({
   const youShown = shown === "browser" ? youBrowser : youDesktop;
   const takingShown = takeSource === shown && !youShown;
   const seenControlRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the server control state, which can drop control without a user action
   useEffect(() => {
     if (takeSource === null) {
       seenControlRef.current = false;
@@ -444,13 +453,15 @@ export function ComputerScreen({
     if (seenControlRef.current) {
       setTakeSource(null);
       if (takeSource === "desktop" && deskControl.notice !== null) {
+        // oxlint-disable-next-line react/set-state-in-effect -- the server dropped control; its notice says why
         setTakeError(deskControl.notice);
       }
     } else if (takeSource === "desktop" && !deskControl.wanted && deskControl.notice !== null) {
       setTakeSource(null);
       setTakeError(deskControl.notice);
     }
-  }, [takeSource, youBrowser, deskControl]);
+  }, [takeSource, youBrowser, deskControl, seenControlRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the take-control error timer
   useEffect(() => {
     if (takeError === null) return;
     const timer = window.setTimeout(() => setTakeError(null), TAKE_ERROR_MS);
@@ -600,31 +611,27 @@ export function ComputerScreen({
   };
 
   // "N bots busy" and "M tasks running" for the Performance sheet.
-  const shells = useThreadShells();
+  const shells = useBotShells(environmentId);
   const botsList = usePersonalBotsList(perfOpen ? environmentId : null);
   const { tasks } = usePersonalTasks(perfOpen ? environmentId : null);
-  const botsBusy = useMemo(() => {
-    const links = botsList.data?.threads ?? [];
-    const live = new Set<string>();
-    for (const link of links) {
-      const shell = shells.find((candidate) => candidate.id === link.threadId);
-      if (shell !== undefined && isThreadLive(shell)) live.add(link.botId);
-    }
-    return live.size;
-  }, [botsList.data, shells]);
-  const tasksRunning = useMemo(
-    () =>
-      [...(tasks?.values() ?? [])].filter(
-        (task) =>
-          task.status !== "completed" &&
-          task.status !== "failed" &&
-          task.status !== "interrupted" &&
-          task.status !== "cancelled",
-      ).length,
-    [tasks],
+  const liveThreadIds = new Set(
+    shells.filter((shell) => isThreadLive(shell)).map((shell) => shell.id as string),
   );
+  const botsBusy = new Set(
+    (botsList.data?.threads ?? [])
+      .filter((link) => liveThreadIds.has(link.threadId))
+      .map((link) => link.botId as string),
+  ).size;
+  const tasksRunning = [...(tasks?.values() ?? [])].filter(
+    (task) =>
+      task.status !== "completed" &&
+      task.status !== "failed" &&
+      task.status !== "interrupted" &&
+      task.status !== "cancelled",
+  ).length;
   const summary = useSystemSummary();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- locks body scroll, makes the rest inert and listens for Escape while full screen
   useEffect(() => {
     if (!fullScreen) return;
     const previousOverflow = document.body.style.overflow;
@@ -738,7 +745,7 @@ export function ComputerScreen({
           type="button"
           onClick={() => setPerfOpen(true)}
           aria-label={`Performance, CPU ${Math.round(summary.cpuPct)} percent, RAM ${Math.round(summary.memUsedPct)} percent`}
-          className="flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-[var(--personal-fill-muted)] px-3 text-[13px] text-[var(--personal-text-secondary)] tabular-nums outline-none max-[380px]:px-2.5 max-[380px]:text-xs focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-[var(--personal-fill-muted)] px-3 text-[13px] text-[var(--personal-text-secondary)] tabular-nums outline-none max-[380px]:px-2.5 max-[380px]:text-xs focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <Activity className="size-4 max-[380px]:hidden" strokeWidth={ICON_STROKE} aria-hidden />
           <span>
@@ -794,7 +801,7 @@ export function ComputerScreen({
             <button
               type="button"
               onClick={() => void handBack()}
-              className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
             >
               <Hand className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
               {handBackLabel}
@@ -1094,15 +1101,12 @@ export function ComputerBrowserPane(props: {
   const page = status?.page ?? null;
   const fullScreen = props.fullScreen === true;
 
-  const onClient = useCallback((client: ViewportClient | null) => {
+  const onClient = (client: ViewportClient | null) => {
     sendRef.current = client?.send ?? null;
     setInputReady(client !== null);
-  }, []);
-  const send = useCallback(
-    (message: PersonalBrowserInputMessage) => sendRef.current?.(message),
-    [],
-  );
-  const keyboardDock = useMemo(() => ({ toggleRef: keyboardToggleRef, onState: setKeyboard }), []);
+  };
+  const send = (message: PersonalBrowserInputMessage) => sendRef.current?.(message);
+  const keyboardDock = { toggleRef: keyboardToggleRef, onState: setKeyboard };
   const ready = inputReady;
   const dock = fullScreen && inControl && ready;
 
@@ -1201,7 +1205,7 @@ function BrowserKeyDock(props: {
 }) {
   const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
   const button =
-    "flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-[10px] border px-2.5 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-70";
+    "flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-[10px] border px-2.5 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] active:opacity-70";
   return (
     <div
       role="toolbar"
@@ -1341,7 +1345,7 @@ function BrowserToolbar(props: {
           type="button"
           aria-label={props.backLabel}
           onClick={props.onBackToChat}
-          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
         </button>
@@ -1381,7 +1385,7 @@ function BrowserToolbar(props: {
           type="button"
           aria-label="Open browser full screen"
           onClick={props.onOpenFullScreen}
-          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <Maximize2 className="size-5" strokeWidth={ICON_STROKE} />
         </button>
@@ -1389,7 +1393,7 @@ function BrowserToolbar(props: {
       <Menu>
         <MenuTrigger
           aria-label="Browser options"
-          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <MoreHorizontal className="size-5" strokeWidth={ICON_STROKE} />
         </MenuTrigger>
@@ -1434,7 +1438,7 @@ export function PageDialogCard(props: {
   const cancelLabel = leave ? "Stay" : "Cancel";
   const message = leave ? "This page asks whether you want to leave it." : dialog.message;
   const buttonClass =
-    "flex h-11 flex-1 items-center justify-center rounded-[10px] px-4 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50";
+    "flex h-11 flex-1 items-center justify-center rounded-[10px] px-4 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] disabled:opacity-50";
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
       <div
@@ -1598,10 +1602,13 @@ function LiveViewport(props: {
 
   // A new address or reload starts over: an old "site refused the connection" must not sit over
   // the page that loads next. (A failure of the new one arrives after this and shows again.)
-  useEffect(() => {
+  const [noticeAttemptKey, setNoticeAttemptKey] = useState(attemptKey);
+  if (noticeAttemptKey !== attemptKey) {
+    setNoticeAttemptKey(attemptKey);
     setNotice(null);
-  }, [attemptKey]);
+  }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the viewport client connection and its canvas while the stage is active
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!active || access === null || canvas === null || gaveUp) return;
@@ -1680,6 +1687,7 @@ function LiveViewport(props: {
   // and the compatibility mouse events that follow a tap would focus the
   // (focusable) canvas and take the keyboard straight back down. So the tap's
   // touchend focuses the field again and cancels those mouse events.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for touchend on the canvas to refocus the keyboard field
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!interactive || canvas === null) return;
@@ -1699,11 +1707,12 @@ function LiveViewport(props: {
 
   // Full screen measures its box: the frame is letterboxed into it, and in
   // control the page is laid out for it. The compact preview is never measured.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the full-screen box size while it is shown
   useEffect(() => {
     const container = containerRef.current;
     if (!fit || container === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
+    return observeResize(container, (entries) => {
+      const rect = entries.at(-1)?.contentRect;
       if (rect === undefined) return;
       setBox((previous) =>
         previous !== null && previous.width === rect.width && previous.height === rect.height
@@ -1711,14 +1720,13 @@ function LiveViewport(props: {
           : { width: rect.width, height: rect.height },
       );
     });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [fit]);
+  }, [containerRef, fit]);
   const fitBox = fit ? box : null;
 
   // In control and full screen, the phone asks for its box as the page's
   // viewport. The server only accepts it from the controller and undoes it
   // when control goes back, so watching never reshapes the bot's page.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends the box to the server as the page viewport while in control
   useEffect(() => {
     if (!syncViewport) {
       sentViewportRef.current = null;
@@ -1781,16 +1789,18 @@ function LiveViewport(props: {
     openKeyboard();
   };
   const dock = props.keyboardDock;
-  const toggleKeyboardRef = useRef(toggleKeyboard);
-  toggleKeyboardRef.current = toggleKeyboard;
+  const stableToggleKeyboard = useStableCallback(toggleKeyboard);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the keyboard toggle to the dock button outside this tree until unmount
   useEffect(() => {
     if (dock === undefined) return;
-    dock.toggleRef.current = () => toggleKeyboardRef.current();
+    // oxlint-disable-next-line react/immutability -- the dock's ref is the slot this stage fills for the dock button
+    dock.toggleRef.current = stableToggleKeyboard;
     return () => {
       dock.toggleRef.current = null;
     };
-  }, [dock]);
+  }, [dock, stableToggleKeyboard]);
   const dockState = dock?.onState;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the keyboard state to the dock button outside this tree
   useEffect(() => {
     dockState?.({ open: keyboardOpen, ready: remoteEditable && !keyboardOpen });
   }, [dockState, keyboardOpen, remoteEditable]);
@@ -2051,6 +2061,7 @@ export function FilesPane({ environmentId }: { readonly environmentId: Environme
   const access = useComputerAccess(environmentId);
   const { refresh } = query;
   // Artifacts appear while the tab is closed; re-list each time Files opens.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-lists the files on the server each time Files opens
   useEffect(() => {
     refresh();
   }, [refresh]);

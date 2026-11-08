@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { useAtomValue } from "@effect/atom-react";
@@ -21,7 +21,6 @@ import {
   botEffectiveModelSelection,
   PersonalSecretRequestId,
   type ApprovalRequestId,
-  type EnvironmentId,
   type PersonalReplyQuote,
   type PersonalSecretRequest,
   type PersonalTask,
@@ -36,19 +35,9 @@ import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logi
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
-import {
-  derivePhase,
-  deriveTimelineEntriesWithState,
-  deriveWorkLogEntries,
-  type TimelineEntriesProjection,
-} from "~/session-logic";
-import {
-  useProject,
-  useThreadDetail,
-  useThreadShell,
-  useThreadShells,
-  useThreadStatus,
-} from "~/state/entities";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { derivePhase, deriveTimelineEntriesWithState, deriveWorkLogEntries } from "~/session-logic";
+import { useProject, useThreadDetail, useThreadStatus } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import {
   threadEnvironment,
@@ -120,7 +109,6 @@ import {
   buildConversationItems,
   contextBadgeLabel,
   conversationHeaderStateLabel,
-  type ConversationState,
   deriveConversationState,
   friendlyTurnError,
   isTurnThinking,
@@ -207,6 +195,7 @@ import {
   usePersonalBotsList,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
+import { useBotShell, useBotShells } from "./useBotShells";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { useWrapupChat } from "./wrapupChat";
 import { type DeleteChatOptions, useDeleteChat } from "./useDeleteChat";
@@ -221,7 +210,7 @@ import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 
 const ICON_BUTTON =
-  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
 
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_SECRET_REQUESTS: ReadonlyArray<PersonalSecretRequest> = [];
@@ -231,6 +220,7 @@ const EMPTY_PLANS: ReadonlyArray<never> = [];
 /** Minute clock for "Today, 21:38" dividers. */
 function useMinuteNow(): Date {
   const [now, setNow] = useState(() => new Date());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the minute timer for the dividers while the chat is open
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
@@ -254,10 +244,7 @@ export function ConversationScreen({
   const backTarget = usePersonalBackTarget();
   const environmentId = usePersonalEnvironmentId();
   const threadId = ThreadId.make(threadIdParam);
-  const threadRef = useMemo(
-    () => (environmentId === null ? null : scopeThreadRef(environmentId, threadId)),
-    [environmentId, threadId],
-  );
+  const threadRef = environmentId === null ? null : scopeThreadRef(environmentId, threadId);
   const list = usePersonalBotsList(environmentId);
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const headerName = resolveConversationHeaderName({
@@ -267,7 +254,7 @@ export function ConversationScreen({
   const thread = useThreadDetail(threadRef);
   // The header title reads the shell: renames and auto-titles reach it live,
   // while the loaded detail keeps the title it was fetched with.
-  const threadShell = useThreadShell(threadRef);
+  const threadShell = useBotShell(environmentId, threadIdParam);
   const status = useThreadStatus(threadRef);
   useCloseChatNotifications(botId, threadIdParam);
   // An archived chat opens read-only: the history, an "Archived" bar with
@@ -311,6 +298,7 @@ export function ConversationScreen({
     environmentId !== null && !list.isPending && (list.data === null || bot === null);
   const listRefreshKey = `${environmentId}|${botId}|${list.data === null ? "none" : "stale"}|${list.error ?? ""}`;
   const lastListRefreshKey = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the bots list query again once per failure or missing bot, which the query cannot tell on its own
   useEffect(() => {
     if (!listNeedsRefresh || lastListRefreshKey.current === listRefreshKey) return;
     lastListRefreshKey.current = listRefreshKey;
@@ -373,18 +361,15 @@ export function ConversationScreen({
   // and their delegated children are fetched once for this chat and folded in.
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const threadTasks = usePersonalRelatedTasks(environmentId, { threadId });
-  const tasks = useMemo(() => {
-    const merged = mergeTaskLists(taskFeed, threadTasks);
-    return merged === null ? [] : [...merged.values()];
-  }, [taskFeed, threadTasks]);
-  const botsById = useMemo(
-    () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
-    [list.data],
+  const mergedTasks = mergeTaskLists(taskFeed, threadTasks);
+  const tasks = mergedTasks === null ? [] : [...mergedTasks.values()];
+  const botsById = new Map(
+    (list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const),
   );
-  const nameOf = useCallback((id: string) => botsById.get(id)?.name ?? null, [botsById]);
-  const waitingLabels = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
+  const nameOf = (id: string) => botsById.get(id)?.name ?? null;
+  const waitingLabels = waitingLabelsByThread(tasks, nameOf);
   const waitingLabel = waitingLabels.get(threadId) ?? null;
-  const children = useMemo(() => delegatedChildren(threadId, tasks), [threadId, tasks]);
+  const children = delegatedChildren(threadId, tasks);
   // A bot a team lead created and handed work in the same turn is not in this
   // device's list yet: its card would read "Deleted bot" until the list is refetched.
   useRefreshBotsForTaskThreads({
@@ -397,10 +382,12 @@ export function ConversationScreen({
   const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
   // Real-user timings (perfRum.ts): chat usable, then send -> echo -> first reply text.
   const usableThreadId = thread !== null ? threadId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the chat-usable mark to the real-user timing probe
   useEffect(() => {
     if (usableThreadId === null) return;
     reportChatUsable(window.location.pathname);
   }, [usableThreadId]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds the send-to-reply timing probe the messages it watches
   useEffect(() => {
     observeChatMessages(threadId, messages);
   }, [threadId, messages]);
@@ -409,23 +396,19 @@ export function ConversationScreen({
   // refetches it when he writes. Ask once on this key, and once more shortly
   // after in case his write and the first read crossed; the refreshed link
   // promotes the chat and the key goes null, so it cannot loop.
-  const taskChatIds = useMemo(
-    () => taskChatThreadIds(list.data?.threads ?? [], tasks),
-    [list.data, tasks],
-  );
-  const ownerWriteKey = useMemo(
-    () => ownerWriteRefreshKey({ link, taskChatIds, messages }),
-    [link, taskChatIds, messages],
-  );
+  const taskChatIds = taskChatThreadIds(list.data?.threads ?? [], tasks);
+  const ownerWriteKey = ownerWriteRefreshKey({ link, taskChatIds, messages });
   const lastOwnerWriteKey = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the bots list after the owner writes in a task chat, and holds the retry timer until unmount
   useEffect(() => {
     if (ownerWriteKey === null || lastOwnerWriteKey.current === ownerWriteKey) return;
     lastOwnerWriteKey.current = ownerWriteKey;
     refreshBotsList();
     const retry = window.setTimeout(refreshBotsList, OWNER_WRITE_REFRESH_RETRY_MS);
     return () => window.clearTimeout(retry);
-  }, [ownerWriteKey, refreshBotsList]);
+  }, [lastOwnerWriteKey, ownerWriteKey, refreshBotsList]);
   const pendingCount = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- marks a new send for the timing probe and warms the highlighter while the reply is written
   useEffect(() => {
     if (pending.length > pendingCount.current) {
       markMessageSent(threadId, messages);
@@ -438,13 +421,7 @@ export function ConversationScreen({
   }, [pending.length, threadId, messages]);
   const activities = thread?.activities ?? EMPTY_ACTIVITIES;
   const proposedPlans = thread?.proposedPlans ?? EMPTY_PLANS;
-  const workEntries = useMemo(() => deriveWorkLogEntries(activities), [activities]);
-  // Incremental projection, as upstream ChatView does: a streaming delta
-  // extends the previous timeline instead of re-folding and re-sorting it.
-  const projectionRef = useRef<{
-    threadId: ThreadId;
-    projection: TimelineEntriesProjection;
-  } | null>(null);
+  const workEntries = deriveWorkLogEntries(activities);
   const showToolSteps = usePersonalSharedPreference("showToolSteps");
   const showRoutinesStrip = usePersonalSharedPreference("showRoutinesStrip");
   const setSharedPreference = useSetPersonalSharedPreference();
@@ -452,50 +429,26 @@ export function ConversationScreen({
   // instead of the link and strip under it. Below the width the chat is laid
   // out exactly as it always was.
   const { fits: sidePanelFits, open: sidePanelOpen } = useChatSidePanel();
-  /* oxlint-disable react/refs -- The ref is a pure render cache, not UI state:
-     it only ever holds the last projection for the last thread, and dropping it
-     costs a full re-fold, never a different result. Moving the read or the
-     write out of render would change WHEN the timeline rebuilds (a frame late,
-     or on every delta), which is the one thing this incremental path exists to
-     avoid, so the rule is suppressed here rather than the pattern rewritten. */
-  const baseItems = useMemo(() => {
-    const previous = projectionRef.current;
-    const projection = deriveTimelineEntriesWithState(
-      messages,
-      proposedPlans,
-      workEntries,
-      previous?.threadId === threadId ? previous.projection : null,
+  const baseItems = buildConversationItems(
+    deriveTimelineEntriesWithState(messages, proposedPlans, workEntries).entries,
+    { showToolSteps },
+  );
+  const delegationItems = placeDelegationCards(baseItems, children);
+  const describeTurn = (turn: ServerTurn) =>
+    serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf);
+  const renderDelegation = (task: PersonalTask) => {
+    const childBot = botsById.get(task.botId) ?? null;
+    return (
+      <DelegationCard
+        environmentId={environmentId!}
+        task={task}
+        bot={childBot}
+        modelLabel={taskCardBotLine(childBot, providers)}
+        waitingFor={task.threadId === null ? null : (waitingLabels.get(task.threadId) ?? null)}
+      />
     );
-    projectionRef.current = { threadId, projection };
-    return buildConversationItems(projection.entries, { showToolSteps });
-    // `projectionRef` is stable for the component's life, so naming it here is
-    // a no-op at runtime; it is listed only because the memo reads it.
-  }, [threadId, messages, proposedPlans, workEntries, showToolSteps, projectionRef]);
-  /* oxlint-enable react/refs */
-  const delegationItems = useMemo(
-    () => placeDelegationCards(baseItems, children),
-    [baseItems, children],
-  );
-  const describeTurn = useCallback(
-    (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
-    [tasks, nameOf],
-  );
-  const renderDelegation = useCallback(
-    (task: PersonalTask) => {
-      const childBot = botsById.get(task.botId) ?? null;
-      return (
-        <DelegationCard
-          environmentId={environmentId!}
-          task={task}
-          bot={childBot}
-          modelLabel={taskCardBotLine(childBot, providers)}
-          waitingFor={task.threadId === null ? null : (waitingLabels.get(task.threadId) ?? null)}
-        />
-      );
-    },
-    [botsById, environmentId, providers, waitingLabels],
-  );
-  const { approvals, userInputs } = useMemo(() => derivePendingRequests(activities), [activities]);
+  };
+  const { approvals, userInputs } = derivePendingRequests(activities);
   // Answering removes the request from `userInputs` the moment the server
   // resolves it. Remembering every request this screen has shown keeps the card
   // in place afterwards, showing the answer instead of leaving a gap where the
@@ -518,28 +471,27 @@ export function ConversationScreen({
     setSeenUserInputs({ threadId, requests });
   }
   // The chat's own context size, shown in the header at any size once the chat has reported one.
-  const contextBadge = useMemo(
-    () => contextBadgeLabel(deriveLatestContextWindowSnapshot(activities)?.usedTokens),
-    [activities],
+  const contextBadge = contextBadgeLabel(deriveLatestContextWindowSnapshot(activities)?.usedTokens);
+  // Every question ever asked on this thread, so reopening a chat still shows
+  // what was asked and answered instead of a reply to an invisible question.
+  // The in-session memory layers on top: a question answered a moment ago has
+  // left `pending` before its resolution reaches the activity stream.
+  const asked = new Map<string, PendingUserInput>(
+    deriveUserInputHistory(activities).map((request) => [request.requestId as string, request]),
   );
-  const questionCards = useMemo(() => {
-    // Every question ever asked on this thread, so reopening a chat still shows
-    // what was asked and answered instead of a reply to an invisible question.
-    // The in-session memory layers on top: a question answered a moment ago has
-    // left `pending` before its resolution reaches the activity stream.
-    const asked = new Map<string, PendingUserInput>(
-      deriveUserInputHistory(activities).map((request) => [request.requestId as string, request]),
-    );
-    // A thread switch that has not settled yet must not show the previous
-    // chat's cards.
-    if (seenUserInputs.threadId === threadId) {
-      for (const [requestId, request] of seenUserInputs.requests) {
-        if ((asked.get(requestId)?.createdAt ?? "") < request.createdAt)
-          asked.set(requestId, request);
-      }
+  // A thread switch that has not settled yet must not show the previous
+  // chat's cards.
+  if (seenUserInputs.threadId === threadId) {
+    for (const [requestId, request] of seenUserInputs.requests) {
+      if ((asked.get(requestId)?.createdAt ?? "") < request.createdAt)
+        asked.set(requestId, request);
     }
-    return deriveQuestionCards(userInputs, asked, deriveUserInputResolutions(activities));
-  }, [activities, seenUserInputs, threadId, userInputs]);
+  }
+  const questionCards = deriveQuestionCards(
+    userInputs,
+    asked,
+    deriveUserInputResolutions(activities),
+  );
   // Secrets the bot asked for. `listPending` drops a row the moment it is
   // answered, so the same seen/outcome memory as the question cards keeps the
   // card in place with its ending instead of leaving a hole in the transcript.
@@ -556,9 +508,11 @@ export function ConversationScreen({
     for (const request of pendingSecrets) next.set(request.requestId, request);
     setSeenSecrets(next);
   }
-  const secretRequestCards = useMemo(
-    () => deriveSecretRequestCards(pendingSecrets, threadId, seenSecrets, secretOutcomes),
-    [pendingSecrets, secretOutcomes, seenSecrets, threadId],
+  const secretRequestCards = deriveSecretRequestCards(
+    pendingSecrets,
+    threadId,
+    seenSecrets,
+    secretOutcomes,
   );
   // Gated vendor calls, shared with the group screen so both can answer one.
   const connectionApprovals = useConnectionApprovalCards(environmentId, threadId);
@@ -594,7 +548,7 @@ export function ConversationScreen({
       ? personalVoiceCallsList({ environmentId, input: { threadId } })
       : null,
   );
-  const startVoiceCall = useCallback(() => {
+  const startVoiceCall = () => {
     if (voice === null || bot === null) return;
     void voice.start({
       threadId,
@@ -603,23 +557,20 @@ export function ConversationScreen({
       avatarShape: bot.avatarShape,
       avatarColor: botVoiceCallColour(bot),
     });
-  }, [voice, bot, threadId]);
-  const voiceCallCards = useMemo<ReadonlyArray<VoiceCallCardItem>>(
-    () =>
-      voiceCalls.data?.calls.map((row) => ({
-        callId: row.callId,
-        startedAtMs: DateTime.toEpochMillis(row.startedAt),
-        endedAtMs: DateTime.toEpochMillis(row.endedAt),
-        live: false,
-        durationMs: row.durationSeconds * 1_000,
-        endedLine: voiceCallEndReasonLabel(row.endReason),
-        sentCount: row.messageCount,
-        voiceName: row.voiceName,
-        transcript: row.transcript,
-        ...(row.summary === undefined ? {} : { summary: row.summary }),
-      })) ?? [],
-    [voiceCalls.data],
-  );
+  };
+  const voiceCallCards: ReadonlyArray<VoiceCallCardItem> =
+    voiceCalls.data?.calls.map((row) => ({
+      callId: row.callId,
+      startedAtMs: DateTime.toEpochMillis(row.startedAt),
+      endedAtMs: DateTime.toEpochMillis(row.endedAt),
+      live: false,
+      durationMs: row.durationSeconds * 1_000,
+      endedLine: voiceCallEndReasonLabel(row.endReason),
+      sentCount: row.messageCount,
+      voiceName: row.voiceName,
+      transcript: row.transcript,
+      ...(row.summary === undefined ? {} : { summary: row.summary }),
+    })) ?? [];
   // A call's summary is written on the server a few seconds after the card is
   // stored (Harout, 16 Oct: he asked on a call whether a court was free and the
   // chat showed nothing of it). While a card that ended recently has no summary
@@ -627,75 +578,58 @@ export function ConversationScreen({
   // cards are left alone, since a call whose summary failed never gets one. The
   // window runs from the call's END, so a long call still refreshes (Astra
   // re-check R4).
-  const voiceCallSummaryPendingNow = voiceCallSummaryPending(voiceCallCards, Date.now());
-  const refreshVoiceCalls = voiceCalls.refresh;
-  const refreshVoiceCallsRef = useRef(refreshVoiceCalls);
-  refreshVoiceCallsRef.current = refreshVoiceCalls;
+  const voiceCallSummaryPendingNow = voiceCallSummaryPending(voiceCallCards, now.getTime());
+  const refreshVoiceCalls = useStableCallback(voiceCalls.refresh);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the voice call list while a recent call's summary is still being written
   useEffect(() => {
     if (!voiceCallSummaryPendingNow) return;
-    const timer = window.setInterval(() => refreshVoiceCallsRef.current(), 15_000);
+    const timer = window.setInterval(refreshVoiceCalls, 15_000);
     return () => window.clearInterval(timer);
-  }, [voiceCallSummaryPendingNow]);
-  const items = useMemo(
-    () =>
-      placeCallCards(
-        placeMemoryCards(
-          placeLoginRequestCards(
-            placeLeadBotChangeCards(
-              placeConnectionApprovalCards(
-                placeSecretRequestCards(
-                  placeQuestionCards(delegationItems, questionCards),
-                  secretRequestCards,
-                ),
-                connectionApprovalCards,
-              ),
-              leadBotChangeCards,
+  }, [voiceCallSummaryPendingNow, refreshVoiceCalls]);
+  const items = placeCallCards(
+    placeMemoryCards(
+      placeLoginRequestCards(
+        placeLeadBotChangeCards(
+          placeConnectionApprovalCards(
+            placeSecretRequestCards(
+              placeQuestionCards(delegationItems, questionCards),
+              secretRequestCards,
             ),
-            loginRequests.cards,
+            connectionApprovalCards,
           ),
-          memoryChangeCards,
+          leadBotChangeCards,
         ),
-        voiceCallCards,
+        loginRequests.cards,
       ),
-    [
-      connectionApprovalCards,
-      delegationItems,
-      leadBotChangeCards,
       memoryChangeCards,
-      questionCards,
-      secretRequestCards,
-      loginRequests.cards,
-      voiceCallCards,
-    ],
+    ),
+    voiceCallCards,
   );
 
-  const renderCallCard = useCallback(
-    (card: VoiceCallCardItem) => (
-      <CallCard
-        model={{
-          callId: card.callId,
-          startedAtMs: card.startedAtMs,
-          durationMs: card.durationMs,
-          endedLine: card.endedLine,
-          sentCount: card.sentCount,
-          transcript: card.transcript,
-          live: false,
-          voiceName: card.voiceName,
-          ...(card.summary === undefined ? {} : { summary: card.summary }),
-        }}
-        // Read only when the card is opened, and only this call's rows.
-        transcript={
-          <CallTranscript
-            callId={card.callId}
-            startedAtMs={card.startedAtMs}
-            voiceName={card.voiceName}
-          />
-        }
-        onCallBack={startVoiceCall}
-        onReturn={() => undefined}
-      />
-    ),
-    [startVoiceCall],
+  const renderCallCard = (card: VoiceCallCardItem) => (
+    <CallCard
+      model={{
+        callId: card.callId,
+        startedAtMs: card.startedAtMs,
+        durationMs: card.durationMs,
+        endedLine: card.endedLine,
+        sentCount: card.sentCount,
+        transcript: card.transcript,
+        live: false,
+        voiceName: card.voiceName,
+        ...(card.summary === undefined ? {} : { summary: card.summary }),
+      }}
+      // Read only when the card is opened, and only this call's rows.
+      transcript={
+        <CallTranscript
+          callId={card.callId}
+          startedAtMs={card.startedAtMs}
+          voiceName={card.voiceName}
+        />
+      }
+      onCallBack={startVoiceCall}
+      onReturn={() => undefined}
+    />
   );
 
   const conversationState = deriveConversationState({
@@ -727,10 +661,7 @@ export function ConversationScreen({
   const latestTurn = thread?.latestTurn ?? null;
   // One muted line of what the running turn is doing, for models that keep
   // their progress in thinking summaries and would otherwise read as blank.
-  const progressNote = useMemo(
-    () => deriveLatestProgressNote({ working, messages, activities, latestTurn }),
-    [working, messages, activities, latestTurn],
-  );
+  const progressNote = deriveLatestProgressNote({ working, messages, activities, latestTurn });
   // A call on this chat reads the bot's real state from here: the same working
   // flag, the same progress line and the newest reply, never a second copy.
   const voiceBotStatus = useRef({
@@ -741,6 +672,7 @@ export function ConversationScreen({
     latestReplyMessageId: null as string | null,
     latestReplyAtMs: null as number | null,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the status the voice call reads (a ref outside render) current
   useEffect(() => {
     const latestReply = messages.findLast(
       (message) => message.role === "assistant" && message.text.trim().length > 0,
@@ -756,16 +688,18 @@ export function ConversationScreen({
       latestReplyMessageId: latestReply?.id ?? null,
       latestReplyAtMs: Number.isFinite(repliedAtMs) ? repliedAtMs : null,
     };
-  }, [conversationState, progressNote, messages]);
+  }, [conversationState, progressNote, messages, voiceBotStatus]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this chat's status reader with the voice call until unmount
   useEffect(() => {
     if (voice === null) return;
     return voice.registerBotStatus(threadId, () => voiceBotStatus.current);
-  }, [voice, threadId]);
-  const latestMessageStatus = useMemo(
-    () =>
-      deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
-    [baseItems, activities, turnBusy, latestTurn],
-  );
+  }, [voice, threadId, voiceBotStatus]);
+  const latestMessageStatus = deriveLatestMessageReadStatus({
+    items: baseItems,
+    activities,
+    busy: turnBusy,
+    latestTurn,
+  });
   const stateLabel = conversationHeaderStateLabel({
     state: conversationState,
     thinking: turnThinking,
@@ -781,13 +715,10 @@ export function ConversationScreen({
   // A typed message, Retry and wrapup send what the bot runs on right now (its fallback while on it).
   const botTurnModel = bot === null ? null : botEffectiveModelSelection(bot);
 
-  const visiblePending = useMemo(
-    () => pendingForThread(pending, threadId, messages),
-    [messages, pending, threadId],
-  );
+  const visiblePending = pendingForThread(pending, threadId, messages);
 
   // The owner's last message, for the failed-turn notice's Retry.
-  const retryTarget = useMemo(() => findRetryTarget(messages), [messages]);
+  const retryTarget = findRetryTarget(messages);
   const failedTurnRetry = useRetryFailedTurn({
     environmentId,
     thread,
@@ -796,7 +727,7 @@ export function ConversationScreen({
     failureKey: thread?.session?.updatedAt ?? null,
   });
 
-  const onInterrupt = useCallback(async (): Promise<string | null> => {
+  const onInterrupt = async (): Promise<string | null> => {
     if (environmentId === null || interruptInput === null) return null;
     const result = await interruptTurn({ environmentId, input: interruptInput });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -804,7 +735,7 @@ export function ConversationScreen({
       return error instanceof Error ? error.message : "Couldn't stop this turn.";
     }
     return null;
-  }, [environmentId, interruptInput, interruptTurn]);
+  };
 
   const onRespondToApproval = async (
     requestId: ApprovalRequestId,
@@ -990,7 +921,8 @@ export function ConversationScreen({
           action,
           target.title,
           action === "snooze" && options !== undefined
-            ? whenWords(options.snoozeUntilMs, Date.now())
+            ? // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+              whenWords(options.snoozeUntilMs, Date.now())
             : undefined,
         ),
       );
@@ -1087,52 +1019,39 @@ export function ConversationScreen({
 
   // Chat chips: the owner's other chats with this bot, one tap away in the
   // header. They need two or more chips; with one chat the header stays as it was.
-  const allShells = useThreadShells();
+  const shells = useBotShells(environmentId);
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
   const chatSeen = useChatSeenState();
   // A snooze that runs out while this screen is open puts its chat back in the chips.
   const wakeClock = useSnoozeWakeClock(list.data?.threads, list.refresh);
-  const chipModel = useMemo(
-    () =>
-      list.data === null
-        ? null
-        : buildChatChips({
-            botId,
-            currentThreadId: threadIdParam,
-            links: list.data.threads,
-            shells: allShells.filter((shell) => shell.environmentId === environmentId),
-            relayThreadIds,
-            tasks,
-            waitingLabels,
-            seen: chatSeen,
-            nowMs: wakeClock,
-          }),
-    [
-      wakeClock,
-      allShells,
-      botId,
-      chatSeen,
-      environmentId,
-      list.data,
-      relayThreadIds,
-      tasks,
-      threadIdParam,
-      waitingLabels,
-    ],
-  );
+  const chipModel =
+    list.data === null
+      ? null
+      : buildChatChips({
+          botId,
+          currentThreadId: threadIdParam,
+          links: list.data.threads,
+          shells,
+          relayThreadIds,
+          tasks,
+          waitingLabels,
+          seen: chatSeen,
+          nowMs: wakeClock,
+        });
   // The order holds still while the owner stays in this bot's chats (chatChipOrder.ts).
   const frozenOwner = useFrozenChipOrder(botId, chipModel?.ownerChips ?? null);
-  const chipRow = useMemo<ReadonlyArray<ChatChip>>(() => {
-    if (chipModel === null) return [];
-    const ownerIds = new Set(chipModel.ownerChips.map((chip) => chip.threadId));
-    // Keep live task and temporary chips from the model; only owner chats
-    // use the frozen order while the owner stays in this bot's chats.
-    return [
-      ...chipModel.chips.filter((chip) => !ownerIds.has(chip.threadId)),
-      ...(frozenOwner.chips ?? chipModel.ownerChips),
-    ];
-  }, [chipModel, frozenOwner.chips]);
+  // Keep live task and temporary chips from the model; only owner chats
+  // use the frozen order while the owner stays in this bot's chats.
+  const ownerChipIds = new Set(chipModel?.ownerChips.map((chip) => chip.threadId) ?? []);
+  const chipRow: ReadonlyArray<ChatChip> =
+    chipModel === null
+      ? []
+      : [
+          ...chipModel.chips.filter((chip) => !ownerChipIds.has(chip.threadId)),
+          ...(frozenOwner.chips ?? chipModel.ownerChips),
+        ];
   const chipsShown = bot !== null && chipModel !== null && chipModel.visible;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records in the chip handoff store whether chips show, which the next chat's first paint reads
   useEffect(() => {
     rememberChipsShown(botId, chipsShown);
   }, [botId, chipsShown]);
@@ -1141,13 +1060,9 @@ export function ConversationScreen({
   useRefetchOnTurnsSettled(chipsShown ? chipModel.turnsKey : "", list.refresh);
   // The server's "switched to the fallback model" and "back on the main model" lines
   // change the bot's label (header, list, tiles): refetch the bots when one lands.
-  const fallbackNoticeKey = useMemo(
-    () =>
-      String(
-        messages.filter((message) => readChatNotice(message)?.notice.startsWith("model-fallback-"))
-          .length,
-      ),
-    [messages],
+  const fallbackNoticeKey = String(
+    messages.filter((message) => readChatNotice(message)?.notice.startsWith("model-fallback-"))
+      .length,
   );
   useRefetchOnTurnsSettled(fallbackNoticeKey, list.refresh);
   // The "+" chip swaps this chat for the new one and keeps Back where it was.
@@ -1194,11 +1109,8 @@ export function ConversationScreen({
     readonly quote: PersonalReplyQuote;
   } | null>(null);
   const replyTo = replyState?.threadId === threadId ? replyState.quote : null;
-  const onReply = useCallback(
-    (quote: PersonalReplyQuote) => setReplyState({ threadId, quote }),
-    [threadId],
-  );
-  const onClearReply = useCallback(() => setReplyState(null), []);
+  const onReply = (quote: PersonalReplyQuote) => setReplyState({ threadId, quote });
+  const onClearReply = () => setReplyState(null);
   const queuedMessages = useQueuedMessages({
     environmentId,
     threadId,
@@ -1206,10 +1118,7 @@ export function ConversationScreen({
     onRestoreReply: onReply,
   });
   const quickSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
-  const onChoose = useCallback(
-    (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false),
-    [],
-  );
+  const onChoose = (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false);
   const onStopFromMenu = async () => {
     const error = await onInterrupt();
     if (error !== null) setActionError(error);
@@ -1219,6 +1128,7 @@ export function ConversationScreen({
 
   // A wrapup started from another chat's settings arrives here as a mark: send it once this
   // chat's thread has loaded, or say it could not start.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a wrapup mark from the module store once this chat's thread loads
   useEffect(() => {
     if (!pendingWrapupFor(threadIdParam)) return;
     const step = pendingWrapupStep({
@@ -1228,9 +1138,13 @@ export function ConversationScreen({
     });
     if (step === "wait") return;
     clearPendingWrapup();
-    if (step === "start") void onWrapup();
-    else setActionError("Couldn't start the wrapup. Try again.");
-  }, [threadIdParam, thread, archived, disabledReason, turnBusy, wrapupSending]);
+    if (step === "start") {
+      // oxlint-disable-next-line react/set-state-in-effect -- the mark only becomes sendable once the thread has loaded
+      void onWrapup();
+      return;
+    }
+    setActionError("Couldn't start the wrapup. Try again.");
+  }, [threadIdParam, thread, archived, disabledReason, turnBusy, wrapupSending, onWrapup]);
 
   // Chat settings: one sheet for any chip's chat, or the open chat from the header or the menu.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
@@ -1239,12 +1153,12 @@ export function ConversationScreen({
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const skipMenuReturnFocus = useRef(false);
   const holdHintId = useId();
-  const openSettings = useCallback((target: string, opener: HTMLElement | null) => {
+  const openSettings = (target: string, opener: HTMLElement | null) => {
     settingsOpener.current =
       opener ??
       (typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null));
     setSettingsFor(target);
-  }, []);
+  };
   const nameHoldTarget = useRef<HTMLElement | null>(null);
   const openOwnSettings = () => openSettings(threadIdParam, nameHoldTarget.current);
   // The three header blocks that open the open chat's settings when held.
@@ -1267,45 +1181,30 @@ export function ConversationScreen({
       openOwnSettings();
     },
   });
-  const settingsTarget = useMemo(() => {
-    if (settingsFor === null || list.data === null) return null;
-    const targetLink = list.data.threads.find((candidate) => candidate.threadId === settingsFor);
-    const targetShell = allShells.find(
-      (candidate) => candidate.environmentId === environmentId && candidate.id === settingsFor,
-    );
-    if (targetLink === undefined || targetShell === undefined) return null;
-    const isOpenChat = settingsFor === threadIdParam;
-    return buildChatSettingsTarget({
-      threadId: settingsFor,
-      currentThreadId: threadIdParam,
-      kind: chipModel?.chips.find((chip) => chip.threadId === settingsFor)?.kind ?? "chat",
-      link: targetLink,
-      shell: targetShell,
-      waitingLabel: waitingLabels.get(settingsFor) ?? null,
-      unread: !isOpenChat && isChatUnread(targetLink, chatSeen, targetShell),
-      hidePreviews: bot !== null && hidesBotPreviews(bot),
-      openChatBusy: turnBusy,
-      nowMs: wakeClock,
-    });
-  }, [
-    allShells,
-    bot,
-    chatSeen,
-    chipModel,
-    environmentId,
-    list.data,
-    settingsFor,
-    threadIdParam,
-    turnBusy,
-    wakeClock,
-    waitingLabels,
-  ]);
+  const settingsLink =
+    settingsFor === null
+      ? undefined
+      : list.data?.threads.find((candidate) => candidate.threadId === settingsFor);
+  const settingsShell =
+    settingsFor === null ? undefined : shells.find((candidate) => candidate.id === settingsFor);
+  const settingsTarget =
+    settingsFor === null || settingsLink === undefined || settingsShell === undefined
+      ? null
+      : buildChatSettingsTarget({
+          threadId: settingsFor,
+          currentThreadId: threadIdParam,
+          kind: chipModel?.chips.find((chip) => chip.threadId === settingsFor)?.kind ?? "chat",
+          link: settingsLink,
+          shell: settingsShell,
+          waitingLabel: waitingLabels.get(settingsFor) ?? null,
+          unread:
+            settingsFor !== threadIdParam && isChatUnread(settingsLink, chatSeen, settingsShell),
+          hidePreviews: bot !== null && hidesBotPreviews(bot),
+          openChatBusy: turnBusy,
+          nowMs: wakeClock,
+        });
   // The chat went away while its sheet was open (deleted or archived elsewhere): close it.
-  useEffect(() => {
-    if (settingsFor !== null && settingsTarget === null && list.data !== null) {
-      setSettingsFor(null);
-    }
-  }, [settingsFor, settingsTarget, list.data]);
+  if (settingsFor !== null && settingsTarget === null && list.data !== null) setSettingsFor(null);
   const onSettingsSnooze = async (untilMs: number) => {
     const target = settingsTarget;
     setSettingsFor(null);
@@ -1448,7 +1347,7 @@ export function ConversationScreen({
                 aria-describedby={holdHintId}
                 {...holdProps(lineHold)}
                 className={cn(
-                  "personal-hold-target flex h-[31px] min-w-0 shrink-0 items-start max-[380px]:h-[49px] rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  "personal-hold-target flex h-[31px] min-w-0 shrink-0 items-start max-[380px]:h-[49px] rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
                   NO_TOUCH_SELECT,
                 )}
               >
@@ -1487,7 +1386,7 @@ export function ConversationScreen({
             aria-describedby={holdHintId}
             {...holdProps(singleHold)}
             className={cn(
-              "personal-hold-target flex min-h-11 min-w-0 flex-1 items-center gap-4 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+              "personal-hold-target flex min-h-11 min-w-0 flex-1 items-center gap-4 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
               NO_TOUCH_SELECT,
             )}
           >

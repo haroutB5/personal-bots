@@ -2,7 +2,7 @@ import type { PersonalBot, PersonalBotThread, PersonalTask } from "@t3tools/cont
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 
 import {
   archivedLiveThreadsKey,

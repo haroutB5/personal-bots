@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -14,13 +14,14 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 
 import { Sheet, SheetPopup, SheetTitle } from "~/components/ui/sheet";
-import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { PersonalPageHeader } from "./BotForm";
 import { TEAM_VIEW_STATE_KEY } from "./botsBackStack";
 import { isThreadLive } from "./botSummaries";
+import { useBotShells } from "./useBotShells";
 import { botActiveModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { friendlyTurnError } from "./conversationModel";
@@ -222,60 +223,41 @@ function TeamBoard({
   // The bot jumps to its new card the moment the finger lets go, and stays
   // there until the server agrees. A failed move clears `pending`, so it snaps
   // back to where it came from.
-  const shown = useMemo(() => {
-    // One lead per team, optimistically too: never two badges for a blink.
-    return pending === null ? bots : applyTeamUpdate(bots, pending);
-  }, [bots, pending]);
+  // One lead per team, optimistically too: never two badges for a blink.
+  const shown = pending === null ? bots : applyTeamUpdate(bots, pending);
 
-  const groups = useMemo(() => buildTeamGroups(shown, customTeams), [shown, customTeams]);
-  const botById = useMemo(
-    () => new Map<string, PersonalBot>(shown.map((bot) => [bot.botId as string, bot] as const)),
-    [shown],
+  const groups = buildTeamGroups(shown, customTeams);
+  const botById = new Map<string, PersonalBot>(
+    shown.map((bot) => [bot.botId as string, bot] as const),
   );
-  const botIdSet = useMemo(() => new Set(botById.keys()), [botById]);
-  const counts = useMemo(
-    () => deriveDelegationCounts(tasks, botIdSet, nowMs),
-    [botIdSet, nowMs, tasks],
+  const botIdSet = new Set(botById.keys());
+  const counts = deriveDelegationCounts(tasks, botIdSet, nowMs);
+  const working = deriveWorkingNow(tasks, botIdSet);
+  const openHandoffsBy = (botId: string) => working.filter((item) => item.from === botId).length;
+  const workingFor = new Map<string, string>();
+  for (const item of working) {
+    const from = botById.get(item.from);
+    if (from !== undefined && !workingFor.has(item.to)) workingFor.set(item.to, from.name);
+  }
+  const modelLabels = new Map(
+    shown.map((bot) => [bot.botId as string, botActiveModelShortLabel(bot, providers)]),
   );
-  const working = useMemo(() => deriveWorkingNow(tasks, botIdSet), [botIdSet, tasks]);
-  const openHandoffsBy = useCallback(
-    (botId: string) => working.filter((item) => item.from === botId).length,
-    [working],
-  );
-  const workingFor = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of working) {
-      const from = botById.get(item.from);
-      if (from !== undefined && !map.has(item.to)) map.set(item.to, from.name);
-    }
-    return map;
-  }, [botById, working]);
-  const modelLabels = useMemo(
-    () =>
-      new Map(shown.map((bot) => [bot.botId as string, botActiveModelShortLabel(bot, providers)])),
-    [providers, shown],
-  );
-  const entryOf = useCallback(
-    (bot: PersonalBot): ConstellationBot => ({
-      bot,
-      modelLabel: modelLabels.get(bot.botId) ?? null,
-      live: liveBotIds.has(bot.botId),
-      workingFor: workingFor.get(bot.botId) ?? null,
-    }),
-    [liveBotIds, modelLabels, workingFor],
-  );
-  const maxSpoke = useMemo(
-    () => counts.reduce((max, entry) => Math.max(max, entry.recent), 0),
-    [counts],
-  );
+  const entryOf = (bot: PersonalBot): ConstellationBot => ({
+    bot,
+    modelLabel: modelLabels.get(bot.botId) ?? null,
+    live: liveBotIds.has(bot.botId),
+    workingFor: workingFor.get(bot.botId) ?? null,
+  });
+  const maxSpoke = counts.reduce((max, entry) => Math.max(max, entry.recent), 0);
 
-  const scrollToTeam = useCallback((team: string) => {
+  const scrollToTeam = (team: string) => {
     const card = containerRef.current?.querySelector(`[data-team="${CSS.escape(team)}"]`);
     card?.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
-  }, []);
+  };
 
   // The new team sits after the older ones, often below the fold on a phone:
   // scroll to its card once the refreshed list has drawn it, once per team.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the page to a just-created team's card once the list has drawn it
   useEffect(() => {
     if (focusTeam === null || focusedTeam.current === focusTeam) return;
     if (!groups.some((group) => sameTeam(group.team, focusTeam))) return;
@@ -284,34 +266,24 @@ function TeamBoard({
     if (group !== undefined) scrollToTeam(group.team);
   }, [focusTeam, groups, scrollToTeam]);
 
-  const dropBots = useMemo(
-    () =>
-      shown.map((bot) => ({
-        botId: bot.botId as string,
-        name: bot.name,
-        team: botTeam(bot),
-        lead: isTeamLead(bot),
-      })),
-    [shown],
-  );
-  const dropBot = useCallback(
-    (botId: string) => dropBots.find((bot) => bot.botId === botId) ?? null,
-    [dropBots],
-  );
+  const dropBots = shown.map((bot) => ({
+    botId: bot.botId as string,
+    name: bot.name,
+    team: botTeam(bot),
+    lead: isTeamLead(bot),
+  }));
+  const dropBot = (botId: string) => dropBots.find((bot) => bot.botId === botId) ?? null;
 
   // What the screen looks like is handed to the history when a bot, a chat, an
   // edit form or a task is opened from it (botsBackStack.ts), and put back here
   // when Back returns: the scroll position, and the members list if it was open.
-  const membersTeamRef = useRef(membersTeam);
-  membersTeamRef.current = membersTeam;
-  useEffect(
-    () =>
-      registerTeamViewSource(() => ({
-        ...readTeamScroll(containerRef.current),
-        membersTeam: membersTeamRef.current,
-      })),
-    [],
-  );
+  const readTeamView = useStableCallback(() => ({
+    ...readTeamScroll(containerRef.current),
+    membersTeam,
+  }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds this screen's view reader in the back-stack registry until unmount
+  useEffect(() => registerTeamViewSource(readTeamView), [readTeamView]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the saved scroll on the DOM until the owner scrolls
   useLayoutEffect(() => {
     if (initialView === null) return;
     const container = containerRef.current;
@@ -341,347 +313,290 @@ function TeamBoard({
       scroller?.removeEventListener("touchstart", stop);
       scroller?.removeEventListener("wheel", stop);
     };
-    // Once, when the screen first draws its cards.
-  }, []);
+    // Once, when the screen first draws its cards: both deps are fixed for the screen's life.
+  }, [containerRef, initialView]);
 
   const failMessage = (result: Parameters<typeof commandFailureMessage>[0], fallback: string) =>
     friendlyTurnError(commandFailureMessage(result, fallback) ?? fallback, fallback).message;
 
-  const focusBot = useCallback((botId: string) => {
+  const focusBot = (botId: string) => {
     window.requestAnimationFrame(() => {
       containerRef.current
         ?.querySelector<HTMLElement>(`[data-bot-node="${CSS.escape(botId)}"]`)
         ?.focus();
     });
-  }, []);
+  };
 
-  const runUndo = useCallback(
-    async (steps: ReadonlyArray<UndoStep>, botName: string) => {
-      const last = steps.at(-1);
-      if (environmentId === null || last === undefined) return;
-      setToast(null);
-      setFeedback(null);
-      setPending({ botId: last.botId, team: last.team, lead: last.lead });
-      for (const step of steps) {
-        const result = await updateBot({
-          environmentId,
-          input: { botId: step.botId as PersonalBot["botId"], team: step.team, lead: step.lead },
-        });
-        if (result._tag !== "Success") {
-          setPending(null);
-          setFeedback({
-            tone: "error",
-            text: failMessage(result, `${botName} couldn't be moved back. Try again.`),
-          });
-          return;
-        }
-      }
-      const message = undoMessage(botName, last.team, last.lead);
-      setLiveHint(message);
-      setToast({ text: message, undo: null });
-      scrollToTeam(last.team);
-    },
-    [environmentId, scrollToTeam, updateBot],
-  );
-
-  const commitMove = useCallback(
-    async (
-      bot: {
-        readonly botId: string;
-        readonly name: string;
-        readonly team?: PersonalBotTeam;
-        readonly lead?: boolean;
-      },
-      outcome: Extract<TeamDropOutcome, { kind: "update" }>,
-      replaced: LeadReplacement | null,
-    ) => {
-      if (environmentId === null) return;
-      const before = { botId: bot.botId, team: botTeam(bot), lead: isTeamLead(bot) };
-      setFeedback(null);
-      setToast(null);
-      setPending({ botId: bot.botId, ...outcome.update });
-      requestAnimationFrame(() => scrollToTeam(outcome.update.team));
+  const runUndo = async (steps: ReadonlyArray<UndoStep>, botName: string) => {
+    const last = steps.at(-1);
+    if (environmentId === null || last === undefined) return;
+    setToast(null);
+    setFeedback(null);
+    setPending({ botId: last.botId, team: last.team, lead: last.lead });
+    for (const step of steps) {
       const result = await updateBot({
         environmentId,
-        input: { botId: bot.botId as PersonalBot["botId"], ...outcome.update },
+        input: { botId: step.botId as PersonalBot["botId"], team: step.team, lead: step.lead },
       });
-      if (result._tag === "Success") {
-        setLiveHint(outcome.message);
-        const steps = undoPlan({ before, replaced, destination: outcome.update.team });
-        setToast({ text: outcome.message, undo: () => void runUndo(steps, bot.name) });
-        return;
-      }
-      setPending(null);
-      setFeedback({
-        tone: "error",
-        text: failMessage(result, `${bot.name} couldn't be moved. Try again.`),
-      });
-    },
-    [environmentId, runUndo, scrollToTeam, updateBot],
-  );
-
-  /** A drop (or a tap on a card) means `target` for `botId`; a Lead drop over a lead asks first. */
-  const applyMove = useCallback(
-    (botId: string, target: TeamDropTarget, confirmed: boolean) => {
-      const bot = dropBot(botId);
-      if (bot === null) return;
-      setTapBotId(null);
-      const plan = planDrop({ bot, target, roster: dropBots, openHandoffsBy, confirmed });
-      if (plan.kind === "none") {
-        setLiveHint(plan.message);
-        return;
-      }
-      if (plan.kind === "blocked") {
-        setFeedback({ tone: "error", text: plan.message });
-        setLiveHint(plan.message);
-        return;
-      }
-      if (environmentId === null || offline) {
+      if (result._tag !== "Success") {
+        setPending(null);
         setFeedback({
           tone: "error",
-          text: `Your computer is offline, so ${bot.name} can't be moved yet. Try again once it reconnects.`,
+          text: failMessage(result, `${botName} couldn't be moved back. Try again.`),
         });
         return;
       }
-      if (plan.kind === "confirm") {
-        setLiveHint(`Make ${bot.name} the lead? ${plan.replaced.oldLeadName} stops leading.`);
-        setConfirm({ botId, target, replaced: plan.replaced });
-        return;
-      }
-      void commitMove(bot, plan.outcome, plan.replaced);
-    },
-    [commitMove, dropBot, dropBots, environmentId, offline, openHandoffsBy],
-  );
-
-  const zoneTargets = useMemo(() => {
-    const map = new Map<string, TeamDropTarget>();
-    for (const group of groups) {
-      for (const kind of ["team", "lead"] as const) {
-        const target = { kind, team: group.team };
-        map.set(teamDropZoneId(target), target);
-      }
     }
-    return map;
-  }, [groups]);
+    const message = undoMessage(botName, last.team, last.lead);
+    setLiveHint(message);
+    setToast({ text: message, undo: null });
+    scrollToTeam(last.team);
+  };
 
-  const zoneAt = useCallback((x: number, y: number): string | null => {
+  const commitMove = async (
+    bot: {
+      readonly botId: string;
+      readonly name: string;
+      readonly team?: PersonalBotTeam;
+      readonly lead?: boolean;
+    },
+    outcome: Extract<TeamDropOutcome, { kind: "update" }>,
+    replaced: LeadReplacement | null,
+  ) => {
+    if (environmentId === null) return;
+    const before = { botId: bot.botId, team: botTeam(bot), lead: isTeamLead(bot) };
+    setFeedback(null);
+    setToast(null);
+    setPending({ botId: bot.botId, ...outcome.update });
+    requestAnimationFrame(() => scrollToTeam(outcome.update.team));
+    const result = await updateBot({
+      environmentId,
+      input: { botId: bot.botId as PersonalBot["botId"], ...outcome.update },
+    });
+    if (result._tag === "Success") {
+      setLiveHint(outcome.message);
+      const steps = undoPlan({ before, replaced, destination: outcome.update.team });
+      setToast({ text: outcome.message, undo: () => void runUndo(steps, bot.name) });
+      return;
+    }
+    setPending(null);
+    setFeedback({
+      tone: "error",
+      text: failMessage(result, `${bot.name} couldn't be moved. Try again.`),
+    });
+  };
+
+  /** A drop (or a tap on a card) means `target` for `botId`; a Lead drop over a lead asks first. */
+  const applyMove = (botId: string, target: TeamDropTarget, confirmed: boolean) => {
+    const bot = dropBot(botId);
+    if (bot === null) return;
+    setTapBotId(null);
+    const plan = planDrop({ bot, target, roster: dropBots, openHandoffsBy, confirmed });
+    if (plan.kind === "none") {
+      setLiveHint(plan.message);
+      return;
+    }
+    if (plan.kind === "blocked") {
+      setFeedback({ tone: "error", text: plan.message });
+      setLiveHint(plan.message);
+      return;
+    }
+    if (environmentId === null || offline) {
+      setFeedback({
+        tone: "error",
+        text: `Your computer is offline, so ${bot.name} can't be moved yet. Try again once it reconnects.`,
+      });
+      return;
+    }
+    if (plan.kind === "confirm") {
+      setLiveHint(`Make ${bot.name} the lead? ${plan.replaced.oldLeadName} stops leading.`);
+      setConfirm({ botId, target, replaced: plan.replaced });
+      return;
+    }
+    void commitMove(bot, plan.outcome, plan.replaced);
+  };
+
+  const zoneTargets = new Map<string, TeamDropTarget>();
+  for (const group of groups) {
+    for (const kind of ["team", "lead"] as const) {
+      const target = { kind, team: group.team };
+      zoneTargets.set(teamDropZoneId(target), target);
+    }
+  }
+
+  const zoneAt = (x: number, y: number): string | null => {
     if (typeof document.elementsFromPoint !== "function") return null;
     for (const element of document.elementsFromPoint(x, y)) {
       const zone = element.closest("[data-team-move-overlay] [data-drop-zone]");
       if (zone !== null) return zone.getAttribute("data-drop-zone");
     }
     return null;
-  }, []);
+  };
 
-  const hintFor = useCallback(
-    (botId: string, zoneId: string | null): string => {
-      const bot = dropBot(botId);
-      if (bot === null) return "";
-      if (zoneId === NEW_TEAM_ZONE_ID) return `Let go to start a new team with ${bot.name}.`;
-      const target = zoneId === null ? undefined : zoneTargets.get(zoneId);
-      return teamDropHint(
-        bot,
-        target === undefined || zoneId === null ? null : { id: zoneId, target },
-        dropBots,
-      );
-    },
-    [dropBot, dropBots, zoneTargets],
-  );
+  const hintFor = (botId: string, zoneId: string | null): string => {
+    const bot = dropBot(botId);
+    if (bot === null) return "";
+    if (zoneId === NEW_TEAM_ZONE_ID) return `Let go to start a new team with ${bot.name}.`;
+    const target = zoneId === null ? undefined : zoneTargets.get(zoneId);
+    return teamDropHint(
+      bot,
+      target === undefined || zoneId === null ? null : { id: zoneId, target },
+      dropBots,
+    );
+  };
 
-  const dropOn = useCallback(
-    (botId: string, zoneId: string | null) => {
-      const bot = dropBot(botId);
-      if (bot === null) return;
-      if (zoneId === null) {
-        // Let go over nothing: the cards stay up to tap, or cancel.
-        setTapBotId(botId);
-        setHint(`Tap a team or a lead seat to move ${bot.name}, or cancel.`);
-        setLiveHint(`${bot.name} is waiting. Tap a team or a lead seat, or cancel.`);
-        return;
-      }
-      if (zoneId === NEW_TEAM_ZONE_ID) {
-        setTapBotId(null);
-        setNewTeamBotId(botId);
-        return;
-      }
-      const target = zoneTargets.get(zoneId);
-      if (target !== undefined) applyMove(botId, target, false);
-    },
-    [applyMove, dropBot, zoneTargets],
-  );
+  const dropOn = (botId: string, zoneId: string | null) => {
+    const bot = dropBot(botId);
+    if (bot === null) return;
+    if (zoneId === null) {
+      // Let go over nothing: the cards stay up to tap, or cancel.
+      setTapBotId(botId);
+      setHint(`Tap a team or a lead seat to move ${bot.name}, or cancel.`);
+      setLiveHint(`${bot.name} is waiting. Tap a team or a lead seat, or cancel.`);
+      return;
+    }
+    if (zoneId === NEW_TEAM_ZONE_ID) {
+      setTapBotId(null);
+      setNewTeamBotId(botId);
+      return;
+    }
+    const target = zoneTargets.get(zoneId);
+    if (target !== undefined) applyMove(botId, target, false);
+  };
 
   const { drag, tokenRef, handlersFor, cancel } = useTeamBotDrag({
     zoneAt,
-    onLift: useCallback(
-      (botId: string) => {
-        const bot = dropBot(botId);
-        setFeedback(null);
-        setToast(null);
-        const text =
-          bot === null
-            ? ""
-            : `${bot.name} lifted. Drag it onto a team, or onto a round seat to lead.`;
-        setHint(text);
-        setLiveHint(bot === null ? "" : `${bot.name} lifted. Pick a team, or a lead seat.`);
-      },
-      [dropBot],
-    ),
-    onHover: useCallback(
-      (botId: string, zoneId: string | null) => {
-        const text = hintFor(botId, zoneId);
-        setHint(text);
-        setLiveHint(text);
-      },
-      [hintFor],
-    ),
+    onLift: (botId: string) => {
+      const bot = dropBot(botId);
+      setFeedback(null);
+      setToast(null);
+      const text =
+        bot === null
+          ? ""
+          : `${bot.name} lifted. Drag it onto a team, or onto a round seat to lead.`;
+      setHint(text);
+      setLiveHint(bot === null ? "" : `${bot.name} lifted. Pick a team, or a lead seat.`);
+    },
+    onHover: (botId: string, zoneId: string | null) => {
+      const text = hintFor(botId, zoneId);
+      setHint(text);
+      setLiveHint(text);
+    },
     onDrop: dropOn,
-    onCancel: useCallback(
-      (botId: string) => {
-        const bot = dropBot(botId);
-        setLiveHint(bot === null ? "" : `${bot.name} stayed where it was.`);
-      },
-      [dropBot],
-    ),
+    onCancel: (botId: string) => {
+      const bot = dropBot(botId);
+      setLiveHint(bot === null ? "" : `${bot.name} stayed where it was.`);
+    },
   });
 
-  const cancelMove = useCallback(() => {
+  const cancelMove = () => {
     const botId = tapBotId ?? drag?.botId ?? null;
     const bot = botId === null ? null : dropBot(botId);
     cancel();
     setTapBotId(null);
     setLiveHint(bot === null ? "" : `${bot.name} stayed where it was.`);
     if (botId !== null) focusBot(botId);
-  }, [cancel, drag, dropBot, focusBot, tapBotId]);
+  };
 
   const overlayBotId = drag?.botId ?? tapBotId;
   const overlayBot = overlayBotId === null ? undefined : botById.get(overlayBotId);
-  const moveRows = useMemo(() => {
-    if (overlayBotId === null) return [];
-    const bot = dropBot(overlayBotId);
-    return bot === null ? [] : teamMoveTargets(bot, groups, dropBots, openHandoffsBy);
-  }, [dropBot, dropBots, groups, openHandoffsBy, overlayBotId]);
-  const facesByTeam = useMemo(() => {
-    const map = new Map<string, PersonalBot[]>();
-    for (const group of groups) {
-      map.set(
-        group.team,
-        [...(group.leadBotId === null ? [] : [group.leadBotId]), ...group.memberBotIds].flatMap(
-          (id) => {
-            const bot = botById.get(id);
-            return bot === undefined || id === overlayBotId ? [] : [bot];
-          },
-        ),
-      );
-    }
-    return map;
-  }, [botById, groups, overlayBotId]);
-  const leadBots = useMemo(() => {
-    const map = new Map<string, PersonalBot>();
-    for (const group of groups) {
-      const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
-      if (lead !== undefined) map.set(lead.botId, lead);
-    }
-    return map;
-  }, [botById, groups]);
-  const hotTone: "info" | "review" = useMemo(() => {
-    if (drag === null || drag.zoneId === null) return "info";
-    const target = zoneTargets.get(drag.zoneId);
-    const bot = dropBot(drag.botId);
-    if (target === undefined || bot === null) return "info";
-    return teamDropOutcome(bot, target, dropBots).kind === "blocked" ? "review" : "info";
-  }, [drag, dropBot, dropBots, zoneTargets]);
+  const overlayDropBot = overlayBotId === null ? null : dropBot(overlayBotId);
+  const moveRows =
+    overlayDropBot === null
+      ? []
+      : teamMoveTargets(overlayDropBot, groups, dropBots, openHandoffsBy);
+  const facesByTeam = new Map<string, PersonalBot[]>();
+  const leadBots = new Map<string, PersonalBot>();
+  for (const group of groups) {
+    facesByTeam.set(
+      group.team,
+      [...(group.leadBotId === null ? [] : [group.leadBotId]), ...group.memberBotIds].flatMap(
+        (id) => {
+          const bot = botById.get(id);
+          return bot === undefined || id === overlayBotId ? [] : [bot];
+        },
+      ),
+    );
+    const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
+    if (lead !== undefined) leadBots.set(lead.botId, lead);
+  }
+  const hotTarget = drag?.zoneId == null ? undefined : zoneTargets.get(drag.zoneId);
+  const hotBot = drag === null ? null : dropBot(drag.botId);
+  const hotTone: "info" | "review" =
+    hotTarget !== undefined &&
+    hotBot !== null &&
+    teamDropOutcome(hotBot, hotTarget, dropBots).kind === "blocked"
+      ? "review"
+      : "info";
 
-  const removeTeam = useCallback(
-    async (team: string) => {
-      if (environmentId === null || removing) return;
-      setRemoving(true);
-      setFeedback(null);
-      try {
-        const result = await saveProfile({
-          environmentId,
-          input: { teamChange: { operation: "delete", name: team.trim() } },
+  const removeTeam = async (team: string) => {
+    if (environmentId === null || removing) return;
+    setRemoving(true);
+    setFeedback(null);
+    try {
+      const result = await saveProfile({
+        environmentId,
+        input: { teamChange: { operation: "delete", name: team.trim() } },
+      });
+      if (result._tag !== "Success") {
+        setFeedback({
+          tone: "error",
+          text: commandFailureMessage(result, "Couldn't remove the team. Try again.") ?? "",
         });
-        if (result._tag !== "Success") {
-          setFeedback({
-            tone: "error",
-            text: commandFailureMessage(result, "Couldn't remove the team. Try again.") ?? "",
-          });
-        }
-      } finally {
-        setRemoving(false);
       }
-    },
-    [environmentId, removing, saveProfile],
-  );
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   // The cards are one memoised element. While a finger drags, the hint, the lit
   // drop card and the banner change under it, and none of that may render the
   // constellations again: the layout under the overlay is frozen for the drag.
   const draggingBotId = drag?.botId ?? null;
   const movingBotId = pending?.botId ?? null;
-  const cards = useMemo(
-    () =>
-      groups.map((group) => {
-        const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
-        const members = group.memberBotIds.flatMap((id) => {
-          const bot = botById.get(id);
-          return bot === undefined ? [] : [entryOf(bot)];
-        });
-        const spokes = new Map<string, ConstellationSpoke>();
-        for (const entry of counts) {
-          if (entry.from !== group.leadBotId) continue;
-          spokes.set(entry.to, { recent: entry.recent, running: entry.running > 0 });
-        }
-        const custom = customTeams.some((registered) => sameTeam(registered, group.team));
-        return (
-          <TeamConstellationCard
-            key={group.team}
-            group={group}
-            label={group.label}
-            lead={lead === undefined ? null : entryOf(lead)}
-            members={members}
-            spokes={spokes}
-            maxSpoke={maxSpoke}
-            custom={custom}
-            removable={lead === undefined && members.length === 0}
-            removeBusy={removing || offline}
-            draggingBotId={draggingBotId}
-            movingBotId={movingBotId}
-            handlersFor={handlersFor}
-            onOpenMembers={setMembersTeam}
-            onRemove={(team) => void removeTeam(team)}
-          />
-        );
-      }),
-    [
-      botById,
-      counts,
-      customTeams,
-      draggingBotId,
-      entryOf,
-      groups,
-      handlersFor,
-      maxSpoke,
-      movingBotId,
-      offline,
-      removeTeam,
-      removing,
-    ],
-  );
+  const cards = groups.map((group) => {
+    const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
+    const members = group.memberBotIds.flatMap((id) => {
+      const bot = botById.get(id);
+      return bot === undefined ? [] : [entryOf(bot)];
+    });
+    const spokes = new Map<string, ConstellationSpoke>();
+    for (const entry of counts) {
+      if (entry.from !== group.leadBotId) continue;
+      spokes.set(entry.to, { recent: entry.recent, running: entry.running > 0 });
+    }
+    const custom = customTeams.some((registered) => sameTeam(registered, group.team));
+    return (
+      <TeamConstellationCard
+        key={group.team}
+        group={group}
+        label={group.label}
+        lead={lead === undefined ? null : entryOf(lead)}
+        members={members}
+        spokes={spokes}
+        maxSpoke={maxSpoke}
+        custom={custom}
+        removable={lead === undefined && members.length === 0}
+        removeBusy={removing || offline}
+        draggingBotId={draggingBotId}
+        movingBotId={movingBotId}
+        handlersFor={handlersFor}
+        onOpenMembers={setMembersTeam}
+        onRemove={(team) => void removeTeam(team)}
+      />
+    );
+  });
 
-  const onPick = useCallback(
-    (zoneId: string) => {
-      if (tapBotId === null) return;
-      if (zoneId === NEW_TEAM_ZONE_ID) {
-        setNewTeamBotId(tapBotId);
-        setTapBotId(null);
-        return;
-      }
-      const target = zoneTargets.get(zoneId);
-      if (target !== undefined) applyMove(tapBotId, target, false);
-    },
-    [applyMove, tapBotId, zoneTargets],
-  );
+  const onPick = (zoneId: string) => {
+    if (tapBotId === null) return;
+    if (zoneId === NEW_TEAM_ZONE_ID) {
+      setNewTeamBotId(tapBotId);
+      setTapBotId(null);
+      return;
+    }
+    const target = zoneTargets.get(zoneId);
+    if (target !== undefined) applyMove(tapBotId, target, false);
+  };
 
   const confirmBot = confirm === null ? null : (botById.get(confirm.botId) ?? null);
   const confirmCopy =
@@ -697,29 +612,28 @@ function TeamBoard({
     membersTeam === null
       ? null
       : (groups.find((group) => sameTeam(group.team, membersTeam)) ?? null);
-  const memberRows: ReadonlyArray<MemberListRow> = useMemo(() => {
-    if (membersGroup === null) return [];
-    const ids = [
-      ...(membersGroup.leadBotId === null ? [] : [membersGroup.leadBotId]),
-      ...membersGroup.memberBotIds,
-    ];
-    return ids.flatMap((id) => {
-      const bot = botById.get(id);
-      return bot === undefined
-        ? []
-        : [
-            {
-              bot,
-              modelLabel: modelLabels.get(id) ?? null,
-              isLead: id === membersGroup.leadBotId,
-              live: liveBotIds.has(id),
-            },
-          ];
-    });
-  }, [botById, liveBotIds, membersGroup, modelLabels]);
+  const memberRows: ReadonlyArray<MemberListRow> =
+    membersGroup === null
+      ? []
+      : [
+          ...(membersGroup.leadBotId === null ? [] : [membersGroup.leadBotId]),
+          ...membersGroup.memberBotIds,
+        ].flatMap((id) => {
+          const bot = botById.get(id);
+          return bot === undefined
+            ? []
+            : [
+                {
+                  bot,
+                  modelLabel: modelLabels.get(id) ?? null,
+                  isLead: id === membersGroup.leadBotId,
+                  live: liveBotIds.has(id),
+                },
+              ];
+        });
 
   const newTeamBot = newTeamBotId === null ? null : (botById.get(newTeamBotId) ?? null);
-  const dismissToast = useCallback(() => setToast(null), []);
+  const dismissToast = () => setToast(null);
 
   return (
     <>
@@ -858,7 +772,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
   const list = usePersonalBotsList(environmentId);
   const profile = usePersonalProfile(environmentId);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
-  const allShells = useThreadShells();
+  const shells = useBotShells(environmentId);
   // How the screen was left the last time a page was opened from it. Read once:
   // a later visit that is not a Back starts at the top.
   // Not subscribed to the location: opening and closing a bot's usage sheet
@@ -869,55 +783,45 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
       (router.state.location.state as unknown as Record<string, unknown>)[TEAM_VIEW_STATE_KEY],
     ),
   );
-  const bots = useMemo(
-    () => (list.data?.bots ?? NO_BOTS).toSorted((left, right) => left.sortOrder - right.sortOrder),
-    [list.data],
+  const bots = (list.data?.bots ?? NO_BOTS).toSorted(
+    (left, right) => left.sortOrder - right.sortOrder,
   );
   // Group-only bots stay out of the chart, as they do out of Chats (leads
   // excepted).
-  const chartBots = useMemo(() => shownInTeamChart(bots), [bots]);
-  const chartBotIds = useMemo(
-    () => new Set(chartBots.map((bot) => bot.botId as string)),
-    [chartBots],
-  );
+  const chartBots = shownInTeamChart(bots);
+  const chartBotIds = new Set(chartBots.map((bot) => bot.botId as string));
   const providers = useAtomValue(primaryServerProvidersAtom);
   // Every model the providers list, by slug, for the token table's per-model
   // lines: "deepseek-flash" is drawn as the picker's "DeepSeek V4.1 Flash".
-  const tokenUsageModelNames = useMemo(() => {
-    const names = new Map<string, string>();
-    for (const provider of providers) {
-      for (const model of provider.models) {
-        names.set(model.slug, model.name);
-        for (const alias of model.aliases ?? []) {
-          if (!names.has(alias)) names.set(alias, model.name);
-        }
+  const tokenUsageModelNames = new Map<string, string>();
+  for (const provider of providers) {
+    for (const model of provider.models) {
+      tokenUsageModelNames.set(model.slug, model.name);
+      for (const alias of model.aliases ?? []) {
+        if (!tokenUsageModelNames.has(alias)) tokenUsageModelNames.set(alias, model.name);
       }
     }
-    return names;
-  }, [providers]);
-  const feedTasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  }
+  const feedTasks = taskFeed === null ? [] : [...taskFeed.values()];
   const tasks = useTeamHandoffTasks(environmentId, feedTasks, taskFeed !== null);
-  const liveBotIds = useMemo(() => {
-    if (list.data === null) return new Set<string>();
-    const liveThreadIds = new Set(
-      allShells
-        .filter((shell) => shell.environmentId === environmentId && isThreadLive(shell))
-        .map((shell) => shell.id as string),
-    );
-    // Archived chats count too: a bot working in one is still working.
-    return new Set(
-      list.data.threads
-        .filter((thread) => liveThreadIds.has(thread.threadId))
-        .map((thread) => thread.botId as string),
-    );
-  }, [allShells, environmentId, list.data]);
+  const liveThreadIds = new Set(
+    shells.filter((shell) => isThreadLive(shell)).map((shell) => shell.id as string),
+  );
+  // Archived chats count too: a bot working in one is still working.
+  const liveBotIds = new Set(
+    (list.data?.threads ?? [])
+      .filter((thread) => liveThreadIds.has(thread.threadId))
+      .map((thread) => thread.botId as string),
+  );
   const ownerName = profile.data?.displayName.trim() || "You";
   // Set by the New team screen (taken once, after mount) or by the form here.
   // The status region is always in the page and only its text arrives later,
   // which is what makes a screen reader announce it.
   const [notice, setNotice] = useState<TeamNotice | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- takes the New team screen's notice from its module store once, after mount
   useEffect(() => {
     const arrived = takeTeamNotice();
+    // oxlint-disable-next-line react/set-state-in-effect -- the text must land after the first paint for a screen reader to announce it
     if (arrived !== null) setNotice(arrived);
   }, []);
 
@@ -927,7 +831,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
         <Link
           to="/bots/teams/new"
           aria-label="New team"
-          className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[var(--personal-fill-muted)] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[var(--personal-fill-muted)] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <Plus aria-hidden="true" className="size-[22px]" strokeWidth={2} />
         </Link>

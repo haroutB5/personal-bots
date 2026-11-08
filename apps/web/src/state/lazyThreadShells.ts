@@ -1,8 +1,7 @@
-import { useAtomSet } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
-  OrchestrationShellSnapshot,
   OrchestrationThreadShell,
   PersonalBotThreadShellsInput,
 } from "@t3tools/contracts";
@@ -12,24 +11,12 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { perfOptimizationOn } from "../features/personal/perfFlags";
 import { useEnvironmentQuery } from "./query";
 
 /**
- * The slim shell (personalShellSlim.ts on the server) leaves out the bot
- * chats the owner archived. The screens that show them ask for them here:
- * a bot's chat list asks for that bot's chats, an open archived chat for
- * itself, search for the chats its hits name. Each answer is merged into the
- * environment snapshot (environmentSnapshotAtom), so every thread-shell
- * reader sees them like any other thread, for as long as a screen asks.
- *
- * Kill switch: `shell-omit-archived` (perfFlags.ts) loads the full shell at
- * connect and turns these requests off.
+ * The personal shell stream carries open chats only. Screens that show archived
+ * chats ask for them here, and useBotShells adds each answer while they ask.
  */
-export function shellOmitArchivedOn(): boolean {
-  return perfOptimizationOn("shell-omit-archived");
-}
-
 export const personalThreadShells = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "personal-bots:thread-shells",
   tag: WS_METHODS.personalBotsThreadShells,
@@ -69,45 +56,22 @@ const lazyRequestsAtom = Atom.family((_environmentId: EnvironmentId) =>
 const queryAtom = (environmentId: EnvironmentId, key: string) =>
   personalThreadShells({ environmentId, input: requestInput(key) });
 
-/**
- * `base` with the asked-for shells appended. A thread the base already holds
- * keeps its base shell, which the live stream keeps current.
- */
-export function mergeLazyThreadShells(
-  base: OrchestrationShellSnapshot,
-  extra: ReadonlyArray<ReadonlyArray<OrchestrationThreadShell>>,
-): OrchestrationShellSnapshot {
-  if (extra.every((threads) => threads.length === 0)) return base;
-  const seen = new Set<string>(base.threads.map((thread) => thread.id));
-  const appended: OrchestrationThreadShell[] = [];
-  for (const threads of extra) {
-    for (const thread of threads) {
-      if (seen.has(thread.id)) continue;
-      seen.add(thread.id);
-      appended.push(thread);
+/** The answers to every request a mounted screen holds, in request order. */
+const archivedShellsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<ReadonlyArray<OrchestrationThreadShell>> => {
+    const answers: Array<ReadonlyArray<OrchestrationThreadShell>> = [];
+    for (const key of get(lazyRequestsAtom(environmentId)).keys()) {
+      const value = AsyncResult.value(get(queryAtom(environmentId, key)));
+      if (Option.isSome(value)) answers.push(value.value.threads);
     }
-  }
-  return appended.length === 0 ? base : { ...base, threads: [...base.threads, ...appended] };
-}
+    return answers;
+  }).pipe(Atom.withLabel(`personal-archived-shells:${environmentId}`)),
+);
 
-/** Wraps a snapshot atom family so it carries the asked-for shells too. */
-export function withLazyThreadShells(
-  baseSnapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationShellSnapshot | null>,
-) {
-  return Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): OrchestrationShellSnapshot | null => {
-      const base = get(baseSnapshotAtom(environmentId));
-      if (base === null) return null;
-      const requests = get(lazyRequestsAtom(environmentId));
-      if (requests.size === 0) return base;
-      const extra: Array<ReadonlyArray<OrchestrationThreadShell>> = [];
-      for (const key of requests.keys()) {
-        const value = AsyncResult.value(get(queryAtom(environmentId, key)));
-        if (Option.isSome(value)) extra.push(value.value.threads);
-      }
-      return mergeLazyThreadShells(base, extra);
-    }).pipe(Atom.withLabel(`environment-snapshot-with-lazy:${environmentId}`)),
-  );
+export function useArchivedThreadShells(
+  environmentId: EnvironmentId | null,
+): ReadonlyArray<ReadonlyArray<OrchestrationThreadShell>> {
+  return useAtomValue(archivedShellsAtom(environmentId ?? ("" as EnvironmentId)));
 }
 
 /**
@@ -119,15 +83,14 @@ export function useLazyThreadShells(
   environmentId: EnvironmentId | null,
   request: LazyThreadShellRequest | null,
 ): { readonly pending: boolean } {
-  const on = shellOmitArchivedOn();
   const key =
-    on &&
     environmentId !== null &&
     request !== null &&
     !("threadIds" in request && request.threadIds.length === 0)
       ? requestKey(request)
       : null;
   const setRequests = useAtomSet(lazyRequestsAtom(environmentId ?? ("" as EnvironmentId)));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds a counted entry in the shared lazy-request registry until unmount
   useEffect(() => {
     if (key === null) return;
     setRequests((current) => {

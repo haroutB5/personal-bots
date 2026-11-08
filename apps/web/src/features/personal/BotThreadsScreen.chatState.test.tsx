@@ -49,9 +49,9 @@ vi.mock("~/components/ui/menu", () => ({
 }));
 vi.mock("~/state/lazyThreadShells", () => ({
   useLazyThreadShells: () => ({ pending: false }),
-  withLazyThreadShells: <A,>(atom: A) => atom,
 }));
-vi.mock("~/state/entities", () => ({ useThreadDetail: () => null, useThreadShells: () => [] }));
+vi.mock("./useBotShells", () => ({ useBotShells: () => [] }));
+vi.mock("~/state/entities", () => ({ useThreadDetail: () => null }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
 vi.mock("~/state/threads", () => ({ threadEnvironment: { updateMetadata: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));

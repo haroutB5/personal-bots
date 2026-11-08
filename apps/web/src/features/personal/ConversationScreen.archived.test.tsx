@@ -1,5 +1,6 @@
 import * as React from "react";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { clearPendingWrapup, pendingWrapupFor } from "./chatChipHandoff";
@@ -117,13 +118,15 @@ vi.mock("~/session-logic", () => ({
 }));
 vi.mock("~/state/lazyThreadShells", () => ({
   useLazyThreadShells: () => ({ pending: false }),
-  withLazyThreadShells: <A,>(atom: A) => atom,
 }));
 vi.mock("~/state/entities", () => ({
   useProject: () => null,
   useThreadDetail: () => state.thread,
-  useThreadShell: () => state.shell,
-  useThreadShells: () => {
+  useThreadStatus: () => "ready",
+}));
+vi.mock("./useBotShells", () => ({
+  useBotShell: () => state.shell,
+  useBotShells: () => {
     const shellOf = (id: string, title: string, archivedAt: string | null, extra = {}) => ({
       id,
       environmentId: "env-1",
@@ -151,7 +154,6 @@ vi.mock("~/state/entities", () => ({
         : []),
     ];
   },
-  useThreadStatus: () => "ready",
 }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
 vi.mock("~/state/threads", () => ({
@@ -563,7 +565,6 @@ const THREAD = {
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
     setInterval: () => 1,
     clearInterval: () => {},

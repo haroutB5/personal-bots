@@ -1,11 +1,10 @@
 import type { EnvironmentId, PersonalBotThread } from "@t3tools/contracts";
 import type { JSX } from "react";
-import { useMemo } from "react";
 
-import { useThreadShells } from "~/state/entities";
 import { useLazyThreadShells } from "~/state/lazyThreadShells";
 
 import { botThreadRows, chatCountsLabel } from "./botThreadRows";
+import { useBotShells } from "./useBotShells";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 
 /**
@@ -26,17 +25,10 @@ export function AllChatsCount({
   archivedCount?: number | undefined;
 }): JSX.Element {
   useLazyThreadShells(environmentId, { botId });
-  const shells = useThreadShells();
+  const shells = useBotShells(environmentId);
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
-  const counts = useMemo(() => {
-    const rows = botThreadRows(
-      botId,
-      links,
-      shells.filter((shell) => shell.environmentId === environmentId),
-      relayThreadIds,
-    );
-    return { open: rows.active.length, archived: archivedCount ?? rows.archived.length };
-  }, [archivedCount, botId, environmentId, links, relayThreadIds, shells]);
+  const rows = botThreadRows(botId, links, shells, relayThreadIds);
+  const counts = { open: rows.active.length, archived: archivedCount ?? rows.archived.length };
   return (
     <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)] tabular-nums">
       {chatCountsLabel(counts)}

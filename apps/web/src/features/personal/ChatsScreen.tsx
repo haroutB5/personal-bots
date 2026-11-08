@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -17,7 +17,6 @@ import { BellOff, ChevronRight, Network, Plus, Search, Settings } from "lucide-r
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
-import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
 import {
@@ -49,6 +48,7 @@ import { SnoozedChatList, type ChatSectionActions } from "./ChatSectionRows";
 import type { ChatSectionRow } from "./chatSections";
 import { isChatPinned, pinnedFirst } from "./chatState";
 import { MessageSearchResults } from "./MessageSearchResults";
+import { useBotShells } from "./useBotShells";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useGroupChatState } from "./useGroupChatState";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
@@ -123,12 +123,42 @@ const PREVIEW_REFRESH_DEBOUNCE_MS = 250;
  */
 const REVEAL_SETTLE_MS = 3_000;
 
+/**
+ * The cold-start snapshot rows, in render order: the pinned box first, then
+ * the list under it, so a cold paint rebuilds both sections without team or
+ * lead rank and the rows do not reshuffle when the live list replaces them.
+ */
+function chatsSnapshotRows(
+  listed: ReadonlyArray<BotSummary>,
+  describeTurn: (turn: ServerTurn) => string,
+): ChatsSnapshotRowInput[] {
+  const split = partitionPinnedSummaries(listed);
+  return [...split.pinned, ...split.rest].map((summary) => ({
+    botId: summary.bot.botId,
+    name: summary.bot.name,
+    avatarShape: summary.bot.avatarShape,
+    avatarColor: summary.bot.avatarColor,
+    subtitle: summary.bot.title,
+    previewLabel: snapshotPreviewLabel(summary, describeTurn),
+    previewAtMs: summary.lastActivityMs,
+    threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
+    // A thread title can be made from message words: not stored for a hidden bot.
+    threadTitle:
+      summary.newestThread === null || hidesBotPreviews(summary.bot)
+        ? null
+        : summary.newestThread.title,
+    pinned: isBotPinned(summary.bot),
+  }));
+}
+
 /** Re-render once a minute so relative timestamps and the greeting stay true. */
 export function useMinuteClock(): number {
   const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the minute timer while the list is shown
   useEffect(() => {
     // A list kept hidden under a chat (keptBotsList.ts) had no clock running:
     // catch up as it shows again. No re-render when under a minute has passed.
+    // oxlint-disable-next-line react/set-state-in-effect -- the clock stopped while the list was hidden, and only the effect knows it is shown again
     setNow((prev) => (Date.now() - prev >= MINUTE_MS ? Date.now() : prev));
     const timer = window.setInterval(() => setNow(Date.now()), MINUTE_MS);
     return () => window.clearInterval(timer);
@@ -146,7 +176,7 @@ const UNPINNED_LIST_CLASS =
 const AFTER_PINNED_LIST_CLASS = "mt-2";
 
 const ICON_BUTTON =
-  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
 
 /**
  * The list's load error, in the owner's words. Never the transport's own:
@@ -318,7 +348,7 @@ export function ChatsScreen({
   const navigate = useNavigate();
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
-  const allShells = useThreadShells();
+  const shells = useBotShells(environmentId);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const { feed: computerFeed } = useComputerFeed(environmentId);
   const desktopSummary = useDesktopSummaryInput(useDesktopStatus(environmentId));
@@ -335,11 +365,6 @@ export function ChatsScreen({
     setDeleteError(outcome.status === "failed" ? outcome.message : null);
   };
 
-  const shells = useMemo(
-    () => allShells.filter((shell) => shell.environmentId === environmentId),
-    [allShells, environmentId],
-  );
-
   // Cold-start snapshot: read synchronously on first mount so the list paints
   // before auth + websocket + `personalBots.list` complete. Re-read when the
   // environment changes (a miss then clears the other environment's entry).
@@ -352,6 +377,7 @@ export function ChatsScreen({
       : readChatsSnapshot(environmentId),
   );
   const snapshotEnv = useRef(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the saved cold-start snapshot from storage when the environment id arrives
   useEffect(() => {
     if (snapshotEnv.current === environmentId) return;
     snapshotEnv.current = environmentId;
@@ -372,10 +398,12 @@ export function ChatsScreen({
   // then paid for ~50 chat chunks (H8). Only the relay-hiding waits for groups.
   usePreloadChatRoute(firstPaintReady);
   const rowsPainted = showingSnapshot || (list.data !== null && list.data.bots.length > 0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the first painted rows to the startup timing probe
   useEffect(() => {
     if (rowsPainted) reportChatsListPainted(!loaded);
   }, [rowsPainted, loaded]);
   const [tasksArmed, setTasksArmed] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arms the task feed from an animation frame after the first paint, held until unmount
   useEffect(() => {
     if (tasksArmed || !firstPaintReady) return;
     let cancelled = false;
@@ -403,26 +431,20 @@ export function ChatsScreen({
   // must not contend with the first paint.
   const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed: groupsFeed } = usePersonalGroupsFeed(tasksArmed ? environmentId : null);
-  const { groups, archivedGroups, rounds } = useMemo(
-    () => mergePersonalGroups(groupsQuery.data ?? null, groupsFeed ?? null),
-    [groupsQuery.data, groupsFeed],
+  const { groups, archivedGroups, rounds } = mergePersonalGroups(
+    groupsQuery.data ?? null,
+    groupsFeed ?? null,
   );
   // One timer for the nearest wake time among every snoozed chat and group: it moves the clock
   // past it (the chat counts as awake at once) and refetches the list, which brings the woken
   // chat back unread at the top.
-  const snoozeItems = useMemo(
-    () => [...(list.data?.threads ?? []), ...groups],
-    [groups, list.data?.threads],
-  );
+  const snoozeItems = [...(list.data?.threads ?? []), ...groups];
   const wakeClock = useSnoozeWakeClock(snoozeItems, list.refresh);
   // A member thread is the bot's private relay of a group, not a chat the owner
   // started: it must not show up as one of that bot's chats (§8.8 — hidden
   // client-side in v1).
-  const memberThreadIds = useMemo(
-    () => groupRelayThreadIds({ groups, archivedGroups }),
-    [archivedGroups, groups],
-  );
-  const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  const memberThreadIds = groupRelayThreadIds({ groups, archivedGroups });
+  const tasks = taskFeed === null ? [] : [...taskFeed.values()];
   useRefreshBotsForTaskThreads({
     bots: list.data?.bots ?? null,
     links: list.data?.threads ?? null,
@@ -431,56 +453,35 @@ export function ChatsScreen({
     shells,
     omitsArchived: list.data?.archivedCounts !== undefined,
   });
-  const namesById = useMemo(
-    () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry.name])),
-    [list.data],
+  const namesById = new Map(
+    (list.data?.bots ?? []).map((entry) => [entry.botId as string, entry.name]),
   );
-  const nameOf = useCallback((botId: string) => namesById.get(botId) ?? null, [namesById]);
-  const waitingByThread = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
-  const endedTaskThreadIds = useMemo(() => threadIdsWithEndedTasks(tasks), [tasks]);
-  const describeTurn = useCallback(
-    (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
-    [tasks, nameOf],
-  );
+  const nameOf = (botId: string) => namesById.get(botId) ?? null;
+  const waitingByThread = waitingLabelsByThread(tasks, nameOf);
+  const endedTaskThreadIds = threadIdsWithEndedTasks(tasks);
+  const describeTurn = (turn: ServerTurn) =>
+    serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf);
   // A bot parked on `request_secret` looks idle everywhere else: its chat has
   // no pending approval and no pending user input, only a request row.
   const pendingSecretsQuery = usePendingSecretRequests(tasksArmed ? environmentId : null);
-  const secretRequestThreadIds = useMemo(
-    () => threadIdsAwaitingSecret(pendingSecretsQuery.data?.requests ?? []),
-    [pendingSecretsQuery.data],
-  );
-  const summaries = useMemo(
-    () =>
-      list.data === null
-        ? []
-        : buildBotSummaries({
-            bots: list.data.bots,
-            links: list.data.threads.filter((link) => !isGroupRelayLink(link, memberThreadIds)),
-            shells,
-            providers,
-            waitingByThread,
-            endedTaskThreadIds,
-            browserHelpThreadId: computerFeed.status?.helpRequest?.threadId ?? null,
-            secretRequestThreadIds,
-            routines: routinesQuery.data?.routines ?? [],
-            desktop: desktopSummary,
-            nowMs: wakeClock,
-            readPerfOptimization: perfOptimizationOn,
-          }),
-    [
-      wakeClock,
-      computerFeed.status?.helpRequest?.threadId,
-      desktopSummary,
-      list.data,
-      memberThreadIds,
-      providers,
-      routinesQuery.data,
-      endedTaskThreadIds,
-      secretRequestThreadIds,
-      shells,
-      waitingByThread,
-    ],
-  );
+  const secretRequestThreadIds = threadIdsAwaitingSecret(pendingSecretsQuery.data?.requests ?? []);
+  const summaries =
+    list.data === null
+      ? []
+      : buildBotSummaries({
+          bots: list.data.bots,
+          links: list.data.threads.filter((link) => !isGroupRelayLink(link, memberThreadIds)),
+          shells,
+          providers,
+          waitingByThread,
+          endedTaskThreadIds,
+          browserHelpThreadId: computerFeed.status?.helpRequest?.threadId ?? null,
+          secretRequestThreadIds,
+          routines: routinesQuery.data?.routines ?? [],
+          desktop: desktopSummary,
+          nowMs: wakeClock,
+          readPerfOptimization: perfOptimizationOn,
+        });
   // Previews ride on `personalBots.list`; a message boundary on a bot's newest
   // thread (see `previewRefreshKey`) refetches the list once instead of every
   // row holding a full thread subscription. Not per streamed chunk: the shell's
@@ -495,6 +496,7 @@ export function ChatsScreen({
   // as a message arriving and refetched the list a second time on every cold
   // start (measured: two byte-identical 12,035 B responses, 28 ms apart).
   const previewKeyReady = list.data !== null && shells.length > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules the debounced bots list refetch when a newest-thread message boundary moves
   useEffect(() => {
     previewRefreshRef.current = list.refresh;
     if (!previewKeyReady) return;
@@ -515,7 +517,15 @@ export function ChatsScreen({
       previewRefreshTimerRef.current = null;
       previewRefreshRef.current();
     }, PREVIEW_REFRESH_DEBOUNCE_MS);
-  }, [list, previewKey, previewKeyReady]);
+  }, [
+    list.refresh,
+    previewKey,
+    previewKeyReady,
+    previewKeyRef,
+    previewRefreshTimerRef,
+    previewRefreshRef,
+  ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending refetch timer on unmount
   useEffect(
     () => () => {
       if (previewRefreshTimerRef.current !== null) {
@@ -523,117 +533,85 @@ export function ChatsScreen({
         previewRefreshTimerRef.current = null;
       }
     },
-    [],
+    [previewRefreshTimerRef],
   );
   // Group-only bots live inside their groups (their settings reach them), so
   // the list, its search, the pinned strip and the cold-start snapshot all
   // leave them out. The preview key and the review row above still see every
   // bot: a hidden bot's first private message must still refetch the list
   // (that is what brings it back), and a question it asks must still surface.
-  const progressTargets = useMemo(
-    () =>
-      summaries.flatMap((summary) =>
-        // A hidden bot's progress notes are never even requested for the list.
-        summary.live && summary.liveThread != null && !hidesBotPreviews(summary.bot)
-          ? [{ threadId: summary.liveThread.id as string, updatedAt: summary.liveThread.updatedAt }]
-          : [],
-      ),
-    [summaries],
+  const progressTargets = summaries.flatMap((summary) =>
+    // A hidden bot's progress notes are never even requested for the list.
+    summary.live && summary.liveThread != null && !hidesBotPreviews(summary.bot)
+      ? [{ threadId: summary.liveThread.id as string, updatedAt: summary.liveThread.updatedAt }]
+      : [],
   );
   const progressNotes = useWorkingProgressNotes(environmentId, progressTargets);
-  const listed = useMemo(
-    () =>
-      shownInChats(summaries).map((summary) => {
-        if (!summary.live || summary.liveThread == null) return summary;
-        const entry = progressNotes.get(summary.liveThread.id);
-        const note = currentProgressNote(entry, summary.liveThread);
-        // A tool step in the live turn makes the bot working (the comet), the
-        // way the open chat's header already reads it from its activities.
-        const thinking = summary.thinking && !currentTurnHasToolStep(entry, summary.liveThread);
-        if (note === undefined && thinking === summary.thinking) return summary;
-        return { ...summary, ...(note === undefined ? {} : { progressNote: note }), thinking };
-      }),
-    [progressNotes, summaries],
-  );
+  const listed = shownInChats(summaries).map((summary) => {
+    if (!summary.live || summary.liveThread == null) return summary;
+    const entry = progressNotes.get(summary.liveThread.id);
+    const note = currentProgressNote(entry, summary.liveThread);
+    // A tool step in the live turn makes the bot working (the comet), the
+    // way the open chat's header already reads it from its activities.
+    const thinking = summary.thinking && !currentTurnHasToolStep(entry, summary.liveThread);
+    if (note === undefined && thinking === summary.thinking) return summary;
+    return { ...summary, ...(note === undefined ? {} : { progressNote: note }), thinking };
+  });
   // Unread chats of the bots that show them (team leads), off the same list:
   // no request per row. The chat open on this device never counts.
   const chatSeen = useChatSeenState();
-  const unreadByBot = useMemo(
-    () =>
-      list.data === null
-        ? new Map<string, ReadonlySet<string>>()
-        : unreadChatsByBot({
-            bots: list.data.bots,
-            links: list.data.threads,
-            tasks,
-            shells,
-            relayThreadIds: memberThreadIds,
-            seen: chatSeen,
-          }),
-    [chatSeen, list.data, memberThreadIds, shells, tasks],
-  );
-  const listedWithUnread = useMemo(
-    () =>
-      unreadByBot.size === 0
-        ? listed
-        : listed.map((summary) => {
-            const count = unreadByBot.get(summary.bot.botId)?.size ?? 0;
-            return count === 0 ? summary : { ...summary, unreadChats: count };
-          }),
-    [listed, unreadByBot],
-  );
-  const visible = useMemo(
-    () => filterBotSummaries(listedWithUnread, query),
-    [query, listedWithUnread],
-  );
+  const unreadByBot =
+    list.data === null
+      ? new Map<string, ReadonlySet<string>>()
+      : unreadChatsByBot({
+          bots: list.data.bots,
+          links: list.data.threads,
+          tasks,
+          shells,
+          relayThreadIds: memberThreadIds,
+          seen: chatSeen,
+        });
+  const listedWithUnread =
+    unreadByBot.size === 0
+      ? listed
+      : listed.map((summary) => {
+          const count = unreadByBot.get(summary.bot.botId)?.size ?? 0;
+          return count === 0 ? summary : { ...summary, unreadChats: count };
+        });
+  const visible = filterBotSummaries(listedWithUnread, query);
   // A snoozed group is in the Snoozed section, not among the rows. A pinned group has no bot
   // chat list to be pinned in, so it stays among the rows, first, with its pin.
-  const visibleGroups = useMemo(
-    () => pinnedFirst(filterGroups(plainGroups(groups, wakeClock), query, nameOf), isChatPinned),
-    [groups, nameOf, query, wakeClock],
+  const visibleGroups = pinnedFirst(
+    filterGroups(plainGroups(groups, wakeClock), query, nameOf),
+    isChatPinned,
   );
   // Archived groups stay out of the list, but a search reaches them (tagged
   // "Archived"), as does the collapsed section at the bottom.
-  const searchedArchivedGroups = useMemo(
-    () => (query.trim().length === 0 ? [] : filterGroups(archivedGroups, query, nameOf)),
-    [archivedGroups, nameOf, query],
+  const searchedArchivedGroups =
+    query.trim().length === 0 ? [] : filterGroups(archivedGroups, query, nameOf);
+  const botsById = new Map(
+    (list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const),
   );
-  const botsById = useMemo(
-    () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
-    [list.data],
-  );
-  const memberBotsOf = useCallback(
-    (group: PersonalGroup): ReadonlyArray<PersonalBot> =>
-      activeGroupMembers(group).flatMap((member) => {
-        const bot = botsById.get(member.botId);
-        return bot === undefined ? [] : [bot];
-      }),
-    [botsById],
-  );
+  const memberBotsOf = (group: PersonalGroup): ReadonlyArray<PersonalBot> =>
+    activeGroupMembers(group).flatMap((member) => {
+      const bot = botsById.get(member.botId);
+      return bot === undefined ? [] : [bot];
+    });
   // Snoozed chats and groups across every bot: the Snoozed section below the bot rows. The search
   // narrows it. A pinned chat is pinned in its own bot's chat list, not here (Harout, 1.65.1).
-  const sections = useMemo(
-    () =>
-      list.data === null
-        ? { snoozed: [] }
-        : buildChatSections({
-            bots: list.data.bots,
-            links: list.data.threads,
-            shells,
-            groups,
-            relayThreadIds: memberThreadIds,
-            nowMs: wakeClock,
-          }),
-    [groups, list.data, memberThreadIds, shells, wakeClock],
-  );
-  const memberNames = useCallback(
-    (group: PersonalGroup) => memberBotsOf(group).map((bot) => bot.name),
-    [memberBotsOf],
-  );
-  const snoozedRows = useMemo(
-    () => sections.snoozed.filter((row) => sectionRowMatches(row, query, memberNames)),
-    [memberNames, query, sections.snoozed],
-  );
+  const sections =
+    list.data === null
+      ? { snoozed: [] }
+      : buildChatSections({
+          bots: list.data.bots,
+          links: list.data.threads,
+          shells,
+          groups,
+          relayThreadIds: memberThreadIds,
+          nowMs: wakeClock,
+        });
+  const memberNames = (group: PersonalGroup) => memberBotsOf(group).map((bot) => bot.name);
+  const snoozedRows = sections.snoozed.filter((row) => sectionRowMatches(row, query, memberNames));
   const runBulk = useBulkChatActions(environmentId);
   const groupChatState = useGroupChatState(environmentId);
   const [sectionError, setSectionError] = useState<string | null>(null);
@@ -663,50 +641,45 @@ export function ChatsScreen({
   // Transform and opacity loops, paused while a row is scrolled out of view
   // (BotAvatar, avatarOffscreen.ts) and dropped under reduced motion. The
   // kill switch bots:perf-off=all-busy-motion brings back the one-row rule.
-  const motionByBotId = useMemo(() => {
-    const motions = visible.map(motionForSummary);
-    const shown = perfOptimizationOn("all-busy-motion")
-      ? motions
-      : firstContinuousMotionOnly(motions);
-    return new Map(
-      visible.map((summary, index) => [summary.bot.botId as string, shown[index]] as const),
-    );
-  }, [visible]);
-  const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
+  const motions = visible.map(motionForSummary);
+  const shownMotions = perfOptimizationOn("all-busy-motion")
+    ? motions
+    : firstContinuousMotionOnly(motions);
+  const motionByBotId = new Map(
+    visible.map((summary, index) => [summary.bot.botId as string, shownMotions[index]] as const),
+  );
+  const { pinned, rest } = partitionPinnedSummaries(visible);
   // Every working bot draws the comet (compositor-only since 1.57.3). The
   // kill switch bots:perf-off=anim-all keeps it on the first working row on
   // screen (pinned box first, then the list), anim-comet draws none.
-  const cometBotIds = useMemo(() => {
-    if (!perfOptimizationOn("anim-comet")) return new Set<string>();
-    const onScreen = [...pinned, ...rest];
-    const rows = cometRowIndexes(
-      onScreen.map((summary) => motionByBotId.get(summary.bot.botId)),
-      !perfOptimizationOn("anim-all"),
-    );
-    return new Set(rows.map((index) => onScreen[index]!.bot.botId as string));
-  }, [motionByBotId, pinned, rest]);
+  const onScreen = [...pinned, ...rest];
+  const cometBotIds = perfOptimizationOn("anim-comet")
+    ? new Set(
+        cometRowIndexes(
+          onScreen.map((summary) => motionByBotId.get(summary.bot.botId)),
+          !perfOptimizationOn("anim-all"),
+        ).map((index) => onScreen[index]!.bot.botId as string),
+      )
+    : new Set<string>();
   // Groups stay together immediately after the pinned strip. Within that
   // block and the bot block, the existing activity order is preserved.
-  const restRows = useMemo(
-    () => [
-      ...visibleGroups.map(
-        (group) =>
-          ({
-            kind: "group",
-            key: group.groupId,
-            group,
-            archived: false,
-            pinned: isChatPinned(group),
-          }) as const,
-      ),
-      ...rest.map((summary) => ({ kind: "bot", key: summary.bot.botId, summary }) as const),
-      ...searchedArchivedGroups.map(
-        (group) =>
-          ({ kind: "group", key: group.groupId, group, archived: true, pinned: false }) as const,
-      ),
-    ],
-    [rest, searchedArchivedGroups, visibleGroups],
-  );
+  const restRows = [
+    ...visibleGroups.map(
+      (group) =>
+        ({
+          kind: "group",
+          key: group.groupId,
+          group,
+          archived: false,
+          pinned: isChatPinned(group),
+        }) as const,
+    ),
+    ...rest.map((summary) => ({ kind: "bot", key: summary.bot.botId, summary }) as const),
+    ...searchedArchivedGroups.map(
+      (group) =>
+        ({ kind: "group", key: group.groupId, group, archived: true, pinned: false }) as const,
+    ),
+  ];
   const togglePin = useTogglePinBot(environmentId);
   const setMute = useSetBotMute(environmentId);
   const renderRow = (summary: BotSummary) => (
@@ -724,7 +697,7 @@ export function ChatsScreen({
       onSetMute={setMute}
     />
   );
-  const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
+  const attention = collectAttentionThreads(summaries);
   const helpRequest = computerFeed.status?.helpRequest ?? null;
   const helpSummary =
     helpRequest === null
@@ -738,11 +711,11 @@ export function ChatsScreen({
   const firstAttention = attention[0] ?? null;
   const { label: versionLabel, updateAvailable } = useAppVersion();
   const [updatingApp, setUpdatingApp] = useState(false);
-  const updateApp = useCallback(() => {
+  const updateApp = () => {
     if (updatingApp) return;
     setUpdatingApp(true);
     void reloadLatestApp();
-  }, [updatingApp]);
+  };
   const firstAttentionBot =
     firstAttention === null
       ? null
@@ -758,40 +731,22 @@ export function ChatsScreen({
   // Persist the render snapshot after each successful list fetch. The effect
   // only writes when the row content actually changed, so task-feed updates
   // that leave the rows alone cost nothing.
-  const snapshotRows = useMemo<ChatsSnapshotRowInput[] | null>(() => {
-    if (environmentId === null || list.data === null) return null;
-    // Stored in render order — the pinned box first, then the list under it —
-    // so a cold paint can rebuild both sections without knowing team or lead
-    // rank, and the rows do not reshuffle when the live list replaces them.
-    const split = partitionPinnedSummaries(listed);
-    return [...split.pinned, ...split.rest].map((summary) => ({
-      botId: summary.bot.botId,
-      name: summary.bot.name,
-      avatarShape: summary.bot.avatarShape,
-      avatarColor: summary.bot.avatarColor,
-      subtitle: summary.bot.title,
-      previewLabel: snapshotPreviewLabel(summary, describeTurn),
-      previewAtMs: summary.lastActivityMs,
-      threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
-      // A thread title can be made from message words: not stored for a hidden bot.
-      threadTitle:
-        summary.newestThread === null || hidesBotPreviews(summary.bot)
-          ? null
-          : summary.newestThread.title,
-      pinned: isBotPinned(summary.bot),
-    }));
-  }, [environmentId, list.data, listed, describeTurn]);
+  const snapshotRows =
+    environmentId === null || list.data === null ? null : chatsSnapshotRows(listed, describeTurn);
+
   const snapshotKey = snapshotRows === null ? null : JSON.stringify(snapshotRows);
   const lastPersistedKey = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the cold-start snapshot to storage when the rows change
   useEffect(() => {
     if (environmentId === null || snapshotRows === null || snapshotKey === null) return;
     if (lastPersistedKey.current === snapshotKey) return;
     lastPersistedKey.current = snapshotKey;
     writeChatsSnapshot(
       environmentId,
+      // oxlint-disable-next-line react/purity -- runs in an effect (oxc#27309)
       buildChatsSnapshot({ environmentId, savedAtMs: Date.now(), rows: snapshotRows }),
     );
-  }, [environmentId, snapshotRows, snapshotKey]);
+  }, [environmentId, snapshotRows, snapshotKey, lastPersistedKey]);
 
   // Keep the open chat's row on screen when the chat changes from outside the
   // list (a notification, a delegation card, the Team chart, a deep link).
@@ -808,6 +763,7 @@ export function ChatsScreen({
     readonly at: number;
     readonly fromList: boolean;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the sidebar DOM to the open chat's row
   useEffect(() => {
     if (selectedChat === null) {
       revealedRef.current = null;
@@ -979,7 +935,7 @@ export function ChatsScreen({
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search bots and chats"
               aria-label="Search bots and chats"
-              className="h-11 w-full rounded-full border-0 bg-[var(--personal-fill-muted)] pr-4 pl-10 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              className="h-11 w-full rounded-full border-0 bg-[var(--personal-fill-muted)] pr-4 pl-10 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
             />
           </div>
 
@@ -1078,7 +1034,7 @@ export function ChatsScreen({
             <Link
               to="/bots/$botId/$threadId"
               params={firstReviewTarget}
-              className="mt-3 flex h-[50px] items-center gap-3 rounded-xl border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] px-4 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              className="mt-3 flex h-[50px] items-center gap-3 rounded-xl border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] px-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
             >
               <span
                 aria-hidden="true"
@@ -1127,7 +1083,7 @@ const ROW_MENU_TRIGGER_CLASS = cn(
   "focus-visible:not-sr-only focus-visible:absolute focus-visible:top-1 focus-visible:right-1 focus-visible:z-10",
   "focus-visible:flex focus-visible:size-7 focus-visible:items-center focus-visible:justify-center focus-visible:rounded-full",
   "focus-visible:bg-[var(--personal-surface)] focus-visible:text-[var(--personal-text)] focus-visible:shadow-[var(--personal-shadow-card)]",
-  "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+  "focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
 );
 
 /**

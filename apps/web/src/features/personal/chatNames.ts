@@ -4,7 +4,7 @@ import {
   normalizeChatName,
   type PersonalBotThread,
 } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 

@@ -1,12 +1,13 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { AllChatsCount } from "./AllChatsCount";
 
 const state = vi.hoisted(() => ({ relays: new Set<string>() as ReadonlySet<string> }));
 
-vi.mock("~/state/entities", () => ({
-  useThreadShells: () =>
+vi.mock("./useBotShells", () => ({
+  useBotShells: () =>
     ["own", "relay"].map((id) => ({
       id,
       environmentId: "env-1",
@@ -38,7 +39,6 @@ afterEach(async () => {
 });
 
 const render = async (flagged: boolean) => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   await act(async () => {
     renderer = create(
       <AllChatsCount environmentId={"env-1" as never} botId="bot-a" links={links(flagged)} />,

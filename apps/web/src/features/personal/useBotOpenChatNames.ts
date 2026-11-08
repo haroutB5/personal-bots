@@ -1,9 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo } from "react";
-
-import { useThreadShells } from "~/state/entities";
 
 import { botOpenChatNames } from "./chatNames";
+import { useBotShells } from "./useBotShells";
 import { usePersonalBotsList } from "./usePersonalBots";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 
@@ -16,19 +14,10 @@ export function useBotOpenChatNames(
   botId: string | null,
 ): ReadonlyArray<{ readonly threadId: string; readonly title: string }> {
   const list = usePersonalBotsList(environmentId);
-  const shells = useThreadShells();
+  const shells = useBotShells(environmentId);
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
   const links = list.data?.threads ?? null;
-  return useMemo(
-    () =>
-      botId === null || links === null
-        ? []
-        : botOpenChatNames(
-            botId,
-            links,
-            shells.filter((shell) => shell.environmentId === environmentId),
-            relayThreadIds,
-          ),
-    [botId, environmentId, links, relayThreadIds, shells],
-  );
+  return botId === null || links === null
+    ? []
+    : botOpenChatNames(botId, links, shells, relayThreadIds);
 }
