@@ -298,10 +298,10 @@ apps/server/src/personal/browser/PersonalBrowserProtectionRepository.test.ts		ad
 apps/server/src/personal/bulkPersonalChats.test.ts		added-broken	276	C1-T	done	ported to the v2 personal service test harness; targeted suite passes
 apps/server/src/personal/bulkPersonalItems.test.ts		added-broken	204	C2-T	done	ported to the v2 personal read test layer; targeted suite passes
 apps/server/src/personal/connections/credentialStore.test.ts		added-broken	95	C12	done	G14 park; sealed credential names return with C12
-apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.test.ts		added-broken	379	D1	open	G2 park; DeepSeek balance watcher (D1)
-apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts		added-broken	306	D1	open	DeepSeek balance watcher (D1)
-apps/server/src/personal/deepseek/deepSeekBalanceAlert.test.ts		added-broken	179	D1	open	G6 park; DeepSeek balance alert (D1)
-apps/server/src/personal/deepseek/deepSeekBalanceAlert.ts		added-broken	145	D1	open	G6 park; DeepSeek balance alert (D1)
+apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.test.ts		added-broken	379	D7	done	D7: ported onto PersonalProviders session events; 10 cases pass
+apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.ts		added-broken	306	D7	done	D7: debounced turn check, half-hour sweep, one notice per low spell
+apps/server/src/personal/deepseek/deepSeekBalanceAlert.test.ts		added-broken	179	D7	done	D7: contract thresholds and one-spell escalation; 10 cases pass
+apps/server/src/personal/deepseek/deepSeekBalanceAlert.ts		added-broken	145	D7	done	D7: imports PROVIDER_LOW_BALANCE_USD and its re-arm pair from contracts
 apps/server/src/personal/engine/PersonalEngineV1.reads.test.ts		added-broken	265	C2	done	ported to PersonalEngineV2.reads.test.ts
 apps/server/src/personal/engine/PersonalEngineV1.test.ts		added-broken	1165	C1	done	ported to PersonalEngineV2.test.ts (verbs, events, notices)
 apps/server/src/personal/engine/PersonalEngineV1Live.ts		added-broken	854	C1	done	replaced by PersonalEngineV2Live; the verbs and events wrap ThreadManagementService and OrchestratorV2
