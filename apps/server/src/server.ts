@@ -138,6 +138,7 @@ import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as Observability from "./observability/Observability.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
+import * as StallRecorder from "./observability/StallRecorder.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -233,10 +234,10 @@ const HTTP_ROUTER_CONFIG = {
 // Skip Effect's default 20 s grace; WebSocket scope finalizers already close connections gracefully.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
 const layerResourceAttribution = ResourceAttribution.layer;
-const layerApplicationObservability = EventLoopMonitor.layer.pipe(
-  Layer.provideMerge(Observability.layer),
-  Layer.provideMerge(layerResourceAttribution),
-);
+const layerApplicationObservability = Layer.mergeAll(
+  EventLoopMonitor.layer,
+  StallRecorder.layer,
+).pipe(Layer.provideMerge(Observability.layer), Layer.provideMerge(layerResourceAttribution));
 
 // Share rotation state so driver loggers cannot race.
 const layerProviderEventLoggers = Layer.effect(
