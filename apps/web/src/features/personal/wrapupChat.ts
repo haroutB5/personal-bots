@@ -1,11 +1,11 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { WRAPUP_CHAT_PROMPT } from "@t3tools/contracts";
 import type { EnvironmentId, MessageId, ModelSelection, ThreadId } from "@t3tools/contracts";
+import type { ChatThread } from "@hbots/personal-client/conversation/chatThread";
 
 import { newMessageId } from "~/lib/utils";
 import { threadEnvironment } from "~/state/threads";
-import type { Thread } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { chatTurnModelSelection } from "./chatModelSelection";
@@ -27,7 +27,7 @@ export function buildWrapupTurnInput({
   createdAt,
 }: {
   threadId: ThreadId;
-  thread: Thread;
+  thread: Pick<ChatThread, "title" | "modelSelection" | "runtimeMode" | "interactionMode">;
   botModelSelection: ModelSelection | null;
   messageId: MessageId;
   createdAt: string;
@@ -54,13 +54,13 @@ export function buildWrapupTurnInput({
  */
 export function useWrapupChat(
   environmentId: EnvironmentId | null,
-  thread: Thread | null,
+  thread: ChatThread | null,
   botModelSelection: ModelSelection | null,
 ): { send: () => Promise<boolean>; sending: boolean } {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const [sending, setSending] = useState(false);
 
-  const send = useCallback(async () => {
+  const send = async () => {
     if (environmentId === null || thread === null || sending) return false;
     setSending(true);
     try {
@@ -80,7 +80,7 @@ export function useWrapupChat(
     } finally {
       setSending(false);
     }
-  }, [botModelSelection, environmentId, sending, startTurn, thread]);
+  };
 
   return { send, sending };
 }

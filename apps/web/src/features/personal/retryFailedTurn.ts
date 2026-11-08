@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import {
   type ChatAttachment as ContractChatAttachment,
@@ -10,10 +10,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
+import type { ChatThread } from "@hbots/personal-client/conversation/chatThread";
 
 import { newMessageId } from "~/lib/utils";
 import { threadEnvironment } from "~/state/threads";
-import type { ChatAttachment, ChatMessage, Thread } from "~/types";
+import type { ChatAttachment, ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { chatTurnModelSelection } from "./chatModelSelection";
@@ -89,7 +90,7 @@ export function buildRetryTurnInput({
   createdAt,
 }: {
   threadId: ThreadId;
-  thread: Pick<Thread, "modelSelection" | "runtimeMode" | "interactionMode">;
+  thread: Pick<ChatThread, "modelSelection" | "runtimeMode" | "interactionMode">;
   botModelSelection: ModelSelection | null;
   target: RetryTarget;
   freshMessageId: MessageId;
@@ -128,7 +129,7 @@ export function buildRetryTurnInput({
  */
 export function useRetryFailedTurn(input: {
   readonly environmentId: EnvironmentId | null;
-  readonly thread: Thread | null;
+  readonly thread: ChatThread | null;
   readonly botModelSelection: ModelSelection | null;
   readonly target: RetryTarget | null;
   /** Identifies the failure on screen, e.g. the session's `updatedAt`. */
@@ -139,7 +140,7 @@ export function useRetryFailedTurn(input: {
   const [inFlight, setInFlight] = useState(false);
   const [sentFor, setSentFor] = useState<string | null>(null);
 
-  const retry = useCallback(async () => {
+  const retry = async () => {
     if (environmentId === null || thread === null || target === null || inFlight) return false;
     setInFlight(true);
     try {
@@ -163,7 +164,7 @@ export function useRetryFailedTurn(input: {
     } finally {
       setInFlight(false);
     }
-  }, [botModelSelection, environmentId, failureKey, inFlight, startTurn, target, thread]);
+  };
 
   return { retry, busy: inFlight || (sentFor !== null && sentFor === failureKey) };
 }

@@ -26,6 +26,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { toChatThread, type ChatThread } from "@hbots/personal-client/conversation/chatThread";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
@@ -189,12 +190,16 @@ export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
-/** Phase 4: the web personal screens still read the v1 detail shape. */
-export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread | null {
-  useAtomValue(
+/**
+ * The v1 chat the web personal screens render, joined from the v2 projection. Null until the
+ * projection loads. The compiler caches the join on the projection, so streamed ticks that leave
+ * it unchanged do not rebuild the chat.
+ */
+export function useThreadDetail(ref: ScopedThreadRef | null): ChatThread | null {
+  const rawThread = useAtomValue(
     ref === null ? EMPTY_THREAD_PROJECTION_ATOM : environmentThreadDetails.threadAtom(ref),
   );
-  return null;
+  return rawThread === null ? null : toChatThread(rawThread.environmentId, rawThread.projection);
 }
 
 /** The thread's structure, held through streamed assistant and reasoning text; see ThreadStructure. */
