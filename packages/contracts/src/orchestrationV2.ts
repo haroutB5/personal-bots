@@ -3588,6 +3588,7 @@ export type OrchestrationV2ServerCommand = OrchestrationV2Command | Orchestratio
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getCommandReceipt: "orchestration.getCommandReceipt",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
@@ -3681,6 +3682,22 @@ export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
+
+/**
+ * Whether the server handled one command. A client whose socket lost the reply
+ * asks this on the next connection and learns whether the command landed
+ * instead of sending it blind again.
+ */
+export const CommandReceiptLookupInput = Schema.Struct({
+  commandId: CommandId,
+});
+export type CommandReceiptLookupInput = typeof CommandReceiptLookupInput.Type;
+
+export const CommandReceiptLookup = Schema.Struct({
+  status: Schema.Literals(["accepted", "rejected", "missing"]),
+  error: Schema.NullOr(Schema.String),
+});
+export type CommandReceiptLookup = typeof CommandReceiptLookup.Type;
 
 export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
   threadId: ThreadId,
@@ -4232,6 +4249,10 @@ export const OrchestrationV2RpcSchemas = {
   dispatchCommand: {
     input: OrchestrationV2Command,
     output: OrchestrationV2DispatchCommandResult,
+  },
+  getCommandReceipt: {
+    input: CommandReceiptLookupInput,
+    output: CommandReceiptLookup,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

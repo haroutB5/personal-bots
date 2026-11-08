@@ -2059,6 +2059,8 @@ export const layerWsRpc = (
       });
       const handlers = ServerWsRpcGroup.of({
         ...personalHandlerEntries,
+        [ORCHESTRATION_V2_WS_METHODS.getCommandReceipt]: (input) =>
+          orchestrationEngine.getCommandReceipt(input.commandId),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

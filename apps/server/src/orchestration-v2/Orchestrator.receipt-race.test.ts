@@ -166,3 +166,43 @@ it.effect("a command id reused concurrently for two threads succeeds for only on
     }
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("reads an accepted, a missing and a rejected command receipt", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:receipt-create");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("cmd-receipt-create"),
+      threadId,
+      projectId: ProjectId.make("project:receipt"),
+      title: "Receipt",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    assert.deepEqual(yield* orchestrator.getCommandReceipt(CommandId.make("cmd-receipt-create")), {
+      status: "accepted",
+      error: null,
+    });
+    assert.deepEqual(
+      yield* orchestrator.getCommandReceipt(CommandId.make("cmd-receipt-never-sent")),
+      { status: "missing", error: null },
+    );
+
+    yield* orchestrator
+      .dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-receipt-rejected"),
+        threadId: ThreadId.make("thread:receipt-missing"),
+      })
+      .pipe(Effect.ignore);
+    const rejected = yield* orchestrator.getCommandReceipt(CommandId.make("cmd-receipt-rejected"));
+    assert.equal(rejected.status, "rejected");
+    assert.include(rejected.error ?? "", "thread:receipt-missing");
+  }).pipe(Effect.provide(layerTest)),
+);

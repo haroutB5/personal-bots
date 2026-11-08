@@ -1,4 +1,10 @@
-import { CommandId, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type CommandReceiptLookup,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -85,6 +91,25 @@ export class CommandReceiptStoreV2 extends Context.Service<
   CommandReceiptStoreV2,
   CommandReceiptStoreV2Shape
 >()("t3/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
+
+/**
+ * One thread command's outcome for a client that lost its reply. A project
+ * command id reads as missing here: this is the thread lookup. A failed read
+ * also reads as missing, because resending under the same id is harmless.
+ */
+export const readThreadReceipt = (
+  receipts: CommandReceiptStoreV2Shape,
+  commandId: CommandId,
+): Effect.Effect<CommandReceiptLookup, never> =>
+  receipts.getByCommandId(commandId).pipe(
+    Effect.map(
+      Option.match({
+        onNone: () => ({ status: "missing" as const, error: null }),
+        onSome: (receipt) => ({ status: receipt.status, error: receipt.error }),
+      }),
+    ),
+    Effect.orElseSucceed(() => ({ status: "missing" as const, error: null })),
+  );
 
 const decodeReceipt = Schema.decodeUnknownEffect(
   CommandReceiptV2.mapFields((fields) => ({

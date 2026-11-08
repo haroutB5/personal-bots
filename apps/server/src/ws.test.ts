@@ -3,11 +3,14 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthOrchestrationReadScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
+  CommandId,
   EnvironmentId,
   EventId,
   MessageId,
+  ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ThreadId,
   TurnItemId,
@@ -55,6 +58,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
+import * as CommandReceiptStore from "./orchestration-v2/CommandReceiptStore.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -1431,6 +1435,130 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
     Effect.provide(
       Layer.mergeAll(
         Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+const layerReceiptTestServices = CommandReceiptStore.layer.pipe(
+  Layer.provide(SqlitePersistence.layerMemory),
+);
+
+it.effect("answers a command receipt read through the WS handler", () =>
+  Effect.gen(function* () {
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const acceptedAt = yield* DateTime.now;
+    const threadId = ThreadId.make("thread-receipt");
+    yield* receipts.insertIfAbsent({
+      commandId: CommandId.make("cmd-receipt-create"),
+      threadId,
+      commandType: "thread.created.record",
+      acceptedAt,
+      resultSequence: 4,
+      status: "accepted",
+      error: null,
+    });
+    yield* receipts.insertIfAbsent({
+      commandId: CommandId.make("cmd-receipt-rejected"),
+      threadId,
+      commandType: "message.dispatch",
+      acceptedAt,
+      resultSequence: 5,
+      status: "rejected",
+      error: "Thread thread-receipt does not exist.",
+    });
+    yield* receipts.insertIfAbsent({
+      commandId: CommandId.make("cmd-receipt-project"),
+      projectId: ProjectId.make("project-receipt"),
+      commandType: "project.create",
+      acceptedAt,
+      resultSequence: 6,
+      status: "accepted",
+      error: null,
+    });
+
+    const responses = yield* Queue.unbounded<unknown>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getCommandReceipt: (commandId: CommandId) =>
+          CommandReceiptStore.readThreadReceipt(receipts, commandId),
+      }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(responses, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("receipt-test"),
+            subject: "receipt-test",
+            method: "browser-session-cookie",
+            scopes: [AuthOrchestrationReadScope],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+          { connectionId: "test-viewing", reported: false },
+        ).pipe(
+          Layer.provide(services),
+          Layer.merge(RpcAuthorization.layer([AuthOrchestrationReadScope])),
+        ),
+      ),
+    );
+    const read = (requestId: string, commandId: string) =>
+      server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(requestId),
+        tag: ORCHESTRATION_V2_WS_METHODS.getCommandReceipt,
+        payload: { commandId: CommandId.make(commandId) },
+        headers: Headers.empty,
+      });
+
+    yield* read("receipt-create", "cmd-receipt-create");
+    assert.deepEqual(
+      yield* Queue.take(responses),
+      Exit.succeed({ status: "accepted", error: null }),
+    );
+
+    yield* read("receipt-missing", "cmd-receipt-never-sent");
+    assert.deepEqual(
+      yield* Queue.take(responses),
+      Exit.succeed({ status: "missing", error: null }),
+    );
+
+    // The thread read must not answer with a project command's receipt.
+    yield* read("receipt-project", "cmd-receipt-project");
+    assert.deepEqual(
+      yield* Queue.take(responses),
+      Exit.succeed({ status: "missing", error: null }),
+    );
+
+    yield* read("receipt-rejected", "cmd-receipt-rejected");
+    assert.deepEqual(
+      yield* Queue.take(responses),
+      Exit.succeed({ status: "rejected", error: "Thread thread-receipt does not exist." }),
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        layerReceiptTestServices,
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),

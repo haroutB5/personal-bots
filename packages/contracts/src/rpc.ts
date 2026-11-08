@@ -1732,6 +1732,15 @@ const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   error: Schema.Union([OrchestrationV2DispatchCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2GetCommandReceiptRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getCommandReceipt,
+  {
+    payload: OrchestrationV2RpcSchemas.getCommandReceipt.input,
+    success: OrchestrationV2RpcSchemas.getCommandReceipt.output,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
 const WsOrchestrationV2GetTurnDiffRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnDiff, {
   payload: OrchestrationV2RpcSchemas.getTurnDiff.input,
   success: OrchestrationV2RpcSchemas.getTurnDiff.output,
@@ -2194,6 +2203,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationV2DispatchCommandRpc,
+  WsOrchestrationV2GetCommandReceiptRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetNativeChildWorkRpc,
   WsOrchestrationV2StopWorkflowRpc,
