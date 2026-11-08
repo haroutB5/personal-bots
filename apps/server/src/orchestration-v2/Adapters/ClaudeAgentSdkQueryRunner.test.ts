@@ -16,6 +16,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -297,6 +298,41 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
   ),
 );
 
+it.effect("treats a setMcpServers answer without an errors map as no failed servers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const messages: Array<unknown> = [];
+      const logger = Logger.make(({ message }) => {
+        messages.push(message);
+      });
+      const close = vi.fn();
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            setMcpServers: async () => ({}),
+            close,
+            [Symbol.asyncDispose]: async () => close(),
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const session = yield* runner
+        .open(resumedMcpQueryInput)
+        .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+
+      assert.equal(querySpy.mock.calls.length, 1);
+      assert.isTrue(
+        messages.some(
+          (message) =>
+            Array.isArray(message) &&
+            message[0] === "orchestration-v2.claude-mcp-servers-unconfirmed",
+        ),
+      );
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
 it.effect.each([
   { case: "a readable rule list", errors: undefined, readable: true },
   { case: "a settings file Claude skipped", errors: [{ file: "settings.json" }], readable: false },
@@ -531,6 +567,65 @@ const openFakeCli = (cli: string) =>
   });
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI process", () => {
+  it.live("writes an offered prompt into the team's fake Claude CLI", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fake-prompt-"));
+        const cli = NodePath.join(dir, "fakeok");
+        NodeFS.copyFileSync(
+          NodePath.resolve(process.cwd(), "../../scripts/personal/testing/fake-claude/cli.js"),
+          cli,
+        );
+        NodeFS.chmodSync(cli, 0o755);
+        const previousPidDir = process.env.FAKE_CLAUDE_PID_DIR;
+        process.env.FAKE_CLAUDE_PID_DIR = dir;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previousPidDir === undefined) delete process.env.FAKE_CLAUDE_PID_DIR;
+            else process.env.FAKE_CLAUDE_PID_DIR = previousPidDir;
+            NodeFS.rmSync(dir, { recursive: true, force: true });
+          }),
+        );
+
+        const runner = yield* ClaudeAgentSdkQueryRunner;
+        const session = yield* runner.open({
+          threadId: ThreadId.make("thread-fake-prompt"),
+          providerSessionId: ProviderSessionId.make("session-fake-prompt"),
+          options: {
+            sessionId: "native-session-fake-prompt",
+            model: "claude-sonnet-4-6",
+            tools: [],
+            permissionMode: "default",
+            pathToClaudeCodeExecutable: cli,
+            mcpServers: {
+              "t3-code": { type: "http", url: "http://127.0.0.1:1/mcp", headers: {} },
+            },
+          },
+        });
+        yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+
+        const logPath = NodePath.join(dir, "fake-claude.log");
+        const promptSeen = yield* Deferred.make<void>();
+        const watcher = NodeFS.watch(dir, (_event, filename) => {
+          if (filename !== "fake-claude.log" || !NodeFS.existsSync(logPath)) return;
+          if (NodeFS.readFileSync(logPath, "utf8").includes("prompt-reaches-cli-marker")) {
+            Deferred.doneUnsafe(promptSeen, Effect.void);
+          }
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => watcher.close()));
+
+        yield* session.offer({
+          type: "user",
+          message: { role: "user", content: "prompt-reaches-cli-marker" },
+          parent_tool_use_id: null,
+          session_id: "native-session-fake-prompt",
+        });
+        yield* Deferred.await(promptSeen).pipe(Effect.timeout("15 seconds"));
+        assert.include(NodeFS.readFileSync(logPath, "utf8"), "prompt-reaches-cli-marker");
+      }).pipe(Effect.provide(realQueryRunner)),
+    ),
+  );
+
   // The leftover child holds a FIFO open; its death produces EOF without polling.
   it.effect("stops what the CLI left running when the session closes", () =>
     Effect.gen(function* () {

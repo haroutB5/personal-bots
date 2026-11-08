@@ -1306,7 +1306,23 @@ export const layerQueryRunner: Layer.Layer<
                         try: () => queryRuntime.setMcpServers(mcpServers),
                         catch: (cause) => queryRunnerError(cause, "setMcpServers"),
                       }).pipe(
-                        Effect.map((result) => Object.keys(result.errors)),
+                        Effect.map((result) => {
+                          const errors: unknown = (result as { readonly errors?: unknown }).errors;
+                          // A CLI that answers without an errors map still registered the
+                          // servers; treat it as no failures instead of failing the turn.
+                          if (errors === null || typeof errors !== "object") return undefined;
+                          return Object.keys(errors);
+                        }),
+                        Effect.tap((failedServers) =>
+                          failedServers === undefined
+                            ? Effect.logWarning("orchestration-v2.claude-mcp-servers-unconfirmed", {
+                                threadId: input.threadId,
+                                providerSessionId: input.providerSessionId,
+                                servers: Object.keys(mcpServers),
+                              })
+                            : Effect.void,
+                        ),
+                        Effect.map((failedServers) => failedServers ?? []),
                         Effect.orElseSucceed(() => Object.keys(mcpServers)),
                         Effect.timeoutOrElse({
                           duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,

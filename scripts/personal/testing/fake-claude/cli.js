@@ -399,6 +399,10 @@ lines.on("line", async (line) => {
       finish("Interrupted", true);
       return;
     }
+    if (subtype === "sdk_mcp_set_servers") {
+      // The SDK reads result.errors; a bare {} makes Object.keys(undefined) throw.
+      return respond(message, { added: [], removed: [], errors: {} });
+    }
     return respond(message, {});
   }
   if (
