@@ -884,7 +884,7 @@ packages/shared/src/dpop.ts		content	6	B1	dropped	our only change at this path i
 packages/shared/src/httpObservability.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/shared/src/nodeServices.ts		modify-delete	16	B1	dropped	superseded by 4cabfdaab7; U imports @effect/platform-node/NodeServices
 packages/shared/src/nodeSqliteClient.test.ts		content	82	B1	dropped	only upstream commits (#N) on our side, each present in U
-packages/shared/src/nodeSqliteClient.ts		content	218	C15	done	C15: slow-op note ported; the single-worker connection is dropped because U runs writer, reader and checkpoint workers, so nodeSqliteWorker.ts stays unused
+packages/shared/src/nodeSqliteClient.ts		content	218	C15	done	C15: slow-op note ported; the writer worker is restored on the main path per STALLS.md (2026-11-08), reader and checkpoint workers unchanged
 packages/shared/src/observability.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/shared/src/observability.ts		content	49	C15	dropped	U already carries the change
 packages/shared/src/otelEnvironment.ts		content	4	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
