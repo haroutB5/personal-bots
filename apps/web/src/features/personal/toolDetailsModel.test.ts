@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { WorkLogEntry } from "~/session-logic";
+import type { WorkLogEntry } from "@hbots/personal-client/conversation/types";
 
 import { toolDetailsSummary } from "./toolDetailsModel";
 

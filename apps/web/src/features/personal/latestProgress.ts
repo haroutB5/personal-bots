@@ -1,8 +1,8 @@
+import type { OrchestrationLatestTurn } from "@hbots/personal-client/bots/threadShell";
 import type {
-  OrchestrationLatestTurn,
-  OrchestrationThreadActivity,
   OrchestrationMessage,
-} from "@t3tools/contracts";
+  OrchestrationThreadActivity,
+} from "@hbots/personal-client/conversation/wireTypes";
 import { pickProgressNote, toolStepNoteText } from "@t3tools/contracts";
 
 /**

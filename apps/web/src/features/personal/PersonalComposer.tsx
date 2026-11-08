@@ -18,9 +18,9 @@ import {
   personalReplyContext,
   type PersonalReplyQuote,
   type ThreadId,
-  type ThreadTurnFollowUp,
   withPersonalFollowUp,
 } from "@t3tools/contracts";
+import type { ThreadTurnFollowUp } from "@hbots/personal-client/conversation/wireTypes";
 import { truncate } from "@t3tools/shared/String";
 import { ArrowUp, CircleAlert, CircleDashed, FileText, Plus, Square, X } from "lucide-react";
 

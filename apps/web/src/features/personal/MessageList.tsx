@@ -20,7 +20,8 @@ import { ownerVisibleText } from "~/components/chat/composerPromptHistory";
 import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
 import { selectMessageImageResources } from "~/session-logic";
-import { isFileAttachment, type ChatMessage } from "~/types";
+import { isFileAttachment } from "~/types";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
@@ -195,7 +196,7 @@ function ErrorNotice({
               type="button"
               onClick={retry.onRetry}
               disabled={retry.busy}
-              className="min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70 disabled:opacity-50"
+              className="min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70 disabled:opacity-50"
             >
               {retry.busy ? "Retrying…" : "Retry"}
             </button>
@@ -204,7 +205,7 @@ function ErrorNotice({
             <button
               type="button"
               onClick={cancel.onCancel}
-              className="min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70"
+              className="min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70"
             >
               Cancel
             </button>
@@ -216,7 +217,7 @@ function ErrorNotice({
 }
 
 const QUEUED_ACTION_CLASS =
-  "min-h-9 px-2 text-xs font-medium text-[var(--personal-text-secondary)] underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-70";
+  "min-h-9 px-2 text-xs font-medium text-[var(--personal-text-secondary)] underline underline-offset-2 outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-70";
 
 /**
  * A message typed while the laptop was away, on the device and not sent yet.
@@ -329,15 +330,12 @@ const UserMessage = memo(function UserMessage({
   onReply?: ((quote: PersonalReplyQuote) => void) | undefined;
   onJump?: ((messageId: string) => void) | undefined;
 }) {
-  const quote = useMemo(() => readPersonalReplyQuote(message.context), [message.context]);
+  const quote = readPersonalReplyQuote(message.context);
   // A message the voice sent during a call reads as the owner's own; the tag is
   // what tells them apart (spec 7 / review should-fix).
-  const fromCall = useMemo(() => readVoiceCallMarker(message.context) !== null, [message.context]);
-  const sentAt = useMemo(() => parseSentAt(message.createdAt), [message.createdAt]);
-  const resources = useMemo(
-    () => selectMessageImageResources(message.attachments),
-    [message.attachments],
-  );
+  const fromCall = readVoiceCallMarker(message.context) !== null;
+  const sentAt = parseSentAt(message.createdAt);
+  const resources = selectMessageImageResources(message.attachments);
   const urls = useAssetUrls(environmentId, resources);
   // An attachment sent with no text carries the app's own placeholder prompt for the bot; the owner sees just the file.
   const bubbleText = ownerVisibleText(message.text);
@@ -382,7 +380,7 @@ const UserMessage = memo(function UserMessage({
                     imageUrl: url,
                   })
                 }
-                className="rounded-xl outline-none focus-visible:ring-2"
+                className="rounded-xl outline-none focus-visible:ring-inset focus-visible:ring-2"
               >
                 <img
                   src={url}
@@ -498,11 +496,8 @@ const AssistantMessage = memo(function AssistantMessage({
   choices?: ChoicesState | null | undefined;
   onChoose?: ((text: string) => Promise<boolean>) | undefined;
 }) {
-  const split = useMemo(
-    () => (mayHaveChoices(message.text) ? splitChoices(message.text, message.streaming) : null),
-    [message.streaming, message.text],
-  );
-  const sentAt = useMemo(() => parseSentAt(message.createdAt), [message.createdAt]);
+  const split = mayHaveChoices(message.text) ? splitChoices(message.text, message.streaming) : null;
+  const sentAt = parseSentAt(message.createdAt);
   const openFile = useChatFilePreview();
   if (message.text.length === 0) return null;
   // Without a state to draw them in, a block is left as the code block it is.
@@ -620,7 +615,7 @@ const GroupMessage = memo(function GroupMessage({
               to="/bots/$botId/$threadId"
               params={{ botId, threadId: speaker.threadId }}
               aria-label={`Open ${name}'s own chat`}
-              className="min-w-0 truncate text-[13px] leading-5 font-semibold text-[var(--personal-text)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              className="min-w-0 truncate text-[13px] leading-5 font-semibold text-[var(--personal-text)] outline-none active:opacity-70 focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
             >
               {name}
             </Link>
@@ -658,7 +653,7 @@ const SystemTurnRow = memo(function SystemTurnRow({
 }) {
   return (
     <details className="group flex w-full flex-col items-center">
-      <summary className="mx-auto flex min-h-11 max-w-[90%] cursor-pointer list-none items-center gap-1.5 rounded-full px-3 text-[13px] text-[var(--personal-text-secondary)] outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
+      <summary className="mx-auto flex min-h-11 max-w-[90%] cursor-pointer list-none items-center gap-1.5 rounded-full px-3 text-[13px] text-[var(--personal-text-secondary)] outline-none select-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
         <ChevronRight
           aria-hidden="true"
           className="size-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
@@ -709,7 +704,7 @@ function ApprovalCard({
             aria-description={option.warning}
             onClick={() => onRespond(approval.requestId, option.decision)}
             className={cn(
-              "h-11 min-w-0 flex-1 rounded-[var(--personal-radius-button)] px-3 text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40",
+              "h-11 min-w-0 flex-1 rounded-[var(--personal-radius-button)] px-3 text-[15px] font-medium outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40",
               option.decision === "accept"
                 ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
                 : "border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]",
@@ -931,7 +926,9 @@ export function MessageList({
   statusLine?: ReactNode;
 }): JSX.Element {
   const openFile = useChatFilePreview();
+  // oxlint-disable-next-line t3code/no-manual-memo -- The compiler skips this component (its layout effect calls helpers declared below it), so this memo keeps the value stable across renders.
   const choicesById = useMemo(() => choicesStates(items, choicesBusy), [items, choicesBusy]);
+  // oxlint-disable-next-line t3code/no-manual-memo -- The compiler skips this component (its layout effect calls helpers declared below it), so this memo keeps the value stable across renders.
   const turnStarts = useMemo(
     () => (showContextUsed ? turnStartByAssistantItem(items) : new Map<string, string>()),
     [items, showContextUsed],
@@ -963,6 +960,7 @@ export function MessageList({
   const range = transcriptRange(items, firstId);
   const visibleItems = items.slice(range.start, range.end);
   const windowRef = useRef({ threadId, range, items, firstId });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mirrors the rendered window into a ref that the scroll, resize and timer callbacks read outside render.
   useLayoutEffect(() => {
     windowRef.current = { threadId, range, items, firstId };
   });
@@ -1038,6 +1036,7 @@ export function MessageList({
         }) ?? null;
     }
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the scroller's DOM position in step with the rows just committed: the saved anchor, a pending jump target or the pinned bottom.
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
     anchorRef.current = null;
@@ -1059,10 +1058,12 @@ export function MessageList({
     // Items arriving just after a return from hidden (the reconnect's missed
     // ones) land on the latest; while the page is still away the marker holds
     // (until is 0) and the visible event owns the first look.
+    // oxlint-disable-next-line react/immutability -- The layout effect runs after render, when this helper and catchUpAtWindowEnd are already initialised.
     if (landOnNewSinceAway()) return;
     // A frozen window whose reader is sitting at the end of what it loaded
     // takes the next step before the frame paints, so later messages arrive
     // without a tap and the fallback button below never has to be pressed.
+    // oxlint-disable-next-line react/immutability, react/exhaustive-effect-dependencies -- Runs after render when the helper is initialised; it reads the latest window through refs, so a new row set or window is the only trigger.
     if (firstId !== null) catchUpAtWindowEnd();
   }, [items, firstId, threadId]);
 
@@ -1151,6 +1152,7 @@ export function MessageList({
     return true;
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Holds the scroller's scroll, touch, wheel, pointer, key, selection and visibility listeners and its resize observer while mounted.
   useEffect(() => {
     const scroller = scrollerRef.current;
     const content = contentRef.current;
@@ -1345,6 +1347,7 @@ export function MessageList({
     window.addEventListener("keydown", onKeyDown);
     // Streaming text, late images and the keyboard all change heights without
     // a React update here, so follow size changes rather than renders.
+    // oxlint-disable-next-line t3code/no-raw-resize-observer -- onResize only writes scrollTop and arms timers; it sets no React state in the frame, and the pin was tuned on this observer's timing.
     const observer = new ResizeObserver(onResize);
     observer.observe(content);
     observer.observe(scroller);
@@ -1364,11 +1367,14 @@ export function MessageList({
       cancelShow();
       endJump();
     };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The listeners attach once to the mounted scroller and read every changing value through refs.
   }, []);
 
   // The screen stays mounted when the route moves to another chat, so the
   // next chat opens at its latest message with the button hidden.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The screen stays mounted across chats, so a chat change resets the scroller position and the refs its listeners read.
   useEffect(() => {
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Only a chat change resets; the helpers are fresh closures over refs each render.
     cancelShow();
     endJump();
     targetGuardRef.current = false;
@@ -1378,6 +1384,7 @@ export function MessageList({
     stickRef.current = true;
     // A tap that opened this chat from inside the last one is not a scroll here.
     readerRef.current = { holding: false, at: Number.NEGATIVE_INFINITY };
+    // oxlint-disable-next-line react/set-state-in-effect -- Hides the jump button in the same reset that pins the new chat's scroller to its bottom.
     setShowJump(false);
     const scroller = scrollerRef.current;
     if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
@@ -1389,6 +1396,7 @@ export function MessageList({
   // reply that follows are on screen. A selected passage keeps its DOM, like
   // every other move.
   const sentRef = useRef({ threadId, count: pending.length + queued.length });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A message going out (typed or from the offline queue) pins the scroller to the newest rows.
   useEffect(() => {
     const count = pending.length + queued.length;
     const sent = sentRef.current.threadId === threadId && count > sentRef.current.count;
@@ -1399,19 +1407,23 @@ export function MessageList({
     cancelShow();
     targetGuardRef.current = false;
     targetRef.current = null;
+    // oxlint-disable-next-line react/set-state-in-effect -- The outbox sends without a handler here, so the pin and the latest window follow its count.
     setShowJump(false);
     stickRef.current = true;
     setPage({ threadId, firstId: null });
     const scroller = scrollerRef.current;
     if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Only a new outgoing message pins; the helpers are fresh closures over refs each render.
   }, [pending.length, queued.length, threadId]);
 
   // A tap on a message search hit asked for this chat to open on that message.
   // The thread loads progressively, so this tries again whenever the items
   // change, until the message is there or the request lapses.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scrolls the DOM to a search hit once its message has loaded, retrying as pages arrive.
   useEffect(() => {
     const messageId = peekMessageJump(threadId);
     if (messageId === null) return;
+    // oxlint-disable-next-line react/set-state-in-effect, react/exhaustive-effect-dependencies -- The hit opens the page that holds it; items is the retry trigger and the helper reads refs.
     jumpToQuoted(messageId);
     // `items` is the trigger: a thread that loads in pages may bring the message later.
   }, [threadId, items]);
@@ -1435,6 +1447,7 @@ export function MessageList({
 
   // The work group that is still being written: the last one, while working,
   // with no user message or task turn after it.
+  // oxlint-disable-next-line t3code/no-manual-memo -- The compiler skips this component (its layout effect calls helpers declared below it), so this memo keeps the value stable across renders.
   const liveWorkId = useMemo(() => {
     if (!working) return null;
     for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -1467,6 +1480,7 @@ export function MessageList({
           sr-only speaker labels (absolute). Otherwise they escape it, sit at
           their place deep in a long transcript and make the page column
           above the chat scrollable, so the whole chat drags up off screen. */}
+      {/* oxlint-disable-next-line t3code/require-centered-scroll-gutter -- personal-scroll-quiet keeps a one-sided stable gutter by design. */}
       <div
         ref={scrollerRef}
         className={cn(
@@ -1488,7 +1502,7 @@ export function MessageList({
               onClick={range.start > 0 ? () => movePage(-1) : loadEarlier?.onLoad}
               disabled={range.start === 0 && loadEarlier?.loading}
               aria-busy={range.start === 0 && loadEarlier?.loading}
-              className="mx-auto h-11 rounded-full px-4 text-sm font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+              className="mx-auto h-11 rounded-full px-4 text-sm font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
             >
               {range.start === 0 && loadEarlier?.loading
                 ? "Loading earlier messages"
@@ -1856,7 +1870,7 @@ export function MessageList({
           onClick={jumpToLatest}
           className="group absolute bottom-1 left-1/2 flex size-11 -translate-x-1/2 items-center justify-center rounded-full outline-none"
         >
-          <span className="flex size-9 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)] shadow-[var(--personal-shadow-lift)] group-focus-visible:ring-2 group-focus-visible:ring-[var(--personal-text)] group-active:opacity-70">
+          <span className="flex size-9 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)] shadow-[var(--personal-shadow-lift)] group-focus-visible:ring-inset group-focus-visible:ring-2 group-focus-visible:ring-[var(--personal-text)] group-active:opacity-70">
             <ArrowDown aria-hidden="true" className="size-[18px]" strokeWidth={2} />
           </span>
         </button>

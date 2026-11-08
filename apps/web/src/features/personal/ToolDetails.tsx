@@ -4,7 +4,7 @@ import { memo } from "react";
 import { ChevronRight, CircleAlert, CircleCheck, Wrench } from "lucide-react";
 
 import { workEntryDisplayLabel } from "~/components/chat/MessagesTimeline.logic";
-import type { WorkLogEntry } from "~/session-logic";
+import type { WorkLogEntry } from "@hbots/personal-client/conversation/types";
 
 import { toolDetailsSummary } from "./toolDetailsModel";
 
@@ -42,7 +42,7 @@ export const ToolDetails = memo(function ToolDetails({
   const shown = summary.liveLabel ?? summary.label;
   return (
     <details className="group w-full">
-      <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-0.5 text-sm text-[var(--personal-text-secondary)] outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-0.5 text-sm text-[var(--personal-text-secondary)] outline-none select-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
         <ChevronRight
           aria-hidden="true"
           className="size-3.5 shrink-0 text-[var(--personal-text-tertiary)] transition-transform group-open:rotate-90"

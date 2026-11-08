@@ -111,11 +111,7 @@ vi.mock("~/components/ui/menu", () => ({
   MenuSeparator: () => <hr />,
 }));
 vi.mock("~/lib/contextWindow", () => ({ deriveLatestContextWindowSnapshot: () => null }));
-vi.mock("~/session-logic", () => ({
-  derivePhase: () => "ready",
-  deriveTimelineEntriesWithState: () => ({ entries: [] }),
-  deriveWorkLogEntries: () => [],
-}));
+vi.mock("~/session-logic", () => ({ derivePhase: () => "ready" }));
 vi.mock("~/state/lazyThreadShells", () => ({
   useLazyThreadShells: () => ({ pending: false }),
 }));

@@ -14,7 +14,7 @@ import {
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ChatMessage } from "~/types";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 
 import { motionForSummary } from "./avatarMotion";
 import { BOT_ERROR_LABEL, botStatus, buildBotSummaries, isThreadErrored } from "./botSummaries";

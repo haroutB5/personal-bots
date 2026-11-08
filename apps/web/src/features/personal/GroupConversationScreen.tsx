@@ -20,10 +20,10 @@ import { ChevronLeft, Ellipsis } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { cn, randomUUID } from "~/lib/utils";
-import { deriveTimelineEntriesWithState } from "~/session-logic";
+import { deriveTimelineEntries } from "@hbots/personal-client/conversation/timeline";
 import { useThreadDetail, useThreadStatus } from "~/state/entities";
 import { useEnvironmentThread, useRetryEnvironmentThread } from "~/state/threads";
-import type { ChatMessage } from "~/types";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { ArchivedChatBar } from "./ArchivedChatBar";
@@ -109,7 +109,7 @@ function useMinuteNow(): Date {
 /**
  * /bots/groups/$groupId — a sibling of `ConversationScreen`, not a variant of
  * it. Everything that makes a chat a chat is shared and unchanged: the thread
- * detail stream, `deriveTimelineEntriesWithState`, `buildConversationItems`,
+ * detail stream, `deriveTimelineEntries`, `buildConversationItems`,
  * `MessageList`, `PersonalComposer`, `useKeyboardInset` and paging. What
  * differs is only what a group actually is — several speakers in one
  * transcript, a round instead of a turn, and no provider session of its own.
@@ -234,13 +234,12 @@ export function GroupConversationScreen({
       ? NO_MEMBERS
       : groupDeleteCandidates({ group, groups, bots: botsList.data?.bots ?? [] });
 
-  const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
+  const messages = thread?.messages ?? EMPTY_MESSAGES;
   // The group thread runs no provider, so there are no tool steps to show and
   // `groups` is what turns each message into its speaker's row.
-  const items = buildConversationItems(
-    deriveTimelineEntriesWithState(messages, EMPTY_PLANS, EMPTY_WORK).entries,
-    { groups: true },
-  );
+  const items = buildConversationItems(deriveTimelineEntries(messages, EMPTY_PLANS, EMPTY_WORK), {
+    groups: true,
+  });
 
   const live = isGroupRoundLive(round);
   const stateLabel = groupStatusLine(round, nameOf, { archived });

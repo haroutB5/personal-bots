@@ -11,10 +11,10 @@ import {
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import type { ChatThread } from "@hbots/personal-client/conversation/chatThread";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 
 import { newMessageId } from "~/lib/utils";
 import { threadEnvironment } from "~/state/threads";
-import type { ChatAttachment, ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { chatTurnModelSelection } from "./chatModelSelection";
@@ -38,12 +38,12 @@ export interface RetryTarget {
 }
 
 /** Drops the web-only fields (`previewUrl`, `downloadable`) a command must not carry. */
-function toContractAttachment(attachment: ChatAttachment): ContractChatAttachment {
+function toContractAttachment(attachment: ContractChatAttachment): ContractChatAttachment {
   const {
     previewUrl: _previewUrl,
     downloadable: _downloadable,
     ...rest
-  } = attachment as ChatAttachment & { previewUrl?: string; downloadable?: boolean };
+  } = attachment as ContractChatAttachment & { previewUrl?: string; downloadable?: boolean };
   return rest as ContractChatAttachment;
 }
 

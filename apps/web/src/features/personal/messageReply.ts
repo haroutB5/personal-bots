@@ -4,7 +4,7 @@ import {
   type PersonalReplyQuote,
 } from "@t3tools/contracts";
 
-import type { ChatMessage } from "~/types";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 
 /**
  * A message's text as plain words, for a quote: the markup a bot writes

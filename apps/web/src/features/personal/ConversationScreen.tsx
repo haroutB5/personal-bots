@@ -36,7 +36,11 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/compone
 import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { derivePhase, deriveTimelineEntriesWithState, deriveWorkLogEntries } from "~/session-logic";
+import {
+  deriveTimelineEntries,
+  deriveWorkLogEntries,
+} from "@hbots/personal-client/conversation/timeline";
+import { derivePhase } from "~/session-logic";
 import { useProject, useThreadDetail, useThreadStatus } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import {
@@ -44,7 +48,7 @@ import {
   useEnvironmentThread,
   useRetryEnvironmentThread,
 } from "~/state/threads";
-import type { ChatMessage } from "~/types";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { perfOptimizationOn } from "./perfFlags";
@@ -379,7 +383,7 @@ export function ConversationScreen({
     refresh: list.refresh,
   });
 
-  const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
+  const messages = thread?.messages ?? EMPTY_MESSAGES;
   // Real-user timings (perfRum.ts): chat usable, then send -> echo -> first reply text.
   const usableThreadId = thread !== null ? threadId : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the chat-usable mark to the real-user timing probe
@@ -430,7 +434,7 @@ export function ConversationScreen({
   // out exactly as it always was.
   const { fits: sidePanelFits, open: sidePanelOpen } = useChatSidePanel();
   const baseItems = buildConversationItems(
-    deriveTimelineEntriesWithState(messages, proposedPlans, workEntries).entries,
+    deriveTimelineEntries(messages, proposedPlans, workEntries),
     { showToolSteps },
   );
   const delegationItems = placeDelegationCards(baseItems, children);

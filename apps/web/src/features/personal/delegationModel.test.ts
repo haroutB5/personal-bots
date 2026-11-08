@@ -2,8 +2,8 @@ import { PersonalTask } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { WorkLogEntry } from "~/session-logic";
-import type { ChatMessage } from "~/types";
+import type { WorkLogEntry } from "@hbots/personal-client/conversation/types";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 
 import { buildConversationItems, placeDelegationCards } from "./conversationModel";
 import {

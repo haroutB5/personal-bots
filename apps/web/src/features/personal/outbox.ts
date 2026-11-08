@@ -1,12 +1,12 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import type {
   ModelSelection,
   PersonalReplyQuote,
   ProviderInteractionMode,
   RuntimeMode,
-  ThreadTurnFollowUp,
 } from "@t3tools/contracts";
+import type { ThreadTurnFollowUp } from "@hbots/personal-client/conversation/wireTypes";
 
 import { randomUUID } from "~/lib/utils";
 
@@ -488,17 +488,15 @@ const NO_ROWS: ReadonlyArray<OutboxRow> = [];
 /** The queued messages of one chat, for drawing under the transcript. */
 export function useOutboxRows(threadId: string | null): ReadonlyArray<OutboxRow> {
   const { entries, sending } = useOutboxSnapshot();
-  return useMemo(() => {
-    if (threadId === null) return NO_ROWS;
-    const rows = entries
-      .filter((entry) => entry.threadId === threadId)
-      .map((entry): OutboxRow => {
-        const state: OutboxRowState =
-          entry.status === "failed" ? "failed" : sending.has(entry.id) ? "sending" : "waiting";
-        return { entry, state };
-      });
-    return rows.length === 0 ? NO_ROWS : rows;
-  }, [entries, sending, threadId]);
+  if (threadId === null) return NO_ROWS;
+  const rows = entries
+    .filter((entry) => entry.threadId === threadId)
+    .map((entry): OutboxRow => {
+      const state: OutboxRowState =
+        entry.status === "failed" ? "failed" : sending.has(entry.id) ? "sending" : "waiting";
+      return { entry, state };
+    });
+  return rows.length === 0 ? NO_ROWS : rows;
 }
 
 /** How many messages are waiting to go out, on any chat. */
