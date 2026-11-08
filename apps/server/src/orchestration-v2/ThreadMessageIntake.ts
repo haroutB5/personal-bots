@@ -2,9 +2,11 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { PersonalTurnDecisions } from "../personal/turnContext/PersonalTurnDecisions.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
@@ -82,11 +84,45 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+/**
+ * A client's selection can be older than the bot it names, and its composer
+ * always sends a title seed. For a bot chat the personal layer decides both:
+ * the bot's current selection, and whether the first message may name the
+ * chat. Every other thread keeps exactly what the client sent.
+ */
+const withPersonalTurn = Effect.fn("ThreadMessageIntake.withPersonalTurn")(function* (
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+) {
+  const decisions = yield* Effect.serviceOption(PersonalTurnDecisions);
+  const modelSelection = Option.isSome(decisions)
+    ? yield* decisions.value.modelSelection({
+        threadId: command.threadId,
+        threadModelSelection: undefined,
+      })
+    : undefined;
+  const titleSeed =
+    command.titleSeed === undefined || Option.isNone(decisions)
+      ? command.titleSeed
+      : yield* decisions.value.titleSeed({
+          threadId: command.threadId,
+          messageId: command.messageId,
+          titleSeed: command.titleSeed,
+        });
+  const { titleSeed: _clientTitleSeed, ...rest } = command;
+  return {
+    ...rest,
+    ...(modelSelection === undefined ? {} : { modelSelection }),
+    ...(titleSeed === undefined ? {} : { titleSeed }),
+  };
+});
+
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
   const command =
-    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+    incoming.type === "message.dispatch"
+      ? yield* withPersonalTurn(yield* withGuestAttachments(incoming))
+      : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
@@ -196,15 +232,28 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
   input: ThreadManagement.ThreadManagementSendInput,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const decisions = yield* Effect.serviceOption(PersonalTurnDecisions);
+  const modelSelection = Option.isSome(decisions)
+    ? yield* decisions.value.modelSelection({
+        threadId: input.threadId,
+        threadModelSelection: undefined,
+      })
+    : undefined;
   const claimed = yield* AttachmentClaims.claimPendingAttachments(input);
-  return yield* threads.sendToThread({ ...input, attachments: claimed.attachments }).pipe(
-    Effect.tap((result) => releaseUnusedClaims(claimed.claimedPaths, result.message.attachments)),
-    Effect.tapError((error) =>
-      dispatchWasNotAccepted(error)
-        ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
-        : Effect.void,
-    ),
-  );
+  return yield* threads
+    .sendToThread({
+      ...input,
+      ...(modelSelection === undefined ? {} : { modelSelection }),
+      attachments: claimed.attachments,
+    })
+    .pipe(
+      Effect.tap((result) => releaseUnusedClaims(claimed.claimedPaths, result.message.attachments)),
+      Effect.tapError((error) =>
+        dispatchWasNotAccepted(error)
+          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+          : Effect.void,
+      ),
+    );
 });
 
 export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(function* (

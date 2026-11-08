@@ -46,6 +46,37 @@ export const PERSONAL_TITLE_SEED_COMMAND_TAG = "personal-thread-title-seed";
 const isPersonalTitleSeedVersion = (version: string) =>
   version.startsWith(`server:${PERSONAL_TITLE_SEED_COMMAND_TAG}:`);
 
+/**
+ * Whether a first-message seed may name this chat. The v1 rule: a manual
+ * rename always wins, a task turn never names the chat (its thread already
+ * carries the task title), and the seed may replace only a placeholder or its
+ * own earlier value.
+ */
+export const canReplacePersonalThreadTitle = (
+  currentTitle: string,
+  titleSeed: string | undefined,
+): boolean => {
+  const title = currentTitle.trim();
+  if (title === PERSONAL_THREAD_TITLE || title === PERSONAL_DEFAULT_THREAD_TITLE) return true;
+  const seed = titleSeed?.trim();
+  return seed !== undefined && seed.length > 0 && title === seed;
+};
+
+/** The seed a bot chat's first message may use, or undefined when it may not rename. */
+export const personalTitleSeedForSend = (input: {
+  readonly title: string;
+  readonly titleState:
+    | { readonly source: "manual" | "generated"; readonly version: string }
+    | null
+    | undefined;
+  readonly messageId: string;
+  readonly titleSeed: string;
+}): string | undefined => {
+  if (input.titleState?.source === "manual") return undefined;
+  if (isPersonalTaskMessageId(input.messageId)) return undefined;
+  return canReplacePersonalThreadTitle(input.title, input.titleSeed) ? input.titleSeed : undefined;
+};
+
 /** Longest title a task or routine chat is created with. */
 export const PERSONAL_TASK_THREAD_TITLE_MAX_LENGTH = 80;
 

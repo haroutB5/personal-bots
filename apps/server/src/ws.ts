@@ -122,6 +122,7 @@ import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
+import { PersonalTurnDecisions } from "./personal/turnContext/PersonalTurnDecisions.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -1415,6 +1416,12 @@ export const layerWsRpc = (
         | ServerSettings.ServerSettingsService
         | DocumentText.DocumentText
       >();
+      // The command intake asks the personal layer for the bot's selection and
+      // title seed. It is optional, so a narrow host keeps the client's values.
+      const personalDecisions = yield* Effect.serviceOption(PersonalTurnDecisions);
+      const commandContext = Option.isSome(personalDecisions)
+        ? Context.add(intakeContext, PersonalTurnDecisions, personalDecisions.value)
+        : intakeContext;
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;
@@ -2091,7 +2098,7 @@ export const layerWsRpc = (
                             "creationSource" in command ? command.creationSource : "web",
                         }),
                       )
-                  ).pipe(Effect.provide(intakeContext)),
+                  ).pipe(Effect.provide(commandContext)),
                 )
                 .pipe(
                   Effect.tap((result) =>
@@ -2276,7 +2283,7 @@ export const layerWsRpc = (
                         }),
                     createdBy: "user",
                     creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                  }).pipe(Effect.provide(commandContext)),
                 )
                 .pipe(
                   // A resumed launch is a retry of one already counted.

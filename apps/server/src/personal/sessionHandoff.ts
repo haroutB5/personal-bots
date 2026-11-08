@@ -1,4 +1,8 @@
-import type { MessageId } from "@t3tools/contracts";
+import {
+  PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
+  type MessageId,
+  type OrchestrationMessageContext,
+} from "@t3tools/contracts";
 
 import type { PersonalMessageView } from "./engine/PersonalEngine.ts";
 
@@ -14,8 +18,36 @@ import type { PersonalMessageView } from "./engine/PersonalEngine.ts";
  * earlier to carry, or no room for it.
  */
 export const HANDOFF_MAX_CHARS = 24_000;
+/** A reopened task's fresh session carries the chat tail, not the whole chat. */
+export const TASK_FRESH_HANDOFF_CHARS = 6_000;
+/** Room left in a turn's input for attachment paths and other context. */
+export const HANDOFF_INPUT_MARGIN_CHARS = 8_000;
 const HANDOFF_MESSAGE_MAX_CHARS = 2_000;
 const HANDOFF_MIN_USEFUL_CHARS = 400;
+
+/**
+ * Whether a turn message is a task continuation that asks for a fresh provider
+ * session. The task marker is the only source: a task reopen sets `fresh` when
+ * its work record seeds a new session.
+ */
+export const isFreshTaskTurn = (
+  context: OrchestrationMessageContext | null | undefined,
+): boolean => {
+  const record = context?.records.find(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "kind" in entry &&
+      (entry as { readonly kind?: unknown }).kind === PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
+  ) as { readonly payload?: unknown } | undefined;
+  const payload = record?.payload;
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    "fresh" in payload &&
+    (payload as { readonly fresh?: unknown }).fresh === true
+  );
+};
 
 const HANDOFF_HEADER =
   "Earlier in this chat (carried over from a previous session that could not be continued; the owner can see all of it, so do not repeat it back):";

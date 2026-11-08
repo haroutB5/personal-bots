@@ -10,6 +10,7 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  ProviderInstanceId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -27,6 +28,7 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { PersonalTurnDecisions } from "../personal/turnContext/PersonalTurnDecisions.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
@@ -424,5 +426,70 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     expect(command.attachments).toHaveLength(1);
     // The guest's file, which is already the thread's.
     expect(command.attachments).toEqual([guestFile]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("a bot chat takes the bot's selection and title over the client's", () =>
+  Effect.gen(function* () {
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const botSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-new",
+    } as const;
+    yield* dispatchCommand({
+      type: "message.dispatch",
+      commandId: CommandId.make("send-bot-selection"),
+      threadId: ThreadId.make("thread-bot"),
+      messageId: MessageId.make("message-bot"),
+      text: "hello",
+      attachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-old" },
+      titleSeed: "Client title",
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerFailingDispatch(captured),
+          Layer.succeed(PersonalTurnDecisions, {
+            modelSelection: () => Effect.succeed(botSelection),
+            titleSeed: () => Effect.succeed("Bot title"),
+          }),
+        ),
+      ),
+      Effect.result,
+    );
+    const command = captured[0];
+    if (command?.type !== "message.dispatch") throw new Error("Expected a message dispatch.");
+    expect(command.modelSelection).toEqual(botSelection);
+    expect(command.titleSeed).toBe("Bot title");
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("a thread with no bot keeps the client's selection and seed", () =>
+  Effect.gen(function* () {
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const clientSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-old",
+    } as const;
+    yield* dispatchCommand({
+      type: "message.dispatch",
+      commandId: CommandId.make("send-client-selection"),
+      threadId: ThreadId.make("thread-plain"),
+      messageId: MessageId.make("message-plain"),
+      text: "hello",
+      attachments: [],
+      modelSelection: clientSelection,
+      titleSeed: "Client title",
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
+    const command = captured[0];
+    if (command?.type !== "message.dispatch") throw new Error("Expected a message dispatch.");
+    expect(command.modelSelection).toEqual(clientSelection);
+    expect(command.titleSeed).toBe("Client title");
   }).pipe(Effect.provide(layerIntakeTest)),
 );

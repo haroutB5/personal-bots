@@ -62,6 +62,11 @@ import {
 } from "./PersonalEngine.ts";
 import { failureDetail, PersonalEngineError } from "./errors.ts";
 import {
+  PERSONAL_TITLE_SEED_COMMAND_TAG,
+  personalTitleSeedForSend,
+} from "../personalThreadTitles.ts";
+import { isFreshTaskTurn } from "../sessionHandoff.ts";
+import {
   makePersonalEventState,
   toPersonalEvents,
   type PersonalEventContext,
@@ -361,6 +366,20 @@ const make = Effect.gen(function* () {
           detail: `Thread '${input.threadId}' is deleted and cannot start a turn.`,
         });
       }
+      // A task reopen asks for a fresh provider session; its turn text carries
+      // the work record and the turn-start path adds the chat tail.
+      const freshContext = isFreshTaskTurn(input.context);
+      // The first message may name the chat, but never over a manual rename or
+      // a task's own title.
+      const titleSeed =
+        input.titleSeed === undefined || shell === null
+          ? input.titleSeed
+          : personalTitleSeedForSend({
+              title: shell.title,
+              titleState: (yield* readExtras(input.threadId)).titleState,
+              messageId: input.messageId,
+              titleSeed: input.titleSeed,
+            });
       const runs =
         input.mode === "steer" && shell !== null
           ? yield* threads
@@ -379,7 +398,8 @@ const make = Effect.gen(function* () {
         text: input.text,
         attachments: input.attachments,
         ...(input.context === undefined ? {} : { context: input.context }),
-        ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+        ...(titleSeed === undefined ? {} : { titleSeed }),
+        ...(freshContext ? { freshContext: true } : {}),
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         dispatchMode:
           input.mode === "steer" && targetRunId !== undefined
@@ -390,11 +410,11 @@ const make = Effect.gen(function* () {
         createdBy: "system",
         creationSource: "server",
       });
-      if (input.titleSeed !== undefined) {
+      if (titleSeed !== undefined) {
         yield* writeTitleState({
           threadId: input.threadId,
           source: "generated",
-          version: `server:personal-thread-title-seed:${input.messageId}`,
+          version: `server:${PERSONAL_TITLE_SEED_COMMAND_TAG}:${input.messageId}`,
         })(sql);
       }
     }).pipe(Effect.mapError(engineError("send")));
@@ -415,6 +435,7 @@ const make = Effect.gen(function* () {
         messageId,
         text: promptless ? "" : CONTINUATION_PROMPT,
         attachments: [],
+        ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         dispatchMode: { type: "start_immediately" },
         createdBy: "system",
         creationSource: "server",

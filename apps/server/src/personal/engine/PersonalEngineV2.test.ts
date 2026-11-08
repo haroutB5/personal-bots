@@ -4,6 +4,7 @@ import {
   EventId,
   DEFAULT_RUNTIME_MODE,
   MessageId,
+  PersonalTaskId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -32,6 +33,7 @@ import { runMigrations } from "../../persistence/Migrations.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
+import { personalTaskMessageContext } from "../tasks/taskShared.ts";
 import { PersonalEngine, type PersonalThreadEvent } from "./PersonalEngine.ts";
 import { PersonalEngineV2Live } from "./PersonalEngineV2Live.ts";
 
@@ -320,13 +322,13 @@ const withEngine = <A, E, R = never>(
     return yield* program(engine);
   }).pipe(Effect.provide(layerFor(harness)));
 
-const seedThread = (harness: Harness, threadId = "thread-1") =>
+const seedThread = (harness: Harness, threadId = "thread-1", title = "Researcher") =>
   Effect.sync(() => {
     harness.threads.set(threadId, {
       shell: shellFor({
         threadId: ThreadId.make(threadId),
         projectId: ProjectId.make("project-1"),
-        title: "Researcher",
+        title,
       }),
       runs: [],
     });
@@ -464,6 +466,111 @@ describe("PersonalEngineV2 verbs", () => {
           { type: "queue_after_active" },
           { type: "steer_active", targetRunId: "run-1" },
         ]);
+      }),
+    );
+  });
+
+  it.effect("a fresh task turn asks v2 for a fresh session", () => {
+    const harness = makeHarness();
+    return withEngine(harness, (engine) =>
+      Effect.gen(function* () {
+        yield* seedThread(harness);
+        yield* engine.send({
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("personal-task-task-1-2"),
+          text: "Continue the task",
+          attachments: ATTACHMENTS,
+          context: personalTaskMessageContext({
+            taskId: PersonalTaskId.make("task-1"),
+            attempt: 2,
+            turn: "continuation",
+            source: "user",
+            title: "Long task",
+            delegatorBotId: null,
+            fresh: true,
+            children: [],
+          }),
+          mode: "start",
+        });
+        const command = harness.dispatched.find(
+          (candidate) => candidate.type === "message.dispatch",
+        );
+        expect(command).toMatchObject({ freshContext: true });
+      }),
+    );
+  });
+
+  it.effect(
+    "a first-message seed names a placeholder chat but never a manual or task title",
+    () => {
+      const harness = makeHarness();
+      return withEngine(harness, (engine) =>
+        Effect.gen(function* () {
+          yield* seedThread(harness, "thread-placeholder", "New chat");
+          yield* engine.send({
+            threadId: ThreadId.make("thread-placeholder"),
+            messageId: MessageId.make("message-seed"),
+            text: "Fix the build",
+            attachments: ATTACHMENTS,
+            titleSeed: "Fix the build",
+            mode: "start",
+          });
+          const seeded = harness.dispatched.findLast(
+            (candidate) => candidate.type === "message.dispatch",
+          );
+          expect(seeded).toMatchObject({ titleSeed: "Fix the build" });
+
+          yield* seedThread(harness, "thread-manual", "Owner named");
+          yield* engine.updateMeta({
+            threadId: ThreadId.make("thread-manual"),
+            title: "Owner named",
+          });
+          yield* engine.send({
+            threadId: ThreadId.make("thread-manual"),
+            messageId: MessageId.make("message-manual"),
+            text: "Fix the build",
+            attachments: ATTACHMENTS,
+            titleSeed: "Fix the build",
+            mode: "start",
+          });
+          const manual = harness.dispatched.findLast(
+            (candidate) => candidate.type === "message.dispatch",
+          );
+          expect(
+            manual?.type === "message.dispatch" ? manual.titleSeed : "missing",
+          ).toBeUndefined();
+
+          yield* seedThread(harness, "thread-task", "New chat");
+          yield* engine.send({
+            threadId: ThreadId.make("thread-task"),
+            messageId: MessageId.make("personal-task-task-2-1"),
+            text: "Task turn",
+            attachments: ATTACHMENTS,
+            titleSeed: "Task title",
+            mode: "start",
+          });
+          const task = harness.dispatched.findLast(
+            (candidate) => candidate.type === "message.dispatch",
+          );
+          expect(task?.type === "message.dispatch" ? task.titleSeed : "missing").toBeUndefined();
+        }),
+      );
+    },
+  );
+
+  it.effect("a continuation carries the selection its caller read from the bot", () => {
+    const harness = makeHarness();
+    return withEngine(harness, (engine) =>
+      Effect.gen(function* () {
+        yield* engine.continueTurn({
+          threadId: ThreadId.make("thread-1"),
+          interactionMode: "default",
+          modelSelection: MODEL,
+        });
+        const command = harness.dispatched.find(
+          (candidate) => candidate.type === "message.dispatch",
+        );
+        expect(command).toMatchObject({ modelSelection: MODEL });
       }),
     );
   });

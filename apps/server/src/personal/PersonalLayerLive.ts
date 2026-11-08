@@ -38,6 +38,7 @@ import * as PersonalSecretService from "./secrets/PersonalSecretService.ts";
 import * as PersonalTaskChatArchive from "./PersonalTaskChatArchiveService.ts";
 import * as PersonalTaskTitleBackfill from "./taskTitleBackfill.ts";
 import * as PersonalThreadLinkRepair from "./personalThreadLinkRepair.ts";
+import * as PersonalTurnDecisions from "./turnContext/PersonalTurnDecisions.ts";
 import * as PersonalTurnRetry from "./PersonalTurnRetryService.ts";
 import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
 import * as PersonalGroupService from "./groups/PersonalGroupService.ts";
@@ -161,7 +162,9 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalGroupService.layerLive),
   // The phone's live shell stream consumes the bot service and its engine.
   Layer.provideMerge(Layer.mergeAll(PersonalBotShellStream.layer, PersonalBotsSeedLive)),
-  Layer.provideMerge(PersonalBotService.layer),
+  // The command boundary asks the decisions port for the bot's selection and
+  // title seed; it reads the engine the bot service provides.
+  Layer.provideMerge(Layer.mergeAll(PersonalBotService.layer, PersonalTurnDecisions.layer)),
   Layer.provideMerge(PersonalBotRepository.layer),
 );
 
