@@ -4114,6 +4114,18 @@
       }
     },
     {
+      "tag": "personalBots.subscribeThreadShells",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {},
+      "error": {
+        "not": {}
+      }
+    },
+    {
       "tag": "personalBots.threadFullText",
       "payload": {
         "additionalProperties": true,
@@ -12544,6 +12556,285 @@
         "anyOf": [
           {
             "$ref": "#/$defs/PersonalDesktopErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalDevices.list",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "devices": {
+            "items": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "deviceType": {
+                      "enum": ["desktop", "mobile", "tablet", "bot", "unknown"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "lastSeenAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "os": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "relationship": {
+                      "enum": ["this-device"],
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "signedInAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "label",
+                    "deviceType",
+                    "os",
+                    "signedInAt",
+                    "lastSeenAt",
+                    "relationship"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "deviceType": {
+                      "enum": ["desktop", "mobile", "tablet", "bot", "unknown"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "lastSeenAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "os": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "relationship": {
+                      "enum": ["other"],
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "signedInAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "label",
+                    "deviceType",
+                    "os",
+                    "signedInAt",
+                    "lastSeenAt",
+                    "relationship"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array"
+          }
+        },
+        "required": ["devices"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalDevicesErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalDevicesError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalDevicesErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalDevices.revoke",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": ["sessionId"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "required": ["revoked"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalDevicesErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalDevicesError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalDevicesErrorEncoded"
           },
           {
             "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
@@ -33222,6 +33513,730 @@
       }
     },
     {
+      "tag": "provider.catalog.add",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "catalogId": {
+            "type": "string"
+          }
+        },
+        "required": ["catalogId"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "instanceId": {
+            "type": "string"
+          }
+        },
+        "required": ["instanceId"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "ProviderSetupErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["ProviderSetupError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "instanceId": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "instanceId", "operation", "detail"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProviderSetupErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "provider.catalog.installFacts",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "catalogId": {
+            "type": "string"
+          }
+        },
+        "required": ["catalogId"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "catalogId": {
+            "type": "string"
+          },
+          "distribution": {
+            "additionalProperties": true,
+            "properties": {
+              "kind": {
+                "enum": ["binary", "npm", "uvx"],
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 200,
+                "type": "string"
+              }
+            },
+            "required": ["kind", "label"],
+            "type": "object"
+          },
+          "downloadBytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "host": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requiredBytes": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runsInstallScripts": {
+            "type": "boolean"
+          },
+          "sha256Checked": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "catalogId",
+          "version",
+          "distribution",
+          "downloadBytes",
+          "requiredBytes",
+          "sha256Checked",
+          "host",
+          "runsInstallScripts"
+        ],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "ProviderSetupErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["ProviderSetupError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "instanceId": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "instanceId", "operation", "detail"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProviderSetupErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "provider.catalog.list",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "refresh": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "added": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "instanceId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["instanceId"],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "catalogId": {
+                  "type": "string"
+                },
+                "cost": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "anyOf": [
+                        {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "kind": {
+                      "enum": [
+                        "subscription",
+                        "free",
+                        "freeTier",
+                        "apiKey",
+                        "payAsYouGo",
+                        "byok",
+                        "unknown"
+                      ],
+                      "type": "string"
+                    },
+                    "label": {
+                      "maxLength": 200,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "label", "detail"],
+                  "type": "object"
+                },
+                "description": {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "distribution": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "enum": ["binary", "npm", "uvx"],
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 200,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["kind", "label"],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "downloadBytes": {
+                  "anyOf": [
+                    {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "iconUrl": {
+                  "anyOf": [
+                    {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "license": {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "openSource": {
+                  "type": "boolean"
+                },
+                "popularRank": {
+                  "anyOf": [
+                    {
+                      "maximum": 9007199254740991,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "publisher": {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "repository": {
+                  "anyOf": [
+                    {
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sha256Checked": {
+                  "type": "boolean"
+                },
+                "signInLabel": {
+                  "anyOf": [
+                    {
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "enum": ["builtIn", "registry"],
+                  "type": "string"
+                },
+                "supported": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "ok": {
+                          "enum": [true],
+                          "type": "boolean"
+                        }
+                      },
+                      "required": ["ok"],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "ok": {
+                          "enum": [false],
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "enum": [
+                            "needsUv",
+                            "noWindowsBuild",
+                            "needsNode",
+                            "noChecksum",
+                            "unpinnedVersion",
+                            "unsupportedArchive",
+                            "badDistribution"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["ok", "reason"],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "version": {
+                  "anyOf": [
+                    {
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "website": {
+                  "anyOf": [
+                    {
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "catalogId",
+                "source",
+                "name",
+                "publisher",
+                "description",
+                "website",
+                "repository",
+                "license",
+                "openSource",
+                "version",
+                "iconUrl",
+                "distribution",
+                "downloadBytes",
+                "sha256Checked",
+                "cost",
+                "signInLabel",
+                "popularRank",
+                "supported",
+                "added"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "registryFetchedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registryStale": {
+            "type": "boolean"
+          }
+        },
+        "required": ["entries", "registryFetchedAt", "registryStale"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "ProviderSetupErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["ProviderSetupError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "instanceId": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "instanceId", "operation", "detail"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProviderSetupErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "provider.test.run",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "instanceId": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": ["instanceId"],
+        "type": "object"
+      },
+      "success": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "ProviderSetupErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["ProviderSetupError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "instanceId": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "instanceId", "operation", "detail"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProviderSetupErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
       "tag": "server.getConfig",
       "payload": {
         "not": {
@@ -34245,6 +35260,9 @@
                         }
                       ]
                     },
+                    "addedByUser": {
+                      "type": "boolean"
+                    },
                     "auth": {
                       "additionalProperties": true,
                       "properties": {
@@ -34359,6 +35377,82 @@
                       "required": ["status"],
                       "type": "object"
                     },
+                    "autoUpdate": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "finishedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "fromVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "message": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "nextAttemptAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "managed",
+                            "blocked",
+                            "updating",
+                            "updated",
+                            "rolled_back",
+                            "failed",
+                            "waiting_for_limit"
+                          ],
+                          "type": "string"
+                        },
+                        "toVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "message",
+                        "fromVersion",
+                        "toVersion",
+                        "finishedAt",
+                        "nextAttemptAt"
+                      ],
+                      "type": "object"
+                    },
                     "availability": {
                       "anyOf": [
                         {
@@ -34371,6 +35465,16 @@
                       ]
                     },
                     "badgeLabel": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "catalogId": {
                       "anyOf": [
                         {
                           "type": "string"
@@ -34496,6 +35600,16 @@
                     },
                     "instanceId": {
                       "type": "string"
+                    },
+                    "license": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "message": {
                       "anyOf": [
@@ -34784,6 +35898,29 @@
                         }
                       ]
                     },
+                    "openSource": {
+                      "type": "boolean"
+                    },
+                    "previousVersion": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "publisher": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "reportsContextWindow": {
                       "anyOf": [
                         {
@@ -34825,6 +35962,15 @@
                             "canInstall": {
                               "type": "boolean"
                             },
+                            "canOpenOnLaptop": {
+                              "type": "boolean"
+                            },
+                            "canRemove": {
+                              "type": "boolean"
+                            },
+                            "canTest": {
+                              "type": "boolean"
+                            },
                             "documentationUrl": {
                               "type": "string"
                             }
@@ -34846,6 +35992,9 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "showUsage": {
+                      "type": "boolean"
                     },
                     "skills": {
                       "anyOf": [
@@ -34974,6 +36123,116 @@
                             "type": "object"
                           },
                           "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "smokeCheck": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "checkedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "durationMs": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "manual": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "message": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "missingModels": {
+                          "anyOf": [
+                            {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "previousVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "retryAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": ["checking", "passed", "failed", "waiting_for_limit"],
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["status", "version", "checkedAt", "message"],
+                      "type": "object"
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": ["builtIn", "registry"],
+                          "type": "string"
                         },
                         {
                           "type": "null"
@@ -35121,6 +36380,152 @@
                       },
                       "required": ["status", "startedAt", "finishedAt", "message", "output"],
                       "type": "object"
+                    },
+                    "usageBalance": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "balance": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "currency": {
+                                      "type": "string"
+                                    },
+                                    "fetchedAt": {
+                                      "type": "string"
+                                    },
+                                    "grantedBalance": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "isAvailable": {
+                                      "type": "boolean"
+                                    },
+                                    "toppedUpBalance": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "totalBalance": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "currency",
+                                    "totalBalance",
+                                    "grantedBalance",
+                                    "toppedUpBalance",
+                                    "isAvailable",
+                                    "fetchedAt"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "checkedAt": {
+                              "type": "string"
+                            },
+                            "failureReason": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "missing_key",
+                                    "auth_error",
+                                    "insufficient_balance",
+                                    "http_error",
+                                    "network_error",
+                                    "timeout",
+                                    "invalid_response"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "message": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "spent": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "costUsd": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "records": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "since": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["costUsd", "since", "records"],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "status": {
+                              "enum": ["ready", "failed"],
+                              "type": "string"
+                            }
+                          },
+                          "required": ["checkedAt", "status"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "usageLimits": {
                       "anyOf": [
@@ -38753,6 +40158,2533 @@
       }
     },
     {
+      "tag": "server.getSettings",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "addProjectBaseDirectory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autoResumeLimitedThreads": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "automaticGitFetchInterval": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": ["Infinity", "-Infinity", "NaN"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "backgroundActivity": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "baseProfile": {
+                    "enum": ["balanced", "performance", "battery-saver"],
+                    "type": "string"
+                  },
+                  "overrides": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "properties": {
+                          "automaticGitFetchInterval": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "enum": ["Infinity", "-Infinity", "NaN"],
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "hostPowerMonitorActiveInterval": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "enum": ["Infinity", "-Infinity", "NaN"],
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "hostPowerMonitorIdleInterval": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "enum": ["Infinity", "-Infinity", "NaN"],
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "pauseWhenClientLowPower": {
+                            "type": "boolean"
+                          },
+                          "pauseWhenHostLocked": {
+                            "type": "boolean"
+                          },
+                          "pauseWhenHostLowPower": {
+                            "type": "boolean"
+                          },
+                          "pauseWhenOnBattery": {
+                            "type": "boolean"
+                          },
+                          "providerHealthRefreshInterval": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "enum": ["Infinity", "-Infinity", "NaN"],
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "profile": {
+                    "anyOf": [
+                      {
+                        "enum": ["balanced", "performance", "battery-saver", "custom"],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "schemaVersion": {
+                    "anyOf": [
+                      {
+                        "enum": [1],
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "backgroundActivityProfile": {
+            "anyOf": [
+              {
+                "enum": ["balanced", "performance", "battery-saver"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branchNameInstructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branchNamePrefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branchNamingMode": {
+            "anyOf": [
+              {
+                "enum": ["static", "semantic", "custom"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "compactIdleThreads": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "enum": ["onReturn", "beforeCacheExpires", "off"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "continueThreadsAfterServerUpdate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cursorKeychainUsageEnabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultAutoPull": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultModelSelection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "instanceId": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "model": {},
+                  "options": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["model"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultProjectScripts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "async": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "autoOpenPreview": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "command": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "enum": ["play", "test", "lint", "configure", "build", "debug"],
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "previewUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "runOnSettle": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "runOnWorktreeCreate": {
+                      "type": "boolean"
+                    },
+                    "stopOnSettle": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["id", "name", "command", "icon", "runOnWorktreeCreate"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultRuntimeMode": {
+            "anyOf": [
+              {
+                "enum": ["approval-required", "auto-accept-edits", "auto", "full-access"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultTheme": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultThemeSetAt": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultThreadEnvMode": {},
+          "deviceHosts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "identityFile": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "kind": {
+                      "enum": ["ssh"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "port": {
+                      "anyOf": [
+                        {
+                          "maximum": 65535,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "target": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "label", "target"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deviceOnboardingCompleted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "easDeviceHosts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "accessToken": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "reference": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["provider", "reference"],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "appId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "idleMinutes": {
+                      "maximum": 60,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "enum": ["eas"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "maxConcurrentSessions": {
+                      "maximum": 20,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxSessionMinutes": {
+                      "maximum": 115,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["kind", "id", "label"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enableAgentBrowserAccess": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enableAgentDeviceAccess": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enableDeviceSupport": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enableProviderUpdateChecks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environmentIcon": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fallbackModelSelection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "instanceId": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "model": {},
+                  "options": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["model"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "favorites": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["provider", "model"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ghqCloneLayout": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "guestSharingEnabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hiddenThreadTags": {
+            "anyOf": [
+              {
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hideTaggedThreads": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idleCompaction": {
+            "enum": ["onReturn", "beforeCacheExpires", "off"],
+            "type": "string"
+          },
+          "linkedEnvironmentsEnabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "newWorktreesStartFromOrigin": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observability": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "otlpLogsUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "otlpMetricsUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "otlpTracesUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previousWorktreesDirectories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectAgentBrowserAccessOverrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectAutoPullOverrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectScriptOverrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "async": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "autoOpenPreview": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "enum": ["play", "test", "lint", "configure", "build", "debug"],
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "previewUrl": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "runOnSettle": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "runOnWorktreeCreate": {
+                            "type": "boolean"
+                          },
+                          "stopOnSettle": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": ["id", "name", "command", "icon", "runOnWorktreeCreate"],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectSettingsFolded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectSettingsOverrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "allOf": [
+                    {
+                      "additionalProperties": {},
+                      "type": "object"
+                    }
+                  ],
+                  "properties": {
+                    "branchNameInstructions": {
+                      "type": "string"
+                    },
+                    "branchNamePrefix": {
+                      "type": "string"
+                    },
+                    "branchNamingMode": {
+                      "enum": ["static", "semantic", "custom"],
+                      "type": "string"
+                    },
+                    "continueThreadsAfterServerUpdate": {
+                      "type": "boolean"
+                    },
+                    "defaultAutoPull": {
+                      "type": "boolean"
+                    },
+                    "defaultModelSelection": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "instanceId": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "model": {},
+                            "options": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "provider": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": ["model"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "defaultProjectScripts": {
+                      "items": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "async": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "autoOpenPreview": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "enum": ["play", "test", "lint", "configure", "build", "debug"],
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "previewUrl": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "runOnSettle": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "runOnWorktreeCreate": {
+                            "type": "boolean"
+                          },
+                          "stopOnSettle": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": ["id", "name", "command", "icon", "runOnWorktreeCreate"],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "defaultRuntimeMode": {
+                      "enum": ["approval-required", "auto-accept-edits", "auto", "full-access"],
+                      "type": "string"
+                    },
+                    "defaultThreadEnvMode": {
+                      "enum": ["local", "worktree"],
+                      "type": "string"
+                    },
+                    "enableAgentBrowserAccess": {
+                      "type": "boolean"
+                    },
+                    "enableAgentDeviceAccess": {
+                      "type": "boolean"
+                    },
+                    "newWorktreesStartFromOrigin": {
+                      "type": "boolean"
+                    },
+                    "providerInstances": {
+                      "additionalProperties": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "object"
+                    },
+                    "pullRequestMergeMethod": {
+                      "anyOf": [
+                        {
+                          "enum": ["merge", "squash", "rebase"],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "removeAgentCreditsOnMerge": {
+                      "type": "boolean"
+                    },
+                    "responseStreamingMode": {
+                      "enum": ["turn", "paragraph"],
+                      "type": "string"
+                    },
+                    "reviewGuideInstructions": {
+                      "type": "string"
+                    },
+                    "reviewGuideModelSelection": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "instanceId": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "model": {},
+                            "options": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "provider": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": ["model"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sidebarAutoSettleAfterDays": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "enum": ["Infinity", "-Infinity", "NaN"],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sidebarAutoSettleKeepPullRequests": {
+                      "type": "boolean"
+                    },
+                    "sidebarAutoSettleOnMerge": {
+                      "type": "boolean"
+                    },
+                    "sourceControlWriterModelSelection": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "instanceId": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "model": {},
+                            "options": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "provider": {
+                              "anyOf": [
+                                {},
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": ["model"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sourceControlWritingStyle": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "customInstructions": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "followChangeRequestTemplates": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "mode": {
+                              "anyOf": [
+                                {
+                                  "enum": ["repo_conventions", "conventional_commits", "custom"],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "speechProjectCustomWords": {
+                      "items": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "aliases": {
+                            "items": {
+                              "maxLength": 50,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 8,
+                            "type": "array"
+                          },
+                          "term": {
+                            "maxLength": 50,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": ["term", "aliases"],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "textGenerationModelSelection": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "instanceId": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {},
+                        "options": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "provider": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["model"],
+                      "type": "object"
+                    },
+                    "threadTitleInstructions": {
+                      "type": "string"
+                    },
+                    "worktreeCleanup": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "mode": {
+                              "enum": ["off"],
+                              "type": "string"
+                            }
+                          },
+                          "required": ["mode"],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "mode": {
+                              "enum": ["custom"],
+                              "type": "string"
+                            },
+                            "rules": {
+                              "additionalProperties": true,
+                              "properties": {
+                                "worktreeAfterDays": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 3650,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "worktreeKeepWhen": {
+                                  "anyOf": [
+                                    {
+                                      "enum": [
+                                        "any-local-files",
+                                        "uncommitted-changes",
+                                        "tracked-changes"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "worktreeOnDelete": {
+                                  "type": "boolean"
+                                },
+                                "worktreeOnMerge": {
+                                  "type": "boolean"
+                                },
+                                "worktreeSettledAfterDays": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 3650,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "worktreeUnchanged": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "worktreeAfterDays",
+                                "worktreeOnMerge",
+                                "worktreeOnDelete",
+                                "worktreeUnchanged"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": ["mode", "rules"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "worktreeSubmodules": {}
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerHealthRefreshInterval": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": ["Infinity", "-Infinity", "NaN"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerInstances": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "accentColor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "config": {},
+                    "displayName": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "driver": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "environment": {
+                      "items": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "secret": {
+                            "additionalProperties": true,
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "reference": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["provider", "reference"],
+                            "type": "object"
+                          },
+                          "sensitive": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "valueRedacted": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": ["name"],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": ["driver"],
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerModelPreferences": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "hiddenModels": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "modelOrder": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pullRequestMergeMethod": {
+            "anyOf": [
+              {
+                "enum": ["merge", "squash", "rebase"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "removeAgentCreditsOnMerge": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "responseStreamingMode": {
+            "anyOf": [
+              {
+                "enum": ["turn", "paragraph"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewGuideInstructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewGuideModelSelection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "instanceId": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "model": {},
+                  "options": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["model"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewGuidesEnabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "secretProviders": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "config": {},
+                    "kind": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "label"],
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sidebarAutoSettleAfterDays": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": ["Infinity", "-Infinity", "NaN"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sidebarAutoSettleKeepPullRequests": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sidebarAutoSettleOnMerge": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "simlockDeviceHosts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "agentToken": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "reference": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["provider", "reference"],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "gatewayUrl": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["simlock"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "maxLeaseMinutes": {
+                      "maximum": 240,
+                      "minimum": 5,
+                      "type": "integer"
+                    },
+                    "maxLeases": {
+                      "maximum": 20,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["kind", "id", "label", "gatewayUrl"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "simlockDeviceHostsEnabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snoozeLimitedThreads": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snoozePresets": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "enum": ["after"],
+                          "type": "string"
+                        },
+                        "minutes": {
+                          "maximum": 43200,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": ["kind", "minutes"],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "day": {
+                          "enum": [
+                            "today",
+                            "tomorrow",
+                            "monday",
+                            "tuesday",
+                            "wednesday",
+                            "thursday",
+                            "friday",
+                            "saturday",
+                            "sunday"
+                          ],
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": ["at"],
+                          "type": "string"
+                        },
+                        "time": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["kind", "day", "time"],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceControlHosts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceControlWriterModelSelection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "instanceId": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "model": {},
+                  "options": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["model"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceControlWritingStyle": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "customInstructions": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "followChangeRequestTemplates": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "mode": {
+                    "anyOf": [
+                      {
+                        "enum": ["repo_conventions", "conventional_commits", "custom"],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speechAcceleration": {
+            "anyOf": [
+              {
+                "enum": ["auto"],
+                "type": "string"
+              },
+              {
+                "enum": ["cpu"],
+                "type": "string"
+              },
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speechModelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speechModelUnloadTimeout": {
+            "anyOf": [
+              {
+                "enum": ["never", "immediately", "min_2", "min_5", "min_10", "min_15", "hour_1"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speechPostProcessingModelSelection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "instanceId": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "model": {},
+                  "options": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["model"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speechProjectCustomWords": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "aliases": {
+                      "items": {
+                        "maxLength": 50,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "type": "array"
+                    },
+                    "term": {
+                      "maxLength": 50,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["term", "aliases"],
+                  "type": "object"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "storageCleanup": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "browserArtifactsAfterDays": {
+                    "anyOf": [
+                      {
+                        "maximum": 3650,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "logsAfterDays": {
+                    "anyOf": [
+                      {
+                        "maximum": 3650,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "worktreeAfterDays": {
+                    "anyOf": [
+                      {
+                        "maximum": 3650,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "worktreeKeepWhen": {
+                    "anyOf": [
+                      {
+                        "enum": ["any-local-files", "uncommitted-changes", "tracked-changes"],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "worktreeOnDelete": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "worktreeOnMerge": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "worktreeSettledAfterDays": {
+                    "anyOf": [
+                      {
+                        "maximum": 3650,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "worktreeUnchanged": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "textGenerationModelSelection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "instanceId": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "model": {},
+                  "options": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["model"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "threadTitleInstructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usageLimitSources": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "kind": {
+                      "enum": ["cliproxy"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "managementKey": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "reference": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["provider", "reference"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "url"],
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usageModelAliases": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usageModelFilter": {},
+          "usagePriceOverrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "cacheReadCostPerMillionTokens": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "cacheWriteCostPerMillionTokens": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "inputCostPerMillionTokens": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "outputCostPerMillionTokens": {
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "required": ["inputCostPerMillionTokens", "outputCostPerMillionTokens"],
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worktreeCleanup": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "mode": {
+                    "enum": ["off"],
+                    "type": "string"
+                  }
+                },
+                "required": ["mode"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "mode": {
+                    "enum": ["custom"],
+                    "type": "string"
+                  },
+                  "rules": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "worktreeAfterDays": {
+                        "anyOf": [
+                          {
+                            "maximum": 3650,
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "worktreeKeepWhen": {
+                        "anyOf": [
+                          {
+                            "enum": ["any-local-files", "uncommitted-changes", "tracked-changes"],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "worktreeOnDelete": {
+                        "type": "boolean"
+                      },
+                      "worktreeOnMerge": {
+                        "type": "boolean"
+                      },
+                      "worktreeSettledAfterDays": {
+                        "anyOf": [
+                          {
+                            "maximum": 3650,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "worktreeUnchanged": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "worktreeAfterDays",
+                      "worktreeOnMerge",
+                      "worktreeOnDelete",
+                      "worktreeUnchanged"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": ["mode", "rules"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worktreeSubmodules": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worktreesDirectory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "ProviderSetupErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["ProviderSetupError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "instanceId": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "instanceId", "operation", "detail"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProviderSetupErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
       "tag": "server.refreshProviders",
       "payload": {
         "additionalProperties": true,
@@ -38858,6 +42790,9 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "addedByUser": {
+                      "type": "boolean"
                     },
                     "auth": {
                       "additionalProperties": true,
@@ -38973,6 +42908,82 @@
                       "required": ["status"],
                       "type": "object"
                     },
+                    "autoUpdate": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "finishedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "fromVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "message": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "nextAttemptAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "managed",
+                            "blocked",
+                            "updating",
+                            "updated",
+                            "rolled_back",
+                            "failed",
+                            "waiting_for_limit"
+                          ],
+                          "type": "string"
+                        },
+                        "toVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "message",
+                        "fromVersion",
+                        "toVersion",
+                        "finishedAt",
+                        "nextAttemptAt"
+                      ],
+                      "type": "object"
+                    },
                     "availability": {
                       "anyOf": [
                         {
@@ -38985,6 +42996,16 @@
                       ]
                     },
                     "badgeLabel": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "catalogId": {
                       "anyOf": [
                         {
                           "type": "string"
@@ -39110,6 +43131,16 @@
                     },
                     "instanceId": {
                       "type": "string"
+                    },
+                    "license": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "message": {
                       "anyOf": [
@@ -39398,6 +43429,29 @@
                         }
                       ]
                     },
+                    "openSource": {
+                      "type": "boolean"
+                    },
+                    "previousVersion": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "publisher": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "reportsContextWindow": {
                       "anyOf": [
                         {
@@ -39439,6 +43493,15 @@
                             "canInstall": {
                               "type": "boolean"
                             },
+                            "canOpenOnLaptop": {
+                              "type": "boolean"
+                            },
+                            "canRemove": {
+                              "type": "boolean"
+                            },
+                            "canTest": {
+                              "type": "boolean"
+                            },
                             "documentationUrl": {
                               "type": "string"
                             }
@@ -39460,6 +43523,9 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "showUsage": {
+                      "type": "boolean"
                     },
                     "skills": {
                       "anyOf": [
@@ -39588,6 +43654,116 @@
                             "type": "object"
                           },
                           "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "smokeCheck": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "checkedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "durationMs": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "manual": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "message": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "missingModels": {
+                          "anyOf": [
+                            {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "previousVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "retryAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": ["checking", "passed", "failed", "waiting_for_limit"],
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["status", "version", "checkedAt", "message"],
+                      "type": "object"
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": ["builtIn", "registry"],
+                          "type": "string"
                         },
                         {
                           "type": "null"
@@ -39735,6 +43911,152 @@
                       },
                       "required": ["status", "startedAt", "finishedAt", "message", "output"],
                       "type": "object"
+                    },
+                    "usageBalance": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "balance": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "currency": {
+                                      "type": "string"
+                                    },
+                                    "fetchedAt": {
+                                      "type": "string"
+                                    },
+                                    "grantedBalance": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "isAvailable": {
+                                      "type": "boolean"
+                                    },
+                                    "toppedUpBalance": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "totalBalance": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "currency",
+                                    "totalBalance",
+                                    "grantedBalance",
+                                    "toppedUpBalance",
+                                    "isAvailable",
+                                    "fetchedAt"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "checkedAt": {
+                              "type": "string"
+                            },
+                            "failureReason": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "missing_key",
+                                    "auth_error",
+                                    "insufficient_balance",
+                                    "http_error",
+                                    "network_error",
+                                    "timeout",
+                                    "invalid_response"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "message": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "spent": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "costUsd": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "enum": ["Infinity", "-Infinity", "NaN"],
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "records": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "since": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["costUsd", "since", "records"],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "status": {
+                              "enum": ["ready", "failed"],
+                              "type": "string"
+                            }
+                          },
+                          "required": ["checkedAt", "status"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "usageLimits": {
                       "anyOf": [

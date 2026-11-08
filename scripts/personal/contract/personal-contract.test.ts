@@ -47,8 +47,8 @@ test("golden is deterministic across builds", () => {
 test("covers every personal method plus the two server methods the client calls", () => {
   const golden = readGolden();
   const tags = golden.entries.map((candidate) => candidate.tag);
-  NodeAssert.equal(tags.length, 136);
-  NodeAssert.equal(new Set(tags).size, 136);
+  NodeAssert.equal(tags.length, 144);
+  NodeAssert.equal(new Set(tags).size, 144);
   NodeAssert.deepEqual(tags, [...tags].sort());
   for (const tag of ["server.getConfig", "server.refreshProviders", "personalBots.list"]) {
     NodeAssert.ok(tags.includes(tag), `missing ${tag}`);
