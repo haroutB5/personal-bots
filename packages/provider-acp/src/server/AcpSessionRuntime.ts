@@ -138,6 +138,8 @@ export interface AcpSessionRuntimeOptions {
   ) => EffectAcpSchema.SessionNotification;
   /** Redact secrets before logging. Failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** The spawned agent's pid, once, for providers that attribute the process to a chat. */
+  readonly onProcessStarted?: (pid: number) => void;
   /** Disable only for non-interactive discovery that must surface auth-required immediately. */
   readonly authenticateOnAuthRequired?: boolean;
   readonly onInitialized?: (
@@ -1473,6 +1475,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     );
 
   yield* lowerBotProcessPriorityEffect(Number(child.pid), "acp");
+  yield* Effect.sync(() => options.onProcessStarted?.(Number(child.pid)));
 
   // Detached children can keep stdout open, delaying protocol termination.
   if (scopeUnit !== undefined) {
