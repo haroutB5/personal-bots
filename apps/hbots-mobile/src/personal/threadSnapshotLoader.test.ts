@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 describe("loadThreadSnapshot", () => {
-  it.fails("decodes the server's /bounded JSON, ISO date strings included", async () => {
+  it("decodes the server's /bounded JSON, ISO date strings included", async () => {
     const urls: string[] = [];
     vi.stubGlobal("fetch", (input: URL) => {
       urls.push(String(input));

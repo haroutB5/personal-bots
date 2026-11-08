@@ -1,17 +1,14 @@
 import type { ThreadId } from "@t3tools/contracts";
-import { OrchestrationV2ThreadDetailSnapshot } from "@t3tools/contracts";
 import { withOrchestrationProtocolHeader } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import {
   ThreadSnapshotLoader,
   type ThreadSnapshotLoadResult,
 } from "@t3tools/client-runtime/state/threads";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 
 import { authorizedFetch } from "../authorizedRequest";
 import type { StoredSession } from "../session";
-
-const decodeThreadSnapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadDetailSnapshot);
+import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 
 export async function loadThreadSnapshot(
   stored: StoredSession,
@@ -31,7 +28,7 @@ export async function loadThreadSnapshot(
     );
     if (response.status === 404) return { _tag: "missing" };
     if (!response.ok) return { _tag: "unavailable" };
-    const snapshot = decodeThreadSnapshot((await response.json()) as unknown);
+    const snapshot = decodeThreadSnapshotJson((await response.json()) as unknown);
     return {
       _tag: "present",
       snapshot,

@@ -1,5 +1,4 @@
 import {
-  OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadDetailSnapshot as ThreadSnapshot,
   type ServerConfig,
@@ -10,7 +9,8 @@ import { ConnectionPersistenceError, Persistence } from "@t3tools/client-runtime
 import { Directory, File, Paths } from "expo-file-system";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+
+import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 
 const CACHE_DIRECTORY = "hbots-thread-cache";
 
@@ -38,15 +38,13 @@ function persistenceError(
   });
 }
 
-const decodeThreadSnapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadDetailSnapshot);
-
 export async function readCachedThread(
   environmentId: string,
   threadId: string,
 ): Promise<Option.Option<ThreadSnapshot>> {
   const file = threadFile(environmentId, threadId);
   if (!file.exists) return Option.none();
-  return Option.some(decodeThreadSnapshot(JSON.parse(await file.text()) as unknown));
+  return Option.some(decodeThreadSnapshotJson(JSON.parse(await file.text()) as unknown));
 }
 
 export function writeCachedThread(environmentId: string, snapshot: ThreadSnapshot): void {

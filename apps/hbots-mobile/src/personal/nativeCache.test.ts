@@ -49,7 +49,7 @@ const snapshot = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2Thre
 );
 
 describe("thread cache file", () => {
-  it.fails("reads back a written thread snapshot", async () => {
+  it("reads back a written thread snapshot", async () => {
     writeCachedThread("environment-phone", snapshot);
 
     const loaded = await readCachedThread(
