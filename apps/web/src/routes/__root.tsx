@@ -15,6 +15,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { isPersonalPath } from "../features/personal/personalMode";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
@@ -182,7 +183,13 @@ function RootRouteBranch() {
     return <Outlet />;
   }
 
-  const appShell = (
+  // The personal Bots shell brings its own full-screen layout and tab bar, so it
+  // skips the upstream thread sidebar, whose fixed toggle would cover its header.
+  const appShell = isPersonalPath(pathname) ? (
+    <CommandPalette>
+      <Outlet />
+    </CommandPalette>
+  ) : (
     <CommandPalette>
       <AppSidebarLayout>
         <Outlet />
