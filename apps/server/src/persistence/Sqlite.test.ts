@@ -29,6 +29,10 @@ vi.mock("node:worker_threads", async (importOriginal) => {
 });
 
 it.effect("keeps writes moving past a 48 MiB WAL while a reader retains its snapshot", () => {
+  // This drives the inline path's admission-aware checkpoint protocol; the
+  // worker path checkpoints through persistence/sqliteCheckpointWorker.ts.
+  const previousWorker = process.env.T3CODE_SQLITE_WORKER;
+  process.env.T3CODE_SQLITE_WORKER = "off";
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-burst-"));
   const dbPath = NodePath.join(tempDir, "state.sqlite");
   const persistence = SqlitePersistence.layerFromPath(dbPath).pipe(
@@ -95,7 +99,13 @@ it.effect("keeps writes moving past a 48 MiB WAL while a reader retains its snap
   }).pipe(
     Effect.scoped,
     Effect.provide(persistence),
-    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (previousWorker === undefined) delete process.env.T3CODE_SQLITE_WORKER;
+        else process.env.T3CODE_SQLITE_WORKER = previousWorker;
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }),
+    ),
   );
 });
 
