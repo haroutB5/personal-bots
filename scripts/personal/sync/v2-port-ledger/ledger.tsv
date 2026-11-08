@@ -539,8 +539,8 @@ apps/server/src/provider/providerInstallation.test.ts		content	268	C5-C9	done	v2
 apps/server/src/provider/providerInstallation.ts		content	188	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/providerMaintenance.test.ts		modify-delete	113	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
 apps/server/src/provider/providerMaintenance.ts		modify-delete	67	C5-C9	dropped	v1 path replaced by the v2 provider-core/provider package; no behaviour left to port
-apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C9	open	M1: MAIN mise update tests parked; C9 ports them with the runner
-apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C9	open	M1: MAIN 1.66.122 mise update handling parked; C9 ports provider updates
+apps/server/src/provider/providerMaintenanceRunner.test.ts		content	114	C9	done	C9: rollback, mise uninstall, single-instance and queued-update cases ported; 38 cases pass
+apps/server/src/provider/providerMaintenanceRunner.ts		content	17	C9	done	C9: main 1.66.122 rollback, smoke-check guard and mise uninstall restored on the v2 runner
 apps/server/src/provider/providerSmokeTest.test.ts		added-broken	194	C9	dropped	C15: the probe is rebuilt as PersonalProvidersV2Live.smokeTestFor on the structured generator, tested in PersonalProvidersV2.test.ts
 apps/server/src/provider/providerSmokeTest.ts		added-broken	452	C5-C9	dropped	C15: the probe is rebuilt as PersonalProvidersV2Live.smokeTestFor on the structured generator, tested in PersonalProvidersV2.test.ts
 apps/server/src/provider/providerStatusCache.test.ts		content	90	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
@@ -850,7 +850,7 @@ packages/contracts/src/providerSetup.ts		content	33	C9	done	v2 module present
 packages/contracts/src/providerUsageLimits.ts		content	115	C14	done	C14: fullReadAt, refreshFailed and the balance and spend shapes; ServerProvider wiring is D1/D6
 packages/contracts/src/pullRequest.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/relay.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/contracts/src/server.ts		content	82	C9	open	M1: MAIN provider smoke, auto-update, catalog and balance fields parked; C9 ports them
+packages/contracts/src/server.ts		content	82	C9	done	C9: smoke, auto-update, catalog and balance fields present; contracts typecheck and golden pass
 packages/contracts/src/settings.test.ts		content	13	C9	done	v2 test present
 packages/contracts/src/settings.ts		content	88	D1	dropped	DeepSeekSettings lives in the package
 packages/contracts/src/usage.ts		content	4	C14	dropped	U already has deepseek in UsageProviderKind at contract v6
@@ -935,10 +935,10 @@ apps/server/src/http.ts		content	0	C12	done	MAIN attachment upload endpoint head
 apps/server/src/server.ts		content	0	C11	done	C11: MAIN device handlers and session close wiring parked; C11 adds them in personal/ws/handlers.ts
 apps/server/src/ws.ts		content	0	C11	done	C11: MAIN dropConnection and device socket wiring parked; C11 swaps in serveUntilSessionRevoked
 apps/server/src/orchestration/Services/OrchestrationEngine.ts		modify-delete	0	C1	open	MAIN service file deleted with the v1 engine; getCommandReceipt moves to C1
-apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts		content	0	C9	open	MAIN 1.66.122 auto-update action and report parked; C9 ports provider updates
-apps/server/src/personal/providerUpdates/PersonalProviderUpdates.test.ts		content	0	C9	open	MAIN auto-update test cases parked; C9 ports them with the source
-apps/server/src/personal/providerUpdates/miseProviderMaintenance.ts		content	0	C9	open	MAIN mise-managed provider update module and its test parked; providerMaintenance.ts is deleted at M1
-apps/server/src/personal/providerUpdates/providerAutoUpdate.ts		content	0	C9	open	MAIN provider auto-update policy and its test parked; C9 ports provider updates
+apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts		content	0	C9	done	C9: auto-update action and report restored; runs once a day, tests, rolls back
+apps/server/src/personal/providerUpdates/PersonalProviderUpdates.test.ts		content	0	C9	done	C9: session events and auto-update cases ported; 43 cases pass across the two suites
+apps/server/src/personal/providerUpdates/miseProviderMaintenance.ts		content	0	C9	done	C9: shared provider-core mise ownership, re-exported at the trunk path; 2 mise cases pass
+apps/server/src/personal/providerUpdates/providerAutoUpdate.ts		content	0	C9	done	C9: daily policy and projection restored; auto-update suite passes
 apps/web/src/features/personal/usePersonalAutomation.ts		content	0	phase 4	open	MAIN web automation hook changes parked; web is out of scope
 apps/web/src/features/personal/usePersonalGroups.ts		content	0	phase 4	open	MAIN web group hook changes parked; web is out of scope
 apps/web/src/features/personal/useRemovedBots.ts		content	0	phase 4	open	MAIN web removed-bots hook changes parked; web is out of scope
