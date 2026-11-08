@@ -155,6 +155,7 @@ const setBaseline = Effect.gen(function* () {
   yield* sql`
     INSERT INTO personal_meta (key, value)
     VALUES (${PersonalBotRepository.PERSONAL_CHAT_UNREAD_SINCE_META_KEY}, ${BASELINE})
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `;
 });
 

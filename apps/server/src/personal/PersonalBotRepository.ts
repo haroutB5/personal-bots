@@ -850,6 +850,21 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;
 
+  // The unread baseline is what keeps chats from before the feature from
+  // lighting up. It is written once on the writer while the repository is built,
+  // never from a read path, so every read can run on the read-only reader.
+  yield* DateTime.now.pipe(
+    Effect.flatMap(
+      (now) =>
+        sql`
+        INSERT INTO personal_meta (key, value)
+        VALUES (${PERSONAL_CHAT_UNREAD_SINCE_META_KEY}, ${DateTime.formatIso(now)})
+        ON CONFLICT(key) DO NOTHING
+      `,
+    ),
+    Effect.mapError(toPersistenceSqlError("PersonalBotRepository.unreadSince")),
+  );
+
   const createBotRow = SqlSchema.void({
     Request: CreatePersonalBotInput,
     execute: (input) =>
@@ -2032,22 +2047,6 @@ export const make = Effect.gen(function* () {
           Effect.mapError(toPersistenceSqlError("PersonalBotRepository.openThreadIds:query")),
         );
 
-  // The unread baseline is written once, the first time a list runs on a
-  // database without one; after that the flag skips the write.
-  let unreadSinceWritten = false;
-  const ensureUnreadSince = Effect.suspend(() => {
-    if (unreadSinceWritten) return Effect.void;
-    return Effect.gen(function* () {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
-        INSERT INTO personal_meta (key, value)
-        VALUES (${PERSONAL_CHAT_UNREAD_SINCE_META_KEY}, ${now})
-        ON CONFLICT(key) DO NOTHING
-      `;
-      unreadSinceWritten = true;
-    });
-  });
-
   const listThreadLinkPreviews = () =>
     DateTime.now.pipe(
       Effect.flatMap((now) => listThreadLinkRows({ now: DateTime.formatIso(now) })),
@@ -2073,10 +2072,7 @@ export const make = Effect.gen(function* () {
     );
 
   const listThreadLinks: PersonalBotRepository["Service"]["listThreadLinks"] = () =>
-    ensureUnreadSince.pipe(
-      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listThreadLinks:unreadSince")),
-      Effect.andThen(listThreadLinkPreviews),
-    );
+    listThreadLinkPreviews();
 
   const listArchivedChatCounts: PersonalBotRepository["Service"]["listArchivedChatCounts"] = () =>
     sql<{ readonly botId: string; readonly count: number }>`
