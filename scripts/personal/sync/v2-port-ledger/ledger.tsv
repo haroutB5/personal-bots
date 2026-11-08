@@ -377,8 +377,8 @@ apps/server/src/provider/CodexInstallation.ts		content	3	B1	dropped	our only cha
 apps/server/src/provider/CodexManagedRuntime.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/CodexProvider.test.ts		content	1	C6	done	C6: skills/list warning test ported to the v2 path
 apps/server/src/provider/CodexProvider.ts	apps/server/src/provider/Layers/CodexProvider.ts	content	31	C5-C9	done	C6: logCodexSkillsListErrors ported
-apps/server/src/provider/DeepSeekModelCatalog.test.ts		added-broken	89	D1	open	G6 park; DeepSeek model catalog (D1)
-apps/server/src/provider/DeepSeekModelCatalog.ts		added-broken	233	D1	open	G6 park; DeepSeek model catalog (D1)
+apps/server/src/provider/DeepSeekModelCatalog.test.ts		added-broken	89	D2	done	Done: v2 home is packages/provider-deepseek/src/server/catalog.test.ts
+apps/server/src/provider/DeepSeekModelCatalog.ts		added-broken	233	D2	done	Done: v2 home is packages/provider-deepseek/src/server/catalog.ts
 apps/server/src/provider/Drivers/AntigravityDriver.test.ts		content	58	C5-C9	done	v2 module and test present
 apps/server/src/provider/Drivers/AntigravityDriver.ts		content	134	C5-C9	done	v2 module present
 apps/server/src/provider/Drivers/ClaudeDriver.ts		content	154	C5-C9	done	installed-CLI model discovery, discovered catalog merge and post-reset capability cache invalidation ported
@@ -393,12 +393,12 @@ apps/server/src/provider/Drivers/CodexHomeLayout.ts		content	4	B1	dropped	every 
 apps/server/src/provider/Drivers/CodexManagedProvider.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/CursorDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/CursorDriver.ts		modify-delete	10	C5-C9	done	v2 home is packages/provider-cursor/src/server/driver.ts
-apps/server/src/provider/Drivers/DeepSeekDriver.test.ts		added-broken	265	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/Drivers/DeepSeekDriver.ts		added-broken	456	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/Drivers/DeepSeekEngine.test.ts		added-broken	43	D1	open	G6 park; DeepSeek engine (D1)
-apps/server/src/provider/Drivers/DeepSeekEngine.ts		added-broken	41	D1	open	G6 park; DeepSeek engine (D1)
-apps/server/src/provider/Drivers/DeepSeekEnvironment.test.ts		added-broken	248	D1	open	G2 park; DeepSeek environment (D1)
-apps/server/src/provider/Drivers/DeepSeekEnvironment.ts		added-broken	228	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Drivers/DeepSeekDriver.test.ts		added-broken	265	D2	done	Done: v2 home is packages/provider-deepseek/src/server/driver.test.ts
+apps/server/src/provider/Drivers/DeepSeekDriver.ts		added-broken	456	D2	done	Done: v2 home is packages/provider-deepseek/src/server/driver.ts
+apps/server/src/provider/Drivers/DeepSeekEngine.test.ts		added-broken	43	D2	done	Done: v2 home is packages/provider-deepseek/src/server/engine.test.ts
+apps/server/src/provider/Drivers/DeepSeekEngine.ts		added-broken	41	D2	done	Done: v2 home is packages/provider-deepseek/src/server/engine.ts
+apps/server/src/provider/Drivers/DeepSeekEnvironment.test.ts		added-broken	248	D2	done	Done: v2 home is packages/provider-deepseek/src/server/environment.test.ts
+apps/server/src/provider/Drivers/DeepSeekEnvironment.ts		added-broken	228	D2	done	Done: v2 home is packages/provider-deepseek/src/server/environment.ts
 apps/server/src/provider/Drivers/GrokDriver.test.ts		modify-delete	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/provider/Drivers/GrokDriver.ts		modify-delete	10	C5-C9	done	v2 home is packages/provider-grok/src/server/driver.ts
 apps/server/src/provider/Drivers/OpenCodeDriver.ts		modify-delete	83	C5-C9	dropped	driver moved to packages/provider-opencode; the v2 driver wires createOpenCodeAdapterV2 and resolveCodexLaunchArgs equivalents, and the parked hunk is upstream import churn
@@ -428,8 +428,8 @@ apps/server/src/provider/Layers/DeepSeekAdapter.test.ts		added-broken	627	D1	ope
 apps/server/src/provider/Layers/DeepSeekAdapter.ts		added-broken	236	D1	open	DeepSeek is the D series, not C5-C9
 apps/server/src/provider/Layers/DeepSeekDshAdapter.test.ts		added-broken	1001	D1	open	DeepSeek is the D series, not C5-C9
 apps/server/src/provider/Layers/DeepSeekDshAdapter.ts		added-broken	1724	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	D1	open	DeepSeek is the D series, not C5-C9
-apps/server/src/provider/Layers/DeepSeekProvider.ts		added-broken	545	D1	open	DeepSeek is the D series, not C5-C9
+apps/server/src/provider/Layers/DeepSeekProvider.test.ts		added-broken	486	D2	done	Done: v2 home is packages/provider-deepseek/src/server/status.test.ts
+apps/server/src/provider/Layers/DeepSeekProvider.ts		added-broken	545	D2	done	Done: v2 home is packages/provider-deepseek/src/server/status.ts
 apps/server/src/provider/Layers/GrokAdapter.test.ts		modify-delete	48	C5-C9	dropped	v2 package tests own the Grok adapter
 apps/server/src/provider/Layers/GrokAdapter.ts		modify-delete	16	C5-C9	done	v2 home is packages/provider-grok/src/server/adapter.ts; termination is owned by AcpSessionRuntime
 apps/server/src/provider/Layers/NativeAcpAdapter.test.ts		added-broken	826	C5-C9	dropped	v2 packages/provider-acp/src/server owns the native ACP adapter and its tests
