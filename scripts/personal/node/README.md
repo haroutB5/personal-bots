@@ -8,12 +8,13 @@ equivalent, used once the hbots laptop runs Omarchy (Arch + Hyprland).
 ```
 node/hbots.mjs            one CLI: build, activate, start, serve, stop, restart,
                           status, smoke, backup, prune, sync, units
+install-dsh.mjs          the pinned DeepSeek Harness runtime installer
 throwaway.mjs            fresh-root throwaway server (start|stop|down|up|pair|list)
 e2e-smoke.mjs            the five phone journeys against a staged release
 gates-linux.json         the Linux fork gate definitions for gate-evidence.mjs
 lib/evidence.mjs         release guard: notes check + gate-evidence check
 lib/*.mjs                paths, process identity, releases, build, smoke, backup
-node/test/*.test.mjs      node:test suites (18 tests, no network, temp roots)
+node/test/*.test.mjs      node:test suites (49 tests, no network, temp roots)
 linux/systemd/*.in        user unit templates (all laptop services)
 linux/install-units.sh    renders the templates with this machine's paths
 ```
@@ -104,5 +105,3 @@ tunnel if hbots already spawns one.
 - `throwaway-server.ps1` (equivalent: `HBOTS_HOME=$(mktemp -d) node ... start`).
 - `pair.ps1` and `notify-release.ps1` (the server exposes the same endpoints;
   they can be called with `node <release>/dist/bin.mjs`).
-- `install-dsh.ps1`: the DeepSeek Harness runtime installer still runs from
-  Windows; port it before using the `dsh` engine on Linux.
