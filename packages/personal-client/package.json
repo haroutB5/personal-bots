@@ -289,6 +289,10 @@
       "types": "./src/conversation/types.ts",
       "import": "./src/conversation/types.ts"
     },
+    "./conversation/timeline": {
+      "types": "./src/conversation/timeline.ts",
+      "import": "./src/conversation/timeline.ts"
+    },
     "./bots/botAvatarShapes": {
       "types": "./src/bots/botAvatarShapes.ts",
       "import": "./src/bots/botAvatarShapes.ts"
