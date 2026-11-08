@@ -331,8 +331,8 @@ describe("removed registry agents", () => {
 
 describe("bot provider instruction support", () => {
   // The v1.19.0 defect: a bot could be created on any ready provider, but
-  // only the Claude, Codex and OpenCode adapters pass its persona to the
-  // model. The other three answered as the raw model, silently.
+  // only the instruction-capable adapters pass its persona to the model. The
+  // others answered as the raw model, silently.
   it("offers only providers whose adapter carries bot instructions", () => {
     expect(readyProvider("claudeAgent")).toSatisfy(isBotProviderSelectable);
     expect(readyProvider("codex")).toSatisfy(isBotProviderSelectable);
@@ -341,7 +341,9 @@ describe("bot provider instruction support", () => {
     expect(readyProvider("grok")).toSatisfy(isBotProviderSelectable);
     // 1.66.73: Antigravity bots get their persona with every prompt.
     expect(readyProvider("antigravity")).toSatisfy(isBotProviderSelectable);
-    for (const driver of ["cursor", "deepseek", "someFutureProvider"]) {
+    // DeepSeek's ACP adapter carries the persona too.
+    expect(readyProvider("deepseek")).toSatisfy(isBotProviderSelectable);
+    for (const driver of ["cursor", "someFutureProvider"]) {
       expect(isBotProviderSelectable(readyProvider(driver))).toBe(false);
     }
   });
@@ -397,15 +399,16 @@ describe("bot provider instruction support", () => {
   });
 
   it("warns in the editor for a bot already saved on a mute provider", () => {
-    const warning = botInstructionSupportWarning(readyProvider("deepseek"), "DeepSeek");
-    expect(warning).toContain("DeepSeek does not pass bot instructions");
+    const warning = botInstructionSupportWarning(readyProvider("cursor"), "Cursor");
+    expect(warning).toContain("Cursor does not pass bot instructions");
     expect(warning).toContain("Instructions");
+    expect(botInstructionSupportWarning(readyProvider("deepseek"), "DeepSeek")).toBeNull();
     expect(botInstructionSupportWarning(readyProvider("claudeAgent"), "Claude Code")).toBeNull();
     expect(botInstructionSupportWarning(undefined, "Claude Code")).toBeNull();
   });
 
   it("does not claim 'no provider is ready' when a ready one is merely mute", () => {
-    expect(noBotProviderMessage([readyProvider("deepseek")])).toContain(
+    expect(noBotProviderMessage([readyProvider("cursor")])).toContain(
       "don't pass bot instructions to the model",
     );
     expect(noBotProviderMessage([])).toContain("No provider is ready");
