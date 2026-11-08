@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NetService from "@t3tools/shared/Net";
 import { AuthStandardClientScopes, ORCHESTRATION_PROTOCOL_QUERY_PARAM } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -10,7 +11,7 @@ import * as Layer from "effect/Layer";
 import { HttpServer } from "effect/http";
 import { vi } from "vite-plus/test";
 
-import { openSocketUrl } from "../../../../../apps/hbots-mobile/src/pairing.ts";
+import { openSocketUrl } from "./mobilePairing.mjs";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -126,5 +127,8 @@ it.live(
       expect(JSON.parse(withoutProtocol.body)).toMatchObject({
         code: "orchestration_protocol_incompatible",
       });
-    }),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer)),
+    ),
 );
