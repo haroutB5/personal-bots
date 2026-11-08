@@ -72,6 +72,7 @@ import type {
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import { enrichProviderSnapshotMetadata } from "./providerSnapshotMetadata.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -2305,10 +2306,12 @@ it.layer(
 
           assert.deepStrictEqual(
             cachedProvider,
-            withBundledCompatibility({
-              ...refreshedProvider,
-              models: [...initialProvider.models],
-            }),
+            withBundledCompatibility(
+              enrichProviderSnapshotMetadata({
+                ...refreshedProvider,
+                models: [...initialProvider.models],
+              }),
+            ),
           );
         }).pipe(Effect.provide(runtimeServices));
       }),
@@ -2684,15 +2687,10 @@ it.layer(
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
 
-          assert.deepStrictEqual(yield* registry.getProviders, [
-            withBundledCompatibility(cachedProvider),
-          ]);
-          assert.deepStrictEqual(yield* registry.refresh(codexDriver), [
-            withBundledCompatibility(cachedProvider),
-          ]);
-          assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
-            withBundledCompatibility(cachedProvider),
-          ]);
+          const enriched = withBundledCompatibility(enrichProviderSnapshotMetadata(cachedProvider));
+          assert.deepStrictEqual(yield* registry.getProviders, [enriched]);
+          assert.deepStrictEqual(yield* registry.refresh(codexDriver), [enriched]);
+          assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [enriched]);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
