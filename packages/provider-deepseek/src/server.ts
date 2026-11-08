@@ -71,6 +71,7 @@ export {
   DEEPSEEK_BALANCE_URL,
   DEEPSEEK_BALANCE_URL_ENV,
   deepSeekBalanceEndpoint,
+  deepSeekBalanceReader,
   makeDeepSeekBalanceReader,
   parseDeepSeekBalance,
   type DeepSeekBalanceAmounts,

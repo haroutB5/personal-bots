@@ -15,6 +15,7 @@ import * as PersonalConnectionApprovalService from "./connections/approvalServic
 import * as PersonalConnectionService from "./connections/service.ts";
 import * as WhatsAppSendLog from "./connections/whatsapp/sendLog.ts";
 import * as WhatsAppSession from "./connections/whatsapp/session.ts";
+import * as DeepSeekBalanceWatcher from "./deepseek/DeepSeekBalanceWatcher.ts";
 import * as PersonalDesktop from "./desktop/PersonalDesktop.ts";
 import * as PersonalBrowser from "./browser/PersonalBrowser.ts";
 import * as PersonalBrowserLease from "./browser/BrowserLease.ts";
@@ -91,6 +92,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalMemoryTidy.PersonalMemoryTidy).start();
     yield* (yield* PersonalPushService.PersonalPushService).start();
     yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
+    // Warns before a DeepSeek prepaid balance runs dry: a light sweep, a
+    // debounced read after a finished turn, and one notice per low spell.
+    yield* (yield* DeepSeekBalanceWatcher.DeepSeekBalanceWatcher).start();
     // Sets up the Updates bot and its nightly 04:00 update run (the routine service runs it).
     yield* (yield* PersonalClaudeCodeReview.PersonalClaudeCodeReview).start();
     // Re-runs a bot reply that died on a transient provider fault. Subscribes
@@ -125,8 +129,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
 // opened by earlier steps). SqlClient, orchestration and providers come from
 // the runtime layers the whole group is merged above.
 const PersonalLayerLive = PersonalReactorsLive.pipe(
-  // Consumes the push service below and the provider/orchestration runtime.
-  Layer.provideMerge(PersonalProviderUpdates.layer),
+  // Both consume the push service, bot repository and provider port below.
+  Layer.provideMerge(Layer.mergeAll(PersonalProviderUpdates.layer, DeepSeekBalanceWatcher.layer)),
   // Consumes the routine service and the bot service/repository below.
   Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),
