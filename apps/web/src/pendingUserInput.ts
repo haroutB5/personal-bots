@@ -11,6 +11,7 @@ import {
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
+export type { PendingUserInputDraftAnswer };
 export {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,

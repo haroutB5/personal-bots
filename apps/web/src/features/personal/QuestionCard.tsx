@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { Check } from "lucide-react";
 
@@ -119,20 +119,17 @@ function PendingQuestionCard({
 
   // A submit needs every question answered, so the card walks through them one
   // at a time and only sends once the last one resolves.
-  const commit = useCallback(
-    (nextDrafts: Drafts, index: number) => {
-      setDrafts(nextDrafts);
-      const isLast = index >= questions.length - 1;
-      if (!isLast) {
-        setQuestionIndex(index + 1);
-        return;
-      }
-      const answers = buildPendingUserInputAnswers(questions, nextDrafts);
-      if (answers === null) return;
-      onAnswer(card.requestId, answers);
-    },
-    [card.requestId, onAnswer, questions],
-  );
+  const commit = (nextDrafts: Drafts, index: number) => {
+    setDrafts(nextDrafts);
+    const isLast = index >= questions.length - 1;
+    if (!isLast) {
+      setQuestionIndex(index + 1);
+      return;
+    }
+    const answers = buildPendingUserInputAnswers(questions, nextDrafts);
+    if (answers === null) return;
+    onAnswer(card.requestId, answers);
+  };
 
   if (question === null) return null;
 
@@ -189,7 +186,7 @@ function PendingQuestionCard({
               aria-pressed={question.multiSelect ? isSelected : undefined}
               onClick={() => chooseOption(optionValue)}
               className={cn(
-                "flex min-h-11 w-full items-start gap-2 rounded-[var(--personal-radius-button)] border px-3.5 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40",
+                "flex min-h-11 w-full items-start gap-2 rounded-[var(--personal-radius-button)] border px-3.5 py-2.5 text-left outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40",
                 isSelected
                   ? "border-[var(--personal-primary)] bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
                   : "border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]",
@@ -249,12 +246,13 @@ function PendingQuestionCard({
               setDrafts((current) => ({
                 ...current,
                 [question.id]: setPendingUserInputCustomAnswer(
+                  question,
                   current[question.id],
                   event.target.value,
                 ),
               }));
             }}
-            className="mt-1 h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-[16px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+            className="mt-1 h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-[16px] text-[var(--personal-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
           />
         </label>
       ) : null}
@@ -265,7 +263,7 @@ function PendingQuestionCard({
             type="button"
             disabled={responding}
             onClick={() => setQuestionIndex(progress.questionIndex - 1)}
-            className="h-11 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 text-[15px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+            className="h-11 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 text-[15px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
           >
             Back
           </button>
@@ -275,7 +273,7 @@ function PendingQuestionCard({
             type="button"
             disabled={responding}
             onClick={() => onDismiss(card.requestId)}
-            className="h-11 rounded-[var(--personal-radius-button)] px-3.5 text-[15px] font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+            className="h-11 rounded-[var(--personal-radius-button)] px-3.5 text-[15px] font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
           >
             Not now
           </button>
@@ -285,7 +283,7 @@ function PendingQuestionCard({
             type="button"
             disabled={responding || !progress.canAdvance}
             onClick={() => commit(drafts, progress.questionIndex)}
-            className="ms-auto h-11 min-w-24 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-medium text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
+            className="ms-auto h-11 min-w-24 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-medium text-[var(--personal-primary-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
           >
             {progress.isLastQuestion ? "Send answer" : "Next"}
           </button>

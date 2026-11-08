@@ -10,7 +10,8 @@ import {
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { act, create, type ReactTestRenderer, type ReactTestInstance } from "react-test-renderer";
+import { create, type ReactTestRenderer, type ReactTestInstance } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import type { ConversationItem } from "./conversationModel";
@@ -76,7 +77,6 @@ afterEach(async () => {
 });
 
 function stubEnvironment(): void {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
     "ResizeObserver",
     class {
