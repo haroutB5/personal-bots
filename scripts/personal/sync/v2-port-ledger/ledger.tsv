@@ -57,7 +57,7 @@ apps/mobile/src/features/threads/NewTaskDraftScreen.tsx		content	1	B1	dropped	ou
 apps/mobile/src/features/threads/NewTaskRouteScreen.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/mobile/src/features/threads/markdownCodeHighlightState.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/mobile/src/features/threads/use-thread-list-v2-shelf-preferences.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/mobile/src/features/usage/usageProviders.ts		content	4	D1	open	deepseek usage literal; D1 checks mobile switches
+apps/mobile/src/features/usage/usageProviders.ts		content	4	D1	done	Done: one label, one colour and one order entry in the mobile usage map
 apps/mobile/src/lib/hot-swappable-atom-runtime.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/mobile/src/state/acknowledged-thread-messages.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/mobile/src/state/assets.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -838,9 +838,9 @@ packages/contracts/src/assets.ts		content	26	C12	done	landed-PR retarget (Append
 packages/contracts/src/baseSchemas.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/device.ts		content	3	C15	dropped	U already carries the shortened device contract
 packages/contracts/src/environmentHttp.ts		content	38	C11	done	C11: landed-PR retarget (Appendix H.4): C11
-packages/contracts/src/model.ts		content	59	D1	open	landed-PR retarget (Appendix H.4): D1
-packages/contracts/src/orchestration.test.ts		modify-delete	79	D1	open	landed-PR retarget (Appendix H.4): D1
-packages/contracts/src/orchestration.ts		modify-delete	121	D1	open	landed-PR retarget (Appendix H.4): D1
+packages/contracts/src/model.ts		content	59	D1	dropped	Provider constants live in the package
+packages/contracts/src/orchestration.test.ts		modify-delete	79	D1	dropped	Assertions move to the package
+packages/contracts/src/orchestration.ts		modify-delete	121	D1	dropped	The image cap is already at contracts/model.ts:14-20
 packages/contracts/src/personalV1Wire.test.ts		added-broken	36	C3	done	ported with a frozen v1 JSON Schema fixture generated at 6357e13b38
 packages/contracts/src/previewAutomation.ts		content	253	C13	done	C13: history and closeTab operations, their schemas, the host kind and trusted host messages
 packages/contracts/src/provider.test.ts		content	6	C5	dropped	v1 provider wire test; personal flags are tested at the v2 adapter input
@@ -852,7 +852,7 @@ packages/contracts/src/pullRequest.ts		content	2	B1	dropped	our only change at t
 packages/contracts/src/relay.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/contracts/src/server.ts		content	82	C9	open	M1: MAIN provider smoke, auto-update, catalog and balance fields parked; C9 ports them
 packages/contracts/src/settings.test.ts		content	13	C9	done	v2 test present
-packages/contracts/src/settings.ts		content	88	D1	open	landed-PR retarget (Appendix H.4): D1
+packages/contracts/src/settings.ts		content	88	D1	dropped	DeepSeekSettings lives in the package
 packages/contracts/src/usage.ts		content	4	C14	dropped	U already has deepseek in UsageProviderKind at contract v6
 packages/effect-acp/src/client.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/effect-acp/src/protocol.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
