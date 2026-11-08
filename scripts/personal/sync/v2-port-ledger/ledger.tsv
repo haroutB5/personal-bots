@@ -211,8 +211,8 @@ apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts		modify-delete	5
 apps/server/src/orchestration/Layers/ProjectionPipeline.ts		modify-delete	56	B1	dropped	Appendix A class DROP, v1 artefact
 apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts		modify-delete	27	C3	dropped	v1 snapshot query deleted at U; PersonalEngine.getThread and shellSnapshot read ProjectionStoreV2
-apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts		modify-delete	1852	C4+C10	open	test of an Appendix A hook file
-apps/server/src/orchestration/Layers/ProviderCommandReactor.ts		modify-delete	844	C4+C10	open	hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts		modify-delete	1852	C4+C10	done	C4b: the behaviours are covered by PersonalTurnDecisions.test.ts, PersonalEngineV2.test.ts, ThreadMessageIntake.test.ts, ProviderTurnStartService.test.ts and ClaudeAdapterV2.test.ts (selection restart)
+apps/server/src/orchestration/Layers/ProviderCommandReactor.ts		modify-delete	844	C4+C10	done	C4b: a-d,k PersonalTurnContext; e PersonalTurnDecisions + ProviderTurnStartService; f,g,l ProviderSessionManager + ProviderTurnStartService; h dispatchMode; i PersonalPrewarmSession; j,n ProviderTurnStartService + bot selection; m thread.archived; o ThreadStream
 apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.activity.test.ts		modify-delete	100	C10	dropped	the v1 activity projection is deleted; v2 turn items replace activities
 apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts		modify-delete	630	C10	dropped	the v1 ingestion reactor is deleted; its v2 home ProviderEventIngestor.test.ts covers normalization and failure items
 apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts		modify-delete	208	C10	dropped	the v1 ingestion reactor is deleted; v2 ProviderEventIngestor writes typed turn items and runs, so the replay/replaced-session/title guards have no v2 event surface
