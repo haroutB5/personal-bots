@@ -210,6 +210,21 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
+  // A provider signs in to a different account while its draft is cleared. Drop
+  // the published reading too, or the next failed read falls back to the old one.
+  const clearUsageLimits = Effect.fn("clearUsageLimits")(function* () {
+    const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
+      if (state.snapshot.usageLimits === undefined) {
+        return [null, state] as const;
+      }
+      const snapshot = withUsageLimits(state.snapshot, undefined);
+      return [snapshot, { ...state, snapshot }] as const;
+    });
+    if (snapshotToPublish !== null) {
+      yield* PubSub.publish(changesPubSub, snapshotToPublish);
+    }
+  });
+
   // Providers call this on every token-usage tick, usually without changing the snapshot.
   const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
     function* (update) {
@@ -445,6 +460,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     },
     applyUsageLimits,
     seedUsageLimits: applyUsageLimitsSeed,
+    clearUsageLimits: clearUsageLimits(),
     refreshUsage: refreshUsage(),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);

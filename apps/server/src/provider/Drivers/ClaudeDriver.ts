@@ -310,6 +310,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               resolveInstalledModelCatalog,
             ),
           ),
+          // A failed probe cannot report the account, but the on-disk login still
+          // names it. Without this, managedProvider keeps the previous account's usage.
+          Effect.flatMap((provider) =>
+            provider.auth.workspaceId !== undefined
+              ? Effect.succeed(provider)
+              : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+                  Effect.map((workspaceId) =>
+                    workspaceId === undefined
+                      ? provider
+                      : { ...provider, auth: { ...provider.auth, workspaceId } },
+                  ),
+                ),
+          ),
           Effect.tap((provider) =>
             provider.auth.status === "unauthenticated"
               ? Cache.invalidateAll(capabilitiesProbeCache)

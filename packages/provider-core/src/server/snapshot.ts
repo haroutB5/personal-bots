@@ -19,6 +19,8 @@ export interface ManagedServerProvider {
   readonly refreshLatest?: Effect.Effect<ServerProvider>;
   /** Takes the usage reading persisted before a restart when the provider has none. */
   readonly seedUsageLimits?: (limits: ServerProviderUsageLimits) => Effect.Effect<void>;
+  /** Drops the published reading when the provider's account changed, without probing. */
+  readonly clearUsageLimits?: Effect.Effect<void>;
   readonly refreshUsage?: Effect.Effect<void, ServerSettingsError>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
   /** Merge windows by ID; updates with no usable window leave the snapshot untouched. */
