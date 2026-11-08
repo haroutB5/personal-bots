@@ -523,8 +523,8 @@ apps/server/src/provider/claudeUsageLimits.ts	apps/server/src/provider/Layers/cl
 apps/server/src/provider/codexLaunchArgs.ts	apps/server/src/provider/Layers/codexLaunchArgs.ts	content	80	C5-C9	done	C6: personal-bot app-server args, skill args and owner skill listing ported
 apps/server/src/provider/codexUsageLimits.test.ts	apps/server/src/provider/Layers/codexUsageLimits.test.ts	content	33	C5-C9	done	C6: usage-limit wording tests ported
 apps/server/src/provider/codexUsageLimits.ts	apps/server/src/provider/Layers/codexUsageLimits.ts	content	31	C5-C9	done	C6: usage-limit wording ported
-apps/server/src/provider/dshUsageLedger.test.ts		added-broken	254	D1	open	G6 park; DeepSeek usage ledger (D1)
-apps/server/src/provider/dshUsageLedger.ts		added-broken	349	D1	open	G6 park; DeepSeek usage ledger (D1)
+apps/server/src/provider/dshUsageLedger.test.ts		added-broken	254	D6	done	D6: ported to packages/provider-deepseek/src/server/usage.test.ts
+apps/server/src/provider/dshUsageLedger.ts		added-broken	349	D6	done	D6: ported to packages/provider-deepseek/src/server/usage.ts
 apps/server/src/provider/model-manifest.json		content	65	C5-C9	done	v2 module present at this path; the parked hunk has no personal behaviour left
 apps/server/src/provider/opencode2.live.test.ts		added-broken	197	C7	dropped	live test needs a real OpenCode CLI and the user's account; package OpenCode2Server/Client tests cover the protocol and the app replay suite covers sessions
 apps/server/src/provider/opencode2.test.ts		added-broken	214	C5-C9	dropped	v1 opencode2 client suite; its behaviour lives in packages/provider-opencode/src/server/v2 tests
@@ -592,12 +592,12 @@ apps/server/src/textGeneration/ClaudeTextGeneration.ts		content	91	C5	done	struc
 apps/server/src/textGeneration/CodexTextGeneration.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/CursorTextGeneration.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/CursorTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/server/src/textGeneration/DeepSeekTextGeneration.ts		added-broken	98	D1	open	G6 park; DeepSeek text generation (D1)
+apps/server/src/textGeneration/DeepSeekTextGeneration.ts		added-broken	98	D6	done	D6: ported to packages/provider-deepseek/src/server/textGeneration.ts
 apps/server/src/textGeneration/GrokTextGeneration.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/GrokTextGeneration.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/textGeneration/OpenCode2TextGeneration.ts		added-broken	259	C7	dropped	no personal behaviour in the hunk; packages/provider-opencode/src/server/v2/textGeneration.ts is the v2 home
 apps/server/src/textGeneration/TextGeneration.ts		content	17	C5	done	service exposes the optional structured generator from provider-core
-apps/server/src/usage-transcript-worker.ts		added-broken	25	D1	open	DeepSeek-only transcript worker; needs the D1 DeepSeek transcript format
+apps/server/src/usage-transcript-worker.ts		added-broken	25	D6	done	D6: restored against the v2 format API; deepseek format lives in the package
 apps/server/src/usage/UsageLimitSources.ts		content	30	C14	done	C14: probe backoff on a failing hub, no backoff for a missing key
 apps/server/src/usage/UsageService.sessionUsage.test.ts		added-broken	398	C14	done	C14: readSessionUsage tests: per-bot window, bounded HTTP, no Cursor network
 apps/server/src/usage/UsageService.test.ts		content	281	C14	done	C14: U v11 cache supersedes the v4 upgrade case; DeepSeek cases go to D1; OpenCode 2 store root is set by the driver environment and packages/provider-opencode usage.test.ts covers the SQLite read
@@ -616,11 +616,11 @@ apps/server/src/usage/usagePricing.test.ts		content	163	C14	done	C14: DeepSeek p
 apps/server/src/usage/usagePricing.ts		content	226	C14	done	C14: DeepSeek Flash peak window rates and Gemini fallback rates
 apps/server/src/usage/usageScanCache.test.ts		content	104	C14	dropped	U v11 scan cache supersedes the personal cache
 apps/server/src/usage/usageScanCache.ts		content	230	C14	dropped	U v11 scan cache supersedes the personal cache
-apps/server/src/usage/usageTranscriptReader.test.ts		content	163	D1	open	DeepSeek transcript reader; needs the D1 DeepSeek transcript format
-apps/server/src/usage/usageTranscriptReader.ts		content	32	D1	open	DeepSeek transcript reader; needs the D1 DeepSeek transcript format
-apps/server/src/usage/usageTranscriptWorkerClient.ts		added-broken	78	D1	open	DeepSeek-only worker client; needs the D1 DeepSeek transcript format
+apps/server/src/usage/usageTranscriptReader.test.ts		content	163	D6	done	D6: v2 reader test covers the DeepSeek worker and its inline fallback
+apps/server/src/usage/usageTranscriptReader.ts		content	32	D6	done	D6: v2 reader dispatches DeepSeek reads to the worker, inline on the kill switch
+apps/server/src/usage/usageTranscriptWorkerClient.ts		added-broken	78	D6	done	D6: restored for the v2 reader
 apps/server/src/usage/usageTranscripts.test.ts		modify-delete	24	B1	dropped	every commit on our side is an upstream cherry-pick U already has
-apps/server/src/usage/usageTranscripts.ts		modify-delete	69	C9+D6	open	hook file listed in Appendix A
+apps/server/src/usage/usageTranscripts.ts		modify-delete	69	C9+D6	done	D6: DeepSeek parsing moved to packages/provider-deepseek/src/server/usage.ts; the v2 reader reads formats
 apps/server/src/vcs/GitVcsDriver.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/GitVcsDriverCore.test.ts		content	9	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/server/src/vcs/GitVcsDriverCore.ts		content	42	C15	dropped	U resolveSpawnCommand already resolves git, and the PATH walk it uses is now off the loop
