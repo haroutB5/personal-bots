@@ -20,7 +20,7 @@ import type { OrchestrationSession } from "@t3tools/contracts";
  * view joins them back into one thread so the screens keep their v1 rows.
  */
 export interface ChatThread {
-  readonly id: string;
+  readonly id: EnvironmentThreadShell["id"];
   readonly projectId: EnvironmentThreadShell["projectId"];
   readonly title: string;
   readonly modelSelection: EnvironmentThreadShell["modelSelection"];
