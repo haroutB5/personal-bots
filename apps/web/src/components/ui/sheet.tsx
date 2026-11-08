@@ -2,13 +2,17 @@ import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
+import { withBackClose } from "~/components/ui/back-closing-root";
 import { Button } from "~/components/ui/button";
 import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
+
+// Where Back is a history step (Android), Back closes an open sheet.
+const BackClosingSheetRoot = withBackClose(SheetPrimitive.Root);
 
 function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
   return (
     <ControlledOpenContext value={props.open}>
-      <SheetPrimitive.Root {...props} />
+      <BackClosingSheetRoot {...props} />
     </ControlledOpenContext>
   );
 }
@@ -60,6 +64,9 @@ function SheetPopup({
   showCloseButton = true,
   keepMounted = false,
   transitionDurationMs,
+  // Personal sheets restyle and force the backdrop (features/personal/*Sheet.tsx).
+  backdropClassName,
+  forceBackdrop = false,
   side = "right",
   variant = "default",
   style,
@@ -68,6 +75,9 @@ function SheetPopup({
   showCloseButton?: boolean;
   keepMounted?: boolean;
   transitionDurationMs?: number;
+  backdropClassName?: string;
+  /** Render the backdrop even when base-ui considers this dialog nested (it skips it by default). */
+  forceBackdrop?: boolean;
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
 }) {
@@ -80,11 +90,12 @@ function SheetPopup({
   return (
     <SheetPortal keepMounted={keepMounted}>
       <SheetBackdrop
-        className={
-          instant
-            ? "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!"
-            : undefined
-        }
+        forceRender={forceBackdrop}
+        className={cn(
+          instant &&
+            "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!",
+          backdropClassName,
+        )}
         style={transitionStyle}
       />
       <SheetViewport side={side} variant={variant}>

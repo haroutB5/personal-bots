@@ -12,8 +12,7 @@ const queryState = vi.hoisted(() => ({
   error: null as string | null,
   isPending: true,
   isNotFile: false,
-  isBinary: false,
-  isProtected: false,
+  readError: null as { readonly failure: string } | null,
 }));
 
 type MockAssetState =
@@ -58,8 +57,7 @@ afterEach(() => {
     error: null,
     isPending: true,
     isNotFile: false,
-    isBinary: false,
-    isProtected: false,
+    readError: null,
   });
   assetState.inline = { _tag: "Loading" };
   assetState.download = { _tag: "Loading" };
@@ -197,7 +195,7 @@ describe("ChatFilePreviewBody", () => {
   it("falls back to Download when an unknown type turns out to be binary", () => {
     queryState.error = "binary_file";
     queryState.isPending = false;
-    queryState.isBinary = true;
+    queryState.readError = { failure: "binary_file" };
     assetState.download = { _tag: "Success", url: "https://h/api/assets/d/data.bin" };
 
     const markup = renderBody({ ...request, path: "data.bin", label: "data.bin" });
@@ -208,7 +206,7 @@ describe("ChatFilePreviewBody", () => {
   it("says a protected file is never shown, for text and for media", () => {
     queryState.error = "protected_file";
     queryState.isPending = false;
-    queryState.isProtected = true;
+    queryState.readError = { failure: "protected_file" };
     expect(renderBody({ ...request, path: "work/.env", label: ".env" })).toContain(
       "never shown or downloaded",
     );

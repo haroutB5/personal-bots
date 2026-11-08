@@ -75,6 +75,8 @@ export type AssetUrlState =
   | {
       readonly _tag: "Failure";
       readonly reason?: "missing-file-access";
+      /** The server refused on purpose: the file holds credentials or machine state. */
+      readonly protectedFile?: true;
     }
   | {
       readonly _tag: "Success";
@@ -115,7 +117,15 @@ export function assetUrlStateFromResult(
   result: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
   httpBaseUrl: string | null,
 ): AssetUrlState {
-  if (result._tag === "Failure") return { _tag: "Failure" };
+  if (result._tag === "Failure") {
+    const cause = Cause.squash(result.cause);
+    return typeof cause === "object" &&
+      cause !== null &&
+      "_tag" in cause &&
+      cause._tag === "AssetProtectedFileError"
+      ? { _tag: "Failure", protectedFile: true }
+      : { _tag: "Failure" };
+  }
   if (httpBaseUrl === null || result._tag !== "Success") return { _tag: "Loading" };
   const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
   if (url === null) return { _tag: "Failure" };

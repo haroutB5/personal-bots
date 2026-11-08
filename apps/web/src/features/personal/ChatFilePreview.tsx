@@ -1,7 +1,7 @@
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { Download, ExternalLink, Share2, X } from "lucide-react";
 import type { JSX, ReactNode } from "react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { FileTextPreview } from "./FileTextPreview";
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -12,11 +12,11 @@ import { chatFilePreviewKind, fileNameFromPath } from "./filesModel";
 import { useSheetDragDismiss } from "./useSheetDragDismiss";
 
 const ICON_BUTTON =
-  "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
 const PRIMARY_ACTION =
-  "flex h-11 flex-1 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-surface)]";
+  "flex h-11 flex-1 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-surface)]";
 const SECONDARY_ACTION =
-  "flex h-11 flex-1 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] px-4 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "flex h-11 flex-1 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] px-4 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
 
 export interface ChatFileOpenRequest {
   /** Workspace-relative, home-relative, `~/` or absolute host path of the file to show. */
@@ -70,16 +70,13 @@ function resolvedPathLabel(cwd: string, resolved: string): string {
   return `${cwd.replace(/[\\/]+$/, "")}/${resolved}`;
 }
 
-function useHostFileResource(
+function hostFileResource(
   cwd: string,
   path: string,
   disposition: "inline" | "download",
   enabled: boolean,
 ): AssetResource | null {
-  return useMemo(
-    () => (enabled ? { _tag: "host-file", cwd, path, disposition } : null),
-    [cwd, path, disposition, enabled],
-  );
+  return enabled ? { _tag: "host-file", cwd, path, disposition } : null;
 }
 
 function canShareFiles(): boolean {
@@ -213,11 +210,11 @@ export function ChatFilePreviewBody({
   const wantsInline = kind === "image" || kind === "pdf" || kind === "html";
   const inline = useAssetUrlState(
     environmentId,
-    useHostFileResource(cwd, path ?? "", "inline", wantsInline && path !== null),
+    hostFileResource(cwd, path ?? "", "inline", wantsInline && path !== null),
   );
   const download = useAssetUrlState(
     environmentId,
-    useHostFileResource(cwd, path ?? "", "download", path !== null),
+    hostFileResource(cwd, path ?? "", "download", path !== null),
   );
   const downloadUrl = download._tag === "Success" ? download.url : null;
   const inlineUrl = inline._tag === "Success" ? inline.url : null;
@@ -229,6 +226,7 @@ export function ChatFilePreviewBody({
         : download._tag === "Success" && download.sourcePath !== undefined
           ? download.sourcePath
           : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hands the path the server opened up to the sheet header, which renders outside this body.
   useEffect(() => {
     if (resolved !== null) onResolvedPath?.(resolved);
   }, [onResolvedPath, resolved]);
@@ -242,7 +240,7 @@ export function ChatFilePreviewBody({
   const shareAction =
     downloadUrl !== null && canShareFiles() ? <ShareButton url={downloadUrl} name={name} /> : null;
   const protectedFile =
-    query.isProtected ||
+    query.readError?.failure === "protected_file" ||
     (wantsInline && inline._tag === "Failure" && inline.protectedFile === true);
   if (protectedFile || (download._tag === "Failure" && download.protectedFile === true)) {
     return <PreviewMessage>{PROTECTED_MESSAGE}</PreviewMessage>;
@@ -294,7 +292,7 @@ export function ChatFilePreviewBody({
     );
   }
 
-  if (kind === "download" || (readsText && query.isBinary)) {
+  if (kind === "download" || (readsText && query.readError?.failure === "binary_file")) {
     if (download._tag === "Failure") {
       return (
         <PreviewMessage>
@@ -365,29 +363,22 @@ export function ChatFilePreviewProvider({
   const [resolved, setResolved] = useState<{ readonly key: string; readonly path: string } | null>(
     null,
   );
-  const openFile = useCallback<ChatFileOpener>(
-    (next) => {
-      if (!shouldOpenChatFilePreview(cwd, next.path)) return false;
-      setRequest(next);
-      return true;
-    },
-    [cwd],
-  );
-  const close = useCallback(() => setRequest(null), []);
+  const openFile: ChatFileOpener = (next) => {
+    if (!shouldOpenChatFilePreview(cwd, next.path)) return false;
+    setRequest(next);
+    return true;
+  };
+  const close = () => setRequest(null);
   const dragRef = useSheetDragDismiss(close);
-  const contextValue = useMemo(() => openFile, [openFile]);
   const name = request === null ? "" : fileNameFromPath(request.path);
   const requestPath = request?.path ?? null;
-  const onResolvedPath = useCallback(
-    (path: string) => {
-      if (requestPath !== null) setResolved({ key: requestPath, path });
-    },
-    [requestPath],
-  );
+  const onResolvedPath = (path: string) => {
+    if (requestPath !== null) setResolved({ key: requestPath, path });
+  };
   const shownPath =
     request === null ? "" : resolved?.key === request.path ? resolved.path : request.path;
   return (
-    <ChatFilePreviewContext.Provider value={contextValue}>
+    <ChatFilePreviewContext.Provider value={openFile}>
       {children}
       <Sheet
         open={request !== null}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   type AssetCreateUrlResult,
+  AssetProtectedFileError,
   type AssetResource,
   EnvironmentId,
   ThreadId,
@@ -26,10 +27,32 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import {
   ASSET_URL_MAX_IN_FLIGHT,
+  assetUrlStateFromResult,
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   makeRevisionedAssetUrlFamily,
 } from "./assets.ts";
+
+describe("asset URL failure reasons", () => {
+  const failureFor = (error: unknown) =>
+    assetUrlStateFromResult(AsyncResult.failure(Cause.fail(error)), "http://127.0.0.1:38472");
+
+  it("marks a policy refusal so the preview can say the file is protected", () => {
+    const resource = {
+      _tag: "media-file",
+      threadId: ThreadId.make("thread-1"),
+      path: "/home/user/.ssh/id_ed25519",
+    } as const;
+    expect(failureFor(new AssetProtectedFileError({ resource }))).toEqual({
+      _tag: "Failure",
+      protectedFile: true,
+    });
+  });
+
+  it("leaves any other failure unexplained", () => {
+    expect(failureFor(new Error("socket closed"))).toEqual({ _tag: "Failure" });
+  });
+});
 
 describe("project favicon URL cache", () => {
   it("does not reuse another environment, workspace, or selected icon's cached URL", () => {
