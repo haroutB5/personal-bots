@@ -5,6 +5,7 @@ import {
   ExecutionEnvironmentDescriptor,
   environmentShortId,
 } from "@t3tools/contracts";
+import { appendOrchestrationProtocol } from "@t3tools/client-runtime/connection";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
@@ -84,7 +85,7 @@ export async function openSocketUrl(
   socketUrl.searchParams.set("clientDeviceType", "phone");
   socketUrl.searchParams.set("clientOs", "android");
   socketUrl.searchParams.set("clientAppVersion", clientAppVersion);
-  return socketUrl.toString();
+  return appendOrchestrationProtocol(socketUrl.toString());
 }
 
 export async function pair(target: PairingTarget, deviceLabel: string): Promise<StoredSession> {
