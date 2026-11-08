@@ -18,10 +18,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
+import type { DeepSeekEngineHost } from "@t3tools/provider-deepseek/server";
 import * as ManagedProviders from "../policy/managedProviders.ts";
 import * as Settings from "../serverSettings.ts";
 import * as SecretResolver from "../secrets/SecretResolver.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
+import * as DeepSeekEngineHostLive from "./DeepSeekEngineHost.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
@@ -38,6 +40,7 @@ type ProviderInstanceRegistryHydrationEnv =
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
       | AcpRegistrySupport.AcpRegistryCatalog
       | ProviderHost.ProviderHost
+      | DeepSeekEngineHost
     >
   | Settings.ServerSettingsService
   | BackgroundPolicy.BackgroundPolicy
@@ -199,6 +202,7 @@ export const layer: Layer.Layer<
       blockedReason: (driver) =>
         ManagedProviders.disallowedDriverReason(serverSettings.managedPolicy, driver),
     }).pipe(
+      Layer.provide(DeepSeekEngineHostLive.layer),
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
       Layer.provide(ProviderHostLive.layer),

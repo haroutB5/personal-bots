@@ -4,8 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
@@ -30,7 +34,7 @@ import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textG
 
 import { DeepSeekSettings } from "../settings.ts";
 import { resolveDeepSeekModelCatalog } from "./catalog.ts";
-import { makeDeepSeekEngineAdapter } from "./engineAdapter.ts";
+import { DeepSeekEngineHost, makeDeepSeekEngineAdapter } from "./engineAdapter.ts";
 import { makeDeepSeekContinuationGroupKey, makeDeepSeekEnvironment } from "./environment.ts";
 import { resolveDeepSeekEngine } from "./engine.ts";
 import { buildInitialDeepSeekProviderSnapshot, checkDeepSeekProviderStatus } from "./status.ts";
@@ -60,10 +64,14 @@ const unsupportedTextGeneration: ProviderTextGeneration = (() => {
 
 export type DeepSeekDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
+  | DeepSeekEngineHost
   | FileSystem.FileSystem
+  | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | ModelCatalog.ModelCatalog
   | Path.Path
-  | ProviderHost.ProviderHost;
+  | ProviderHost.ProviderHost
+  | SecureRandom.SecureRandom;
 
 // peakSwitch only changes the next turn's model; every other config key feeds create
 // and must rebuild the instance.
@@ -157,7 +165,23 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
     const orchestrationAdapter = yield* makeDeepSeekEngineAdapter({
       instanceId,
       engine: resolveDeepSeekEngine(effectiveConfig, processEnv),
-    });
+      settings: effectiveConfig,
+      environment: deepSeekEnv,
+      providerCatalog: catalogService.current(DRIVER_KIND),
+      selfInvocation: yield* resolveSelfInvocation(),
+      ...(displayName === undefined ? {} : { displayName }),
+      ...(accentColor === undefined ? {} : { accentColor }),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Failed to build DeepSeek orchestration adapter.",
+            cause,
+          }),
+      ),
+    );
 
     return {
       instanceId,
