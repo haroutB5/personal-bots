@@ -1,6 +1,7 @@
 import {
   type ModelSelection,
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+  PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
   PersonalBotId,
   ProviderInstanceId,
   ThreadId,
@@ -12,6 +13,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import { TestClock } from "effect/testing";
 
@@ -48,7 +50,29 @@ const provider = (instanceId: string, driver: string, overrides: Record<string, 
 
 const ready = [provider("codex", "codex"), provider(FALLBACK.instanceId, "claudeAgent")];
 
-const makeLayer = (providers: ReadonlyArray<unknown>, env: Record<string, string> = {}) => {
+const DEEPSEEK_HOME: ModelSelection = {
+  instanceId: ProviderInstanceId.make("deepseek"),
+  model: "deepseek-flash",
+};
+const DEEPSEEK_READY = [
+  provider(DEEPSEEK_HOME.instanceId, "deepseek"),
+  provider(FALLBACK.instanceId, "claudeAgent"),
+];
+const PEAK_SETTINGS = {
+  providerInstances: {
+    [DEEPSEEK_HOME.instanceId]: {
+      driver: "deepseek",
+      enabled: true,
+      config: { peakSwitch: true },
+    },
+  },
+};
+
+const makeLayer = (
+  providers: ReadonlyArray<unknown>,
+  env: Record<string, string> = {},
+  settings: Record<string, unknown> = {},
+) => {
   const providerPort = Layer.mock(PersonalProviders)({
     listProviders: () => Effect.succeed(providers as never),
     invalidateUsage: () => Effect.void,
@@ -57,7 +81,7 @@ const makeLayer = (providers: ReadonlyArray<unknown>, env: Record<string, string
   return PersonalModelFallbackService.layer.pipe(
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(providerPort),
-    Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest(settings as never)),
     Layer.provideMerge(personalEngineTestLayer(makePersonalEngineHarness())),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
     Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -67,7 +91,12 @@ const makeLayer = (providers: ReadonlyArray<unknown>, env: Record<string, string
   );
 };
 
-const createBot = (overrides: { readonly fallbackEnabled?: boolean } = {}) =>
+const createBot = (
+  overrides: {
+    readonly fallbackEnabled?: boolean;
+    readonly modelSelection?: ModelSelection;
+  } = {},
+) =>
   Effect.gen(function* () {
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
     const at = DateTime.makeUnsafe(Date.now());
@@ -251,5 +280,60 @@ describe("PersonalModelFallback on the v2 stack", () => {
       yield* fallback.switchBackAtTurnBoundary({ botId: BOT, threadId: thread });
       expect(yield* states).toHaveLength(0);
     }).pipe(Effect.provide(makeLayer(ready))),
+  );
+
+  it.effect("moves a DeepSeek bot to Sonnet 5.5 High at 02:00 UTC when peakSwitch is on", () =>
+    Effect.gen(function* () {
+      yield* createBot({ modelSelection: DEEPSEEK_HOME });
+      const fallback = yield* PersonalModelFallbackService.PersonalModelFallback;
+
+      yield* fallback.sweep;
+
+      const rows = yield* states;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.reason).toBe(PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK);
+      expect(rows[0]?.fromInstanceId).toBe(DEEPSEEK_HOME.instanceId);
+      expect(rows[0]?.fallbackModel).toEqual(PERSONAL_BOT_DEFAULT_FALLBACK_MODEL);
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          DEEPSEEK_READY,
+          { PERSONAL_DEEPSEEK_PEAK_NOW: "2026-10-14T02:00:00Z" },
+          PEAK_SETTINGS,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("takes the DeepSeek selection back at 12:00 UTC", () =>
+    Effect.gen(function* () {
+      yield* createBot({ modelSelection: DEEPSEEK_HOME });
+      const repository = yield* PersonalBotRepository.PersonalBotRepository;
+      const fallback = yield* PersonalModelFallbackService.PersonalModelFallback;
+      yield* repository.startFallback({
+        botId: BOT,
+        fallbackModel: PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+        fromInstanceId: DEEPSEEK_HOME.instanceId,
+        fromProvider: "DeepSeek",
+        reason: PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+        startedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.now() - 3_600_000)),
+        resetAt: "2026-10-14T04:00:00.000Z",
+        noticeThreadId: null,
+      } as never);
+
+      yield* fallback.sweep;
+
+      expect(yield* states).toHaveLength(0);
+      const bot = yield* repository.getBotById({ botId: BOT });
+      expect(Option.getOrThrow(bot).modelSelection).toEqual(DEEPSEEK_HOME);
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          DEEPSEEK_READY,
+          { PERSONAL_DEEPSEEK_PEAK_NOW: "2026-10-14T12:00:00Z" },
+          PEAK_SETTINGS,
+        ),
+      ),
+    ),
   );
 });
