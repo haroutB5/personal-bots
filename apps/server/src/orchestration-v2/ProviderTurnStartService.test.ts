@@ -9,6 +9,7 @@ import {
   GitCommandError,
   MessageId,
   NodeId,
+  PersonalTaskId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -51,6 +52,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
+import { personalTaskMessageContext } from "../personal/tasks/taskShared.ts";
 import { PersonalTurnContext } from "../personal/turnContext/PersonalTurnContext.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -307,6 +309,8 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  /** Start a normal provider turn, so the test can read the prompt the adapter receives. */
+  readonly nativeTurn?: boolean;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -848,19 +852,22 @@ function makeLocalCommandHarness(input: {
                     ),
                   ),
                 )
-              : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+              : input.failReadsAfterRunning === true ||
+                  input.previousTurn !== undefined ||
+                  input.nativeTurn === true
                 ? Effect.succeed({
                     driver: providerThread.driver,
                     providerSession,
                     ensureThread: () => Effect.succeed(providerThread),
                     resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                    startTurn,
                   } as never)
                 : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >((runInput) =>
-    input.sideChat !== undefined
+    input.sideChat !== undefined || input.nativeTurn === true
       ? runInput.session.startTurn(runInput as never).pipe(Effect.orDie)
       : input.failReadsAfterRunning === true || input.previousTurn !== undefined
         ? Effect.suspend(() =>
@@ -1905,5 +1912,50 @@ effectIt.effect("passes the personal bot instructions to the provider session op
     expect(harness.open).toHaveBeenCalledWith(
       expect.objectContaining({ systemInstructions: "BOT PERSONA" }),
     );
+  }),
+);
+
+effectIt.effect("a fresh task session carries the chat tail within the task handoff budget", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue the task",
+      nativeTurn: true,
+      previousMessages: ["Earlier question", "Earlier answer", "x".repeat(4_000)],
+    });
+    const projection = harness.projection();
+    harness.setProjection({
+      ...projection,
+      runs: projection.runs.map((run) =>
+        run.id === "run-native-account-command" ? { ...run, freshContext: true } : run,
+      ),
+      messages: projection.messages.map((message) =>
+        message.id === "message-native-account-command"
+          ? {
+              ...message,
+              context: personalTaskMessageContext({
+                taskId: PersonalTaskId.make("task-1"),
+                attempt: 2,
+                turn: "continuation",
+                source: "user",
+                title: "Long task",
+                delegatorBotId: null,
+                fresh: true,
+                children: [],
+              }),
+            }
+          : message,
+      ),
+    });
+
+    yield* harness.start;
+
+    const prompt = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+    const start = prompt.indexOf("Earlier in this chat");
+    const end = prompt.indexOf("End of earlier messages");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const handoff = prompt.slice(start, end + "End of earlier messages".length);
+    expect(handoff.length).toBeLessThanOrEqual(6_000);
+    expect(handoff).toContain("Owner: Earlier question");
+    expect(prompt).toContain("User message:\nContinue the task");
   }),
 );

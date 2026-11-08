@@ -12,9 +12,11 @@ import {
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -35,6 +37,12 @@ import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import { PersonalTurnContext } from "../personal/turnContext/PersonalTurnContext.ts";
+import {
+  buildChatHandoff,
+  HANDOFF_INPUT_MARGIN_CHARS,
+  isFreshTaskTurn,
+  TASK_FRESH_HANDOFF_CHARS,
+} from "../personal/sessionHandoff.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
 import {
@@ -879,6 +887,55 @@ export const layer: Layer.Layer<
                   },
           })
         : undefined;
+      // A task reopen starts a fresh session whose turn text carries the work
+      // record. The chat tail goes in front of it, sized to the room the turn
+      // input leaves, so the bot still knows what was just discussed.
+      const personalHandoff =
+        run.freshContext === true && isFreshTaskTurn(message.context)
+          ? yield* Effect.gen(function* () {
+              const { messages, runs } = yield* projectionStore.getThreadRecords(
+                projection.thread.id,
+                ["messages", "runs"],
+              );
+              const rolledBack = new Set(
+                runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+              );
+              const history = messages
+                .filter(
+                  (candidate) =>
+                    !candidate.streaming &&
+                    (candidate.runId === null || !rolledBack.has(candidate.runId)),
+                )
+                .map((candidate) => ({
+                  id: candidate.id,
+                  role: candidate.role,
+                  text: candidate.text,
+                  attachments: candidate.attachments,
+                }));
+              const maxChars = Math.min(
+                TASK_FRESH_HANDOFF_CHARS,
+                PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
+                  (personalTurn?.text.length ?? message.text.length) -
+                  (personalTurn?.extraContext?.length ?? 0) -
+                  HANDOFF_INPUT_MARGIN_CHARS,
+              );
+              return buildChatHandoff({
+                messages: history,
+                currentMessageId: message.id,
+                maxChars,
+              });
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.interrupt
+                  : Effect.logWarning("provider turn start could not carry the task chat over", {
+                      threadId: projection.thread.id,
+                      runId: run.id,
+                      cause: Cause.pretty(cause),
+                    }).pipe(Effect.as(undefined)),
+              ),
+            )
+          : undefined;
       const userText = projectComposerContextForProvider({
         text: personalTurn?.text ?? message.text,
         records: message.context?.records ?? [],
@@ -1646,6 +1703,7 @@ export const layer: Layer.Layer<
             delivery.context,
             sideChatContext,
             restartNote,
+            personalHandoff ?? "",
             personalTurn?.extraContext ?? "",
           ]
             .filter((part) => part !== "")
@@ -1721,12 +1779,17 @@ export const layer: Layer.Layer<
               }),
         ),
       );
+      // Personal turn context (memory, call summaries, the task chat tail) is
+      // part of the prompt, so it needs the same wrapper as a handoff.
+      const hasPersonalContext =
+        personalHandoff !== undefined || (personalTurn?.extraContext?.length ?? 0) > 0;
       const deliverySession =
         effectiveHandoffs.length === 0 &&
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
-        !noteContinuation
+        !noteContinuation &&
+        !hasPersonalContext
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
