@@ -3,6 +3,7 @@ import {
   DEEPSEEK_AGENT_MODE_OPTION_ID,
   type ServerProviderAuth,
   type ServerProviderModel,
+  type ServerProviderUsageBalance,
 } from "@t3tools/contracts";
 import * as NodeOS from "node:os";
 import * as NodeProcess from "node:process";
@@ -23,6 +24,11 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
+import {
+  type DeepSeekBalanceFailureReason,
+  type DeepSeekBalanceRead,
+  deepSeekBalanceReader,
+} from "./balance.ts";
 import { type DeepSeekModelCatalog, scopeDeepSeekModelCatalog } from "./catalog.ts";
 import { DEEPSEEK_AUTH_TOKEN_ENV } from "./environment.ts";
 import {
@@ -73,6 +79,71 @@ export const DEEPSEEK_DEFAULT_AGENT_MODE: DeepSeekDshAgentMode = "standard";
  */
 export const DEEPSEEK_KEY_MISSING_MESSAGE =
   "Set it in this instance's settings. Keys come from platform.deepseek.com.";
+
+/** How a failed balance read reads on the usage card: short, ours, never DeepSeek's body. */
+const BALANCE_FAILURE_NOTES: Record<DeepSeekBalanceFailureReason, string> = {
+  missing_key: "Add your DeepSeek API key to read the balance.",
+  auth_error: "DeepSeek did not accept this key, so it would not return the balance.",
+  insufficient_balance: "This key works; the DeepSeek account has no credit left.",
+  http_error: "DeepSeek would not return the balance for this key.",
+  network_error: "DeepSeek could not be reached for the balance.",
+  timeout: "DeepSeek did not answer the balance request in time.",
+  invalid_response: "DeepSeek returned a balance that could not be read.",
+};
+
+/**
+ * One balance read as the published contract shape. A failed read keeps the
+ * last good numbers (`balance`) and says how old they are through `fetchedAt`;
+ * the newest attempt's outcome is `status`, with a short message of our wording.
+ */
+function toUsageBalance(read: DeepSeekBalanceRead, checkedAt: string): ServerProviderUsageBalance {
+  const amounts = read.status === "ready" ? read.amounts : read.lastGood?.amounts;
+  const fetchedAtMs = read.status === "ready" ? read.fetchedAtMs : read.lastGood?.fetchedAtMs;
+  return {
+    checkedAt,
+    status: read.status,
+    ...(amounts !== undefined && fetchedAtMs !== undefined
+      ? {
+          balance: {
+            currency: amounts.currency,
+            totalBalance: amounts.totalBalance,
+            grantedBalance: amounts.grantedBalance,
+            toppedUpBalance: amounts.toppedUpBalance,
+            isAvailable: amounts.isAvailable,
+            fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(fetchedAtMs)),
+          },
+        }
+      : {}),
+    ...(read.status === "failed"
+      ? { message: BALANCE_FAILURE_NOTES[read.reason], failureReason: read.reason }
+      : {}),
+  };
+}
+
+export interface DeepSeekProviderProbeDependencies {
+  /** Tests: stub the balance read. Defaults to the shared, cached reader. */
+  readonly readBalance?: (token: string) => Promise<DeepSeekBalanceRead>;
+  /** Tests: the clock the snapshot stamps. Defaults to `Date.now`. */
+  readonly now?: () => number;
+}
+
+const readUsageBalance = Effect.fn("readUsageBalance")(function* (
+  token: string,
+  dependencies: DeepSeekProviderProbeDependencies | undefined,
+): Effect.fn.Return<ServerProviderUsageBalance | undefined> {
+  if (token.length === 0) return undefined;
+  const readBalance = dependencies?.readBalance ?? deepSeekBalanceReader.read;
+  const failed = (): DeepSeekBalanceRead => ({
+    status: "failed",
+    reason: "network_error",
+    lastGood: null,
+  });
+  const read = yield* Effect.tryPromise({ try: () => readBalance(token), catch: failed }).pipe(
+    Effect.orElseSucceed(failed),
+  );
+  const now = dependencies?.now ?? Date.now;
+  return toUsageBalance(read, DateTime.formatIso(DateTime.makeUnsafe(now())));
+});
 
 /**
  * The models as the picker sees them. On the dsh engine the Flash model gains
@@ -278,7 +349,7 @@ const checkDeepSeekDshStatus = Effect.fn("DeepSeekProvider.checkDshStatus")(func
   });
 });
 
-export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatus")(function* (
+const probeDeepSeekProviderStatus = Effect.fn("probeDeepSeekProviderStatus")(function* (
   settings: DeepSeekSettings,
   environment: NodeJS.ProcessEnv = process.env,
   catalog: DeepSeekModelCatalog,
@@ -409,4 +480,21 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
       auth,
     },
   });
+});
+
+export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatus")(function* (
+  settings: DeepSeekSettings,
+  environment: NodeJS.ProcessEnv = process.env,
+  catalog: DeepSeekModelCatalog,
+  dependencies?: DeepSeekProviderProbeDependencies,
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Path.Path | FileSystem.FileSystem
+> {
+  const snapshot = yield* probeDeepSeekProviderStatus(settings, environment, catalog);
+  if (!settings.enabled) return snapshot;
+  const token = environment[DEEPSEEK_AUTH_TOKEN_ENV]?.trim() ?? "";
+  const usageBalance = yield* readUsageBalance(token, dependencies);
+  return usageBalance === undefined ? snapshot : { ...snapshot, usageBalance };
 });

@@ -25,7 +25,7 @@ export const dshRuntimeBinJs = (runtimeDir: string): string =>
 
 /** What the provider card says when the runtime is not installed. */
 export const DSH_RUNTIME_MISSING_MESSAGE =
-  "DeepSeek Harness runtime missing: run scripts/personal/install-dsh";
+  "DeepSeek Harness runtime missing: run node scripts/personal/node/install-dsh.mjs";
 
 const CLAUDE_CODE_VALUES = new Set(["claude-code", "off", "0", "false", "no"]);
 
