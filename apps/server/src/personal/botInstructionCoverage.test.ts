@@ -80,6 +80,7 @@ describe("bot instruction coverage", () => {
       antigravity: acp,
       claudeAgent: "../orchestration-v2/Adapters/ClaudeAdapterV2.ts",
       codex: "CodexDeveloperInstructions.ts",
+      deepseek: acp,
       fx: acp,
       grok: acp,
       kiro: acp,

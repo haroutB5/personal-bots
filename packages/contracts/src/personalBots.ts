@@ -42,6 +42,7 @@ export const BOT_INSTRUCTION_DRIVER_KINDS: ReadonlyArray<ProviderDriverKind> = [
   ProviderDriverKind.make("antigravity"),
   ProviderDriverKind.make("claudeAgent"),
   ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("deepseek"),
   ProviderDriverKind.make("fx"),
   ProviderDriverKind.make("grok"),
   ProviderDriverKind.make("kiro"),
