@@ -431,4 +431,33 @@ describe("acpRegistrySnapshotReadiness", () => {
       });
     }),
   );
+
+  it("carries the registry catalogue fields on the provider snapshot", () => {
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "test-agent",
+        version: "1.0.0",
+        distribution: "npx",
+        agentMetadata: {
+          publisher: "Example Corp",
+          license: "Apache-2.0",
+          openSource: true,
+        },
+      },
+    });
+
+    expect(snapshot).toMatchObject({
+      catalogId: "test-agent",
+      source: "registry",
+      publisher: "Example Corp",
+      license: "Apache-2.0",
+      openSource: true,
+      addedByUser: true,
+      showUsage: false,
+    });
+  });
 });

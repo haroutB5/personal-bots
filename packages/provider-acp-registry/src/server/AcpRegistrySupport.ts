@@ -461,6 +461,40 @@ export function resolveAcpRegistryDistribution(input: {
   return undefined;
 }
 
+/** The publisher the catalogue shows: named authors, else the site's host. */
+function registryPublisherOf(agent: AcpRegistryAgent): string {
+  const names = (agent.authors ?? [])
+    .map((author) => author.replace(/<[^>]*>/gu, "").trim())
+    .filter((author) => author !== "" && !author.includes("@"))
+    .slice(0, 3);
+  if (names.length > 0) return names.join(", ");
+  if (agent.website !== undefined) {
+    try {
+      return new URL(agent.website).hostname.replace(/^www\./u, "");
+    } catch {
+      // fall through
+    }
+  }
+  return "Unknown publisher";
+}
+
+function isOpenSourceLicense(license: string | null): boolean {
+  if (license === null) return false;
+  const text = license.trim().toLowerCase();
+  return (
+    text !== "" && text !== "unknown" && !/proprietary|commercial|closed|unlicensed/u.test(text)
+  );
+}
+
+function acpRegistryAgentMetadata(agent: AcpRegistryAgent): AcpRegistryAgentMetadata {
+  const license = agent.license ?? null;
+  return {
+    publisher: registryPublisherOf(agent),
+    license,
+    openSource: isOpenSourceLicense(license),
+  };
+}
+
 export interface ResolvedAcpRegistryAgent {
   readonly agent?: AcpRegistryAgent;
   readonly distribution: AcpRegistryDistributionKind | "local";
@@ -499,7 +533,15 @@ export type AcpRegistryInspection =
       readonly version: string | null;
       readonly distribution: AcpRegistryDistributionKind | "local";
       readonly documentationUrl?: string;
+      readonly agentMetadata?: AcpRegistryAgentMetadata;
     };
+
+/** Catalogue fields the snapshot carries without a second registry lookup. */
+export interface AcpRegistryAgentMetadata {
+  readonly publisher: string;
+  readonly license: string | null;
+  readonly openSource: boolean;
+}
 
 export class AcpRegistryCatalog extends Context.Service<
   AcpRegistryCatalog,
@@ -1752,6 +1794,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               version: null,
               distribution: distribution.kind,
               ...(documentationUrl ? { documentationUrl } : {}),
+              agentMetadata: acpRegistryAgentMetadata(agent),
             } as const)
           : ({
               status: "missing_runner",
@@ -1798,6 +1841,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               version: agent.version,
               distribution: "binary",
               ...(documentationUrl ? { documentationUrl } : {}),
+              agentMetadata: acpRegistryAgentMetadata(agent),
             } as const;
           }),
         );
@@ -1813,6 +1857,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             version: agent.version,
             distribution: distribution.kind,
             ...(documentationUrl ? { documentationUrl } : {}),
+            agentMetadata: acpRegistryAgentMetadata(agent),
           } as const)
         : ({
             status: "missing_runner",

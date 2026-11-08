@@ -194,8 +194,11 @@ function baseSnapshot(
     readonly message?: string;
     readonly probe?: AcpRegistryConfigurationProbeResult;
     readonly probeError?: AcpRegistryOperationError;
+    readonly agentMetadata?: AcpRegistrySupport.AcpRegistryAgentMetadata;
   },
 ): ServerProvider {
+  const metadata = input.agentMetadata;
+  const registrySource = input.settings.source === "registry" && input.settings.agentId.length > 0;
   const iconUrl =
     input.settings.source === "local"
       ? null
@@ -209,6 +212,17 @@ function baseSnapshot(
     ...(iconUrl ? { iconUrl } : {}),
     continuation: { groupKey: input.continuationKey },
     supportsTextGeneration: false,
+    ...(registrySource
+      ? { catalogId: input.settings.agentId, source: "registry" as const, addedByUser: true }
+      : {}),
+    ...(metadata
+      ? {
+          publisher: metadata.publisher,
+          license: metadata.license,
+          openSource: metadata.openSource,
+        }
+      : {}),
+    showUsage: false,
     enabled: input.settings.enabled,
     installed: input.installed,
     version: input.version,
@@ -345,6 +359,9 @@ export function buildCheckedAcpRegistrySnapshot(
     : undefined;
   return baseSnapshot({
     ...input,
+    ...(input.inspection.status === "ready" && input.inspection.agentMetadata
+      ? { agentMetadata: input.inspection.agentMetadata }
+      : {}),
     ...(input.inspection.status === "ready" && input.inspection.documentationUrl
       ? { documentationUrl: input.inspection.documentationUrl }
       : {}),
