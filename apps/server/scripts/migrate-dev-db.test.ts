@@ -297,12 +297,15 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-clash-" });
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-clash-dest-" });
       const source = yield* createFixtureSource(sourceDir);
+      // The fork keeps upstream's V2 migrations at their mapped ids; 060 is upstream's
+      // slot, so clash at the id this checkout records it under.
+      const v2Slot = UPSTREAM_MIGRATION_IDS["060_ThreadSnapshotWindowIndexes"];
       yield* withDatabase(
         source,
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`UPDATE effect_sql_migrations SET name = 'OtherBuildMigration'
-            WHERE migration_id = 60`;
+            WHERE migration_id = ${v2Slot}`;
         }),
       );
 
@@ -317,7 +320,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       assert.equal(error._tag, "MigrateDevDbPhaseError");
       if (error._tag === "MigrateDevDbPhaseError") {
         assert.equal(error.phase, "migrate");
-        assert.include(String(error.cause), "60_ThreadSnapshotWindowIndexes");
+        assert.include(String(error.cause), `${v2Slot}_ThreadSnapshotWindowIndexes`);
       }
       assert.deepStrictEqual(yield* fs.readFile(source), sourceBefore);
       assert.deepStrictEqual(yield* fs.readFile(destination), destinationBefore);
