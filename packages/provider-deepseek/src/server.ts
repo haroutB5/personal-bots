@@ -13,6 +13,20 @@ export {
 } from "./server/catalog.ts";
 export { resolveDeepSeekEngine, type DeepSeekEngine } from "./server/engine.ts";
 export {
+  deepSeekClaudeSettings,
+  deepSeekFailureText,
+  makeDeepSeekClaudeAdapter,
+  type DeepSeekClaudeAdapterFactory,
+  type DeepSeekClaudeAdapterFactoryInput,
+  type DeepSeekClaudeAdapterOptions,
+} from "./server/adapter.ts";
+export {
+  DeepSeekEngineHost,
+  makeDeepSeekEngineAdapter,
+  type DeepSeekEngineAdapterInput,
+  type DeepSeekEngineHostService,
+} from "./server/engineAdapter.ts";
+export {
   DEEPSEEK_ANTHROPIC_BASE_URL,
   DEEPSEEK_AUTH_TOKEN_ENV,
   makeDeepSeekEnvironment,
