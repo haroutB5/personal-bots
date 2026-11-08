@@ -10,12 +10,12 @@
 import type {
   ProviderInstanceId,
   ServerProvider,
+  ServerProviderAutoUpdate,
   ServerProviderSmokeCheck,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -52,17 +52,6 @@ const make = Effect.gen(function* () {
         return generate === undefined ? Option.none() : Option.some(generate);
       }),
     );
-  const smokeChecks = yield* Ref.make<ReadonlyMap<string, ServerProviderSmokeCheck>>(new Map());
-  const smokeChanges = yield* PubSub.unbounded<void>();
-  const withSmokeChecks = (providers: ReadonlyArray<ServerProvider>) =>
-    Ref.get(smokeChecks).pipe(
-      Effect.map((checks): ReadonlyArray<PersonalServerProvider> =>
-        providers.map((provider) => {
-          const smokeCheck = checks.get(provider.instanceId);
-          return smokeCheck === undefined ? provider : { ...provider, smokeCheck };
-        }),
-      ),
-    );
   const smokeTestFor: PersonalProvidersShape["smokeTestFor"] = (instanceId) =>
     structuredGenerator(instanceId).pipe(
       Effect.map(
@@ -84,7 +73,7 @@ const make = Effect.gen(function* () {
   > =>
     Effect.gen(function* () {
       const first = yield* Ref.getAndSet(firstList, false);
-      if (!first) return yield* registry.getProviders.pipe(Effect.flatMap(withSmokeChecks));
+      if (!first) return yield* registry.getProviders;
       // The v2 registry probes asynchronously; the first reader (startup
       // seeding) waits for one snapshot so it does not see an empty list.
       return yield* registry.getProviders.pipe(
@@ -97,7 +86,6 @@ const make = Effect.gen(function* () {
         Effect.map((providers) =>
           Option.getOrElse(providers, (): ReadonlyArray<ServerProvider> => []),
         ),
-        Effect.flatMap(withSmokeChecks),
       );
     }).pipe(Effect.mapError(providersError("listProviders")));
   const shape: PersonalProvidersShape = {
@@ -113,17 +101,15 @@ const make = Effect.gen(function* () {
       Option.isSome(providerSessions) ? providerSessions.value.listSessions() : Effect.succeed([]),
     stopSession: (input) =>
       Option.isSome(providerSessions) ? providerSessions.value.stopSession(input) : Effect.void,
-    streamChanges: Stream.merge(
-      registry.streamChanges,
-      Stream.fromPubSub(smokeChanges).pipe(Stream.mapEffect(() => registry.getProviders)),
-    ).pipe(Stream.mapEffect(withSmokeChecks)),
+    streamChanges: registry.streamChanges,
     setSmokeCheck: (instanceId: ProviderInstanceId, state: ServerProviderSmokeCheck | null) =>
-      Ref.update(smokeChecks, (previous) => {
-        const next = new Map(previous);
-        if (state === null) next.delete(instanceId);
-        else next.set(instanceId, state);
-        return next;
-      }).pipe(Effect.andThen(PubSub.publish(smokeChanges, undefined)), Effect.asVoid),
+      registry
+        .setProviderMaintenanceActionState({ instanceId, action: "smokeCheck", state })
+        .pipe(Effect.andThen(registry.getProviders), Effect.asVoid),
+    setAutoUpdate: (instanceId: ProviderInstanceId, state: ServerProviderAutoUpdate | null) =>
+      registry
+        .setProviderMaintenanceActionState({ instanceId, action: "autoUpdate", state })
+        .pipe(Effect.andThen(registry.getProviders), Effect.asVoid),
     sessionEvents: Option.isSome(providerSessions)
       ? providerSessions.value.sessionEvents
       : Stream.empty,

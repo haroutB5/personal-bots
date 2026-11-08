@@ -12,6 +12,7 @@ import type {
   ProviderInstanceId,
   ProviderSession,
   ServerProvider,
+  ServerProviderAutoUpdate,
   ServerProviderSmokeCheck,
   TextGenerationError,
   ThreadId,
@@ -86,6 +87,11 @@ export interface PersonalProvidersShape {
   readonly setSmokeCheck: (
     instanceId: ProviderInstanceId,
     state: ServerProviderSmokeCheck | null,
+  ) => Effect.Effect<void, PersonalProvidersError>;
+  /** Writes (or clears, with null) the background updater state a provider card shows. */
+  readonly setAutoUpdate: (
+    instanceId: ProviderInstanceId,
+    state: ServerProviderAutoUpdate | null,
   ) => Effect.Effect<void, PersonalProvidersError>;
   readonly sessionEvents: Stream.Stream<PersonalSessionEvent>;
   /** None when the instance is missing or has no structured generation. */

@@ -4,6 +4,8 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderAutoUpdate,
+  type ServerProviderSmokeCheck,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -47,8 +49,31 @@ import {
   latestProviderVersionCacheKeys,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
+import {
+  applyProviderMaintenanceActionStates,
+  enrichProviderSnapshotMetadata,
+  type ProviderMaintenanceActionStates,
+} from "./providerSnapshotMetadata.ts";
 
-export type ProviderMaintenanceActionKind = "update";
+export type ProviderMaintenanceActionKind = "update" | "smokeCheck" | "autoUpdate";
+
+/** Volatile per-instance state projected onto `ServerProvider.updateState` / `.smokeCheck` / `.autoUpdate`. */
+export type ProviderMaintenanceActionStateInput =
+  | {
+      readonly instanceId: ProviderInstanceId;
+      readonly action: "update";
+      readonly state: ServerProviderUpdateState | null;
+    }
+  | {
+      readonly instanceId: ProviderInstanceId;
+      readonly action: "smokeCheck";
+      readonly state: ServerProviderSmokeCheck | null;
+    }
+  | {
+      readonly instanceId: ProviderInstanceId;
+      readonly action: "autoUpdate";
+      readonly state: ServerProviderAutoUpdate | null;
+    };
 
 export class ProviderRegistry extends Context.Service<
   ProviderRegistry,
@@ -98,11 +123,9 @@ export class ProviderRegistry extends Context.Service<
       options?: { readonly fresh?: boolean },
     ) => Effect.Effect<ProviderMaintenanceCapabilities>;
 
-    readonly setProviderMaintenanceActionState: (input: {
-      readonly instanceId: ProviderInstanceId;
-      readonly action: ProviderMaintenanceActionKind;
-      readonly state: ServerProviderUpdateState | null;
-    }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+    readonly setProviderMaintenanceActionState: (
+      input: ProviderMaintenanceActionStateInput,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   }
@@ -329,7 +352,7 @@ const correlateSnapshotWithSource = (
       ),
     );
   }
-  return Effect.succeed(snapshot);
+  return Effect.succeed(enrichProviderSnapshotMetadata(snapshot));
 };
 
 const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
@@ -436,7 +459,7 @@ export const layer = Layer.effect(
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
+      ReadonlyMap<ProviderInstanceId, ProviderMaintenanceActionStates>
     >(new Map());
 
     const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ProviderInstance>>(
@@ -452,7 +475,14 @@ export const layer = Layer.effect(
         cacheDir: config.providerStatusCacheDir,
         instanceId: key,
       }).pipe(Effect.provideService(Path.Path, path));
-      const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
+      // The smoke check and auto-update state are re-projected from personal
+      // state on boot; a cached copy would show a stale verdict.
+      const {
+        workspaceSnapshots: _workspaceSnapshots,
+        smokeCheck: _smokeCheck,
+        autoUpdate: _autoUpdate,
+        ...machineProvider
+      } = provider;
       yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -465,15 +495,12 @@ export const layer = Layer.effect(
       provider: ServerProvider,
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
-      const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      if (!updateState) {
-        const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
-        return providerWithoutUpdateState;
-      }
-      return {
-        ...provider,
-        updateState,
-      };
+      const live = (yield* Ref.get(liveSubsRef)).get(provider.instanceId);
+      return applyProviderMaintenanceActionStates(
+        provider,
+        maintenanceActionStates.get(provider.instanceId),
+        { canTest: live?.textGeneration.generateStructured !== undefined },
+      );
     });
 
     const upsertProviders = Effect.fn("upsertProviders")(function* (
@@ -559,18 +586,21 @@ export const layer = Layer.effect(
     });
 
     const setProviderMaintenanceActionState = Effect.fn("setProviderMaintenanceActionState")(
-      function* (input: {
-        readonly instanceId: ProviderInstanceId;
-        readonly action: "update";
-        readonly state: ServerProviderUpdateState | null;
-      }) {
+      function* (input: ProviderMaintenanceActionStateInput) {
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
-          const previousActions = previous.get(input.instanceId);
-          const nextActions = { ...previousActions };
-          if (input.state === null || input.state.status === "idle") {
+          const previousActions = previous.get(input.instanceId) ?? {};
+          const nextActions: ProviderMaintenanceActionStates = { ...previousActions };
+          if (
+            input.state === null ||
+            (input.action === "update" && input.state.status === "idle")
+          ) {
             delete nextActions[input.action];
+          } else if (input.action === "update") {
+            nextActions.update = input.state;
+          } else if (input.action === "smokeCheck") {
+            nextActions.smokeCheck = input.state;
           } else {
-            nextActions[input.action] = input.state;
+            nextActions.autoUpdate = input.state;
           }
 
           const next = new Map(previous);

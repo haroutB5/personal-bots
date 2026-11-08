@@ -32,6 +32,7 @@ import {
   type PersonalBot,
   type ProviderInstanceId,
   type ProviderSession,
+  type ServerProviderAutoUpdate,
   type ServerProviderSmokeCheck,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -59,10 +60,21 @@ import {
   type PersonalSmokeTest,
 } from "../engine/PersonalProviders.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { ProviderMaintenanceRunner } from "../../provider/providerMaintenanceRunner.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import { PersonalEngine } from "../engine/PersonalEngine.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
+import {
+  autoUpdateBlockReason,
+  autoUpdateMetaKey,
+  autoUpdateProjection,
+  autoUpdateRetryAtMs,
+  canManageAutoUpdate,
+  decodePersistedAutoUpdate,
+  encodePersistedAutoUpdate,
+  type PersistedAutoUpdate,
+} from "./providerAutoUpdate.ts";
 import {
   isUsageLimitFailure,
   smokeLimitDueAtMs,
@@ -73,6 +85,8 @@ import {
 
 /** Catches restarts the turn-end event raced (the projection lags the provider). */
 const RESTART_SWEEP_INTERVAL = Duration.seconds(30);
+/** A provider that was busy or only became due later gets another look. */
+const AUTO_UPDATE_SWEEP_INTERVAL = Duration.minutes(1);
 const MESSAGE_MAX_LENGTH = 500;
 
 const PersistedSmokeCheck = Schema.Struct({
@@ -143,6 +157,20 @@ export interface PersonalProviderUpdatesDeps {
     instanceId: ProviderInstanceId,
     state: ServerProviderSmokeCheck | null,
   ) => Effect.Effect<void>;
+  /**
+   * Runs the provider's normal update path (lock, compatibility gate and
+   * version verification included). `targetVersion` + `rollback` is the same
+   * "go back" the Settings button uses.
+   */
+  readonly updateProvider: (input: {
+    readonly provider: ServerProvider;
+    readonly targetVersion?: string;
+    readonly rollback?: boolean;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>, DepFailure>;
+  readonly setAutoUpdate: (
+    instanceId: ProviderInstanceId,
+    state: ServerProviderAutoUpdate | null,
+  ) => Effect.Effect<void>;
   readonly runtimeEvents: Stream.Stream<PersonalSessionEvent>;
   readonly listSessions: Effect.Effect<ReadonlyArray<ProviderSession>>;
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, DepFailure>;
@@ -181,6 +209,8 @@ export interface PersonalProviderUpdatesShape {
   readonly handleProviders: (providers: ReadonlyArray<ServerProvider>) => Effect.Effect<void>;
   readonly handleRuntimeEvent: (event: PersonalSessionEvent) => Effect.Effect<void>;
   readonly restartStaleSessions: Effect.Effect<void>;
+  /** One look at every provider: update the due ones, record why the rest wait. */
+  readonly autoUpdatePass: Effect.Effect<void>;
   /** Resolves when every queued test message has finished. */
   readonly drainChecks: Effect.Effect<void>;
 }
@@ -285,6 +315,22 @@ const failureDetail = (cause: Cause.Cause<{ readonly detail: string }>): string 
   return trimmed.length <= MESSAGE_MAX_LENGTH ? trimmed : trimmed.slice(0, MESSAGE_MAX_LENGTH);
 };
 
+const providerUpdateFailureReason = (cause: Cause.Cause<unknown>): string => {
+  const failure = Cause.squash(cause);
+  const reason =
+    typeof failure === "object" &&
+    failure !== null &&
+    "reason" in failure &&
+    typeof failure.reason === "string"
+      ? failure.reason
+      : failure instanceof Error
+        ? failure.message
+        : "";
+  const trimmed = reason.trim();
+  if (trimmed.length === 0) return "The update command failed.";
+  return trimmed.length <= MESSAGE_MAX_LENGTH ? trimmed : trimmed.slice(0, MESSAGE_MAX_LENGTH);
+};
+
 /**
  * The version that last worked before `version`: the previous record's version
  * when that one passed (or was the first sight of it), else what that record
@@ -316,6 +362,11 @@ export const makeWith = (
     >();
     const scope = yield* Effect.scope;
     const restartLock = yield* Semaphore.make(1);
+    // One smoke check at a time, whether it came from the queue or from the
+    // auto-updater, so two test turns cannot race on the same verdict.
+    const checkLock = yield* Semaphore.make(1);
+    const autoUpdateLock = yield* Semaphore.make(1);
+    const autoUpdating = new Set<ProviderInstanceId>();
 
     const logFailure =
       (message: string, fields: Record<string, unknown> = {}) =>
@@ -375,6 +426,8 @@ export const makeWith = (
             return;
           case "TurnSettled":
             yield* restartStaleSessions;
+            // A due update was waiting for this turn to end.
+            yield* Effect.forkIn(scope)(autoUpdatePass);
             return;
           case "SessionStarted":
             break;
@@ -412,7 +465,7 @@ export const makeWith = (
           ),
         );
 
-    const runCheck = (request: CheckRequest) =>
+    const runCheckNow = (request: CheckRequest): Effect.Effect<PersistedSmokeCheck | null> =>
       Effect.gen(function* () {
         const { provider, version } = request;
         const instanceId = provider.instanceId;
@@ -530,7 +583,7 @@ export const makeWith = (
         yield* deps.setSmokeCheck(instanceId, projectionOf(next));
         if (next.status === "passed") {
           yield* Effect.logInfo("personal provider test message passed", { instanceId, version });
-          return;
+          return next;
         }
         if (retryAtMs !== null) {
           // No alert and no "broke": the test runs again after the reset.
@@ -541,7 +594,7 @@ export const makeWith = (
             message: next.message,
           });
           yield* armRetry(instanceId, smokeLimitDueAtMs(retryAtMs), nowMs);
-          return;
+          return next;
         }
         yield* Effect.logWarning("personal provider test message failed", {
           instanceId,
@@ -554,16 +607,19 @@ export const makeWith = (
         if (!alreadyAlerted && request.manual !== true) {
           yield* deps.notifyBroken({ instanceId, label: providerProductName(provider), version });
         }
+        return next;
       }).pipe(
         Effect.ensuring(Effect.sync(() => checking.delete(request.provider.instanceId))),
-        Effect.catchCause(
+        Effect.catchCause((cause) =>
           logFailure("personal provider test message crashed", {
             instanceId: request.provider.instanceId,
-          }),
+          })(cause).pipe(Effect.as(null)),
         ),
       );
     // One check at a time, across providers: each spawns a CLI and a model turn.
-    const worker = yield* makeDrainableWorker(runCheck);
+    const worker = yield* makeDrainableWorker((request: CheckRequest) =>
+      runCheckNow(request).pipe(Effect.asVoid),
+    );
 
     const cancelRetry = (instanceId: ProviderInstanceId) =>
       Effect.gen(function* () {
@@ -703,6 +759,527 @@ export const makeWith = (
         yield* worker.enqueue({ provider, version, models, test: test.value, previous: persisted });
       });
 
+    const readAutoUpdate = (instanceId: ProviderInstanceId) =>
+      deps.getMeta(autoUpdateMetaKey(instanceId)).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.succeed(null),
+            onSome: (raw) => decodePersistedAutoUpdate(raw).pipe(Effect.orElseSucceed(() => null)),
+          }),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+    const writeAutoUpdate = (instanceId: ProviderInstanceId, value: PersistedAutoUpdate) =>
+      deps
+        .setMeta(autoUpdateMetaKey(instanceId), encodePersistedAutoUpdate(value))
+        .pipe(
+          Effect.catchCause(
+            logFailure("personal provider auto-update record could not be saved", { instanceId }),
+          ),
+        );
+
+    const sameAutoUpdate = (
+      left: ServerProviderAutoUpdate | undefined,
+      right: ServerProviderAutoUpdate | undefined,
+    ) =>
+      left === undefined || right === undefined
+        ? left === right
+        : left.status === right.status &&
+          left.message === right.message &&
+          left.fromVersion === right.fromVersion &&
+          left.toVersion === right.toVersion &&
+          left.finishedAt === right.finishedAt &&
+          left.nextAttemptAt === right.nextAttemptAt;
+
+    const projectAutoUpdate = (
+      provider: ServerProvider,
+      blockReason: string | null,
+      record: PersistedAutoUpdate | null,
+      retryAtMs: number | null,
+    ) =>
+      Effect.gen(function* () {
+        const next = autoUpdateProjection({ provider, record, blockReason, retryAtMs });
+        if (sameAutoUpdate(provider.autoUpdate, next)) return;
+        yield* deps.setAutoUpdate(provider.instanceId, next ?? null);
+      });
+
+    const completeAutoUpdate = (provider: ServerProvider, record: PersistedAutoUpdate) =>
+      Effect.gen(function* () {
+        const finishedAt = DateTime.formatIso(yield* DateTime.now);
+        const finished: PersistedAutoUpdate = { ...record, finishedAt };
+        yield* writeAutoUpdate(provider.instanceId, finished);
+        yield* projectAutoUpdate(
+          provider,
+          autoUpdateBlockReason(provider),
+          finished,
+          autoUpdateRetryAtMs(finished),
+        );
+        yield* Effect.logInfo("personal provider auto-update finished", {
+          instanceId: provider.instanceId,
+          status: finished.status,
+          from: finished.fromVersion,
+          to: finished.toVersion,
+        });
+      });
+
+    /**
+     * The update itself is safe; the restart afterwards is not, so it waits
+     * for the reply to finish.
+     */
+    const hasRunningTurn = (instanceId: ProviderInstanceId) =>
+      Effect.gen(function* () {
+        const sessions = (yield* deps.listSessions).filter(
+          (session) => session.providerInstanceId === instanceId,
+        );
+        for (const session of sessions) {
+          if (session.status === "running" || session.activeTurnId !== undefined) {
+            return true;
+          }
+          // A failed or stopped session is not a running turn; waiting on it
+          // would block this provider's updates forever.
+          if (session.status !== "ready") continue;
+          const shell = yield* Effect.exit(deps.threadShell(session.threadId));
+          if (Exit.isFailure(shell)) return true;
+          const thread = Option.getOrUndefined(shell.value);
+          if (thread === undefined) continue;
+          if (thread.hasPendingApprovals || thread.hasPendingUserInput) return true;
+          if (thread.latestTurn?.state === "running") return true;
+          if (thread.session?.status === "running" || thread.session?.status === "starting") {
+            return true;
+          }
+        }
+        return false;
+      });
+
+    /**
+     * The runner only allows a "Go back" to a version it has seen working, so
+     * the version we are about to update from must be on record first. A
+     * baseline is not tested; it only names the version the bots are on.
+     */
+    const ensureSmokeBaseline = (provider: ServerProvider) =>
+      Effect.gen(function* () {
+        const version = provider.version;
+        if (version === null) return;
+        const current = yield* readPersisted(provider.instanceId);
+        if (current !== null && current.version === version) {
+          return;
+        }
+        yield* writePersisted(provider.instanceId, {
+          version,
+          status: "baseline",
+          checkedAt: null,
+          message: null,
+        });
+      });
+
+    /** The smoke result for the version just installed. Null means "could not run". */
+    const autoUpdateCheck = (
+      provider: ServerProvider,
+      bots: ReadonlyArray<PersonalBot>,
+    ): Effect.Effect<PersistedSmokeCheck | null> =>
+      Effect.gen(function* () {
+        const instanceId = provider.instanceId;
+        const version = provider.version;
+        if (version === null) return null;
+        // A snapshot change may already have queued the same test; wait for
+        // whatever is running and reuse its verdict.
+        yield* worker.drain;
+        const existing = yield* checkLock.withPermits(1)(
+          Effect.gen(function* () {
+            const nowMs = yield* Clock.currentTimeMillis;
+            return yield* readVerdict(provider, nowMs);
+          }),
+        );
+        if (existing !== null && existing.version === version && existing.status !== "baseline") {
+          return existing;
+        }
+        const models = botModelsFor(bots, instanceId);
+        const fallback =
+          provider.models.find((candidate) => candidate.isDefault === true) ?? provider.models[0];
+        const testModels = models.length > 0 ? models : fallback ? [fallback.slug] : [];
+        if (testModels.length === 0) return null;
+        const test = yield* deps.smokeTestFor(instanceId);
+        if (Option.isNone(test)) return null;
+        checking.add(instanceId);
+        return yield* runCheckNow({
+          provider,
+          version,
+          models: testModels,
+          test: test.value,
+          previous: existing,
+        }).pipe(Effect.ensuring(Effect.sync(() => checking.delete(instanceId))));
+      });
+
+    const rollBackAutoUpdate = (
+      provider: ServerProvider,
+      record: PersistedAutoUpdate,
+      reason: string,
+      options: {
+        readonly status?: "rolled_back" | "failed";
+        readonly summary?: string;
+      } = {},
+    ) =>
+      Effect.gen(function* () {
+        const instanceId = provider.instanceId;
+        const fromVersion = record.fromVersion;
+        const failureSummary = options.summary ?? `${record.toVersion} failed the test: ${reason}`;
+        if (fromVersion === null) {
+          yield* completeAutoUpdate(provider, {
+            ...record,
+            status: "failed",
+            message: `Could not go back: the previous version is unknown. ${failureSummary}`,
+          });
+          return;
+        }
+        // The runner only accepts a rollback to a version its smoke check
+        // names as previousVersion. Reconcile whatever the test left behind,
+        // and write the verdict when the test could not run at all.
+        const verdict = yield* checkLock.withPermits(1)(
+          Effect.gen(function* () {
+            const nowMs = yield* Clock.currentTimeMillis;
+            const current = yield* readVerdict(provider, nowMs);
+            if (current?.version === record.toVersion) {
+              if (current.status === "passed") return "passed" as const;
+              if (current.status === "waiting_for_limit") return "waiting" as const;
+              if (current.status === "failed" && current.previousVersion === fromVersion) {
+                return "failed" as const;
+              }
+              if (current.status === "failed") {
+                const patched: PersistedSmokeCheck = {
+                  ...current,
+                  previousVersion: fromVersion,
+                };
+                yield* writePersisted(instanceId, patched);
+                yield* deps.setSmokeCheck(instanceId, projectionOf(patched));
+                return "failed" as const;
+              }
+            }
+            const synthetic: PersistedSmokeCheck = {
+              version: record.toVersion,
+              status: "failed",
+              checkedAt: DateTime.formatIso(yield* DateTime.now),
+              message: reason,
+              previousVersion: fromVersion,
+            };
+            yield* writePersisted(instanceId, synthetic);
+            yield* deps.setSmokeCheck(instanceId, projectionOf(synthetic));
+            return "failed" as const;
+          }),
+        );
+        if (verdict === "passed") {
+          yield* completeAutoUpdate(provider, {
+            ...record,
+            status: "updated",
+            message: "Updated automatically.",
+          });
+          return;
+        }
+        if (verdict === "waiting") {
+          yield* completeAutoUpdate(provider, {
+            ...record,
+            status: "waiting_for_limit",
+            message: `Updated to ${record.toVersion}. The test is waiting for the usage limit.`,
+          });
+          return;
+        }
+
+        // If the process dies during the rollback, this record stops the same
+        // bad release from being tried again tomorrow.
+        const goingBack: PersistedAutoUpdate = {
+          ...record,
+          status: "rolled_back",
+          message: `Going back to ${fromVersion}.`,
+        };
+        yield* writeAutoUpdate(instanceId, goingBack);
+        yield* projectAutoUpdate(provider, null, goingBack, null);
+
+        const outcome = yield* Effect.exit(
+          deps.updateProvider({ provider, targetVersion: fromVersion, rollback: true }),
+        );
+        const afterProviders = Exit.isSuccess(outcome) ? outcome.value : yield* deps.getProviders;
+        const after =
+          afterProviders.find((candidate) => candidate.instanceId === instanceId) ?? provider;
+        if (after.version === fromVersion) {
+          // The bad version is gone. Clear its failed verdict so the working
+          // version is not shown as "Update broke" and is not tested again.
+          yield* writePersisted(instanceId, {
+            version: fromVersion,
+            status: "baseline",
+            checkedAt: null,
+            message: null,
+          });
+          yield* deps.setSmokeCheck(instanceId, null);
+          yield* completeAutoUpdate(after, {
+            ...goingBack,
+            status: options.status ?? "rolled_back",
+            message: `${failureSummary} Went back to ${fromVersion}.`,
+          });
+          return;
+        }
+        const rollbackReason = Exit.isFailure(outcome)
+          ? providerUpdateFailureReason(outcome.cause)
+          : `it still reports ${after.version ?? "no version"}`;
+        yield* completeAutoUpdate(after, {
+          ...record,
+          status: "failed",
+          message: `Could not go back to ${fromVersion}. ${failureSummary} (${rollbackReason})`,
+        });
+      });
+
+    const runAutoUpdate = (
+      provider: ServerProvider,
+      bots: ReadonlyArray<PersonalBot>,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const instanceId = provider.instanceId;
+        const fromVersion = provider.version;
+        const targetVersion = provider.versionAdvisory?.latestVersion;
+        if (fromVersion === null || targetVersion === null || targetVersion === undefined) return;
+        const attemptedAt = DateTime.formatIso(yield* DateTime.now);
+        const updating: PersistedAutoUpdate = {
+          status: "updating",
+          fromVersion,
+          toVersion: targetVersion,
+          message: `Updating to ${targetVersion}.`,
+          attemptedAt,
+          finishedAt: null,
+        };
+        // Written before the command runs: a crash still counts against the
+        // daily clock, and the next boot can finish the smoke test.
+        yield* writeAutoUpdate(instanceId, updating);
+        yield* projectAutoUpdate(provider, null, updating, autoUpdateRetryAtMs(updating));
+
+        const outcome = yield* Effect.exit(deps.updateProvider({ provider }));
+        if (Exit.isFailure(outcome)) {
+          yield* completeAutoUpdate(provider, {
+            ...updating,
+            status: "failed",
+            message: providerUpdateFailureReason(outcome.cause),
+          });
+          return;
+        }
+        const refreshed =
+          outcome.value.find((candidate) => candidate.instanceId === instanceId) ??
+          (yield* deps.getProviders).find((candidate) => candidate.instanceId === instanceId) ??
+          provider;
+        if (refreshed.version !== targetVersion) {
+          yield* rollBackUnrequestedVersion(refreshed, updating, bots);
+          return;
+        }
+
+        const verdict = yield* autoUpdateCheck(refreshed, bots);
+        if (verdict?.status === "passed") {
+          yield* completeAutoUpdate(refreshed, {
+            ...updating,
+            status: "updated",
+            message: "Updated automatically.",
+          });
+          return;
+        }
+        if (verdict?.status === "waiting_for_limit") {
+          yield* completeAutoUpdate(refreshed, {
+            ...updating,
+            status: "waiting_for_limit",
+            message: `Updated to ${targetVersion}. The test is waiting for the usage limit.`,
+          });
+          return;
+        }
+        yield* rollBackAutoUpdate(
+          refreshed,
+          updating,
+          verdict?.message ?? "The test message could not run.",
+        );
+      });
+
+    /**
+     * The version that landed is not the one the update asked for. It has
+     * never been tested, so test it and go back to the last known working
+     * version; the failure stays visible with Try again.
+     */
+    const rollBackUnrequestedVersion = (
+      provider: ServerProvider,
+      record: PersistedAutoUpdate,
+      bots: ReadonlyArray<PersonalBot>,
+    ) =>
+      Effect.gen(function* () {
+        const delivered = provider.version;
+        const verdict = yield* autoUpdateCheck(provider, bots);
+        const testNote =
+          verdict === null
+            ? " The test could not run."
+            : verdict.status === "failed"
+              ? ` The test failed: ${verdict.message ?? "no detail"}`
+              : verdict.status === "passed"
+                ? " The test passed."
+                : " The test is waiting for the usage limit.";
+        const summary = `Reports ${delivered ?? "no version"}, not ${record.toVersion}.${testNote}`;
+        yield* rollBackAutoUpdate(provider, record, summary, {
+          status: "failed",
+          summary,
+        });
+      });
+
+    const finishInterruptedUpdate = (
+      provider: ServerProvider,
+      record: PersistedAutoUpdate,
+      bots: ReadonlyArray<PersonalBot>,
+    ) =>
+      Effect.gen(function* () {
+        if (provider.version !== record.toVersion) {
+          yield* rollBackUnrequestedVersion(provider, record, bots);
+          return;
+        }
+        const verdict = yield* autoUpdateCheck(provider, bots);
+        if (verdict?.status === "passed") {
+          yield* completeAutoUpdate(provider, {
+            ...record,
+            status: "updated",
+            message: "Updated automatically.",
+          });
+          return;
+        }
+        if (verdict?.status === "waiting_for_limit") {
+          yield* completeAutoUpdate(provider, {
+            ...record,
+            status: "waiting_for_limit",
+            message: `Updated to ${record.toVersion}. The test is waiting for the usage limit.`,
+          });
+          return;
+        }
+        yield* rollBackAutoUpdate(
+          provider,
+          record,
+          verdict?.message ?? "The test message could not run.",
+        );
+      });
+
+    const considerAutoUpdate = (
+      provider: ServerProvider,
+      bots: ReadonlyArray<PersonalBot>,
+      nowMs: number,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const instanceId = provider.instanceId;
+        if (autoUpdating.has(instanceId)) return;
+        const record = yield* readAutoUpdate(instanceId);
+        const blockReason = autoUpdateBlockReason(provider);
+        if (blockReason !== null) {
+          yield* projectAutoUpdate(
+            provider,
+            blockReason,
+            record,
+            record === null ? null : autoUpdateRetryAtMs(record),
+          );
+          return;
+        }
+        const behind = provider.versionAdvisory?.status === "behind_latest";
+        if (!behind) {
+          if (
+            record?.status === "updating" &&
+            provider.version !== null &&
+            provider.version !== record.fromVersion
+          ) {
+            yield* finishInterruptedUpdate(provider, record, bots);
+            return;
+          }
+          // A crash after the command landed leaves "failed"; the version is
+          // now the target, so finish with the smoke test.
+          if (record?.status === "failed" && provider.version === record.toVersion) {
+            yield* finishInterruptedUpdate(provider, record, bots);
+            return;
+          }
+          if (record?.status === "updating") {
+            const update = provider.updateState;
+            if (update?.status === "queued" || update?.status === "running") {
+              yield* projectAutoUpdate(provider, null, record, null);
+              return;
+            }
+            yield* completeAutoUpdate(provider, {
+              ...record,
+              status: "failed",
+              message: "The update did not finish. Retrying tomorrow.",
+            });
+            return;
+          }
+          yield* projectAutoUpdate(
+            provider,
+            null,
+            record,
+            record === null ? null : autoUpdateRetryAtMs(record),
+          );
+          return;
+        }
+
+        const latest = provider.versionAdvisory?.latestVersion ?? null;
+        if (latest === null) {
+          yield* projectAutoUpdate(provider, null, record, null);
+          return;
+        }
+        // The same release already failed its test and went back. Retrying it
+        // tomorrow would break every bot again; wait for a newer one.
+        if (record?.status === "rolled_back" && record.toVersion === latest) {
+          yield* projectAutoUpdate(provider, null, record, null);
+          return;
+        }
+        if (record?.status === "updating") {
+          const update = provider.updateState;
+          if (update?.status !== "queued" && update?.status !== "running") {
+            yield* completeAutoUpdate(provider, {
+              ...record,
+              status: "failed",
+              message: "The update did not finish. Retrying tomorrow.",
+            });
+            return;
+          }
+        }
+        if (record !== null) {
+          const retryAtMs = autoUpdateRetryAtMs(record);
+          if (retryAtMs !== null && retryAtMs > nowMs) {
+            yield* projectAutoUpdate(provider, null, record, retryAtMs);
+            return;
+          }
+        }
+        const update = provider.updateState;
+        if (update?.status === "queued" || update?.status === "running") {
+          yield* projectAutoUpdate(provider, null, record, null);
+          return;
+        }
+        if (checking.has(instanceId)) {
+          yield* projectAutoUpdate(provider, null, record, null);
+          return;
+        }
+        if (yield* hasRunningTurn(instanceId)) {
+          yield* projectAutoUpdate(provider, null, record, null);
+          return;
+        }
+        if (!canManageAutoUpdate(provider)) {
+          yield* projectAutoUpdate(provider, autoUpdateBlockReason(provider), record, null);
+          return;
+        }
+        yield* ensureSmokeBaseline(provider);
+        autoUpdating.add(instanceId);
+        yield* runAutoUpdate(provider, bots).pipe(
+          Effect.ensuring(Effect.sync(() => autoUpdating.delete(instanceId))),
+        );
+      }).pipe(
+        Effect.catchCause(
+          logFailure("personal provider auto-update check failed", {
+            instanceId: provider.instanceId,
+          }),
+        ),
+      );
+
+    const autoUpdatePass: Effect.Effect<void> = autoUpdateLock.withPermits(1)(
+      Effect.gen(function* () {
+        const providers = yield* deps.getProviders;
+        const bots = yield* deps.listBots;
+        const nowMs = yield* Clock.currentTimeMillis;
+        for (const provider of providers) {
+          yield* considerAutoUpdate(provider, bots, nowMs);
+        }
+      }).pipe(Effect.catchCause(logFailure("personal provider auto-update pass failed"))),
+    );
+
     const handleProviders = (providers: ReadonlyArray<ServerProvider>) =>
       Effect.gen(function* () {
         yield* restartStaleSessions;
@@ -710,6 +1287,17 @@ export const makeWith = (
         const used = new Set<string>(bots.map((bot) => bot.modelSelection.instanceId));
         for (const provider of providers) {
           if (used.has(provider.instanceId)) yield* considerSmoke(provider, bots, false);
+        }
+        // A manual Check or a fresh advisory can make an update due; take the
+        // look now instead of waiting for the next sweep.
+        if (
+          providers.some(
+            (provider) =>
+              provider.versionAdvisory?.status === "behind_latest" &&
+              autoUpdateBlockReason(provider) === null,
+          )
+        ) {
+          yield* Effect.forkIn(scope)(autoUpdatePass);
         }
       }).pipe(Effect.catchCause(logFailure("personal provider snapshot handling failed")));
 
@@ -789,6 +1377,13 @@ export const makeWith = (
             Effect.asVoid,
           ),
         );
+        yield* forkParked(
+          autoUpdatePass.pipe(
+            withStallJob("job:provider-auto-update"),
+            Effect.repeat(Schedule.spaced(AUTO_UPDATE_SWEEP_INTERVAL)),
+            Effect.asVoid,
+          ),
+        );
       });
 
     return {
@@ -798,6 +1393,7 @@ export const makeWith = (
       handleProviders,
       handleRuntimeEvent,
       restartStaleSessions,
+      autoUpdatePass,
       drainChecks: worker.drain,
     } satisfies PersonalProviderUpdatesShape;
   });
@@ -808,6 +1404,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* PersonalEngine;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const push = yield* PersonalPushService.PersonalPushService;
+  const maintenance = yield* Effect.serviceOption(ProviderMaintenanceRunner);
   return yield* makeWith({
     getProviders: providers.listProviders().pipe(Effect.orElseSucceed(() => [])),
     providerChanges: providers.streamChanges,
@@ -815,6 +1412,25 @@ export const make = Effect.gen(function* () {
       providers.refreshInstance(instanceId).pipe(Effect.orElseSucceed(() => [])),
     setSmokeCheck: (instanceId, state) =>
       providers.setSmokeCheck(instanceId, state).pipe(Effect.orElseSucceed(() => undefined)),
+    updateProvider: (input) =>
+      Option.isNone(maintenance)
+        ? Effect.fail({
+            _tag: "ProviderUpdateError",
+            reason: "Provider updates are not available on this server.",
+          })
+        : maintenance.value
+            .updateProvider({
+              provider: input.provider.driver,
+              instanceId: input.provider.instanceId,
+              ...(input.targetVersion === undefined ? {} : { targetVersion: input.targetVersion }),
+              ...(input.rollback === true ? { rollback: true } : {}),
+            })
+            .pipe(
+              Effect.map((payload) => payload.providers),
+              Effect.mapError((error) => ({ _tag: "ProviderUpdateError", reason: error.reason })),
+            ),
+    setAutoUpdate: (instanceId, state) =>
+      providers.setAutoUpdate(instanceId, state).pipe(Effect.orElseSucceed(() => undefined)),
     runtimeEvents: providers.sessionEvents,
     listSessions: providers.listSessions().pipe(Effect.orElseSucceed(() => [])),
     stopSession: (threadId) => providers.stopSession({ threadId }),

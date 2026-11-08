@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
@@ -94,16 +95,27 @@ const withRegistries = <A, E>(
   const registry = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
     getInstance: () => Effect.succeed(instance as never),
   });
-  const providerRegistry = Layer.mock(ProviderRegistry.ProviderRegistry)({
-    getProviders: Effect.succeed(providerList as never),
-  });
   return Effect.gen(function* () {
-    return yield* body(yield* PersonalProviders);
-  }).pipe(
-    Effect.provide(
-      PersonalProvidersV2Live.pipe(Layer.provide(Layer.merge(registry, providerRegistry))),
-    ),
-  );
+    const providersRef = yield* Ref.make(providerList as ReadonlyArray<Record<string, unknown>>);
+    const providerRegistry = Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Ref.get(providersRef) as never,
+      setProviderMaintenanceActionState: (input) =>
+        Ref.updateAndGet(providersRef, (providers) =>
+          providers.map((candidate) =>
+            candidate.instanceId === input.instanceId
+              ? { ...candidate, [input.action]: input.state ?? undefined }
+              : candidate,
+          ),
+        ) as never,
+    });
+    return yield* Effect.gen(function* () {
+      return yield* body(yield* PersonalProviders);
+    }).pipe(
+      Effect.provide(
+        PersonalProvidersV2Live.pipe(Layer.provide(Layer.merge(registry, providerRegistry))),
+      ),
+    );
+  });
 };
 
 describe("PersonalProvidersV2 smoke test and usage", () => {
