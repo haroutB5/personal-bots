@@ -9,7 +9,9 @@
     "dev:built": "vp build --watch",
     "build": "vp build",
     "preview": "vp preview",
-    "test": "vp test run --passWithNoTests --project unit --project browser"
+    "test": "vp test run --passWithNoTests --project unit --project browser",
+    "remotion:studio": "remotion studio src/features/personal/avatarRemotion/index.ts",
+    "remotion:render": "remotion render src/features/personal/avatarRemotion/index.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -97,6 +99,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@remotion/cli": "4.0.524",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
     "@types/canvas-confetti": "1.9.0",
@@ -117,6 +120,7 @@
     "oxc-transform-react": "~0.152.0",
     "playwright": "1.60.0",
     "react-test-renderer": "19.2.6",
+    "remotion": "4.0.524",
     "tailwindcss": "^4.0.0",
     "vite": "catalog:",
     "vite-plus": "catalog:"
