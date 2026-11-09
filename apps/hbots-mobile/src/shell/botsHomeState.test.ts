@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { botsHomeState, botTapTarget } from "./botsHomeState";
+import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
 
 describe("Bots home states", () => {
   it("paints the cache before the live list", () => {
@@ -70,6 +70,17 @@ describe("Bots home states", () => {
         query: "planner",
       }),
     ).toBe("list");
+  });
+});
+
+describe("groupsSectionVisible", () => {
+  it("draws no Groups section while there is no group to show", () => {
+    expect(groupsSectionVisible({ groups: 0, archived: 0 })).toBe(false);
+  });
+
+  it("draws the list when a group or an archived group exists", () => {
+    expect(groupsSectionVisible({ groups: 1, archived: 0 })).toBe(true);
+    expect(groupsSectionVisible({ groups: 0, archived: 1 })).toBe(true);
   });
 });
 
