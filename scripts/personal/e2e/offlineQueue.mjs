@@ -65,7 +65,7 @@ async function routeSocket(page) {
  * first and the copy is read, so the server's mapping is never touched.
  */
 function openDatabase(root) {
-  const file = NodePath.join(root, "userdata", "state.sqlite");
+  const file = NodePath.join(root, "userdata", "statev2.sqlite");
   if (!NodeFS.existsSync(file)) throw new Error(`no database at ${file}`);
   const copyDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-e2e-db-"));
   for (const suffix of ["", "-wal", "-shm"]) {
