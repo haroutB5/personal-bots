@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 describe("ClaudeAdapterV2 warning filter", () => {
   it("installs the bypassPermissions warning filter when the adapter loads", async () => {
