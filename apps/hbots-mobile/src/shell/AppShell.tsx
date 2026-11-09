@@ -35,6 +35,9 @@ import { ChatScreen } from "../screens/ChatScreen";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
 import { ComputerScreen } from "../computer/ComputerScreen";
 import { DevicesScreen } from "../settings/DevicesScreen";
+import { AddProviderScreen } from "../settings/AddProviderScreen";
+import { CatalogProviderScreen } from "../settings/CatalogProviderScreen";
+import { ProviderScreen } from "../settings/ProviderScreen";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { ThisPhoneScreen } from "../settings/ThisPhoneScreen";
 import { NotificationsScreen } from "../settings/NotificationsScreen";
@@ -76,6 +79,9 @@ export type RootStackParamList = {
   TeamRemoved: undefined;
   Settings: undefined;
   SettingsNotifications: undefined;
+  Provider: { readonly instanceId: string };
+  ProviderAdd: undefined;
+  ProviderCatalog: { readonly catalogId: string };
   ThisPhone: undefined;
   SettingsDevices: undefined;
   Memory: undefined;
@@ -192,9 +198,11 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
     case "settingsNotifications":
       return { name: "SettingsNotifications" };
     case "settingsProvidersAdd":
+      return { name: "ProviderAdd" };
     case "settingsProvider":
+      return { name: "Provider", params: { instanceId: route.instanceId } };
     case "settingsProviderCatalog":
-      return { name: "Settings" };
+      return { name: "ProviderCatalog", params: { catalogId: route.catalogId } };
     case "thisPhone":
       return { name: "ThisPhone" };
     case "memory":
@@ -427,6 +435,8 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               onOpenTeam={() => navigation.navigate("Team")}
               onOpenNewBot={() => navigation.navigate("BotNew")}
               onOpenRemovedBots={() => navigation.navigate("TeamRemoved")}
+              onOpenProvider={(instanceId) => navigation.navigate("Provider", { instanceId })}
+              onOpenAddProvider={() => navigation.navigate("ProviderAdd")}
               onOpenNotifications={() => navigation.navigate("SettingsNotifications")}
               onOpenMemory={() => navigation.navigate("Memory")}
               onOpenPasswords={() => navigation.navigate("Passwords")}
@@ -439,6 +449,35 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         <Stack.Screen name="SettingsNotifications">
           {({ navigation }) => (
             <NotificationsScreen native={props.native} onBack={() => navigation.goBack()} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Provider">
+          {({ navigation, route }) => (
+            <ProviderScreen
+              native={props.native}
+              instanceId={route.params.instanceId}
+              onBack={() => navigation.goBack()}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ProviderAdd">
+          {({ navigation }) => (
+            <AddProviderScreen
+              native={props.native}
+              onBack={() => navigation.goBack()}
+              onOpenProvider={(instanceId) => navigation.navigate("Provider", { instanceId })}
+              onOpenCatalog={(catalogId) => navigation.navigate("ProviderCatalog", { catalogId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ProviderCatalog">
+          {({ navigation, route }) => (
+            <CatalogProviderScreen
+              native={props.native}
+              catalogId={route.params.catalogId}
+              onBack={() => navigation.goBack()}
+              onInstalled={(instanceId) => navigation.replace("Provider", { instanceId })}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Memory">

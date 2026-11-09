@@ -6,18 +6,22 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
-import { Notice } from "./SettingsUi";
+import {
+  runProviderUpdates,
+  updateAllTargets,
+  updateFailureLines,
+  type ProviderUpdateFailure,
+} from "./providerUpdateAllModel";
+import { Notice, TextButton } from "./SettingsUi";
 
 export function ProvidersSettingsCard({
   native,
   onOpenProvider,
   onAddProvider,
-  last = false,
 }: {
   readonly native: NativePersonal;
   readonly onOpenProvider: (instanceId: string) => void;
   readonly onAddProvider: () => void;
-  readonly last?: boolean;
 }) {
   const environmentId = native.environmentId as EnvironmentId;
   const providers = native.useProviders();
@@ -25,8 +29,14 @@ export function ProvidersSettingsCard({
   const recheck = native.client.useAtomCommand(native.bots.personalProviderRecheck, {
     reportFailure: false,
   });
+  const updateProvider = native.client.useAtomCommand(native.providers.updateProvider, {
+    reportFailure: false,
+  });
   const [checking, setChecking] = useState(false);
+  const [updatingAll, setUpdatingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState<ReadonlyArray<ProviderUpdateFailure>>([]);
+  const [startedCount, setStartedCount] = useState<number | null>(null);
   const installs = new Map<string, ProviderInstallState>();
   const list = buildProviderList(
     providers,
@@ -34,10 +44,13 @@ export function ProvidersSettingsCard({
     installs,
   );
   const rows = list.rows;
+  const targets = updateAllTargets(rows);
 
   const checkAll = async () => {
     setChecking(true);
     setError(null);
+    setFailures([]);
+    setStartedCount(null);
     for (const row of rows) {
       if (row.busy || row.driver === null) continue;
       const result = await recheck({
@@ -53,23 +66,38 @@ export function ProvidersSettingsCard({
     setChecking(false);
   };
 
+  const updateAll = async () => {
+    setUpdatingAll(true);
+    setError(null);
+    setFailures([]);
+    setStartedCount(null);
+    const failed = await runProviderUpdates(rows, async (target) => {
+      const result = await updateProvider({
+        environmentId,
+        input: { provider: target.driver, instanceId: target.instanceId as never },
+      });
+      return result === null
+        ? "Not connected to your computer."
+        : commandFailureMessage(result, `Couldn't start the ${target.label} update.`);
+    });
+    setFailures(failed);
+    setStartedCount(targets.length - failed.length);
+    setUpdatingAll(false);
+  };
+
   return (
-    <View style={[styles.block, last ? null : styles.divider]}>
-      <View style={styles.header}>
-        <Text style={styles.label} maxFontSizeMultiplier={1.4}>
-          Providers
-        </Text>
-        <Pressable
+    <>
+      <View style={styles.actions}>
+        <TextButton
+          label={checking ? "Checking…" : "Check all"}
           onPress={() => void checkAll()}
-          disabled={checking || rows.length === 0}
-          accessibilityRole="button"
-          accessibilityLabel="Check all providers"
-          style={styles.checkAll}
-        >
-          <Text style={styles.checkAllLabel} maxFontSizeMultiplier={1.3}>
-            {checking ? "Checking…" : "Check all"}
-          </Text>
-        </Pressable>
+          disabled={checking || updatingAll || rows.length === 0}
+        />
+        <TextButton
+          label={updatingAll ? "Updating…" : "Update all"}
+          onPress={() => void updateAll()}
+          disabled={checking || updatingAll || targets.length === 0}
+        />
       </View>
       {rows.map((row) => (
         <ProviderSummaryRow
@@ -98,10 +126,18 @@ export function ProvidersSettingsCard({
         </Text>
       ) : null}
       {error === null ? null : <Notice tone="danger">{error}</Notice>}
+      {failures.length === 0 ? null : <Notice tone="danger">{updateFailureLines(failures)}</Notice>}
+      {failures.length === 0 && startedCount !== null && startedCount > 0 ? (
+        <Notice tone="success">
+          {startedCount === 1
+            ? "Update started. Its row shows the progress."
+            : `${startedCount} updates started. Their rows show the progress.`}
+        </Notice>
+      ) : null}
       <Text style={styles.note} maxFontSizeMultiplier={1.4}>
         After an update, each bot switches to the new version once its current reply ends.
       </Text>
-    </View>
+    </>
   );
 }
 
@@ -117,7 +153,7 @@ function ProviderSummaryRow({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${row.label}, ${row.statusText}`}
-      style={({ pressed }) => [styles.row, pressed ? styles.pressed : null]}
+      style={({ pressed }) => [styles.row, styles.divider, pressed ? styles.pressed : null]}
     >
       <View style={[styles.dot, dotStyle(row)]} />
       <View style={styles.rowText}>
@@ -159,22 +195,15 @@ function dotStyle(row: ProviderRow) {
 }
 
 const styles = StyleSheet.create({
-  block: { paddingTop: 4, paddingBottom: 8 },
-  divider: {
+  actions: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingHorizontal: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: tokens.border,
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 4,
-  },
-  label: { color: tokens.text, fontSize: 16, fontWeight: "600" },
-  checkAll: { minHeight: 36, justifyContent: "center", paddingHorizontal: 8 },
-  checkAllLabel: { color: tokens.textSecondary, fontSize: 13, fontWeight: "500" },
   row: {
     minHeight: 56,
     flexDirection: "row",
@@ -182,6 +211,10 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  divider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: tokens.border,
   },
   pressed: { backgroundColor: tokens.raised },
   dot: { width: 8, height: 8, borderRadius: 4 },
@@ -205,5 +238,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     paddingHorizontal: 16,
     paddingTop: 6,
+    paddingBottom: 4,
   },
 });
