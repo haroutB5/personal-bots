@@ -48,8 +48,9 @@ export function leftoverStopDecision(
   if (testing && NodePath.resolve(stateDir) === NodePath.resolve(LIVE_STATE_DIR)) {
     return { stop: false, reason: "test process on the live state dir" };
   }
-  const underService =
-    Boolean(environment.INVOCATION_ID?.trim()) || /(?:^|\/)hbots\.service(?:\/|$)/m.test(cgroup);
+  // The cgroup alone: systemd's INVOCATION_ID is inherited by every process a
+  // bot launches, so it cannot tell the real service from its children.
+  const underService = /(?:^|\/)hbots\.service(?:\/|$)/m.test(cgroup);
   if (!underService) return { stop: false, reason: "not running under hbots.service" };
   return { stop: true };
 }

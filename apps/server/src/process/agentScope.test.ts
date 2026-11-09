@@ -51,20 +51,27 @@ describe("leftoverStopDecision", () => {
     const serviceCgroup =
       "0::/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service\n";
 
-    expect(leftoverStopDecision(throwaway, { INVOCATION_ID: "x" }, "")).toEqual({ stop: true });
     expect(leftoverStopDecision(throwaway, {}, serviceCgroup)).toEqual({ stop: true });
     expect(
       leftoverStopDecision(throwaway, {}, "0::/user.slice/user-1000.slice/session-1.scope"),
     ).toEqual({ stop: false, reason: "not running under hbots.service" });
-    expect(leftoverStopDecision(live, { VITEST: "1", INVOCATION_ID: "x" }, "")).toEqual({
+    // A process a bot launched inherits INVOCATION_ID but lives in another cgroup.
+    expect(
+      leftoverStopDecision(
+        live,
+        { INVOCATION_ID: "x" },
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/agent-1.scope\n",
+      ),
+    ).toEqual({ stop: false, reason: "not running under hbots.service" });
+    expect(leftoverStopDecision(live, { VITEST: "1" }, serviceCgroup)).toEqual({
       stop: false,
       reason: "test process on the live state dir",
     });
-    expect(leftoverStopDecision(live, { NODE_ENV: "test", INVOCATION_ID: "x" }, "")).toEqual({
+    expect(leftoverStopDecision(live, { NODE_ENV: "test" }, serviceCgroup)).toEqual({
       stop: false,
       reason: "test process on the live state dir",
     });
-    expect(leftoverStopDecision(live, { INVOCATION_ID: "x" }, "")).toEqual({ stop: true });
+    expect(leftoverStopDecision(live, {}, serviceCgroup)).toEqual({ stop: true });
   });
 });
 
@@ -148,13 +155,18 @@ const withFakeSystemd = <A, E>(
       Effect.provideService(HostProcess.Environment, {
         PATH: bin,
         XDG_RUNTIME_DIR: "/run/user/1",
-        ...(serviceIdentity ? { INVOCATION_ID: "test-invocation" } : {}),
         ...env,
       }),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
         readFileString: (path, encoding) =>
-          fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
+          path === "/proc/self/cgroup"
+            ? Effect.succeed(
+                serviceIdentity
+                  ? "0::/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service\n"
+                  : "0::/user.slice/user-1000.slice/session-1.scope\n",
+              )
+            : fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
         writeFileString: (path, data, options) =>
           fileSystem.writeFileString(path.replace("/sys/fs/cgroup", cgroupRoot), data, options),
       }),

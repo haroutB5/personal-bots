@@ -42,9 +42,7 @@
     "kind": "e2e",
     "title": "Phone e2e smoke on Linux (five journeys)",
     "cwd": ".",
-    "commands": [
-      "E2E_STEP_TIMEOUT_MS=30000 E2E_JOURNEY_LIMIT_MS=60000 node scripts/personal/node/e2e-smoke.mjs --suite-timeout 600 --json"
-    ]
+    "commands": ["node scripts/personal/node/e2e-smoke.mjs --suite-timeout 600 --json"]
   },
   {
     "id": "personal-client",
