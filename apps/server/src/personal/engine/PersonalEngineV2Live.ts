@@ -980,7 +980,7 @@ const make = Effect.gen(function* () {
           FROM orchestration_v2_projection_turn_items i
           WHERE i.thread_id = t.thread_id
             AND i.type IN ('command_execution', 'file_change', 'file_search', 'web_search',
-              'dynamic_tool', 'approval_request', 'subagent')
+              'dynamic_tool', 'approval_request', 'user_input_request', 'subagent')
             AND i.updated_at >= MAX(COALESCE(json_extract(t.payload_json, '$.latestUserMessageAt'), ''),
               COALESCE(r.requested_at, ''))
           ORDER BY i.ordinal DESC LIMIT 1
@@ -990,7 +990,7 @@ const make = Effect.gen(function* () {
           FROM orchestration_v2_projection_turn_items i
           WHERE i.thread_id = t.thread_id
             AND i.type IN ('command_execution', 'file_change', 'file_search', 'web_search',
-              'dynamic_tool', 'approval_request', 'subagent')
+              'dynamic_tool', 'approval_request', 'user_input_request', 'subagent')
             AND i.updated_at >= MAX(COALESCE(json_extract(t.payload_json, '$.latestUserMessageAt'), ''),
               COALESCE(r.requested_at, ''))
           ORDER BY i.ordinal DESC LIMIT 1
@@ -1000,7 +1000,7 @@ const make = Effect.gen(function* () {
           FROM orchestration_v2_projection_turn_items i
           WHERE i.thread_id = t.thread_id
             AND i.type IN ('command_execution', 'file_change', 'file_search', 'web_search',
-              'dynamic_tool', 'approval_request', 'subagent')
+              'dynamic_tool', 'approval_request', 'user_input_request', 'subagent')
             AND i.updated_at >= MAX(COALESCE(json_extract(t.payload_json, '$.latestUserMessageAt'), ''),
               COALESCE(r.requested_at, ''))
           ORDER BY i.ordinal DESC LIMIT 1
