@@ -88,3 +88,25 @@ test('staging wrapper uses build and copied externals without activation',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-stage-wrapper-test-'));
  try {fs.mkdirSync(path.join(root,'scripts/personal/node'),{recursive:true});fs.writeFileSync(path.join(root,'scripts/personal/node/hbots.mjs'),"console.log(JSON.stringify(process.argv.slice(2)));process.exitCode=17");const r=run('bash',[path.join(here,'build.sh'),root],{env:jobEnv(lockBase())});assert.equal(r.status,17,r.stderr);assert.deepEqual(JSON.parse(r.stdout),['build','--copy-externals'])}finally{fs.rmSync(root,{recursive:true,force:true})}
 });
+
+test('restore staging copies every database in the backup and nothing else',async()=>{
+ const {stageDatabases}=await import('./restore-test.mjs');
+ const {DatabaseSync}=await import('node:sqlite');
+ const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-restore-stage-'));
+ try{
+  const make=(dir,names)=>{fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'backup.json'),'{}');for(const n of names){const d=new DatabaseSync(path.join(dir,n));d.exec(`CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('${n}')`);d.close();}return dir;};
+  const read=f=>{const d=new DatabaseSync(f,{readOnly:true});const v=d.prepare('SELECT v FROM t').get().v;d.close();return v;};
+  const both=make(path.join(tmp,'both'),['state.sqlite','statev2.sqlite']);
+  const dest=path.join(tmp,'dest-both');fs.mkdirSync(dest);
+  assert.deepEqual(stageDatabases(both,dest),['state.sqlite','statev2.sqlite']);
+  assert.deepEqual(fs.readdirSync(dest).sort(),['state.sqlite','statev2.sqlite']);
+  assert.equal(read(path.join(dest,'statev2.sqlite')),'statev2.sqlite');
+  const v1=make(path.join(tmp,'v1'),['state.sqlite']);
+  const dest1=path.join(tmp,'dest-v1');fs.mkdirSync(dest1);
+  assert.deepEqual(stageDatabases(v1,dest1),['state.sqlite']);
+  assert.deepEqual(fs.readdirSync(dest1),['state.sqlite']);
+  fs.writeFileSync(path.join(both,'statev2.sqlite-wal'),'');
+  assert.throws(()=>stageDatabases(both,path.join(tmp,'dest-wal')),/completed SQLite snapshot/);
+  assert.throws(()=>stageDatabases(make(path.join(tmp,'none'),[]),path.join(tmp,'dest-none')),/no database/);
+ }finally{fs.rmSync(tmp,{recursive:true,force:true});}
+});
