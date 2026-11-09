@@ -43,6 +43,7 @@ import {
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "./tokens";
+import { sendUsageRefresh } from "./usageRefresh";
 
 const PROVIDER_DOT: Record<UsageProviderKind, string> = {
   claude: "#c98500",
@@ -429,29 +430,34 @@ function UsageSheet({
   });
   const tokenUsage = native.bots.usePersonalTokenUsage(native.environmentId);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const probed = useRef(false);
   const drag = useRef(0);
 
   const refresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
+    setRefreshError(null);
     try {
-      await refreshProviders({
-        environmentId: native.environmentId,
-        input: { fresh: true },
-      });
+      setRefreshError(await sendUsageRefresh(refreshProviders, native.environmentId));
     } finally {
       setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    if (!visible || probed.current) return;
+    if (!visible) {
+      // The modal stays mounted, so each open needs its own probe and no stale failure.
+      probed.current = false;
+      // eslint-disable-next-line react/set-state-in-effect -- a closed sheet must not reopen with the last failure
+      setRefreshError(null);
+      return;
+    }
+    if (probed.current) return;
     if (!usageNeedsRefreshOnOpen(cards, Date.now())) return;
     probed.current = true;
-    // eslint-disable-next-line react/set-state-in-effect -- the open-time probe starts once
     void refresh();
-    // Once per open: the sheet is mounted only while it is up.
+    // Once per open.
     // eslint-disable-next-line react/exhaustive-effect-dependencies -- once per open, by design
   }, [visible]);
 
@@ -498,14 +504,14 @@ function UsageSheet({
                 disabled={refreshing}
                 accessibilityRole="button"
                 accessibilityLabel="Refresh usage"
-                accessibilityState={{ busy: refreshing }}
+                accessibilityState={{ busy: refreshing, disabled: refreshing }}
                 style={styles.iconButton}
               >
-                <IconRefresh
-                  size={20}
-                  color={refreshing ? tokens.textTertiary : tokens.text}
-                  strokeWidth={1.75}
-                />
+                {refreshing ? (
+                  <ActivityIndicator size="small" color={tokens.textSecondary} />
+                ) : (
+                  <IconRefresh size={20} color={tokens.text} strokeWidth={1.75} />
+                )}
               </Pressable>
               <Pressable
                 onPress={onClose}
@@ -522,6 +528,11 @@ function UsageSheet({
             showsVerticalScrollIndicator={false}
             style={styles.sheetScroll}
           >
+            {refreshError !== null ? (
+              <Text style={styles.warning} accessibilityLiveRegion="polite">
+                {refreshError}
+              </Text>
+            ) : null}
             {cards.map((card) => (
               <UsageCardView
                 key={card.driver}
@@ -579,7 +590,7 @@ export function PersonalUsageStrip({
     probe.current.lastProbeAt = at;
     void refreshProviders({
       environmentId: native.environmentId,
-      input: { fresh: true },
+      input: { refreshUsage: true },
     });
   }, [providers, now, hidden]);
 
