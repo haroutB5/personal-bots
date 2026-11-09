@@ -14,7 +14,14 @@ if(process.env.HBOTS_HEAVY_JOB_HELD!=='1' || !holdsGate()) {
   const r=spawnSync('bash',[path.join(here,'heavy-job.sh'),'--label',`gate evidence ${v.release}`,'--',process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit'});
   process.exit(r.status??1);
 }
-const gateEnv=(cwd)=>({...process.env,PATH:`${cwd}/node_modules/.bin:${v.repo}/node_modules/.bin:${process.env.PATH}`,NO_COLOR:'1'});
+// Gate commands must not see the live app environment the bot shell carries.
+const gateEnv=(cwd)=>{
+  const env={};
+  for(const [key,value] of Object.entries(process.env)) if(!/^(?:T3CODE_|PERSONAL_|DSH_)/.test(key)) env[key]=value;
+  env.PATH=`${cwd}/node_modules/.bin:${v.repo}/node_modules/.bin:${process.env.PATH}`;
+  env.NO_COLOR='1';
+  return env;
+};
 const lanesOf=(d)=>d.concurrent??[d.commands];
 const commandsOf=(d)=>lanesOf(d).flat();
 try {

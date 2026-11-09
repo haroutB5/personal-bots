@@ -166,6 +166,31 @@ test('server-tests gate runs two weighted shards over the same folders',()=>{
   assert.deepEqual(folders(lane[0]),folders(gate.concurrent[0][0]));
  }
 });
+test('gate commands run without the live app environment',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-env-'));
+ try{
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),seen=path.join(root,'env');
+  fs.mkdirSync(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','fixture');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  const fixture=path.join(root,'command.mjs');
+  fs.writeFileSync(fixture,`import fs from 'node:fs';
+const kind=process.argv[2];
+if(kind==='server-tests') fs.writeFileSync(process.env.SEEN,JSON.stringify({t3:process.env.T3CODE_ENVIRONMENT_LABEL??'unset',personal:process.env.PERSONAL_SEED_MODEL??'unset',dsh:process.env.DSH_PROBE??'unset',keep:process.env.KEEP_ME??'unset'}));
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
+else console.log('Tests 3 passed (3)');`);
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
+  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{SEEN:seen,T3CODE_ENVIRONMENT_LABEL:'Bots',PERSONAL_SEED_MODEL:'live',DSH_PROBE:'live',KEEP_ME:'ok'})});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(seen,'utf8')),{t3:'unset',personal:'unset',dsh:'unset',keep:'ok'});
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
 test('server-tests gate covers the folders behind the 1.67.1 rollbacks',()=>{
  const root=path.resolve(here,'../../../..');
  const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));
