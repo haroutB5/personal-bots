@@ -23,12 +23,12 @@ const UNIT_NAME = /^hbots-fixture-[A-Za-z0-9]+\.service$/;
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
-const cacheRoot = () =>
+export const cacheRoot = () =>
   process.env.HBOTS_RELEASE_FIXTURE_CACHE || path.join(os.homedir(), ".cache");
-const runtimeUnitDir = () =>
+export const runtimeUnitDir = () =>
   process.env.HBOTS_RELEASE_FIXTURE_RUNTIME_DIR ||
   path.join(process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`, "systemd", "user");
-const configUnitDir = () =>
+export const configUnitDir = () =>
   process.env.HBOTS_RELEASE_FIXTURE_CONFIG_DIR ||
   path.join(os.homedir(), ".config", "systemd", "user");
 const unitDir = () => process.env.HBOTS_RELEASE_FIXTURE_UNIT_DIR || runtimeUnitDir();

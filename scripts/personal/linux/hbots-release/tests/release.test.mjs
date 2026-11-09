@@ -10,19 +10,27 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
 import { copyStopped, liveSizes, verifyBackup, writeManifest } from "../lib/backup.mjs";
 import { makeFixtureDb } from "../lib/fixture.mjs";
-import { makeEnv, procStart, reapOrphans, sh, sleep, ROOT, spawn } from "./env.mjs";
+import {
+  cacheRoot,
+  configUnitDir,
+  makeEnv,
+  procStart,
+  reapOrphans,
+  sh,
+  sleep,
+  ROOT,
+  spawn,
+} from "./env.mjs";
 import { prepared } from "./prepare.mjs";
 
-// Fixtures stay in a per-checkout scratch root so a suite run cannot touch the real ~/.cache leftovers.
+// Child reports and the generated child test live in scratch. Fixtures use the harness defaults
+// (~/.cache and ~/.config/systemd/user) unless the caller sets the sandbox env for this run.
 const SCRATCH = NodePath.join(
   NodePath.resolve(ROOT, "../../../.."),
   ".tmp",
   "release-fixture-tests",
 );
-process.env.HBOTS_RELEASE_FIXTURE_CACHE = NodePath.join(SCRATCH, "cache");
-process.env.HBOTS_RELEASE_FIXTURE_CONFIG_DIR = NodePath.join(SCRATCH, "config-units");
-NodeFS.mkdirSync(process.env.HBOTS_RELEASE_FIXTURE_CACHE, { recursive: true });
-NodeFS.mkdirSync(process.env.HBOTS_RELEASE_FIXTURE_CONFIG_DIR, { recursive: true });
+NodeFS.mkdirSync(SCRATCH, { recursive: true });
 const RUNTIME_UNIT_DIR =
   process.env.HBOTS_RELEASE_FIXTURE_RUNTIME_DIR ||
   NodePath.join(process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`, "systemd", "user");
@@ -615,8 +623,10 @@ NodeTest.test("the reaper removes a fixture left by a SIGKILLed test on the next
 });
 
 NodeTest.test("the reaper never touches a fixture whose owner is alive", () => {
-  const cache = process.env.HBOTS_RELEASE_FIXTURE_CACHE;
-  const config = process.env.HBOTS_RELEASE_FIXTURE_CONFIG_DIR;
+  const cache = cacheRoot();
+  const config = configUnitDir();
+  NodeFS.mkdirSync(cache, { recursive: true });
+  NodeFS.mkdirSync(config, { recursive: true });
   const liveDir = NodeFS.mkdtempSync(NodePath.join(cache, "hbots-release-fixture-live-"));
   const suffix = NodePath.basename(liveDir).split("-").pop();
   const unit = `hbots-fixture-${suffix}.service`;
@@ -670,8 +680,10 @@ NodeTest.test("the reaper never touches a fixture whose owner is alive", () => {
 });
 
 NodeTest.test("a dry run lists orphan fixtures and stray unit files and removes nothing", () => {
-  const cache = process.env.HBOTS_RELEASE_FIXTURE_CACHE;
-  const config = process.env.HBOTS_RELEASE_FIXTURE_CONFIG_DIR;
+  const cache = cacheRoot();
+  const config = configUnitDir();
+  NodeFS.mkdirSync(cache, { recursive: true });
+  NodeFS.mkdirSync(config, { recursive: true });
   const noRecord = NodeFS.mkdtempSync(NodePath.join(cache, "hbots-release-fixture-norecord-"));
   const deadDir = NodeFS.mkdtempSync(NodePath.join(cache, "hbots-release-fixture-drydead-"));
   const deadUnit = `hbots-fixture-${NodePath.basename(deadDir).split("-").pop()}.service`;
