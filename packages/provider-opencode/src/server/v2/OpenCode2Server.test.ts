@@ -241,7 +241,7 @@ describe("OpenCode2Server spawned server", () => {
           : `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
       );
       if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
-      const botConfigHome = yield* ensurePersonalBotOpenCodeHome(directory);
+      const botHome = yield* ensurePersonalBotOpenCodeHome(directory);
 
       const server = yield* OpenCode2Server.make({
         binaryPath,
@@ -249,7 +249,7 @@ describe("OpenCode2Server spawned server", () => {
         serverPassword: "",
         directory,
         environment: yield* HostProcess.Environment,
-        botConfigHome,
+        botHome,
       });
       const owner = yield* server.withConnection((connection) => Effect.succeed(connection));
       const bot = yield* server.withBotConnection({ model: "opencode/big-pickle" }, (connection) =>

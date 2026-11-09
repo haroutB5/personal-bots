@@ -284,7 +284,7 @@ export const OpenCodeDriver: ProviderDriver<
           }),
       ),
     );
-    const botConfigHome = yield* ensurePersonalBotOpenCodeHome(host.paths.stateDir).pipe(
+    const botHome = yield* ensurePersonalBotOpenCodeHome(host.paths.stateDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
       Effect.catch((cause) =>
@@ -311,7 +311,7 @@ export const OpenCodeDriver: ProviderDriver<
       serverPassword: effectiveConfig.serverPassword,
       directory: host.paths.cwd,
       environment: processEnv,
-      ...(botConfigHome === undefined ? {} : { botConfigHome }),
+      ...(botHome === undefined ? {} : { botHome }),
     }).pipe(
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
       Effect.provideService(
