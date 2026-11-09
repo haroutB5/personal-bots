@@ -635,7 +635,7 @@ apps/server/src/workspace/WorkspaceSearchIndex.test.ts		content	68	B1	dropped	ev
 apps/server/src/workspace/WorkspaceSearchIndex.ts		content	21	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/server/test/ActivityPayloadProjection.test.ts		modify-delete	15	C10	dropped	the v1 activity projection pipeline is deleted; v2 stores turn items
 apps/server/vite.config.ts		content	8	B1	done	take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
-apps/web/package.json		content	8	phase 4	open	area phase 4
+apps/web/package.json		content	8	phase 4	done	Done: remotion studio scripts and dev deps restored (4fc8a543fa); personal-client dep present
 apps/web/public/manifest.webmanifest		content	20	phase 4	open	area phase 4
 apps/web/src/AppRoot.tsx		content	30	phase 4	open	area phase 4
 apps/web/src/assets/assetUrls.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -650,7 +650,7 @@ apps/web/src/cloud/managedRelayLayer.ts		content	1	B1	dropped	our only change at
 apps/web/src/cloud/managedRelayState.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/cloud/primaryCloudLinkState.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/ChatMarkdown.test.tsx		modify-delete	78	phase 4	open	area phase 4
-apps/web/src/components/ChatMarkdown.tsx		content	119	phase 4	open	area phase 4
+apps/web/src/components/ChatMarkdown.tsx		content	119	phase 4	open	Partial: onOpenFile chat file sheet restored (96e55fda7c); bare-anchor placeholder and media failure-detail hunks still parked
 apps/web/src/components/ChatMarkdown.workspace-images.test.tsx		modify-delete	36	phase 4	open	area phase 4
 apps/web/src/components/ChatView.logic.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/ChatView.logic.ts		content	1	B1	dropped	every commit on our side is an upstream cherry-pick U already has
@@ -675,7 +675,7 @@ apps/web/src/components/cloud/CloudEnvironmentConnectList.test.tsx		modify-delet
 apps/web/src/components/cloud/ConnectOnboardingDialog.tsx		content	57	phase 4	open	area phase 4
 apps/web/src/components/diffs/useReviewFilePatches.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/files/projectFilesQueryState.test.tsx		content	61	phase 4	open	area phase 4
-apps/web/src/components/files/projectFilesQueryState.ts		content	7	phase 4	open	area phase 4
+apps/web/src/components/files/projectFilesQueryState.ts		content	7	phase 4	dropped	upstream readError carries the typed failure; ChatFilePreview reads readError.failure protected_file and binary_file
 apps/web/src/components/files/useFileSaveCoordinator.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/onboarding/FirstRunGate.tsx		content	14	phase 4	open	area phase 4
 apps/web/src/components/preview/PreviewAutomationHosts.test.tsx		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -700,14 +700,14 @@ apps/web/src/components/ui/alert-dialog.tsx		content	2	phase 4	open	area phase 4
 apps/web/src/components/ui/dialog.tsx		content	2	phase 4	open	area phase 4
 apps/web/src/components/ui/menu.tsx		content	2	phase 4	open	area phase 4
 apps/web/src/components/ui/popover.tsx		content	2	phase 4	open	area phase 4
-apps/web/src/components/ui/sheet.tsx		content	20	phase 4	open	area phase 4
+apps/web/src/components/ui/sheet.tsx		content	20	phase 4	done	Done: Back-closing sheets, forceBackdrop, backdropClassName and SheetClose (b78c184e36)
 apps/web/src/components/usage/UsageLimits.tsx		content	51	phase 4	done	Done: resetCreditFailureText reads the typed error from the Cause, windows past reset read as full, and the bots server Show usage setting hides providers; upstream barColor already covers Antigravity
 apps/web/src/components/usage/UsageLimitsPooled.tsx		content	4	phase 4	open	area phase 4
 apps/web/src/components/usage/UsagePage.refresh.test.tsx		modify-delete	1	phase 4	open	area phase 4
 apps/web/src/components/usage/UsagePriceOverrides.tsx		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/components/usage/usageProviders.ts		content	4	phase 4	open	area phase 4
 apps/web/src/connection/platform.ts		content	12	phase 4	open	area phase 4
-apps/web/src/connection/runtime.ts		content	13	phase 4	open	area phase 4
+apps/web/src/connection/runtime.ts		content	13	phase 4	open	omitProviderWorkspaceData superseded by upstream workspaceSnapshotsOnDemand; v1 snapshot-loader perf options have no v2 equivalent yet
 apps/web/src/connection/storage.test.ts		content	199	phase 4	open	area phase 4
 apps/web/src/connection/storage.ts		content	227	phase 4	open	area phase 4
 apps/web/src/environments/primary/httpLayer.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -719,8 +719,8 @@ apps/web/src/hooks/useLoadBalancedEnvironment.ts		content	1	B1	dropped	our only 
 apps/web/src/hooks/useLocalStorage.ts		content	8	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 apps/web/src/hooks/useTheme.test.ts		modify-delete	57	phase 4	open	area phase 4
 apps/web/src/lib/assistantCitationNavigation.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/web/src/lib/attachmentUploadQueue.test.ts		content	190	phase 4	open	area phase 4
-apps/web/src/lib/attachmentUploadQueue.ts		content	103	phase 4	open	area phase 4
+apps/web/src/lib/attachmentUploadQueue.test.ts		content	190	phase 4	done	Done: tests wait on awaitPreparedConnection with flushUploadStart (96e55fda7c)
+apps/web/src/lib/attachmentUploadQueue.ts		content	103	phase 4	done	Done: first upload in a new chat waits for the prepared connection (96e55fda7c)
 apps/web/src/lib/chunkReloadGuard.ts		content	14	phase 4	open	area phase 4
 apps/web/src/lib/contextWindow.test.ts		content	14	phase 4	open	area phase 4
 apps/web/src/lib/diffFileContents.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -738,7 +738,7 @@ apps/web/src/routes/__root.tsx		content	201	phase 4	open	area phase 4
 apps/web/src/routes/_chat.index.tsx		content	10	phase 4	open	area phase 4
 apps/web/src/rpc/atomRegistry.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/session-logic.command-output.test.ts		modify-delete	34	phase 4	open	area phase 4
-apps/web/src/session-logic.ts		content	35	phase 4	open	area phase 4
+apps/web/src/session-logic.ts		content	35	phase 4	dropped	personal work-log types live in personal-client conversation/types.ts; upstream session-logic stands
 apps/web/src/state/desktopNetworkAccess.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/state/desktopSshHosts.test.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/state/desktopWslState.test.ts		modify-delete	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -748,14 +748,14 @@ apps/web/src/state/projectClones.ts		content	1	B1	dropped	our only change at thi
 apps/web/src/state/pullRequests.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/state/queries.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/state/query.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/web/src/state/session.ts		content	60	phase 4	open	area phase 4
+apps/web/src/state/session.ts		content	60	phase 4	done	Done: awaitPreparedConnection restored for the upload queue (96e55fda7c)
 apps/web/src/state/shell.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/state/shell.ts		content	8	phase 4	open	area phase 4
 apps/web/src/state/sourceControlActions.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/state/threads.ts		content	17	phase 4	open	area phase 4
 apps/web/src/state/usage.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/state/use-atom-query-runner.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/web/test/environmentHttpTest.ts		content	4	phase 4	open	area phase 4
+apps/web/test/environmentHttpTest.ts		content	4	phase 4	done	Done: renewSession and revokeSession handlers (96e55fda7c)
 apps/web/vite.config.ts		content	68	phase 4	open	area phase 4
 docs/internals/connection-runtime.md		content	13	B1	dropped	every commit on our side is an upstream cherry-pick U already has
 evals/thread-titles/run.ts	apps/server/scripts/evaluate-thread-titles.ts	content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -803,7 +803,7 @@ packages/client-runtime/src/rpc/session.ts		content	12	C16	dropped	U's subscribe
 packages/client-runtime/src/state/archivedThreads.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/archivedThreads.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/assets.test.ts		content	31	C16	dropped	the orchestration shell stream is dropped; the bots surfaces read thread shells through personalBots.threadShells
-packages/client-runtime/src/state/assets.ts		content	22	C16	dropped	the orchestration shell stream is dropped; the bots surfaces read thread shells through personalBots.threadShells
+packages/client-runtime/src/state/assets.ts		content	22	C16	done	Done: protected_file read reason restored (b78c184e36)
 packages/client-runtime/src/state/deviceHubAccess.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/entities.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/environmentHttpAuth.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
@@ -814,7 +814,7 @@ packages/client-runtime/src/state/preview.ts		content	1	B1	dropped	our only chan
 packages/client-runtime/src/state/projectCommands.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/review.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/runtime.test.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-packages/client-runtime/src/state/server.ts		content	22	C16	dropped	U's server state stands; hbots-mobile sets workspaceSnapshotsOnDemand on its own config subscription
+packages/client-runtime/src/state/server.ts		content	22	C16	done	Reopened by WEB-GATES U7, then done: runProviderTest restored (0b219ca6a1); omitProviderWorkspaceData superseded by workspaceSnapshotsOnDemand; openProviderAuthOnLaptop dropped, v2 has no server handler
 packages/client-runtime/src/state/session.ts		content	2	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 packages/client-runtime/src/state/shell-sync.test.ts		content	96	C16	dropped	the orchestration shell stream is dropped; hbots-mobile polls personalBots.threadShells every 5s while connected
 packages/client-runtime/src/state/shell.test.ts		modify-delete	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
