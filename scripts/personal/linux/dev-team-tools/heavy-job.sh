@@ -97,19 +97,28 @@ printf 'pid=%s started=%s label=%s cwd=%s slot=%s\n' "$$" "$(date -Is)" "$label"
 export HBOTS_HEAVY_JOB_HELD=1
 # nice -n is relative; setpriority makes the inherited nice value exactly 10.
 prio=(ionice -c 3 python3 -c 'import os,sys; os.setpriority(os.PRIO_PROCESS,0,10); os.execvp(sys.argv[1],sys.argv[1:])')
-# A soft memory ceiling in a scope of its own: past MemoryHigh the kernel
-# reclaims from the job and slows it, never kills it, so the live server keeps
-# its pages. Bot shells run inside hbots.service; without a scope a 6 GiB tsc
-# competes with the server for the same cgroup. HEAVY_JOB_MEMORY_HIGH=off is the kill switch.
+# A memory scope of its own. MemoryHigh softens the job past 5G so the live server
+# keeps its pages. MemoryMax and MemorySwapMax are the hard ceiling: past 6G RAM
+# plus 4G swap the kernel kills the job inside this scope, so a runaway build or
+# emulator cannot push the box to 90% swap and take hbots with it. Two jobs at
+# both limits leave room for the server, and 8G of job swap is far below the 90%
+# swap rule. Any cap accepts off, which restores the old behaviour; MemoryHigh=off
+# also runs without a scope at all.
 # --expand-environment=no: systemd-run would otherwise rewrite $$ and $VAR in the job's arguments.
 high=${HEAVY_JOB_MEMORY_HIGH:-5G}
-if [[ ! "$high" =~ ^(off|[1-9][0-9]*[KMG])$ ]]; then
-  echo 'HEAVY_JOB_MEMORY_HIGH must be off or a size such as 6G.' >&2; exit 2
-fi
+max=${HEAVY_JOB_MEMORY_MAX:-6G}
+swap=${HEAVY_JOB_SWAP_MAX:-4G}
+size_re='^(off|[1-9][0-9]*[KMG])$'
+[[ "$high" =~ $size_re ]] || { echo 'HEAVY_JOB_MEMORY_HIGH must be off or a size such as 6G.' >&2; exit 2; }
+[[ "$max" =~ $size_re ]] || { echo 'HEAVY_JOB_MEMORY_MAX must be off or a size such as 6G.' >&2; exit 2; }
+[[ "$swap" =~ $size_re ]] || { echo 'HEAVY_JOB_SWAP_MAX must be off or a size such as 4G.' >&2; exit 2; }
 if [[ "$high" != off ]]; then
   if systemd-run --user --scope --quiet --collect true 2>/dev/null; then
-    printf 'heavy-job: nice 10, ionice idle, MemoryHigh %s :: %s\n' "$high" "$label" >&2
-    exec systemd-run --user --scope --quiet --collect --expand-environment=no -p MemoryHigh="$high" -p CPUWeight=20 \
+    printf 'heavy-job: nice 10, ionice idle, MemoryHigh %s, MemoryMax %s, MemorySwapMax %s :: %s\n' "$high" "$max" "$swap" "$label" >&2
+    caps=(-p MemoryHigh="$high" -p CPUWeight=20)
+    [[ "$max" == off ]] || caps+=(-p MemoryMax="$max")
+    [[ "$swap" == off ]] || caps+=(-p MemorySwapMax="$swap")
+    exec systemd-run --user --scope --quiet --collect --expand-environment=no "${caps[@]}" \
       --unit="heavy-job-$$" -- "${prio[@]}" "$@"
   fi
   echo 'heavy-job: systemd-run --user unavailable; running without a memory scope.' >&2
