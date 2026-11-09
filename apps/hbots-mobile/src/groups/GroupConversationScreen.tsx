@@ -143,7 +143,7 @@ export function GroupConversationScreen({
     chat,
     environmentId,
     threadId: threadId ?? "",
-    activities: thread?.activities ?? [],
+    projection: view.projection,
     items,
     bots,
     botName: group?.name ?? "Group",

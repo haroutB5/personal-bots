@@ -563,4 +563,53 @@ describe("PersonalEngineV2 reads", () => {
       }),
     );
   });
+
+  it.effect("workingSnapshot picks the waiting question over the tool that asked it", () => {
+    const shells = new Map<string, OrchestrationV2ThreadShell>();
+    return withEngine(shells, (engine) =>
+      Effect.gen(function* () {
+        yield* insertThread({
+          threadId: "thread-1",
+          latestUserMessageAt: "2026-11-06T10:00:00.000Z",
+        });
+        yield* insertRun({
+          threadId: "thread-1",
+          runId: "run-1",
+          ordinal: 1,
+          status: "running",
+          requestedAt: "2026-11-06T09:00:00.000Z",
+        });
+        yield* insertItem({
+          id: "tool-1",
+          threadId: "thread-1",
+          ordinal: 1,
+          type: "dynamic_tool",
+          at: "2026-11-06T10:02:00.000Z",
+          payload: { title: null, toolName: "AskUserQuestion" },
+        });
+        yield* insertItem({
+          id: "ask-1",
+          threadId: "thread-1",
+          ordinal: 2,
+          type: "user_input_request",
+          status: "waiting",
+          at: "2026-11-06T10:03:00.000Z",
+          payload: { title: null, requestId: "request-1", questions: [] },
+        });
+
+        const rows = yield* engine.workingSnapshot([ThreadId.make("thread-1")]);
+        expect(rows).toEqual([
+          {
+            threadId: "thread-1",
+            turnId: "run-1",
+            reasoningText: null,
+            reasoningAt: null,
+            toolTitle: null,
+            toolSummary: "user_input_request",
+            toolAt: "2026-11-06T10:03:00.000Z",
+          },
+        ]);
+      }),
+    );
+  });
 });
