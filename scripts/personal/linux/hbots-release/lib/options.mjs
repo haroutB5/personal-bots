@@ -7,6 +7,7 @@ export const OPTIONS = {
   summary: { type: "string", default: "" }, "extra-columns": { type: "string", default: "" },
   "sw-revision": { type: "string", default: "2026-09-30-worker-list" },
   "backup-keep": { type: "string", default: "3" }, "force-backup": { type: "boolean" }, "allow-slow-backup": { type: "boolean" },
+  "compact-db": { type: "boolean" },
   "repo-root": { type: "string", default: DEFAULT_REPO },
   "app-sheet": { type: "string", default: DEFAULT_APP_SHEET }, "app-history": { type: "string", default: DEFAULT_APP_HISTORY },
   prepare: { type: "boolean" }, "guards-only": { type: "boolean" }, "dry-run": { type: "boolean" }, "verify-live": { type: "boolean" },

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readJson, sha256File, atomicWrite } from "./util.mjs";
 
-const LOCAL = ["lib/hash.mjs", "lib/dbcheck.mjs", "lib/fixture.mjs", "lib/idle.mjs", "lib/backup.mjs", "lib/seal.mjs"];
+const LOCAL = ["lib/hash.mjs", "lib/dbcheck.mjs", "lib/fixture.mjs", "lib/idle.mjs", "lib/backup.mjs", "lib/seal.mjs", "lib/compact.mjs", "lib/compact-db.mjs"];
 const TOOLS = ["check-release-notes.mjs", "check-gate-evidence.mjs", "gate-common.mjs", "ops-common.mjs", "notify-release.mjs"];
 
 export function currentPins(cfg) {

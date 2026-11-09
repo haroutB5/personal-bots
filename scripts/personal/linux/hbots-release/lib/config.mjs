@@ -72,6 +72,9 @@ export function loadConfig(env = process.env) {
     staleLeftoverMs: n("STALE_LEFTOVER_MS", 30 * 60_000),
     stableSeconds: n("STABLE_SECONDS", 120),
     startTimeoutMs: n("START_TIMEOUT_MS", 180_000),
+    /** --compact-db: hard limit for the VACUUM child, and a test-only free-space override. */
+    compactTimeoutMs: n("COMPACT_TIMEOUT_MS", 15 * 60_000),
+    compactFreeBytes: n("COMPACT_FREE_BYTES", 0),
     pinsFile: t("PINS", path.join(here, "PINS.json")),
     scope: t("CGROUP", ""),
     /** Desktop notifier. Tests point this at a recorder so they never toast the owner. */

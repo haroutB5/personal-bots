@@ -148,9 +148,15 @@ export async function runGuards(cfg, a, names, ctx, flags) {
   save("preflight");
   const levels = await step("guards.migrations", async () => testMigrations(a));
   result.migrationLevelsFromSource = levels;
-  const skipBackup = Number(a["migration-before"]) === Number(a["migration-after"]) && !a["force-backup"];
+  const skipBackup = Number(a["migration-before"]) === Number(a["migration-after"]) && !a["force-backup"] && !a["compact-db"];
   result.backupSkipped = skipBackup;
-  result.backupDecision = skipBackup ? "no migration (backup skipped; the live database is not opened)" : a["force-backup"] && levels.before === levels.after ? "--force-backup" : `migration ${levels.before} -> ${levels.after}`;
+  result.backupDecision = skipBackup
+    ? "no migration (backup skipped; the live database is not opened)"
+    : a["compact-db"]
+      ? "--compact-db (the pre-restart backup is verified before VACUUM)"
+      : a["force-backup"] && levels.before === levels.after
+        ? "--force-backup"
+        : `migration ${levels.before} -> ${levels.after}`;
   if (!skipBackup) {
     await step("guards.reflink-and-disk", async () => {
       const probe = reflinkProbe(cfg);

@@ -6,8 +6,9 @@
 //   --guards-only  every guard, exit 0/1. Nothing waits, nothing restarts.
 //   --dry-run      guards + one idle look + the plan with timings; --verify-live also runs the post-restart
 //                  verification read-only against the live server when the release is already live.
-//   (default)      the waiter: guards -> idle gate -> heavy-job lock -> seal re-verify -> (backup) -> restart ->
-//                  smoke with extended checks -> app sheet -> notice. A failed smoke rolls the binary back.
+//   (default)      the waiter: guards -> idle gate -> heavy-job lock -> seal re-verify -> (backup, + compact with
+//                  --compact-db) -> restart -> smoke with extended checks -> app sheet -> notice. A failed smoke
+//                  rolls the binary back. With --compact-db, a failed VACUUM restores the verified backup first.
 // Start it with hbots-release-launch.mjs: the runner must live OUTSIDE hbots.service's cgroup, because the restart
 // it performs would otherwise kill it. The live database is never opened by this tool.
 import * as NodeFS from "node:fs";
@@ -35,8 +36,10 @@ import {
   pruneBackups,
   stamp,
   verifyBackup,
+  verifyDatabaseCopy,
   writeManifest,
 } from "./lib/backup.mjs";
+import { compactDatabase, compactDiskPlan, liveDatabaseName } from "./lib/compact.mjs";
 import { postActivation, waitAlive } from "./lib/verify.mjs";
 import { liveLine, sendReleaseNotice, updateAppSheet } from "./lib/sheet.mjs";
 
@@ -44,6 +47,8 @@ function setCurrent(cfg, release) {
   NodeFS.writeFileSync(cfg.currentTxt, `${release}\n`);
   return NodeFS.readFileSync(cfg.currentTxt, "utf8").trim();
 }
+
+const gb = (bytes) => `${(Number(bytes) / 1024 ** 3).toFixed(2)} GB`;
 
 // Without this marker the old server treats the restart as the host going offline and deletes its Cloudflare
 // tunnel; the relay then provisions a new UUID and the public hostname takes 1-2 minutes to route to it.
@@ -142,6 +147,15 @@ function planTable(cfg, a, skipBackup, guardSeconds) {
             25,
           ],
         ]),
+    ...(a["compact-db"]
+      ? [
+          [
+            `compact db: verify the stopped copy (full integrity_check), checkpoint, auto_vacuum=INCREMENTAL, VACUUM, rebuild search index, quick_check (hard limit ${Math.round(cfg.compactTimeoutMs / 1000)} s)`,
+            240,
+            Math.max(300, Math.round(cfg.compactTimeoutMs / 1000) + 60),
+          ],
+        ]
+      : []),
     ["restart to server up (systemctl restart + server.json)", 6, 20],
     [`smoke stability window (${stable} s; checks A run inside it)`, stable + 3, stable + 8],
     ["checks B (log scans) + sheet + notice", 1, 3],
@@ -399,6 +413,23 @@ async function main() {
           ? `No backup planned (no migration); ${backups.length} timestamp backups stay as they are.`
           : `Backup retention: ${backups.length} now; the fresh one makes ${backups.length + 1}; --backup-keep ${a["backup-keep"]} would prune ${result.backupsWouldPrune.length}${result.backupsWouldPrune.length ? `: ${result.backupsWouldPrune.join(", ")}` : ""}.`,
       );
+      if (a["compact-db"]) {
+        const name = liveDatabaseName(cfg);
+        if (name) {
+          const plan = compactDiskPlan(cfg, name, cfg.compactFreeBytes);
+          result.compactPlan = {
+            database: name,
+            bytes: plan.bytes,
+            freeBytes: plan.free,
+            neededBytes: plan.needed,
+            ok: plan.ok,
+            timeoutMs: cfg.compactTimeoutMs,
+          };
+          note(
+            `Database compact planned: ${name} ${(plan.bytes / 1024 ** 3).toFixed(2)} GB, ${(plan.free / 1024 ** 3).toFixed(1)} GB free, ${(plan.needed / 1024 ** 3).toFixed(1)} GB needed (database plus 2 GB), hard limit ${Math.round(cfg.compactTimeoutMs / 1000)} s.`,
+          );
+        } else note("Database compact planned, but the state folder holds no database.");
+      }
       Object.assign(result, { selfStats: selfStats(null) });
       save("dryrun_ok");
       note("");
@@ -505,7 +536,7 @@ async function main() {
     result.idleAt = new Date().toISOString();
     timings["idle.wait"] = round1((Date.now() - waitStart) / 1000);
     note(
-      `Idle confirmed; ${g.skipBackup ? "no backup (no migration)" : "backup with the server stopped"}, then activation -> ${a.release}`,
+      `Idle confirmed; ${g.skipBackup ? "no backup (no migration)" : a["compact-db"] ? "backup and compact with the server stopped" : "backup with the server stopped"}, then activation -> ${a.release}`,
     );
 
     const before = readJson(cfg.serverJson);
@@ -526,6 +557,7 @@ async function main() {
       const oldPid = Number(before.pid);
       const inactive = systemctl(["is-active", cfg.unit]).out.trim();
       const holders = dbHolders(cfg);
+      let copyError = null;
       try {
         if (stop.code !== 0 || inactive !== "inactive")
           throw new Error(
@@ -549,14 +581,67 @@ async function main() {
         note(
           `backup copy written with the server stopped: ${backupDir} (${round1((Date.now() - startedAt) / 1000)} s stopped)`,
         );
+        if (a["compact-db"]) {
+          const name = liveDatabaseName(cfg);
+          result.compact = {
+            flag: true,
+            database: name,
+            backupPath: backupDir,
+            timeoutMs: cfg.compactTimeoutMs,
+          };
+          if (!name) throw new Error("the state folder holds no database to compact");
+          const verified = await step("backup.verify-before-compact", () =>
+            verifyDatabaseCopy(cfg, backupDir, name, a["migration-before"]),
+          );
+          Object.assign(result.compact, {
+            backupVerified: true,
+            backupBytes: verified.bytes,
+            backupSha256: verified.sha256,
+          });
+          note(
+            `compact: backup of ${name} verified before VACUUM (${gb(verified.bytes)}, migration ${verified.mig}, integrity ok, sha256 ${verified.sha256.slice(0, 12)}).`,
+          );
+        }
       } catch (error) {
+        copyError = error;
+      }
+      if (copyError) {
         result.backupExit = 1;
+        if (result.compact)
+          Object.assign(result.compact, {
+            ok: false,
+            exit: 1,
+            phase: result.compact.backupVerified ? "copy" : "backup-verify",
+            error: errMsg(copyError),
+          });
         setCurrent(cfg, a.rollback);
         systemctl(["start", cfg.unit]);
         throw Object.assign(
-          new Error(`Backup failed, server restarted on ${a.rollback}: ${errMsg(error)}`),
+          new Error(`Backup failed, server restarted on ${a.rollback}: ${errMsg(copyError)}`),
           { noRollback: true },
         );
+      }
+      if (a["compact-db"] && result.compact?.backupVerified) {
+        const c = await step("compact.database", () =>
+          compactDatabase(cfg, result.compact.database, {
+            timeoutMs: cfg.compactTimeoutMs,
+            freeBytes: cfg.compactFreeBytes,
+            backupDir,
+            backupSha256: result.compact.backupSha256,
+            note,
+          }),
+        );
+        Object.assign(result.compact, c);
+        save();
+        if (c.skipped) note(`compact skipped: ${c.reason}`);
+        else if (c.ok)
+          note(
+            `compact done: ${result.compact.database} ${gb(c.beforeBytes)} -> ${gb(c.afterBytes)} in ${c.seconds} s (auto_vacuum ${c.autoVacuum}, free pages ${c.freelistAfter}, ${c.check} ${c.checkResult}).`,
+          );
+        else
+          note(
+            `compact FAILED: ${c.error}; restored the database from the verified backup (sha256 match ${c.restoreVerified}). The release continues.`,
+          );
       }
       timings["backup.stopped-window"] = round1((Date.now() - startedAt) / 1000);
       const started = systemctl(["start", cfg.unit]);
