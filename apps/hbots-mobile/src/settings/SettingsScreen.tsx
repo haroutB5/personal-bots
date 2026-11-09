@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import { ProvidersSettingsCard } from "./ProvidersSettingsCard";
 import { Notice, Row, Section, SectionNote, SettingsPage, ToggleRow } from "./SettingsUi";
 import {
   autoArchiveEnabled,
@@ -25,6 +26,8 @@ export interface SettingsScreenProps {
   readonly onOpenTeam: () => void;
   readonly onOpenNewBot: () => void;
   readonly onOpenRemovedBots: () => void;
+  readonly onOpenProvider: (instanceId: string) => void;
+  readonly onOpenAddProvider: () => void;
   readonly onOpenNotifications: () => void;
   readonly onOpenMemory: () => void;
   readonly onOpenPasswords: () => void;
@@ -155,7 +158,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
         </Section>
       ) : null}
 
-      {matches("Bots team new bot removed providers") ? (
+      {matches("Bots team new bot removed") ? (
         <Section label="Bots">
           <Row title="Team" hint="See how your bots work together" onPress={props.onOpenTeam} />
           <Row title="New bot" onPress={props.onOpenNewBot} />
@@ -167,6 +170,16 @@ export function SettingsScreen(props: SettingsScreenProps) {
               onPress={props.onOpenRemovedBots}
             />
           ) : null}
+        </Section>
+      ) : null}
+
+      {matches("Providers versions update") ? (
+        <Section label="Providers">
+          <ProvidersSettingsCard
+            native={props.native}
+            onOpenProvider={props.onOpenProvider}
+            onAddProvider={props.onOpenAddProvider}
+          />
         </Section>
       ) : null}
 
