@@ -132,29 +132,46 @@ test('server-tests and e2e gates start together',()=>{
   const fixture=path.join(root,'command.mjs');
   fs.writeFileSync(fixture,`import fs from 'node:fs';
 const kind=process.argv[2];
-if(kind==='server-tests'||kind==='e2e'){
+if(kind.startsWith('server-tests')||kind==='e2e'){
   fs.appendFileSync(process.env.STARTS,String(Date.now())+'\\n');
   await new Promise((resolve)=>setTimeout(resolve,1500));
 }
 if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
   const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
+  defs[0].concurrent=[[`node '${fixture}' server-tests-1`],[`node '${fixture}' server-tests-2`]];
+  delete defs[0].commands;
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{STARTS:starts})});
   assert.equal(r.status,0,r.stdout+r.stderr);
   const times=fs.readFileSync(starts,'utf8').trim().split('\n').map(Number);
-  assert.equal(times.length,2);
+  assert.equal(times.length,3);
   assert.ok(Math.max(...times)-Math.min(...times)<500,`start spread ${Math.max(...times)-Math.min(...times)} ms`);
+  const evidence=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
+  assert.equal(evidence.gates.find((gate)=>gate.id==='server-tests').counts.passed,6);
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
 
+test('server-tests gate runs two weighted shards over the same folders',()=>{
+ const root=path.resolve(here,'../../../..');
+ const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));
+ const gate=defs.find((d)=>d.id==='server-tests');
+ assert.ok(gate,'server-tests gate exists');
+ assert.equal(gate.concurrent?.length,2,'server-tests has two lanes');
+ const folders=(command)=>command.split(/\s+/).filter((word)=>word.startsWith('src/')).sort();
+ for(const [index,lane] of gate.concurrent.entries()){
+  assert.equal(lane.length,1);
+  assert.match(lane[0],new RegExp(`--shard=${index+1}/2`));
+  assert.deepEqual(folders(lane[0]),folders(gate.concurrent[0][0]));
+ }
+});
 test('server-tests gate covers the folders behind the 1.67.1 rollbacks',()=>{
  const root=path.resolve(here,'../../../..');
  const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));
  const gate=defs.find((d)=>d.id==='server-tests');
  assert.ok(gate,'server-tests gate exists');
- const command=gate.commands.join(' ');
+ const command=(gate.commands??gate.concurrent.flat()).join(' ');
  for(const folder of ['orchestration-v2','cloud','provider','process']){
   const tests=fs.readdirSync(path.join(root,'apps/server/src',folder),{recursive:true}).filter((file)=>String(file).endsWith('.test.ts')).length;
   assert.ok(tests>0,`src/${folder} has test files`);
