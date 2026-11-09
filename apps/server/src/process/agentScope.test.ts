@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,7 +17,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { classifyScope, make, ownedAgentSlice, type ScopeState } from "./agentScope.ts";
+import {
+  classifyScope,
+  leftoverStopDecision,
+  make,
+  ownedAgentSlice,
+  type ScopeState,
+} from "./agentScope.ts";
 
 const running: ScopeState = {
   loadState: "loaded",
@@ -34,6 +41,37 @@ describe("classifyScope", () => {
     expect(classifyScope({ ...running, oomKills: 1 })).toBe("stopping");
     expect(classifyScope({ ...running, populated: false })).toBe("stopping");
     expect(classifyScope({ ...running, activeState: "deactivating" })).toBe("stopping");
+  });
+});
+
+describe("leftoverStopDecision", () => {
+  it("stops only under hbots.service, and never for a test process on the live state dir", () => {
+    const throwaway = NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-test");
+    const live = NodePath.join(NodeOS.homedir(), ".personal-bots", "dev");
+    const serviceCgroup =
+      "0::/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service\n";
+
+    expect(leftoverStopDecision(throwaway, {}, serviceCgroup)).toEqual({ stop: true });
+    expect(
+      leftoverStopDecision(throwaway, {}, "0::/user.slice/user-1000.slice/session-1.scope"),
+    ).toEqual({ stop: false, reason: "not running under hbots.service" });
+    // A process a bot launched inherits INVOCATION_ID but lives in another cgroup.
+    expect(
+      leftoverStopDecision(
+        live,
+        { INVOCATION_ID: "x" },
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/agent-1.scope\n",
+      ),
+    ).toEqual({ stop: false, reason: "not running under hbots.service" });
+    expect(leftoverStopDecision(live, { VITEST: "1" }, serviceCgroup)).toEqual({
+      stop: false,
+      reason: "test process on the live state dir",
+    });
+    expect(leftoverStopDecision(live, { NODE_ENV: "test" }, serviceCgroup)).toEqual({
+      stop: false,
+      reason: "test process on the live state dir",
+    });
+    expect(leftoverStopDecision(live, {}, serviceCgroup)).toEqual({ stop: true });
   });
 });
 
@@ -55,7 +93,16 @@ const withFakeSystemd = <A, E>(
   {
     oomPolicy = true,
     stopFails = false,
-  }: { readonly oomPolicy?: boolean; readonly stopFails?: boolean } = {},
+    serviceIdentity = true,
+    liveStateDir = false,
+    env = {},
+  }: {
+    readonly oomPolicy?: boolean;
+    readonly stopFails?: boolean;
+    readonly serviceIdentity?: boolean;
+    readonly liveStateDir?: boolean;
+    readonly env?: NodeJS.ProcessEnv;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -105,11 +152,21 @@ const withFakeSystemd = <A, E>(
     const scope = yield* make.pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(HostProcess.Environment, {
+        PATH: bin,
+        XDG_RUNTIME_DIR: "/run/user/1",
+        ...env,
+      }),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
         readFileString: (path, encoding) =>
-          fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
+          path === "/proc/self/cgroup"
+            ? Effect.succeed(
+                serviceIdentity
+                  ? "0::/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service\n"
+                  : "0::/user.slice/user-1000.slice/session-1.scope\n",
+              )
+            : fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
         writeFileString: (path, data, options) =>
           fileSystem.writeFileString(path.replace("/sys/fs/cgroup", cgroupRoot), data, options),
       }),
@@ -122,6 +179,14 @@ const withFakeSystemd = <A, E>(
     Effect.scoped,
     Effect.provide(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-scope-" }).pipe(
+        Layer.flatMap((context) => {
+          const config = Context.get(context, ServerConfig.ServerConfig);
+          return ServerConfig.layer(
+            liveStateDir
+              ? { ...config, stateDir: NodePath.join(NodeOS.homedir(), ".personal-bots", "dev") }
+              : config,
+          );
+        }),
         Layer.provideMerge(NodeServices.layer),
       ),
     ),
@@ -412,6 +477,42 @@ describe("AgentScope service", () => {
         yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
         expect(calls.filter(([, verb]) => verb === "stop")).toEqual([]);
       }),
+    ),
+  );
+
+  it.effect("refuses to stop live agents from a test process on the live state dir", () =>
+    withFakeSystemd(
+      ({ scope, units, calls, stateDir }) =>
+        Effect.gen(function* () {
+          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(stopsOf(calls)).toEqual([]);
+        }),
+      { liveStateDir: true, env: { VITEST: "1" } },
+    ),
+  );
+
+  it.effect("does not touch leftover agents outside hbots.service", () =>
+    withFakeSystemd(
+      ({ scope, units, calls, stateDir }) =>
+        Effect.gen(function* () {
+          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(stopsOf(calls)).toEqual([]);
+        }),
+      { serviceIdentity: false },
+    ),
+  );
+
+  it.effect("still stops leftovers for a test process on a throwaway state dir", () =>
+    withFakeSystemd(
+      ({ scope, units, calls, stateDir }) =>
+        Effect.gen(function* () {
+          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(stopsOf(calls)).toEqual([["--user", "stop", ownedAgentSlice(stateDir)]]);
+        }),
+      { env: { VITEST: "1" } },
     ),
   );
 });

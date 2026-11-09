@@ -1,9 +1,22 @@
 // Idle gate. Reads only the process tree, the unit's cgroup, the per-thread event logs and the heavy-job lock.
 // It never opens the database (26 Oct: another process opening the live state.sqlite crashed the server).
-import fs from "node:fs";
-import path from "node:path";
-import { spawn } from "node:child_process";
-import { cgroupCpuSeconds, cgroupDirFromPid, cgroupDirOf, cgroupMembership, cgroupPids, cgroupPathFromProcText, descendants, fileLockedInProcLocks, liveState, onlyInCgroup, procSnapshot, procStartMs } from "./proc.mjs";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import {
+  cgroupCpuSeconds,
+  cgroupDirFromPid,
+  cgroupDirOf,
+  cgroupMembership,
+  cgroupPids,
+  cgroupPathFromProcText,
+  descendants,
+  fileLockedInProcLocks,
+  liveState,
+  onlyInCgroup,
+  procSnapshot,
+  procStartMs,
+} from "./proc.mjs";
 import { run, sleep, round1 } from "./util.mjs";
 
 export const isHelper = (cmd) =>
@@ -15,10 +28,14 @@ export const isHelper = (cmd) =>
   /sqlite-snapshot\.cjs/.test(cmd);
 
 export const isSessionRoot = (cmd) =>
-  /\sacp$/.test(cmd) || /codex app-server/.test(cmd) || /claude --output-format stream-json/.test(cmd);
+  /\sacp$/.test(cmd) ||
+  /codex app-server/.test(cmd) ||
+  /claude --output-format stream-json/.test(cmd);
 
 export function classifyOrphan(proc, parent, ageMs, nowMs, orphanSince) {
-  const orphan = ageMs > 30 * 60_000 && (proc.ppid === 1 || (/^(?:\S*\/)?systemd\s+--user$/.test(parent?.cmdline ?? "")));
+  const orphan =
+    ageMs > 30 * 60_000 &&
+    (proc.ppid === 1 || /^(?:\S*\/)?systemd\s+--user$/.test(parent?.cmdline ?? ""));
   const key = `${proc.pid}:${proc.startTicks}`;
   if (orphan && !orphanSince.has(key)) orphanSince.set(key, nowMs);
   if (!orphan) orphanSince.delete(key);
@@ -45,8 +62,7 @@ export function dueWaitingAlerts(elapsedMs, alerted, minutes = [20, 60]) {
 /** The short line for a notification and the full blocker list for the log and the chat notice. */
 export function waitingSummary(blockers, busyReason = null) {
   const active = blockers.filter((p) => !p.ignored);
-  const name = (p) =>
-    (p.cmd || p.reason || "unknown").split(" ")[0].split("/").pop() ?? "unknown";
+  const name = (p) => (p.cmd || p.reason || "unknown").split(" ")[0].split("/").pop() ?? "unknown";
   const detail = (p, label) =>
     `${label}${p.pid ? ` pid ${p.pid}` : ""}${p.ageSec != null ? `, ${p.ageSec}s` : ""}`;
   const full = (
@@ -58,7 +74,10 @@ export function waitingSummary(blockers, busyReason = null) {
   const short =
     active.length === 0
       ? (busyReason ?? "unknown").slice(0, 160)
-      : `${active.length} blocker${active.length === 1 ? "" : "s"}, e.g. ${detail(first, name(first))}`.slice(0, 200);
+      : `${active.length} blocker${active.length === 1 ? "" : "s"}, e.g. ${detail(first, name(first))}`.slice(
+          0,
+          200,
+        );
   return { short, full };
 }
 
@@ -98,7 +117,7 @@ export function sendWaitingAlerts({
 
 /** True while a heavy-job.sh holder (a build, a gate run) owns the lock. flock -n takes and drops it at once. */
 export function heavyLockHeld(lockPath) {
-  if (!fs.existsSync(lockPath)) return { held: false, holder: null };
+  if (!NodeFS.existsSync(lockPath)) return { held: false, holder: null };
   const r = run("flock", ["-n", "-E", "75", lockPath, "true"], { timeout: 10_000 });
   if (r.code === 0) return { held: false, holder: null };
   // The gate is held. Normal jobs hold it shared and put their metadata in one
@@ -109,7 +128,7 @@ export function heavyLockHeld(lockPath) {
   for (const file of [lockPath, `${base}-1.lock`, `${base}-2.lock`]) {
     if (!fileLockedInProcLocks(file)) continue;
     try {
-      const line = fs.readFileSync(file, "utf8").trim().split("\n")[0];
+      const line = NodeFS.readFileSync(file, "utf8").trim().split("\n")[0];
       if (line) labels.push(line.slice(0, 160));
     } catch {}
   }
@@ -122,9 +141,13 @@ export function heavyLockHeld(lockPath) {
  * Returns null when the lock is already held.
  */
 export async function takeHeavyLock(lockPath, label) {
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  NodeFS.mkdirSync(NodePath.dirname(lockPath), { recursive: true });
   const script = `printf 'pid=%s started=%s label=%s cwd=%s\\n' "$$" "$(date -Is)" "$1" "$PWD" > "$2"; exec sleep 7200`;
-  const child = spawn("flock", ["-n", "-E", "75", "-F", lockPath, "sh", "-c", script, "sh", label, lockPath], { stdio: "ignore", detached: false });
+  const child = NodeChildProcess.spawn(
+    "flock",
+    ["-n", "-E", "75", "-F", lockPath, "sh", "-c", script, "sh", label, lockPath],
+    { stdio: "ignore", detached: false },
+  );
   const outcome = await Promise.race([
     new Promise((resolve) => child.once("exit", (code) => resolve({ exited: code }))),
     sleep(400).then(() => ({ exited: null })),
@@ -140,13 +163,14 @@ export async function takeHeavyLock(lockPath, label) {
   };
 }
 
-function newestEventLog(dir) {
+export function newestEventLog(dir, ignoreName = null) {
   let newest = 0;
   let name = null;
   try {
-    for (const entry of fs.readdirSync(dir)) {
+    for (const entry of NodeFS.readdirSync(dir)) {
       if (!/^events\..*\.log$/.test(entry)) continue; // rotations (.log.1) are history
-      const mtime = fs.statSync(path.join(dir, entry)).mtimeMs;
+      if (entry === ignoreName) continue; // the runner posts its own notices into that thread
+      const mtime = NodeFS.statSync(NodePath.join(dir, entry)).mtimeMs;
       if (mtime > newest) {
         newest = mtime;
         name = entry;
@@ -166,16 +190,12 @@ export function takeLook(cfg, prev, { ignoreLock = false, orphanSince = new Map(
   // systemctl output. Fall back to the recorded dir, then to systemctl.
   const serverCgPath = (() => {
     try {
-      return cgroupPathFromProcText(fs.readFileSync(`/proc/${serverPid}/cgroup`, "utf8"));
+      return cgroupPathFromProcText(NodeFS.readFileSync(`/proc/${serverPid}/cgroup`, "utf8"));
     } catch {
       return null;
     }
   })();
-  const cgDir =
-    cfg.scope ||
-    cgroupDirFromPid(serverPid) ||
-    prev?.cgDir ||
-    cgroupDirOf(cfg.unit);
+  const cgDir = cfg.scope || cgroupDirFromPid(serverPid) || prev?.cgDir || cgroupDirOf(cfg.unit);
   const inCgroup = cgDir ? cgroupPids(cgDir) : null;
   let pids;
   if (inCgroup?.length) {
@@ -189,16 +209,39 @@ export function takeLook(cfg, prev, { ignoreLock = false, orphanSince = new Map(
   for (const pid of pids) {
     const proc = now.get(pid);
     if (!proc || pid === Number(state.pid)) continue;
-    if (isHelper(proc.cmdline) || isSessionRoot(proc.cmdline) || /hbots\.mjs\s+serve/.test(proc.cmdline) || /\bbin\.mjs\b.*\bserve\b/.test(proc.cmdline)) continue;
+    if (
+      isHelper(proc.cmdline) ||
+      isSessionRoot(proc.cmdline) ||
+      /hbots\.mjs\s+serve/.test(proc.cmdline) ||
+      /\bbin\.mjs\b.*\bserve\b/.test(proc.cmdline)
+    )
+      continue;
     const before = prev?.snapshot?.get(pid);
     const delta = before ? proc.cpu - before.cpu : 0;
     const ageMs = Date.now() - procStartMs(proc.startTicks);
-    const { orphan, ignored } = classifyOrphan(proc, now.get(proc.ppid), ageMs, Date.now(), orphanSince);
+    const { orphan, ignored } = classifyOrphan(
+      proc,
+      now.get(proc.ppid),
+      ageMs,
+      Date.now(),
+      orphanSince,
+    );
     if (!ignored) cpu += Math.max(0, delta);
-    if (!orphan && !hasSessionAncestor(proc, now) && delta <= 0.02 && ageMs > cfg.staleLeftoverMs) continue;
-    toolProcs.push({ pid, ageSec: Math.round(ageMs / 1000), delta: round1(delta), cmd: proc.cmdline.slice(0, 80), orphan, ignored });
+    if (!orphan && !hasSessionAncestor(proc, now) && delta <= 0.02 && ageMs > cfg.staleLeftoverMs)
+      continue;
+    toolProcs.push({
+      pid,
+      ageSec: Math.round(ageMs / 1000),
+      delta: round1(delta),
+      cmd: proc.cmdline.slice(0, 80),
+      orphan,
+      ignored,
+    });
   }
-  const events = newestEventLog(cfg.providerLogs);
+  const events = newestEventLog(
+    cfg.providerLogs,
+    cfg.notifyThread ? `events.${cfg.notifyThread}.log` : null,
+  );
   const lock = ignoreLock ? { held: false, holder: null } : heavyLockHeld(cfg.heavyLock);
   const cgCpu = cgDir ? cgroupCpuSeconds(cgDir) : null;
   return {
@@ -208,7 +251,10 @@ export function takeLook(cfg, prev, { ignoreLock = false, orphanSince = new Map(
     toolProcs,
     cpu: Number(cpu.toFixed(2)),
     cgroupCpuS: cgCpu,
-    cgroupCpuDelta: cgCpu !== null && prev?.cgroupCpuS != null ? Number((cgCpu - prev.cgroupCpuS).toFixed(2)) : null,
+    cgroupCpuDelta:
+      cgCpu !== null && prev?.cgroupCpuS != null
+        ? Number((cgCpu - prev.cgroupCpuS).toFixed(2))
+        : null,
     eventsAgeMs: events.newest ? Date.now() - events.newest : Number.MAX_SAFE_INTEGER,
     eventsName: events.name,
     heavy: lock,
@@ -222,9 +268,12 @@ export function busyReasons(look, cfg) {
   if (look.heavy?.held) reasons.push(`heavy-lock(${look.heavy.holder ?? "held"})`);
   const blocking = look.toolProcs.filter((p) => !p.ignored);
   if (blocking.length)
-    reasons.push(`tools=${blocking.length}(${blocking.map((p) => `pid=${p.pid} cmd=${JSON.stringify(p.cmd)} age=${p.ageSec}s reason=${p.orphan ? "orphan-tool" : "tool-process"}`).join(", ")})`);
+    reasons.push(
+      `tools=${blocking.length}(${blocking.map((p) => `pid=${p.pid} cmd=${JSON.stringify(p.cmd)} age=${p.ageSec}s reason=${p.orphan ? "orphan-tool" : "tool-process"}`).join(", ")})`,
+    );
   if (look.cpu > cfg.cpuBudgetS) reasons.push(`cpu=${look.cpu}s`);
-  if (look.eventsAgeMs < cfg.eventsQuietMs) reasons.push(`events=${Math.round(look.eventsAgeMs / 1000)}s(${look.eventsName ?? "?"})`);
+  if (look.eventsAgeMs < cfg.eventsQuietMs)
+    reasons.push(`events=${Math.round(look.eventsAgeMs / 1000)}s(${look.eventsName ?? "?"})`);
   return reasons;
 }
 
@@ -232,7 +281,10 @@ export function busyReasons(look, cfg) {
  * Waits for N quiet looks in a row. One sleep per look (no busy polling); the first look waits one interval so
  * CPU deltas have a window. Returns { idle, looks, waitedS } and calls onLook after each look.
  */
-export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, intervalMs = cfg.lookMs, orphanSince = new Map() } = {}) {
+export async function waitForIdle(
+  cfg,
+  { onLook, looksLimit = Infinity, intervalMs = cfg.lookMs, orphanSince = new Map() } = {},
+) {
   const started = Date.now();
   const deadline = started + cfg.marathonMs;
   const looks = [];
@@ -241,19 +293,45 @@ export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, interval
   while (Date.now() < deadline) {
     await sleep(intervalMs);
     const look = takeLook(cfg, prev, { orphanSince });
-    if (!look.serverRunning) throw new Error("the live server stopped during the idle wait; not restarting anything");
+    if (!look.serverRunning)
+      throw new Error("the live server stopped during the idle wait; not restarting anything");
     const reasons = busyReasons(look, cfg);
     quiet = reasons.length ? 0 : quiet + 1;
-    const blockers = look.toolProcs.map((p) => ({ ...p, reason: p.orphan ? "orphan tool process" : "tool process" }));
-    if (look.eventsAgeMs < cfg.eventsQuietMs) blockers.push({ pid: null, cmd: look.eventsName, ageSec: Math.round(look.eventsAgeMs / 1000), reason: "events log", ignored: false });
-    if (look.cpu > cfg.cpuBudgetS) blockers.push({ pid: null, cmd: null, ageSec: null, reason: `CPU ${look.cpu}s`, ignored: false });
-    if (look.heavy.held) blockers.push({ pid: null, cmd: look.heavy.holder, ageSec: null, reason: "heavy lock", ignored: false });
+    const blockers = look.toolProcs.map((p) => ({
+      ...p,
+      reason: p.orphan ? "orphan tool process" : "tool process",
+    }));
+    if (look.eventsAgeMs < cfg.eventsQuietMs)
+      blockers.push({
+        pid: null,
+        cmd: look.eventsName,
+        ageSec: Math.round(look.eventsAgeMs / 1000),
+        reason: "events log",
+        ignored: false,
+      });
+    if (look.cpu > cfg.cpuBudgetS)
+      blockers.push({
+        pid: null,
+        cmd: null,
+        ageSec: null,
+        reason: `CPU ${look.cpu}s`,
+        ignored: false,
+      });
+    if (look.heavy.held)
+      blockers.push({
+        pid: null,
+        cmd: look.heavy.holder,
+        ageSec: null,
+        reason: "heavy lock",
+        ignored: false,
+      });
     const entry = {
       at: look.at,
       quiet,
       cpu: look.cpu,
       cgroupCpuDelta: look.cgroupCpuDelta,
-      eventsAgeSec: look.eventsAgeMs === Number.MAX_SAFE_INTEGER ? null : Math.round(look.eventsAgeMs / 1000),
+      eventsAgeSec:
+        look.eventsAgeMs === Number.MAX_SAFE_INTEGER ? null : Math.round(look.eventsAgeMs / 1000),
       toolProcs: look.toolProcs.length,
       blockers,
       heavyLock: look.heavy.held,
@@ -262,14 +340,20 @@ export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, interval
     looks.push(entry);
     onLook?.(entry, quiet);
     prev = look;
-    if (quiet >= cfg.quietLooks) return { idle: true, looks, waitedS: round1((Date.now() - started) / 1000) };
-    if (looks.length >= looksLimit) return { idle: false, looks, waitedS: round1((Date.now() - started) / 1000) };
+    if (quiet >= cfg.quietLooks)
+      return { idle: true, looks, waitedS: round1((Date.now() - started) / 1000) };
+    if (looks.length >= looksLimit)
+      return { idle: false, looks, waitedS: round1((Date.now() - started) / 1000) };
   }
   return { idle: false, looks, waitedS: round1((Date.now() - started) / 1000), timedOut: true };
 }
 
 /** A short window check right before the restart: lock, tools, events, and CPU over windowMs. ignoreLock: the runner holds the lock itself. */
-export async function quickIdleCheck(cfg, windowMs = 3000, { ignoreLock = false, orphanSince = new Map() } = {}) {
+export async function quickIdleCheck(
+  cfg,
+  windowMs = 3000,
+  { ignoreLock = false, orphanSince = new Map() } = {},
+) {
   const first = takeLook(cfg, null, { ignoreLock, orphanSince });
   if (!first.serverRunning) return { idle: false, reasons: ["server-not-running"] };
   await sleep(windowMs);

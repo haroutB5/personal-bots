@@ -172,6 +172,7 @@ function planTable(cfg, a, skipBackup, guardSeconds) {
 async function main() {
   const { values: a } = NodeUtil.parseArgs({ options: OPTIONS, strict: true });
   const cfg = loadConfig();
+  cfg.notifyThread = String(a["notify-thread"] ?? "").trim();
   if (a.help) {
     console.log(
       NodeFS.readFileSync(new URL(import.meta.url), "utf8")

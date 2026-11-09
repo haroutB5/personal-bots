@@ -2,35 +2,39 @@
 //   node <release>/dist/bin.mjs serve        (by a throwaway systemd user unit)
 // It writes run/server.json like the real server, logs the startup markers the runner checks, and answers the
 // HTTP probes. It never touches a database.
-import fs from "node:fs";
-import http from "node:http";
-import path from "node:path";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
-const self = fileURLToPath(import.meta.url);
-const releaseDir = path.dirname(path.dirname(self));
-const version = /^version=(.+)$/m.exec(fs.readFileSync(path.join(releaseDir, "VERSION"), "utf8"))[1];
-const release = path.basename(releaseDir);
+const self = NodeURL.fileURLToPath(import.meta.url);
+const releaseDir = NodePath.dirname(NodePath.dirname(self));
+const version = /^version=(.+)$/m.exec(
+  NodeFS.readFileSync(NodePath.join(releaseDir, "VERSION"), "utf8"),
+)[1];
+const release = NodePath.basename(releaseDir);
 const home = process.env.FIXTURE_HOME;
 const port = Number(process.env.FIXTURE_PORT);
-const logFile = path.join(home, "logs", "server-fixture.log");
-fs.mkdirSync(path.dirname(logFile), { recursive: true });
-const log = (line) => fs.appendFileSync(logFile, `${line}\n`);
-const flag = (name) => fs.existsSync(path.join(releaseDir, name));
+const logFile = NodePath.join(home, "logs", "server-fixture.log");
+NodeFS.mkdirSync(NodePath.dirname(logFile), { recursive: true });
+const log = (line) => NodeFS.appendFileSync(logFile, `${line}\n`);
+const flag = (name) => NodeFS.existsSync(NodePath.join(releaseDir, name));
 
 log(`=== ${new Date().toISOString()} serve release ${release} version ${version}`);
 log("stall recorder on { profiler: 'continuous' }");
+log("claude sdk warning filter installed");
 if (flag("MIGRATES")) {
   log("Migrations ran successfully");
   log("migrations: ['114_fixture_change']");
 }
 if (flag("BAD_LOG")) log("ERROR fixture: something went wrong at startup");
 
-const server = http.createServer((req, res) => {
+const server = NodeHttp.createServer((req, res) => {
   if (req.url === "/version.txt") return res.end(`version=${version}\nrelease=${release}\n`);
   if (req.url === "/sw.js") return res.end("const REVISION = '2026-09-30-worker-list';");
-  if (req.url === "/.well-known/t3/environment") return res.end(JSON.stringify({ version: "fixture" }));
+  if (req.url === "/.well-known/t3/environment")
+    return res.end(JSON.stringify({ version: "fixture" }));
   if (req.url === "/api/personal/push/sent" && req.method === "POST") {
     res.statusCode = 401;
     return res.end("unauthorized");
@@ -39,16 +43,27 @@ const server = http.createServer((req, res) => {
   res.end("not found");
 });
 server.listen(port, "127.0.0.1", () => {
-  fs.mkdirSync(path.join(home, "run"), { recursive: true });
-  const state = { pid: process.pid, release, version, binPath: self, logFile, startedAt: new Date().toISOString(), port };
-  const file = path.join(home, "run", "server.json");
-  fs.writeFileSync(`${file}.tmp`, JSON.stringify(state));
-  fs.renameSync(`${file}.tmp`, file);
+  NodeFS.mkdirSync(NodePath.join(home, "run"), { recursive: true });
+  const state = {
+    pid: process.pid,
+    release,
+    version,
+    binPath: self,
+    logFile,
+    startedAt: new Date().toISOString(),
+    port,
+  };
+  const file = NodePath.join(home, "run", "server.json");
+  NodeFS.writeFileSync(`${file}.tmp`, JSON.stringify(state));
+  NodeFS.renameSync(`${file}.tmp`, file);
   // Tests: one long-lived child inside the unit's own cgroup, so the release
   // runner's "only the server cgroup counts" rule can be proven both ways.
   if (process.env.FIXTURE_CHILD) {
-    const child = spawn(process.env.FIXTURE_CHILD, { shell: true, stdio: "ignore" });
-    fs.writeFileSync(path.join(home, "run", "fixture-child.pid"), `${child.pid}\n`);
+    const child = NodeChildProcess.spawn(process.env.FIXTURE_CHILD, {
+      shell: true,
+      stdio: "ignore",
+    });
+    NodeFS.writeFileSync(NodePath.join(home, "run", "fixture-child.pid"), `${child.pid}\n`);
   }
 });
 process.on("SIGTERM", () => process.exit(0));

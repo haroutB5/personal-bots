@@ -17,8 +17,12 @@ export const PHONE = {
 };
 
 /** Per-step wait. A journey as a whole must still finish inside JOURNEY_LIMIT_MS. */
-export const STEP_TIMEOUT_MS = 15_000;
-export const JOURNEY_LIMIT_MS = 30_000;
+const budget = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+export const STEP_TIMEOUT_MS = budget(process.env.E2E_STEP_TIMEOUT_MS, 15_000);
+export const JOURNEY_LIMIT_MS = budget(process.env.E2E_JOURNEY_LIMIT_MS, 30_000);
 
 /**
  * Finds playwright-core: next to the server bundle under test (a release folder
