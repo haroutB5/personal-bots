@@ -87,21 +87,22 @@ export function userMessages(root, threadTitle) {
   try {
     const thread = db
       .prepare(
-        "SELECT thread_id AS id FROM projection_threads WHERE title = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT thread_id AS id FROM orchestration_v2_projection_threads " +
+          "WHERE title = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
       )
       .get(threadTitle);
     if (!thread) return [];
     const sent = db
       .prepare(
-        "SELECT sequence, json_extract(payload_json, '$.messageId') AS messageId, json_extract(payload_json, '$.text') AS text " +
-          "FROM orchestration_events WHERE event_type = 'thread.message-sent' AND stream_id = ? " +
-          "AND json_extract(payload_json, '$.role') = 'user' ORDER BY sequence",
+        "SELECT message_id AS messageId, json_extract(payload_json, '$.text') AS text " +
+          "FROM orchestration_v2_projection_messages WHERE thread_id = ? AND role = 'user' " +
+          "ORDER BY created_at, message_id",
       )
       .all(thread.id);
     const turns = db
       .prepare(
-        "SELECT json_extract(payload_json, '$.messageId') AS messageId FROM orchestration_events " +
-          "WHERE event_type = 'thread.turn-start-requested' AND stream_id = ?",
+        "SELECT json_extract(payload_json, '$.userMessageId') AS messageId " +
+          "FROM orchestration_v2_projection_runs WHERE thread_id = ?",
       )
       .all(thread.id);
     return sent.map((row) => ({
