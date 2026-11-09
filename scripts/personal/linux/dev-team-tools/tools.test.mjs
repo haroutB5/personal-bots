@@ -139,20 +139,53 @@ if(kind.startsWith('server-tests')||kind==='e2e'){
 if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
   const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
+  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{STARTS:starts})});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const times=fs.readFileSync(starts,'utf8').trim().split('\n').map(Number);
+  assert.equal(times.length,2);
+  assert.ok(Math.max(...times)-Math.min(...times)<500,`start spread ${Math.max(...times)-Math.min(...times)} ms`);
+  const evidence=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
+  assert.equal(evidence.gates.find((gate)=>gate.id==='server-tests').counts.passed,3);
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
+
+test('e2e waits when server-tests has two lanes',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-serial-'));
+ try{
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),starts=path.join(root,'starts');
+  fs.mkdirSync(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','fixture');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  const fixture=path.join(root,'command.mjs');
+  fs.writeFileSync(fixture,`import fs from 'node:fs';
+const kind=process.argv[2];
+if(kind.startsWith('server-tests')||kind==='e2e'){
+  fs.appendFileSync(process.env.STARTS,kind+':'+Date.now()+'\\n');
+  if(kind.startsWith('server-tests')) await new Promise((resolve)=>setTimeout(resolve,400));
+}
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
+else console.log('Tests 3 passed (3)');`);
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
   defs[0].concurrent=[[`node '${fixture}' server-tests-1`],[`node '${fixture}' server-tests-2`]];
   delete defs[0].commands;
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{STARTS:starts})});
   assert.equal(r.status,0,r.stdout+r.stderr);
-  const times=fs.readFileSync(starts,'utf8').trim().split('\n').map(Number);
-  assert.equal(times.length,3);
-  assert.ok(Math.max(...times)-Math.min(...times)<500,`start spread ${Math.max(...times)-Math.min(...times)} ms`);
-  const evidence=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
-  assert.equal(evidence.gates.find((gate)=>gate.id==='server-tests').counts.passed,6);
+  const rows=fs.readFileSync(starts,'utf8').trim().split('\n').map((line)=>line.split(':'));
+  const lanes=rows.filter(([id])=>id.startsWith('server-tests')).map(([,at])=>Number(at));
+  const e2e=rows.find(([id])=>id==='e2e');
+  assert.equal(lanes.length,2);
+  assert.ok(e2e,'e2e ran');
+  assert.ok(Number(e2e[1])-Math.max(...lanes)>=350,`e2e started ${Number(e2e[1])-Math.max(...lanes)} ms after both lanes`);
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
-
 test('server-tests gate runs two weighted shards over the same folders',()=>{
  const root=path.resolve(here,'../../../..');
  const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));
@@ -190,6 +223,12 @@ else console.log('Tests 3 passed (3)');`);
   assert.equal(r.status,0,r.stdout+r.stderr);
   assert.deepEqual(JSON.parse(fs.readFileSync(seen,'utf8')),{t3:'unset',personal:'unset',dsh:'unset',keep:'ok'});
  }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
+test('e2e step and journey budgets follow the gate environment',()=>{
+ const lib=new URL('../../e2e/lib.mjs',import.meta.url).href;
+ const read=(extra)=>run(process.execPath,['-e',`import(${JSON.stringify(lib)}).then((m)=>console.log(m.STEP_TIMEOUT_MS,m.JOURNEY_LIMIT_MS))`],{env:{...process.env,E2E_STEP_TIMEOUT_MS:'',E2E_JOURNEY_LIMIT_MS:'',...extra}}).stdout.trim();
+ assert.equal(read({}),'15000 30000');
+ assert.equal(read({E2E_STEP_TIMEOUT_MS:'30000',E2E_JOURNEY_LIMIT_MS:'60000'}),'30000 60000');
 });
 test('server-tests gate covers the folders behind the 1.67.1 rollbacks',()=>{
  const root=path.resolve(here,'../../../..');

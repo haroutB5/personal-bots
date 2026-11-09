@@ -85,9 +85,12 @@ try {
     } finally{fs.closeSync(fd)}
   };
   const selected=defs.filter(d=>wanted.includes(d.id));
-  const simultaneous=selected.filter(d=>d.id==='server-tests'||d.id==='e2e');
-  if(simultaneous.length===2) await Promise.all(simultaneous.map(runGate));
-  for(const d of selected) if(!(simultaneous.length===2&&simultaneous.includes(d))) await runGate(d);
+  const serverTests=selected.find(d=>d.id==='server-tests');
+  const e2eGate=selected.find(d=>d.id==='e2e');
+  // Two shards plus the browser peaked at the 5 GiB soft cap and starved e2e, so only a single-lane server-tests shares the window.
+  const together=serverTests!==undefined&&e2eGate!==undefined&&(serverTests.concurrent?.length??1)===1;
+  if(together) await Promise.all([runGate(serverTests),runGate(e2eGate)]);
+  for(const d of selected) if(!(together&&(d===serverTests||d===e2eGate))) await runGate(d);
   gates.push(...selected.map(d=>results.get(d.id)).filter(Boolean));
   const endDirty=dirty();
   const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gates};
