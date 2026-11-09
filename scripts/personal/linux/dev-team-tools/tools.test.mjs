@@ -118,6 +118,18 @@ test('evidence real commands, notes ancestry, failures and tampering',()=>{
  assert.equal(node('check-gate-evidence.mjs',[]).status,2);
  } finally {fs.rmSync(root,{recursive:true,force:true})}
 });
+test('server-tests gate covers the folders behind the 1.67.1 rollbacks',()=>{
+ const root=path.resolve(here,'../../../..');
+ const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));
+ const gate=defs.find((d)=>d.id==='server-tests');
+ assert.ok(gate,'server-tests gate exists');
+ const command=gate.commands.join(' ');
+ for(const folder of ['orchestration-v2','cloud','provider','process']){
+  const tests=fs.readdirSync(path.join(root,'apps/server/src',folder),{recursive:true}).filter((file)=>String(file).endsWith('.test.ts')).length;
+  assert.ok(tests>0,`src/${folder} has test files`);
+  assert.match(command,new RegExp(`(?:^|\\s)src/${folder}(?:\\s|$)`),`server-tests gate runs src/${folder}`);
+ }
+});
 test('a gate cwd with its own vp wins over the repo root copy',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-vp-'));
  try {
