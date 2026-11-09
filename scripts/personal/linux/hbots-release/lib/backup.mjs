@@ -2,7 +2,7 @@
 // opened by a second process while the server runs. The server is STOPPED, the files are reflink-copied
 // (btrfs: copy-on-write, a few seconds for 6 GB), the server is started again on the new release, and the copy is
 // then checkpointed and integrity-checked at background priority while the new release is already up.
-// Nothing here ever opens the live state.sqlite or its -wal/-shm; sizes come from stat only.
+// Nothing here ever opens a live database (state.sqlite, statev2.sqlite) or its -wal/-shm; sizes come from stat only.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { run, runAsync, readJson, atomicWrite, round1 } from "./util.mjs";
@@ -13,6 +13,11 @@ const DBCHECK = NodePath.join(
   "dbcheck.mjs",
 );
 export const BACKUP_NAME = /^\d{8}-\d{6}$/;
+// The v1 database and the one the v2 server writes. The last one present is the live one.
+export const DATABASES = ["state.sqlite", "statev2.sqlite"];
+
+const presentDatabases = (dir) =>
+  DATABASES.filter((name) => NodeFS.existsSync(NodePath.join(dir, name)));
 
 export function stamp(date = new Date()) {
   const p = (n) => String(n).padStart(2, "0");
@@ -28,7 +33,8 @@ export function liveSizes(cfg) {
       return 0;
     }
   };
-  return { db: size("state.sqlite"), wal: size("state.sqlite-wal"), shm: size("state.sqlite-shm") };
+  const total = (suffix) => DATABASES.reduce((sum, name) => sum + size(name + suffix), 0);
+  return { db: total(""), wal: total("-wal"), shm: total("-shm") };
 }
 
 export function listBackups(cfg) {
@@ -82,13 +88,16 @@ export function diskPlan(cfg, reflinkOk, allowSlow) {
 export function copyStopped(cfg, destDir, { allowSlow = false } = {}) {
   NodeFS.mkdirSync(destDir, { recursive: true, mode: 0o700 });
   const mode = allowSlow ? "--reflink=auto" : "--reflink=always";
+  const databases = presentDatabases(cfg.stateDir);
+  if (databases.length === 0) throw new Error(`no database in ${cfg.stateDir} to back up`);
+  const files = [
+    ...databases.flatMap((name) => [name, `${name}-wal`, `${name}-shm`]),
+    "settings.json",
+  ];
   const copied = [];
-  for (const name of ["state.sqlite", "state.sqlite-wal", "state.sqlite-shm", "settings.json"]) {
+  for (const name of files) {
     const src = NodePath.join(cfg.stateDir, name);
-    if (!NodeFS.existsSync(src)) {
-      if (name === "state.sqlite") throw new Error(`no ${src} to back up`);
-      continue;
-    }
+    if (!NodeFS.existsSync(src)) continue;
     const r = run("cp", [mode, "--preserve=timestamps", src, NodePath.join(destDir, name)], {
       timeout: 600_000,
     });
@@ -105,15 +114,17 @@ export function copyStopped(cfg, destDir, { allowSlow = false } = {}) {
     if (r.code !== 0) throw new Error(`copy of ${dir}/ failed: ${r.err.slice(0, 200)}`);
     copied.push({ name: `${dir}/` });
   }
-  const head = Buffer.alloc(16);
-  const fd = NodeFS.openSync(NodePath.join(destDir, "state.sqlite"), "r");
-  try {
-    NodeFS.readSync(fd, head, 0, 16, 0);
-  } finally {
-    NodeFS.closeSync(fd);
+  for (const name of databases) {
+    const head = Buffer.alloc(16);
+    const fd = NodeFS.openSync(NodePath.join(destDir, name), "r");
+    try {
+      NodeFS.readSync(fd, head, 0, 16, 0);
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+    if (head.toString("latin1") !== "SQLite format 3\0")
+      throw new Error(`the copied ${name} does not start with the SQLite header`);
   }
-  if (head.toString("latin1") !== "SQLite format 3\0")
-    throw new Error("the copied state.sqlite does not start with the SQLite header");
   return copied;
 }
 
@@ -121,17 +132,25 @@ export function writeManifest(destDir, manifest) {
   atomicWrite(NodePath.join(destDir, "backup.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-/** Checkpoint + integrity_check + digest on the COPY, at idle I/O priority. Updates the manifest. */
+/** Checkpoint + integrity_check + digest on each database COPY, at idle I/O priority. Updates the manifest.
+ * The migration expectation and the returned check are for the live database (the last one present). */
 export async function verifyBackup(cfg, destDir, expectMigration) {
   const t0 = Date.now();
-  const r = await runAsync(
-    cfg.node,
-    ["--disable-warning=ExperimentalWarning", DBCHECK, NodePath.join(destDir, "state.sqlite")],
-    { low: true, timeoutMs: 60 * 60_000 },
-  );
-  if (r.code !== 0) throw new Error(`backup check failed: ${r.err.slice(0, 300)}`);
-  const check = JSON.parse(r.out);
-  if (check.ic !== "ok") throw new Error(`backup integrity_check: ${check.ic}`);
+  const databases = presentDatabases(destDir);
+  if (databases.length === 0) throw new Error(`backup ${destDir} holds no database`);
+  const checks = {};
+  for (const name of databases) {
+    const r = await runAsync(
+      cfg.node,
+      ["--disable-warning=ExperimentalWarning", DBCHECK, NodePath.join(destDir, name)],
+      { low: true, timeoutMs: 60 * 60_000 },
+    );
+    if (r.code !== 0) throw new Error(`backup check of ${name} failed: ${r.err.slice(0, 300)}`);
+    checks[name] = JSON.parse(r.out);
+    if (checks[name].ic !== "ok")
+      throw new Error(`backup integrity_check of ${name}: ${checks[name].ic}`);
+  }
+  const check = checks[databases.at(-1)];
   if (expectMigration != null && check.mig !== Number(expectMigration))
     throw new Error(`backup is at migration ${check.mig}; expected ${expectMigration}`);
   const manifest = readJson(NodePath.join(destDir, "backup.json")) ?? {};
@@ -145,6 +164,12 @@ export async function verifyBackup(cfg, destDir, expectMigration) {
     bytes: check.bytes,
     sha256: check.sha256,
   };
+  manifest.databases = Object.fromEntries(
+    databases.map((name) => {
+      const { bytes, sha256, ic, mig } = checks[name];
+      return [name, { bytes, sha256, ic, mig }];
+    }),
+  );
   writeManifest(destDir, manifest);
   return { ...check, seconds: round1((Date.now() - t0) / 1000) };
 }

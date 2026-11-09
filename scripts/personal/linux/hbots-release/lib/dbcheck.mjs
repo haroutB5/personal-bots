@@ -1,6 +1,6 @@
 // Checks a COPY of the database (a backup). It refuses every path under the live data roots: opening the live
 // state.sqlite or its -wal/-shm from a second process crashed the server with SIGBUS on 26 Oct.
-// Library: checkCopy(file). CLI: node dbcheck.mjs <backup-dir>/state.sqlite
+// Library: checkCopy(file). CLI: node dbcheck.mjs <backup-dir>/state.sqlite (or statev2.sqlite)
 //   -> checkpoints the copy into a single file, runs integrity_check, prints {"ic","rows","mem","mig","bytes","sha256"}.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -12,11 +12,16 @@ const LIVE_ROOTS = [/^\/home\/[^/]+\/\.personal-bots\/(dev|prod)(\/|$)/];
 
 export function assertNotLive(file) {
   const real = NodeFS.realpathSync(file);
-  if (LIVE_ROOTS.some((re) => re.test(real)) || /(^|\/)userdata\/state\.sqlite$/.test(real)) {
+  if (
+    LIVE_ROOTS.some((re) => re.test(real)) ||
+    /(^|\/)userdata\/(state|statev2)\.sqlite$/.test(real)
+  ) {
     throw new Error(`refusing to open ${real}: it is under a live data root`);
   }
-  if (NodePath.basename(real) !== "state.sqlite")
-    throw new Error("expected a file named state.sqlite inside a backup directory");
+  if (!["state.sqlite", "statev2.sqlite"].includes(NodePath.basename(real)))
+    throw new Error(
+      "expected a file named state.sqlite or statev2.sqlite inside a backup directory",
+    );
   if (!NodeFS.existsSync(NodePath.join(NodePath.dirname(real), "backup.json")))
     throw new Error("the directory has no backup.json: not a backup copy");
   return real;

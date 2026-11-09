@@ -1,12 +1,14 @@
 // Backup of one data root, layout-compatible with scripts/personal/backup.ps1:
-// a timestamped folder with state.sqlite (online backup + full integrity
-// check), its integrity proof, the non-secret user files and backup.json.
+// a timestamped folder with state.sqlite and statev2.sqlite (each an online
+// backup + full integrity check), their integrity proofs, the non-secret user
+// files and backup.json.
 // secrets/ is never copied.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import { backupStamp, readJson } from "./util.mjs";
 
+const DATABASES = ["state.sqlite", "statev2.sqlite"];
 const COPY_ITEMS = [
   "attachments",
   "browser-artifacts",
@@ -62,9 +64,35 @@ function pruneBackups(backupsDir, keep) {
   return removed;
 }
 
+function snapshotDatabase(nodeExe, snapshotScript, stateDir, target, name) {
+  const snapshot = NodeChildProcess.spawnSync(
+    nodeExe,
+    ["--disable-warning=ExperimentalWarning", snapshotScript],
+    {
+      env: {
+        ...process.env,
+        PB_SNAPSHOT_SOURCE: NodePath.join(stateDir, name),
+        PB_SNAPSHOT_TARGET: NodePath.join(target, name),
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (snapshot.status !== 0) {
+    throw new Error(
+      `SQLite snapshot of ${name} failed (exit ${snapshot.status}): ${(snapshot.stderr || "").trim()}`,
+    );
+  }
+  const proof = readJson(NodePath.join(target, `${name}.integrity.json`));
+  if (!proof) throw new Error(`Snapshot integrity proof for ${name} is missing.`);
+  return proof;
+}
+
 export function backupRoot({ paths, keep = 1, nodeExe = process.execPath, snapshotScript }) {
-  const database = NodePath.join(paths.stateDir, "state.sqlite");
-  if (!NodeFS.existsSync(database)) throw new Error(`No database at ${database}.`);
+  const databases = DATABASES.filter((name) =>
+    NodeFS.existsSync(NodePath.join(paths.stateDir, name)),
+  );
+  if (databases.length === 0) throw new Error(`No database in ${paths.stateDir}.`);
   if (!snapshotScript || !NodeFS.existsSync(snapshotScript))
     throw new Error(`Snapshot helper missing: ${snapshotScript}`);
   NodeFS.mkdirSync(paths.backupsDir, { recursive: true });
@@ -75,25 +103,10 @@ export function backupRoot({ paths, keep = 1, nodeExe = process.execPath, snapsh
   const started = Date.now();
   NodeFS.mkdirSync(target, { recursive: true });
   try {
-    const snapshot = NodeChildProcess.spawnSync(
-      nodeExe,
-      ["--disable-warning=ExperimentalWarning", snapshotScript],
-      {
-        env: {
-          ...process.env,
-          PB_SNAPSHOT_SOURCE: database,
-          PB_SNAPSHOT_TARGET: NodePath.join(target, "state.sqlite"),
-        },
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    if (snapshot.status !== 0) {
-      throw new Error(
-        `SQLite snapshot failed (exit ${snapshot.status}): ${(snapshot.stderr || "").trim()}`,
-      );
-    }
-    const copied = ["state.sqlite"];
+    const proofs = {};
+    for (const name of databases)
+      proofs[name] = snapshotDatabase(nodeExe, snapshotScript, paths.stateDir, target, name);
+    const copied = [...databases];
     for (const item of COPY_ITEMS) {
       const sourcePath = NodePath.join(paths.stateDir, item);
       if (!NodeFS.existsSync(sourcePath)) continue;
@@ -113,14 +126,18 @@ export function backupRoot({ paths, keep = 1, nodeExe = process.execPath, snapsh
       });
       copied.push(entry.name);
     }
-    const validation = readJson(NodePath.join(target, "state.sqlite.integrity.json"));
-    if (!validation) throw new Error("Snapshot integrity proof is missing.");
     const manifest = {
       root: paths.root,
       source: paths.stateDir,
       createdAt: new Date().toISOString(),
       items: copied,
-      validation,
+      validation: proofs[databases[0]],
+      databases: Object.fromEntries(
+        databases.map((name) => {
+          const { bytes, sha256, ic, mig } = proofs[name];
+          return [name, { bytes, sha256, ic, mig }];
+        }),
+      ),
     };
     NodeFS.writeFileSync(
       NodePath.join(target, "backup.json.pending"),

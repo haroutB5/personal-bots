@@ -2,10 +2,10 @@
   "schema": 1,
   "files": {
     "lib/hash.mjs": "a7d5e91da28c5abb37c1dd15c0fc3b193e7533195e7f974c53acb1f63ee4d734",
-    "lib/dbcheck.mjs": "e78dd7d3bec77fda8f2884b82d62726382058b5749c1ae7e8a052e668cde420e",
+    "lib/dbcheck.mjs": "7296151ea75429d9c112e475f1b01dfabde483570ac2f84def7e13af90e1ada4",
     "lib/fixture.mjs": "0bee9625bcae9382c2b63aad0975a8ce002044f73500ac5ef54e97ec3963a116",
     "lib/idle.mjs": "5f58b3f3d19808a663d89c0d474b151dd72307713de4b7771d1116170b7f4fe2",
-    "lib/backup.mjs": "595e079cbeb644a80d19dd08d41a03a1f98e1d424265941aa223aff5072eb5c9",
+    "lib/backup.mjs": "1e08eab198cd9f7e92b61805c93d4d3d4f91993e05473b6b45d2ed60351d6d7e",
     "lib/seal.mjs": "3800d2b066731fa2755efcaee90db19d0a7c7043ec213ab3b44ce58dc32108cb",
     "tools/check-release-notes.mjs": "b1501431a607f4e960205f500eb7a7777649d59dacf6d3ee523a004ce5cd2d06",
     "tools/check-gate-evidence.mjs": "a397e27254c5dac7cbb7c042911ee9a7cc5de70f3adb8ea7dd5ce7fe640c4510",

@@ -86,13 +86,13 @@ NodeTest.test(
     NodeAssert.equal(manifest.databases["statev2.sqlite"].mig, 70);
     NodeAssert.equal(manifest.validation.sha256, sha256(NodePath.join(backup, "state.sqlite")));
     NodeAssert.deepEqual(result.items.slice(0, 2), ["state.sqlite", "statev2.sqlite"]);
+    NodeAssert.equal(NodeFS.existsSync(NodePath.join(backup, "statev2.sqlite-wal")), false);
     const copy = new NodeSqlite.DatabaseSync(NodePath.join(backup, "statev2.sqlite"), {
       readOnly: true,
     });
     const row = copy.prepare("SELECT body FROM notes").get();
     copy.close();
     NodeAssert.equal(row.body, "v2 only");
-    NodeAssert.equal(NodeFS.existsSync(NodePath.join(backup, "statev2.sqlite-wal")), false);
   },
 );
 

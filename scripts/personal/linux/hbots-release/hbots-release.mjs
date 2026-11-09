@@ -29,6 +29,7 @@ import {
 } from "./lib/idle.mjs";
 import { selfStats } from "./lib/proc.mjs";
 import {
+  DATABASES,
   copyStopped,
   listBackups,
   pruneBackups,
@@ -88,7 +89,7 @@ function queueWaitingNotice(cfg, a, names, alert) {
 /** pids that hold the database files open, read from /proc/<pid>/fd links (a readlink, never an open of the DB). */
 function dbHolders(cfg) {
   const holders = [];
-  const prefix = NodePath.join(cfg.stateDir, "state.sqlite");
+  const prefixes = DATABASES.map((name) => NodePath.join(cfg.stateDir, name));
   for (const name of NodeFS.readdirSync("/proc")) {
     if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
     let fds;
@@ -99,7 +100,8 @@ function dbHolders(cfg) {
     }
     for (const fd of fds) {
       try {
-        if (NodeFS.readlinkSync(`/proc/${name}/fd/${fd}`).startsWith(prefix)) {
+        const link = NodeFS.readlinkSync(`/proc/${name}/fd/${fd}`);
+        if (prefixes.some((prefix) => link.startsWith(prefix))) {
           holders.push(Number(name));
           break;
         }
