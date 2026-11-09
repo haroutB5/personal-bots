@@ -247,6 +247,12 @@ import {
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
+import { installClaudeSdkWarningFilter } from "../../provider/Layers/claudeSdkWarnings.ts";
+
+// The v1 ClaudeAdapter installed this filter at import; the v2 move dropped the
+// call, so every bypassPermissions session logged the harmless
+// CLAUDE_SDK_CAN_USE_TOOL_SHADOWED warning and the release runner rolled back.
+installClaudeSdkWarningFilter();
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
