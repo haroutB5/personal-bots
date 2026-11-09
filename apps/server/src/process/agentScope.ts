@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- unit names and RAM size come from the host.
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import {
   AgentScope,
@@ -29,6 +30,28 @@ const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"]
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
   return `app-t3code-agents-${hash}.slice`;
+}
+
+const LIVE_STATE_DIR = NodePath.join(NodeOS.homedir(), ".personal-bots", "dev");
+
+export type LeftoverStopDecision =
+  | { readonly stop: true }
+  | { readonly stop: false; readonly reason: string };
+
+/** Stopping the whole slice from a test or a dev process kills every live bot. */
+export function leftoverStopDecision(
+  stateDir: string,
+  environment: NodeJS.ProcessEnv,
+  cgroup: string,
+): LeftoverStopDecision {
+  const testing = Boolean(environment.VITEST) || environment.NODE_ENV === "test";
+  if (testing && NodePath.resolve(stateDir) === NodePath.resolve(LIVE_STATE_DIR)) {
+    return { stop: false, reason: "test process on the live state dir" };
+  }
+  const underService =
+    Boolean(environment.INVOCATION_ID?.trim()) || /(?:^|\/)hbots\.service(?:\/|$)/m.test(cgroup);
+  if (!underService) return { stop: false, reason: "not running under hbots.service" };
+  return { stop: true };
 }
 
 const GiB = 1024 ** 3;
@@ -130,6 +153,17 @@ export const make = Effect.gen(function* () {
   const stopLeftoverAgents = Effect.fn("agentScope.stopLeftoverAgents")(function* (
     systemctl: string,
   ) {
+    const cgroup = yield* fileSystem
+      .readFileString("/proc/self/cgroup")
+      .pipe(Effect.orElseSucceed(() => ""));
+    const decision = leftoverStopDecision(stateDir, hostEnvironment, cgroup);
+    if (!decision.stop) {
+      yield* Effect.logDebug("Not stopping agents left by a previous server", {
+        slice: ownedSlice,
+        reason: decision.reason,
+      });
+      return;
+    }
     const shown = yield* run(systemctl, [
       "--user",
       "show",
