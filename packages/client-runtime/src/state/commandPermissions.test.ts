@@ -29,7 +29,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
-import { createCommandPermissions } from "./commandPermissions.ts";
+import { createCommandPermissions, KnownSessionGrants } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
@@ -228,6 +228,74 @@ describe("command permissions", () => {
         }),
       ),
   );
+  it.effect("accepts known session grants without reading the session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const refresh = createCommandPermissions(runtime, WS_METHODS.serverRefreshProviders);
+        const phone = EnvironmentId.make("phone");
+        registry.set(sessions(phone), AsyncResult.failure(Cause.fail("no HttpClient")));
+        expect(registry.get(refresh.permissionAtom(phone))).toBe(false);
+        yield* refresh.authorize(registry, phone).pipe(
+          Effect.provideService(KnownSessionGrants, {
+            authenticated: true,
+            scopes: [AuthOrchestrationReadScope],
+          }),
+        );
+        const untrusted = yield* refresh.authorize(registry, phone).pipe(Effect.flip);
+        expect(untrusted).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: AuthOrchestrationReadScope,
+        });
+      }),
+    ),
+  );
+
+  it.effect("refuses known session grants that lack the required scope", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const refresh = createCommandPermissions(runtime, WS_METHODS.serverRefreshProviders);
+        const phone = EnvironmentId.make("phone");
+        const denied = yield* refresh.authorize(registry, phone).pipe(
+          Effect.provideService(KnownSessionGrants, {
+            authenticated: true,
+            scopes: [AuthOrchestrationOperateScope],
+          }),
+          Effect.flip,
+        );
+        expect(denied).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: AuthOrchestrationReadScope,
+        });
+      }),
+    ),
+  );
+
+  it.effect("reads known session grants for command availability", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const knownRuntime = Atom.runtime(
+          Layer.mergeAll(
+            Layer.succeed(EnvironmentRegistry, {
+              run: (_id: EnvironmentId, effect: Effect.Effect<unknown>) => effect,
+            } as unknown as EnvironmentRegistry["Service"]),
+            Layer.succeed(KnownSessionGrants, {
+              authenticated: true,
+              scopes: [AuthOrchestrationReadScope],
+            }),
+          ),
+        );
+        const refresh = createCommandPermissions(knownRuntime, WS_METHODS.serverRefreshProviders);
+        const phone = EnvironmentId.make("phone");
+        registry.set(sessions(phone), AsyncResult.failure(Cause.fail("no HttpClient")));
+        yield* AtomRegistry.getResult(registry, knownRuntime, { suspendOnWaiting: true });
+        expect(registry.get(refresh.permissionAtom(phone))).toBe(true);
+      }),
+    ),
+  );
+
   it("rechecks permission after waiting in a serial command lane", async () => {
     const registry = AtomRegistry.make();
     const unmount = registry.mount(sessions(env));

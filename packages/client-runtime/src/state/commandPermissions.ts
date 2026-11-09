@@ -4,14 +4,24 @@ import {
   authScopeRequiredResponse,
   EnvironmentAuthorizationError,
   type EnvironmentId,
-  type AuthSessionState,
   type AuthEnvironmentScope,
+  type SessionGrantInput,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentSessionAtoms } from "./session.ts";
+
+/**
+ * A host that already holds the connection's grants, such as a paired phone
+ * carrying its token scopes. When provided, the gate reads these instead of
+ * fetching the session, which needs an HttpClient the mobile runtime lacks.
+ */
+export class KnownSessionGrants extends Context.Service<KnownSessionGrants, SessionGrantInput>()(
+  "@t3tools/client-runtime/state/commandPermissions/KnownSessionGrants",
+) {}
 
 function makeCommandPermissions<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -25,6 +35,14 @@ function makeCommandPermissions<R, E>(
         if (environmentId === null) return false;
         const scopes = scopeKey.split(",").filter(Boolean) as AuthEnvironmentScope[];
         if (scopes.length === 0) return true;
+        const context = AsyncResult.getOrElse(get(runtime), () => null);
+        const known =
+          context === null
+            ? Option.none<SessionGrantInput>()
+            : Context.getOption(context, KnownSessionGrants);
+        if (Option.isSome(known)) {
+          return scopes.every((scope) => sessionGrantsScope(known.value, scope));
+        }
         const result = get(sessions.sessionStateAtom(environmentId));
         const session = AsyncResult.getOrElse(result, () => null);
         return (
@@ -37,6 +55,21 @@ function makeCommandPermissions<R, E>(
   );
   const permissionAtom = (environmentId: EnvironmentId | null, input?: unknown) =>
     atomsByEnvironment(environmentId)(requiredScopes(input).join(","));
+  const check = (
+    session: Option.Option<SessionGrantInput>,
+    scopes: ReadonlyArray<AuthEnvironmentScope>,
+  ) => {
+    const missing = scopes.find(
+      (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),
+    );
+    if (missing === undefined) return Effect.void;
+    return Effect.fail(
+      new EnvironmentAuthorizationError({
+        ...authScopeRequiredResponse(missing),
+        message: `This connection requires ${missing}.`,
+      }),
+    );
+  };
   const authorize = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
@@ -45,26 +78,23 @@ function makeCommandPermissions<R, E>(
     Effect.suspend(() => {
       const scopes = requiredScopes(input);
       if (scopes.length === 0) return Effect.void;
-      const atom = sessions.sessionStateAtom(environmentId);
-      return Effect.scoped(
-        Effect.gen(function* () {
-          yield* AtomRegistry.mount(registry, atom);
-          const session = yield* AtomRegistry.getResult(registry, atom, {
-            suspendOnWaiting: false,
-          }).pipe(
-            Effect.timeoutOption(6_000),
-            Effect.orElseSucceed(() => Option.none<AuthSessionState>()),
-          );
-          const missing = scopes.find(
-            (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),
-          );
-          if (missing !== undefined)
-            return yield* new EnvironmentAuthorizationError({
-              ...authScopeRequiredResponse(missing),
-              message: `This connection requires ${missing}.`,
-            });
-        }),
-      );
+      return Effect.gen(function* () {
+        const known = yield* Effect.serviceOption(KnownSessionGrants);
+        if (Option.isSome(known)) return yield* check(known, scopes);
+        const atom = sessions.sessionStateAtom(environmentId);
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* AtomRegistry.mount(registry, atom);
+            const session = yield* AtomRegistry.getResult(registry, atom, {
+              suspendOnWaiting: false,
+            }).pipe(
+              Effect.timeoutOption(6_000),
+              Effect.orElseSucceed(() => Option.none<SessionGrantInput>()),
+            );
+            return yield* check(session, scopes);
+          }),
+        );
+      });
     });
   return { requiredScopes, permissionAtom, authorize };
 }

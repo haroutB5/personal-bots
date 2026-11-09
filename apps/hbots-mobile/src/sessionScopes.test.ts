@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { canManageDevices } from "./sessionScopes";
+import { canManageDevices, grantedScopes } from "./sessionScopes";
 
 describe("canManageDevices", () => {
   it("is false for the standard scopes a Connections link grants", () => {
@@ -22,5 +22,26 @@ describe("canManageDevices", () => {
 
   it("is false for an empty scope string", () => {
     expect(canManageDevices("")).toBe(false);
+  });
+});
+
+describe("grantedScopes", () => {
+  it("splits the pairing scope string and drops unknown names", () => {
+    expect(grantedScopes("orchestration:read access:read contact:write")).toEqual([
+      "orchestration:read",
+      "access:read",
+    ]);
+  });
+
+  it("keeps legacy scope names the server still issues", () => {
+    expect(grantedScopes("orchestration:read filesystem:read review:write")).toEqual([
+      "orchestration:read",
+      "filesystem:read",
+      "review:write",
+    ]);
+  });
+
+  it("returns an empty list for an empty scope string", () => {
+    expect(grantedScopes("")).toEqual([]);
   });
 });
