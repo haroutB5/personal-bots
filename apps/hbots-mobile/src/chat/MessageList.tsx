@@ -876,7 +876,9 @@ export function MessageList({
                   delayLongPress={350}
                   style={[
                     styles.assistantPress,
-                    markdownNeedsWidth(body) ? styles.assistantWide : null,
+                    markdownNeedsWidth(body) || reply.options !== null
+                      ? styles.assistantWide
+                      : null,
                   ]}
                 >
                   {item.showSpeaker ? (
@@ -1004,7 +1006,7 @@ export function MessageList({
                 delayLongPress={350}
                 style={[
                   styles.assistantPress,
-                  markdownNeedsWidth(body) ? styles.assistantWide : null,
+                  markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
                 ]}
               >
                 <MarkdownBody

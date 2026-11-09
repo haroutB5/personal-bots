@@ -761,7 +761,7 @@ export function ChatScreen({
               currentUserId="You"
               activities={thread.activities}
               latestTurn={thread.latestTurn}
-              busy={running}
+              busy={running || archived}
               latestMessageStatus={latestMessageStatus}
               onReply={(quote) => setReplyTo(quote)}
               onMessageMenu={setMessageMenu}
