@@ -337,6 +337,7 @@ async function screensKeepContent({ page, context, origin, step }) {
     const p2 = fresh.page;
     const h = (name) => p2.getByRole("heading", { name, exact: true });
     const t = (name) => p2.getByRole("navigation", { name: "Primary" }).getByRole("link", { name });
+    await recordEveryResource(p2);
     await p2.goto(`${origin}/bots`, { waitUntil: "load" });
     await p2.getByLabel("Search bots and chats").waitFor({ state: "visible" });
     // The app warms its screens once it is quiet: wait until Team, Memory and Files have been fetched.
