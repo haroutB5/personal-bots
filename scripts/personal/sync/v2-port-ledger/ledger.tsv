@@ -729,12 +729,12 @@ apps/web/src/lib/imageCompression.ts		content	60	B1	dropped	every commit on our 
 apps/web/src/lib/runtime.ts		content	5	phase 4	open	area phase 4
 apps/web/src/lib/syntaxHighlighting.ts		content	20	phase 4	open	area phase 4
 apps/web/src/lib/utils.ts		content	3	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
-apps/web/src/main.tsx		content	73	phase 4	open	area phase 4
+apps/web/src/main.tsx		content	73	phase 4	done	WEB-GATES U8: re-applied in b6f2217283 (service worker, resume last chat, Bots back stack, overlay back, stale release check, chunk recovery, managed auth skip); boot wiring lives in appInit.tsx on v2
 apps/web/src/observability/clientTracing.ts		content	4	phase 4	open	area phase 4
 apps/web/src/onboarding/useProjectScans.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/previewStateStore.ts		content	23	phase 4	open	area phase 4
 apps/web/src/routeTree.gen.ts		content	592	phase 4	open	area phase 4
-apps/web/src/routes/__root.tsx		content	201	phase 4	open	area phase 4
+apps/web/src/routes/__root.tsx		content	201	phase 4	open	WEB-GATES U8 re-applied DeferredMount lazy boot dialogs (85c87118c2) and PersonalUnreachableScreen in the root error view (95a78b57f3); still open: lean-shell lazy loads, trace-batch interval, provider workspace data reload, ProviderUpdateLaunchNotification personal gate
 apps/web/src/routes/_chat.index.tsx		content	10	phase 4	open	area phase 4
 apps/web/src/rpc/atomRegistry.ts		content	1	B1	dropped	our only change at this path is 4cabfdaab717b245dbc5908f35f497b46fa5c5b3, which U already carries
 apps/web/src/session-logic.command-output.test.ts		modify-delete	34	phase 4	open	area phase 4
