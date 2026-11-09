@@ -13,7 +13,10 @@ import { withProviderSessionEnvironment } from "@t3tools/provider-core/server/mc
 
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
-import { personalBotOpenCodeEnvironment } from "../opencodeBotIsolation.ts";
+import {
+  personalBotOpenCodeEnvironment,
+  type PersonalBotOpenCodeHome,
+} from "../opencodeBotIsolation.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
 const INFO_TIMEOUT = "5 seconds";
@@ -130,7 +133,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   readonly serverPassword: string;
   readonly directory: string;
   readonly environment: NodeJS.ProcessEnv;
-  readonly botConfigHome?: string | undefined;
+  readonly botHome?: PersonalBotOpenCodeHome | undefined;
 }) {
   const opencode = yield* OpenCode2Client.OpenCode2Client;
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
@@ -184,7 +187,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     botInput: OpenCode2BotEnvironment,
     use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
   ): Effect.fn.Return<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R | Scope.Scope> {
-    if (input.botConfigHome === undefined) {
+    if (input.botHome === undefined) {
       return yield* new OpenCodeRuntime.OpenCodeRuntimeError({
         operation: "server.start",
         detail: "OpenCode could not prepare the bots' private settings folder, so bots can't run.",
@@ -202,7 +205,8 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
           ? {}
           : { personalSecretEnvironment: botInput.personalSecretEnvironment }),
       }),
-      configHome: input.botConfigHome,
+      configHome: input.botHome.configHome,
+      pluginDirectory: input.botHome.pluginDirectory,
       model: botInput.model,
     });
     const botOwner = yield* OpenCodeServerOwner.make({
