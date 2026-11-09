@@ -11,6 +11,8 @@ const TEST_EXCLUDE = [
   "**/dist/**",
   "**/dist-electron/**",
   "**/.{idea,git,cache,output,temp}/**",
+  // node:test files run by their own harness (scripts/personal/linux/hbots-release/README.md).
+  "scripts/personal/linux/**",
 ];
 
 // Directories whose tests belong to a package's own test config. desktop also
