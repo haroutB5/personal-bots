@@ -1,0 +1,41 @@
+diff --git a/apps/server/integration/OrchestrationEngineHarness.integration.ts b/apps/server/integration/OrchestrationEngineHarness.integration.ts
+index 5e3b4c6e4afe32903a74b077c17a0ebb0f90e27f..c4a96799b9f80f518b2cf3720d67e5f93d907a6a 100644
+--- a/apps/server/integration/OrchestrationEngineHarness.integration.ts
++++ b/apps/server/integration/OrchestrationEngineHarness.integration.ts
+@@ -1,7 +1,7 @@
+ // @effect-diagnostics nodeBuiltinImport:off
+ import * as NodeChildProcess from "node:child_process";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   ApprovalRequestId,
+   CodexSettings,
+@@ -58,6 +58,8 @@ import * as ThreadPlanProgress from "../src/orchestration/ThreadPlanProgress.ts"
+ import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
+ import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
+ import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
++import * as PersonalBotRepository from "../src/personal/PersonalBotRepository.ts";
++import * as PersonalVoiceCallRepository from "../src/personal/voiceCalls/PersonalVoiceCallRepository.ts";
+ import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
+ import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
+ import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
+@@ -322,6 +324,7 @@ export const makeOrchestrationIntegrationHarness = (
+     const serverSettingsLayer = ServerSettingsService.layerTest();
+     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
+       Layer.provideMerge(runtimeServicesLayer),
++      Layer.provideMerge(PersonalBotRepository.layer),
+       Layer.provideMerge(serverSettingsLayer),
+     );
+     const gitWorkflowLayer = Layer.mock(GitWorkflowService)({
+@@ -343,6 +346,10 @@ export const makeOrchestrationIntegrationHarness = (
+       ),
+       Layer.provide(Layer.mock(TerminalManager.TerminalManager)({ closeIdle: () => Effect.void })),
+       Layer.provideMerge(runtimeServicesLayer),
++      Layer.provideMerge(PersonalBotRepository.layer),
++      // The call summary a bot's next turn is given; no voice calls exist in
++      // this harness, so every turn's block is empty.
++      Layer.provideMerge(PersonalVoiceCallRepository.layer),
+       Layer.provideMerge(gitWorkflowLayer),
+       Layer.provideMerge(textGenerationLayer),
+       Layer.provideMerge(serverSettingsLayer),

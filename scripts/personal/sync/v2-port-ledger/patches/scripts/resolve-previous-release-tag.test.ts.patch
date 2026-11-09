@@ -1,0 +1,13 @@
+diff --git a/scripts/resolve-previous-release-tag.test.ts b/scripts/resolve-previous-release-tag.test.ts
+index 1cffc47aac7007d3aeecf153fe15e6e0358ff839..856dd698f76e9fcf8f6609122f11976d3f2b0cd9 100644
+--- a/scripts/resolve-previous-release-tag.test.ts
++++ b/scripts/resolve-previous-release-tag.test.ts
+@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Sink from "effect/Sink";
+ import * as Stream from "effect/Stream";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ 
+ import {
+   listGitTags,

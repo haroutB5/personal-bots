@@ -1,0 +1,34 @@
+diff --git a/apps/server/src/orchestration/ThreadPullRequestReactor.ts b/apps/server/src/orchestration/ThreadPullRequestReactor.ts
+index 3f8dfb82ece4e6401d15e771b1fdcd3e860ff906..91d7250f4106f32939c40efbb9e38767525e5de3 100644
+--- a/apps/server/src/orchestration/ThreadPullRequestReactor.ts
++++ b/apps/server/src/orchestration/ThreadPullRequestReactor.ts
+@@ -13,7 +13,7 @@ import {
+ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+ import * as Cause from "effect/Cause";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+@@ -29,6 +29,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
+ import { forkParked } from "../serverActivation.ts";
+ import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
+ import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
++import { withStallJob } from "../observability/stallJobs.ts";
+ 
+ export class ThreadPullRequestReactor extends Context.Service<
+   ThreadPullRequestReactor,
+@@ -415,7 +416,11 @@ export const make = Effect.gen(function* () {
+         yield* Effect.gen(function* () {
+           yield* worker.enqueue({ threadId: null, refresh: false });
+           yield* worker.drain;
+-        }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.delay("1 minute"));
++        }).pipe(
++          withStallJob("job:thread-pull-request-refresh"),
++          Effect.repeat(Schedule.spaced("1 minute")),
++          Effect.delay("1 minute"),
++        );
+       }).pipe(Effect.asVoid),
+     );
+   });

@@ -1,0 +1,11 @@
+diff --git a/packages/contracts/src/relay.test.ts b/packages/contracts/src/relay.test.ts
+index 441fecd33268ed0ef33b5e4a6a4a879153e1a210..954c46e0d8badb1475d94dbb3b42c9e91f44b1ba 100644
+--- a/packages/contracts/src/relay.test.ts
++++ b/packages/contracts/src/relay.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, it } from "vite-plus/test";
+-import * as OpenApi from "effect/unstable/httpapi/OpenApi";
++import * as OpenApi from "effect/http-api/OpenApi";
+ import * as Schema from "effect/Schema";
+ 
+ import { RelayApi, RelayDeviceRegistrationRequest } from "./relay.ts";

@@ -1,6 +1,7 @@
 import * as NodeTimersPromises from "node:timers/promises";
+import * as NodeSqlite from "node:sqlite";
 
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -26,6 +27,7 @@ const SLOW_SELECT = `
   SELECT sum(x) FROM cnt
 `;
 
+// oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- the timer is the probe for main-thread freedom; the abandoned-failure case has no Effect event.
 const realSleep = (ms: number) => Effect.promise(() => NodeTimersPromises.setTimeout(ms));
 
 const tempDatabase = Effect.gen(function* () {
@@ -295,3 +297,63 @@ it.effect("T3CODE_SQLITE_WORKER=off builds the in-thread path", () => {
     ),
   );
 });
+
+// A write that cannot finish inside a 50 ms main-thread timer. Inline it holds
+// the event loop, so the timer cannot win; on the worker the loop stays free.
+const BLOCKING_WRITE = `
+  INSERT INTO timer_probe(value)
+  WITH RECURSIVE cnt(x) AS (
+    SELECT 1
+    UNION ALL
+    SELECT x + 1 FROM cnt WHERE x < 2000000
+  )
+  SELECT x FROM cnt
+`;
+
+const writeRace = (worker: boolean) =>
+  Effect.gen(function* () {
+    const filename = yield* tempDatabase;
+    return yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE timer_probe(value INTEGER)`;
+      const winner = yield* sql
+        .unsafe(BLOCKING_WRITE)
+        .pipe(
+          Effect.as("write" as const),
+          Effect.race(realSleep(50).pipe(Effect.as("timer" as const))),
+        );
+      return winner;
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, worker })));
+  }).pipe(Effect.provide(NodeServices.layer));
+
+it.effect("keeps the main thread free while the worker runs a blocking write", () =>
+  Effect.gen(function* () {
+    assert.equal(yield* writeRace(true), "timer");
+  }),
+);
+
+it.effect("blocks the main thread while the inline path runs the same write", () =>
+  Effect.gen(function* () {
+    assert.equal(yield* writeRace(false), "write");
+  }),
+);
+
+it.effect("classifies SQLITE_BUSY through the worker as a lock timeout", () =>
+  Effect.gen(function* () {
+    const filename = yield* tempDatabase;
+    const other = new NodeSqlite.DatabaseSync(filename);
+    yield* Effect.addFinalizer(() => Effect.sync(() => other.close()));
+    other.exec("PRAGMA journal_mode = WAL");
+    other.exec("CREATE TABLE locked(value TEXT NOT NULL)");
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 0`;
+      other.exec("BEGIN IMMEDIATE");
+      const error = yield* sql`INSERT INTO locked VALUES ('blocked')`.pipe(Effect.flip);
+      assert.equal(error.reason._tag, "LockTimeoutError");
+      other.exec("COMMIT");
+      yield* sql`INSERT INTO locked VALUES ('after')`;
+      assert.deepEqual(yield* sql`SELECT value FROM locked`, [{ value: "after" }]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, worker: true })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

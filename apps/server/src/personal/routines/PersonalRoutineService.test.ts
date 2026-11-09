@@ -1,125 +1,91 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   PersonalBotId,
   PersonalRoutineId,
   ProviderInstanceId,
-  type OrchestrationCommand,
+  type OrchestrationV2ServerCommand,
   type ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionThreadMessageRepository,
-  type ProjectionThreadMessageRepositoryShape,
-} from "../../persistence/Services/ProjectionThreadMessages.ts";
+import { PersonalEngine } from "../engine/PersonalEngine.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
+import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
+import { PERSONAL_V2_RELATIONS } from "../engine/PersonalProjectionRelationsV2Live.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { pushEventForTask } from "../push/PersonalPushService.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
+import {
+  makePersonalEngineHarness,
+  personalEngineTestLayer,
+} from "../test/personalEngineTestLayer.ts";
+import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
 import * as PersonalRoutineService from "./PersonalRoutineService.ts";
 
-/**
- * Live chats the projection knows, by thread id, with their session status.
- * A thread missing here reads as deleted or archived, as the real
- * `getThreadShellById` returns nothing for either.
- */
-type ShellSessions = Map<
-  string,
-  { readonly status: string; readonly activeTurnId?: string; readonly title?: string }
->;
+/** What the routine tests observe: engine commands and the notices it posts. */
+interface RoutineHarness {
+  readonly dispatched: Array<OrchestrationV2ServerCommand>;
+  readonly notices: Array<{ readonly threadId: ThreadId; readonly text: string }>;
+}
 
-/** Orchestration is a recorder: routines only need tasks to be created. */
-const makeLayer = (
-  dbPath?: string,
-  dispatched: Array<OrchestrationCommand> = [],
-  shells: ShellSessions = new Map(),
-) => {
-  return PersonalRoutineService.layer.pipe(
+const makeHarness = (): RoutineHarness => ({
+  ...makePersonalEngineHarness(),
+  notices: [],
+});
+
+/** The engine, plus a record of every relay notice a routine posts. */
+const recordingEngineLayer = (harness: RoutineHarness) =>
+  Layer.effect(
+    PersonalEngine,
+    Effect.gen(function* () {
+      const engine = yield* PersonalEngine;
+      return {
+        ...engine,
+        postNotice: (input: Parameters<PersonalEngine["Service"]["postNotice"]>[0]) =>
+          Effect.gen(function* () {
+            harness.notices.push({ threadId: input.threadId, text: input.text });
+            yield* engine.postNotice(input);
+          }),
+      } as never;
+    }),
+  ).pipe(Layer.provide(personalEngineTestLayer(harness)));
+
+/**
+ * The service stack alone, with no database of its own. The restart test
+ * provides one durable database to two builds of this layer, so the second
+ * build is a fresh service with no in-memory state from the first.
+ */
+const makeServicesLayer = (harness: RoutineHarness = makeHarness()) =>
+  PersonalRoutineService.layer.pipe(
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(
-      dbPath === undefined ? SqlitePersistenceMemory : makeSqlitePersistenceLive(dbPath),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            dispatched.push(command);
-            return { sequence: dispatched.length };
-          }),
-        subscribeDomainEvents: Effect.succeed(Stream.never),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    ),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed([]),
       }),
     ),
-    Layer.provideMerge(ThreadBackgroundLiveness.layer),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() => {
-            const session = shells.get(threadId);
-            return session === undefined
-              ? Option.none()
-              : Option.some({
-                  id: threadId,
-                  ...(session.title === undefined
-                    ? {}
-                    : { title: session.title, archivedAt: null }),
-                  session: {
-                    threadId,
-                    status: session.status,
-                    activeTurnId: session.activeTurnId ?? null,
-                    lastError: null,
-                    providerName: null,
-                    updatedAt: "2026-09-25T00:00:00.000Z",
-                  },
-                });
-          }),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionThreadMessageRepository, {
-        listByThreadId: () => Effect.succeed([]),
-        getByMessageId: () => Effect.succeed(Option.none()),
-        getLatestAssistantMessageForTurn: () => Effect.succeed(Option.none()),
-        getLatestAssistantMessageAfter: () => Effect.succeed(Option.none()),
-      } as unknown as ProjectionThreadMessageRepositoryShape),
-    ),
+    Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V2_RELATIONS)),
+    Layer.provideMerge(recordingEngineLayer(harness)),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-routines-test-" }),
     ),
     Layer.provideMerge(NodeServices.layer),
   );
-};
+
+const makeLayer = (harness: RoutineHarness = makeHarness()) =>
+  makeServicesLayer(harness).pipe(Layer.provideMerge(personalTestDatabase));
 
 const BOT = PersonalBotId.make("bot-planner");
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -486,44 +452,44 @@ it.effect("after a 10h sleep, coalesce runs the latest missed slot once and skip
 
 it.effect("a restart before the routine advanced does not duplicate the occurrence", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-routines-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
-
+    // One database, two builds of the services: the second build has none of
+    // the first's in-memory state, as a fresh process would not. The test
+    // database stands in for the durable state a restart reads back.
     yield* Effect.gen(function* () {
-      yield* setNow("2026-09-14T06:00:00Z");
-      yield* seedBot;
-      const routines = yield* PersonalRoutineService.PersonalRoutineService;
-      yield* routines.create({
-        routineId: PersonalRoutineId.make("morning"),
-        botId: BOT,
-        title: "Morning briefing",
-        prompt: "Brief me.",
-        schedule: { kind: "daily", time: "09:00" },
-      });
-      yield* setNow("2026-09-14T08:00:05Z");
-      yield* tickAndDrain;
-      expect((yield* occurrences("morning")).length).toBe(1);
-      // Simulate a crash between firing and advancing the routine.
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`
-        UPDATE personal_routines SET next_due_utc = '2026-09-14T08:00:00.000Z'
-        WHERE routine_id = 'morning'
-      `;
-    }).pipe(Effect.provide(makeLayer(dbPath)));
+      yield* Effect.gen(function* () {
+        yield* setNow("2026-09-14T06:00:00Z");
+        yield* seedBot;
+        const routines = yield* PersonalRoutineService.PersonalRoutineService;
+        yield* routines.create({
+          routineId: PersonalRoutineId.make("morning"),
+          botId: BOT,
+          title: "Morning briefing",
+          prompt: "Brief me.",
+          schedule: { kind: "daily", time: "09:00" },
+        });
+        yield* setNow("2026-09-14T08:00:05Z");
+        yield* tickAndDrain;
+        expect((yield* occurrences("morning")).length).toBe(1);
+        // Simulate a crash between firing and advancing the routine.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          UPDATE personal_routines SET next_due_utc = '2026-09-14T08:00:00.000Z'
+          WHERE routine_id = 'morning'
+        `;
+      }).pipe(Effect.provide(makeServicesLayer()));
 
-    // A fresh process over the same database catches up again.
-    yield* Effect.gen(function* () {
-      yield* setNow("2026-09-14T08:03:00Z");
-      yield* tickAndDrain;
-      const rows = yield* occurrences("morning");
-      expect(rows.map((row) => row.localOccurrence)).toEqual(["2026-09-14T09:00"]);
-      expect(rows[0]?.taskId).not.toBeNull();
-      expect((yield* routineTasks("morning")).length).toBe(1);
-      expect(yield* nextDueIso("morning")).toBe("2026-09-15T08:00:00.000Z");
-    }).pipe(Effect.provide(makeLayer(dbPath)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      // A fresh process over the same database catches up again.
+      yield* Effect.gen(function* () {
+        yield* setNow("2026-09-14T08:03:00Z");
+        yield* tickAndDrain;
+        const rows = yield* occurrences("morning");
+        expect(rows.map((row) => row.localOccurrence)).toEqual(["2026-09-14T09:00"]);
+        expect(rows[0]?.taskId).not.toBeNull();
+        expect((yield* routineTasks("morning")).length).toBe(1);
+        expect(yield* nextDueIso("morning")).toBe("2026-09-15T08:00:00.000Z");
+      }).pipe(Effect.provide(makeServicesLayer()));
+    }).pipe(Effect.provide(personalTestDatabase));
+  }),
 );
 
 it.effect("Run now creates its own occurrence key and dedupes on the request id", () =>
@@ -906,16 +872,17 @@ it.effect("moves an event routine to another time zone", () =>
 
 // A relay routine posts text into the bot's chat as the bot's own message and
 // starts no model turn; the run is a task that is already completed, so it
-// shows in Tasks and notifies like any finished routine run.
-const assistantPosts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
-  dispatched.flatMap((command) =>
-    command.type === "thread.message.assistant.delta" ? [command] : [],
+// shows in Tasks and notifies like any finished routine run. In v2 a notice is
+// one `postNotice` call, which writes and completes the message in one step.
+const assistantPosts = (harness: RoutineHarness) => harness.notices;
+const turnStarts = (harness: RoutineHarness) =>
+  harness.dispatched.filter(
+    (command): command is Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }> =>
+      command.type === "message.dispatch",
   );
-const turnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
-  dispatched.filter((command) => command.type === "thread.turn.start");
 
 it.effect("relays an event payload's message verbatim into the bot's chat, with no turn", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
+  const harness = makeHarness();
   return Effect.gen(function* () {
     yield* setNow("2026-09-14T10:00:00Z");
     yield* seedBot;
@@ -941,13 +908,11 @@ it.effect("relays an event payload's message verbatim into the bot's chat, with 
     expect(fired._tag).toBe("Fired");
     yield* tasks.drain;
 
-    const posts = assistantPosts(dispatched);
-    expect(posts.map((post) => post.delta)).toEqual([message]);
-    expect(turnStarts(dispatched)).toEqual([]);
-    const completes = dispatched.filter(
-      (command) => command.type === "thread.message.assistant.complete",
-    );
-    expect(completes.length).toBe(1);
+    const posts = assistantPosts(harness);
+    expect(posts.map((post) => post.text)).toEqual([message]);
+    expect(turnStarts(harness)).toEqual([]);
+    // One notice, written and completed together.
+    expect(posts).toHaveLength(1);
 
     const [task] = yield* routineTasks(EVENT_ROUTINE);
     expect(task?.status).toBe("completed");
@@ -956,11 +921,11 @@ it.effect("relays an event payload's message verbatim into the bot's chat, with 
     expect(task?.threadId).toBe(posts[0]!.threadId);
     // The same event the task stream turns into a routine notification.
     expect(pushEventForTask(task!)).toBe("routine_result");
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("fails a relay whose payload has no message, and posts nothing", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
+  const harness = makeHarness();
   return Effect.gen(function* () {
     yield* setNow("2026-09-14T10:00:00Z");
     yield* seedBot;
@@ -980,13 +945,13 @@ it.effect("fails a relay whose payload has no message, and posts nothing", () =>
       body: '{"text":"wrong field"}',
     });
     expect(fired._tag).toBe("Failed");
-    expect(assistantPosts(dispatched)).toEqual([]);
+    expect(assistantPosts(harness)).toEqual([]);
     expect((yield* occurrences(EVENT_ROUTINE)).map((row) => row.status)).toEqual(["failed"]);
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a scheduled relay posts its prompt, and an edit keeps the delivery", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
+  const harness = makeHarness();
   return Effect.gen(function* () {
     // 09:00 in London is 08:00 UTC in September.
     yield* setNow("2026-09-14T06:00:00Z");
@@ -1006,14 +971,12 @@ it.effect("a scheduled relay posts its prompt, and an edit keeps the delivery", 
 
     yield* setNow("2026-09-14T07:30:00Z");
     yield* tickAndDrain;
-    expect(assistantPosts(dispatched)).toEqual([]);
+    expect(assistantPosts(harness)).toEqual([]);
     yield* setNow("2026-09-14T08:00:10Z");
     yield* tickAndDrain;
-    expect(assistantPosts(dispatched).map((post) => post.delta)).toEqual([
-      "Stand-up in five minutes.",
-    ]);
-    expect(turnStarts(dispatched)).toEqual([]);
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched)));
+    expect(assistantPosts(harness).map((post) => post.text)).toEqual(["Stand-up in five minutes."]);
+    expect(turnStarts(harness)).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 // ── Preparers (the nightly Claude Code update run) ─────────────────────
@@ -1142,12 +1105,41 @@ const seedChat = (threadId: ThreadId = CHAT, botId: PersonalBotId = BOT) =>
     yield* bots.createThread({ botId, threadId });
   });
 
-const chatTurnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
-  dispatched.flatMap((command) =>
-    command.type === "thread.turn.start"
-      ? [{ threadId: command.threadId as string, text: command.message.text }]
-      : [],
-  );
+/** A live turn the task does not own, as the owner's own turn would be. */
+const startOtherTurn = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+          completed_at, payload_json)
+      VALUES ('user-turn', ${threadId}, 1, 'claudeAgent', NULL, 'running',
+        '2026-09-25T15:00:00.000Z', NULL, '{}')
+    `;
+  });
+
+const endOtherTurn = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      UPDATE orchestration_v2_projection_runs
+      SET status = 'completed', completed_at = '2026-09-25T15:00:30.000Z'
+      WHERE thread_id = ${threadId} AND status IN ('preparing', 'starting', 'running', 'waiting')
+    `;
+  });
+
+/** A chat whose projection is gone: the engine reads no live thread for it. */
+const forgetThread = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+  });
+
+const chatTurnStarts = (harness: RoutineHarness) =>
+  turnStarts(harness).map((command) => ({
+    threadId: command.threadId as string,
+    text: command.text,
+  }));
 
 const createInChat = (
   routineId: string,
@@ -1170,8 +1162,7 @@ const createInChat = (
 const FIRE_AT = "2026-09-25T15:20:05Z";
 
 it.effect("a routine made from a chat stores it and posts its run into that chat", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
-  const shells: ShellSessions = new Map([[CHAT, { status: "ready" }]]);
+  const harness = makeHarness();
   return Effect.gen(function* () {
     yield* setNow("2026-09-25T15:00:00Z");
     yield* seedBot;
@@ -1179,7 +1170,7 @@ it.effect("a routine made from a chat stores it and posts its run into that chat
     const created = yield* createInChat("in-chat");
     expect(created.threadId).toBe(CHAT);
     expect(created.newChatEachRun).toBe(false);
-    dispatched.length = 0;
+    harness.dispatched.length = 0;
 
     yield* setNow(FIRE_AT);
     yield* tickAndDrain;
@@ -1187,28 +1178,28 @@ it.effect("a routine made from a chat stores it and posts its run into that chat
     const [task] = yield* routineTasks("in-chat");
     expect(task?.threadId).toBe(CHAT);
     expect(task?.status).toBe("running");
-    expect(chatTurnStarts(dispatched)).toEqual([
+    expect(chatTurnStarts(harness)).toEqual([
       { threadId: CHAT, text: expect.stringContaining("[Routine task]") },
     ]);
     // The existing chat is reused, never created again.
-    expect(dispatched.some((command) => command.type === "thread.create")).toBe(false);
-    const start = dispatched.find((command) => command.type === "thread.turn.start");
+    expect(harness.dispatched.some((command) => command.type === "thread.create")).toBe(false);
+    const start = harness.dispatched.find((command) => command.type === "message.dispatch");
     // The task-turn marker the UI renders as "Routine: <title>".
-    const record = start?.type === "thread.turn.start" ? start.message.context?.records[0] : null;
+    const record = start?.type === "message.dispatch" ? start.context?.records[0] : null;
     expect(
       record !== null && record !== undefined && "payload" in record ? record.payload : null,
     ).toEqual(expect.objectContaining({ source: "routine", title: "Confirm release" }));
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a busy chat holds the run queued until it is idle, then runs it once", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
-  const shells: ShellSessions = new Map([[CHAT, { status: "running", activeTurnId: "user-turn" }]]);
+  const harness = makeHarness();
   return Effect.gen(function* () {
     const tasks = yield* PersonalTaskService.PersonalTaskService;
     yield* setNow("2026-09-25T15:00:00Z");
     yield* seedBot;
     yield* seedChat();
+    yield* startOtherTurn(CHAT);
     yield* createInChat("busy");
 
     yield* setNow(FIRE_AT);
@@ -1217,33 +1208,29 @@ it.effect("a busy chat holds the run queued until it is idle, then runs it once"
     const [waiting] = yield* routineTasks("busy");
     expect(waiting?.status).toBe("queued");
     expect(waiting?.threadId).toBe(CHAT);
-    expect(chatTurnStarts(dispatched)).toEqual([]);
+    expect(chatTurnStarts(harness)).toEqual([]);
 
     // Still busy on the next sweep: still waiting.
     yield* tasks.sweep;
     yield* tasks.drain;
-    expect(chatTurnStarts(dispatched)).toEqual([]);
+    expect(chatTurnStarts(harness)).toEqual([]);
 
-    shells.set(CHAT, { status: "ready" });
+    yield* endOtherTurn(CHAT);
     yield* tasks.sweep;
     yield* tasks.drain;
     yield* tasks.sweep;
     yield* tasks.drain;
-    expect(chatTurnStarts(dispatched).map((start) => start.threadId)).toEqual([CHAT]);
+    expect(chatTurnStarts(harness).map((start) => start.threadId)).toEqual([CHAT]);
     expect((yield* routineTasks("busy"))[0]?.status).toBe("running");
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect(
   "falls back to a new chat when the source chat is archived, deleted or another bot's",
   () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makeHarness();
     const archived = "chat-archived" as ThreadId;
     const deleted = "chat-deleted" as ThreadId;
-    const shells: ShellSessions = new Map([
-      [CHAT, { status: "ready" }],
-      [archived, { status: "ready" }],
-    ]);
     return Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
       const routines = yield* PersonalRoutineService.PersonalRoutineService;
@@ -1261,6 +1248,7 @@ it.effect(
       yield* seedChat();
       yield* seedChat(archived);
       yield* seedChat(deleted);
+      yield* forgetThread(deleted);
       yield* bots.archiveThread({ threadId: archived, archived: true });
       yield* createInChat("archived", { threadId: archived });
       // Deleted: even if a link row lingers, the projection has no live thread.
@@ -1279,19 +1267,20 @@ it.effect(
         // Null until claimed (a new chat is minted then); never one of these.
         expect([CHAT, archived, deleted]).not.toContain(task?.threadId);
       }
-      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(CHAT);
-    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+      expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(CHAT);
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
-/** The projection rows a bot's open chats are listed from (the harness has no projector). */
+/** Names the chats the engine harness created. The harness has no projector. */
 const seedProjectedChats = (chats: ReadonlyArray<readonly [ThreadId, string]>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     for (const [threadId, title] of chats) {
       yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES (${threadId}, 'project', ${title}, '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')
+        UPDATE orchestration_v2_projection_threads
+        SET title = ${title}, payload_json = json_set(payload_json, '$.title', ${title})
+        WHERE thread_id = ${threadId}
       `;
     }
   });
@@ -1299,13 +1288,9 @@ const seedProjectedChats = (chats: ReadonlyArray<readonly [ThreadId, string]>) =
 it.effect(
   "an archived source chat is not revived: the run goes to the bot's open chat with the same name",
   () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makeHarness();
     const archived = "chat-main-archived" as ThreadId;
     const open = "chat-main-open" as ThreadId;
-    const shells: ShellSessions = new Map([
-      [archived, { status: "ready", title: "Main" }],
-      [open, { status: "ready", title: "Main" }],
-    ]);
     return Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
       const sql = yield* SqlClient.SqlClient;
@@ -1319,34 +1304,32 @@ it.effect(
       ]);
       yield* createInChat("main-routine", { threadId: archived });
       yield* bots.archiveThread({ threadId: archived, archived: true });
-      dispatched.length = 0;
+      harness.dispatched.length = 0;
 
       yield* setNow(FIRE_AT);
       yield* tickAndDrain;
 
       const [task] = yield* routineTasks("main-routine");
       expect(task?.threadId).toBe(open);
-      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).toEqual([open]);
+      expect(chatTurnStarts(harness).map((start) => start.threadId)).toEqual([open]);
       // The archived chat stays archived and is not renamed.
       const [link] = yield* sql<{ readonly archivedAt: string | null }>`
         SELECT archived_at AS "archivedAt" FROM personal_bot_threads WHERE thread_id = ${archived}
       `;
       expect(link?.archivedAt).not.toBeNull();
-      expect(dispatched.filter((command) => command.type === "thread.meta.update")).toEqual([]);
-    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+      expect(
+        harness.dispatched.filter((command) => command.type === "thread.metadata.update"),
+      ).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
 it.effect(
   "an archived source chat with no open chat of its name keeps the run in its own new chat, not a stranger's",
   () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makeHarness();
     const archived = "chat-main-archived" as ThreadId;
     const stranger = "chat-other-open" as ThreadId;
-    const shells: ShellSessions = new Map([
-      [archived, { status: "ready", title: "Main" }],
-      [stranger, { status: "ready", title: "matchday" }],
-    ]);
     return Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
       yield* setNow("2026-09-25T15:00:00Z");
@@ -1359,29 +1342,25 @@ it.effect(
       ]);
       yield* createInChat("main-routine", { threadId: archived });
       yield* bots.archiveThread({ threadId: archived, archived: true });
-      dispatched.length = 0;
+      harness.dispatched.length = 0;
 
       yield* setNow(FIRE_AT);
       yield* tickAndDrain;
 
       const [task] = yield* routineTasks("main-routine");
       expect([archived, stranger]).not.toContain(task?.threadId);
-      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(archived);
-      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(stranger);
-    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+      expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(archived);
+      expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(stranger);
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
 it.effect(
   "a group member's relay thread as the source chat is never written into or moved out of: the run opens its own chat",
   () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makeHarness();
     const relay = "chat-relay" as ThreadId;
     const open = "chat-main-open" as ThreadId;
-    const shells: ShellSessions = new Map([
-      [relay, { status: "ready", title: "Main" }],
-      [open, { status: "ready", title: "Main" }],
-    ]);
     return Effect.gen(function* () {
       const bots = yield* PersonalBotService.PersonalBotService;
       const sql = yield* SqlClient.SqlClient;
@@ -1403,7 +1382,7 @@ it.effect(
         VALUES ('g-1', ${BOT}, ${relay}, 'member', 0, '2026-09-25T00:00:00.000Z')
       `;
       yield* bots.archiveThread({ threadId: relay, archived: true });
-      dispatched.length = 0;
+      harness.dispatched.length = 0;
 
       yield* setNow(FIRE_AT);
       yield* tickAndDrain;
@@ -1411,15 +1390,14 @@ it.effect(
       const [task] = yield* routineTasks("relay-routine");
       // Not redirected to the bot's open chat with the same name, and not into the relay.
       expect([relay, open]).not.toContain(task?.threadId);
-      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(relay);
-      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(open);
-    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+      expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(relay);
+      expect(chatTurnStarts(harness).map((start) => start.threadId)).not.toContain(open);
+    }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
 
 it.effect("newChatEachRun opts out, and an edit can turn it back off", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
-  const shells: ShellSessions = new Map([[CHAT, { status: "ready" }]]);
+  const harness = makeHarness();
   return Effect.gen(function* () {
     const routines = yield* PersonalRoutineService.PersonalRoutineService;
     yield* setNow("2026-09-25T15:00:00Z");
@@ -1443,12 +1421,11 @@ it.effect("newChatEachRun opts out, and an edit can turn it back off", () => {
 
     expect((yield* routineTasks("opted-out"))[0]?.threadId).not.toBe(CHAT);
     expect((yield* routineTasks("flipped"))[0]?.threadId).toBe(CHAT);
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a routine with no source chat (legacy or Scheduled screen) opens a new chat", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
-  const shells: ShellSessions = new Map([[CHAT, { status: "ready" }]]);
+  const harness = makeHarness();
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* setNow("2026-09-25T15:00:00Z");
@@ -1462,7 +1439,7 @@ it.effect("a routine with no source chat (legacy or Scheduled screen) opens a ne
       FROM personal_routines WHERE routine_id = 'no-chat'
     `;
     expect(rows).toEqual([{ threadId: null, flag: 0 }]);
-    dispatched.length = 0;
+    harness.dispatched.length = 0;
 
     yield* setNow(FIRE_AT);
     yield* tickAndDrain;
@@ -1470,19 +1447,19 @@ it.effect("a routine with no source chat (legacy or Scheduled screen) opens a ne
     const [task] = yield* routineTasks("no-chat");
     expect(task?.threadId).toBeTruthy();
     expect(task?.threadId).not.toBe(CHAT);
-    expect(dispatched.some((command) => command.type === "thread.create")).toBe(true);
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+    expect(harness.dispatched.some((command) => command.type === "thread.create")).toBe(true);
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect("a retried slot or Run now posts into the chat once, one run at a time", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
-  const shells: ShellSessions = new Map([[CHAT, { status: "running", activeTurnId: "user-turn" }]]);
+  const harness = makeHarness();
   return Effect.gen(function* () {
     const routines = yield* PersonalRoutineService.PersonalRoutineService;
     const tasks = yield* PersonalTaskService.PersonalTaskService;
     yield* setNow("2026-09-25T15:00:00Z");
     yield* seedBot;
     yield* seedChat();
+    yield* startOtherTurn(CHAT);
     const routine = yield* routines.create({
       routineId: PersonalRoutineId.make("daily-in-chat"),
       botId: BOT,
@@ -1505,18 +1482,18 @@ it.effect("a retried slot or Run now posts into the chat once, one run at a time
     ]);
 
     // Idle: the two runs go one after the other, never together.
-    shells.set(CHAT, { status: "ready" });
+    yield* endOtherTurn(CHAT);
     yield* tasks.sweep;
     yield* tasks.drain;
-    expect(chatTurnStarts(dispatched).length).toBe(1);
+    expect(chatTurnStarts(harness).length).toBe(1);
     yield* tasks.sweep;
     yield* tasks.drain;
-    expect(chatTurnStarts(dispatched).length).toBe(1);
+    expect(chatTurnStarts(harness).length).toBe(1);
     expect(yield* occurrences("daily-in-chat")).toEqual([
       expect.objectContaining({ localOccurrence: "2026-09-25T16:20", status: "created" }),
       expect.objectContaining({ localOccurrence: "manual:again", status: "created" }),
     ]);
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 // A routine's notify mode: what a run is told, and the mode the run keeps.
@@ -1714,7 +1691,7 @@ const dueDailyRoutine = (routineId: PersonalRoutineId) =>
 it.effect(
   "schedulers off (restored test copy): a due routine is not caught up, no task, no turn",
   () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makeHarness();
     const routineId = PersonalRoutineId.make("due-on-restored-copy");
     return Effect.gen(function* () {
       yield* dueDailyRoutine(routineId);
@@ -1727,15 +1704,15 @@ it.effect(
 
       expect(yield* occurrences(routineId)).toEqual([]);
       expect(yield* routineTasks(routineId)).toEqual([]);
-      expect(turnStarts(dispatched)).toEqual([]);
+      expect(turnStarts(harness)).toEqual([]);
       // Still due: the copy changed nothing about it.
       expect(yield* nextDueIso(routineId)).toBe("2026-09-14T08:00:00.000Z");
-    }).pipe(Effect.provide(makeLayer(undefined, dispatched)), withSchedulersEnv("off"));
+    }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv("off"));
   },
 );
 
 it.effect("schedulers unset or on: the same due routine fires once and its task starts", () => {
-  const dispatched: Array<OrchestrationCommand> = [];
+  const harness = makeHarness();
   const routineId = PersonalRoutineId.make("due-on-live");
   return Effect.gen(function* () {
     yield* dueDailyRoutine(routineId);
@@ -1746,7 +1723,7 @@ it.effect("schedulers unset or on: the same due routine fires once and its task 
     ]);
     const created = yield* routineTasks(routineId);
     expect(created.map((task) => task.status)).toEqual(["running"]);
-    expect(turnStarts(dispatched).length).toBe(1);
+    expect(turnStarts(harness).length).toBe(1);
     expect(yield* nextDueIso(routineId)).toBe("2026-09-15T08:00:00.000Z");
-  }).pipe(Effect.provide(makeLayer(undefined, dispatched)), withSchedulersEnv(undefined));
+  }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv(undefined));
 });

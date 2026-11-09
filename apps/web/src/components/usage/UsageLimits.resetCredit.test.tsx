@@ -6,13 +6,21 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { useEffect } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { resetCreditFailureText, useResetCredit } from "./UsageLimits";
 
 const state = vi.hoisted(() => ({ consume: vi.fn() }));
 
+// Upstream gates consume behind AuthProvidersManageScope; the owner holds it.
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => true,
+  readEnvironmentScope: () => true,
+}));
 // Never the real RPC: a redeem spends a real banked reset.
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => state.consume,
@@ -53,11 +61,14 @@ describe("resetCreditFailureText", () => {
 
 // The Limits tab (developer view) and the Bots usage sheet share this hook.
 describe("useResetCredit", () => {
-  let hook: ReturnType<typeof useResetCredit> | undefined;
+  const probe: { hook?: ReturnType<typeof useResetCredit> | undefined } = {};
   let renderer: ReactTestRenderer | undefined;
 
   function Probe() {
-    hook = useResetCredit(ENV, INPUT);
+    const next = useResetCredit(ENV, INPUT);
+    useEffect(() => {
+      probe.hook = next;
+    });
     return null;
   }
 
@@ -71,28 +82,28 @@ describe("useResetCredit", () => {
   afterEach(async () => {
     await act(async () => renderer?.unmount());
     renderer = undefined;
-    hook = undefined;
+    probe.hook = undefined;
   });
 
   it("puts the server's message in status on a failed redeem", async () => {
     state.consume.mockResolvedValue(
       AsyncResult.failure(Cause.fail(setupError("401 Incorrect API key provided"))),
     );
-    await act(async () => hook!.redeem());
+    await act(async () => probe.hook!.redeem());
     expect(state.consume).toHaveBeenCalledWith({ environmentId: ENV, input: INPUT });
-    expect(hook!.status).toBe("401 Incorrect API key provided");
-    expect(hook!.busy).toBe(false);
+    expect(probe.hook!.status).toBe("401 Incorrect API key provided");
+    expect(probe.hook!.busy).toBe(false);
   });
 
   it("keeps the generic status when the failure has no message", async () => {
     state.consume.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
-    await act(async () => hook!.redeem());
-    expect(hook!.status).toBe(GENERIC);
+    await act(async () => probe.hook!.redeem());
+    expect(probe.hook!.status).toBe(GENERIC);
   });
 
   it("still reports a successful outcome", async () => {
     state.consume.mockResolvedValue(AsyncResult.success({ outcome: "reset" }));
-    await act(async () => hook!.redeem());
-    expect(hook!.status).toBe("Reset applied. Your windows have cleared.");
+    await act(async () => probe.hook!.redeem());
+    expect(probe.hook!.status).toBe("Reset applied. Your windows have cleared.");
   });
 });

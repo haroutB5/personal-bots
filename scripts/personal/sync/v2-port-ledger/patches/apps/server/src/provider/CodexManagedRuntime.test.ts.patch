@@ -1,0 +1,21 @@
+diff --git a/apps/server/src/provider/CodexManagedRuntime.test.ts b/apps/server/src/provider/CodexManagedRuntime.test.ts
+index aeba7c5bfe3dd4b8f7623625528a1ff4c454c95c..f30fe11b0e44bee83eb1784d4b31b62446ad4b80 100644
+--- a/apps/server/src/provider/CodexManagedRuntime.test.ts
++++ b/apps/server/src/provider/CodexManagedRuntime.test.ts
+@@ -1,6 +1,6 @@
+ // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
+ import * as NodeOS from "node:os";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+ import * as Clock from "effect/Clock";
+@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ import { ServerConfig } from "../config.ts";
+ import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+ import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";

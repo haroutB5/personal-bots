@@ -1,0 +1,28 @@
+diff --git a/apps/web/src/components/ChatView.logic.ts b/apps/web/src/components/ChatView.logic.ts
+index 528024de4393036eee6f6d6b01caa1af600b5495..8ab8ec4a80abd8dc4eabd198c6274027b217728d 100644
+--- a/apps/web/src/components/ChatView.logic.ts
++++ b/apps/web/src/components/ChatView.logic.ts
+@@ -795,22 +795,7 @@ export interface PullRequestDialogState {
+   key: number;
+ }
+ 
+-export function readFileAsDataUrl(file: File): Promise<string> {
+-  return new Promise((resolve, reject) => {
+-    const reader = new FileReader();
+-    reader.addEventListener("load", () => {
+-      if (typeof reader.result === "string") {
+-        resolve(reader.result);
+-        return;
+-      }
+-      reject(new Error("Could not read image data."));
+-    });
+-    reader.addEventListener("error", () => {
+-      reject(reader.error ?? new Error("Failed to read image."));
+-    });
+-    reader.readAsDataURL(file);
+-  });
+-}
++export { readFileAsDataUrl } from "../lib/imageCompression";
+ 
+ export function resolveSendEnvMode(input: {
+   requestedEnvMode: DraftThreadEnvMode;

@@ -1,0 +1,23 @@
+diff --git a/apps/server/src/telemetry/Identify.ts b/apps/server/src/telemetry/Identify.ts
+index d68812c17cc61011160270ce45500e38202c9c69..dff2d3fb5427b81bd770bd176763a2a1a252f286 100644
+--- a/apps/server/src/telemetry/Identify.ts
++++ b/apps/server/src/telemetry/Identify.ts
+@@ -1,7 +1,7 @@
+ import * as NodeOS from "node:os";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Hex from "effect/encoding/Hex";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+@@ -150,7 +150,7 @@ const readIdentityFile = (
+ const hash = (source: TelemetryIdentitySource, value: string) =>
+   Crypto.Crypto.pipe(
+     Effect.flatMap((crypto) => crypto.digest("SHA-256", new TextEncoder().encode(value))),
+-    Effect.map(Encoding.encodeHex),
++    Effect.map(Hex.encode),
+     Effect.mapError(
+       (cause) =>
+         new TelemetryIdentityHashError({

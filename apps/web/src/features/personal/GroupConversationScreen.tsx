@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -20,10 +20,10 @@ import { ChevronLeft, Ellipsis } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { cn, randomUUID } from "~/lib/utils";
-import { deriveTimelineEntriesWithState, type TimelineEntriesProjection } from "~/session-logic";
-import { useThreadDetail, useThreadShells, useThreadStatus } from "~/state/entities";
+import { deriveTimelineEntries } from "@hbots/personal-client/conversation/timeline";
+import { useThreadDetail, useThreadStatus } from "~/state/entities";
 import { useEnvironmentThread, useRetryEnvironmentThread } from "~/state/threads";
-import type { ChatMessage } from "~/types";
+import type { ChatMessage } from "@hbots/personal-client/conversation/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { ArchivedChatBar } from "./ArchivedChatBar";
@@ -71,6 +71,7 @@ import {
   usePersonalBotsList,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
+import { useBotShells } from "./useBotShells";
 import {
   mergePersonalGroups,
   personalGroupAddMember,
@@ -85,7 +86,7 @@ import {
 } from "./usePersonalGroups";
 
 const ICON_BUTTON =
-  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
 
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_PLANS: ReadonlyArray<never> = [];
@@ -97,6 +98,7 @@ const NO_MEMBERS: ReadonlyArray<never> = [];
 
 function useMinuteNow(): Date {
   const [now, setNow] = useState(() => new Date());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the minute timer for the dividers while the group is open
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
@@ -107,7 +109,7 @@ function useMinuteNow(): Date {
 /**
  * /bots/groups/$groupId — a sibling of `ConversationScreen`, not a variant of
  * it. Everything that makes a chat a chat is shared and unchanged: the thread
- * detail stream, `deriveTimelineEntriesWithState`, `buildConversationItems`,
+ * detail stream, `deriveTimelineEntries`, `buildConversationItems`,
  * `MessageList`, `PersonalComposer`, `useKeyboardInset` and paging. What
  * differs is only what a group actually is — several speakers in one
  * transcript, a round instead of a turn, and no provider session of its own.
@@ -116,13 +118,6 @@ function useMinuteNow(): Date {
  * approvals, questions, secrets, tool steps or the shared browser: those all
  * happen inside a member's own chat, one tap away through its name.
  */
-/* oxlint-disable react/preserve-manual-memoization -- The group and round
-   arrays come out of `mergePersonalGroups`, across a module boundary, so the
-   compiler cannot prove they are never mutated and bails out of optimising the
-   whole component. They are frozen at the source and nothing here writes to
-   them. The manual memos stay because they ARE required for semantics: a fresh
-   `threadRef` object every render would make `useThreadDetail` resubscribe on
-   every keystroke. */
 export function GroupConversationScreen({
   groupId,
   openSettings = false,
@@ -137,9 +132,9 @@ export function GroupConversationScreen({
   useCloseGroupNotifications(groupId);
   const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed } = usePersonalGroupsFeed(environmentId);
-  const { groups, archivedGroups, rounds, votes } = useMemo(
-    () => mergePersonalGroups(groupsQuery.data ?? null, feed ?? null),
-    [groupsQuery.data, feed],
+  const { groups, archivedGroups, rounds, votes } = mergePersonalGroups(
+    groupsQuery.data ?? null,
+    feed ?? null,
   );
   // An archived group is hidden, not gone: its saved link still opens it,
   // read-only, with Unarchive. Only a deleted group drops out of the list.
@@ -152,11 +147,8 @@ export function GroupConversationScreen({
   const botsList = usePersonalBotsList(environmentId);
 
   const threadId = group === null ? null : ThreadId.make(group.threadId);
-  const threadRef = useMemo(
-    () =>
-      environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId),
-    [environmentId, threadId],
-  );
+  const threadRef =
+    environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId);
   const thread = useThreadDetail(threadRef);
   const status = useThreadStatus(threadRef);
   const threadState = useEnvironmentThread(environmentId, threadId);
@@ -193,93 +185,61 @@ export function GroupConversationScreen({
   const addMember = useAtomCommand(personalGroupAddMember, { reportFailure: false });
   const removeMember = useAtomCommand(personalGroupRemoveMember, { reportFailure: false });
   const createThread = useAtomCommand(personalBotCreateThread, { reportFailure: false });
-  const allShells = useThreadShells();
+  const shells = useBotShells(environmentId);
 
-  const botsById = useMemo(
-    () =>
-      new Map((botsList.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
-    [botsList.data],
+  const botsById = new Map(
+    (botsList.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const),
   );
-  const nameOf = useCallback((botId: string) => botsById.get(botId)?.name ?? null, [botsById]);
+  const nameOf = (botId: string) => botsById.get(botId)?.name ?? null;
   // At most six entries, so deriving it every render costs nothing.
   const members = group === null ? NO_MEMBERS : activeGroupMembers(group);
-  const memberBots = useMemo(
-    () =>
-      (group === null ? NO_MEMBERS : activeGroupMembers(group)).flatMap((member): PersonalBot[] => {
-        const bot = botsById.get(member.botId);
-        return bot === undefined ? [] : [bot];
-      }),
-    [botsById, group],
+  const memberBots = (group === null ? NO_MEMBERS : activeGroupMembers(group)).flatMap(
+    (member): PersonalBot[] => {
+      const bot = botsById.get(member.botId);
+      return bot === undefined ? [] : [bot];
+    },
   );
   // One presentation object per bot, rebuilt only when the roster or the group
   // changes. `groupSpeaker` used to build a fresh object per call, so every
   // group message row's `speaker` prop changed on every render (every stream
   // delta) and the `GroupMessage` memo never held.
-  const speakersById = useMemo(() => {
-    const threadByBot = new Map(
-      (group === null ? NO_MEMBERS : activeGroupMembers(group)).map(
-        (member) => [member.botId as string, member.threadId] as const,
-      ),
-    );
-    return new Map(
-      [...botsById.values()].map((bot): readonly [string, GroupSpeakerPresentation] => [
-        bot.botId as string,
-        {
-          name: bot.name,
-          avatarShape: bot.avatarShape,
-          avatarColor: bot.avatarColor,
-          threadId: threadByBot.get(bot.botId as string) ?? null,
-        },
-      ]),
-    );
-  }, [botsById, group]);
-  const groupSpeaker = useCallback(
-    (botId: string): GroupSpeakerPresentation | null => speakersById.get(botId) ?? null,
-    [speakersById],
+  const threadByBot = new Map(
+    (group === null ? NO_MEMBERS : activeGroupMembers(group)).map(
+      (member) => [member.botId as string, member.threadId] as const,
+    ),
   );
-  const mentionCandidates = useMemo(
-    () =>
-      memberBots.map((bot) => ({
-        botId: bot.botId as string,
+  const speakersById = new Map(
+    [...botsById.values()].map((bot): readonly [string, GroupSpeakerPresentation] => [
+      bot.botId as string,
+      {
         name: bot.name,
         avatarShape: bot.avatarShape,
         avatarColor: bot.avatarColor,
-      })),
-    [memberBots],
+        threadId: threadByBot.get(bot.botId as string) ?? null,
+      },
+    ]),
   );
+  const groupSpeaker = (botId: string): GroupSpeakerPresentation | null =>
+    speakersById.get(botId) ?? null;
+  const mentionCandidates = memberBots.map((bot) => ({
+    botId: bot.botId as string,
+    name: bot.name,
+    avatarShape: bot.avatarShape,
+    avatarColor: bot.avatarColor,
+  }));
 
   // Which members the Delete group sheet ticks by default, and why not.
-  const deleteCandidates = useMemo(
-    () =>
-      group === null
-        ? NO_MEMBERS
-        : groupDeleteCandidates({ group, groups, bots: botsList.data?.bots ?? [] }),
-    [group, groups, botsList.data],
-  );
+  const deleteCandidates =
+    group === null
+      ? NO_MEMBERS
+      : groupDeleteCandidates({ group, groups, bots: botsList.data?.bots ?? [] });
 
-  const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
-  const projectionRef = useRef<{
-    threadId: string;
-    projection: TimelineEntriesProjection;
-  } | null>(null);
-  /* oxlint-disable react/refs -- Pure render cache, as in ConversationScreen:
-     it holds only the last projection for the last thread, and dropping it
-     costs a re-fold, never a different result. */
-  const items = useMemo(() => {
-    const key = threadId ?? "none";
-    const previous = projectionRef.current;
-    const projection = deriveTimelineEntriesWithState(
-      messages,
-      EMPTY_PLANS,
-      EMPTY_WORK,
-      previous?.threadId === key ? previous.projection : null,
-    );
-    projectionRef.current = { threadId: key, projection };
-    // The group thread runs no provider, so there are no tool steps to show and
-    // `groups` is what turns each message into its speaker's row.
-    return buildConversationItems(projection.entries, { groups: true });
-  }, [messages, threadId, projectionRef]);
-  /* oxlint-enable react/refs */
+  const messages = thread?.messages ?? EMPTY_MESSAGES;
+  // The group thread runs no provider, so there are no tool steps to show and
+  // `groups` is what turns each message into its speaker's row.
+  const items = buildConversationItems(deriveTimelineEntries(messages, EMPTY_PLANS, EMPTY_WORK), {
+    groups: true,
+  });
 
   const live = isGroupRoundLive(round);
   const stateLabel = groupStatusLine(round, nameOf, { archived });
@@ -288,32 +248,27 @@ export function GroupConversationScreen({
   // everything else, so exactly one card can ever be in the slot below.
   const vote = groupVoteCard({ round, votes, members, nameOf });
 
-  const visiblePending = useMemo(
-    () => (threadId === null ? EMPTY_PENDING : pendingForThread(pending, threadId, messages)),
-    [messages, pending, threadId],
-  );
+  const visiblePending =
+    threadId === null ? EMPTY_PENDING : pendingForThread(pending, threadId, messages);
 
-  const send = useCallback(
-    async (input: {
-      readonly messageId: string;
-      readonly text: string;
-      readonly replyTo?: PersonalReplyQuote;
-    }) => {
-      if (environmentId === null) return { _tag: "Failure" as const };
-      return sendMessage({
-        environmentId,
-        input: {
-          groupId: PersonalGroupId.make(groupId),
-          messageId: MessageId.make(input.messageId),
-          text: input.text,
-          ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
-        },
-      });
-    },
-    [environmentId, groupId, sendMessage],
-  );
+  const send = async (input: {
+    readonly messageId: string;
+    readonly text: string;
+    readonly replyTo?: PersonalReplyQuote;
+  }) => {
+    if (environmentId === null) return { _tag: "Failure" as const };
+    return sendMessage({
+      environmentId,
+      input: {
+        groupId: PersonalGroupId.make(groupId),
+        messageId: MessageId.make(input.messageId),
+        text: input.text,
+        ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+      },
+    });
+  };
 
-  const onStop = useCallback(async (): Promise<string | null> => {
+  const onStop = async (): Promise<string | null> => {
     if (environmentId === null) return null;
     // Stops every member, not just the one speaking: a group's Stop that left
     // the queue running would be a lie.
@@ -322,16 +277,16 @@ export function GroupConversationScreen({
       input: { groupId: PersonalGroupId.make(groupId) },
     });
     return commandFailureMessage(result, "Couldn't stop the group. Try again.");
-  }, [environmentId, groupId, stopRound]);
+  };
 
-  const onContinue = useCallback(async (): Promise<string | null> => {
+  const onContinue = async (): Promise<string | null> => {
     if (environmentId === null) return null;
     const result = await continueRound({
       environmentId,
       input: { groupId: PersonalGroupId.make(groupId) },
     });
     return commandFailureMessage(result, "Couldn't continue the group. Try again.");
-  }, [continueRound, environmentId, groupId]);
+  };
 
   const voteId = vote?.voteId ?? null;
   /**
@@ -339,25 +294,22 @@ export function GroupConversationScreen({
    * same act: a parked round only ever moves because the owner said so. Until
    * this runs, nothing the bots agreed on has reached any of them.
    */
-  const onDecide = useCallback(
-    async (decision: "approve" | "reject"): Promise<string | null> => {
-      if (environmentId === null || voteId === null) return null;
-      const result = await continueRound({
-        environmentId,
-        input: {
-          groupId: PersonalGroupId.make(groupId),
-          vote: { voteId: PersonalGroupVoteId.make(voteId), decision },
-        },
-      });
-      return commandFailureMessage(
-        result,
-        decision === "approve"
-          ? "Couldn't approve that. Try again."
-          : "Couldn't reject that. Try again.",
-      );
-    },
-    [continueRound, environmentId, groupId, voteId],
-  );
+  const onDecide = async (decision: "approve" | "reject"): Promise<string | null> => {
+    if (environmentId === null || voteId === null) return null;
+    const result = await continueRound({
+      environmentId,
+      input: {
+        groupId: PersonalGroupId.make(groupId),
+        vote: { voteId: PersonalGroupVoteId.make(voteId), decision },
+      },
+    });
+    return commandFailureMessage(
+      result,
+      decision === "approve"
+        ? "Couldn't approve that. Try again."
+        : "Couldn't reject that. Try again.",
+    );
+  };
 
   const onArchive = async () => {
     if (environmentId === null) return;
@@ -472,7 +424,7 @@ export function GroupConversationScreen({
       const reuse = reusablePrivateChat({
         botId,
         links: botsList.data?.threads ?? [],
-        shells: allShells.filter((shell) => shell.environmentId === environmentId),
+        shells,
         relayThreadIds: groupRelayThreadIds({ groups, archivedGroups }),
       });
       let threadId = reuse === null ? null : ThreadId.make(reuse);
@@ -498,7 +450,7 @@ export function GroupConversationScreen({
   const loadEarlier =
     environmentId !== null && threadId !== null && threadHasOlderTurns(threadState)
       ? {
-          loading: threadState.page._tag === "Some" && threadState.page.value.loadingOlder,
+          loading: threadState.history.loading,
           onLoad: () => {
             requestOlderThreadTurns(environmentId, threadId);
           },
@@ -512,11 +464,8 @@ export function GroupConversationScreen({
     readonly quote: PersonalReplyQuote;
   } | null>(null);
   const replyTo = replyState?.groupId === groupId ? replyState.quote : null;
-  const onReply = useCallback(
-    (quote: PersonalReplyQuote) => setReplyState({ groupId, quote }),
-    [groupId],
-  );
-  const onClearReply = useCallback(() => setReplyState(null), []);
+  const onReply = (quote: PersonalReplyQuote) => setReplyState({ groupId, quote });
+  const onClearReply = () => setReplyState(null);
   const queuedMessages = useQueuedMessages({
     environmentId,
     threadId,
@@ -524,10 +473,7 @@ export function GroupConversationScreen({
     onRestoreReply: onReply,
   });
   const quickSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
-  const onChoose = useCallback(
-    (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false),
-    [],
-  );
+  const onChoose = (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false);
 
   // A laptop that is away does not stop a send: the message is saved on this
   // device and goes out when the connection is back (`outbox.ts`).
@@ -560,7 +506,7 @@ export function GroupConversationScreen({
           onClick={() => setShowSettings(true)}
           aria-haspopup="dialog"
           aria-label={group === null ? undefined : `${group.name} settings`}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[var(--personal-radius-button)] text-left outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[var(--personal-radius-button)] text-left outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <GroupAvatarCluster bots={memberBots} memberCount={members.length} size={40} />
           <span className="min-w-0 flex-1">

@@ -1,0 +1,19 @@
+diff --git a/apps/server/src/assets/GitHubMediaFetch.ts b/apps/server/src/assets/GitHubMediaFetch.ts
+index 495c2fa14c3bf27833a2d3a9a06741678e2badc9..39ed14f8b6093caf96e7a912d629e16d621a8857 100644
+--- a/apps/server/src/assets/GitHubMediaFetch.ts
++++ b/apps/server/src/assets/GitHubMediaFetch.ts
+@@ -1,4 +1,4 @@
+-import * as Mime from "effect/unstable/http/Mime";
++import * as Mime from "effect/http/Mime";
+ import { githubMediaFileName } from "@t3tools/shared/githubMedia";
+ import * as Clock from "effect/Clock";
+ import * as Effect from "effect/Effect";
+@@ -10,7 +10,7 @@ import {
+   HttpClientRequest,
+   HttpServerResponse,
+   type HttpClientResponse,
+-} from "effect/unstable/http";
++} from "effect/http";
+ 
+ import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+ 

@@ -1,0 +1,21 @@
+diff --git a/apps/server/src/orchestration/Layers/CheckpointReactor.test.ts b/apps/server/src/orchestration/Layers/CheckpointReactor.test.ts
+index 1d0b3da1bdbc9843d9e0abdc3891b939cbaece5f..325b68f67a5915366d9a1fd722c39f8a82b8c602 100644
+--- a/apps/server/src/orchestration/Layers/CheckpointReactor.test.ts
++++ b/apps/server/src/orchestration/Layers/CheckpointReactor.test.ts
+@@ -22,7 +22,7 @@ import {
+   ThreadId,
+   TurnId,
+ } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Clock from "effect/Clock";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -119,6 +119,7 @@ function createProviderServiceHarness(
+   const service: ProviderServiceShape = {
+     startSession: () => unsupported(),
+     sendTurn: () => unsupported(),
++    validateTurn: () => unsupported(),
+     compactThread: () => unsupported(),
+     interruptTurn: () => unsupported(),
+     respondToRequest: () => unsupported(),

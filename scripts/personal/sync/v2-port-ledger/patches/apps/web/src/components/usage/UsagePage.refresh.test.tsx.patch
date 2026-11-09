@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/usage/UsagePage.refresh.test.tsx b/apps/web/src/components/usage/UsagePage.refresh.test.tsx
+index 61ad487ade70a1fc3f15d699180fb32cdd55f091..e0d7409b20250de78416b0e6f74ac3b6ba8471c2 100644
+--- a/apps/web/src/components/usage/UsagePage.refresh.test.tsx
++++ b/apps/web/src/components/usage/UsagePage.refresh.test.tsx
+@@ -168,7 +168,7 @@ it.each([0, 1])(
+     });
+     expect(state.refreshProviders).toHaveBeenCalledWith({
+       environmentId: `test-${environmentNumber}`,
+-      input: {},
++      input: { refreshUsage: true },
+     });
+     expect(
+       JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),

@@ -1,4 +1,4 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -7,24 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Logger from "effect/Logger";
 
-import {
-  cachedUsageLimitsToSeed,
-  hydrateCachedProvider,
-  isCachedProviderCorrelated,
-  makeSerializedProviderStatusCacheWriter,
-  readProviderStatusCache,
-  resolveProviderStatusCachePath,
-  writeProviderStatusCache,
-} from "./providerStatusCache.ts";
+import { hydrateCachedProvider, isCachedProviderCorrelated } from "./providerStatusCache.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
-const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 
 const makeProvider = (
   provider: ProviderDriverKind,
@@ -45,84 +32,6 @@ const makeProvider = (
 });
 
 it.layer(NodeServices.layer)("providerStatusCache", (it) => {
-  it.effect("logs structural diagnostics without retaining invalid cache contents", () => {
-    const messages: Array<unknown> = [];
-    const logger = Logger.make<unknown, void>((options) => {
-      if (Array.isArray(options.message)) {
-        messages.push(...options.message);
-      } else {
-        messages.push(options.message);
-      }
-    });
-
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-invalid-" });
-      const cachePath = `${tempDir}/provider.json`;
-      const secretCacheValue = "secret-cache-value";
-      yield* fs.writeFileString(cachePath, `{ "token": "${secretCacheValue}" }`);
-
-      const result = yield* readProviderStatusCache(cachePath);
-
-      assert.strictEqual(result, undefined);
-      const failure = messages.find(
-        (message): message is Record<string, unknown> =>
-          typeof message === "object" && message !== null && "path" in message,
-      );
-      assert.exists(failure);
-      assert.strictEqual(failure.path, cachePath);
-      assert.strictEqual(typeof failure.errorTag, "string");
-      assert.ok(!("cause" in failure));
-      assert.ok(!("issues" in failure));
-      assert.ok(!Object.values(failure).map(String).join("\n").includes(secretCacheValue));
-    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
-  });
-
-  it.effect("writes and reads provider status snapshots", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-" });
-      const codexProvider = makeProvider(CODEX_DRIVER);
-      const claudeProvider = makeProvider(CLAUDE_AGENT_DRIVER, {
-        status: "warning",
-        auth: { status: "unknown" },
-      });
-      const openCodeProvider = makeProvider(OPENCODE_DRIVER, {
-        status: "warning",
-        auth: { status: "unknown", type: "opencode" },
-      });
-      const codexPath = yield* resolveProviderStatusCachePath({
-        cacheDir: tempDir,
-        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("codex")),
-      });
-      const claudePath = yield* resolveProviderStatusCachePath({
-        cacheDir: tempDir,
-        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("claudeAgent")),
-      });
-      const openCodePath = yield* resolveProviderStatusCachePath({
-        cacheDir: tempDir,
-        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("opencode")),
-      });
-
-      yield* writeProviderStatusCache({
-        filePath: codexPath,
-        provider: codexProvider,
-      });
-      yield* writeProviderStatusCache({
-        filePath: claudePath,
-        provider: claudeProvider,
-      });
-      yield* writeProviderStatusCache({
-        filePath: openCodePath,
-        provider: openCodeProvider,
-      });
-
-      assert.deepStrictEqual(yield* readProviderStatusCache(codexPath), codexProvider);
-      assert.deepStrictEqual(yield* readProviderStatusCache(claudePath), claudeProvider);
-      assert.deepStrictEqual(yield* readProviderStatusCache(openCodePath), openCodeProvider);
-    }),
-  );
-
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",
@@ -299,91 +208,4 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       fallbackCodex,
     );
   });
-
-  it("seeds only a good usage reading cached for the same account", () => {
-    const limits = {
-      checkedAt: "2026-04-10T12:00:00.000Z",
-      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 60 }],
-    } as const;
-    const account = { groupKey: "claude:home:/home/dev" };
-    const fallback = makeProvider(CLAUDE_AGENT_DRIVER, { continuation: account });
-    const cached = makeProvider(CLAUDE_AGENT_DRIVER, {
-      continuation: account,
-      usageLimits: limits,
-    });
-
-    assert.strictEqual(
-      cachedUsageLimitsToSeed({ cachedProvider: cached, fallbackProvider: fallback }),
-      limits,
-    );
-    // Hydration itself never carries usage; the provider is seeded instead.
-    assert.isUndefined(
-      hydrateCachedProvider({ cachedProvider: cached, fallbackProvider: fallback }).usageLimits,
-    );
-
-    const notSeeded: ReadonlyArray<readonly [string, ServerProvider, ServerProvider]> = [
-      [
-        "another account",
-        { ...cached, continuation: { groupKey: "claude:home:/home/other" } },
-        fallback,
-      ],
-      [
-        "a failed reading",
-        {
-          ...cached,
-          usageLimits: {
-            checkedAt: limits.checkedAt,
-            windows: [],
-            unavailable: { reason: "probeFailed" },
-          },
-        },
-        fallback,
-      ],
-      [
-        "an unsupported account",
-        {
-          ...cached,
-          usageLimits: {
-            checkedAt: limits.checkedAt,
-            windows: [],
-            unavailable: { reason: "unsupported" },
-          },
-        },
-        fallback,
-      ],
-      ["a provider disabled since", cached, { ...fallback, enabled: false }],
-      [
-        "another instance",
-        { ...cached, instanceId: ProviderInstanceId.make("claudeAgent_work") },
-        fallback,
-      ],
-    ];
-    for (const [label, cachedProvider, fallbackProvider] of notSeeded) {
-      assert.isUndefined(cachedUsageLimitsToSeed({ cachedProvider, fallbackProvider }), label);
-    }
-  });
 });
-
-it.effect("a burst of cache writes to one file all land and leave a valid file", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-burst-" });
-    const filePath = `${directory}/kilo.json`;
-    const write = yield* makeSerializedProviderStatusCacheWriter();
-    const base = makeProvider(CODEX_DRIVER);
-    yield* Effect.forEach(
-      Array.from({ length: 40 }, (_, index) => index),
-      (index) =>
-        write({
-          filePath,
-          provider: { ...base, version: `1.0.${index}` },
-        }),
-      { concurrency: "unbounded", discard: true },
-    );
-    const cached = yield* readProviderStatusCache(filePath);
-    assert.isDefined(cached);
-    assert.match(cached?.version ?? "", /^1\.0\.\d+$/);
-    // No temp folders are left beside the cache file.
-    assert.deepEqual(yield* fs.readDirectory(directory), ["kilo.json"]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);

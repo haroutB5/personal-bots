@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/environments/primary/sessionState.ts b/apps/web/src/environments/primary/sessionState.ts
+index 5912a4865f9c39b1f39df06dc6d3e7f91399942d..e40a75b4d47209ac8f79d73a5a3f3c1633513274 100644
+--- a/apps/web/src/environments/primary/sessionState.ts
++++ b/apps/web/src/environments/primary/sessionState.ts
+@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
+ import * as Cause from "effect/Cause";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useCallback } from "react";
+ 
+ import { isLocalEnvironmentDisabled } from "../../localEnvironment";

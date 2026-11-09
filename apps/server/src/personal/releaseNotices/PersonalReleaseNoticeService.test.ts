@@ -4,33 +4,33 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
-  PersonalBotId,
-  ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
+  type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../../config.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskChatArchive from "../PersonalTaskChatArchiveService.ts";
 import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
+import {
+  makePersonalEngineHarness,
+  personalEngineTestLayer,
+  type PersonalEngineHarness,
+} from "../test/personalEngineTestLayer.ts";
+import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
+import { seedV2Message, seedV2Thread } from "../test/v2ProjectionSeed.ts";
 import {
   PersonalReleaseNotices,
   RELEASE_NOTICE_DIR,
@@ -39,56 +39,41 @@ import {
 
 const CTO_CHAT = "thread-cto-chat";
 const PLAIN_THREAD = "thread-not-a-bot";
+const CHAT_CREATED = "2026-10-08T09:00:00.000Z";
 
-/** What the projection says about the chats of a test: title and archive flag. */
-const shells = new Map<string, { title: string; archivedAt: string | null }>();
-
-const makeLayer = (dispatched: Array<OrchestrationCommand>) =>
+const makeLayer = (harness: PersonalEngineHarness) =>
   releaseNoticeLayer.pipe(
     Layer.provideMerge(PersonalTaskChatArchive.layer),
-    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed([]),
       }),
     ),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            dispatched.push(command);
-            return { sequence: dispatched.length };
-          }),
-        streamDomainEvents: Stream.empty,
-        subscribeDomainEvents: Effect.succeed(Stream.empty),
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.succeed(
-            threadId === CTO_CHAT || threadId === PLAIN_THREAD || shells.has(threadId)
-              ? Option.some({
-                  id: threadId,
-                  title: shells.get(threadId)?.title ?? "Main",
-                  archivedAt: shells.get(threadId)?.archivedAt ?? null,
-                  runtimeMode: "full-access",
-                  interactionMode: "default",
-                  modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
-                })
-              : Option.none(),
-          ),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-release-notice-test-" }),
     ),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(personalEngineTestLayer(harness)),
+    Layer.provideMerge(personalTestDatabase),
   );
+
+const seedThread = (input: {
+  readonly id: string;
+  readonly title: string;
+  readonly archivedAt?: string | null;
+  readonly deletedAt?: string | null;
+}) =>
+  seedV2Thread({
+    threadId: input.id,
+    title: input.title,
+    instanceId: "claudeAgent",
+    model: "claude-sonnet-5-5",
+    createdAt: CHAT_CREATED,
+    archivedAt: input.archivedAt ?? null,
+    deletedAt: input.deletedAt ?? null,
+  });
 
 /** The CTO's chat is a bot chat; PLAIN_THREAD is an ordinary T3 thread. */
 const linkCtoChat = Effect.gen(function* () {
@@ -105,6 +90,8 @@ const linkCtoChat = Effect.gen(function* () {
     INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
     VALUES (${CTO_CHAT}, 'bot-cto', ${now})
   `;
+  yield* seedThread({ id: CTO_CHAT, title: "Release hub" });
+  yield* seedThread({ id: PLAIN_THREAD, title: "Main" });
 });
 
 const inboxDir = Effect.map(ServerConfig.ServerConfig, (config) =>
@@ -122,15 +109,15 @@ const writeNotice = (name: string, body: Record<string, unknown>) =>
     });
   });
 
-const turnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
-  dispatched.filter(
-    (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
-      command.type === "thread.turn.start",
+const messageDispatches = (harness: PersonalEngineHarness) =>
+  harness.dispatched.filter(
+    (command): command is Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }> =>
+      command.type === "message.dispatch",
   );
 
 describe("PersonalReleaseNotices", () => {
   it.effect("the next server consumes a live runner waiting alert exactly once", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {
       yield* linkCtoChat;
       const config = yield* ServerConfig.ServerConfig;
@@ -159,10 +146,10 @@ describe("PersonalReleaseNotices", () => {
       const service = yield* PersonalReleaseNotices;
       expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
       expect(yield* service.sweep).toEqual([]);
-      const turns = turnStarts(dispatched);
+      const turns = messageDispatches(harness);
       expect(turns).toHaveLength(1);
-      expect(turns[0]!.message.text).toContain("waiting on: node pid 123, 245s");
-      expect(turns[0]!.message.text).not.toContain("re-arm");
+      expect(turns[0]!.text).toContain("waiting on: node pid 123, 245s");
+      expect(turns[0]!.text).not.toContain("re-arm");
       yield* Effect.promise(async () => {
         const file = NodePath.join(runDir, "restart-9.9.9-result.json");
         const result = JSON.parse(await NodeFSP.readFile(file, "utf8"));
@@ -172,12 +159,12 @@ describe("PersonalReleaseNotices", () => {
       const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
       expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
       expect(yield* service.sweep).toEqual([]);
-      expect(turnStarts(dispatched)).toHaveLength(2);
+      expect(messageDispatches(harness)).toHaveLength(2);
       clock.mockRestore();
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   });
   it.effect("a runner that delivered its own waiting notice is not queued again", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {
       yield* linkCtoChat;
       const config = yield* ServerConfig.ServerConfig;
@@ -207,11 +194,11 @@ describe("PersonalReleaseNotices", () => {
       });
       const service = yield* PersonalReleaseNotices;
       expect(yield* service.sweep).toEqual([]);
-      expect(turnStarts(dispatched)).toHaveLength(0);
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+      expect(messageDispatches(harness)).toHaveLength(0);
+    }).pipe(Effect.provide(makeLayer(harness)));
   });
   it.effect("a waiting notice posts once without saying the release failed", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {
       yield* linkCtoChat;
       yield* writeNotice("waiting.json", {
@@ -224,15 +211,15 @@ describe("PersonalReleaseNotices", () => {
       const service = yield* PersonalReleaseNotices;
       expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
       expect(yield* service.sweep).toEqual([]);
-      const turns = turnStarts(dispatched);
+      const turns = messageDispatches(harness);
       expect(turns).toHaveLength(1);
-      expect(turns[0]!.message.text).toContain("still waiting for idle");
-      expect(turns[0]!.message.text).toContain("node pid 123, 40m");
-      expect(turns[0]!.message.text).not.toContain("re-arm");
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+      expect(turns[0]!.text).toContain("still waiting for idle");
+      expect(turns[0]!.text).toContain("node pid 123, 40m");
+      expect(turns[0]!.text).not.toContain("re-arm");
+    }).pipe(Effect.provide(makeLayer(harness)));
   });
   it.effect("a successful release posts exactly one turn into the requesting chat", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {
       yield* linkCtoChat;
       yield* writeNotice("20261001T230000Z-live.json", {
@@ -250,31 +237,40 @@ describe("PersonalReleaseNotices", () => {
 
       expect(first).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
       expect(second).toEqual([]);
-      const turns = turnStarts(dispatched);
+      const turns = messageDispatches(harness);
       expect(turns).toHaveLength(1);
       const turn = turns[0]!;
       expect(turn.threadId).toBe(CTO_CHAT);
-      expect(turn.message.messageId).toBe("personal-notice-release-20261001T230000Z-live");
-      expect(turn.message.text).toContain(
+      expect(turn.messageId).toBe("personal-notice-release-20261001T230000Z-live");
+      expect(turn.text).toContain(
         "Release landed: hbots 1.60.18 (release abc123def456) is live. Smoke exit 0. No rollback.",
       );
-      expect(turn.message.text).toContain("restart-1.60.18.log");
-      expect(turn.message.text).toContain("start QA now");
-      expect(turn.message.context?.records[0]).toMatchObject({
+      expect(turn.text).toContain("restart-1.60.18.log");
+      expect(turn.text).toContain("start QA now");
+      expect(turn.context?.records[0]).toMatchObject({
         kind: PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
         payload: { notice: "release-landed" },
       });
       // The chat's own modes: a changed runtime mode would restart its session.
-      expect(turn.runtimeMode).toBe("full-access");
-      expect(turn.interactionMode).toBe("default");
+      // The v2 dispatch carries no modes of its own, so read them from the
+      // thread the notice went to.
+      const sql = yield* SqlClient.SqlClient;
+      const [modes] = yield* sql<{
+        readonly runtimeMode: string;
+        readonly interactionMode: string;
+      }>`
+        SELECT runtime_mode AS "runtimeMode", interaction_mode AS "interactionMode"
+        FROM orchestration_v2_projection_threads WHERE thread_id = ${CTO_CHAT}
+      `;
+      expect(modes).toEqual({ runtimeMode: "full-access", interactionMode: "default" });
       const dir = yield* inboxDir;
       const posted = yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(dir, "posted")));
       expect(posted).toEqual(["20261001T230000Z-live.json"]);
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   });
 
   it.effect("a rollback posts exactly one turn with the rollback status", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {
       yield* linkCtoChat;
       yield* writeNotice("20261001T231500Z-rollback.json", {
@@ -293,17 +289,17 @@ describe("PersonalReleaseNotices", () => {
       yield* service.sweep;
       yield* service.sweep;
 
-      const turns = turnStarts(dispatched);
+      const turns = messageDispatches(harness);
       expect(turns).toHaveLength(1);
-      expect(turns[0]!.message.text).toContain(
+      expect(turns[0]!.text).toContain(
         "failed its smoke (exit 1) and was rolled back to 5531a1f12aeb: rollback exit 0, rollback smoke exit 0.",
       );
-      expect(turns[0]!.message.text).toContain("Detail: FAIL  /version.txt mismatch");
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+      expect(turns[0]!.text).toContain("Detail: FAIL  /version.txt mismatch");
+    }).pipe(Effect.provide(makeLayer(harness)));
   });
 
   it.effect("no thread id, a plain thread or a broken file posts nothing", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {
       yield* linkCtoChat;
       const base = { version: "1.60.18", release: "abc123def456", outcome: "live", smokeExit: 0 };
@@ -322,12 +318,12 @@ describe("PersonalReleaseNotices", () => {
         "rejected",
         "rejected",
       ]);
-      expect(dispatched).toEqual([]);
+      expect(harness.dispatched).toEqual([]);
       const dir = yield* inboxDir;
       const rejected = yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(dir, "rejected")));
       expect(rejected).toHaveLength(5);
       expect(yield* service.sweep).toEqual([]);
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+    }).pipe(Effect.provide(makeLayer(harness)));
   });
 
   describe("a chat that was archived or deleted never takes the notice back", () => {
@@ -347,26 +343,27 @@ describe("PersonalReleaseNotices", () => {
 
     const seedChats = (chats: ReadonlyArray<ChatSeed>) =>
       Effect.gen(function* () {
-        shells.clear();
         const sql = yield* SqlClient.SqlClient;
-        const created = "2026-10-08T09:00:00.000Z";
+        const created = CHAT_CREATED;
         for (const chat of chats) {
           if (chat.deleted !== true) {
             yield* sql`
               INSERT INTO personal_bot_threads (thread_id, bot_id, created_at, archived_at)
               VALUES (${chat.id}, 'bot-cto', ${created}, ${chat.archived === true ? "2026-10-08T10:00:00.000Z" : null})
             `;
-            shells.set(chat.id, { title: chat.title, archivedAt: null });
           }
-          yield* sql`
-            INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, deleted_at)
-            VALUES (${chat.id}, 'project', ${chat.title}, ${created}, ${created}, ${chat.deleted === true ? created : null})
-          `;
+          yield* seedThread({
+            id: chat.id,
+            title: chat.title,
+            deletedAt: chat.deleted === true ? created : null,
+          });
           if (chat.lastMessageAt !== undefined) {
-            yield* sql`
-              INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
-              VALUES (${`${chat.id}-m`}, ${chat.id}, 'user', 'hi', 0, ${chat.lastMessageAt}, ${chat.lastMessageAt})
-            `;
+            yield* seedV2Message({
+              messageId: `${chat.id}-m`,
+              threadId: chat.id,
+              text: "hi",
+              createdAt: chat.lastMessageAt,
+            });
           }
           if (chat.taskChat === true || chat.deleted === true) {
             yield* sql`
@@ -393,9 +390,25 @@ describe("PersonalReleaseNotices", () => {
         return row?.archivedAt ?? null;
       });
 
-    const run = (chats: ReadonlyArray<ChatSeed>, target: string) =>
+    const threadTitle = (id: string) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const [row] = yield* sql<{ readonly title: string }>`
+          SELECT title FROM orchestration_v2_projection_threads WHERE thread_id = ${id}
+        `;
+        return row?.title ?? null;
+      });
+
+    const run = (chats: ReadonlyArray<ChatSeed>, target: string, ctoChatOpen = true) =>
       Effect.gen(function* () {
         yield* linkCtoChat;
+        if (!ctoChatOpen) {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            UPDATE personal_bot_threads SET archived_at = '2026-10-01T00:00:00.000Z'
+            WHERE thread_id = ${CTO_CHAT}
+          `;
+        }
         yield* seedChats(chats);
         yield* writeNotice("20261008T120000Z-live.json", { ...BASE, threadId: target });
         const service = yield* PersonalReleaseNotices;
@@ -403,13 +416,13 @@ describe("PersonalReleaseNotices", () => {
       });
 
     /** The rename a notice must never cause. */
-    const renames = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
-      dispatched.filter((command) => command.type === "thread.meta.update");
+    const renames = (harness: PersonalEngineHarness) =>
+      harness.dispatched.filter((command) => command.type === "thread.metadata.update");
 
     it.effect(
       "goes to the bot's open chat with the same name; the archived chat stays archived and keeps its name",
       () => {
-        const dispatched: Array<OrchestrationCommand> = [];
+        const harness = makePersonalEngineHarness();
         return Effect.gen(function* () {
           const outcomes = yield* run(
             [
@@ -421,19 +434,21 @@ describe("PersonalReleaseNotices", () => {
           );
 
           expect(outcomes).toEqual([{ status: "posted", threadId: "thread-main-new" }]);
-          expect(turnStarts(dispatched).map((turn) => turn.threadId)).toEqual(["thread-main-new"]);
-          expect(turnStarts(dispatched)[0]!.message.text).toContain("Release landed");
+          expect(messageDispatches(harness).map((turn) => turn.threadId)).toEqual([
+            "thread-main-new",
+          ]);
+          expect(messageDispatches(harness)[0]!.text).toContain("Release landed");
           // Still archived, still called "Main", nothing renamed or unarchived.
           expect(yield* archivedState(ARCHIVED_MAIN)).not.toBeNull();
-          expect(shells.get(ARCHIVED_MAIN)?.title).toBe("Main");
-          expect(renames(dispatched)).toEqual([]);
-          expect(dispatched.map((command) => command.type)).toEqual(["thread.turn.start"]);
-        }).pipe(Effect.provide(makeLayer(dispatched)));
+          expect(yield* threadTitle(ARCHIVED_MAIN)).toBe("Main");
+          expect(renames(harness)).toEqual([]);
+          expect(harness.dispatched.map((command) => command.type)).toEqual(["message.dispatch"]);
+        }).pipe(Effect.provide(makeLayer(harness)));
       },
     );
 
     it.effect("with several open chats of that name, the most recently active one takes it", () => {
-      const dispatched: Array<OrchestrationCommand> = [];
+      const harness = makePersonalEngineHarness();
       return Effect.gen(function* () {
         const outcomes = yield* run(
           [
@@ -445,13 +460,13 @@ describe("PersonalReleaseNotices", () => {
           ARCHIVED_MAIN,
         );
         expect(outcomes).toEqual([{ status: "posted", threadId: "main-busy" }]);
-      }).pipe(Effect.provide(makeLayer(dispatched)));
+      }).pipe(Effect.provide(makeLayer(harness)));
     });
 
     it.effect(
       "with no open chat of that name, the bot's most recently active conversation takes it, not a task chat",
       () => {
-        const dispatched: Array<OrchestrationCommand> = [];
+        const harness = makePersonalEngineHarness();
         return Effect.gen(function* () {
           const outcomes = yield* run(
             [
@@ -469,30 +484,31 @@ describe("PersonalReleaseNotices", () => {
           );
           expect(outcomes).toEqual([{ status: "posted", threadId: "matchday" }]);
           expect(yield* archivedState(ARCHIVED_MAIN)).not.toBeNull();
-          expect(renames(dispatched)).toEqual([]);
-        }).pipe(Effect.provide(makeLayer(dispatched)));
+          expect(renames(harness)).toEqual([]);
+        }).pipe(Effect.provide(makeLayer(harness)));
       },
     );
 
     it.effect(
       "with no open chat at all, one new chat named like the archived one is made and the archived chat is left alone",
       () => {
-        const dispatched: Array<OrchestrationCommand> = [];
+        const harness = makePersonalEngineHarness();
         return Effect.gen(function* () {
           const outcomes = yield* run(
             [{ id: ARCHIVED_MAIN, title: "Main", archived: true }],
             ARCHIVED_MAIN,
+            false,
           );
 
           expect(outcomes).toHaveLength(1);
           const outcome = outcomes[0]!;
           expect(outcome.status).toBe("posted");
-          const created = dispatched.filter((command) => command.type === "thread.create");
+          const created = harness.dispatched.filter((command) => command.type === "thread.create");
           expect(created).toHaveLength(1);
           expect(created[0]).toMatchObject({ title: "Main" });
           const newId = (outcome as { readonly threadId: string }).threadId;
           expect(newId).not.toBe(ARCHIVED_MAIN);
-          expect(turnStarts(dispatched).map((turn) => turn.threadId)).toEqual([newId]);
+          expect(messageDispatches(harness).map((turn) => turn.threadId)).toEqual([newId]);
           const sql = yield* SqlClient.SqlClient;
           const [link] = yield* sql<{ readonly botId: string; readonly archivedAt: string | null }>`
             SELECT bot_id AS "botId", archived_at AS "archivedAt"
@@ -500,15 +516,15 @@ describe("PersonalReleaseNotices", () => {
           `;
           expect(link).toEqual({ botId: "bot-cto", archivedAt: null });
           expect(yield* archivedState(ARCHIVED_MAIN)).not.toBeNull();
-          expect(renames(dispatched)).toEqual([]);
-        }).pipe(Effect.provide(makeLayer(dispatched)));
+          expect(renames(harness)).toEqual([]);
+        }).pipe(Effect.provide(makeLayer(harness)));
       },
     );
 
     it.effect(
       "a deleted chat is traced to its bot by its task, and the notice goes to the open chat of that name",
       () => {
-        const dispatched: Array<OrchestrationCommand> = [];
+        const harness = makePersonalEngineHarness();
         return Effect.gen(function* () {
           const outcomes = yield* run(
             [
@@ -518,30 +534,30 @@ describe("PersonalReleaseNotices", () => {
             "main-deleted",
           );
           expect(outcomes).toEqual([{ status: "posted", threadId: "main-open" }]);
-        }).pipe(Effect.provide(makeLayer(dispatched)));
+        }).pipe(Effect.provide(makeLayer(harness)));
       },
     );
 
     it.effect("a deleted chat nothing ties to a bot is still refused", () => {
-      const dispatched: Array<OrchestrationCommand> = [];
+      const harness = makePersonalEngineHarness();
       return Effect.gen(function* () {
         const outcomes = yield* run([], "never-seen");
         expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected"]);
-        expect(dispatched).toEqual([]);
-      }).pipe(Effect.provide(makeLayer(dispatched)));
+        expect(harness.dispatched).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(harness)));
     });
 
     it.effect("an open chat still gets its notice as before", () => {
-      const dispatched: Array<OrchestrationCommand> = [];
+      const harness = makePersonalEngineHarness();
       return Effect.gen(function* () {
         const outcomes = yield* run([{ id: "main-open", title: "Main" }], "main-open");
         expect(outcomes).toEqual([{ status: "posted", threadId: "main-open" }]);
-        expect(dispatched.map((command) => command.type)).toEqual(["thread.turn.start"]);
-      }).pipe(Effect.provide(makeLayer(dispatched)));
+        expect(harness.dispatched.map((command) => command.type)).toEqual(["message.dispatch"]);
+      }).pipe(Effect.provide(makeLayer(harness)));
     });
 
     it.effect("Harout sending in an archived chat still unarchives it", () => {
-      const dispatched: Array<OrchestrationCommand> = [];
+      const harness = makePersonalEngineHarness();
       return Effect.gen(function* () {
         yield* linkCtoChat;
         yield* seedChats([{ id: ARCHIVED_MAIN, title: "Main", archived: true }]);
@@ -550,37 +566,38 @@ describe("PersonalReleaseNotices", () => {
         // turn-start listener unarchives it exactly as before.
         expect(yield* archive.unarchiveForTurn(ThreadId.make(ARCHIVED_MAIN))).toBe(true);
         expect(yield* archivedState(ARCHIVED_MAIN)).toBeNull();
-      }).pipe(Effect.provide(makeLayer(dispatched)));
+      }).pipe(Effect.provide(makeLayer(harness)));
     });
 
     it.effect("Harout's Unarchive in the app still unarchives and keeps the chat's name", () => {
-      const dispatched: Array<OrchestrationCommand> = [];
+      const harness = makePersonalEngineHarness();
       return Effect.gen(function* () {
         yield* linkCtoChat;
         yield* seedChats([{ id: ARCHIVED_MAIN, title: "Main", archived: true }]);
         const bots = yield* PersonalBotService.PersonalBotService;
         yield* bots.archiveThread({ threadId: ThreadId.make(ARCHIVED_MAIN), archived: false });
         expect(yield* archivedState(ARCHIVED_MAIN)).toBeNull();
-        expect(renames(dispatched)).toEqual([]);
-      }).pipe(Effect.provide(makeLayer(dispatched)));
+        expect(renames(harness)).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(harness)));
     });
   });
 
   it.effect("an empty or missing inbox is a quiet no-op", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {
       const service = yield* PersonalReleaseNotices;
       expect(yield* service.sweep).toEqual([]);
-      expect(dispatched).toEqual([]);
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+      expect(harness.dispatched).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
   });
 });
 
 describe("PersonalReleaseNotices with T3CODE_PERSONAL_SCHEDULERS (restored test copies)", () => {
   const NOTICE = "20261015T090000Z-live.json";
   /** A restored copy whose inbox still holds a notice for the CTO chat. */
-  const sweepPendingNotice = (dispatched: Array<OrchestrationCommand>) =>
-    Effect.gen(function* () {
+  const sweepPendingNotice = () => {
+    const harness = makePersonalEngineHarness();
+    return Effect.gen(function* () {
       yield* linkCtoChat;
       yield* writeNotice(NOTICE, {
         threadId: CTO_CHAT,
@@ -598,12 +615,13 @@ describe("PersonalReleaseNotices with T3CODE_PERSONAL_SCHEDULERS (restored test 
           .filter((entry) => entry.isFile())
           .map((entry) => entry.name),
       );
-      return { outcomes, inbox, turns: turnStarts(dispatched) };
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+      return { outcomes, inbox, turns: messageDispatches(harness) };
+    }).pipe(Effect.provide(makeLayer(harness)));
+  };
 
   it.effect("off: a pending notice is not posted and stays in the inbox", () =>
     Effect.gen(function* () {
-      const { outcomes, inbox, turns } = yield* sweepPendingNotice([]);
+      const { outcomes, inbox, turns } = yield* sweepPendingNotice();
       expect(outcomes).toEqual([]);
       expect(turns).toEqual([]);
       expect(inbox).toEqual([NOTICE]);
@@ -612,7 +630,7 @@ describe("PersonalReleaseNotices with T3CODE_PERSONAL_SCHEDULERS (restored test 
 
   it.effect("on: the same notice posts one turn, as before", () =>
     Effect.gen(function* () {
-      const { outcomes, inbox, turns } = yield* sweepPendingNotice([]);
+      const { outcomes, inbox, turns } = yield* sweepPendingNotice();
       expect(outcomes).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
       expect(turns).toHaveLength(1);
       expect(inbox).toEqual([]);

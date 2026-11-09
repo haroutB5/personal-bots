@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/cli/config.ts b/apps/server/src/cli/config.ts
+index 62461e2867487c13e8959c531aedc769ea4e6948..30a697a788d407654de566338a80b87bcebe48a0 100644
+--- a/apps/server/src/cli/config.ts
++++ b/apps/server/src/cli/config.ts
+@@ -18,7 +18,7 @@ import * as Redacted from "effect/Redacted";
+ import * as Schema from "effect/Schema";
+ import * as SchemaIssue from "effect/SchemaIssue";
+ import * as SchemaTransformation from "effect/SchemaTransformation";
+-import { Argument, Flag } from "effect/unstable/cli";
++import { Argument, Flag } from "effect/cli";
+ 
+ import { readBootstrapEnvelope } from "../bootstrap.ts";
+ import * as ServerConfig from "../config.ts";

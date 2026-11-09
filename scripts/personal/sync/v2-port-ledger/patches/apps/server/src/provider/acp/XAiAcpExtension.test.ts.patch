@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/acp/XAiAcpExtension.test.ts b/apps/server/src/provider/acp/XAiAcpExtension.test.ts
+index 28f5f29f498764c2667d6308246251adec2f819c..ea4dc8ba6d2b813325e1b4167ff2f982efc66bcc 100644
+--- a/apps/server/src/provider/acp/XAiAcpExtension.test.ts
++++ b/apps/server/src/provider/acp/XAiAcpExtension.test.ts
+@@ -3,7 +3,7 @@ import * as NodeOS from "node:os";
+ import * as NodePath from "node:path";
+ import * as NodeURL from "node:url";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Schema from "effect/Schema";

@@ -5,6 +5,8 @@
     "src/**/*.d.ts",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
+    "test/browserSetup.ts",
+    "test/renderScenarios.renders.tsx",
     "test/**/*.test.ts",
     "vite/**/*.test.ts"
   ]

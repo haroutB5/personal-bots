@@ -1,0 +1,16 @@
+diff --git a/scripts/merge-update-manifests.test.ts b/scripts/merge-update-manifests.test.ts
+index 32431b81d3394ef3dd61fc26a3ef90b748011464..9f79e872ffbeb439f9cce40dd4627a5350fccc64 100644
+--- a/scripts/merge-update-manifests.test.ts
++++ b/scripts/merge-update-manifests.test.ts
+@@ -1,9 +1,9 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+-import { Command, CliError } from "effect/unstable/cli";
++import { Command, CliError } from "effect/cli";
+ 
+ import {
+   mergePlatformUpdateManifests,

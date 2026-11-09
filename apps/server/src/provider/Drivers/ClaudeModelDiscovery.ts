@@ -1,3 +1,4 @@
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -6,7 +7,6 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { parseClaudeModelSlug } from "../ClaudeModelCatalog.ts";
 
 const DISCOVERY_CACHE_VERSION = 1;
@@ -119,6 +119,7 @@ export const discoverClaudeModelSlugs = Effect.fn("discoverClaudeModelSlugs")(fu
   readonly cachePath: string;
 }): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const info = yield* fileSystem.stat(input.executablePath).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("Could not inspect the Claude executable for model discovery.", {
@@ -170,6 +171,8 @@ export const discoverClaudeModelSlugs = Effect.fn("discoverClaudeModelSlugs")(fu
         errorTag: causeErrorTag(cause),
       }),
     ),
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
   );
   return slugs;
 });

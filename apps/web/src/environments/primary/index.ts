@@ -1,21 +1,9 @@
 export {
-  getPrimaryKnownEnvironment,
-  resetPrimaryEnvironmentDescriptorForTests,
-  resolveInitialPrimaryEnvironmentDescriptor,
-  writePrimaryEnvironmentDescriptor,
-} from "./context";
-
-export {
-  createServerPairingCredential,
-  isPrimaryEnvironmentPairingCredentialRejectedError,
-  isPrimaryEnvironmentRequestError,
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,
+  isPrimaryEnvironmentRequestError,
   PrimaryEnvironmentRequestError,
   resolveInitialServerAuthGateState,
-  revokeOtherServerClientSessions,
-  revokeServerClientSession,
-  revokeServerPairingLink,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
   takePairingTokenFromUrl,
@@ -24,13 +12,8 @@ export {
   __resetServerAuthBootstrapForTests,
 } from "./auth";
 
-export { usePrimarySessionState } from "./sessionState";
-
 export {
   DesktopEnvironmentBootstrapIncompleteError,
-  isDesktopEnvironmentBootstrapIncompleteError,
-  isPrimaryEnvironmentProtocolUnsupportedError,
-  isPrimaryEnvironmentUrlInvalidError,
   PrimaryEnvironmentProtocolUnsupportedError,
   PrimaryEnvironmentUrlInvalidError,
   readPrimaryEnvironmentTarget,

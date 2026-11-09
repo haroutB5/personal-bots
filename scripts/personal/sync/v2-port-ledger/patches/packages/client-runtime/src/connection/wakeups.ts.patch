@@ -1,0 +1,12 @@
+diff --git a/packages/client-runtime/src/connection/wakeups.ts b/packages/client-runtime/src/connection/wakeups.ts
+index 721b941645c03ea66e2895668494b07c88b25678..5f19924c47a1b519ec822102a13f756219bd7f01 100644
+--- a/packages/client-runtime/src/connection/wakeups.ts
++++ b/packages/client-runtime/src/connection/wakeups.ts
+@@ -16,6 +16,7 @@ export function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
+   );
+ }
+ 
++// A long resume replaces the session, and the new session subscribes on its own.
+ export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean {
+   return reason === "application-active" || reason === "application-active-probe";
+ }

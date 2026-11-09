@@ -1,23 +1,24 @@
-"use client";
-
-import { withBackClose } from "~/components/ui/back-closing-root";
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
+import { withBackClose } from "~/components/ui/back-closing-root";
 import { Button } from "~/components/ui/button";
+import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
-const Sheet = withBackClose(SheetPrimitive.Root);
+// Where Back is a history step (Android), Back closes an open sheet.
+const BackClosingSheetRoot = withBackClose(SheetPrimitive.Root);
+
+function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
+  return (
+    <ControlledOpenContext value={props.open}>
+      <BackClosingSheetRoot {...props} />
+    </ControlledOpenContext>
+  );
+}
 
 const SheetPortal = SheetPrimitive.Portal;
 
-// The personal sheets render their own close button (features/personal).
-function SheetClose(props: SheetPrimitive.Close.Props) {
-  return <SheetPrimitive.Close data-slot="sheet-close" {...props} />;
-}
-
-// Sheets are docked panels, not dialogs: their layer (--z-sheet) sits under dialogs that open
-// from inside them and under anything the app floats above panels.
 function SheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   return (
     <SheetPrimitive.Backdrop
@@ -116,6 +117,7 @@ function SheetPopup({
             className,
           )}
           data-slot="sheet-popup"
+          render={keepMounted ? undefined : renderRetainedPopup}
           style={{ ...transitionStyle, ...style }}
           {...props}
         >
@@ -151,7 +153,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
 function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
-      className={cn("font-semibold text-xl leading-none", className)}
+      className={cn("font-semibold text-xl leading-snug", className)}
       data-slot="sheet-title"
       {...props}
     />
@@ -168,9 +170,12 @@ function SheetDescription({ className, ...props }: SheetPrimitive.Description.Pr
   );
 }
 
+function SheetClose({ className, ...props }: SheetPrimitive.Close.Props) {
+  return <SheetPrimitive.Close className={className} data-slot="sheet-close" {...props} />;
+}
+
 export {
   Sheet,
-  SheetClose,
   SheetPortal,
   SheetBackdrop,
   SheetBackdrop as SheetOverlay,
@@ -179,4 +184,5 @@ export {
   SheetHeader,
   SheetTitle,
   SheetDescription,
+  SheetClose,
 };

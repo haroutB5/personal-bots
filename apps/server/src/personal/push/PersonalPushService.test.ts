@@ -8,12 +8,10 @@ import {
   PersonalTaskId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationEvent,
   type PersonalBot,
   type PersonalGroupRound,
   type PersonalPushInAppNotification,
   type PersonalTask,
-  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -25,15 +23,16 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
-import { runtimeEventToActivities } from "../../orchestration/Layers/ProviderRuntimeIngestion.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { UPDATES_BOT_ID } from "../claudeCodeReview/reviewPrompts.ts";
-import { PersonalEngineV1WiredLive } from "../engine/PersonalEngineV1Live.ts";
 import type { PersonalThreadEvent, PersonalSessionView } from "../engine/PersonalEngine.ts";
-import { personalStatusOf } from "../engine/PersonalEngineV1Live.ts";
+import { personalStatusOf } from "../engine/PersonalThreadShellV2.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import {
+  makePersonalEngineHarness,
+  personalEngineTestLayer,
+} from "../test/personalEngineTestLayer.ts";
+import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
+import { seedV2Thread } from "../test/v2ProjectionSeed.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalPushService from "./PersonalPushService.ts";
 import { base64UrlEncode, type WebPushRequest } from "./webPushCrypto.ts";
@@ -72,20 +71,7 @@ const makeLayer = (
   harness: Harness,
   tasks?: Layer.Layer<PersonalTaskService.PersonalTaskService>,
 ) => {
-  const engineLayer = PersonalEngineV1WiredLive.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-          dispatch: () => Effect.die("not used"),
-          subscribeDomainEvents: Effect.succeed(Stream.never),
-          streamDomainEvents: Stream.never,
-        } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-        Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-          getThreadShellById: () => Effect.succeed(Option.none()),
-        } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-      ),
-    ),
-  );
+  const engineLayer = personalEngineTestLayer(makePersonalEngineHarness());
   const base = PersonalPushService.layer.pipe(
     Layer.provideMerge(
       Layer.succeed(PersonalPushService.PersonalPushTransport, {
@@ -100,7 +86,7 @@ const makeLayer = (
     Layer.provideMerge(memorySecrets()),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(engineLayer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(personalTestDatabase),
   );
   return base;
 };
@@ -1027,10 +1013,21 @@ const listenInApp = (connectionId: string) =>
 const seedReply = (threadId: ThreadId, text: string, at: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const messageId = `m-${at}`;
+    const payload = {
+      id: messageId,
+      role: "assistant",
+      text,
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+    };
     yield* sql`
-      INSERT INTO projection_thread_messages
-        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-      VALUES (${`m-${at}`}, ${threadId}, NULL, 'assistant', ${text}, 0, ${at}, ${at})
+      INSERT INTO orchestration_v2_projection_messages
+        (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at,
+          payload_json)
+      VALUES (${messageId}, ${threadId}, NULL, NULL, 'assistant', 0, ${at}, ${at},
+        ${JSON.stringify(payload)})
     `;
   });
 
@@ -1773,62 +1770,54 @@ it.effect("a bot_decides run that said notify still obeys the bot's mute", () =>
 /* ── chat_needs_input ──────────────────────────────────────────────────────
  *
  * A plain bot chat - the owner's own chat with a bot - parked on the user.
- * The events here are the real ones: `runtimeEventToActivities` is the
- * provider→activity mapping the server actually runs, and the activity is
- * wrapped in the `thread.activity-appended` event the decider's
- * `thread.activity.append` command publishes, so the test crosses the same
- * provider/orchestration boundary production does, in the same order.
+ * The events here are the real ones: `personalThreadEventsV2` turns a waiting
+ * turn item into the `ActivityAppended` event the engine publishes, carrying
+ * the provider's own request id and questions, so the test crosses the same
+ * provider/engine boundary production does, in the same order.
  */
 
 /** The chat's own row: what a bot thread always has in production. */
 const chatRow = (threadId: ThreadId, title: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-      VALUES (${threadId}, 'project-1', ${title}, '2026-09-18T08:00:00.000Z',
-              '2026-09-18T08:00:00.000Z')
-    `;
+  seedV2Thread({
+    threadId,
+    projectId: "project-1",
+    title,
+    createdAt: "2026-09-18T08:00:00.000Z",
   });
 
-/** One runtime event as its adapter emits it, turned into the pushed event. */
+/**
+ * One request activity as the v2 adapter publishes it when a turn item parks
+ * on the owner (`personalThreadEventsV2`), wrapped in the pushed event.
+ */
 const activityAppended = (
   threadId: ThreadId,
-  runtime: Record<string, unknown>,
-): PersonalThreadEvent => {
-  const activity = runtimeEventToActivities({
-    provider: "claudeAgent",
-    threadId,
-    ...runtime,
-  } as unknown as ProviderRuntimeEvent)[0];
-  if (activity === undefined) throw new Error("the runtime event produced no activity");
-  return {
-    _tag: "ActivityAppended",
-    threadId,
-    activity: { id: activity.id, kind: activity.kind, payload: activity.payload },
-  };
-};
+  activity: { readonly id: string; readonly kind: string; readonly payload: unknown },
+): PersonalThreadEvent => ({
+  _tag: "ActivityAppended",
+  threadId,
+  activity: { id: activity.id, kind: activity.kind, payload: activity.payload },
+});
 
-const questionAsked = (threadId: ThreadId, requestId: string, question: string) =>
+const questionAsked = (
+  threadId: ThreadId,
+  requestId: string | null,
+  question: string,
+  eventId: string = requestId === null ? "evt-no-id" : `evt-${requestId}`,
+) =>
   activityAppended(threadId, {
-    eventId: `evt-${requestId}`,
-    createdAt: "2026-09-18T09:00:00.000Z",
-    turnId: "turn-1",
-    requestId,
-    type: "user-input.requested",
+    id: eventId,
+    kind: "user-input.requested",
     payload: {
+      ...(requestId === null ? {} : { requestId }),
       questions: [{ id: "q1", header: "Dinner", question, options: [] }],
     },
   });
 
 const approvalAsked = (threadId: ThreadId, requestId: string, detail: string) =>
   activityAppended(threadId, {
-    eventId: `evt-${requestId}`,
-    createdAt: "2026-09-18T09:01:00.000Z",
-    turnId: "turn-1",
-    requestId,
-    type: "request.opened",
-    payload: { requestType: "command_execution_approval", detail },
+    id: `evt-${requestId}`,
+    kind: "approval.requested",
+    payload: { requestId, kind: "command_execution_approval", detail },
   });
 
 it.effect("a question in a plain chat notifies once, and the tap opens the chat", () => {
@@ -1909,21 +1898,7 @@ it.effect(
       const push = yield* PersonalPushService.PersonalPushService;
       yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
 
-      const activity = runtimeEventToActivities({
-        provider: "claudeAgent",
-        threadId: CHAT,
-        eventId: "evt-no-id",
-        createdAt: "2026-09-18T09:00:00.000Z",
-        turnId: "turn-1",
-        type: "user-input.requested",
-        payload: { questions: [{ id: "q1", header: "Dinner", question: "Which table?" }] },
-      } as unknown as ProviderRuntimeEvent)[0];
-      if (activity === undefined) throw new Error("the runtime event produced no activity");
-      yield* feed({
-        _tag: "ActivityAppended",
-        threadId: CHAT,
-        activity: { id: activity.id, kind: activity.kind, payload: activity.payload },
-      });
+      yield* feed(questionAsked(CHAT, null, "Which table?"));
       yield* push.drain;
 
       const rows = yield* outbox;

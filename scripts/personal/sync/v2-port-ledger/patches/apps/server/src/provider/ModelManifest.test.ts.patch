@@ -1,0 +1,48 @@
+diff --git a/apps/server/src/provider/ModelManifest.test.ts b/apps/server/src/provider/ModelManifest.test.ts
+index 7933f8e2e962919ec6d0b1b675b3444d7fe06048..0b46ca0bf19530269bd00ab21a9b61280c514bb8 100644
+--- a/apps/server/src/provider/ModelManifest.test.ts
++++ b/apps/server/src/provider/ModelManifest.test.ts
+@@ -1,12 +1,12 @@
+ import { assert, describe, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as TestClock from "effect/testing/TestClock";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ 
+ import * as ServerConfig from "../config.ts";
+ import * as ServerSettings from "../serverSettings.ts";
+@@ -120,6 +120,28 @@ describe("applyManifestDefault", () => {
+       models.slice(0, 1),
+     );
+   });
++  it("normalises stale suffixed Antigravity manifest default to match family model", () => {
++    const driver = ProviderDriverKind.make("antigravity");
++    const manifest: ModelManifestData = {
++      version: 1,
++      currentModels: {},
++      providers: {
++        antigravity: {
++          defaults: { chat: "gemini-3.8-flash-high" },
++          profiles: {},
++          models: [{ slug: "gemini-3.8-flash", name: "Flash", status: "current" }],
++        },
++      },
++    };
++    const models = [
++      model({ slug: "gemini-old", isDefault: true, aliases: ["antigravity-default"] }),
++      model({ slug: "gemini-3.8-flash" }),
++    ];
++    assert.deepStrictEqual(applyManifestDefault(models, manifest, driver), [
++      model({ slug: "gemini-old" }),
++      model({ slug: "gemini-3.8-flash", isDefault: true, aliases: ["antigravity-default"] }),
++    ]);
++  });
+ });
+ 
+ describe("resolveProviderCatalog", () => {

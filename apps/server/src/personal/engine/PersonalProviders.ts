@@ -12,6 +12,7 @@ import type {
   ProviderInstanceId,
   ProviderSession,
   ServerProvider,
+  ServerProviderAutoUpdate,
   ServerProviderSmokeCheck,
   TextGenerationError,
   ThreadId,
@@ -23,6 +24,11 @@ import type * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
 
 import type { PersonalProvidersError } from "./errors.ts";
+
+/** U dropped `smokeCheck` from ServerProvider; the port overlays it from `setSmokeCheck`. */
+export type PersonalServerProvider = ServerProvider & {
+  readonly smokeCheck?: ServerProviderSmokeCheck;
+};
 
 export type PersonalPrewarmOutcome =
   | "started"
@@ -57,13 +63,13 @@ export type PersonalSmokeTest = (input: {
 
 export interface PersonalProvidersShape {
   readonly listProviders: () => Effect.Effect<
-    ReadonlyArray<ServerProvider>,
+    ReadonlyArray<PersonalServerProvider>,
     PersonalProvidersError
   >;
   readonly refreshInstance: (
     instanceId: ProviderInstanceId,
     options?: { readonly refreshLatestVersion?: boolean },
-  ) => Effect.Effect<ReadonlyArray<ServerProvider>, PersonalProvidersError>;
+  ) => Effect.Effect<ReadonlyArray<PersonalServerProvider>, PersonalProvidersError>;
   readonly invalidateUsage: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<void, PersonalProvidersError>;
@@ -76,11 +82,16 @@ export interface PersonalProvidersShape {
     readonly terminateProcesses?: boolean;
   }) => Effect.Effect<void, PersonalProvidersError>;
   /** Every provider snapshot change, as the full current list. */
-  readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+  readonly streamChanges: Stream.Stream<ReadonlyArray<PersonalServerProvider>>;
   /** Writes (or clears, with null) the smoke check result a provider card shows. */
   readonly setSmokeCheck: (
     instanceId: ProviderInstanceId,
     state: ServerProviderSmokeCheck | null,
+  ) => Effect.Effect<void, PersonalProvidersError>;
+  /** Writes (or clears, with null) the background updater state a provider card shows. */
+  readonly setAutoUpdate: (
+    instanceId: ProviderInstanceId,
+    state: ServerProviderAutoUpdate | null,
   ) => Effect.Effect<void, PersonalProvidersError>;
   readonly sessionEvents: Stream.Stream<PersonalSessionEvent>;
   /** None when the instance is missing or has no structured generation. */

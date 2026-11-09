@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/cloud/environmentKeys.test.ts b/apps/server/src/cloud/environmentKeys.test.ts
+index 48c44ccc48adab715474652ca8118789618479d7..5b6719f33e79f8a2417768b00de480b2c0b3ebc7 100644
+--- a/apps/server/src/cloud/environmentKeys.test.ts
++++ b/apps/server/src/cloud/environmentKeys.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";

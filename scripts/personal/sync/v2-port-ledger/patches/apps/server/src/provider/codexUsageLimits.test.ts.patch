@@ -1,0 +1,58 @@
+diff --git a/apps/server/src/provider/Layers/codexUsageLimits.test.ts b/apps/server/src/provider/Layers/codexUsageLimits.test.ts
+index 37006789986c2a7444d37ecd272c05d42d1a23f8..a07ece1e41a001580e9ec09290e217207d50b73b 100644
+--- a/apps/server/src/provider/Layers/codexUsageLimits.test.ts
++++ b/apps/server/src/provider/Layers/codexUsageLimits.test.ts
+@@ -7,6 +7,7 @@ import {
+   codexRateLimitsToUpdate,
+   codexResetCreditsToContract,
+   codexUsageLimitMessage,
++  codexUsageLimitResetAt,
+   mergeCodexRateLimits,
+ } from "./codexUsageLimits.ts";
+ 
+@@ -25,6 +26,7 @@ describe("codexRateLimitsToLimits", () => {
+       }),
+     ).toEqual({
+       checkedAt,
++      fullReadAt: checkedAt,
+       windows: [
+         {
+           id: "primary",
+@@ -204,6 +206,37 @@ describe("codexResetCreditsToContract", () => {
+   });
+ });
+ 
++describe("codexUsageLimitResetAt", () => {
++  const at = "2026-01-01T00:00:00.000Z";
++  const atSeconds = Date.parse(at) / 1000;
++
++  it("returns the reset of the exhausted window that resets last", () => {
++    expect(
++      codexUsageLimitResetAt(
++        {
++          limitId: "codex",
++          primary: { usedPercent: 100, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
++          secondary: { usedPercent: 100, resetsAt: atSeconds + 86_400, windowDurationMins: 10_080 },
++        },
++        at,
++      ),
++    ).toBe("2026-01-02T00:00:00.000Z");
++  });
++
++  it("reports nothing when no exhausted window names a future reset", () => {
++    expect(
++      codexUsageLimitResetAt(
++        {
++          limitId: "codex",
++          primary: { usedPercent: 40, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
++        },
++        at,
++      ),
++    ).toBeUndefined();
++    expect(codexUsageLimitResetAt(undefined, at)).toBeUndefined();
++  });
++});
++
+ describe("codexUsageLimitMessage", () => {
+   const at = "2026-01-01T00:00:00.000Z";
+   const atSeconds = Date.parse(at) / 1000;

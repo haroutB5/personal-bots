@@ -6,8 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { seedV2Message, seedV2Thread } from "./test/v2ProjectionSeed.ts";
 import {
   asciiLower,
   groupMessageSearchRows,
@@ -15,7 +16,9 @@ import {
   snippetOf,
 } from "./personalMessageSearch.ts";
 
-const testLayer = PersonalBotRepository.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const testLayer = PersonalBotRepository.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+);
 const decodeCreateBot = Schema.decodeSync(PersonalBotRepository.CreatePersonalBotInput);
 const decodeInsertThreadLink = Schema.decodeSync(
   PersonalBotRepository.InsertPersonalBotThreadInput,
@@ -63,25 +66,26 @@ const seedChat = (input: {
 }) =>
   Effect.gen(function* () {
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
-    const sql = yield* SqlClient.SqlClient;
     const threadId = ThreadId.make(input.id);
     yield* repository.insertThreadLink(
       decodeInsertThreadLink({ botId: input.botId, threadId, createdAt: T0 }),
     );
-    yield* sql`
-      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, archived_at)
-      VALUES (${input.id}, 'project-1', ${input.id}, ${T0}, ${T0},
-        ${input.archivedThread === true ? T0 : null})
-    `;
+    yield* seedV2Thread({
+      threadId: input.id,
+      title: input.id,
+      createdAt: T0,
+      archivedAt: input.archivedThread === true ? T0 : null,
+    });
     let n = 0;
     for (const message of input.messages ?? []) {
       n += 1;
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (${`${input.id}-m${String(n)}`}, ${input.id}, ${message.role}, ${message.text}, 0,
-          ${message.at}, ${message.at})
-      `;
+      yield* seedV2Message({
+        messageId: `${input.id}-m${String(n)}`,
+        threadId: input.id,
+        role: message.role,
+        text: message.text,
+        createdAt: message.at,
+      });
     }
     return threadId;
   });
@@ -314,7 +318,7 @@ it.live(
         id: "t-deleted",
         messages: [{ role: "assistant", text: "deleted release", at: "2026-10-06T08:05:00.000Z" }],
       });
-      yield* sql`UPDATE projection_threads SET deleted_at = ${T0} WHERE thread_id = 't-deleted'`;
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${T0} WHERE thread_id = 't-deleted'`;
       yield* seedChat({
         botId: BOT,
         id: "t-relay",
@@ -328,16 +332,13 @@ it.live(
         INSERT INTO personal_group_members (group_id, bot_id, thread_id, role, sort_order, joined_at)
         VALUES ('g-1', ${BOT}, 't-relay', 'member', 0, ${T0})
       `;
-      yield* sql`
-        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-        VALUES ('g-thread', 'project-1', 'Team', ${T0}, ${T0})
-      `;
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES ('g-m1', 'g-thread', 'user', 'group release talk', 0,
-          '2026-10-06T08:07:00.000Z', '2026-10-06T08:07:00.000Z')
-      `;
+      yield* seedV2Thread({ threadId: "g-thread", title: "Team", createdAt: T0 });
+      yield* seedV2Message({
+        messageId: "g-m1",
+        threadId: "g-thread",
+        text: "group release talk",
+        createdAt: "2026-10-06T08:07:00.000Z",
+      });
 
       const rows = yield* repository.searchMessages({ needle: "release", limit: 50 });
       expect(rows.map((row) => row.messageId)).toEqual(["g-m1", "t-a-m3", "t-a-m1", "t-b-m1"]);
@@ -362,15 +363,13 @@ it.live("search: a group with a hidden-preview member is not searched", () =>
       INSERT INTO personal_group_members (group_id, bot_id, thread_id, role, sort_order, joined_at)
       VALUES ('g-1', ${hidden}, NULL, 'member', 0, ${T0})
     `;
-    yield* sql`
-      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
-      VALUES ('g-thread', 'project-1', 'Team', ${T0}, ${T0})
-    `;
-    yield* sql`
-      INSERT INTO projection_thread_messages (
-        message_id, thread_id, role, text, is_streaming, created_at, updated_at
-      ) VALUES ('g-m1', 'g-thread', 'user', 'group release talk', 0, ${T0}, ${T0})
-    `;
+    yield* seedV2Thread({ threadId: "g-thread", title: "Team", createdAt: T0 });
+    yield* seedV2Message({
+      messageId: "g-m1",
+      threadId: "g-thread",
+      text: "group release talk",
+      createdAt: T0,
+    });
     expect(yield* repository.searchMessages({ needle: "release", limit: 10 })).toEqual([]);
   }).pipe(Effect.provide(testLayer)),
 );

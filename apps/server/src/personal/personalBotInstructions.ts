@@ -4,7 +4,7 @@
  * and the machine owner's add-ons (`personalBot` on the session start input),
  * so these name the app tools that take their place.
  */
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * The machine the computer_* tools drive, as the app rules name it. The
@@ -12,7 +12,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
  * thing (QA's L8).
  */
 const DESKTOP_MACHINE = (() => {
-  const platform = HostProcessPlatform.defaultValue();
+  const platform = HostProcess.Platform.defaultValue();
   return platform === "win32" ? "Windows PC" : platform === "darwin" ? "Mac" : "Linux PC";
 })();
 

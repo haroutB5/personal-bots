@@ -1,0 +1,42 @@
+diff --git a/apps/server/src/mcp/McpDeviceToolkit.test.ts b/apps/server/src/mcp/McpDeviceToolkit.test.ts
+index 3a9307314c393fe06b9885366abf790b4d2973ed..febdccb3f992dd61a152d0852d0ab87c93b53750 100644
+--- a/apps/server/src/mcp/McpDeviceToolkit.test.ts
++++ b/apps/server/src/mcp/McpDeviceToolkit.test.ts
+@@ -1,5 +1,5 @@
+ import { expect, it } from "@effect/vitest";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   DeviceHostUnavailableError,
+   EnvironmentId,
+@@ -8,7 +8,7 @@ import {
+ } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import { McpSchema, McpServer } from "effect/unstable/ai";
++import { McpSchema, McpServer } from "effect/ai";
+ 
+ import * as ServerConfig from "../config.ts";
+ import * as DeviceService from "../device/DeviceService.ts";
+@@ -97,7 +97,7 @@ const DeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
+ });
+ 
+ const TestLayer = McpHttpServer.DeviceToolkitRegistrationLive.pipe(
+-  Layer.provideMerge(McpServer.McpServer.layer),
++  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+   Layer.provideMerge(DeviceServiceMock),
+   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" })),
+   Layer.provide(NodeServices.layer),
+@@ -167,8 +167,11 @@ it.effect("rejects unavailable agent access before booting or opening a device",
+     Effect.scoped,
+     Effect.provide(
+       McpHttpServer.DeviceToolkitRegistrationLive.pipe(
+-        Layer.provideMerge(McpServer.McpServer.layer),
++        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+         Layer.provide(unavailable),
++        Layer.provide(
++          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
++        ),
+         Layer.provide(NodeServices.layer),
+       ),
+     ),

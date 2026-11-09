@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { DeepSeekBalanceRead } from "../../provider/Drivers/DeepSeekBalance.ts";
+import type { DeepSeekBalanceRead } from "@t3tools/provider-deepseek/server";
+
 import {
-  DEEPSEEK_LOW_BALANCE_USD,
   DEEPSEEK_LOW_BALANCE_REARM_USD,
+  DEEPSEEK_LOW_BALANCE_USD,
   decideDeepSeekBalanceAlert,
   deepSeekBalanceAlertMetaKey,
   deepSeekBalanceLastKindValue,
@@ -74,7 +75,6 @@ describe("decideDeepSeekBalanceAlert", () => {
   });
 
   it("escalates a low spell to the empty notice exactly once, and never back down", () => {
-    // Low first, then the account runs out.
     expect(decide(ready({ totalBalance: 0.9 }))).toEqual({
       action: "alert",
       alert: { kind: "low", balance: "$0.90" },
@@ -105,8 +105,7 @@ describe("decideDeepSeekBalanceAlert", () => {
 
   it("never warns on a failed read, and never ends a spell on one either", () => {
     expect(decide(failed)).toEqual({ action: "none" });
-    // The important half: an outage must not re-arm, or the next good reading
-    // would report the same drop a second time.
+    // An outage must not re-arm, or the next good reading would warn twice.
     expect(decide(failed, "low")).toEqual({ action: "none" });
     expect(decide(failed, "empty")).toEqual({ action: "none" });
   });
@@ -124,7 +123,6 @@ describe("the balance wording and the persisted flag", () => {
     expect(formatDeepSeekBalance({ currency: "USD", totalBalance: 0.94 })).toBe("$0.94");
     expect(formatDeepSeekBalance({ currency: "usd", totalBalance: 1 })).toBe("$1.00");
     expect(formatDeepSeekBalance({ currency: "CNY", totalBalance: 6 })).toBe("CNY 6.00");
-    // Never rounded up into a bigger number than the account holds.
     expect(formatDeepSeekBalance({ currency: "USD", totalBalance: 0.999 })).toBe("$1.00");
   });
 
@@ -138,8 +136,7 @@ describe("the balance wording and the persisted flag", () => {
     expect(parseDeepSeekBalanceLastKind('{"kind":"nonsense"}')).toBeNull();
     expect(parseDeepSeekBalanceLastKind('{"kind":"low"}')).toBe("low");
     expect(parseDeepSeekBalanceLastKind('{"kind":"empty"}')).toBe("empty");
-    // 1.66.43 wrote a bare boolean, only ever for the first notice of a spell,
-    // which is the low one. A row written by it must not re-announce the drop.
+    // 1.66.43 wrote a bare boolean, only for the first notice of a spell.
     expect(parseDeepSeekBalanceLastKind('{"warned":true}')).toBe("low");
     expect(parseDeepSeekBalanceLastKind('{"warned":false}')).toBeNull();
     expect(
@@ -156,8 +153,7 @@ describe("the balance wording and the persisted flag", () => {
         deepSeekBalanceLastKindValue({ kind: null, at: "2026-10-14T10:00:00Z" }),
       ),
     ).toBeNull();
-    // The written value still reads the old way, so a probe written before the
-    // kind existed (QA's balance walk, the sweep diagnostic) keeps working.
+    // The written value still reads the old way for the QA and diagnostic probes.
     expect(
       JSON.parse(
         deepSeekBalanceLastKindValue({

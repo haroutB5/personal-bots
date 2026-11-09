@@ -1,4 +1,4 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -13,9 +13,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import {
-  CommandId,
-  CorrelationId,
-  EventId,
   MessageId,
   OrchestrationMessageContext,
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
@@ -23,32 +20,24 @@ import {
   PersonalGroupId,
   PersonalGroupRoundId,
   PersonalGroupVoteId,
+  ProjectId,
   ProviderInstanceId,
   readPersonalReplyQuote,
   ThreadId,
   TurnId,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
+  type ModelSelection,
   type OrchestrationSession,
+  type OrchestrationThreadShell,
   type PersonalGroupMessageMarker,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../../config.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
-import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
-import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionThreadMessageRepository,
-  type ProjectionThreadMessage,
-  type ProjectionThreadMessageRepositoryShape,
-} from "../../persistence/Services/ProjectionThreadMessages.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import type { PersonalThreadEvent } from "../engine/PersonalEngine.ts";
+import { toPersonalSessionView } from "../engine/PersonalEngineV2Live.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
+import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import {
@@ -61,21 +50,66 @@ import * as PersonalGroupService from "./PersonalGroupService.ts";
 import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 
 /**
- * The orchestration side, stood in for. Commands are recorded AND applied to a
- * tiny projection, because the group service reads back what it wrote: the
- * catch-up brief is built from the text of the messages it relayed into the
- * group thread, so a harness that only records would test half the loop.
+ * The personal engine, stood in for as an in-memory double. Calls are recorded
+ * AND applied to a tiny transcript, because the group service reads back what
+ * it wrote: the catch-up brief is built from the text of the messages it
+ * relayed into the group thread, so a harness that only records would test
+ * half the loop.
  *
  * No timers anywhere: every wait is a dispatcher drain.
  */
 interface Harness {
-  readonly dispatched: Array<OrchestrationCommand>;
+  readonly dispatched: Array<Dispatched>;
   readonly sessions: Map<string, OrchestrationSession>;
-  readonly messages: Map<string, Array<ProjectionThreadMessage>>;
+  readonly messages: Map<string, Array<HarnessMessage>>;
   /** Threads a `thread.create` made and no `thread.delete` removed. */
   readonly liveThreads: Set<string>;
-  readonly statuses: Map<string, PersonalThreadStatus>;
+  readonly models: Map<string, ModelSelection>;
   sequence: number;
+}
+
+type Dispatched =
+  | { readonly type: "thread.create"; readonly threadId: ThreadId; readonly title: string }
+  | {
+      readonly type: "thread.turn.start";
+      readonly threadId: ThreadId;
+      readonly message: { readonly messageId: MessageId; readonly text: string };
+      readonly modelSelection: ModelSelection | undefined;
+    }
+  | {
+      readonly type: "thread.message.user.append";
+      readonly threadId: ThreadId;
+      readonly message: { readonly messageId: MessageId; readonly text: string };
+    }
+  | {
+      readonly type: "thread.message.assistant.delta";
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly delta: string;
+    }
+  | {
+      readonly type: "thread.message.assistant.complete";
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+    }
+  | {
+      readonly type: "thread.turn.interrupt";
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId | null;
+    }
+  | { readonly type: "thread.delete"; readonly threadId: ThreadId };
+
+/** A transcript row as the personal layer reads it. */
+interface HarnessMessage {
+  messageId: MessageId;
+  threadId: ThreadId;
+  turnId: TurnId | null;
+  role: "user" | "assistant";
+  text: string;
+  isStreaming: boolean;
+  context?: OrchestrationMessageContext;
+  createdAt: string;
+  updatedAt: string;
 }
 
 const makeHarness = (): Harness => ({
@@ -83,195 +117,262 @@ const makeHarness = (): Harness => ({
   sessions: new Map(),
   messages: new Map(),
   liveThreads: new Set(),
-  statuses: new Map(),
+  models: new Map(),
   sequence: 0,
 });
 
-type MutableMessage = {
-  -readonly [K in keyof ProjectionThreadMessage]: ProjectionThreadMessage[K];
-};
-
-const listOf = (harness: Harness, threadId: string): Array<MutableMessage> => {
+const listOf = (harness: Harness, threadId: string): Array<HarnessMessage> => {
   const existing = harness.messages.get(threadId);
   if (existing !== undefined) {
-    return existing as Array<MutableMessage>;
+    return existing;
   }
-  const created: Array<ProjectionThreadMessage> = [];
+  const created: Array<HarnessMessage> = [];
   harness.messages.set(threadId, created);
-  return created as Array<MutableMessage>;
+  return created;
 };
 
-/** The projection rules this service depends on, and only those. */
-const applyToProjection = (harness: Harness, command: OrchestrationCommand) => {
-  switch (command.type) {
-    case "thread.create": {
-      harness.liveThreads.add(command.threadId);
-      return;
-    }
-    case "thread.delete": {
-      harness.liveThreads.delete(command.threadId);
-      return;
-    }
-    case "thread.message.user.append": {
-      listOf(harness, command.threadId).push({
-        messageId: command.message.messageId,
-        threadId: command.threadId,
+const messageView = (message: HarnessMessage): PersonalEngine.PersonalMessageView => ({
+  id: message.messageId,
+  role: message.role,
+  text: message.text,
+  ...(message.context === undefined ? {} : { context: message.context }),
+  turnId: message.turnId,
+  streaming: message.isStreaming,
+  createdAt: message.createdAt,
+  updatedAt: message.updatedAt,
+});
+
+const PROJECT_ID = ProjectId.make("personal-test-project");
+
+/**
+ * The personal engine, stood in for. It records the calls the service makes
+ * and applies the few projection rules the service reads back: a member's
+ * brief, a relayed notice and the group transcript. No provider ever runs.
+ */
+const personalEngineDouble = (harness: Harness) => ({
+  createProject: (input: PersonalEngine.CreateProjectInput) =>
+    Effect.succeed(input.projectId ?? PROJECT_ID),
+  getProject: () => Effect.succeed(Option.some({ id: PROJECT_ID, workspaceRoot: process.cwd() })),
+  listProjects: () => Effect.succeed([]),
+  createThread: (input: PersonalEngine.CreateThreadInput) =>
+    Effect.sync(() => {
+      const threadId =
+        input.threadId ?? ThreadId.make(`thread-${String(harness.liveThreads.size + 1)}`);
+      harness.liveThreads.add(threadId);
+      harness.models.set(threadId, input.modelSelection);
+      harness.dispatched.push({ type: "thread.create", threadId, title: input.title });
+      return threadId;
+    }),
+  updateMeta: () => Effect.void,
+  send: (input: PersonalEngine.PersonalSendInput) =>
+    Effect.gen(function* () {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      harness.dispatched.push({
+        type: "thread.turn.start",
+        threadId: input.threadId,
+        message: { messageId: input.messageId, text: input.text },
+        modelSelection: input.modelSelection,
+      });
+      listOf(harness, input.threadId).push({
+        messageId: input.messageId,
+        threadId: input.threadId,
         turnId: null,
         role: "user",
-        text: command.message.text,
+        text: input.text,
         isStreaming: false,
-        ...(command.message.context === undefined ? {} : { context: command.message.context }),
-        createdAt: command.createdAt,
-        updatedAt: command.createdAt,
-      } as ProjectionThreadMessage);
-      return;
-    }
-    case "thread.turn.start": {
-      listOf(harness, command.threadId).push({
-        messageId: command.message.messageId,
-        threadId: command.threadId,
+        ...(input.context === undefined ? {} : { context: input.context }),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }),
+  postUserMessage: (input: PersonalEngine.PersonalPostUserMessageInput) =>
+    Effect.gen(function* () {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      harness.dispatched.push({
+        type: "thread.message.user.append",
+        threadId: input.threadId,
+        message: { messageId: input.messageId, text: input.text },
+      });
+      listOf(harness, input.threadId).push({
+        messageId: input.messageId,
+        threadId: input.threadId,
         turnId: null,
         role: "user",
-        text: command.message.text,
+        text: input.text,
         isStreaming: false,
-        ...(command.message.context === undefined ? {} : { context: command.message.context }),
-        createdAt: command.createdAt,
-        updatedAt: command.createdAt,
-      } as ProjectionThreadMessage);
-      return;
-    }
-    case "thread.message.assistant.delta": {
-      const list = listOf(harness, command.threadId);
-      const existing = list.find((message) => message.messageId === command.messageId);
+        ...(input.context === undefined ? {} : { context: input.context }),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }),
+  appendNotice: (input: PersonalEngine.PersonalAppendNoticeInput) =>
+    Effect.gen(function* () {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      harness.dispatched.push({
+        type: "thread.message.assistant.delta",
+        threadId: input.threadId,
+        messageId: input.messageId,
+        delta: input.delta,
+      });
+      const list = listOf(harness, input.threadId);
+      const existing = list.find((message) => message.messageId === input.messageId);
       if (existing === undefined) {
         list.push({
-          messageId: command.messageId,
-          threadId: command.threadId,
+          messageId: input.messageId,
+          threadId: input.threadId,
           turnId: null,
           role: "assistant",
-          text: command.delta,
+          text: input.delta,
           isStreaming: true,
-          ...(command.context === undefined ? {} : { context: command.context }),
-          createdAt: command.createdAt,
-          updatedAt: command.createdAt,
-        } as ProjectionThreadMessage);
+          ...(input.context === undefined ? {} : { context: input.context }),
+          createdAt: now,
+          updatedAt: now,
+        });
         return;
       }
-      // Exactly the projection's rule: the context set by the first delta is
-      // preserved across later deltas and the completing upsert.
-      existing.text += command.delta;
-      existing.updatedAt = command.createdAt;
-      return;
-    }
-    case "thread.message.assistant.complete": {
-      const existing = listOf(harness, command.threadId).find(
-        (message) => message.messageId === command.messageId,
+      // The context set by the first chunk survives the later ones.
+      existing.text += input.delta;
+      existing.updatedAt = now;
+    }),
+  completeNotice: (input: PersonalEngine.PersonalCompleteNoticeInput) =>
+    Effect.sync(() => {
+      harness.dispatched.push({
+        type: "thread.message.assistant.complete",
+        threadId: input.threadId,
+        messageId: input.messageId,
+      });
+      const existing = listOf(harness, input.threadId).find(
+        (message) => message.messageId === input.messageId,
       );
-      if (existing !== undefined) {
-        existing.isStreaming = false;
+      if (existing !== undefined) existing.isStreaming = false;
+    }),
+  postNotice: (input: PersonalEngine.PersonalPostNoticeInput) =>
+    Effect.gen(function* () {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      listOf(harness, input.threadId).push({
+        messageId: input.messageId,
+        threadId: input.threadId,
+        turnId: null,
+        role: "assistant",
+        text: input.text,
+        isStreaming: false,
+        ...(input.context === undefined ? {} : { context: input.context }),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }),
+  interrupt: (threadId: ThreadId, turnId?: TurnId) =>
+    Effect.sync(() => {
+      harness.dispatched.push({ type: "thread.turn.interrupt", threadId, turnId: turnId ?? null });
+    }),
+  stop: () => Effect.void,
+  archive: () => Effect.void,
+  deleteThread: (threadId: ThreadId) =>
+    Effect.sync(() => {
+      harness.liveThreads.delete(threadId);
+      harness.sessions.delete(threadId);
+      harness.models.delete(threadId);
+      harness.dispatched.push({ type: "thread.delete", threadId });
+    }),
+  getThread: (threadId: ThreadId) =>
+    Effect.sync(() =>
+      // As the real read: a live thread has a shell (its session may not
+      // exist yet); a missing or deleted one has none.
+      harness.liveThreads.has(threadId) || harness.sessions.has(threadId)
+        ? Option.some({
+            id: threadId,
+            title: "Chat",
+            modelSelection: harness.models.get(threadId),
+            session: harness.sessions.get(threadId) ?? null,
+          } as unknown as OrchestrationThreadShell)
+        : Option.none(),
+    ),
+  messageById: (messageId: MessageId) =>
+    Effect.sync(() => {
+      for (const list of harness.messages.values()) {
+        const found = list.find((message) => message.messageId === messageId);
+        if (found !== undefined) return Option.some(messageView(found));
       }
-      return;
-    }
-    default:
-      return;
-  }
-};
+      return Option.none();
+    }),
+  latestAssistantMessage: (input: {
+    readonly threadId: ThreadId;
+    readonly after?: DateTime.Utc;
+    readonly afterMessageId?: MessageId;
+    readonly turnId?: TurnId;
+  }) =>
+    Effect.sync(() => {
+      const after = input.after === undefined ? undefined : DateTime.formatIso(input.after);
+      const rows = (harness.messages.get(input.threadId) ?? [])
+        .filter((message) => message.role === "assistant")
+        .filter((message) => input.turnId === undefined || message.turnId === input.turnId)
+        .filter((message) => {
+          if (after === undefined) return true;
+          if (message.createdAt > after) return true;
+          return (
+            message.createdAt === after &&
+            input.afterMessageId !== undefined &&
+            String(message.messageId) > String(input.afterMessageId)
+          );
+        })
+        .toSorted((a, b) =>
+          a.createdAt === b.createdAt
+            ? String(b.messageId).localeCompare(String(a.messageId))
+            : b.createdAt.localeCompare(a.createdAt),
+        );
+      const found = rows[0];
+      return found === undefined ? Option.none() : Option.some(messageView(found));
+    }),
+  listMessages: (input: { readonly threadId: ThreadId; readonly limit: number }) =>
+    Effect.sync(() =>
+      (harness.messages.get(input.threadId) ?? []).slice(-input.limit).map(messageView),
+    ),
+  events: Stream.never,
+});
 
-const optionOf = <A>(value: A | undefined): Option.Option<A> =>
-  value === undefined ? Option.none() : Option.some(value);
-
-const BotServiceLive = PersonalBotService.layerRequiringEngine.pipe(
-  Layer.provideMerge(PersonalEngineV1Live),
-);
-
-const makeLayer = (harness: Harness, dbPath?: string) =>
-  PersonalGroupService.layer.pipe(
+const makeLayer = (harness: Harness, dbPath?: string) => {
+  const engineLayer = Layer.succeed(
+    PersonalEngine.PersonalEngine,
+    personalEngineDouble(harness) as unknown as PersonalEngine.PersonalEngineShape,
+  );
+  const botServiceLayer = PersonalBotService.layerRequiringEngine.pipe(
+    Layer.provideMerge(engineLayer),
+  );
+  return PersonalGroupService.layer.pipe(
     Layer.provideMerge(PersonalGroupRepository.layer),
-    Layer.provideMerge(BotServiceLive),
+    Layer.provideMerge(botServiceLayer),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(
-      dbPath === undefined ? SqlitePersistenceMemory : makeSqlitePersistenceLive(dbPath),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            harness.dispatched.push(command);
-            applyToProjection(harness, command);
-            return { sequence: harness.dispatched.length };
-          }),
-        subscribeDomainEvents: Effect.succeed(Stream.never),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
+      dbPath === undefined ? personalTestDatabase : SqlitePersistence.layerFromPath(dbPath),
     ),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed([]),
       }),
     ),
-    Layer.provideMerge(ThreadBackgroundLiveness.layer),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() =>
-            // As the real query: a live thread has a shell (its session may
-            // not exist yet); a missing or deleted one has none.
-            harness.liveThreads.has(threadId) || harness.sessions.has(threadId)
-              ? Option.some({ id: threadId, session: harness.sessions.get(threadId) ?? null })
-              : Option.none(),
-          ),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionThreadMessageRepository, {
-        listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-          Effect.sync(() => harness.messages.get(threadId) ?? []),
-        getByMessageId: ({ messageId }: { readonly messageId: MessageId }) =>
-          Effect.sync(() => {
-            for (const list of harness.messages.values()) {
-              const found = list.find((message) => message.messageId === messageId);
-              if (found !== undefined) return Option.some(found);
-            }
-            return Option.none();
-          }),
-        getLatestAssistantMessageForTurn: ({
-          threadId,
-          turnId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly turnId: TurnId;
-        }) =>
-          Effect.sync(() =>
-            optionOf(
-              (harness.messages.get(threadId) ?? []).findLast(
-                (message) => message.role === "assistant" && message.turnId === turnId,
-              ),
-            ),
-          ),
-        getLatestAssistantMessageAfter: ({
-          threadId,
-          afterMessageId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly afterCreatedAt: string;
-          readonly afterMessageId: MessageId;
-        }) =>
-          Effect.sync(() => {
-            const list = harness.messages.get(threadId) ?? [];
-            const anchor = list.findIndex((message) => message.messageId === afterMessageId);
-            return optionOf(
-              list.slice(anchor + 1).findLast((message) => message.role === "assistant"),
-            );
-          }),
-      } as unknown as ProjectionThreadMessageRepositoryShape),
-    ),
+    Layer.provideMerge(engineLayer),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-groups-test-" }),
     ),
     Layer.provideMerge(NodeServices.layer),
   );
+};
+
+/**
+ * Restart cases need a real database file. Keep it inside the worktree's
+ * scratch dir, not the shared /tmp, which other heavy jobs can fill.
+ */
+const makeTempDbPath = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve(process.cwd(), "../../.tmp");
+  yield* fs.makeDirectory(root, { recursive: true });
+  const directory = yield* fs.makeTempDirectoryScoped({
+    directory: root,
+    prefix: "t3-personal-groups-db-",
+  });
+  return path.join(directory, "state.sqlite");
+});
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -360,75 +461,31 @@ const makeSession = (input: {
   updatedAt: input.updatedAt,
 });
 
-const eventBase = (harness: Harness, aggregateId: string, occurredAt: string) => {
-  harness.sequence += 1;
-  const id = `evt-${String(harness.sequence)}`;
-  return {
-    sequence: harness.sequence,
-    eventId: EventId.make(id),
-    aggregateKind: "thread" as const,
-    aggregateId,
-    occurredAt,
-    commandId: CommandId.make(`cmd-${id}`),
-    causationEventId: null,
-    correlationId: CorrelationId.make(`cmd-${id}`),
-    metadata: {},
-  };
-};
-
 const setSession = (harness: Harness, session: OrchestrationSession) =>
   Effect.gen(function* () {
     harness.sessions.set(session.threadId, session);
-    yield* ingestAll(harness, {
-      ...eventBase(harness, session.threadId, session.updatedAt),
-      type: "thread.session-set",
-      payload: { threadId: session.threadId, session },
-    } as OrchestrationEvent);
+    const view = toPersonalSessionView(session);
+    yield* ingestAll(harness, [
+      { _tag: "StatusChanged", threadId: session.threadId, status: view.status, session: view },
+    ]);
     const service = yield* PersonalGroupService.PersonalGroupService;
     yield* service.drain;
   });
 
-/** Feeds the events production sees, through the real v1-to-personal mapping. */
-const ingestAll = (harness: Harness, event: OrchestrationEvent) =>
+/** Feeds the thread events the engine publishes in production. */
+const ingestAll = (_harness: Harness, events: ReadonlyArray<PersonalThreadEvent>) =>
   Effect.gen(function* () {
     const service = yield* PersonalGroupService.PersonalGroupService;
-    for (const personal of toPersonalEvents(event, harness.statuses)) {
-      yield* service.ingestDomainEvent(personal);
+    for (const event of events) {
+      yield* service.ingestDomainEvent(event);
     }
   });
-
-const messageSentEvent = (
-  harness: Harness,
-  input: {
-    readonly threadId: ThreadId;
-    readonly messageId: MessageId;
-    readonly role: "assistant" | "user";
-    readonly text: string;
-    readonly streaming: boolean;
-    readonly turnId: TurnId | null;
-    readonly at: string;
-  },
-): OrchestrationEvent =>
-  ({
-    ...eventBase(harness, input.threadId, input.at),
-    type: "thread.message-sent",
-    payload: {
-      threadId: input.threadId,
-      messageId: input.messageId,
-      role: input.role,
-      text: input.text,
-      attachments: [],
-      turnId: input.turnId,
-      streaming: input.streaming,
-      createdAt: input.at,
-      updatedAt: input.at,
-    },
-  }) as unknown as OrchestrationEvent;
 
 const beginTurn = (harness: Harness, threadId: ThreadId) =>
   Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);
-    const turnId = TurnId.make(`turn-${threadId}-${String(harness.sequence + 1)}`);
+    harness.sequence += 1;
+    const turnId = TurnId.make(`turn-${threadId}-${String(harness.sequence)}`);
     yield* setSession(
       harness,
       makeSession({ threadId, status: "running", activeTurnId: turnId, updatedAt: now }),
@@ -439,18 +496,16 @@ const beginTurn = (harness: Harness, threadId: ThreadId) =>
 /** One streamed chunk of a member's reply, as the provider would send it. */
 const streamChunk = (harness: Harness, threadId: ThreadId, turnId: TurnId, chunk: string) =>
   Effect.gen(function* () {
-    yield* ingestAll(
-      harness,
-      messageSentEvent(harness, {
+    yield* ingestAll(harness, [
+      {
+        _tag: "MessageSent",
         threadId,
         messageId: MessageId.make(`member-${turnId}`),
         role: "assistant",
         text: chunk,
         streaming: true,
-        turnId,
-        at: DateTime.formatIso(yield* DateTime.now),
-      }),
-    );
+      },
+    ]);
     const service = yield* PersonalGroupService.PersonalGroupService;
     yield* service.drain;
   });
@@ -477,7 +532,7 @@ const endTurn = (
       isStreaming: false,
       createdAt: now,
       updatedAt: now,
-    } as ProjectionThreadMessage);
+    });
     yield* setSession(
       harness,
       makeSession({
@@ -514,7 +569,7 @@ const speak = (
 
 const groupTranscript = (harness: Harness) => harness.messages.get(GROUP_THREAD) ?? [];
 
-const markerOf = (message: ProjectionThreadMessage | undefined) => {
+const markerOf = (message: HarnessMessage | undefined) => {
   const record = message?.context?.records[0];
   return record !== undefined && "payload" in record
     ? (record.payload as PersonalGroupMessageMarker)
@@ -1157,18 +1212,16 @@ it.effect("deltas relay live into the group thread, marked with the speaker", ()
     // the active-member-thread filter, which a group thread also fails; the
     // guard is what makes that safe to reorder or relax.)
     const before = harness.dispatched.length;
-    yield* ingestAll(
-      harness,
-      messageSentEvent(harness, {
+    yield* ingestAll(harness, [
+      {
+        _tag: "MessageSent",
         threadId: GROUP_THREAD,
         messageId: MessageId.make("echo-1"),
         role: "assistant",
         text: "an echo of our own relay",
         streaming: true,
-        turnId: null,
-        at: DateTime.formatIso(yield* DateTime.now),
-      }),
-    );
+      },
+    ]);
     yield* service.drain;
     expect(harness.dispatched.length).toBe(before);
   }).pipe(Effect.provide(makeLayer(harness)));
@@ -1187,17 +1240,14 @@ it.effect("a stray turn on the group thread is interrupted and reported", () => 
 
     // The developer view can start a turn on any thread. A provider running on
     // the shared thread would have no persona and would speak for nobody.
-    yield* ingestAll(harness, {
-      ...eventBase(harness, GROUP_THREAD, DateTime.formatIso(yield* DateTime.now)),
-      type: "thread.turn-start-requested",
-      payload: {
+    yield* ingestAll(harness, [
+      {
+        _tag: "TurnStartRequested",
         threadId: GROUP_THREAD,
         messageId: MessageId.make("stray-1"),
-        runtimeMode: "full-access",
         interactionMode: "default",
-        createdAt: DateTime.formatIso(yield* DateTime.now),
       },
-    } as OrchestrationEvent);
+    ]);
     yield* service.drain;
 
     expect(interrupts(harness).map((command) => command.threadId)).toEqual([GROUP_THREAD]);
@@ -1209,17 +1259,14 @@ it.effect("a stray turn on the group thread is interrupted and reported", () => 
 
     // A turn-start on an unrelated thread is none of this service's business.
     const before = harness.dispatched.length;
-    yield* ingestAll(harness, {
-      ...eventBase(harness, "thread-unrelated", DateTime.formatIso(yield* DateTime.now)),
-      type: "thread.turn-start-requested",
-      payload: {
+    yield* ingestAll(harness, [
+      {
+        _tag: "TurnStartRequested",
         threadId: ThreadId.make("thread-unrelated"),
         messageId: MessageId.make("stray-2"),
-        runtimeMode: "full-access",
         interactionMode: "default",
-        createdAt: DateTime.formatIso(yield* DateTime.now),
       },
-    } as OrchestrationEvent);
+    ]);
     yield* service.drain;
     expect(harness.dispatched.length).toBe(before);
   }).pipe(Effect.provide(makeLayer(harness)));
@@ -1617,10 +1664,7 @@ it.effect("a resume is skipped when the group was archived or deleted", () => {
 
 it.effect("a resume booked before a restart runs once after it", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
+    const dbPath = yield* makeTempDbPath;
 
     const before = makeHarness();
     const assistantThread = yield* cutOffThenRoundEnds(before).pipe(
@@ -1656,10 +1700,7 @@ const restoredGroupCopyAfterReset = <E, R>(
   check: (after: Harness) => Effect.Effect<void, E, R>,
 ) =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
+    const dbPath = yield* makeTempDbPath;
 
     const before = makeHarness();
     const assistantThread = yield* cutOffThenRoundEnds(before).pipe(
@@ -1794,10 +1835,7 @@ it.effect("after two automatic continues the third hit only says so", () => {
 
 it.effect("an expired lease interrupts the round and nothing re-runs without Continue", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
-    const dbPath = path.join(directory, "state.sqlite");
+    const dbPath = yield* makeTempDbPath;
 
     const before = makeHarness();
     const memberThread = yield* Effect.gen(function* () {
@@ -2147,7 +2185,7 @@ it("the group marker survives persistence decoding and never reaches the provide
     speaker: { kind: "bot", botId: PersonalBotId.make("bot-dev"), name: "Dev" },
   };
   const context = PersonalGroupService.personalGroupMessageContext(marker);
-  // Same codec as projection_thread_messages.context_json, i.e. a replay.
+  // The message context codec, i.e. a replay.
   const codec = Schema.fromJsonString(OrchestrationMessageContext);
   const decoded = Schema.decodeUnknownSync(codec)(Schema.encodeSync(codec)(context));
   const record = decoded.records[0]!;

@@ -340,7 +340,8 @@ describe("bot provider instruction support", () => {
     expect(readyProvider("deepseek")).toSatisfy(isBotProviderSelectable);
     // 1.66.73: Antigravity bots get their persona with every prompt.
     expect(readyProvider("antigravity")).toSatisfy(isBotProviderSelectable);
-    for (const driver of ["cursor", "grok", "someFutureProvider"]) {
+    expect(readyProvider("grok")).toSatisfy(isBotProviderSelectable);
+    for (const driver of ["cursor", "someFutureProvider"]) {
       expect(isBotProviderSelectable(readyProvider(driver))).toBe(false);
     }
   });
@@ -398,15 +399,15 @@ describe("bot provider instruction support", () => {
   });
 
   it("warns in the editor for a bot already saved on a mute provider", () => {
-    const warning = botInstructionSupportWarning(readyProvider("grok"), "Grok");
-    expect(warning).toContain("Grok does not pass bot instructions");
+    const warning = botInstructionSupportWarning(readyProvider("cursor"), "Cursor");
+    expect(warning).toContain("Cursor does not pass bot instructions");
     expect(warning).toContain("Instructions");
     expect(botInstructionSupportWarning(readyProvider("claudeAgent"), "Claude Code")).toBeNull();
     expect(botInstructionSupportWarning(undefined, "Claude Code")).toBeNull();
   });
 
   it("does not claim 'no provider is ready' when a ready one is merely mute", () => {
-    expect(noBotProviderMessage([readyProvider("grok")])).toContain(
+    expect(noBotProviderMessage([readyProvider("cursor")])).toContain(
       "don't pass bot instructions to the model",
     );
     expect(noBotProviderMessage([])).toContain("No provider is ready");

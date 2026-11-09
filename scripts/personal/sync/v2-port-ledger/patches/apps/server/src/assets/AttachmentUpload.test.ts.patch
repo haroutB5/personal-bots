@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/assets/AttachmentUpload.test.ts b/apps/server/src/assets/AttachmentUpload.test.ts
+index 6fffa1d1f9f2979493faa8b50d852f88937852e9..f2d070582be65f53c97993e3e37591a8acc3f822 100644
+--- a/apps/server/src/assets/AttachmentUpload.test.ts
++++ b/apps/server/src/assets/AttachmentUpload.test.ts
+@@ -2,7 +2,7 @@
+ import * as NodeFS from "node:fs";
+ import * as NodePath from "node:path";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";

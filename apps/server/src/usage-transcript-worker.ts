@@ -1,12 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - isolated transcript reader entry.
-import { parentPort } from "node:worker_threads";
+import * as NodeWorkerThreads from "node:worker_threads";
+
+import { deepSeekUsageFormat } from "@t3tools/provider-deepseek/server/usage";
 
 import {
   readTranscriptRecordsInline,
   type TranscriptParsePosition,
 } from "./usage/usageTranscriptReader.ts";
 
-parentPort!.on(
+NodeWorkerThreads.parentPort!.on(
   "message",
   async (request: {
     readonly filePath: string;
@@ -15,10 +17,11 @@ parentPort!.on(
   }) => {
     const result = await readTranscriptRecordsInline(
       request.filePath,
-      "deepseek",
+      deepSeekUsageFormat,
       request.resumeFrom,
       request.options,
     );
-    parentPort!.postMessage(result);
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a worker port takes no target origin
+    NodeWorkerThreads.parentPort!.postMessage(result);
   },
 );

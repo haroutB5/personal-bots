@@ -1,0 +1,17 @@
+diff --git a/apps/server/src/mcp/McpSessionRegistry.test.ts b/apps/server/src/mcp/McpSessionRegistry.test.ts
+index 9fc482d366d3e44e1fc379c30589231a5c5170a9..1c3efd4352b7904a18a554ff758dd3d566f2de76 100644
+--- a/apps/server/src/mcp/McpSessionRegistry.test.ts
++++ b/apps/server/src/mcp/McpSessionRegistry.test.ts
+@@ -1,9 +1,9 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+-import { HttpServer } from "effect/unstable/http";
+-import * as NetAddress from "effect/unstable/net/NetAddress";
++import { HttpServer } from "effect/http";
++import * as NetAddress from "effect/net/NetAddress";
+ 
+ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+ import * as McpSessionRegistry from "./McpSessionRegistry.ts";

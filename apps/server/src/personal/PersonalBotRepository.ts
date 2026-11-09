@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -35,7 +36,7 @@ import {
 import type { PersonalBotPersona } from "./personalBotInstructions.ts";
 import { serverPerfOptimizationOn } from "./perfFlags.ts";
 import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
-import { PersonalProjectionRelationsV1Live } from "./engine/PersonalProjectionRelationsV1Live.ts";
+import { PersonalProjectionRelationsV2Live } from "./engine/PersonalProjectionRelationsV2Live.ts";
 
 export const CreatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
@@ -231,7 +232,7 @@ export interface PersonalBotProviderSession {
   /** The provider that owns the session (`claudeAgent`, `codex`, `opencode`, ...). */
   readonly providerName: string;
   /**
-   * `provider_session_runtime.resume_cursor_json`, as stored. The session id a
+   * the provider-sessions relation's `resume_cursor_json`, as stored. The session id a
    * Claude CLI carries on its command line lives in here (`$.resume`), not in
    * the sessions relation's `provider_session_id`, which is empty on a real
    * data root; `sessionIdFromResumeCursor` reads it for the provider at hand.
@@ -343,6 +344,15 @@ export class PersonalBotRepository extends Context.Service<
       ReadonlyArray<PersonalBotThread>,
       PersonalBotRepositoryError
     >;
+    /** Every open bot chat id, for the shell stream's first snapshot. */
+    readonly listOpenThreadIds: () => Effect.Effect<
+      ReadonlyArray<ThreadId>,
+      PersonalBotRepositoryError
+    >;
+    /** The subset of `threadIds` that is an open bot chat right now. */
+    readonly openThreadIds: (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<ReadonlySet<ThreadId>, PersonalBotRepositoryError>;
     /** Archived chats with a visible shell, excluding group relays. */
     readonly listArchivedChatCounts: () => Effect.Effect<
       ReadonlyArray<{ readonly botId: string; readonly count: number }>,
@@ -839,6 +849,21 @@ function toPersistenceSqlOrDecodeError(
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;
+
+  // The unread baseline is what keeps chats from before the feature from
+  // lighting up. It is written once on the writer while the repository is built,
+  // never from a read path, so every read can run on the read-only reader.
+  yield* DateTime.now.pipe(
+    Effect.flatMap(
+      (now) =>
+        sql`
+        INSERT INTO personal_meta (key, value)
+        VALUES (${PERSONAL_CHAT_UNREAD_SINCE_META_KEY}, ${DateTime.formatIso(now)})
+        ON CONFLICT(key) DO NOTHING
+      `,
+    ),
+    Effect.mapError(toPersistenceSqlError("PersonalBotRepository.unreadSince")),
+  );
 
   const createBotRow = SqlSchema.void({
     Request: CreatePersonalBotInput,
@@ -1999,21 +2024,28 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  // The unread baseline is written once, the first time a list runs on a
-  // database without one; after that the flag skips the write.
-  let unreadSinceWritten = false;
-  const ensureUnreadSince = Effect.suspend(() => {
-    if (unreadSinceWritten) return Effect.void;
-    return Effect.gen(function* () {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
-        INSERT INTO personal_meta (key, value)
-        VALUES (${PERSONAL_CHAT_UNREAD_SINCE_META_KEY}, ${now})
-        ON CONFLICT(key) DO NOTHING
-      `;
-      unreadSinceWritten = true;
-    });
-  });
+  const listOpenThreadIds: PersonalBotRepository["Service"]["listOpenThreadIds"] = () =>
+    sql<{ readonly threadId: string }>`
+      SELECT thread_id AS "threadId"
+      FROM personal_bot_threads
+      WHERE archived_at IS NULL
+    `.pipe(
+      Effect.map((rows) => rows.map((row) => ThreadId.make(row.threadId))),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listOpenThreadIds:query")),
+    );
+
+  const openThreadIds: PersonalBotRepository["Service"]["openThreadIds"] = (threadIds) =>
+    threadIds.length === 0
+      ? Effect.succeed(new Set<ThreadId>())
+      : sql<{ readonly threadId: string }>`
+          SELECT thread_id AS "threadId"
+          FROM personal_bot_threads
+          WHERE archived_at IS NULL
+            AND ${sql.in("thread_id", threadIds)}
+        `.pipe(
+          Effect.map((rows) => new Set(rows.map((row) => ThreadId.make(row.threadId)))),
+          Effect.mapError(toPersistenceSqlError("PersonalBotRepository.openThreadIds:query")),
+        );
 
   const listThreadLinkPreviews = () =>
     DateTime.now.pipe(
@@ -2040,10 +2072,7 @@ export const make = Effect.gen(function* () {
     );
 
   const listThreadLinks: PersonalBotRepository["Service"]["listThreadLinks"] = () =>
-    ensureUnreadSince.pipe(
-      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listThreadLinks:unreadSince")),
-      Effect.andThen(listThreadLinkPreviews),
-    );
+    listThreadLinkPreviews();
 
   const listArchivedChatCounts: PersonalBotRepository["Service"]["listArchivedChatCounts"] = () =>
     sql<{ readonly botId: string; readonly count: number }>`
@@ -2186,41 +2215,48 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
   return {
     createBot,
-    getBotById,
-    listBots,
+    getBotById: asRead(getBotById),
+    listBots: asRead(listBots),
     updateBot,
     softDeleteBot,
     clearTeamLead,
     insertThreadLink,
-    getThreadLink,
-    isGroupRelay,
+    getThreadLink: asRead(getThreadLink),
+    isGroupRelay: asRead(isGroupRelay),
     setThreadArchived,
     recordThreadViewed,
-    listFallbackStates,
+    listFallbackStates: asRead(listFallbackStates),
     startFallback,
     switchFallback,
     updateFallbackReset,
     endFallback,
     updateThreadState,
-    searchMessages,
+    searchMessages: asRead(searchMessages),
     deleteThreadLink,
-    listThreadLinks,
-    listArchivedChatCounts,
-    listBotProviderSessions,
-    listOpenChatTitles,
-    listOpenChats,
-    getChatFacts,
-    listDirectChats,
-    getRemovedChatOrigin,
-    getChatTitleScope,
-    listGroupPresence,
-    getMeta,
+    listThreadLinks: asRead(listThreadLinks),
+    listOpenThreadIds: asRead(listOpenThreadIds),
+    openThreadIds: asRead(openThreadIds),
+    listArchivedChatCounts: asRead(listArchivedChatCounts),
+    listBotProviderSessions: asRead(listBotProviderSessions),
+    listOpenChatTitles: asRead(listOpenChatTitles),
+    listOpenChats: asRead(listOpenChats),
+    getChatFacts: asRead(getChatFacts),
+    listDirectChats: asRead(listDirectChats),
+    getRemovedChatOrigin: asRead(getRemovedChatOrigin),
+    getChatTitleScope: asRead(getChatTitleScope),
+    listGroupPresence: asRead(listGroupPresence),
+    getMeta: asRead(getMeta),
     setMeta,
     deleteMeta,
-    getInstructionsForThread,
-    listThreadAttachments,
+    getInstructionsForThread: asRead(getInstructionsForThread),
+    listThreadAttachments: asRead(listThreadAttachments),
   } satisfies PersonalBotRepository["Service"];
 });
 
@@ -2230,5 +2266,5 @@ export const make = Effect.gen(function* () {
  * is chosen here, in one place.
  */
 export const layer = Layer.effect(PersonalBotRepository, make).pipe(
-  Layer.provideMerge(PersonalProjectionRelationsV1Live),
+  Layer.provideMerge(PersonalProjectionRelationsV2Live),
 );

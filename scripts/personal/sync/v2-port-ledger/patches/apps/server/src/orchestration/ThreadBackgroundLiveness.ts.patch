@@ -1,0 +1,26 @@
+diff --git a/apps/server/src/orchestration/ThreadBackgroundLiveness.ts b/apps/server/src/orchestration/ThreadBackgroundLiveness.ts
+index 2781e4981f7cdc1a6e1cf7653bf67ec6ec72b02c..3d4f0e4e880eb20e2fd5f7348905314d163e3d45 100644
+--- a/apps/server/src/orchestration/ThreadBackgroundLiveness.ts
++++ b/apps/server/src/orchestration/ThreadBackgroundLiveness.ts
+@@ -69,6 +69,9 @@ export class ThreadBackgroundLivenessService extends Context.Service<
+      * "monitoring" only when watch loops are the ONLY live work.
+      */
+     readonly getThreadBackgroundLiveness: (threadId: string) => ThreadBackgroundLiveness;
++
++    /** The ids behind that status: every live task of the thread, agents and watch loops. */
++    readonly getThreadLiveTaskIds: (threadId: string) => ReadonlyArray<string>;
+   }
+ >()("t3/orchestration/ThreadBackgroundLiveness/ThreadBackgroundLivenessService") {}
+ 
+@@ -166,6 +169,11 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
+       }
+       return null;
+     },
++
++    getThreadLiveTaskIds: (threadId) => {
++      const state = stateByThreadId.get(threadId);
++      return state === undefined ? [] : [...state.agents, ...state.monitors];
++    },
+   };
+ }
+ 

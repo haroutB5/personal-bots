@@ -1,8 +1,9 @@
-import type { PendingUserInput } from "@t3tools/client-runtime/pending-requests";
-import type { OrchestrationThreadActivity, UserInputQuestion } from "@t3tools/contracts";
+import type { PendingUserInput } from "./wireTypes.ts";
+import type { UserInputQuestion } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "./wireTypes.ts";
 
 /** What the provider expects back: one answer per question id. */
-export type UserInputAnswers = Record<string, string | string[]>;
+export type UserInputAnswers = Record<string, string | ReadonlyArray<string>>;
 
 /**
  * A question the bot asked, in the state the transcript should show it:
@@ -96,11 +97,8 @@ export function deriveUserInputResolutions(
 
 /**
  * The cards to render, oldest first.
- *
  * `seen` is every request this screen has shown so far: once a question is
  * answered it leaves `pending`, and without that memory the card would vanish
- * mid-tap with no record of what was chosen. Questions answered before this
- * screen mounted are not in `seen`, so old history stays out of the way.
  */
 export function deriveQuestionCards(
   pending: ReadonlyArray<PendingUserInput>,
@@ -156,7 +154,7 @@ export function deriveQuestionCards(
  */
 export function describeAnswer(
   question: UserInputQuestion,
-  answer: string | string[] | undefined,
+  answer: string | ReadonlyArray<string> | undefined,
 ): ReadonlyArray<string> {
   if (answer === undefined) return [];
   const values = Array.isArray(answer) ? answer : [answer];

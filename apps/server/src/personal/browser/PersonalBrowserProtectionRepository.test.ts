@@ -3,11 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
 
 const layer = PersonalBrowserProtectionRepository.layer.pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
 it.layer(layer)("PersonalBrowserProtectionRepository", (it) => {

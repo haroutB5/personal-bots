@@ -1,6 +1,6 @@
 // @effect-diagnostics globalTimers:off - the socket handler is callback-based; the tests wait on its promises.
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -50,7 +50,7 @@ const fixture = (auth: "missing" | ReadonlyArray<AuthEnvironmentScope>) => {
       ),
       Layer.provideMerge(
         Layer.succeed(SessionStore, {
-          awaitRevoked: () => Effect.never,
+          awaitInvalidation: () => Effect.never,
         } as unknown as SessionStore["Service"]),
       ),
       Layer.provideMerge(

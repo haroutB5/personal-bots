@@ -1,4 +1,4 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -38,7 +38,7 @@ it.layer(NodeServices.layer)("Linux browser secret path", (it) => {
         yield* fileSystem.writeFileString(filename, "helper");
       }
       const resolve = (isPackaged: boolean, platform: NodeJS.Platform = "linux") => {
-        const environment = DesktopEnvironment.layer({
+        const layerEnvironment = DesktopEnvironment.layer({
           dirname: path.join(root, "apps", "desktop", "dist-electron"),
           homeDirectory: root,
           platform,
@@ -50,7 +50,7 @@ it.layer(NodeServices.layer)("Linux browser secret path", (it) => {
           runningUnderArm64Translation: false,
         }).pipe(Layer.provide(DesktopConfig.layerTest({})));
         return LinuxBrowserSecret.LinuxBrowserSecretPath.pipe(
-          Effect.provide(LinuxBrowserSecret.layer.pipe(Layer.provide(environment))),
+          Effect.provide(LinuxBrowserSecret.layer.pipe(Layer.provide(layerEnvironment))),
         );
       };
 

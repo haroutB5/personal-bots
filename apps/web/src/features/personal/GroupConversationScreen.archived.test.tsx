@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { GroupConversationScreen } from "./GroupConversationScreen";
@@ -40,10 +41,10 @@ vi.mock("~/components/ui/menu", () => ({
   ),
   MenuSeparator: () => <hr />,
 }));
+vi.mock("./useBotShells", () => ({ useBotShells: () => [] }));
 vi.mock("~/state/entities", () => ({
   useThreadDetail: () => ({ messages: [], activities: [], proposedPlans: [], session: null }),
   useThreadStatus: () => "ready",
-  useThreadShells: () => [],
 }));
 vi.mock("~/state/threads", () => ({
   useEnvironmentThread: () => ({
@@ -122,7 +123,6 @@ let renderer: ReactTestRenderer | null = null;
 
 beforeEach(() => {
   vi.stubGlobal("window", { setInterval: () => 1, clearInterval: () => {} });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.navigate = vi.fn(async () => undefined);
 });
 

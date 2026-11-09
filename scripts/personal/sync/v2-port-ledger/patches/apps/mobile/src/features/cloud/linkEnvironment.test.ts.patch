@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/cloud/linkEnvironment.test.ts b/apps/mobile/src/features/cloud/linkEnvironment.test.ts
+index 8fa346c5be4599856e59b105c7eaf0812d8de7e1..974ce765a4d468f71637a69c1c5611bf544bbbf1 100644
+--- a/apps/mobile/src/features/cloud/linkEnvironment.test.ts
++++ b/apps/mobile/src/features/cloud/linkEnvironment.test.ts
+@@ -6,7 +6,7 @@ import { EnvironmentId } from "@t3tools/contracts";
+ import { RelayMobileClientId } from "@t3tools/contracts/relay";
+ import { ManagedRelay } from "@t3tools/client-runtime/relay";
+ import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+-import { HttpClient } from "effect/unstable/http";
++import { HttpClient } from "effect/http";
+ 
+ import { MobileStorage } from "../../persistence/mobile-storage";
+ 

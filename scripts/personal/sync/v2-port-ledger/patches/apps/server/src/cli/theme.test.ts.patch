@@ -1,0 +1,21 @@
+diff --git a/apps/server/src/cli/theme.test.ts b/apps/server/src/cli/theme.test.ts
+index 7935f5e51b42ca8059e07e6a9c8a337858dfe49b..bbdcfee62e20ecde620705d691bfac6eac23b41d 100644
+--- a/apps/server/src/cli/theme.test.ts
++++ b/apps/server/src/cli/theme.test.ts
+@@ -3,14 +3,14 @@ import * as NodeFS from "node:fs";
+ import * as NodeOS from "node:os";
+ import * as NodePath from "node:path";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as ConfigProvider from "effect/ConfigProvider";
+ import * as NetService from "@t3tools/shared/Net";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as TestConsole from "effect/testing/TestConsole";
+-import { Command } from "effect/unstable/cli";
++import { Command } from "effect/cli";
+ 
+ import { cli } from "../bin.ts";
+ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";

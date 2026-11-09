@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/environments/primary/httpLayer.test.ts b/apps/web/src/environments/primary/httpLayer.test.ts
+index 4c70fbf5622edbff2c1bf31eb26e135e7450c8df..73b8005864daf42c80bdd580752aede9fcc9fe26 100644
+--- a/apps/web/src/environments/primary/httpLayer.test.ts
++++ b/apps/web/src/environments/primary/httpLayer.test.ts
+@@ -1,7 +1,7 @@
+ import type { DesktopBridge } from "@t3tools/contracts";
+ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+-import { HttpClient } from "effect/unstable/http";
++import { HttpClient } from "effect/http";
+ 
+ import { __resetDesktopPrimaryAuthForTests } from "./desktopAuth";
+ import { makePrimaryEnvironmentHttpLayer } from "./httpLayer";

@@ -1,0 +1,15 @@
+diff --git a/apps/server/src/cloud/ManagedEndpointRuntime.ts b/apps/server/src/cloud/ManagedEndpointRuntime.ts
+index 21091c5c446e8eab024981488f5754f67addcbf1..25426fcba4ce92ae2ef1cc5da6772c4518e16876 100644
+--- a/apps/server/src/cloud/ManagedEndpointRuntime.ts
++++ b/apps/server/src/cloud/ManagedEndpointRuntime.ts
+@@ -12,8 +12,8 @@ import * as Result from "effect/Result";
+ import * as Semaphore from "effect/Semaphore";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ export type CloudManagedEndpointRuntimeStatus =
+   | {

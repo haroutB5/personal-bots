@@ -1,0 +1,13 @@
+diff --git a/packages/shared/src/relayTracing.test.ts b/packages/shared/src/relayTracing.test.ts
+index f96dfea8bb3bc06481f9e28f6525e09dd8c86156..faa22cafe79d48a4b5a10caa8bd1bdc60d1bb1f8 100644
+--- a/packages/shared/src/relayTracing.test.ts
++++ b/packages/shared/src/relayTracing.test.ts
+@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Tracer from "effect/Tracer";
+-import { FetchHttpClient } from "effect/unstable/http";
++import { FetchHttpClient } from "effect/http";
+ import { vi } from "vite-plus/test";
+ 
+ import {

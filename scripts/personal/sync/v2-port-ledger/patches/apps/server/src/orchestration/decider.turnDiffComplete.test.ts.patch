@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/decider.turnDiffComplete.test.ts b/apps/server/src/orchestration/decider.turnDiffComplete.test.ts
+index fa52c4eaa0445587a4b2187ede394aeabbc709f0..76eff11aefd8a957bd8f7c326508ce9b20966de0 100644
+--- a/apps/server/src/orchestration/decider.turnDiffComplete.test.ts
++++ b/apps/server/src/orchestration/decider.turnDiffComplete.test.ts
+@@ -9,7 +9,7 @@ import {
+   type OrchestrationCheckpointSummary,
+   type OrchestrationReadModel,
+ } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";

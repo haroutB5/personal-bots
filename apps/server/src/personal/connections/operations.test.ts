@@ -278,7 +278,6 @@ describe("vercel provisioning operations", () => {
       expect(production.risk.summary).toContain("DATABASE_URL");
       expect(production.risk.summary).not.toContain("hunter2");
       expect(production.targetResources).toContain("vercel:env:production:DATABASE_URL");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(production.targetResources)).not.toContain("hunter2");
 
       const preview = yield* prepare("vercel.set_environment_variables", {

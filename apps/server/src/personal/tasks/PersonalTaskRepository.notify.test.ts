@@ -4,10 +4,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 
-const layer = PersonalTaskRepository.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const layer = PersonalTaskRepository.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const makeTask = Effect.gen(function* () {
   const now = yield* DateTime.now;

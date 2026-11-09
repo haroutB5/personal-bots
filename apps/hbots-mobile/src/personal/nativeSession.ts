@@ -1,11 +1,6 @@
-import { EnvironmentId } from "@t3tools/contracts";
-import { WS_METHODS } from "@t3tools/contracts";
+import { EnvironmentId, WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
 import type { ServerProvider } from "@t3tools/contracts";
-import {
-  makeWsRpcProtocolClient,
-  type RpcSession,
-  type WsRpcProtocolClient,
-} from "@t3tools/client-runtime/rpc";
+import type { RpcSession, WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -38,8 +33,9 @@ export async function connectNativeSession(
   stored: StoredSession,
   appVersion: string,
   onProviders?: (providers: ReadonlyArray<ServerProvider>) => void,
+  signal?: AbortSignal,
 ): Promise<NativeSession> {
-  const socketUrl = await openSocketUrl(stored, appVersion);
+  const socketUrl = await openSocketUrl(stored, appVersion, signal);
   const disconnected = await Effect.runPromise(Deferred.make<never, ConnectionTransientError>());
   const hooks = RpcClient.ConnectionHooks.of({
     onConnect: Effect.void,
@@ -69,7 +65,31 @@ export async function connectNativeSession(
     Layer.provideMerge(Layer.succeed(Scope.Scope, scope)),
   );
   const runtime = makeManagedRuntime(protocolLayer);
-  const client: WsRpcProtocolClient = await runtime.runPromise(makeWsRpcProtocolClient);
+  let client: WsRpcProtocolClient;
+  try {
+    client = await new Promise<WsRpcProtocolClient>((resolve, reject) => {
+      const abort = () => reject(new Error("The connection attempt was aborted."));
+      if (signal?.aborted === true) {
+        abort();
+        return;
+      }
+      signal?.addEventListener("abort", abort);
+      runtime.runPromise(RpcClient.make(WsRpcGroup)).then(
+        (next) => {
+          signal?.removeEventListener("abort", abort);
+          resolve(next);
+        },
+        (cause: unknown) => {
+          signal?.removeEventListener("abort", abort);
+          reject(cause);
+        },
+      );
+    });
+  } catch (cause) {
+    await runtime.dispose().catch(() => undefined);
+    await Effect.runPromise(Scope.close(scope, Exit.void)).catch(() => undefined);
+    throw cause;
+  }
 
   const configFiber =
     onProviders === undefined
@@ -78,6 +98,7 @@ export async function connectNativeSession(
           client[WS_METHODS.subscribeServerConfig]({
             usageLimitsCommand: true,
             usageLimitSources: true,
+            workspaceSnapshotsOnDemand: true,
           }).pipe(
             Stream.runForEach((event) =>
               Effect.sync(() => {
@@ -97,7 +118,7 @@ export async function connectNativeSession(
           new ConnectionTransientError({ reason: "remote-unavailable", detail: String(cause) }),
       ),
     ),
-    subscribeServerConfig: (input) => client[WS_METHODS.subscribeServerConfig](input),
+    subscribeServerConfig: (input) => client[WS_METHODS.subscribeServerConfig](input ?? {}),
     ready: Effect.void,
     probe: client[WS_METHODS.serverGetConfig]({}).pipe(
       Effect.mapError(
@@ -106,6 +127,7 @@ export async function connectNativeSession(
       ),
       Effect.asVoid,
     ),
+    inboundFrames: Effect.succeed(0),
     closed: Deferred.await(disconnected),
   };
 

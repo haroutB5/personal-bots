@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/ChatView.logic.test.ts b/apps/web/src/components/ChatView.logic.test.ts
+index a2708de8bda33eebbe9092abfbbf3e29b4568c8b..ad2003b7285df5418469194155ca79ef650c3e85 100644
+--- a/apps/web/src/components/ChatView.logic.test.ts
++++ b/apps/web/src/components/ChatView.logic.test.ts
+@@ -13,7 +13,7 @@ import {
+   type WorktreeSetupSnapshot,
+ } from "@t3tools/contracts";
+ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+-import { Atom, AsyncResult } from "effect/unstable/reactivity";
++import { Atom, AsyncResult } from "effect/reactivity";
+ import { appAtomRegistry } from "../rpc/atomRegistry";
+ import { environmentThreadDetails } from "../state/threads";
+ 

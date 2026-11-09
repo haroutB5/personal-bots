@@ -1,0 +1,72 @@
+diff --git a/packages/client-runtime/src/pendingRequests.ts b/packages/client-runtime/src/pendingRequests.ts
+index 51488559de86ea5e4830082bd765ec8fa6572edc..69edccbb0597d269abcaf9494c2dfd6662a0ebb5 100644
+--- a/packages/client-runtime/src/pendingRequests.ts
++++ b/packages/client-runtime/src/pendingRequests.ts
+@@ -125,7 +125,7 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
+   const approvals = new Map<ApprovalRequestId, PendingApproval>();
+   const userInputs = new Map<ApprovalRequestId, PendingUserInput>();
+   const closedApprovals = new Set<ApprovalRequestId>();
+-  const closedUserInputs = new Set<ApprovalRequestId>();
++  const closedUserInputs = new Map<ApprovalRequestId, string>();
+ 
+   // Request IDs are unique. A terminal event stays final even when provider
+   // sequences and server-generated activities arrive in a different order.
+@@ -161,7 +161,8 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
+         ...(options.length > 0 ? { options } : {}),
+       });
+     } else if (activity.kind === "user-input.requested") {
+-      if (closedUserInputs.has(requestId)) continue;
++      if ((closedUserInputs.get(requestId) ?? "") >= activity.createdAt) continue;
++      if ((userInputs.get(requestId)?.createdAt ?? "") > activity.createdAt) continue;
+       const questions = parseQuestions(payload.questions);
+       if (questions.length === 0) continue;
+       userInputs.set(requestId, {
+@@ -182,8 +183,12 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
+       (activity.kind === "provider.user-input.respond.failed" &&
+         isStaleRequestFailure(activity.kind, payload))
+     ) {
+-      closedUserInputs.add(requestId);
+-      userInputs.delete(requestId);
++      if ((closedUserInputs.get(requestId) ?? "") < activity.createdAt) {
++        closedUserInputs.set(requestId, activity.createdAt);
++      }
++      if ((userInputs.get(requestId)?.createdAt ?? "") <= activity.createdAt) {
++        userInputs.delete(requestId);
++      }
+     }
+   }
+ 
+@@ -196,3 +201,33 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
+     userInputs: [...userInputs.values()].sort(byCreatedAt),
+   };
+ }
++
++/**
++ * Every question the bot has ever asked on this thread, answered or not.
++ *
++ * `derivePendingRequests` drops a question the moment it resolves, which is
++ * right for "what still blocks the turn" but wrong for a transcript: reopening
++ * a chat would show the bot's reply with no sign of the question it answers.
++ * The asking activity carries the questions, so the record survives a reload.
++ */
++export function deriveUserInputHistory(
++  activities: ReadonlyArray<OrchestrationThreadActivity>,
++): ReadonlyArray<PendingUserInput> {
++  const asked = new Map<ApprovalRequestId, PendingUserInput>();
++  for (const activity of activities) {
++    if (activity.kind !== "user-input.requested") continue;
++    const payload = Predicate.isObject(activity.payload) ? activity.payload : undefined;
++    if (!payload || !isRequestId(payload.requestId)) continue;
++    const questions = parseQuestions(payload.questions);
++    if (questions.length === 0) continue;
++    // A provider can reuse an ID for a later question.
++    if ((asked.get(payload.requestId)?.createdAt ?? "") >= activity.createdAt) continue;
++    asked.set(payload.requestId, {
++      requestId: payload.requestId,
++      createdAt: activity.createdAt,
++      questions,
++      dismissible: payload.responseMode === "message",
++    });
++  }
++  return [...asked.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
++}

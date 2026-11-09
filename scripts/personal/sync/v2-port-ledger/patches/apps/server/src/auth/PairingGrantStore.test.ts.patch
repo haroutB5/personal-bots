@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/auth/PairingGrantStore.test.ts b/apps/server/src/auth/PairingGrantStore.test.ts
+index beb07627c66a473d2938e53d1119079e2c3188ae..2873d6367cc6a1932354c85963482453b0d1c7eb 100644
+--- a/apps/server/src/auth/PairingGrantStore.test.ts
++++ b/apps/server/src/auth/PairingGrantStore.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";

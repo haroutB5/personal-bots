@@ -1,0 +1,20 @@
+diff --git a/apps/web/src/components/ui/alert-dialog.tsx b/apps/web/src/components/ui/alert-dialog.tsx
+index 2dae216fa88a706b1778f4847a8394d3654fe07f..b416a65d4a02929138e2b46752e13b2baafe55c8 100644
+--- a/apps/web/src/components/ui/alert-dialog.tsx
++++ b/apps/web/src/components/ui/alert-dialog.tsx
+@@ -1,5 +1,6 @@
+ "use client";
+ 
++import { withBackClose } from "~/components/ui/back-closing-root";
+ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
+ 
+ import { cn } from "~/lib/utils";
+@@ -9,7 +10,7 @@ import {
+   DIALOG_POPUP_CLASS,
+ } from "~/components/ui/dialog-styles";
+ 
+-const AlertDialog = AlertDialogPrimitive.Root;
++const AlertDialog = withBackClose(AlertDialogPrimitive.Root);
+ 
+ const AlertDialogPortal = AlertDialogPrimitive.Portal;
+ 

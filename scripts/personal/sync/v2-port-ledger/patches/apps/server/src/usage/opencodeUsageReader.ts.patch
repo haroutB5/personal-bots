@@ -1,0 +1,246 @@
+diff --git a/apps/server/src/usage/opencodeUsageReader.ts b/apps/server/src/usage/opencodeUsageReader.ts
+index 45d6ef33a58438abbe73e7bb1f243137372565a3..5aaa15f71aed480546a450e3045ccd7c14068b2c 100644
+--- a/apps/server/src/usage/opencodeUsageReader.ts
++++ b/apps/server/src/usage/opencodeUsageReader.ts
+@@ -1,10 +1,10 @@
+-// node:sqlite reads live OpenCode databases; Node fs walks legacy JSON history.
++// A worker thread reads the live OpenCode databases (node:sqlite); Node fs walks legacy JSON history.
+ // @effect-diagnostics nodeBuiltinImport:off
+ import * as NodeFSP from "node:fs/promises";
+ import * as NodePath from "node:path";
+-import * as NodeSqlite from "node:sqlite";
+-import * as NodeTimersPromises from "node:timers/promises";
+-
++import * as NodeWorkerThreads from "node:worker_threads";
++import { OPENCODE_ROWS_WORKER_SOURCE, type OpenCodeRowsResult } from "./opencodeRowsWorker.ts";
++import { makeSliceYield } from "./sliceYield.ts";
+ import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
+ 
+ function object(value: unknown): Record<string, unknown> {
+@@ -21,6 +21,54 @@ function text(value: unknown): string {
+   return typeof value === "string" ? value : "";
+ }
+ 
++/** The message fields usage needs; everything else in a row's JSON is skipped. */
++const MESSAGE_FIELDS = [
++  "role",
++  "model",
++  "modelID",
++  "tokens",
++  "time",
++  "cost",
++  "sessionID",
++  "id",
++] as const;
++
++/**
++ * SQL that hands back only {@link MESSAGE_FIELDS}, as a JSON array in that
++ * order, instead of the row's whole `data`. A message row can carry megabytes
++ * of tool output (the largest in the live store is 12 MB): fetching and
++ * parsing that in JavaScript held the event loop for about 100 ms, while
++ * SQLite skims past it inside one step. `json_valid` first, so a damaged row
++ * reads as no fields (skipped, as before) instead of failing the whole table.
++ */
++const MESSAGE_FIELDS_SQL = `CASE WHEN json_valid(data) THEN json_extract(data, ${MESSAGE_FIELDS.map((field) => `'$.${field}'`).join(", ")}) END`;
++
++/**
++ * `message` rows longer than this are skipped without being read. Message rows
++ * hold a role, a model and token counts, a few KB; the exceptions are user
++ * messages that carry file diffs (the six largest in the live store are 1.1 to
++ * 12.5 MB, all role user, and reading one costs about 100 ms of event loop
++ * when its pages are not cached). Token usage lives on assistant rows.
++ */
++const MAX_MESSAGE_ROW_CHARS = 2_000_000;
++
++/** The projection back as a message object: absent fields stay absent. */
++function messageFromFields(fields: string): Record<string, unknown> | null {
++  let values: unknown;
++  try {
++    values = JSON.parse(fields);
++  } catch {
++    return null;
++  }
++  if (!Array.isArray(values)) return null;
++  const message: Record<string, unknown> = {};
++  MESSAGE_FIELDS.forEach((field, index) => {
++    const value: unknown = values[index];
++    if (value !== null && value !== undefined) message[field] = value;
++  });
++  return message;
++}
++
+ /** OpenCode stores uncached input and reasoning separately from input/output. */
+ function parseOpenCodeMessage(
+   source: string,
+@@ -36,7 +84,17 @@ function parseOpenCodeMessage(
+   } catch {
+     return null;
+   }
+-  const message = object(parsed);
++  return parseOpenCodeMessageObject(object(parsed), fallback);
++}
++
++function parseOpenCodeMessageObject(
++  message: Record<string, unknown>,
++  fallback: {
++    readonly id?: string;
++    readonly sessionId?: string;
++    readonly timestampMs?: number;
++  },
++): UsageRecord | null {
+   if (message.role !== undefined && message.role !== "assistant") return null;
+   const usage = object(message.tokens);
+   const cache = object(usage.cache);
+@@ -64,15 +122,59 @@ function parseOpenCodeMessage(
+     // OpenCode writes zero for models without a known rate, including paid
+     // subscription models. Let the shared price table estimate those records.
+     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+-    fast: false,
++    speed: "standard",
+     dedupeKey: id ? `opencode:${id}` : null,
+   };
+ }
+ 
++/** The worker gets this long to read every database before it is given up on. */
++const WORKER_TIMEOUT_MS = 120_000;
++
++/**
++ * The databases' message rows, fetched on a worker thread (see
++ * `opencodeRowsWorker.ts`). Null when the worker failed or timed out, which the
++ * caller reports as a partial source.
++ */
++function readRowsInWorker(
++  root: string,
++  names: ReadonlyArray<string>,
++  sinceMs: number,
++): Promise<ReadonlyArray<OpenCodeRowsResult> | null> {
++  return new Promise((resolve) => {
++    let settled = false;
++    const worker = new NodeWorkerThreads.Worker(OPENCODE_ROWS_WORKER_SOURCE, {
++      eval: true,
++      workerData: {
++        root,
++        names,
++        sinceMs,
++        fieldsSql: MESSAGE_FIELDS_SQL,
++        maxRowChars: MAX_MESSAGE_ROW_CHARS,
++      },
++      // Rows are a few hundred bytes each; this only bounds a runaway.
++      resourceLimits: { maxOldGenerationSizeMb: 512 },
++    });
++    const finish = (value: ReadonlyArray<OpenCodeRowsResult> | null) => {
++      if (settled) return;
++      settled = true;
++      clearTimeout(timer);
++      void worker.terminate();
++      resolve(value);
++    };
++    // @effect-diagnostics-next-line globalTimers:off - a plain promise around a worker, outside any fiber
++    const timer = setTimeout(() => finish(null), WORKER_TIMEOUT_MS);
++    worker.once("message", (value: ReadonlyArray<OpenCodeRowsResult>) => finish(value));
++    worker.once("error", () => finish(null));
++    worker.once("exit", () => finish(null));
++  });
++}
++
+ export interface OpenCodeUsageReadResult {
+   readonly files: readonly { readonly path: string; readonly records: readonly UsageRecord[] }[];
+   readonly missing: boolean;
+   readonly error: boolean;
++  /** `message` rows over the size cap that were not read (user messages carrying file diffs). */
++  readonly skippedRows: number;
+ }
+ 
+ /** Reads current SQLite and pre-migration JSON stores without modifying either. */
+@@ -82,8 +184,12 @@ export async function readOpenCodeUsage(
+ ): Promise<OpenCodeUsageReadResult> {
+   const files: { path: string; records: UsageRecord[] }[] = [];
+   const seen = new Set<string>();
++  // Message rows run to several KB of JSON each, so a fixed count of rows per
++  // yield is not a bound on how long the loop holds the event loop; time is.
++  const slice = makeSliceYield();
+   let found = false;
+   let error = false;
++  let skippedRows = 0;
+   const append = (records: UsageRecord[], record: UsageRecord | null) => {
+     if (record === null || record.timestampMs < sinceMs) return;
+     if (record.dedupeKey !== null) {
+@@ -102,55 +208,27 @@ export async function readOpenCodeUsage(
+   } catch (cause) {
+     if (object(cause).code !== "ENOENT") error = true;
+   }
++  const fetched = databases.length === 0 ? [] : await readRowsInWorker(root, databases, sinceMs);
+   for (const name of databases) {
+     found = true;
+     const file = { path: NodePath.join(root, name), records: [] as UsageRecord[] };
+     files.push(file);
+-    let database: NodeSqlite.DatabaseSync | undefined;
+-    try {
+-      database = new NodeSqlite.DatabaseSync(NodePath.join(root, name), { readOnly: true });
+-      // A busy live provider should fail this source promptly rather than
+-      // stalling the server while SQLite waits for its writer.
+-      database.exec("PRAGMA busy_timeout = 100");
+-      const tables = new Set(
+-        database
+-          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+-          .all()
+-          .map((row) => row.name),
+-      );
+-      if (!tables.has("message") && !tables.has("session_message")) error = true;
+-      for (const table of ["message", "session_message"] as const) {
+-        if (!tables.has(table)) continue;
+-        const columns = new Set(
+-          database
+-            .prepare(`PRAGMA table_info(${table})`)
+-            .all()
+-            .map((row) => row.name),
+-        );
+-        const timestamp = columns.has("time_created") ? "time_created" : "NULL";
+-        const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
+-        if (timestamp !== "NULL") predicates.push("time_created >= ?");
+-        const where = predicates.length > 0 ? ` WHERE ${predicates.join(" AND ")}` : "";
+-        const statement = database.prepare(
+-          `SELECT id, session_id, data, ${timestamp} AS created FROM ${table}${where}`,
+-        );
+-        let count = 0;
+-        for (const row of statement.iterate(...(timestamp === "NULL" ? [] : [sinceMs]))) {
+-          append(
+-            file.records,
+-            parseOpenCodeMessage(text(row.data), {
+-              id: text(row.id),
+-              sessionId: text(row.session_id),
+-              ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
++    const result = fetched?.find((candidate) => candidate.name === name);
++    if (result === undefined || result.error) error = true;
++    skippedRows += result?.skipped ?? 0;
++    for (const [id, sessionId, fields, created] of result?.rows ?? []) {
++      const message = messageFromFields(text(fields));
++      append(
++        file.records,
++        message === null
++          ? null
++          : parseOpenCodeMessageObject(message, {
++              id: text(id),
++              sessionId: text(sessionId),
++              ...(typeof created === "number" ? { timestampMs: created } : {}),
+             }),
+-          );
+-          if (++count % 256 === 0) await NodeTimersPromises.setImmediate();
+-        }
+-      }
+-    } catch {
+-      error = true;
+-    } finally {
+-      database?.close();
++      );
++      if (slice.due()) await slice.yieldNow();
+     }
+   }
+ 
+@@ -184,5 +262,5 @@ export async function readOpenCodeUsage(
+       if (object(cause).code !== "ENOENT") error = true;
+     }
+   }
+-  return { files, missing: !found && !error, error };
++  return { files, missing: !found && !error, error, skippedRows };
+ }

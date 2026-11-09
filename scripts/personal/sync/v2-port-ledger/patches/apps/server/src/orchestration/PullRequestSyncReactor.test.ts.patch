@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/PullRequestSyncReactor.test.ts b/apps/server/src/orchestration/PullRequestSyncReactor.test.ts
+index 1339cd2e3cf4e152893171448686e1cf0137304d..898d46989be8fbd60cf983f717b9e8fe16795cd0 100644
+--- a/apps/server/src/orchestration/PullRequestSyncReactor.test.ts
++++ b/apps/server/src/orchestration/PullRequestSyncReactor.test.ts
+@@ -16,7 +16,7 @@ import {
+   type ThreadPullRequestSnapshot,
+ } from "@t3tools/contracts";
+ import { assert, describe, it } from "@effect/vitest";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";

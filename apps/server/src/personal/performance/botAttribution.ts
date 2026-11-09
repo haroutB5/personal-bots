@@ -6,7 +6,7 @@
  * 1. **The command line.** A Claude CLI names the session it runs
  *    (`--session-id=<uuid>` for a chat that started one, `--resume=<uuid>` for
  *    a chat that continues one). The chat that resumes that session is the bot
- *    (`provider_session_runtime.resume_cursor_json`, `$.resume`). Claude and
+ *    (the provider-sessions relation's `resume_cursor_json`, `$.resume`). Claude and
  *    DeepSeek bots both run this CLI, and their ids do not collide.
  * 2. **The recorded PID.** A Codex app-server names nothing on its command
  *    line, so its spawn site recorded the PID under the chat

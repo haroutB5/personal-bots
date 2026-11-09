@@ -1,0 +1,13 @@
+diff --git a/infra/relay/src/agentActivity/FcmDeliveries.ts b/infra/relay/src/agentActivity/FcmDeliveries.ts
+index 8f830a8af7b4641020a0397c7672d870735d35c8..adb0d80a16fed0dbadd9502952156e9c9ac43970 100644
+--- a/infra/relay/src/agentActivity/FcmDeliveries.ts
++++ b/infra/relay/src/agentActivity/FcmDeliveries.ts
+@@ -5,7 +5,7 @@ import {
+   RelayAgentAwarenessPreferences,
+   type RelayDeliveryResult,
+ } from "@t3tools/contracts/relay";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import type * as PlatformError from "effect/PlatformError";
+ import * as Context from "effect/Context";
+ import * as DateTime from "effect/DateTime";

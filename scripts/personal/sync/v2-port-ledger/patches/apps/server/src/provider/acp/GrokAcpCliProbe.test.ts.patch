@@ -1,0 +1,21 @@
+diff --git a/apps/server/src/provider/acp/GrokAcpCliProbe.test.ts b/apps/server/src/provider/acp/GrokAcpCliProbe.test.ts
+index ad6eaac1b52138d8742c021e9162ef990f56f9b6..d1fbdd5992e34f58f2bde48b97a0fa7c00ceff49 100644
+--- a/apps/server/src/provider/acp/GrokAcpCliProbe.test.ts
++++ b/apps/server/src/provider/acp/GrokAcpCliProbe.test.ts
+@@ -8,14 +8,14 @@
+  * agent's `authenticate` request will fail and the test will surface
+  * the error.
+  */
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Deferred from "effect/Deferred";
+ import * as Fiber from "effect/Fiber";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Stream from "effect/Stream";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import { describe, expect } from "vite-plus/test";
+ 
+ import { makeGrokAcpRuntime } from "./GrokAcpSupport.ts";

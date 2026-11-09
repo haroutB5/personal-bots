@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { memo, useMemo } from "react";
+import { memo } from "react";
 
 import type {
   EnvironmentId,
@@ -10,12 +10,12 @@ import type {
 import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 
-import { useThreadShells } from "~/state/entities";
 import { useLazyThreadShells } from "~/state/lazyThreadShells";
 
 import { BotAvatar } from "./BotAvatar";
 import { ROW_CLASS } from "./BotRow";
 import { splitSnippet } from "./chatSearch";
+import { useBotShells } from "./useBotShells";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { activeGroupMembers } from "./groupModel";
 import { requestMessageJump } from "./pendingMessageJump";
@@ -162,28 +162,17 @@ export function MessageSearchResults({
 }): JSX.Element | null {
   const search = useMessageSearch(environmentId, query);
   // Hits in archived chats need their titles, which the connect-time shell leaves out.
-  const hitThreadIds = useMemo(
-    () => search.hits.filter((hit) => hit.groupId === null).map((hit) => hit.threadId as string),
-    [search.hits],
-  );
+  const hitThreadIds = search.hits
+    .filter((hit) => hit.groupId === null)
+    .map((hit) => hit.threadId as string);
   useLazyThreadShells(environmentId, { threadIds: hitThreadIds });
-  const shells = useThreadShells();
-  const titles = useMemo(() => {
-    const byId = new Map<string, string>();
-    for (const shell of shells) {
-      if (environmentId !== null && shell.environmentId !== environmentId) continue;
-      if (shell.title.trim().length > 0) byId.set(shell.id as string, shell.title);
-    }
-    return byId;
-  }, [environmentId, shells]);
-  const botsById = useMemo(
-    () => new Map(bots.map((bot) => [bot.botId as string, bot] as const)),
-    [bots],
-  );
-  const groupsById = useMemo(
-    () => new Map(groups.map((group) => [group.groupId as string, group] as const)),
-    [groups],
-  );
+  const shells = useBotShells(environmentId);
+  const titles = new Map<string, string>();
+  for (const shell of shells) {
+    if (shell.title.trim().length > 0) titles.set(shell.id as string, shell.title);
+  }
+  const botsById = new Map(bots.map((bot) => [bot.botId as string, bot] as const));
+  const groupsById = new Map(groups.map((group) => [group.groupId as string, group] as const));
 
   if (search.hits.length === 0) {
     return search.status === "loading" ? (

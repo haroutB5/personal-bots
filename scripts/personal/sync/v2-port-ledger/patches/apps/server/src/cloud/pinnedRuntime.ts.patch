@@ -1,0 +1,29 @@
+diff --git a/apps/server/src/cloud/pinnedRuntime.ts b/apps/server/src/cloud/pinnedRuntime.ts
+index 892ed4bcaba156b1983e8118f6ebd9be2a5bf326..3c04e4960d103bac17b6e60eeb74bd32390ff412 100644
+--- a/apps/server/src/cloud/pinnedRuntime.ts
++++ b/apps/server/src/cloud/pinnedRuntime.ts
+@@ -1,13 +1,13 @@
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Hex from "effect/encoding/Hex";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Option from "effect/Option";
+ import * as Stream from "effect/Stream";
+ import * as Semaphore from "effect/Semaphore";
+-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ 
+ import {
+   CLI_RELEASE_CHECKSUMS_FILE,
+@@ -224,7 +224,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
+     catch: (cause) =>
+       new PinnedRuntimeInstallError({ step: "verifying the t3 release archive", cause }),
+   });
+-  if (Encoding.encodeHex(new Uint8Array(digest)) !== expected) {
++  if (Hex.encode(new Uint8Array(digest)) !== expected) {
+     return yield* new PinnedRuntimeInstallError({
+       step: "verifying the t3 release archive checksum",
+     });

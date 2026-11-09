@@ -1,17 +1,8 @@
 // @effect-diagnostics globalTimers:off -- startup/stop deadlines belong to the worker's own lifecycle.
-/**
- * One serialized `node:sqlite` connection on a worker thread.
- *
- * The server's database used to run on the process's main thread, where every
- * `StatementSync.all/run` blocked the event loop for as long as the disk took
- * (one memory SELECT held it for 4.55 s). This module starts one worker that
- * owns one connection and answers requests strictly in arrival order, so the
- * main thread only pays message passing and result copying.
- *
- * The worker is intentionally synchronous: while a statement runs the worker
- * cannot read another message, which is what keeps ordering and whole
- * transactions intact. `T3CODE_SQLITE_WORKER=off` restores the in-thread path.
- */
+/** One serialized `node:sqlite` connection on a worker thread. The worker
+ * runs statements synchronously, so ordering and whole transactions hold;
+ * the main thread only pays message passing. `T3CODE_SQLITE_WORKER=off`
+ * restores the in-thread path. */
 import * as NodeWorkerThreads from "node:worker_threads";
 
 export const SQLITE_WORKER_ENV = "T3CODE_SQLITE_WORKER";
@@ -379,7 +370,7 @@ export class SqliteWorkerClient {
         abandoned: false,
       });
       try {
-        // oxlint-disable-next-line unicorn/require-post-message-target-origin
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
         this.worker.postMessage({ id, op: "close" });
       } catch {
         finish();

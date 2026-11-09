@@ -1,0 +1,75 @@
+diff --git a/apps/server/src/startupAccess.ts b/apps/server/src/startupAccess.ts
+index 7df131669babc6a2fc643b81d1e9f628c6bc23e5..2465cd9594f0195c7a7f25c93eb4342c726186e2 100644
+--- a/apps/server/src/startupAccess.ts
++++ b/apps/server/src/startupAccess.ts
+@@ -2,7 +2,7 @@ import * as NodeOS from "node:os";
+ 
+ import { QrCode } from "@t3tools/shared/qrCode";
+ import * as Effect from "effect/Effect";
+-import { HttpServer } from "effect/unstable/http";
++import { HttpServer } from "effect/http";
+ 
+ import { ServerConfig } from "./config.ts";
+ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+@@ -130,14 +130,40 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo):
+     "",
+   ].join("\n");
+ 
+-export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
++/**
++ * What `serve` prints when stdout is not an interactive console (a log file, a
++ * pipe): the pairing token, URL and QR are credentials, so they stay out of it.
++ */
++export const formatHeadlessServeLogOutput = (connectionString: string): string =>
++  [
++    "T3 Code server is ready.",
++    `Connection string: ${connectionString}`,
++    "Pairing token not printed: output is not an interactive console.",
++    "For a pairing link run scripts\\personal\\pair.ps1 (or `t3 pair`).",
++    "",
++  ].join("\n");
++
++/**
++ * Credentials are printed only to an interactive console. T3CODE_STARTUP_PRINT_TOKEN=on
++ * restores the upstream behaviour for a headless host that reads its token from a log.
++ */
++export const shouldPrintStartupToken = (
++  stdout: { readonly isTTY?: boolean | undefined } = process.stdout,
++  env: Readonly<Record<string, string | undefined>> = process.env,
++): boolean => stdout.isTTY === true || env.T3CODE_STARTUP_PRINT_TOKEN === "on";
++
++const resolveServeConnectionString = Effect.gen(function* () {
+   const serverConfig = yield* ServerConfig;
+   const httpServer = yield* HttpServer.HttpServer;
+-  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+-  const connectionString = resolveHeadlessConnectionString(
++  return resolveHeadlessConnectionString(
+     serverConfig.host,
+     resolveListeningPort(httpServer.address, serverConfig.port),
+   );
++});
++
++export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
++  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
++  const connectionString = yield* resolveServeConnectionString;
+   const issued = yield* serverAuth.issueStartupPairingCredential();
+ 
+   return {
+@@ -146,3 +172,17 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
+     pairingUrl: buildPairingUrl(connectionString, issued.credential),
+   } satisfies HeadlessServeAccessInfo;
+ });
++
++/**
++ * The text `serve` prints once it is ready. The startup credential is issued only
++ * when it is going to be shown: a non-interactive start mints nothing, so no
++ * unused admin credential is left in the pairing table either.
++ */
++export const prepareHeadlessServeOutput = Effect.fn("prepareHeadlessServeOutput")(function* (
++  printToken: boolean,
++) {
++  if (printToken) {
++    return formatHeadlessServeOutput(yield* issueHeadlessServeAccessInfo());
++  }
++  return formatHeadlessServeLogOutput(yield* resolveServeConnectionString);
++});

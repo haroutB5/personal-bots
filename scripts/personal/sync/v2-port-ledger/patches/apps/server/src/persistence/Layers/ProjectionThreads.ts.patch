@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/persistence/Layers/ProjectionThreads.ts b/apps/server/src/persistence/Layers/ProjectionThreads.ts
+index 595bc0b5594c33de9db2b7dede5690b0090d9a3a..43b21a7e5b7ebf9cf8449e6a1c56117408851a1b 100644
+--- a/apps/server/src/persistence/Layers/ProjectionThreads.ts
++++ b/apps/server/src/persistence/Layers/ProjectionThreads.ts
+@@ -1,5 +1,5 @@
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Schema from "effect/Schema";

@@ -1,0 +1,97 @@
+import {
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadDetailSnapshot as ThreadSnapshot,
+  type ServerConfig,
+  type ThreadId,
+  type VcsListRefsResult,
+} from "@t3tools/contracts";
+import { ConnectionPersistenceError, Persistence } from "@t3tools/client-runtime/platform";
+import { Directory, File, Paths } from "expo-file-system";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
+
+const CACHE_DIRECTORY = "hbots-thread-cache";
+
+function cacheRoot(): Directory {
+  const root = new Directory(Paths.document, CACHE_DIRECTORY);
+  if (!root.exists) root.create({ intermediates: true });
+  return root;
+}
+
+function safeKey(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function threadFile(environmentId: string, threadId: string): File {
+  return new File(cacheRoot(), `thread-${safeKey(environmentId)}-${safeKey(threadId)}.json`);
+}
+
+function persistenceError(
+  operation: ConnectionPersistenceError["operation"],
+  cause: unknown,
+): ConnectionPersistenceError {
+  return new ConnectionPersistenceError({
+    operation,
+    message: cause instanceof Error ? cause.message : String(cause),
+  });
+}
+
+export async function readCachedThread(
+  environmentId: string,
+  threadId: string,
+): Promise<Option.Option<ThreadSnapshot>> {
+  const file = threadFile(environmentId, threadId);
+  if (!file.exists) return Option.none();
+  return Option.some(decodeThreadSnapshotJson(JSON.parse(await file.text()) as unknown));
+}
+
+export function writeCachedThread(environmentId: string, snapshot: ThreadSnapshot): void {
+  threadFile(environmentId, snapshot.projection.thread.id).write(JSON.stringify(snapshot));
+}
+
+/**
+ * A thread's last settled detail, kept as one file. A chat opened again in a
+ * new run paints from here before the socket catches up, which is what keeps a
+ * cached open under the 150 ms budget.
+ */
+export function createNativeEnvironmentCache(): Persistence.EnvironmentCacheStore["Service"] {
+  return Persistence.EnvironmentCacheStore.of({
+    loadShell: () => Effect.succeed(Option.none<OrchestrationV2ShellSnapshot>()),
+    saveShell: () => Effect.void,
+    loadThread: (environmentId, threadId: ThreadId) =>
+      Effect.tryPromise({
+        try: () => readCachedThread(environmentId, threadId),
+        catch: (cause) => persistenceError("load-thread", cause),
+      }),
+    saveThread: (environmentId, snapshot) =>
+      Effect.try({
+        try: () => writeCachedThread(environmentId, snapshot),
+        catch: (cause) => persistenceError("save-thread", cause),
+      }),
+    removeThread: (environmentId, threadId) =>
+      Effect.try({
+        try: () => {
+          const file = threadFile(environmentId, threadId);
+          if (file.exists) file.delete();
+        },
+        catch: (cause) => persistenceError("remove-thread", cause),
+      }),
+    loadServerConfig: () => Effect.succeed(Option.none<ServerConfig>()),
+    saveServerConfig: () => Effect.void,
+    loadVcsRefs: () => Effect.succeed(Option.none<VcsListRefsResult>()),
+    saveVcsRefs: () => Effect.void,
+    removeVcsRefs: () => Effect.void,
+    clearVcsRefs: () => Effect.void,
+    clear: () =>
+      Effect.try({
+        try: () => {
+          for (const entry of cacheRoot().list()) {
+            if (entry instanceof File) entry.delete();
+          }
+        },
+        catch: (cause) => persistenceError("clear-environment", cause),
+      }),
+  });
+}

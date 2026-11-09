@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/environmentHttpAuth.ts b/packages/client-runtime/src/state/environmentHttpAuth.ts
+index 29dd08f9f188616095d3a14ee02dc99fd4098bee..0e70095b82bb92455f505034578c2bba7dc816b7 100644
+--- a/packages/client-runtime/src/state/environmentHttpAuth.ts
++++ b/packages/client-runtime/src/state/environmentHttpAuth.ts
+@@ -1,7 +1,7 @@
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import * as Result from "effect/Result";
+-import { FetchHttpClient, type HttpMethod } from "effect/unstable/http";
++import { FetchHttpClient, type HttpMethod } from "effect/http";
+ 
+ import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+ import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";

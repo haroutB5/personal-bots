@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/orchestration/decider.import.test.ts b/apps/server/src/orchestration/decider.import.test.ts
+index c809c733800a14b4d8789e4890f092d5e2e074d8..759b974798da916c06b419bb8959aef5e9995cdd 100644
+--- a/apps/server/src/orchestration/decider.import.test.ts
++++ b/apps/server/src/orchestration/decider.import.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import {
+   CommandId,

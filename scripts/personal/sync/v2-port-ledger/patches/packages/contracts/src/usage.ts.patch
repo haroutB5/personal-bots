@@ -1,0 +1,29 @@
+diff --git a/packages/contracts/src/usage.ts b/packages/contracts/src/usage.ts
+index 97db8594379a7b3b8402dc1c7c9c6e3b14c21e95..cf9e548f81ab7947f6ef199040760b38b476b02e 100644
+--- a/packages/contracts/src/usage.ts
++++ b/packages/contracts/src/usage.ts
+@@ -20,13 +20,13 @@ import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from ".
+  * Adding providers or other array-element variants is additive: unknown
+  * entries are skipped on decode and do not require a version bump.
+  */
+-export const USAGE_CONTRACT_VERSION = 6 as const;
++export const USAGE_CONTRACT_VERSION = 7 as const;
+ 
+ /**
+  * Oldest {@link UsageSummary} version a current client will still merge.
+  *
+- * v5/v6 add providers and optional source attribution; v4 Claude/Codex
+- * buckets remain valid in mixed-version environments.
++ * v5/v6 add providers and optional source attribution, v7 adds DeepSeek;
++ * v4 Claude/Codex buckets remain valid in mixed-version environments.
+  */
+ export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
+ 
+@@ -37,6 +37,7 @@ export const UsageProviderKind = Schema.Literals([
+   "cursor",
+   "opencode",
+   "antigravity",
++  "deepseek",
+ ]);
+ export type UsageProviderKind = typeof UsageProviderKind.Type;
+ 

@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { memo, useMemo, useState } from "react";
+import { memo, useState } from "react";
 
 import type { EnvironmentId, PersonalBot, PersonalTask } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -8,7 +8,8 @@ import { Check, Ellipsis, X } from "lucide-react";
 import { workEntryDisplayLabel } from "~/components/chat/MessagesTimeline.logic";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
-import { deriveWorkLogEntries, type WorkLogEntry } from "~/session-logic";
+import { deriveWorkLogEntries } from "@hbots/personal-client/conversation/timeline";
+import type { WorkLogEntry } from "@hbots/personal-client/conversation/types";
 import { useThreadDetail } from "~/state/entities";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -87,16 +88,13 @@ export const DelegationCard = memo(function DelegationCard({
   // is the lead's own line and stays). Its thread is not even read.
   const hidden = bot !== null && hidesBotPreviews(bot);
   // Steps only show while the child runs, so only then is its thread read.
-  const childRef = useMemo(
-    () =>
-      task.status === "running" && task.threadId !== null && !hidden
-        ? { environmentId, threadId: task.threadId }
-        : null,
-    [environmentId, hidden, task.status, task.threadId],
-  );
+  const childRef =
+    task.status === "running" && task.threadId !== null && !hidden
+      ? { environmentId, threadId: task.threadId }
+      : null;
   const childThread = useThreadDetail(childRef);
   const activities = childThread?.activities ?? NO_ACTIVITIES;
-  const entries = useMemo(() => deriveWorkLogEntries(activities), [activities]);
+  const entries = deriveWorkLogEntries(activities);
   const derived = deriveDelegationCard({
     task,
     entries,
@@ -138,7 +136,7 @@ export const DelegationCard = memo(function DelegationCard({
           to="/bots/$botId/$threadId"
           params={{ botId: task.botId, threadId }}
           aria-label={`Open ${name}'s chat for this task`}
-          className="absolute inset-0 rounded-[var(--personal-radius-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="absolute inset-0 rounded-[var(--personal-radius-card)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         />
       )}
       <div className="relative flex min-w-0 items-center gap-3">
@@ -168,7 +166,7 @@ export const DelegationCard = memo(function DelegationCard({
             disabled={cancelling}
             aria-busy={cancelling}
             onClick={() => void onCancel()}
-            className="flex h-9 shrink-0 items-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-[13px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+            className="flex h-9 shrink-0 items-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-[13px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
           >
             {task.status === "running" ? "Interrupt" : "Cancel"}
           </button>
@@ -180,7 +178,7 @@ export const DelegationCard = memo(function DelegationCard({
                 <button
                   type="button"
                   aria-label={`Options for ${name}'s task`}
-                  className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                  className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
                 />
               }
             >

@@ -9,18 +9,18 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { withStallJob } from "../observability/stallJobs.ts";
 import { botUsageTotalTokens } from "../usage/botUsage.ts";
+import { UsageService } from "../usage/UsageService.ts";
 import { providerSessionHistoryEnabled } from "../usage/providerSessions.ts";
-import * as UsageService from "../usage/UsageService.ts";
 import {
   buildSessionOwners,
   computeTokenUsageWindows,
   dayInZone,
-  tokenUsageWindowRanges,
   type ChatSessionRow,
 } from "./botTokenUsage.ts";
 import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
@@ -72,7 +72,7 @@ interface ZoneEntry {
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;
-  const usage = yield* UsageService.UsageService;
+  const usage = yield* UsageService;
 
   const zones = new Map<string, ZoneEntry>();
 
@@ -130,11 +130,12 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const startedAtMs = yield* Clock.currentTimeMillis;
       const today = dayInZone(startedAtMs, timeZone);
-      const month = tokenUsageWindowRanges(today).find((range) => range.id === "month")!;
 
       const scan = yield* usage.readSessionUsage({
         timeZone,
-        sinceDay: month.sinceDay,
+        sinceDay: new Date(Date.parse(`${today}T00:00:00Z`) - 29 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10),
         untilDay: today,
       });
       // The chats are read after the scan, so a chat that started while it ran is mapped.
@@ -230,7 +231,12 @@ export const make = Effect.gen(function* () {
       } satisfies PersonalBotTokenUsageResult;
     });
 
-  return { read } as const;
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
+  return { read: asRead(read) } as const;
 });
 
 export const layer = Layer.effect(PersonalBotTokenUsage, make);

@@ -1,11 +1,11 @@
 // @effect-diagnostics globalTimers:off -- real time is the point: the interrupt must land while the dispatch is in flight. Tests only.
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   PersonalBotId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -14,35 +14,36 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemoryWorker } from "../persistence/Layers/Sqlite.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 import { personalThreadLinkIntentKey } from "./personalThreadLinkRepair.ts";
+import { personalTestDatabase } from "./test/personalReadsTestLayer.ts";
 
 /**
- * QA's 1.66.70 blocker, at the service boundary and on the real worker:
- * `personalBots.createThread` must leave the chat's bot link behind even when
- * the requesting fiber is interrupted (a browser that disconnects) while the
- * thread.create dispatch is still returning.
+ * QA's 1.66.70 blocker, at the service boundary: `personalBots.createThread`
+ * must leave the chat's bot link behind even when the requesting fiber is
+ * interrupted (a browser that disconnects) while the thread.create dispatch is
+ * still returning.
  *
- * The test clock is not used for the dispatch delay on purpose: it has to be
- * real time, so the interrupt reaches the service while the dispatch is still
- * in flight.
+ * The engine seam is doubled with a real-time delay: it is the dispatch that
+ * has to still be in flight when the interrupt lands, so the test clock is not
+ * used here.
  */
 
 interface TestContext {
-  readonly dispatched: Array<OrchestrationCommand>;
+  readonly calls: Array<{
+    readonly type: "createThread" | "deleteThread";
+    readonly threadId: ThreadId;
+  }>;
   onThreadCreate?: (() => void) | undefined;
   onThreadDelete?: (() => void) | undefined;
 }
 
-const context: TestContext = { dispatched: [] };
+const context: TestContext = { calls: [] };
 
 const realDelay = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -68,43 +69,43 @@ const provider = (): ServerProvider =>
     ],
   }) as unknown as ServerProvider;
 
-const testLayer = PersonalBotService.layer.pipe(
+const engineLayer = Layer.mock(PersonalEngine.PersonalEngine)({
+  createProject: (input) =>
+    Effect.succeed(input.projectId ?? ProjectId.make("personal-worker-test-project")),
+  getProject: () => Effect.succeed(Option.none()),
+  listProjects: () => Effect.succeed([]),
+  createThread: (input) =>
+    Effect.gen(function* () {
+      const threadId = input.threadId ?? ThreadId.make("personal-worker-test-thread");
+      context.calls.push({ type: "createThread", threadId });
+      // A real dispatch returns only after its command has landed. The
+      // wait is where a disconnecting client's interrupt arrives.
+      context.onThreadCreate?.();
+      context.onThreadCreate = undefined;
+      yield* realDelay(150);
+      return threadId;
+    }),
+  updateMeta: () => Effect.void,
+  getThread: () => Effect.succeed(Option.none()),
+  stop: () => Effect.void,
+  deleteThread: (threadId) =>
+    Effect.gen(function* () {
+      context.calls.push({ type: "deleteThread", threadId });
+      context.onThreadDelete?.();
+      context.onThreadDelete = undefined;
+      yield* realDelay(150);
+    }),
+});
+
+const testLayer = PersonalBotService.layerRequiringEngine.pipe(
+  Layer.provideMerge(engineLayer),
   Layer.provideMerge(PersonalBotRepository.layer),
-  // Explicit worker mode: this is the path the regression came from.
-  Layer.provideMerge(SqlitePersistenceMemoryWorker),
-  Layer.provideMerge(
-    Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-      dispatch: (command: OrchestrationCommand) =>
-        Effect.gen(function* () {
-          context.dispatched.push(command);
-          // A real dispatch returns only after its command has landed. The
-          // wait is where a disconnecting client's interrupt arrives.
-          if (command.type === "thread.create") {
-            context.onThreadCreate?.();
-            context.onThreadCreate = undefined;
-            yield* realDelay(150);
-          }
-          if (command.type === "thread.delete") {
-            context.onThreadDelete?.();
-            context.onThreadDelete = undefined;
-            yield* realDelay(150);
-          }
-          return { sequence: context.dispatched.length };
-        }),
-      streamDomainEvents: Stream.never,
-    } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-  ),
   Layer.provideMerge(
     Layer.mock(PersonalProviders)({
       listProviders: () => Effect.sync(() => [provider()]),
     }),
   ),
-  Layer.provideMerge(
-    Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-      getProjectShellById: () => Effect.succeed(Option.none()),
-      getProjectShells: () => Effect.succeed([]),
-    } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-  ),
+  Layer.provideMerge(personalTestDatabase),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-worker-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -126,7 +127,7 @@ const botInput = (botId: string) =>
 
 it.effect("a disconnect during createThread still links the chat (worker mode)", () =>
   Effect.gen(function* () {
-    context.dispatched.length = 0;
+    context.calls.length = 0;
     const service = yield* PersonalBotService.PersonalBotService;
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
     const sql = yield* SqlClient.SqlClient;
@@ -163,7 +164,7 @@ it.effect("a disconnect during createThread still links the chat (worker mode)",
 
 it.effect("a retried createThread links a projection whose link is missing", () =>
   Effect.gen(function* () {
-    context.dispatched.length = 0;
+    context.calls.length = 0;
     const service = yield* PersonalBotService.PersonalBotService;
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
     const sql = yield* SqlClient.SqlClient;
@@ -183,7 +184,7 @@ it.effect("a retried createThread links a projection whose link is missing", () 
 
 it.effect("a disconnect during deleteThread removes the link too (worker mode)", () =>
   Effect.gen(function* () {
-    context.dispatched.length = 0;
+    context.calls.length = 0;
     const service = yield* PersonalBotService.PersonalBotService;
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
     const bot = yield* service.create(botInput("bot-delete"));

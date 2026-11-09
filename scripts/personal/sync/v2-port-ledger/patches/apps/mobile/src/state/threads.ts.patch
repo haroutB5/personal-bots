@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/threads.ts b/apps/mobile/src/state/threads.ts
+index ce0097635ac438769587ef01387e2b94b45ebc9f..d91829581af1c5b045aa3ce295b98e610772902c 100644
+--- a/apps/mobile/src/state/threads.ts
++++ b/apps/mobile/src/state/threads.ts
+@@ -9,7 +9,7 @@ import {
+ } from "@t3tools/client-runtime/state/threads";
+ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import { environmentCatalog } from "../connection/catalog";
+ import { connectionAtomRuntime } from "../connection/runtime";

@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -1080,9 +1081,14 @@ export const make = Effect.gen(function* () {
           ),
         ).pipe(Effect.asVoid);
 
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
   return {
-    list,
-    get,
+    list: asRead(list),
+    get: asRead(get),
     create,
     update,
     remove,

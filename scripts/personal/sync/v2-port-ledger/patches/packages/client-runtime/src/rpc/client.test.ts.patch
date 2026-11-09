@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/rpc/client.test.ts b/packages/client-runtime/src/rpc/client.test.ts
+index 032603f28a96b67b377b9d1887c65dba10a096bb..11d62fbff84d8d34024d1ed02471b6c05770bd24 100644
+--- a/packages/client-runtime/src/rpc/client.test.ts
++++ b/packages/client-runtime/src/rpc/client.test.ts
+@@ -21,7 +21,7 @@ import * as Ref from "effect/Ref";
+ import * as Stream from "effect/Stream";
+ import * as SubscriptionRef from "effect/SubscriptionRef";
+ import * as TestClock from "effect/testing/TestClock";
+-import { RpcClientError } from "effect/unstable/rpc";
++import { RpcClientError } from "effect/rpc";
+ 
+ import {
+   AVAILABLE_CONNECTION_STATE,

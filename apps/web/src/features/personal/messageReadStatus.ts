@@ -1,8 +1,6 @@
-import {
-  readPersonalFollowUp,
-  type OrchestrationLatestTurn,
-  type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+import type { OrchestrationLatestTurn } from "@hbots/personal-client/bots/threadShell";
+import type { OrchestrationThreadActivity } from "@hbots/personal-client/conversation/wireTypes";
+import { readPersonalFollowUp } from "@t3tools/contracts";
 
 import type { ConversationItem } from "./conversationModel";
 

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/project/AgentSessionImporter.ts b/apps/server/src/project/AgentSessionImporter.ts
+index bf9eb702ebe52ddf18283054a9129b08f1c3afb4..4b66da066a52ad57eaa3a3bd8322e33707c5d529 100644
+--- a/apps/server/src/project/AgentSessionImporter.ts
++++ b/apps/server/src/project/AgentSessionImporter.ts
+@@ -18,7 +18,7 @@ import {
+   type OrchestrationThread,
+ } from "@t3tools/contracts";
+ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";

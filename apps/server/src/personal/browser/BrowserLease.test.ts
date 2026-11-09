@@ -10,13 +10,13 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as BrowserLease from "./BrowserLease.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 
 const leaseLayer = BrowserLease.layer.pipe(
   Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
 /**
@@ -180,7 +180,7 @@ describe("BrowserLease", () => {
         Effect.provide(
           BrowserLease.layer.pipe(
             Layer.provideMerge(gatedRepository),
-            Layer.provideMerge(SqlitePersistenceMemory),
+            Layer.provideMerge(SqlitePersistence.layerMemory),
           ),
         ),
       );

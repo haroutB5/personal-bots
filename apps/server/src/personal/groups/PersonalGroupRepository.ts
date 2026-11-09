@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -882,37 +883,42 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.map((rows) => rows.length > 0));
 
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
   return {
     transaction,
     insertGroup,
-    getGroup,
-    getGroupByThreadId,
-    listGroups,
+    getGroup: asRead(getGroup),
+    getGroupByThreadId: asRead(getGroupByThreadId),
+    listGroups: asRead(listGroups),
     writeGroup,
     softDeleteGroup,
     insertMember,
-    listMembers,
+    listMembers: asRead(listMembers),
     writeMember,
     removeMember,
-    listMembershipsByBot,
-    getMemberByThreadId,
+    listMembershipsByBot: asRead(listMembershipsByBot),
+    getMemberByThreadId: asRead(getMemberByThreadId),
     insertMessage,
-    getMessageByMessageId,
-    listMessagesAfter,
-    latestSeq,
+    getMessageByMessageId: asRead(getMessageByMessageId),
+    listMessagesAfter: asRead(listMessagesAfter),
+    latestSeq: asRead(latestSeq),
     deleteMessage,
     insertRound,
-    getRound,
+    getRound: asRead(getRound),
     writeRound,
-    latestRoundForGroup,
-    listLiveRounds,
-    getRoundByActiveThread,
+    latestRoundForGroup: asRead(latestRoundForGroup),
+    listLiveRounds: asRead(listLiveRounds),
+    getRoundByActiveThread: asRead(getRoundByActiveThread),
     heartbeat,
     insertVote,
     getVote,
-    listVotesForRound,
-    listPendingVotes,
-    listPendingVotesForRounds,
+    listVotesForRound: asRead(listVotesForRound),
+    listPendingVotes: asRead(listPendingVotes),
+    listPendingVotesForRounds: asRead(listPendingVotesForRounds),
     writeVote,
     insertBallot,
   } satisfies PersonalGroupRepository["Service"];

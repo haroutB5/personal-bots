@@ -9,16 +9,18 @@ import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-data class DownloadAuth(val apkUrl: String, val bearer: String) {
+data class DownloadAuth(val apkUrl: String, val bearer: String, val authMethod: String) {
   companion object {
     fun parse(raw: Map<String, Any?>?): DownloadAuth? {
       if (raw == null) return null
       val url = raw["apkUrl"] as? String ?: return null
       val bearer = raw["bearer"] as? String ?: return null
       if (bearer.isBlank()) return null
+      val method = raw["authMethod"] as? String ?: "bearer"
+      if (method != "bearer" && method != "dpop") return null
       val parsed = runCatching { URL(url) }.getOrNull() ?: return null
       if (parsed.protocol != "https") return null
-      return DownloadAuth(parsed.toString(), bearer)
+      return DownloadAuth(parsed.toString(), bearer, method)
     }
   }
 }
@@ -72,10 +74,25 @@ object UpdateDownloader {
     part.delete()
     var complete = false
     try {
-      val request = Request.Builder()
-        .url(auth.apkUrl)
-        .header("Authorization", "Bearer ${auth.bearer}")
-        .build()
+      val requestBuilder = Request.Builder().url(auth.apkUrl)
+      if (auth.authMethod == "dpop") {
+        val key = DpopKeySource.read(context)
+        if (key == null) {
+          Log.w(TAG, "download failed no dpop key")
+          return DownloadOutcome.Failed
+        }
+        val proof = DpopProof.create(key, "GET", auth.apkUrl, auth.bearer)
+        if (proof == null) {
+          Log.w(TAG, "download failed no dpop proof")
+          return DownloadOutcome.Failed
+        }
+        requestBuilder
+          .header("Authorization", "DPoP ${auth.bearer}")
+          .header("DPoP", proof)
+      } else {
+        requestBuilder.header("Authorization", "Bearer ${auth.bearer}")
+      }
+      val request = requestBuilder.build()
       http.newCall(request).execute().use { response ->
         if (!response.isSuccessful) {
           Log.w(TAG, "download failed http=${response.code}")

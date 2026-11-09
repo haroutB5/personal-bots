@@ -1,0 +1,11 @@
+diff --git a/apps/server/src/cli/serviceLauncher.ts b/apps/server/src/cli/serviceLauncher.ts
+index 280177fc28079bf444188068d95b6e19867d7748..ddd53fd63026206a21f724791449a58611c7ac03 100644
+--- a/apps/server/src/cli/serviceLauncher.ts
++++ b/apps/server/src/cli/serviceLauncher.ts
+@@ -1,5 +1,5 @@
+ import * as Effect from "effect/Effect";
+-import { Command } from "effect/unstable/cli";
++import { Command } from "effect/cli";
+ 
+ import { main as runServiceLauncher } from "../serviceLauncher.ts";
+ 

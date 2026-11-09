@@ -5,15 +5,14 @@
 // time, with one checker and GOGC=25, each shard stays under 2.6 GiB (Optimizer,
 // 26 Oct, qa/build-diet-20261026). The shards must list exactly the files of the
 // package's tsconfig.json; checkCoverage proves that on every run.
-import fs from "node:fs";
-import path from "node:path";
-import { spawnSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 export const SHARD_PREFIX = "tsconfig.typecheck-";
 
 export function findShards(dir) {
-  return fs
-    .readdirSync(dir)
+  return NodeFS.readdirSync(dir)
     .filter((f) => f.startsWith(SHARD_PREFIX) && f.endsWith(".json"))
     .sort();
 }
@@ -27,6 +26,35 @@ export function leanSettings(env) {
   if (!/^[1-9][0-9]?$/.test(checkers)) throw new Error("HBOTS_TYPECHECK_CHECKERS must be 1-99");
   // A caller's own GOGC wins (Go reads it at start-up).
   return { lean: true, env: env.GOGC ? {} : { GOGC: "25" }, args: ["--checkers", checkers] };
+}
+
+// A fresh install hoists the TypeScript apps/marketing ranges on (6.0.3) into
+// the root .bin, or leaves it empty. Resolve the catalog pin instead.
+export function resolveCatalogTsc({
+  repoRoot,
+  readFile = (file) => NodeFS.readFileSync(file, "utf8"),
+  exists = NodeFS.existsSync,
+}) {
+  const workspace = readFile(NodePath.join(repoRoot, "pnpm-workspace.yaml"));
+  const catalog = /^catalog:[ \t]*\n((?:(?:[ \t]+.*)?\n)*)/m.exec(workspace)?.[1] ?? "";
+  const version = /^[ \t]+typescript:[ \t]*([^\s#]+)/m.exec(catalog)?.[1];
+  if (version === undefined || !/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error("pnpm-workspace.yaml catalog has no exact typescript version");
+  }
+  const tsc = NodePath.join(
+    repoRoot,
+    "node_modules",
+    ".pnpm",
+    `typescript@${version}`,
+    "node_modules",
+    "typescript",
+    "lib",
+    "tsc.js",
+  );
+  if (!exists(tsc)) {
+    throw new Error(`TypeScript ${version} from the catalog is not installed at ${tsc}`);
+  }
+  return tsc;
 }
 
 // tsc --pretty false prints one diagnostic per block: a line at column 0 plus
@@ -64,8 +92,10 @@ export function isOwnAmbient(file, read) {
 }
 
 function tscRunner(tsc, cwd, env) {
+  const command = tsc.endsWith(".js") ? process.execPath : tsc;
+  const prefix = command === tsc ? [] : [tsc];
   return (args) =>
-    spawnSync(tsc, args, {
+    NodeChildProcess.spawnSync(command, [...prefix, ...args], {
       cwd,
       env: { ...process.env, ...env },
       encoding: "utf8",
@@ -90,7 +120,7 @@ export function runTypecheck({
   const settings = leanSettings(env);
   const run = tscRunner(tsc, cwd, settings.env);
   if (!settings.lean) {
-    const r = spawnSync(tsc, ["--noEmit"], { cwd, stdio: "inherit" });
+    const r = NodeChildProcess.spawnSync(tsc, ["--noEmit"], { cwd, stdio: "inherit" });
     return r.status ?? 1;
   }
   const shards = findShards(cwd);
@@ -107,7 +137,7 @@ export function runTypecheck({
       for (const f of cov.extra.slice(0, 20)) log.write(`  extra: ${f}\n`);
       return 2;
     }
-    const ambient = full.filter((f) => isOwnAmbient(f, (p) => fs.readFileSync(p, "utf8")));
+    const ambient = full.filter((f) => isOwnAmbient(f, (p) => NodeFS.readFileSync(p, "utf8")));
     let gaps = 0;
     shards.forEach((shard, i) => {
       const have = new Set(lists[i]);
@@ -130,7 +160,7 @@ export function runTypecheck({
     }
     const status = r.status ?? 1;
     log.write(
-      `typecheck: ${path.basename(project)} exit ${status} in ${((Date.now() - t0) / 1000).toFixed(1)}s\n`,
+      `typecheck: ${NodePath.basename(project)} exit ${status} in ${((Date.now() - t0) / 1000).toFixed(1)}s\n`,
     );
     if (status !== 0 && exit === 0) exit = status;
   }

@@ -1,26 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Spawns the Claude Code CLI for a session and remembers its PID.
- *
- * The SDK does not expose the process it starts, so a session could stop its
- * CLI but not the shell commands that CLI started, which outlive it on Windows
- * (see `processTree.ts`). This spawner does what the SDK's own local spawn
- * does (`child_process.spawn`, three pipes, hidden window, the forwarded abort
- * signal) and records the child in a handle the session keeps.
- *
- * One difference: the SDK's own spawn folds the CLI's stderr into its exit
- * error, and a custom spawn cannot. The tail is kept here instead and logged
- * when the CLI exits abnormally. `PERSONAL_CLAUDE_SDK_SPAWN=1` turns this
- * spawner off (the SDK spawns as before, and deleting a chat no longer ends
- * its commands).
- *
+ * Spawns the Claude Code CLI and records its PID, because the SDK does not
+ * expose the process and its shell children would outlive it. The CLI's stderr
+ * tail is logged on an abnormal exit. `PERSONAL_CLAUDE_SDK_SPAWN=1` turns it off.
  * @module provider/Layers/claudeProcessSpawner
  */
 import * as NodeChildProcess from "node:child_process";
 
 import type { SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
-import { lowerBotProcessPriority } from "../botProcessPriority.ts";
+import { lowerBotProcessPriority } from "@t3tools/provider-core/server/botProcessPriority";
 import { forgetBotProviderProcess, registerBotProviderProcess } from "../botProviderProcesses.ts";
 
 const STDERR_TAIL_CHARS = 8_192;

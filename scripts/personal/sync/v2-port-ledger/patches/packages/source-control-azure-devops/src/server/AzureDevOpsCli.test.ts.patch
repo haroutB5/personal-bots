@@ -1,0 +1,18 @@
+diff --git a/apps/server/src/sourceControl/AzureDevOpsCli.test.ts b/apps/server/src/sourceControl/AzureDevOpsCli.test.ts
+index 24b28af13fe4e63407bd28c7ccab3a149af9b283..6a4fdd16169ca8cb564d12e2a7327b9a24502d93 100644
+--- a/apps/server/src/sourceControl/AzureDevOpsCli.test.ts
++++ b/apps/server/src/sourceControl/AzureDevOpsCli.test.ts
+@@ -1,11 +1,11 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as PlatformError from "effect/PlatformError";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
+ 
+ import * as VcsProcess from "../vcs/VcsProcess.ts";

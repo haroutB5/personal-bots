@@ -2,12 +2,13 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   makeSpawnImageWarmer,
@@ -94,6 +95,10 @@ describe("makeSpawnImageWarmer", () => {
 
   it("shares one warm-up between callers that ask at the same time", async () => {
     let release: () => void = () => undefined;
+    let markLaunched: () => void = () => undefined;
+    const launchStarted = new Promise<void>((resolve) => {
+      markLaunched = resolve;
+    });
     const launched: Array<string> = [];
     const warmer = makeSpawnImageWarmer({
       platform: "win32",
@@ -101,6 +106,7 @@ describe("makeSpawnImageWarmer", () => {
       stat: async () => programFile("a"),
       launch: (file) => {
         launched.push(file);
+        markLaunched();
         return new Promise<void>((resolve) => {
           release = resolve;
         });
@@ -108,7 +114,7 @@ describe("makeSpawnImageWarmer", () => {
     });
     const first = warmer.warm(claude);
     const second = warmer.warm(claude);
-    await new Promise((resolve) => setImmediate(resolve));
+    await launchStarted;
     release();
     expect(await outcome(first)).toBe("warmed");
     expect(await outcome(second)).toBe("warmed");
@@ -131,7 +137,7 @@ describe("makeSpawnImageWarmer", () => {
     expect(await outcome(slow.warmer.warm(claude))).toBe("timeout");
   });
 
-  it.skipIf(process.platform !== "win32")(
+  it.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
     "starts and ends a real program on the worker thread",
     async () => {
       // node.exe is well above the size floor and is already checked, so this is quick.
@@ -142,10 +148,9 @@ describe("makeSpawnImageWarmer", () => {
       const missing = NodePath.join(NodeOS.tmpdir(), "spawn-warmup-missing.exe");
       expect((await warmer.warm(missing)).outcome).toBe("skipped");
     },
-    30_000,
   );
 
-  it.skipIf(process.platform !== "win32")(
+  it.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
     "reports a program Windows cannot start as failed",
     async () => {
       const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-warmup-"));
@@ -158,7 +163,6 @@ describe("makeSpawnImageWarmer", () => {
         NodeFS.rmSync(dir, { recursive: true, force: true });
       }
     },
-    30_000,
   );
 });
 
@@ -198,14 +202,15 @@ describe("withSpawnImageWarmup", () => {
 
   it.effect("warms the program before it is spawned, and passes the command through", () => {
     const { events, spawner, warmer } = recording();
-    const program = process.execPath;
+    const program = "C:\\tools\\codex.exe";
     return Effect.gen(function* () {
+      vi.stubEnv("T3CODE_SPAWN_ASYNC_RESOLVE", "off");
       const exitCode = yield* withSpawnImageWarmup(spawner, warmer, "win32").exitCode(
         ChildProcess.make(program, ["--version"]),
       );
       expect(exitCode).toBe(0);
       expect(events).toEqual([`warm ${program}`, `spawn ${program}`]);
-    });
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
   it.effect("leaves shell launches, other platforms and missing programs alone", () => {

@@ -1,0 +1,15 @@
+diff --git a/apps/web/src/components/diffs/useReviewFilePatches.ts b/apps/web/src/components/diffs/useReviewFilePatches.ts
+index 8ac353e86be88ea00e5c237f85e9557fd87de6b6..60536fdd5d7938806a05421ace22fa7650b3903f 100644
+--- a/apps/web/src/components/diffs/useReviewFilePatches.ts
++++ b/apps/web/src/components/diffs/useReviewFilePatches.ts
+@@ -1,8 +1,8 @@
+ import { RegistryContext, useAtomValue } from "@effect/atom-react";
+ import type { FileDiffMetadata } from "@pierre/diffs";
+ import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
+-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+-import * as Atom from "effect/unstable/reactivity/Atom";
++import * as AsyncResult from "effect/reactivity/AsyncResult";
++import * as Atom from "effect/reactivity/Atom";
+ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+ import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+ import { reviewEnvironment } from "~/state/review";

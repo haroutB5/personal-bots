@@ -1,0 +1,10 @@
+diff --git a/apps/desktop/src/settings/DesktopClientSettings.diagnostics.test.ts b/apps/desktop/src/settings/DesktopClientSettings.diagnostics.test.ts
+index d2fd166e878c750cd3e65f95e783d8bcb42f527c..c4097c3697bd3e9cfa61ab63c91e2024d8d3c398 100644
+--- a/apps/desktop/src/settings/DesktopClientSettings.diagnostics.test.ts
++++ b/apps/desktop/src/settings/DesktopClientSettings.diagnostics.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

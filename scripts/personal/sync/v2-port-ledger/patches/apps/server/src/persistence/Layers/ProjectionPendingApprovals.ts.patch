@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/persistence/Layers/ProjectionPendingApprovals.ts b/apps/server/src/persistence/Layers/ProjectionPendingApprovals.ts
+index 883198402ee9a3f20ee3be3f8a6f31e26ea3afe7..3f17c538fba471bd954e8fa7fa2b0c922ec91340 100644
+--- a/apps/server/src/persistence/Layers/ProjectionPendingApprovals.ts
++++ b/apps/server/src/persistence/Layers/ProjectionPendingApprovals.ts
+@@ -1,5 +1,5 @@
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Schema from "effect/Schema";

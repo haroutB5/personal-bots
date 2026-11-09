@@ -1,0 +1,12 @@
+diff --git a/apps/mobile/src/state/thread-order.ts b/apps/mobile/src/state/thread-order.ts
+index f83252e9cb8a663dc870e04c4f032ca41038b042..7667d47d159d283d00eda2f565d8f3e054d9d61b 100644
+--- a/apps/mobile/src/state/thread-order.ts
++++ b/apps/mobile/src/state/thread-order.ts
+@@ -1,6 +1,6 @@
+ import { useAtomValue } from "@effect/atom-react";
+ import { useEffect } from "react";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import {
+   reconcilePendingThreadOrder,

@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/provider/ProviderInstanceEnvironment.test.ts b/apps/server/src/provider/ProviderInstanceEnvironment.test.ts
+index 7d6bbe61a2aa758bae3c0a7f292728cb476ad23d..dddea13517b4191e4da7002cb939a83d8e73c90b 100644
+--- a/apps/server/src/provider/ProviderInstanceEnvironment.test.ts
++++ b/apps/server/src/provider/ProviderInstanceEnvironment.test.ts
+@@ -1,6 +1,6 @@
+ import * as NodeOS from "node:os";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Path from "effect/Path";

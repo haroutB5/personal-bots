@@ -1,28 +1,20 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
-import type { ModelManifestData } from "./ModelManifest.ts";
+import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
-  formatClaudeModelName,
   formatClaudeVersionUpgradeMessage,
-  mergeDiscoveredClaudeModels,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
-  parseClaudeModelSlug,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
+  resolveClaudeUpdateRequiredModels,
   scopeClaudeModelCatalog,
 } from "./ClaudeModelCatalog.ts";
-
-/**
- * Test policy: adding or changing a real Claude model in model-manifest.json
- * must not add or update tests here. These synthetic fixtures cover resolver
- * behavior once. Add a test only when Claude adapter semantics change, such
- * as introducing a new compatibility rule or dispatch mapping type.
- */
 
 const manifest = (): ModelManifestData => ({
   version: 1,
@@ -43,7 +35,10 @@ const manifest = (): ModelManifestData => ({
                 id: "contextWindow",
                 label: "Context Window",
                 type: "select",
-                options: [{ id: "large", label: "Large", isDefault: true }],
+                options: [
+                  { id: "large", label: "Large", isDefault: true },
+                  { id: "small", label: "Small" },
+                ],
               },
             ],
           },
@@ -69,131 +64,71 @@ const manifest = (): ModelManifestData => ({
   },
 });
 
-describe("Claude model catalog", () => {
-  it("parses only bare family-version slugs and derives their names", () => {
-    assert.deepStrictEqual(parseClaudeModelSlug("claude-opus-5-5"), {
-      family: "opus",
-      version: [5, 5],
-    });
-    assert.strictEqual(formatClaudeModelName("claude-opus-5-5"), "Claude Opus 5.5");
-    assert.strictEqual(formatClaudeModelName("claude-sonnet-5"), "Claude Sonnet 5");
-    assert.strictEqual(parseClaudeModelSlug("claude-haiku-4-5-20251001"), undefined);
-    assert.strictEqual(parseClaudeModelSlug("claude-opus-4-20250514-v1"), undefined);
-  });
+const CLAUDE = ProviderDriverKind.make("claudeAgent");
 
-  it("inherits the newest family profile while preserving manifest models and defaults", () => {
-    const newestOpus = {
-      model: {
-        slug: "claude-opus-4-6",
-        name: "Manifest Opus",
-        isCustom: false,
-        isDefault: true,
-        capabilities: {
-          optionDescriptors: [
+const catalogFromManifest = (data: ModelManifestData) =>
+  resolveClaudeModelCatalog(resolveProviderCatalog(data, CLAUDE) ?? undefined);
+
+describe("Claude model catalog", () => {
+  it("resolves capacity from selected options and fixed catalog windows without guessing custom models", () => {
+    const source = manifest();
+    const profile = source.providers!.claudeAgent!.profiles.synthetic!;
+    const catalog = catalogFromManifest({
+      ...source,
+      providers: {
+        claudeAgent: {
+          ...source.providers!.claudeAgent!,
+          profiles: {
+            fixed: {
+              capabilities: { optionDescriptors: [] },
+              adapter: { claudeCode: { fixedContextWindowTokens: 64_000 } },
+            },
+            synthetic: {
+              ...profile,
+              adapter: { claudeCode: { contextWindowTokens: { large: 1_000_000, small: 32_000 } } },
+            },
+          },
+          models: [
+            ...source.providers!.claudeAgent!.models,
             {
-              id: "contextWindow",
-              label: "Context Window",
-              type: "select" as const,
-              options: [
-                { id: "200k", label: "200k" },
-                { id: "1m", label: "1M", isDefault: true },
-              ],
+              slug: "fixed",
+              name: "Fixed",
+              status: "current",
+              profile: "fixed",
             },
           ],
         },
       },
-      runtime: {
-        modelSuffixes: { contextWindow: { "1m": "[1m]" } },
-        contextWindowTokens: { "200k": 200_000, "1m": 1_000_000 },
-      },
-      compatibility: { minVersion: "2.0.0" },
-    };
-    const catalog = {
-      models: [
-        newestOpus,
-        {
-          model: {
-            slug: "claude-opus-4-5",
-            name: "Older Opus",
-            isCustom: false,
-            capabilities: null,
-          },
-          runtime: {},
-          compatibility: {},
-        },
-        {
-          model: {
-            slug: "claude-sonnet-5",
-            name: "Manifest Sonnet",
-            isCustom: false,
-            capabilities: null,
-          },
-          runtime: {},
-          compatibility: {},
-        },
-      ],
-    };
-
-    const merged = mergeDiscoveredClaudeModels(catalog, [
-      "claude-opus-5-5",
-      "claude-opus-4-6",
-      "claude-fable-5",
-    ]);
-
-    assert.deepStrictEqual(
-      merged.models.map((entry) => entry.model.slug),
-      ["claude-opus-5-5", "claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-5"],
-    );
-    const discovered = merged.models[0]!;
-    assert.strictEqual(discovered.model.name, "Claude Opus 5.5");
-    assert.strictEqual(discovered.model.capabilities, newestOpus.model.capabilities);
-    assert.strictEqual(discovered.runtime, newestOpus.runtime);
-    assert.deepStrictEqual(discovered.compatibility, {});
-    assert.isUndefined(discovered.model.isDefault);
-    assert.strictEqual(merged.models[1], newestOpus);
-    assert.strictEqual(merged.models[1]!.model.name, "Manifest Opus");
-    assert.isTrue(merged.models[1]!.model.isDefault);
-  });
-
-  it("ignores discovered models older than the family's newest, whatever the manifest order", () => {
-    const entry = (slug: string, isDefault?: true) => ({
-      model: {
-        slug,
-        name: slug,
-        isCustom: false,
-        capabilities: null,
-        ...(isDefault ? { isDefault } : {}),
-      },
-      runtime: {},
-      compatibility: {},
     });
-    // Oldest first: "newest" must come from the version, not the position.
-    const catalog = { models: [entry("claude-opus-5"), entry("claude-opus-5-5", true)] };
-
-    const merged = mergeDiscoveredClaudeModels(catalog, [
-      // Every id a real binary carries: retired generations and stray
-      // version-shaped strings. Only something newer than 5.5 may be listed.
-      "claude-opus-4",
-      "claude-opus-4-8",
-      "claude-haiku-3-55",
-      "claude-sonnet-4-6",
-      "claude-opus-5-6",
-    ]);
-
-    assert.deepStrictEqual(
-      merged.models.map((model) => model.model.slug),
-      ["claude-opus-5-6", "claude-opus-5-5", "claude-opus-5"],
+    const selection = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "synthetic" };
+    assert.equal(resolveClaudeCatalogContextWindowTokens(catalog, selection), 1_000_000);
+    assert.equal(
+      resolveClaudeCatalogContextWindowTokens(catalog, {
+        ...selection,
+        options: [{ id: "contextWindow", value: "small" }],
+      }),
+      32_000,
     );
-    assert.isTrue(merged.models[1]!.model.isDefault);
+    assert.equal(
+      resolveClaudeCatalogContextWindowTokens(catalog, { ...selection, model: "fixed" }),
+      64_000,
+    );
+    assert.isUndefined(
+      resolveClaudeCatalogContextWindowTokens(catalog, { ...selection, model: "custom" }),
+    );
   });
 
   it("filters models at runtime-version boundaries and derives the upgrade message", () => {
-    const catalog = resolveClaudeModelCatalog(manifest());
+    const catalog = catalogFromManifest(manifest());
     assert.deepStrictEqual(resolveClaudeModelsForVersion(catalog, "3.1.9"), []);
     assert.deepStrictEqual(
       resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
       ["claude-synthetic-next"],
     );
+    assert.deepStrictEqual(resolveClaudeUpdateRequiredModels(catalog, "3.1.9"), [
+      { slug: "claude-synthetic-next", name: "Claude Synthetic Next", minVersion: "3.2.0" },
+    ]);
+    assert.deepStrictEqual(resolveClaudeUpdateRequiredModels(catalog, "3.2.0"), []);
     assert.strictEqual(
       formatClaudeVersionUpgradeMessage(catalog, "3.1.9"),
       "Claude Code v3.1.9 is too old for Claude Synthetic Next. Upgrade to v3.2.0 or newer to access it.",
@@ -220,7 +155,7 @@ describe("Claude model catalog", () => {
         },
       },
     };
-    const catalog = resolveClaudeModelCatalog(input);
+    const catalog = catalogFromManifest(input);
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "claude-synthetic-next");
     assert.strictEqual(
       resolveClaudeModelSlug(catalog, "claude-synthetic-next"),
@@ -236,39 +171,8 @@ describe("Claude model catalog", () => {
     );
   });
 
-  it("rejects malformed adapter mappings", () => {
-    const base = manifest();
-    const malformed: ModelManifestData = {
-      ...base,
-      providers: {
-        ...base.providers,
-        claudeAgent: {
-          ...base.providers!.claudeAgent!,
-          profiles: {
-            ...base.providers!.claudeAgent!.profiles,
-            synthetic: {
-              ...base.providers!.claudeAgent!.profiles.synthetic!,
-              adapter: { claudeCode: { effortMap: { extreme: 123 } } },
-            },
-          },
-        },
-      },
-    };
-    assert.isFalse(hasValidClaudeManifestAdapters(malformed));
-  });
-
-  it("preserves only SDK effort levels for uncatalogued models", () => {
-    const catalog = resolveClaudeModelCatalog(manifest());
-    for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
-      assert.strictEqual(resolveClaudeCatalogEffort(catalog, "custom", ` ${effort} `), effort);
-    }
-    for (const effort of [undefined, null, "", "  ", "brutal", "extreme", "HIGH", "ultrathink"]) {
-      assert.isUndefined(resolveClaudeCatalogEffort(catalog, "custom", effort));
-    }
-  });
-
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
-    const catalog = scopeClaudeModelCatalog(resolveClaudeModelCatalog(manifest()), [
+    const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",
       {
         slug: "claude-custom-tuned",
@@ -282,6 +186,7 @@ describe("Claude model catalog", () => {
               options: [
                 { id: "gentle", label: "Gentle", isDefault: true },
                 { id: "brutal", label: "Brutal" },
+                { id: "ultracode", label: "Ultracode" },
               ],
             },
           ],
@@ -289,14 +194,11 @@ describe("Claude model catalog", () => {
       },
     ]);
 
-    // The bare custom slug shadows the built-in alias, so it no longer resolves to it.
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
     assert.isUndefined(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"));
     assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "max"), "max");
     assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "max", "synthetic"), "max");
 
-    // The entry with descriptors resolves user-defined effort ids and passes
-    // them through untouched (no effortMap, no model suffix).
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "brutal"),
       "brutal",
@@ -304,6 +206,12 @@ describe("Claude model catalog", () => {
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "bogus"),
       "gentle",
+    );
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "claude-custom-tuned").optionDescriptors?.map(
+        ({ id, type }) => `${id}:${type}`,
+      ),
+      ["effort:select", "ultracode:boolean"],
     );
     assert.strictEqual(
       normalizeClaudeCatalogEffort(catalog, "brutal", "claude-custom-tuned"),

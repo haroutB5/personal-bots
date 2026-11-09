@@ -2,19 +2,18 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderRuntimeEvent,
   type ServerProvider,
+  ThreadId,
 } from "@t3tools/contracts";
+import type { DeepSeekBalanceRead } from "@t3tools/provider-deepseek/server";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-import type { DeepSeekBalanceRead } from "../../provider/Drivers/DeepSeekBalance.ts";
+import type { PersonalSessionEvent } from "../engine/PersonalProviders.ts";
 import {
-  DEEPSEEK_BALANCE_CHECK_DEBOUNCE_MS,
-  DEEPSEEK_BALANCE_CHECK_INTERVAL_MS,
   deepSeekBalanceAlertMetaKey,
   deepSeekBalanceLastKindValue,
   parseDeepSeekBalanceLastKind,
@@ -60,19 +59,15 @@ const failedRead: DeepSeekBalanceRead = {
   lastGood: null,
 };
 
-/**
- * A watcher over fakes: the instance list, the balance reads, the persisted
- * meta rows and the notifications are all in the test's hands, so the rules
- * can be driven directly rather than through the real services.
- */
 function harness(input: {
-  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly providers: ReadonlyArray<ServerProvider> | (() => ReadonlyArray<ServerProvider>);
   readonly reads: () => DeepSeekBalanceRead | null;
   readonly now?: () => number;
   /** Survives a "restart": a second harness can share the same rows. */
   readonly meta?: Map<string, string>;
   /** Registry snapshots, when the test drives the instance list itself. */
   readonly providerChanges?: Stream.Stream<ReadonlyArray<ServerProvider>>;
+  readonly runtimeEvents?: Stream.Stream<PersonalSessionEvent>;
   /**
    * Runs after the check has written its flag (or cleared it). The notice is
    * sent before that, so this is "the whole check is done" for a test that
@@ -91,8 +86,10 @@ function harness(input: {
   let readCalls = 0;
 
   const make = makeWith({
-    getProviders: Effect.succeed(input.providers),
-    runtimeEvents: Stream.empty,
+    getProviders: Effect.suspend(() =>
+      Effect.succeed(typeof input.providers === "function" ? input.providers() : input.providers),
+    ),
+    runtimeEvents: input.runtimeEvents ?? Stream.empty,
     providerChanges: input.providerChanges ?? Stream.empty,
     readBalance: () => {
       readCalls += 1;
@@ -155,12 +152,9 @@ describe("DeepSeekBalanceWatcher", () => {
       ]);
       expect(first.lastKind()).toBe("low");
 
-      // A second reading in the same spell stays quiet even when it drops.
       yield* watcher.check({ instanceId, force: true });
       expect(first.notifications).toHaveLength(1);
 
-      // "Restart": a fresh watcher over the same persisted rows must not warn
-      // again for the same low spell.
       const after = harness({ providers: [provider()], reads: () => ready(0.9), meta });
       yield* (yield* after.make).check({ instanceId });
       expect(after.notifications).toHaveLength(0);
@@ -239,16 +233,15 @@ describe("DeepSeekBalanceWatcher", () => {
       yield* watcher.check({ instanceId });
       expect(test.readCalls()).toBe(1);
 
-      nowMs += DEEPSEEK_BALANCE_CHECK_DEBOUNCE_MS - 1;
+      nowMs += 4 * 60_000;
       yield* watcher.check({ instanceId });
       expect(test.readCalls()).toBe(1);
 
-      nowMs += 2;
+      nowMs += 2 * 60_000;
       yield* watcher.check({ instanceId });
       expect(test.readCalls()).toBe(2);
 
-      // The timer's own path is never debounced: it is already half an hour
-      // apart, and a forced check is what keeps the card honest.
+      // The timer's own path is never debounced.
       yield* watcher.check({ instanceId, force: true });
       expect(test.readCalls()).toBe(3);
     }),
@@ -275,9 +268,6 @@ describe("DeepSeekBalanceWatcher", () => {
       yield* (yield* keyless.make).sweep;
       expect(keyless.readCalls()).toBe(0);
 
-      // The timer's cadence is the light half-hour sweep, not a per-step poll.
-      expect(DEEPSEEK_BALANCE_CHECK_INTERVAL_MS).toBe(30 * 60_000);
-
       const live = harness({ providers: [provider()], reads: () => ready(0.5) });
       yield* (yield* live.make).sweep;
       expect(live.readCalls()).toBe(1);
@@ -301,15 +291,12 @@ describe("DeepSeekBalanceWatcher", () => {
       });
       const watcher = yield* test.make;
 
-      yield* watcher.check({ instanceId, force: true }); // 5.00: above the line
-      yield* watcher.check({ instanceId, force: true }); // 0.90: the low drop
-      yield* watcher.check({ instanceId, force: true }); // 0.00: the account runs out
-      yield* watcher.check({ instanceId, force: true }); // 7.00: the top-up
-      yield* watcher.check({ instanceId, force: true }); // 0.00: a fresh spell
+      yield* watcher.check({ instanceId, force: true });
+      yield* watcher.check({ instanceId, force: true });
+      yield* watcher.check({ instanceId, force: true });
+      yield* watcher.check({ instanceId, force: true });
+      yield* watcher.check({ instanceId, force: true });
 
-      // The low notice, then the one escalation to empty. The top-up re-arms,
-      // so the next drop is a new spell and reports the empty notice straight
-      // away. None of it repeats inside a spell.
       expect(test.notifications.map((notice) => [notice.balance, notice.empty])).toEqual([
         ["$0.90", false],
         ["$0.00", true],
@@ -323,9 +310,6 @@ describe("DeepSeekBalanceWatcher", () => {
     Effect.gen(function* () {
       const changes = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
       const checked = yield* Deferred.make<void>();
-      // The boot sweep sees an instance whose probe has not finished. That
-      // probe reads the balance itself, so it can land minutes later, and the
-      // old watcher would wait for the next half-hour tick (QA: 1,794 s).
       const test = harness({
         providers: [provider({ auth: { status: "unauthenticated" } })],
         reads: () => ready(0.4),
@@ -361,18 +345,40 @@ describe("DeepSeekBalanceWatcher", () => {
     }),
   );
 
-  it.effect("ignores a turn that carries no instance, and needs a scope only to start", () =>
+  it.effect("checks a settled turn on its session's instance, and ignores an unknown one", () =>
     Effect.gen(function* () {
-      const test = harness({ providers: [provider()], reads: () => ready(0.5) });
+      const events = yield* Queue.unbounded<PersonalSessionEvent>();
+      const checked = yield* Deferred.make<void>();
+      const thread = ThreadId.make("thread-1");
+      // The startup sweep sees nothing; the session arrives after it, as a real
+      // session does, so the only read this test can see is the turn's.
+      let providers: ReadonlyArray<ServerProvider> = [];
+      const test = harness({
+        providers: () => providers,
+        reads: () => ready(0.5),
+        runtimeEvents: Stream.fromQueue(events),
+        onMetaWrite: () => Deferred.succeed(checked, undefined),
+      });
       const watcher = yield* test.make;
-      // The turn path is the stream inside `start`; the decision itself is the
-      // same `check`, which is what the tests above drive.
-      const event: ProviderRuntimeEvent = {
-        type: "turn.completed",
-        turnId: "t1",
-      } as ProviderRuntimeEvent;
-      expect(event.providerInstanceId).toBeUndefined();
-      expect(watcher.start).toBeTypeOf("function");
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* watcher.start();
+          // No `SessionStarted` for this chat, so the instance is unknown.
+          yield* Queue.offer(events, { _tag: "TurnSettled", threadId: ThreadId.make("other") });
+          yield* Effect.yieldNow;
+          expect(test.readCalls()).toBe(0);
+
+          providers = [provider()];
+          yield* Queue.offer(events, { _tag: "SessionStarted", threadId: thread, instanceId });
+          yield* Queue.offer(events, { _tag: "TurnSettled", threadId: thread });
+          yield* Deferred.await(checked);
+        }),
+      );
+
+      expect(test.readCalls()).toBe(1);
+      expect(test.notifications).toHaveLength(1);
+      expect(test.lastKind()).toBe("low");
     }),
   );
 });

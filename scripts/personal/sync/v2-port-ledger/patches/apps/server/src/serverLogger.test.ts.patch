@@ -1,0 +1,15 @@
+diff --git a/apps/server/src/serverLogger.test.ts b/apps/server/src/serverLogger.test.ts
+index 43843b249eeac1e272dede60cf9ee6fcff53013e..d7307709212e799440c10b573e1b00ded7d19e83 100644
+--- a/apps/server/src/serverLogger.test.ts
++++ b/apps/server/src/serverLogger.test.ts
+@@ -6,8 +6,8 @@ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as Tracer from "effect/Tracer";
+-import * as HttpClient from "effect/unstable/http/HttpClient";
+-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
++import * as HttpClient from "effect/http/HttpClient";
++import * as HttpClientResponse from "effect/http/HttpClientResponse";
+ 
+ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";

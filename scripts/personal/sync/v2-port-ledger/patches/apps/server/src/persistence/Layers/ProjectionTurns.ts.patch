@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Layers/ProjectionTurns.ts b/apps/server/src/persistence/Layers/ProjectionTurns.ts
+index 94443c867f04823acafc1780e1b0cb6343fdae9e..6b9f84d31cafa6c14af863f2ad713d50f6c130fe 100644
+--- a/apps/server/src/persistence/Layers/ProjectionTurns.ts
++++ b/apps/server/src/persistence/Layers/ProjectionTurns.ts
+@@ -1,6 +1,6 @@
+ import { OrchestrationCheckpointFile } from "@t3tools/contracts";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";

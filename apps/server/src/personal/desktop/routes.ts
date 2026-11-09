@@ -28,7 +28,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
+import { serveUntilSessionRevoked } from "../auth/sessionRevocationClose.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import type { LiveViewer } from "./DesktopLiveView.ts";
 import {
@@ -371,8 +372,18 @@ export const personalDesktopStreamRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Upgrade Required", { status: 426 });
     }
     const desktop = yield* PersonalDesktop;
+    const sessions = yield* SessionStore.SessionStore;
     return yield* serveUntilSessionRevoked({
       sessionId: session.sessionId,
+      until: sessions
+        .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("Failed to watch a stream session for revocation.").pipe(
+              Effect.annotateLogs({ sessionId: session.sessionId, cause }),
+            ),
+          ),
+        ),
       serve: serveDesktopStream(desktop),
     });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),

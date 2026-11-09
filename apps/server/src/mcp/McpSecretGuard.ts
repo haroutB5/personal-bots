@@ -18,7 +18,6 @@ import type * as Tool from "effect/ai/Tool";
 import type * as Toolkit from "effect/ai/Toolkit";
 
 import { secretRedactor, type SecretRedactor } from "../personal/secrets/secretRedaction.ts";
-import { advertisedMcpTool } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 type McpServerService = McpServer.McpServer["Service"];
@@ -37,7 +36,7 @@ export const guardMcpServer = (
       value: ((options) =>
         server.addTool({
           ...options,
-          tool: advertisedMcpTool(options.tool),
+          tool: options.tool,
           handle: (payload) => options.handle(redactor.redact(payload)),
         })) satisfies McpServerService["addTool"],
     },

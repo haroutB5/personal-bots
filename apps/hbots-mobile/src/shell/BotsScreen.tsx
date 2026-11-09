@@ -1,5 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   botStatus,
   buildBotSummaries,
@@ -21,17 +19,44 @@ import {
   currentProgressNote,
   currentTurnHasToolStep,
 } from "@hbots/personal-client/bots/workingProgress";
-import { isBotPinned, type ThreadId } from "@t3tools/contracts";
+import {
+  isBotPinned,
+  ThreadId,
+  type PersonalBot,
+  type PersonalBotNotificationMute,
+} from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { useBotShells } from "../personal/useBotShells";
+import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
+import { GroupAvatarCluster } from "../groups/GroupAvatarCluster";
+import { groupChatsSections } from "../groups/groupScreenModel";
+import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
+import { BotActionsSheet } from "../sheets/BotActionsSheet";
+import { NewChatSheet } from "../sheets/NewChatSheet";
+import { RenameChatSheet } from "../sheets/RenameChatSheet";
+import { SnoozeSheet } from "../sheets/SnoozeSheet";
+import type { ChatEnvironment } from "../chat/chatEnvironment";
+import type { UpdateSnapshot } from "../updater";
 import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
-import { botsHomeState } from "./botsHomeState";
+import { botsHomeState, botTapTarget } from "./botsHomeState";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
+import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { SystemStatsLine } from "./SystemStatsLine";
 import { tokens } from "./tokens";
@@ -46,10 +71,12 @@ function PinnedTile({
   summary,
   now,
   onPress,
+  onLongPress,
 }: {
   readonly summary: BotSummary;
   readonly now: number;
   readonly onPress: () => void;
+  readonly onLongPress: () => void;
 }) {
   const status = botStatus(summary, now);
   const badge = status.tone === "review" ? "attention" : summary.live ? "working" : null;
@@ -57,6 +84,8 @@ function PinnedTile({
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
       accessibilityRole="button"
       accessibilityLabel={`${summary.bot.name}${badge === null ? "" : `, ${status.label}`}${unread > 0 ? `, ${unread} unread chats` : ""}`}
       style={styles.tile}
@@ -93,17 +122,21 @@ function BotRow({
   now,
   last,
   onPress,
+  onLongPress,
 }: {
   readonly summary: BotSummary;
   readonly now: number;
   readonly last: boolean;
   readonly onPress: () => void;
+  readonly onLongPress: () => void;
 }) {
   const status = botStatus(summary, now);
   const unread = summary.unreadChats ?? 0;
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
       accessibilityRole="button"
       accessibilityLabel={`${summary.bot.name}${summary.modelShortLabel === null ? "" : `, ${summary.modelShortLabel}`}, ${status.label}, ${previewOf(summary, () => "Task update")}${unread > 0 ? `, ${unread} unread chats` : ""}`}
       accessibilityHint="Opens the chat"
@@ -158,17 +191,78 @@ function BotRow({
   );
 }
 
+function GroupChatRow({
+  row,
+  bots,
+  onPress,
+}: {
+  readonly row: ReturnType<typeof groupChatsSections>["groups"][number];
+  readonly bots: ReadonlyArray<PersonalBot>;
+  readonly onPress: () => void;
+}) {
+  const byId = new Map(bots.map((bot) => [bot.botId as string, bot] as const));
+  const members = row.memberIds.flatMap((botId) => {
+    const bot = byId.get(botId);
+    return bot === undefined ? [] : [bot];
+  });
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${row.name}, ${row.subtitle}, ${row.statusLabel}`}
+      style={({ pressed }) => [styles.groupRow, pressed ? styles.groupRowPressed : null]}
+    >
+      <GroupAvatarCluster bots={members} memberCount={row.memberIds.length} size={40} />
+      <View style={styles.groupRowText}>
+        <View style={styles.groupRowTitleLine}>
+          <Text style={styles.groupRowName} numberOfLines={1}>
+            {row.name}
+          </Text>
+          <Text style={styles.groupRowTime}>{row.timeLabel}</Text>
+        </View>
+        <Text style={styles.groupRowPreview} numberOfLines={1}>
+          {row.preview}
+        </Text>
+        <View style={styles.groupRowStatusLine}>
+          <View
+            style={[
+              styles.groupStatusDot,
+              row.live
+                ? styles.groupStatusLive
+                : row.tone === "review"
+                  ? styles.groupStatusReview
+                  : null,
+            ]}
+          />
+          <Text style={styles.groupRowStatus} numberOfLines={1}>
+            {`${row.subtitle} · ${row.statusLabel}`}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 function SnapshotRow({
   row,
   now,
   last,
+  onPress,
 }: {
   readonly row: ChatsSnapshot["rows"][number];
   readonly now: number;
   readonly last: boolean;
+  readonly onPress: () => void;
 }) {
   return (
-    <View style={[styles.row, last ? styles.rowLast : null]}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${row.name}, ${row.preview.length > 0 ? row.preview : "No chats yet"}`}
+      accessibilityHint="Opens the chat"
+      android_ripple={{ color: "rgba(255,255,255,0.08)" }}
+      style={[styles.row, last ? styles.rowLast : null]}
+    >
       <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={56} label={row.name} />
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
@@ -186,7 +280,7 @@ function SnapshotRow({
           {row.preview.length > 0 ? row.preview : "No chats yet"}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -207,33 +301,80 @@ function Skeleton() {
   );
 }
 
+interface NewChatTarget {
+  readonly botId: string;
+  readonly botName: string;
+}
+
 export function BotsScreen({
   native,
+  chat,
   installedVersion,
+  update,
+  onOpenInstallPermission,
   onOpenChat,
-  onOpenBot,
+  onOpenChats,
+  onOpenGroup,
+  onNewGroup,
   onOpenTeam,
   onOpenSettings,
 }: {
   readonly native: NativePersonal;
+  readonly chat: ChatEnvironment;
   readonly installedVersion: string;
+  readonly update: UpdateSnapshot | null;
+  readonly onOpenInstallPermission: () => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
-  readonly onOpenBot: (botId: string) => void;
+  readonly onOpenChats: (botId: string) => void;
+  readonly onOpenGroup: (groupId: string) => void;
+  readonly onNewGroup: () => void;
   readonly onOpenTeam: () => void;
   readonly onOpenSettings: () => void;
 }) {
   const environmentId = native.environmentId;
   const list = native.bots.usePersonalBotsList(environmentId);
   const routines = native.bots.usePersonalRoutinesList(environmentId);
+  const groupsList = native.groups.usePersonalGroupsList(environmentId);
+  const { feed: groupsFeed } = native.groups.usePersonalGroupsFeed(environmentId);
   const providers = native.useProviders();
-  const shellState = useAtomValue(native.shell.stateValueAtom(environmentId));
+  const botShells = useBotShells(native, environmentId);
   const connection = native.useConnectionState();
   const [snapshot, setSnapshot] = useState<ChatsSnapshot | null>(() =>
     readChatsSnapshot(native.client.ports.kv, environmentId),
   );
   const [now, setNow] = useState(() => Date.now());
+  const groupSections = useMemo(() => {
+    const merged = mergePersonalGroups(groupsList.data, groupsFeed);
+    return groupChatsSections({
+      groups: merged.groups,
+      archivedGroups: merged.archivedGroups,
+      rounds: merged.rounds,
+      bots: list.data?.bots ?? [],
+      nowMs: now,
+    });
+  }, [groupsFeed, groupsList.data, list.data?.bots, now]);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const [actionBot, setActionBot] = useState<BotSummary | null>(null);
+  const [newChatBot, setNewChatBot] = useState<NewChatTarget | null>(null);
+  const [renameTarget, setRenameTarget] = useState<BotSummary | null>(null);
+  const [snoozeTarget, setSnoozeTarget] = useState<BotSummary | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const archiveThread = native.client.useAtomCommand(native.bots.personalBotArchiveThread, {
+    reportFailure: false,
+  });
+  const deleteThread = native.client.useAtomCommand(native.bots.personalBotDeleteThread, {
+    reportFailure: false,
+  });
+  const updateThreads = native.client.useAtomCommand(native.bots.personalBotUpdateThreads, {
+    reportFailure: false,
+  });
+  const updateBot = native.client.useAtomCommand(native.bots.personalBotUpdate, {
+    reportFailure: false,
+  });
+  const deleteBot = native.client.useAtomCommand(native.bots.personalBotDelete, {
+    reportFailure: false,
+  });
   const persistedKey = useRef<string | null>(null);
   const refreshedGeneration = useRef<number | null>(null);
 
@@ -246,49 +387,15 @@ export function BotsScreen({
   useEffect(() => {
     if (
       connection.phase === "connected" &&
-      shellState.status === "live" &&
+      botShells.status === "live" &&
       refreshedGeneration.current !== connection.generation
     ) {
       refreshedGeneration.current = connection.generation;
       refreshList();
     }
-  }, [connection.generation, connection.phase, refreshList, shellState.status]);
+  }, [botShells.status, connection.generation, connection.phase, refreshList]);
 
-  const baseShells = useMemo<ReadonlyArray<EnvironmentThreadShell>>(
-    () => native.shellsOf(shellState.snapshot._tag === "Some" ? shellState.snapshot.value : null),
-    [native, shellState.snapshot],
-  );
-  // The slim shell leaves out archived bot chats. Ask for a linked chat only
-  // when its shell is genuinely missing, the same request the web makes.
-  const missingThreadIds = useMemo(() => {
-    if (list.data === null) return "";
-    const present = new Set(baseShells.map((shell) => shell.id as string));
-    return list.data.threads
-      .filter((link) => link.archivedAt === null && !present.has(link.threadId))
-      .map((link) => link.threadId as string)
-      .toSorted()
-      .join(",");
-  }, [baseShells, list.data]);
-  const extraShellsAtom = useMemo(
-    () =>
-      missingThreadIds.length === 0
-        ? null
-        : native.bots.personalBotsThreadShells({
-            environmentId,
-            input: {
-              threadIds: missingThreadIds.split(",") as ThreadId[],
-            },
-          }),
-    [environmentId, missingThreadIds, native],
-  );
-  const extraShells = native.client.useEnvironmentQuery(extraShellsAtom).data;
-  const shells = useMemo<ReadonlyArray<EnvironmentThreadShell>>(
-    () =>
-      extraShells === null
-        ? baseShells
-        : [...baseShells, ...extraShells.threads.map((thread) => ({ ...thread, environmentId }))],
-    [baseShells, environmentId, extraShells],
-  );
+  const shells = botShells.shells;
 
   const baseSummaries = useMemo(
     () =>
@@ -415,13 +522,96 @@ export function BotsScreen({
     setSnapshot(cache);
   }, [environmentId, list.data, native, split]);
 
-  const openSummary = (summary: BotSummary) => {
+  const openBot = (target: NewChatTarget, newestThreadId: string | null) => {
+    const tap = botTapTarget(newestThreadId);
+    if (tap.kind === "chat") onOpenChat(target.botId, tap.threadId);
+    else setNewChatBot(target);
+  };
+
+  const openSummary = (summary: BotSummary) =>
+    openBot(
+      { botId: summary.bot.botId, botName: summary.bot.name },
+      summary.newestThread?.id ?? null,
+    );
+
+  const newestThreadOf = (summary: BotSummary) => {
     const thread = summary.newestThread;
-    if (thread === null) {
-      onOpenBot(summary.bot.botId);
-      return;
-    }
-    onOpenChat(summary.bot.botId, thread.id);
+    if (thread === null) return null;
+    const shell = shells.find((candidate) => candidate.id === thread.id) ?? null;
+    return shell === null ? null : { shell, threadId: thread.id as string };
+  };
+
+  const failureText = (result: { readonly _tag: string }, fallback: string): string | null => {
+    if (result._tag === "Success") return null;
+    const cause = squashAtomCommandFailure(result as never);
+    return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+  };
+
+  const togglePin = async (summary: BotSummary) => {
+    const target = newestThreadOf(summary);
+    if (target === null) return;
+    setActionBot(null);
+    const result = await updateThreads({
+      environmentId,
+      input: {
+        threadIds: [ThreadId.make(target.threadId)],
+        pinned: !target.shell.pinnedAt,
+      },
+    });
+    setActionError(failureText(result, "Couldn't update that chat."));
+  };
+
+  const archiveNewest = async (summary: BotSummary) => {
+    const target = newestThreadOf(summary);
+    if (target === null) return;
+    setActionBot(null);
+    const result = await archiveThread({
+      environmentId,
+      input: { threadId: ThreadId.make(target.threadId), archived: true },
+    });
+    setActionError(failureText(result, "Couldn't archive that chat."));
+  };
+
+  const deleteNewest = async (summary: BotSummary) => {
+    const target = newestThreadOf(summary);
+    if (target === null) return;
+    setActionBot(null);
+    const ok = await native.client.ports.confirm.confirm({
+      title: "Delete this chat?",
+      body: "The chat and its messages are removed for good.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    const result = await deleteThread({
+      environmentId,
+      input: { threadId: ThreadId.make(target.threadId) },
+    });
+    setActionError(failureText(result, "Couldn't delete that chat."));
+  };
+
+  const setMute = async (summary: BotSummary, mute: PersonalBotNotificationMute) => {
+    setActionBot(null);
+    const result = await updateBot({
+      environmentId,
+      input: { botId: summary.bot.botId, notificationsMute: mute },
+    });
+    setActionError(failureText(result, "Couldn't change notifications for that bot."));
+  };
+
+  const removeBot = async (summary: BotSummary) => {
+    const ok = await native.client.ports.confirm.confirm({
+      title: `Delete ${summary.bot.name}?`,
+      body: "This deletes the bot and every chat you had with it.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    const result = await deleteBot({
+      environmentId,
+      input: { botId: summary.bot.botId },
+    });
+    setActionError(failureText(result, "Couldn't delete that bot."));
   };
 
   const snapshotSplit = snapshot === null ? null : partitionPinnedSnapshotRows(snapshot.rows);
@@ -436,8 +626,12 @@ export function BotsScreen({
   });
 
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.screen}
+    >
       <PersonalOfflineBanner native={native} />
+      <UpdatePermissionBanner update={update} onPress={onOpenInstallPermission} />
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Text style={styles.title} maxFontSizeMultiplier={1.2}>
@@ -484,7 +678,17 @@ export function BotsScreen({
       >
         <PersonalUsageStrip native={native} now={now} />
 
-        {list.error !== null ? (
+        {actionError !== null ? (
+          <Pressable
+            onPress={() => setActionError(null)}
+            accessibilityRole="alert"
+            style={styles.errorBox}
+          >
+            <Text style={styles.errorText}>{actionError}</Text>
+          </Pressable>
+        ) : null}
+
+        {state === "error" ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>Couldn't load your bots.</Text>
             <Pressable
@@ -517,6 +721,48 @@ export function BotsScreen({
           </View>
         ) : null}
 
+        {loaded ? (
+          <View style={styles.groupsSection}>
+            <View style={styles.groupsHeadingRow}>
+              <Text style={styles.groupsHeading}>Groups</Text>
+              <Pressable
+                onPress={onNewGroup}
+                accessibilityRole="button"
+                accessibilityLabel="New group"
+                style={styles.groupsNewButton}
+              >
+                <Text style={styles.groupsNewText}>New</Text>
+              </Pressable>
+            </View>
+            {groupSections.groups.length === 0 ? (
+              <Text style={styles.groupsEmpty}>
+                Start a group when two bots should answer in the same conversation.
+              </Text>
+            ) : null}
+            {groupSections.groups.map((row) => (
+              <GroupChatRow
+                key={row.groupId}
+                row={row}
+                bots={list.data?.bots ?? []}
+                onPress={() => onOpenGroup(row.groupId)}
+              />
+            ))}
+            {groupSections.archived.length > 0 ? (
+              <>
+                <Text style={styles.groupsArchivedLabel}>Archived groups</Text>
+                {groupSections.archived.map((row) => (
+                  <GroupChatRow
+                    key={row.groupId}
+                    row={row}
+                    bots={list.data?.bots ?? []}
+                    onPress={() => onOpenGroup(row.groupId)}
+                  />
+                ))}
+              </>
+            ) : null}
+          </View>
+        ) : null}
+
         {state === "snapshot" && snapshotSplit !== null ? (
           <>
             {snapshotSplit.pinned.length > 0 ? (
@@ -529,10 +775,7 @@ export function BotsScreen({
                 {snapshotSplit.pinned.map((row) => (
                   <Pressable
                     key={row.botId}
-                    onPress={() => {
-                      if (row.threadId !== null) onOpenChat(row.botId, row.threadId);
-                      else onOpenBot(row.botId);
-                    }}
+                    onPress={() => openBot({ botId: row.botId, botName: row.name }, row.threadId)}
                     accessibilityRole="button"
                     accessibilityLabel={row.name}
                     style={styles.tile}
@@ -559,6 +802,7 @@ export function BotsScreen({
                 row={row}
                 now={now}
                 last={index === snapshotSplit.rest.length - 1}
+                onPress={() => openBot({ botId: row.botId, botName: row.name }, row.threadId)}
               />
             ))}
           </>
@@ -593,6 +837,7 @@ export function BotsScreen({
                     summary={summary}
                     now={now}
                     onPress={() => openSummary(summary)}
+                    onLongPress={() => setActionBot(summary)}
                   />
                 ))}
               </ScrollView>
@@ -600,13 +845,19 @@ export function BotsScreen({
             {split.rest.length > 0 ? (
               <View style={styles.list}>
                 {split.rest.map((summary, index) => (
-                  <BotRow
+                  <SwipeToDeleteRow
                     key={summary.bot.botId}
-                    summary={summary}
-                    now={now}
-                    last={index === split.rest.length - 1}
-                    onPress={() => openSummary(summary)}
-                  />
+                    label={`Delete ${summary.bot.name}`}
+                    onDelete={() => void removeBot(summary)}
+                  >
+                    <BotRow
+                      summary={summary}
+                      now={now}
+                      last={index === split.rest.length - 1}
+                      onPress={() => openSummary(summary)}
+                      onLongPress={() => setActionBot(summary)}
+                    />
+                  </SwipeToDeleteRow>
                 ))}
               </View>
             ) : null}
@@ -632,7 +883,97 @@ export function BotsScreen({
         bots={list.data?.bots ?? []}
         onClose={() => setCreating(false)}
       />
-    </View>
+      <BotActionsSheet
+        visible={actionBot !== null}
+        bot={actionBot?.bot ?? null}
+        threadTitle={actionBot?.newestThread?.title ?? null}
+        hasThread={actionBot?.newestThread !== null && actionBot?.newestThread !== undefined}
+        pinned={
+          actionBot?.newestThread?.pinnedAt !== null &&
+          actionBot?.newestThread?.pinnedAt !== undefined
+        }
+        nowMs={now}
+        onClose={() => setActionBot(null)}
+        onNewChat={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) {
+            setNewChatBot({ botId: target.bot.botId, botName: target.bot.name });
+          }
+        }}
+        onAllChats={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) onOpenChats(target.bot.botId);
+        }}
+        onRename={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) setRenameTarget(target);
+        }}
+        onSnooze={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) setSnoozeTarget(target);
+        }}
+        onTogglePin={() => {
+          if (actionBot !== null) void togglePin(actionBot);
+        }}
+        onArchive={() => {
+          if (actionBot !== null) void archiveNewest(actionBot);
+        }}
+        onDeleteChat={() => {
+          if (actionBot !== null) void deleteNewest(actionBot);
+        }}
+        onMute={(mute) => {
+          if (actionBot !== null) void setMute(actionBot, mute);
+        }}
+      />
+      {newChatBot !== null ? (
+        <NewChatSheet
+          native={native}
+          visible
+          botId={newChatBot.botId}
+          botName={newChatBot.botName}
+          openChatTitles={
+            list.data?.threads
+              .filter((link) => link.botId === newChatBot.botId && link.archivedAt === null)
+              .map((link) => shells.find((shell) => shell.id === link.threadId)?.title ?? "") ?? []
+          }
+          onClose={() => setNewChatBot(null)}
+          onCreated={(threadId) => onOpenChat(newChatBot.botId, threadId)}
+        />
+      ) : null}
+      {renameTarget !== null ? (
+        <RenameChatSheet
+          native={native}
+          chat={chat}
+          visible
+          threadId={renameTarget.newestThread?.id ?? ""}
+          initialTitle={renameTarget.newestThread?.title ?? ""}
+          takenTitles={
+            list.data?.threads
+              .filter(
+                (link) =>
+                  link.botId === renameTarget.bot.botId &&
+                  link.archivedAt === null &&
+                  link.threadId !== renameTarget.newestThread?.id,
+              )
+              .map((link) => shells.find((shell) => shell.id === link.threadId)?.title ?? "") ?? []
+          }
+          onClose={() => setRenameTarget(null)}
+          onSaved={() => setActionError(null)}
+        />
+      ) : null}
+      <SnoozeSheet
+        native={native}
+        visible={snoozeTarget !== null}
+        threadIds={snoozeTarget?.newestThread == null ? [] : [snoozeTarget.newestThread.id]}
+        onClose={() => setSnoozeTarget(null)}
+        onSnoozed={() => setActionError(null)}
+        onError={setActionError}
+      />
+    </KeyboardAvoidingView>
   );
 }
 
@@ -836,4 +1177,60 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.fillMuted,
     marginVertical: 4,
   },
+  groupsSection: { marginTop: 12, gap: 2 },
+  groupsHeadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
+  groupsHeading: {
+    color: tokens.sectionLabel,
+    fontSize: 13,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  groupsNewButton: {
+    minHeight: 32,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    justifyContent: "center",
+  },
+  groupsNewText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "600" },
+  groupsEmpty: {
+    color: tokens.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
+  groupsArchivedLabel: {
+    color: tokens.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
+    paddingHorizontal: 4,
+    paddingTop: 10,
+    paddingBottom: 2,
+  },
+  groupRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  groupRowPressed: { backgroundColor: tokens.fillMuted },
+  groupRowText: { flex: 1, minWidth: 0, gap: 1 },
+  groupRowTitleLine: { flexDirection: "row", alignItems: "baseline", gap: 8 },
+  groupRowName: { flex: 1, color: tokens.text, fontSize: 16, fontWeight: "600" },
+  groupRowTime: { color: tokens.textTertiary, fontSize: 12 },
+  groupRowPreview: { color: tokens.textPreview, fontSize: 14 },
+  groupRowStatusLine: { flexDirection: "row", alignItems: "center", gap: 6 },
+  groupStatusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: tokens.textTertiary },
+  groupStatusLive: { backgroundColor: tokens.working },
+  groupStatusReview: { backgroundColor: tokens.reviewText },
+  groupRowStatus: { color: tokens.textSecondary, fontSize: 13, flexShrink: 1 },
 });

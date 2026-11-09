@@ -1,5 +1,7 @@
 import { createSecureKeyValueStore } from "../platform/nativePorts";
+import type { UpdateSnapshot } from "../updater";
 import { crashDiagBody } from "./diagBody";
+import { createUpdaterStateTracker } from "./updaterDiag";
 
 const EXIT_MARKER_KEY = "hbots.exit-marker.v1";
 const MARKER_ALIVE = "alive";
@@ -10,6 +12,7 @@ const kv = createSecureKeyValueStore();
 let previousExit: string | null = null;
 let reported = false;
 let baseUrl: string | null = null;
+const updaterStates = createUpdaterStateTracker();
 
 /**
  * Called once at module load, before anything can crash. The previous value is
@@ -83,4 +86,16 @@ export async function reportAnrForTest(): Promise<void> {
   await post(baseUrl, crashDiagBody("anr", "ApplicationNotResponding", Date.now())).catch(
     () => undefined,
   );
+}
+
+/**
+ * A stalled updater leaves no other trace on the server. Nothing is sent until
+ * a session gives the base URL, so a state seen before pairing is still
+ * reported once the URL is known.
+ */
+export function reportUpdaterState(snapshot: UpdateSnapshot | null): void {
+  if (snapshot === null || baseUrl === null) return;
+  const body = updaterStates.next(snapshot);
+  if (body === null) return;
+  void post(baseUrl, { ...body }).catch(() => undefined);
 }

@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -901,39 +902,44 @@ export const make = Effect.gen(function* () {
         `,
       ).pipe(Effect.flatMap((rows) => decodeTasks("listTasksAwaitingResume", rows)));
 
+  const asRead =
+    <A extends ReadonlyArray<unknown>, X, E, R>(fn: (...args: A) => Effect.Effect<X, E, R>) =>
+    (...args: A): Effect.Effect<X, E, R> =>
+      readOnly(fn(...args));
+
   return {
     transaction,
     insertTask,
-    getTask,
-    getTaskByIdempotencyKey,
-    listTasks,
-    listForReplay,
-    listTerminalPage,
-    listRelated,
-    listDescendants,
-    countTasksInRoot,
-    listRootDelegationsForBot,
+    getTask: asRead(getTask),
+    getTaskByIdempotencyKey: asRead(getTaskByIdempotencyKey),
+    listTasks: asRead(listTasks),
+    listForReplay: asRead(listForReplay),
+    listTerminalPage: asRead(listTerminalPage),
+    listRelated: asRead(listRelated),
+    listDescendants: asRead(listDescendants),
+    countTasksInRoot: asRead(countTasksInRoot),
+    listRootDelegationsForBot: asRead(listRootDelegationsForBot),
     writeTask,
-    listClaimable,
+    listClaimable: asRead(listClaimable),
     insertAttempt,
     writeAttempt,
-    listAttempts,
-    listActiveAttempts,
+    listAttempts: asRead(listAttempts),
+    listActiveAttempts: asRead(listActiveAttempts),
     setNotifyMode,
     recordNotifyDecision,
-    getNotifyState,
+    getNotifyState: asRead(getNotifyState),
     heartbeat,
     insertHandoff,
     writeHandoff,
     getHandoffByChild,
-    listHandoffsByParent,
-    latestTaskForThread,
-    latestUnfinishedTaskForThread,
+    listHandoffsByParent: asRead(listHandoffsByParent),
+    latestTaskForThread: asRead(latestTaskForThread),
+    latestUnfinishedTaskForThread: asRead(latestUnfinishedTaskForThread),
     insertResumeNote,
-    listUndeliveredNotes,
+    listUndeliveredNotes: asRead(listUndeliveredNotes),
     markNotesDelivered,
-    listSteerNotes,
-    listTasksAwaitingResume,
+    listSteerNotes: asRead(listSteerNotes),
+    listTasksAwaitingResume: asRead(listTasksAwaitingResume),
   } satisfies PersonalTaskRepository["Service"];
 });
 

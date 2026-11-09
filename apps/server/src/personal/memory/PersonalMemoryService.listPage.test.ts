@@ -4,11 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { PersonalMemoryService } from "./PersonalMemoryService.ts";
 import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
-const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 /** Adds an entry straight into the table with the time given, so a test can lay out a long history. */
 const insert = (input: {

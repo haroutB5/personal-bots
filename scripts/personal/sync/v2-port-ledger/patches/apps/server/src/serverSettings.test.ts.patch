@@ -1,0 +1,269 @@
+diff --git a/apps/server/src/serverSettings.test.ts b/apps/server/src/serverSettings.test.ts
+index 502ae3430e27d46007681ef0024e4be72a4f133e..c7dd1a518b1abb5df2ed27e8ef68d8b417b5e17c 100644
+--- a/apps/server/src/serverSettings.test.ts
++++ b/apps/server/src/serverSettings.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   DEFAULT_SERVER_SETTINGS,
+   ModelSelection,
+@@ -21,7 +21,7 @@ import * as Path from "effect/Path";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+ import * as ServerConfig from "./config.ts";
+ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+@@ -92,6 +92,57 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
+   });
+ 
+ it.layer(NodeServices.layer)("server settings", (it) => {
++  it.effect("redacts OpenCode passwords and preserves them when the phone saves other fields", () =>
++    Effect.gen(function* () {
++      const service = yield* ServerSettingsModule.ServerSettingsService;
++      const id = ProviderInstanceId.make("opencode");
++      const saved = yield* service.updateSettings({
++        providers: { opencode: { serverPassword: "fake-legacy-password" } },
++        providerInstances: {
++          [id]: {
++            driver: ProviderDriverKind.make("opencode"),
++            config: { serverPassword: "fake-instance-password" },
++          },
++        },
++      });
++      const client = ServerSettingsModule.redactServerSettingsForClient(saved);
++      assert.equal(client.providers.opencode.serverPassword, "[redacted]");
++      const instance = client.providerInstances[id];
++      assert.isDefined(instance);
++      const clientConfig = instance?.config as { serverPassword?: string } | undefined;
++      assert.equal(clientConfig?.serverPassword, "[redacted]");
++      const updated = yield* service.updateSettings({
++        providers: client.providers,
++        providerInstances: {
++          [id]: {
++            ...instance!,
++            driver: ProviderDriverKind.make("opencode"),
++            config: {
++              ...clientConfig,
++              serverUrl: "http://127.0.0.1:4096",
++            },
++          },
++        },
++      });
++      assert.equal(updated.providers.opencode.serverPassword, "fake-legacy-password");
++      const config = updated.providerInstances[id]?.config as { serverPassword?: string };
++      assert.equal(config.serverPassword, "fake-instance-password");
++      const cleared = yield* service.updateSettings({
++        providerInstances: {
++          [id]: {
++            driver: ProviderDriverKind.make("opencode"),
++            config: { serverPassword: "" },
++          },
++        },
++      });
++      const clearedClient = ServerSettingsModule.redactServerSettingsForClient(cleared);
++      assert.equal(
++        (clearedClient.providerInstances[id]?.config as { serverPassword?: string } | undefined)
++          ?.serverPassword,
++        "",
++      );
++    }).pipe(Effect.provide(makeServerSettingsLayer())),
++  );
+   it.effect("preserves context when reading a provider environment secret fails", () => {
+     const platformCause = PlatformError.systemError({
+       _tag: "PermissionDenied",
+@@ -1228,68 +1279,134 @@ it.layer(NodeServices.layer)("server settings", (it) => {
+     );
+   }
+ 
+-  it.effect("stores sensitive provider instance environment values outside settings.json", () =>
+-    Effect.gen(function* () {
+-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+-      const serverConfig = yield* ServerConfig.ServerConfig;
+-      const fileSystem = yield* FileSystem.FileSystem;
+-      const instanceId = ProviderInstanceId.make("codex_personal");
++  for (const driver of ["codex", "deepseek"] as const) {
++    it.effect(
++      `stores ${driver} sensitive provider instance environment values outside settings.json`,
++      () =>
++        Effect.gen(function* () {
++          const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
++          const serverConfig = yield* ServerConfig.ServerConfig;
++          const fileSystem = yield* FileSystem.FileSystem;
++          const instanceId = ProviderInstanceId.make("codex_personal");
+ 
+-      const next = yield* serverSettings.updateSettings({
+-        providerInstances: {
+-          [instanceId]: {
+-            driver: ProviderDriverKind.make("codex"),
+-            environment: [
+-              { name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true },
+-              { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
+-            ],
+-            config: {},
++          const next = yield* serverSettings.updateSettings({
++            providerInstances: {
++              [instanceId]: {
++                driver: ProviderDriverKind.make(driver),
++                environment: [
++                  { name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true },
++                  {
++                    name: "ANTHROPIC_BASE_URL",
++                    value: "https://openrouter.ai/api",
++                    sensitive: false,
++                  },
++                ],
++                config: {},
++              },
++            },
++          });
++
++          assert.deepEqual(next.providerInstances[instanceId]?.environment, [
++            {
++              name: "OPENROUTER_API_KEY",
++              value: "sk-or-secret",
++              sensitive: true,
++              valueRedacted: true,
++            },
++            { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
++          ]);
++
++          const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
++          assert.notInclude(raw, "sk-or-secret");
++          // @effect-diagnostics-next-line preferSchemaOverJson:off
++          assert.deepEqual(JSON.parse(raw).providerInstances.codex_personal.environment, [
++            {
++              name: "OPENROUTER_API_KEY",
++              value: "",
++              sensitive: true,
++              valueRedacted: true,
++            },
++            { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
++          ]);
++
++          const roundTripped = yield* serverSettings.updateSettings({
++            providerInstances: {
++              [instanceId]: {
++                driver: ProviderDriverKind.make(driver),
++                displayName: "Codex Personal",
++                environment: [
++                  { name: "OPENROUTER_API_KEY", value: "", sensitive: true, valueRedacted: true },
++                  {
++                    name: "ANTHROPIC_BASE_URL",
++                    value: "https://openrouter.ai/api",
++                    sensitive: false,
++                  },
++                ],
++                config: {},
++              },
++            },
++          });
++
++          assert.equal(
++            roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
++            "sk-or-secret",
++          );
++        }).pipe(Effect.provide(makeServerSettingsLayer())),
++    );
++  }
++
++  it.effect(
++    "stores the DeepSeek key field's entry in the secret store, replaces it, and removes it",
++    () =>
++      Effect.gen(function* () {
++        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
++        const serverConfig = yield* ServerConfig.ServerConfig;
++        const fileSystem = yield* FileSystem.FileSystem;
++        const instanceId = ProviderInstanceId.make("deepseek_personal");
++        const withKey = (value: string) => ({
++          providerInstances: {
++            [instanceId]: {
++              driver: ProviderDriverKind.make("deepseek"),
++              environment: [{ name: "ANTHROPIC_AUTH_TOKEN", value, sensitive: true }],
++              config: {},
++            },
+           },
+-        },
+-      });
++        });
+ 
+-      assert.deepEqual(next.providerInstances[instanceId]?.environment, [
+-        {
+-          name: "OPENROUTER_API_KEY",
+-          value: "sk-or-secret",
+-          sensitive: true,
+-          valueRedacted: true,
+-        },
+-        { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
+-      ]);
+-
+-      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+-      assert.notInclude(raw, "sk-or-secret");
+-      // @effect-diagnostics-next-line preferSchemaOverJson:off
+-      assert.deepEqual(JSON.parse(raw).providerInstances.codex_personal.environment, [
+-        {
+-          name: "OPENROUTER_API_KEY",
+-          value: "",
+-          sensitive: true,
+-          valueRedacted: true,
+-        },
+-        { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
+-      ]);
+-
+-      const roundTripped = yield* serverSettings.updateSettings({
+-        providerInstances: {
+-          [instanceId]: {
+-            driver: ProviderDriverKind.make("codex"),
+-            displayName: "Codex Personal",
+-            environment: [
+-              { name: "OPENROUTER_API_KEY", value: "", sensitive: true, valueRedacted: true },
+-              { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
+-            ],
+-            config: {},
++        // Exactly what the DeepSeek API key field saves.
++        const saved = yield* serverSettings.updateSettings(withKey("sk-first-key"));
++        assert.deepEqual(saved.providerInstances[instanceId]?.environment, [
++          {
++            name: "ANTHROPIC_AUTH_TOKEN",
++            value: "sk-first-key",
++            sensitive: true,
++            valueRedacted: true,
+           },
+-        },
+-      });
++        ]);
++        // The file keeps the marker; the value comes back only from the store.
++        assert.notInclude(
++          yield* fileSystem.readFileString(serverConfig.settingsPath),
++          "sk-first-key",
++        );
+ 
+-      assert.equal(
+-        roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
+-        "sk-or-secret",
+-      );
+-    }).pipe(Effect.provide(makeServerSettingsLayer())),
++        // Replace: the new value replaces the old one everywhere.
++        const replaced = yield* serverSettings.updateSettings(withKey("sk-second-key"));
++        assert.equal(
++          replaced.providerInstances[instanceId]?.environment?.[0]?.value,
++          "sk-second-key",
++        );
++        const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
++        assert.notInclude(persisted, "sk-second-key");
++        assert.notInclude(persisted, "sk-first-key");
++
++        // Remove: no entry, and nothing of either key left in the file.
++        const removed = yield* serverSettings.updateSettings({ providerInstances: {} });
++        assert.equal(removed.providerInstances[instanceId], undefined);
++        assert.notInclude(
++          yield* fileSystem.readFileString(serverConfig.settingsPath),
++          "sk-second-key",
++        );
++      }).pipe(Effect.provide(makeServerSettingsLayer())),
+   );
+ 
+   it.effect(

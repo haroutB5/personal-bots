@@ -1,0 +1,16 @@
+diff --git a/packages/shared/src/otelEnvironment.ts b/packages/shared/src/otelEnvironment.ts
+index c2496bd28a527a6ba08b8a1287a666e464b24acd..e54dc6cf2a294633e09f285aa889fba1f8f8b5a6 100644
+--- a/packages/shared/src/otelEnvironment.ts
++++ b/packages/shared/src/otelEnvironment.ts
+@@ -65,7 +65,10 @@ interface Flag {
+ const TrimmedLowercase = Schema.String.pipe(
+   Schema.decodeTo(
+     Schema.String,
+-    SchemaTransformation.trim().compose(SchemaTransformation.toLowerCase()),
++    SchemaTransformation.composeTransformation(
++      SchemaTransformation.trim(),
++      SchemaTransformation.toLowerCase(),
++    ),
+   ),
+ );
+ 

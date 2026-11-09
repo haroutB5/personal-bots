@@ -1,0 +1,15 @@
+diff --git a/apps/web/src/cloud/primaryCloudLinkState.ts b/apps/web/src/cloud/primaryCloudLinkState.ts
+index c5871fa65d6638c5afff5d3d21eef0f98f664fa7..d46ee641d5746f521f201c17729e6e3f5f6d5b3f 100644
+--- a/apps/web/src/cloud/primaryCloudLinkState.ts
++++ b/apps/web/src/cloud/primaryCloudLinkState.ts
+@@ -5,8 +5,8 @@ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+-import { HttpClient } from "effect/unstable/http";
++import { AsyncResult, Atom } from "effect/reactivity";
++import { HttpClient } from "effect/http";
+ import { useCallback, useMemo } from "react";
+ 
+ import { usePrimaryEnvironment } from "../state/environments";

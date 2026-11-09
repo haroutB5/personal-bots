@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
-import { advertisedJsonSchema, compactSchemasEnabled } from "./advertisedJsonSchema.ts";
+import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 
 it("drops JSON noise, merges tagged unions, and keeps null where it is required", () => {
   const Every = Schema.Struct({ ms: Schema.Int });
@@ -42,11 +42,4 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
     },
     required: ["beforeRunId", "every"],
   });
-});
-
-it("compact schemas are on unless switched off", () => {
-  expect(compactSchemasEnabled({})).toBe(true);
-  expect(compactSchemasEnabled({ PERSONAL_MCP_COMPACT_SCHEMAS: "off" })).toBe(false);
-  expect(compactSchemasEnabled({ T3CODE_PERSONAL_MCP_COMPACT_SCHEMAS: "0" })).toBe(false);
-  expect(compactSchemasEnabled({ PERSONAL_MCP_COMPACT_SCHEMAS: "on" })).toBe(true);
 });

@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/terminal/OutputProtocol.ts b/apps/server/src/terminal/OutputProtocol.ts
+index 1bd4934f94cc054ea00fd89c3d1482dbe5acf57c..441961a7952f411312f114071ddaeaca390bcc0c 100644
+--- a/apps/server/src/terminal/OutputProtocol.ts
++++ b/apps/server/src/terminal/OutputProtocol.ts
+@@ -1,6 +1,6 @@
+ import { WS_METHODS } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+-import type { RpcServer } from "effect/unstable/rpc";
++import type { RpcServer } from "effect/rpc";
+ 
+ const MAX_PENDING_CHUNKS = 8;
+ const MAX_PENDING_BYTES = 64 * 1024;

@@ -1,0 +1,49 @@
+diff --git a/apps/server/src/provider/Layers/CursorProvider.test.ts b/apps/server/src/provider/Layers/CursorProvider.test.ts
+index aa5207f3aef2e8b71dd6a53c8bb54311213ccdf6..86ef5e16b50807b8bafc49b6af394cddd7655085 100644
+--- a/apps/server/src/provider/Layers/CursorProvider.test.ts
++++ b/apps/server/src/provider/Layers/CursorProvider.test.ts
+@@ -1,13 +1,15 @@
++// @effect-diagnostics nodeBuiltinImport:off - FileSystem.symlink cannot select Windows directory junctions.
+ import * as NodeOS from "node:os";
++import * as NodeFSP from "node:fs/promises";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it as effectIt } from "@effect/vitest";
+-import type * as Crypto from "effect/Crypto";
++import type * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Stream from "effect/Stream";
+-import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import { describe, expect, it } from "vite-plus/test";
+ import type * as EffectAcpSchema from "effect-acp/schema";
+ import { ProviderDriverKind, ProviderInstanceId, type CursorSettings } from "@t3tools/contracts";
+@@ -35,7 +37,7 @@ import {
+ } from "../Drivers/CursorSkills.ts";
+ import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./cursorUsageLimits.ts";
+ 
+ const runNode = <A, E>(
+@@ -432,7 +434,15 @@ describe("Cursor skills", () => {
+         yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
+         const root = path.join(workspace, ".cursor", "skills");
+         yield* fileSystem.makeDirectory(root, { recursive: true });
+-        yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
++        const target = path.join(library, "shared-review");
++        const link = path.join(root, "review");
++        if (windowsHost) {
++          // Directory junctions preserve link-boundary coverage without requiring
++          // Windows symlink privileges or skipping the containment assertions.
++          yield* Effect.promise(() => NodeFSP.symlink(target, link, "junction"));
++        } else {
++          yield* fileSystem.symlink(target, link);
++        }
+ 
+         const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+         expect(skills).toEqual([

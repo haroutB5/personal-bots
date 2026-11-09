@@ -1,19 +1,7 @@
 /**
- * API-key providers — the one field each of them needs, and the rules around it.
- *
- * Some providers authenticate with a key the owner pastes rather than a
- * browser login. Until this module existed the only way in was the generic
- * **Environment** row, where the owner had to know the variable's name
- * (`ANTHROPIC_AUTH_TOKEN`, `XAI_API_KEY`) and mark it sensitive by hand. Each
- * entry here turns that into a labelled, masked field that still writes the
- * same sensitive environment entry, so the server's redaction, encrypted
- * secret store and both DeepSeek engines are untouched.
- *
- * Nothing here ever holds a value from a saved entry: the server returns
- * sensitive values redacted (`valueRedacted`), and the field only ever reports
- * whether one is saved.
- *
- * @module components/settings/providerApiKeys
+ * API-key providers: the one field each needs. Saving writes the same sensitive
+ * environment entry the hand-typed setup used, so server redaction and the
+ * secret store are unchanged. Nothing here holds a saved value.
  */
 import type {
   ProviderInstanceEnvironmentVariable,
@@ -57,10 +45,8 @@ export interface ProviderApiKeyField {
 
 /**
  * One entry per driver that carries an API key in its instance environment.
- * Deliberately small: Claude Code, Codex, Cursor and Antigravity authenticate
- * through their own logins or their own settings schema, and OpenCode connects
- * upstream providers through `opencode auth login`, so none of them has a
- * single hand-typed key to replace.
+ * Claude Code, Codex, Cursor, Antigravity and OpenCode sign in their own way,
+ * so none of them has a single key to replace.
  */
 export const PROVIDER_API_KEY_FIELDS: Readonly<Record<string, ProviderApiKeyField>> = {
   deepseek: {
@@ -104,14 +90,17 @@ export function providerApiKeyEntry(
   return environment.findLast((variable) => variable.name === field.name);
 }
 
-/** A key is saved once its entry exists and carries a value the server holds. */
+/** A key is saved once its entry exists and carries a value the server holds or a reference. */
 export function hasSavedProviderApiKey(
   environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
   field: ProviderApiKeyField,
 ): boolean {
   const entry = providerApiKeyEntry(environment, field);
   if (entry === undefined) return false;
-  return entry.valueRedacted === true || entry.value.trim().length > 0;
+  // A reference names a key held in a secret manager, so it is saved too.
+  return (
+    entry.valueRedacted === true || typeof entry.value !== "string" || entry.value.trim().length > 0
+  );
 }
 
 /** Save (or replace) the key. The entry is always sensitive, like the hand-typed one was. */
@@ -156,15 +145,9 @@ function formatBalance(amounts: { currency: string; totalBalance: number } | und
 }
 
 /**
- * What to say after a key was saved in this session, from the balance the
- * server read with it. The reading must be newer than the save, or it is the
- * previous key's answer; a same-second save and read is accepted, because the
- * probe timestamp is taken after the read that used the new key.
- *
- * A rejected key is named as such; an empty account is named as a working key
- * with nothing left to spend; and every other failure — a rate limit, a server
- * fault, a flaky connection — is not, so nothing ever reads as "your key is
- * wrong" when the key is fine.
+ * What to say after a key was saved here, from a balance read newer than the
+ * save (same second counts). Only a rejected key reads as wrong; an empty
+ * account is a working key, and other failures never blame the key.
  */
 export function providerApiKeyCheckLine(input: {
   readonly field: ProviderApiKeyField;

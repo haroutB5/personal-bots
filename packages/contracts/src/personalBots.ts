@@ -38,12 +38,15 @@ import { UsageProviderKind } from "./usage.ts";
  * disagree in either direction.
  */
 export const BOT_INSTRUCTION_DRIVER_KINDS: ReadonlyArray<ProviderDriverKind> = [
+  ProviderDriverKind.make("acpRegistry"),
+  ProviderDriverKind.make("antigravity"),
   ProviderDriverKind.make("claudeAgent"),
   ProviderDriverKind.make("codex"),
-  ProviderDriverKind.make("opencode"),
   ProviderDriverKind.make("deepseek"),
-  ProviderDriverKind.make("antigravity"),
-  ProviderDriverKind.make("registry"),
+  ProviderDriverKind.make("fx"),
+  ProviderDriverKind.make("grok"),
+  ProviderDriverKind.make("kiro"),
+  ProviderDriverKind.make("opencode"),
 ];
 
 /**
@@ -264,7 +267,7 @@ export const PersonalBot = Schema.Struct({
    * The bot form's "Allow voice calls": whether this bot's owner chats offer
    * the call button. On for the CTO only at launch, off for every other bot
    * and for a new one. Optional on the wire like the fields above; read it
-   * through {@link botAllowsVoiceCalls}.
+   * through {@link botTakesVoiceCalls}.
    */
   allowVoiceCalls: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,
@@ -609,6 +612,27 @@ export const PersonalBotThreadShellsResult = Schema.Struct({
   threads: Schema.Array(OrchestrationThreadShell),
 });
 export type PersonalBotThreadShellsResult = typeof PersonalBotThreadShellsResult.Type;
+
+/**
+ * One item on `personalBots.subscribeThreadShells`. A snapshot opens every
+ * stream and replaces the phone's map; an upsert is idempotent; a removed
+ * item names chats that left the open bot list (archived or deleted).
+ */
+export const PersonalBotThreadShellStreamItem = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("snapshot"),
+    threads: Schema.Array(OrchestrationThreadShell),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("upsert"),
+    threads: Schema.Array(OrchestrationThreadShell),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("removed"),
+    threadIds: Schema.Array(ThreadId),
+  }),
+]);
+export type PersonalBotThreadShellStreamItem = typeof PersonalBotThreadShellStreamItem.Type;
 
 /** The whole text behind previews a thread read sent (see `textPreviews`). */
 export const PERSONAL_THREAD_FULL_TEXT_MAX = 50;

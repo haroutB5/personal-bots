@@ -1,4 +1,4 @@
-﻿// @effect-diagnostics-next-line nodeBuiltinImport:off - locates this repo's own source tree for static analysis.
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -12,8 +12,16 @@ const providerDirectory = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../provider",
 );
+const packagesDirectory = NodePath.resolve(providerDirectory, "../../../../packages");
+/** Drivers upstream moved into packages; their adapter sits beside the driver. */
+const packageDriverFiles = NodeFS.readdirSync(packagesDirectory)
+  .filter((name) => name.startsWith("provider-"))
+  .map((name) => NodePath.join(packagesDirectory, name, "src/server/driver.ts"))
+  .filter((file) => NodeFS.existsSync(file));
 
-const coverage = scanDriverInstructionCoverage(providerDirectory);
+const coverage = scanDriverInstructionCoverage(providerDirectory, {
+  extraDriverFiles: packageDriverFiles,
+});
 const sorted = (kinds: ReadonlyArray<string>): ReadonlyArray<string> => [...kinds].sort();
 
 describe("bot instruction coverage", () => {
@@ -66,23 +74,26 @@ describe("bot instruction coverage", () => {
         .filter((entry) => entry.carriesBotInstructions)
         .map((entry) => [entry.driverKind, entry.callSite]),
     );
+    const acp = "../../../../packages/provider-acp/src/server/adapter.ts";
     assert.deepEqual(callSites, {
-      claudeAgent: "Layers/ClaudeAdapter.ts",
+      acpRegistry: acp,
+      antigravity: acp,
+      claudeAgent: "../orchestration-v2/Adapters/ClaudeAdapterV2.ts",
       codex: "CodexDeveloperInstructions.ts",
-      opencode: "Layers/OpenCodeAdapter.ts",
-      deepseek: "Layers/ClaudeAdapter.ts",
-      antigravity: "Layers/AntigravityAdapter.ts",
-      registry: "Layers/NativeAcpAdapter.ts",
+      deepseek: acp,
+      fx: acp,
+      grok: acp,
+      kiro: acp,
+      opencode: "../../../../packages/provider-opencode/src/server/adapter.ts",
     });
   });
 
   // Regression pin for the v1.19.0 defect: these ACP adapters append only
   // buildRuntimeInstructions, never the bot's persona. If one of them is
   // wired up later, this fails and the contracts list must be updated with
-  // it (which the assertion above then re-derives). Antigravity was wired in
-  // 1.66.73 (the persona rides in the same text block on every prompt).
-  it("still reports the ACP providers as not carrying instructions", () => {
-    for (const kind of ["cursor", "grok"]) {
+  // it (which the assertion above then re-derives).
+  it("still reports the remaining ACP providers as not carrying instructions", () => {
+    for (const kind of ["cursor"]) {
       const entry = coverage.find((candidate) => candidate.driverKind === kind);
       if (entry === undefined) continue;
       assert.isFalse(

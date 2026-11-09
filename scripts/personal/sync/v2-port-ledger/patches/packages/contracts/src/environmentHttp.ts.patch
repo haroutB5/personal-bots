@@ -1,0 +1,92 @@
+diff --git a/packages/contracts/src/environmentHttp.ts b/packages/contracts/src/environmentHttp.ts
+index ae63a405fa989d833f0a7419f99e6fce9f658fc4..318e5a3de23263df14948b4bc39a51222c34e7f6 100644
+--- a/packages/contracts/src/environmentHttp.ts
++++ b/packages/contracts/src/environmentHttp.ts
+@@ -1,12 +1,12 @@
+ import * as Context from "effect/Context";
+ import type * as DateTime from "effect/DateTime";
+ import * as Schema from "effect/Schema";
+-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
+-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import * as HttpApi from "effect/http-api/HttpApi";
++import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
++import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
++import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
++import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
+ 
+ import {
+   AuthAccessTokenResult,
+@@ -78,6 +78,8 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
+ 
+ export const EnvironmentOperationForbiddenReason = Schema.Literals([
+   "current_session_revoke_not_allowed",
++  "session_not_renewable",
++  "session_not_revocable",
+ ]);
+ export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
+ 
+@@ -323,6 +325,10 @@ const EnvironmentSessionRevokeErrors = [
+   EnvironmentOperationForbiddenError,
+   EnvironmentInternalError,
+ ] as const;
++const EnvironmentOwnSessionErrors = [
++  EnvironmentOperationForbiddenError,
++  EnvironmentInternalError,
++] as const;
+ const EnvironmentOrchestrationSnapshotErrors = [
+   EnvironmentScopeRequiredError,
+   EnvironmentInternalError,
+@@ -422,6 +428,20 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
+       error: [EnvironmentInternalError],
+     }),
+   )
++  .add(
++    HttpApiEndpoint.post("renewSession", "/api/auth/session/renew", {
++      headers: OptionalBearerHeaders,
++      success: AuthAccessTokenResult,
++      error: EnvironmentOwnSessionErrors,
++    }).middleware(EnvironmentAuthenticatedAuth),
++  )
++  .add(
++    HttpApiEndpoint.post("revokeSession", "/api/auth/session/revoke", {
++      headers: OptionalBearerHeaders,
++      success: AuthClientSessionRevokeResult,
++      error: EnvironmentOwnSessionErrors,
++    }).middleware(EnvironmentAuthenticatedAuth),
++  )
+   .add(
+     HttpApiEndpoint.post("browserSession", "/api/auth/browser-session", {
+       payload: AuthBrowserSessionRequest,
+@@ -497,8 +517,19 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
+ // Query-string window for windowed thread snapshots (GET payloads must encode
+ // to strings). Both fields optional: omitting them keeps the full-snapshot
+ // behavior, so pagination stays opt-in per request.
++/**
++ * `omitArchivedBotChats=true` leaves out the bot chats the owner archived,
++ * unless one is working or waiting on the owner. The Bots app loads those on
++ * demand (`personalBots.threadShells`). Servers that predate it ignore it.
++ */
++const EnvironmentOrchestrationShellSnapshotQuery = {
++  omitArchivedBotChats: Schema.optional(Schema.Literal("true")),
++};
++
+ const EnvironmentOrchestrationThreadSnapshotQuery = {
+   reasoningMessages: Schema.optional(Schema.Literal("true")),
++  /** Like the thread subscription's `textPreviews`. */
++  textPreviews: Schema.optional(Schema.Literal("true")),
+   turnLimit: Schema.optional(
+     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+   ),
+@@ -516,6 +547,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
+   .add(
+     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
+       headers: OptionalBearerHeaders,
++      payload: EnvironmentOrchestrationShellSnapshotQuery,
+       success: OrchestrationShellSnapshot,
+       error: EnvironmentOrchestrationSnapshotErrors,
+     }).middleware(EnvironmentAuthenticatedAuth),

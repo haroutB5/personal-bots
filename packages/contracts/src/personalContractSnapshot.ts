@@ -14,7 +14,8 @@
  */
 import * as Schema from "effect/Schema";
 
-import { WS_METHODS, WsPersonalRpcGroup, WsServerRpcGroup } from "./rpc.ts";
+import { WsPersonalRpcGroup } from "./personalRpc.ts";
+import { WS_METHODS, WsRpcGroup as WsServerRpcGroup } from "./rpc.ts";
 
 /** Server-group methods the personal client calls by name. */
 export const PERSONAL_CONTRACT_EXTRA_METHODS = [

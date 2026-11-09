@@ -1,12 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import {
-  ModelSelection as V1ModelSelection,
-  OrchestrationMessageRole as V1OrchestrationMessageRole,
-  OrchestrationThreadShell as V1OrchestrationThreadShell,
-  ThreadTurnFollowUp as V1ThreadTurnFollowUp,
-} from "./orchestration.ts";
+import golden from "./personalV1Wire.golden.json" with { type: "json" };
 import {
   ModelSelection,
   OrchestrationMessageRole,
@@ -14,22 +9,24 @@ import {
   ThreadTurnFollowUp,
 } from "./personalV1Wire.ts";
 
+const goldenSchemas = golden as Record<string, unknown>;
+
 const jsonSchema = (schema: Schema.Top): unknown => {
   const document = Schema.toJsonSchemaDocument(schema);
   return { schema: document.schema, definitions: document.definitions };
 };
 
 describe("personalV1Wire", () => {
-  it("encodes every vendored schema exactly as the v1 original does", () => {
+  it("encodes every vendored schema exactly as the v1 original did", () => {
     const pairs = [
-      ["ModelSelection", ModelSelection, V1ModelSelection],
-      ["OrchestrationMessageRole", OrchestrationMessageRole, V1OrchestrationMessageRole],
-      ["OrchestrationThreadShell", OrchestrationThreadShell, V1OrchestrationThreadShell],
-      ["ThreadTurnFollowUp", ThreadTurnFollowUp, V1ThreadTurnFollowUp],
+      ["ModelSelection", ModelSelection],
+      ["OrchestrationMessageRole", OrchestrationMessageRole],
+      ["OrchestrationThreadShell", OrchestrationThreadShell],
+      ["ThreadTurnFollowUp", ThreadTurnFollowUp],
     ] as const;
 
-    for (const [name, vendored, original] of pairs) {
-      expect(jsonSchema(vendored), name).toEqual(jsonSchema(original));
+    for (const [name, vendored] of pairs) {
+      expect(jsonSchema(vendored), name).toEqual(goldenSchemas[name]);
     }
   });
 });

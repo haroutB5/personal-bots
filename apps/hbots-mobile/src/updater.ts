@@ -30,6 +30,7 @@ export interface UpdateSnapshot {
 export interface UpdateAuth {
   readonly apkUrl: string;
   readonly bearer: string;
+  readonly authMethod: "bearer" | "dpop";
 }
 
 interface NativeUpdater {

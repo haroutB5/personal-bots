@@ -1,36 +1,27 @@
 /**
  * When a DeepSeek prepaid balance is worth interrupting the owner for.
  *
- * Two thresholds, deliberately: warn at or below $1.00, and re-arm only once
- * the balance is back above $1.50. A single threshold would flap a
- * notification every time the balance crossed a dollar; the gap means one
- * notice per low spell, cleared by a top-up.
+ * Warn at or below $1.00 and re-arm only above $1.50. A single threshold
+ * would flap a notice every time the balance crossed a dollar; the gap means
+ * one notice per low spell, cleared by a top-up.
  *
- * Inside one spell the notice escalates exactly once: the low notice, then the
- * stronger empty notice when the account actually runs out (zero balance, or
- * `is_available: false`). It never falls back to low and never repeats, so an
- * account parked at zero is announced at most once per spell and then stays
- * quiet. The kind already announced is what the flag remembers.
+ * Inside one spell the notice escalates once: the low notice, then the
+ * stronger empty notice when the account runs out. It never falls back to low
+ * and never repeats.
  *
  * A failed read never warns and never re-arms. An outage must not present
- * itself as a balance problem (Harout's rule: nothing that makes it look like
- * something is wrong when it is not), and it must not end a low spell either,
- * because then a flaky poll would produce a second notice for the same drop.
+ * itself as a balance problem, and it must not end a spell either, or a flaky
+ * poll would produce a second notice for the same drop.
  *
  * Only a USD reading is judged. DeepSeek reports the account's own currency
- * and the app never converts or invents a rate, so a CNY-only account is left
- * alone rather than measured against a dollar line.
+ * and the app never converts or invents a rate.
  *
  * @module personal/deepseek/deepSeekBalanceAlert
  */
 import { PROVIDER_LOW_BALANCE_REARM_USD, PROVIDER_LOW_BALANCE_USD } from "@t3tools/contracts";
+import type { DeepSeekBalanceRead } from "@t3tools/provider-deepseek/server";
 
-import type { DeepSeekBalanceRead } from "../../provider/Drivers/DeepSeekBalance.ts";
-
-/**
- * At or below this (USD) the owner is told. The threshold lives in the shared
- * contract so the card's warning line and this notice can never disagree.
- */
+/** At or below this (USD) the owner is told. Shared with the card's warning line. */
 export const DEEPSEEK_LOW_BALANCE_USD = PROVIDER_LOW_BALANCE_USD;
 /** A low spell ends, and can be reported again, above this (USD). */
 export const DEEPSEEK_LOW_BALANCE_REARM_USD = PROVIDER_LOW_BALANCE_REARM_USD;
@@ -39,19 +30,13 @@ export const DEEPSEEK_BALANCE_CHECK_DEBOUNCE_MS = 5 * 60_000;
 /** The light timer's cadence while an enabled DeepSeek instance has a key. */
 export const DEEPSEEK_BALANCE_CHECK_INTERVAL_MS = 30 * 60_000;
 
-/**
- * Where the announced kind lives: one `personal_meta` row per instance, like
- * `provider-smoke-check:<instanceId>`.
- */
+/** One `personal_meta` row per instance holds the announced kind. */
 export const deepSeekBalanceAlertMetaKey = (instanceId: string) =>
   `deepseek-balance-low:${instanceId}`;
 
 export type DeepSeekBalanceAlertKind = "low" | "empty";
 
-/**
- * The notice already sent in the spell that is open, or null when no spell is
- * open. This is what the persisted flag holds.
- */
+/** The notice already sent in the open spell, or null when no spell is open. */
 export type DeepSeekBalanceAlertLastKind = DeepSeekBalanceAlertKind | null;
 
 export interface DeepSeekBalanceAlert {
@@ -76,10 +61,7 @@ export function formatDeepSeekBalance(amounts: {
   return amounts.currency.toUpperCase() === "USD" ? `$${fixed}` : `${amounts.currency} ${fixed}`;
 }
 
-/**
- * What to do about one reading, given what this instance has already announced
- * in its open low spell (null when no spell is open).
- */
+/** What to do about one reading, given what this instance already announced. */
 export function decideDeepSeekBalanceAlert(input: {
   readonly read: DeepSeekBalanceRead;
   readonly lastKind: DeepSeekBalanceAlertLastKind;
@@ -90,12 +72,9 @@ export function decideDeepSeekBalanceAlert(input: {
   if (amounts.totalBalance > DEEPSEEK_LOW_BALANCE_REARM_USD) {
     return input.lastKind !== null ? { action: "clear" } : { action: "none" };
   }
-  // The band between the warn line and the re-arm line keeps the spell as it
-  // is: still warned stays quiet, not yet warned stays quiet too.
+  // The band between the warn line and the re-arm line keeps the spell as it is.
   if (amounts.totalBalance > DEEPSEEK_LOW_BALANCE_USD) return { action: "none" };
   const empty = !amounts.isAvailable || amounts.totalBalance <= 0;
-  // One notice per spell, and the escalation runs one way only: a low notice
-  // may be followed by the empty one, and nothing may follow the empty one.
   const allowed = input.lastKind === null || (input.lastKind === "low" && empty);
   if (!allowed) return { action: "none" };
   return {
@@ -119,8 +98,7 @@ export function parseDeepSeekBalanceLastKind(
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
     const kind = (parsed as { readonly kind?: unknown }).kind;
     if (kind === "low" || kind === "empty") return kind;
-    // 1.66.43 stored a bare boolean, and it wrote it only for the first notice
-    // of a spell, which is always the low one.
+    // 1.66.43 stored a bare boolean, and only for the first notice of a spell.
     return (parsed as { readonly warned?: unknown }).warned === true ? "low" : null;
   } catch {
     return null;
@@ -134,8 +112,8 @@ export function deepSeekBalanceLastKindValue(input: {
   readonly balance?: string;
 }): string {
   return JSON.stringify({
-    // `kind` is the truth; `warned` carries the same fact in the shape readers
-    // written before it (the QA and diagnostic probes) still look for.
+    // `warned` carries the same fact for the QA and diagnostic probes written
+    // before `kind` existed.
     kind: input.kind,
     warned: input.kind !== null,
     at: input.at,

@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/pullRequest/usePullRequestFilesViewed.test.tsx b/apps/web/src/components/pullRequest/usePullRequestFilesViewed.test.tsx
+index 78314b7ca7d03e2c8d2f99480bf81b3284f12d2d..6f221bf7d363f27289294976519432be0a83a542 100644
+--- a/apps/web/src/components/pullRequest/usePullRequestFilesViewed.test.tsx
++++ b/apps/web/src/components/pullRequest/usePullRequestFilesViewed.test.tsx
+@@ -4,7 +4,7 @@ import {
+   type PullRequestFilesViewedResult,
+   type PullRequestRef,
+ } from "@t3tools/contracts";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { act, StrictMode } from "react";
+ import { create, type ReactTestRenderer } from "react-test-renderer";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/shell.test.ts b/packages/client-runtime/src/state/shell.test.ts
+index 3be7ac2142c840f9fcb1c6de88a360108d40b1e9..d8665fac0269333a1d2c145fd8d8491f8f1e9b36 100644
+--- a/packages/client-runtime/src/state/shell.test.ts
++++ b/packages/client-runtime/src/state/shell.test.ts
+@@ -2,7 +2,7 @@ import type { ServerConfig } from "@t3tools/contracts";
+ import { EnvironmentId } from "@t3tools/contracts";
+ import { describe, expect, it } from "@effect/vitest";
+ import * as Option from "effect/Option";
+-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { Atom, AtomRegistry } from "effect/reactivity";
+ 
+ import { PrimaryConnectionTarget } from "../connection/model.ts";
+ import type { EnvironmentShellState } from "./shell.ts";

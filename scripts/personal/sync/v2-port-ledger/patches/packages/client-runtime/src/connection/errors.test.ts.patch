@@ -1,0 +1,51 @@
+diff --git a/packages/client-runtime/src/connection/errors.test.ts b/packages/client-runtime/src/connection/errors.test.ts
+index a892ceda7767e855f9f83d6f6335f6aeaef5fb70..465ff4cec145466617225f55d9acd3632f7f89b3 100644
+--- a/packages/client-runtime/src/connection/errors.test.ts
++++ b/packages/client-runtime/src/connection/errors.test.ts
+@@ -1,6 +1,7 @@
+ import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
+ import {
+   RelayAuthInvalidError,
++  RelayEnvironmentConnectNotAuthorizedError,
+   RelayEnvironmentEndpointTimedOutError,
+ } from "@t3tools/contracts/relay";
+ import { describe, expect, it } from "@effect/vitest";
+@@ -35,6 +36,38 @@ describe("mapManagedRelayError", () => {
+     });
+   });
+ 
++  it("retries a tunnel that is still being set up, and blocks other refusals", () => {
++    const mapConnectRefusal = (reason: RelayEnvironmentConnectNotAuthorizedError["reason"]) => {
++      const relayError = new RelayEnvironmentConnectNotAuthorizedError({
++        code: "environment_connect_not_authorized",
++        reason,
++        traceId: "trace-connect-refused",
++      });
++      return mapManagedRelayError(
++        new ManagedRelayRequestFailedError({
++          action: "connect relay environment",
++          cause: relayError,
++          relayError,
++        }),
++      );
++    };
++
++    expect(mapConnectRefusal("managed_endpoint_allocation_not_ready")).toMatchObject({
++      _tag: "ConnectionTransientError",
++      reason: "endpoint-unavailable",
++      detail: "The environment's T3 Connect tunnel is still being set up.",
++      traceId: "trace-connect-refused",
++    });
++    expect(mapConnectRefusal("endpoint_provider_not_managed")).toMatchObject({
++      _tag: "ConnectionBlockedError",
++      reason: "permission",
++    });
++    expect(mapConnectRefusal(undefined)).toMatchObject({
++      _tag: "ConnectionBlockedError",
++      reason: "permission",
++    });
++  });
++
+   it("presents clock skew as one possible cause for a generic DPoP error", () => {
+     const mapped = mapManagedRelayError(
+       new ManagedRelayRequestFailedError({

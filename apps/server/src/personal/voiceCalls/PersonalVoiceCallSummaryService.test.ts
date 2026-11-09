@@ -34,7 +34,7 @@ import {
   type VoiceCallSummary,
 } from "@t3tools/contracts";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
@@ -48,6 +48,7 @@ import {
 import { VoiceCallHttp, type VoiceCallMintOutcome } from "./voiceCallGemini.ts";
 import { VOICE_CALL_GREETING_SUMMARY, parseVoiceCallSummary } from "./voiceCallSummary.ts";
 import { VoiceCallSummaryClaude } from "./voiceCallSummaryClaude.ts";
+import { seedV2Message } from "../test/v2ProjectionSeed.ts";
 
 const CTO_CHAT = ThreadId.make("thread-call-summary");
 const CTO_BOT = PersonalBotId.make("bot-cto");
@@ -279,7 +280,7 @@ const makeHarness = (options: HarnessOptions) => {
         }),
       ),
     ),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
   );
 };
 
@@ -834,20 +835,25 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
           },
         ],
       });
-    return withService({ calls }, (service, sql) =>
+    return withService({ calls }, (service) =>
       Effect.gen(function* () {
-        yield* sql`
-          INSERT INTO projection_thread_messages (
-            message_id, thread_id, role, text, is_streaming, created_at, updated_at, context_json
-          ) VALUES
-            ('m-relayed', ${CTO_CHAT}, 'user', 'Relayed by this call', 0,
-             '2026-10-16T14:00:30.000Z', '2026-10-16T14:00:30.000Z', ${relayContext(CALL_ID)}),
-            ('m-other-call', ${CTO_CHAT}, 'user', ${`Other call ${PRIVATE}`}, 0,
-             '2026-10-16T14:00:31.000Z', '2026-10-16T14:00:31.000Z',
-             ${relayContext("another-call-id")}),
-            ('m-typed', ${CTO_CHAT}, 'user', ${`Typed during the call ${PRIVATE}`}, 0,
-             '2026-10-16T14:00:32.000Z', '2026-10-16T14:00:32.000Z', NULL)
-        `;
+        for (const [messageId, text, createdAt, context] of [
+          [
+            "m-relayed",
+            "Relayed by this call",
+            "2026-10-16T14:00:30.000Z",
+            JSON.parse(relayContext(CALL_ID)) as unknown,
+          ],
+          [
+            "m-other-call",
+            `Other call ${PRIVATE}`,
+            "2026-10-16T14:00:31.000Z",
+            JSON.parse(relayContext("another-call-id")) as unknown,
+          ],
+          ["m-typed", `Typed during the call ${PRIVATE}`, "2026-10-16T14:00:32.000Z", undefined],
+        ] as const) {
+          yield* seedV2Message({ messageId, threadId: CTO_CHAT, text, createdAt, context });
+        }
         yield* service.summarise(CALL_ID);
         expect(calls).toHaveLength(1);
         const body = calls[0]!.request.body ?? "";

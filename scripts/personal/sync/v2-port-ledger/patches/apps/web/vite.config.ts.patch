@@ -1,0 +1,116 @@
+diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
+index 1d710f273cd0bed8d0d221f65ba5ac06a9fed260..b73301fa9ed0af1adef89a7db61293d0b8e1c34c 100644
+--- a/apps/web/vite.config.ts
++++ b/apps/web/vite.config.ts
+@@ -13,6 +13,7 @@ import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
+ 
+ import { loadRepoEnv } from "../../scripts/lib/public-config";
+ import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
++import { routePreloadPlugin } from "./vite/routePreload";
+ import { tailwindPlugins } from "./vite/tailwind";
+ 
+ const repoEnv = loadRepoEnv();
+@@ -85,6 +86,19 @@ const unitTestProject = {
+   },
+ } satisfies TestProjectInlineConfiguration;
+ 
++// Vitest defaults to one fork per core but one less (19 on the Omarchy laptop):
++// 3.3-3.7 GiB and 312 s CPU for the web gate. Four forks run the same 3,080
++// tests in 1.4 GiB and 179 s CPU, 37 s wall instead of 21 s (Optimizer, 26 Oct,
++// qa/build-diet-20261026). HBOTS_TEST_WORKERS=default is the kill switch back
++// to Vitest's own choice; a number or a percentage such as 50% also works.
++const testWorkersEnv = process.env.HBOTS_TEST_WORKERS?.trim() || "4";
++const testMaxWorkers =
++  testWorkersEnv === "default"
++    ? undefined
++    : /^[1-9][0-9]*$/.test(testWorkersEnv)
++      ? Number(testWorkersEnv)
++      : testWorkersEnv;
++
+ function resolveDevProxyTarget(
+   backendPort: string | undefined,
+   wsUrl: string | undefined,
+@@ -143,6 +157,32 @@ function devCompressionPlugin(): Plugin {
+   };
+ }
+ 
++// Personal fork: lucide-react/dynamic (the project icon picker) imports every
++// icon with `import("./icons/<name>.js")`. That made each icon a dynamic entry,
++// so every icon the app also imports statically was forced into its own ~1 KB
++// chunk: 60+ extra requests before the Bots chats list could paint. Giving the
++// picker's imports their own module ids leaves the static icons free to bundle
++// with the code that uses them; the picker still loads one icon per chunk.
++const LUCIDE_DYNAMIC_IMPORTER = /lucide-react[\\/]dist[\\/]esm[\\/]dynamicIconImports\.js$/;
++const LUCIDE_DYNAMIC_QUERY = "?lucide-dynamic";
++const LUCIDE_ICON_MODULE = /lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/][^\\/]+\.js/;
++const HAST_TO_HTML_MODULE =
++  /[\\/]node_modules[\\/](?:\.pnpm[\\/])?(?:hast-util-to-html|zwitch|html-void-elements|character-entities-legacy|character-entities-html4|stringify-entities)[@\\/]/;
++
++function lucideDynamicIconsPlugin(): Plugin {
++  return {
++    name: "personal:lucide-dynamic-icons",
++    enforce: "pre",
++    apply: "build",
++    async resolveId(source, importer, options) {
++      if (!importer || !LUCIDE_DYNAMIC_IMPORTER.test(importer)) return null;
++      if (!source.startsWith("./icons/")) return null;
++      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
++      return resolved ? `${resolved.id}${LUCIDE_DYNAMIC_QUERY}` : null;
++    },
++  };
++}
++
+ // Vite rejects requests whose Host header isn't localhost, which blocks sharing
+ // a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:
+ // the DNS is controlled by tailscale, so they can't be rebound by an attacker.
+@@ -158,6 +198,7 @@ export default defineConfig(() => {
+     assetsInclude: ["**/*.wasm"],
+     plugins: [
+       devCompressionPlugin(),
++      lucideDynamicIconsPlugin(),
+       thirdPartyLicensesPlugin({
+         bundleName: "web",
+         configFile: new URL("../../third-party-licenses.config.json", import.meta.url),
+@@ -181,6 +222,7 @@ export default defineConfig(() => {
+         presets: [reactCompilerPreset()],
+       }),
+       tailwindPlugins(bundledDev),
++      routePreloadPlugin(),
+     ],
+     optimizeDeps: {
+       include: [
+@@ -282,8 +324,34 @@ export default defineConfig(() => {
+       emptyOutDir: true,
+       manifest: true,
+       sourcemap: buildSourcemap,
++      rolldownOptions: {
++        output: {
++          codeSplitting: {
++            groups: [
++              // Every icon the app imports statically, in one chunk (~57 KB raw)
++              // instead of one request per icon.
++              {
++                name: "icons",
++                test: (id) => LUCIDE_ICON_MODULE.test(id) && !id.includes(LUCIDE_DYNAMIC_QUERY),
++                priority: 2,
++              },
++              // hast-util-to-html and its leaf helpers are shared by ChatMarkdown and
++              // Shiki. Left to the default split they land in the Shiki chunk, so
++              // every chat paid ~61 KB gzip of highlighter on its startup path.
++              {
++                name: "hast-to-html",
++                test: HAST_TO_HTML_MODULE,
++                priority: 1,
++              },
++            ],
++          },
++        },
++      },
+     },
+     test: {
++      // Omitted rather than undefined: the config type does not accept an
++      // explicit undefined for maxWorkers (exactOptionalPropertyTypes).
++      ...(testMaxWorkers === undefined ? {} : { maxWorkers: testMaxWorkers }),
+       projects: [defineProject(unitTestProject)],
+     },
+   };

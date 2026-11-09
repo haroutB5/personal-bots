@@ -1,0 +1,167 @@
+diff --git a/apps/server/src/usage/usageScanCache.test.ts b/apps/server/src/usage/usageScanCache.test.ts
+index 6455b1eb7770a6ebf21dfbd315c1e946037d1e00..efdf1a74c707b501d0d84e4a86994293a99527f5 100644
+--- a/apps/server/src/usage/usageScanCache.test.ts
++++ b/apps/server/src/usage/usageScanCache.test.ts
+@@ -1,9 +1,12 @@
+ import { describe, expect, it } from "@effect/vitest";
+ 
++import { makeSliceYield } from "./sliceYield.ts";
+ import {
+   decodeScanCache,
++  decodeScanCacheText,
+   dedupeWithinFile,
+   encodeScanCache,
++  encodeScanCacheLines,
+   pruneScanCache,
+   type CachedFile,
+   type ScanCache,
+@@ -24,7 +27,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
+       reasoningTokens: 0,
+     },
+     reportedCostUsd: null,
+-    fast: false,
++    speed: "standard",
+     dedupeKey: "msg_1:",
+     ...overrides,
+   };
+@@ -61,7 +64,7 @@ describe("scan cache round trip", () => {
+       [
+         "/a.jsonl",
+         100,
+-        [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", fast: true })],
++        [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
+       ],
+       ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+     ]);
+@@ -79,11 +82,14 @@ describe("scan cache round trip", () => {
+       size: 80,
+       mtimeMs: 400,
+       provider: "codex",
+-      records: [record({ provider: "codex", model: "gpt-5.2-codex", dedupeKey: null })],
++      records: [
++        record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null, speed: "ultrafast" }),
++      ],
+       tailRecords: [],
+       position: position({
+         codexState: {
+-          model: "gpt-5.2-codex",
++          model: "gpt-6-astra",
++          speed: "ultrafast",
+           sessionId: "session-c",
+           lastUsageSignature: '{"input_tokens":1}',
+           sawSessionMeta: true,
+@@ -128,8 +134,8 @@ describe("scan cache round trip", () => {
+     expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+   });
+ 
+-  it("drops an entry whose fast flag is not 0 or 1", () => {
+-    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record({ fast: true })]]]));
++  it("drops an entry whose speed is not a known index", () => {
++    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record({ speed: "fast" })]]]));
+     const row = encoded.files["/a.jsonl"]!.r[0]!;
+     const poisoned = {
+       ...encoded,
+@@ -139,7 +145,7 @@ describe("scan cache round trip", () => {
+     expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+   });
+ 
+-  it("rejects a document from the previous cache version", () => {
++  it("rejects a document from before records carried a speed", () => {
+     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+     const previous = { ...encoded, version: 3 };
+ 
+@@ -243,3 +249,94 @@ describe("dedupeWithinFile", () => {
+     ).toHaveLength(2);
+   });
+ });
++
++describe("scan cache line format", () => {
++  // A zero budget makes every file yield, so the sliced paths really run.
++  const everyFile = () => makeSliceYield(0);
++
++  const sample = (): ScanCache => {
++    const cache = cacheWith([
++      ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5" })]],
++      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
++    ]);
++    cache.set("/codex.jsonl", {
++      size: 80,
++      mtimeMs: 400,
++      provider: "codex",
++      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
++      tailRecords: [],
++      position: position({
++        codexState: {
++          model: "gpt-6-astra",
++          speed: "standard",
++          sessionId: "rollout-1",
++          lastUsageSignature: "{}",
++          sawSessionMeta: true,
++          suppressingForkCopies: false,
++          forkCopyAnchorMs: 0,
++        },
++      }),
++    });
++    return cache;
++  };
++
++  it("restores the same cache as the single-document form, and the sources", async () => {
++    const original = sample();
++    const sources = { "claude\u0000/home": { dir: "/home", volumeId: "1:2" } };
++    const text = await encodeScanCacheLines(original, sources, everyFile());
++    const decoded = await decodeScanCacheText(text, everyFile());
++
++    expect(decoded).not.toBeNull();
++    expect(decoded?.cache).toEqual(
++      decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original)))),
++    );
++    expect(decoded?.cache).toEqual(original);
++    expect(decoded?.document).toMatchObject({ sources });
++  });
++
++  it("is one header line and one line per file", async () => {
++    const text = await encodeScanCacheLines(sample(), {}, everyFile());
++    const lines = text.trimEnd().split("\n");
++    expect(lines).toHaveLength(1 + 3);
++    expect(JSON.parse(lines[0]!)).toMatchObject({ version: 6 });
++  });
++
++  it("still reads a single-document file", async () => {
++    const original = sample();
++    const legacy = JSON.stringify({ ...encodeScanCache(original), sources: {} });
++    const decoded = await decodeScanCacheText(legacy, everyFile());
++    expect(decoded?.cache).toEqual(original);
++  });
++
++  it("reads the v5 line format, keeping Codex usage but re-parsing its rollouts", async () => {
++    const text = await encodeScanCacheLines(sample(), {}, everyFile());
++    const [header, ...rows] = text.trimEnd().split("\n");
++    const v5 = [JSON.stringify({ ...JSON.parse(header!), version: 5 }), ...rows].join("\n");
++    const decoded = await decodeScanCacheText(v5, everyFile());
++    const codex = decoded?.cache.get("/codex.jsonl");
++    expect(codex?.records).toHaveLength(1);
++    expect(codex?.size).toBe(-1);
++    expect(codex?.position.resumeOffset).toBe(0);
++    expect(decoded?.cache.get("/a.jsonl")?.size).not.toBe(-1);
++  });
++
++  it("loses only the damaged or truncated file, never the whole cache", async () => {
++    const text = await encodeScanCacheLines(sample(), {}, everyFile());
++    const lines = text.trimEnd().split("\n");
++    const damaged = [lines[0], "{not json", lines[2], lines[3]!.slice(0, 40)].join("\n");
++    const decoded = await decodeScanCacheText(damaged, everyFile());
++    expect([...(decoded?.cache.keys() ?? [])]).toEqual(["/b.jsonl"]);
++  });
++
++  it("rejects text that is not a cache, and a cache with corrupt tables", async () => {
++    expect(await decodeScanCacheText("", everyFile())).toBeNull();
++    expect(await decodeScanCacheText("not json", everyFile())).toBeNull();
++    expect(await decodeScanCacheText('{"version":9}', everyFile())).toBeNull();
++    const text = await encodeScanCacheLines(sample(), {}, everyFile());
++    const lines = text.split("\n");
++    const header = JSON.parse(lines[0]!);
++    lines[0] = JSON.stringify({ ...header, models: [42] });
++    const decoded = await decodeScanCacheText(lines.join("\n"), everyFile());
++    expect(decoded?.cache.size).toBe(0);
++  });
++});

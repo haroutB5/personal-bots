@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts b/apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts
+index 207ad9a20d3478dd6ae17746330fe62d7c552844..a888faf4becc5e62665b08f8c88bf7182acf5783 100644
+--- a/apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts
++++ b/apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts
+@@ -57,6 +57,7 @@ describe("OrchestrationReactor", () => {
+               return Effect.void;
+             },
+             drain: Effect.void,
++            prewarmSession: () => Effect.succeed("live" as const),
+           }),
+         ),
+         Layer.provideMerge(

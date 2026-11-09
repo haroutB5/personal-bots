@@ -1,0 +1,20 @@
+diff --git a/apps/web/src/components/usage/usageProviders.ts b/apps/web/src/components/usage/usageProviders.ts
+index 38b78cbcdb046db29955d72da95ab0354820e6b2..b665445bcb51d7f341ae72343e39d28fe32096bb 100644
+--- a/apps/web/src/components/usage/usageProviders.ts
++++ b/apps/web/src/components/usage/usageProviders.ts
+@@ -1,4 +1,5 @@
+ import type { UsageProviderKind } from "@t3tools/contracts";
++import { BotIcon } from "lucide-react";
+ 
+ import {
+   AntigravityIcon,
+@@ -41,6 +42,9 @@ export const PROVIDER_PRESENTATION = {
+   cursor: { label: "Cursor", color: "#8b8b8b", mark: CursorIcon },
+   opencode: { label: "OpenCode", color: "#5b9bbd", mark: OpenCodeIcon },
+   antigravity: { label: "Antigravity", color: "#8c7bd1", mark: AntigravityIcon },
++  // DeepSeek has no brand mark in the icon set; the driver metadata uses the
++  // same neutral robot for it.
++  deepseek: { label: "DeepSeek", color: "#4d6bfe", mark: BotIcon },
+ } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
+ 
+ /** Stable provider reading order across charts, summaries, tables, and hover rows. */

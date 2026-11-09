@@ -2,7 +2,14 @@ import { PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import { isDeepSeekPeakTime } from "../usage/usagePricing.ts";
+/** Vendored from HEAD usagePricing.ts 128-141 (UTC path). Owner C14. */
+const isDeepSeekPeakTime = (timestampMs: number): boolean => {
+  const at = DateTime.make(timestampMs);
+  if (Option.isNone(at)) return false;
+  const parts = DateTime.toParts(at.value);
+  if (parts.weekDay === 0 || parts.weekDay === 6) return false;
+  return (parts.hour >= 1 && parts.hour < 4) || (parts.hour >= 6 && parts.hour < 10);
+};
 
 /**
  * DeepSeek peak-hours switch (1.66.44).

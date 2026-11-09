@@ -86,7 +86,6 @@ describe("connection machine import", () => {
       expect(result.candidates[1]?.identifier).toBe("harout@example.com");
 
       // The whole point of a probe: it says what exists, never what it is.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const rendered = JSON.stringify(result);
       expect(rendered).not.toContain(GH_TOKEN);
       expect(rendered).not.toContain(VERCEL_TOKEN);

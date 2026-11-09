@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 import { PERSONAL_TASK_TERMINAL_STATUSES } from "@t3tools/contracts";
 import type { PersonalBotThread, PersonalTask } from "@t3tools/contracts";
 

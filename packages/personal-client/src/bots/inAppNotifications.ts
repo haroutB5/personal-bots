@@ -32,9 +32,6 @@ function screenOf(url: string | undefined): string | null {
  * What to do with the in-app feed after it changed. Every id is handled once
  * (`seen` is updated in place). A hidden page acknowledges nothing, so the
  * server falls back to web push for it. A visible page acknowledges each new
- * notification, and shows the newest one unless it points at the screen
- * already open (its own url, or its `quietPath`: the chat it is about). That
- * acknowledgement is also what confirms a "viewing" report to the server.
  */
 export function planInAppNotifications(
   seen: Set<string>,

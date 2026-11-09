@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 
 import type { EnvironmentId, PersonalBot, PersonalTask } from "@t3tools/contracts";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DelegationCard } from "./DelegationCard";
@@ -23,7 +24,6 @@ vi.mock("~/components/ui/menu", () => ({
 vi.mock("~/components/chat/MessagesTimeline.logic", () => ({
   workEntryDisplayLabel: () => "step",
 }));
-vi.mock("~/session-logic", () => ({ deriveWorkLogEntries: () => [] }));
 vi.mock("~/state/entities", () => ({ useThreadDetail: () => null }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => cancel }));
 vi.mock("./usePersonalAutomation", () => ({ personalTaskCancel: {} }));
@@ -65,9 +65,7 @@ const render = async (value: PersonalTask, cardBot: PersonalBot = bot) => {
 };
 
 describe("DelegationCard", () => {
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  });
+  beforeEach(() => {});
 
   afterEach(async () => {
     await act(async () => renderer?.unmount());

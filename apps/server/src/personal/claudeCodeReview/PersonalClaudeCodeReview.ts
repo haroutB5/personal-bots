@@ -31,10 +31,13 @@
  * @module personal/claudeCodeReview/PersonalClaudeCodeReview
  */
 // @effect-diagnostics preferSchemaOverJson:off - the run data is free-form JSON the bot reads.
-import type {
+import {
+  ClaudeSettings,
   PersonalRoutine,
-  PersonalRoutineCreateInput,
-  PersonalRoutineId,
+  type PersonalRoutineCreateInput,
+  type PersonalRoutineId,
+  ProviderInstanceId,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -47,6 +50,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as NodeOS from "node:os";
 
@@ -96,6 +100,16 @@ import {
   updatesScript,
   type ReviewPaths,
 } from "./reviewPrompts.ts";
+
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+/** The default Claude instance settings; decoding {} yields the schema defaults. */
+const defaultClaudeSettings = (settings: ServerSettings): ClaudeSettings =>
+  Option.getOrElse(
+    decodeClaudeSettings(
+      settings.providerInstances[ProviderInstanceId.make("claudeAgent")]?.config ?? {},
+    ),
+    () => Schema.decodeUnknownSync(ClaudeSettings)({}),
+  );
 
 export const CLAUDE_CODE_REVIEW_SETUP_KEY = "claude-code-review:setup";
 /** Setup "1" was 1.33.0's event routine; "2" is the nightly run. */
@@ -765,7 +779,7 @@ export const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null)),
       ),
       serverSettings.getSettings.pipe(
-        Effect.flatMap((settings) => claudeCliVersion(settings.providers.claudeAgent)),
+        Effect.flatMap((settings) => claudeCliVersion(defaultClaudeSettings(settings))),
         Effect.timeoutOption(CLI_VERSION_TIMEOUT_MS),
         Effect.map(Option.getOrNull),
         Effect.provide(cliContext),

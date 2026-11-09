@@ -1,0 +1,25 @@
+diff --git a/packages/client-runtime/src/connection/errors.ts b/packages/client-runtime/src/connection/errors.ts
+index be7a1822cbdef9ff85ea998c8da8b1775f88639b..4cdfc3eee71e4614b1c13ff3dd8aee0d44272a74 100644
+--- a/packages/client-runtime/src/connection/errors.ts
++++ b/packages/client-runtime/src/connection/errors.ts
+@@ -46,6 +46,20 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
+         traceId: error.traceId,
+       });
+     case "RelayEnvironmentConnectNotAuthorizedError":
++      // A host swapping in a new tunnel leaves its allocation unready until
++      // the tunnel is up, and nothing on the client changes when it is.
++      if (error.reason === "managed_endpoint_allocation_not_ready") {
++        return new ConnectionTransientError({
++          reason: "endpoint-unavailable",
++          detail: relayProtectedErrorMessage(error),
++          traceId: error.traceId,
++        });
++      }
++      return new ConnectionBlockedError({
++        reason: "permission",
++        detail: relayProtectedErrorMessage(error),
++        traceId: error.traceId,
++      });
+     case "RelayEnvironmentLinkProofInvalidError":
+     case "RelayEnvironmentLinkLimitExceededError":
+       return new ConnectionBlockedError({

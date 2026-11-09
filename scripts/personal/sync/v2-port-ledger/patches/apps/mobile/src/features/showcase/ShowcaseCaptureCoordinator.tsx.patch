@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/showcase/ShowcaseCaptureCoordinator.tsx b/apps/mobile/src/features/showcase/ShowcaseCaptureCoordinator.tsx
+index 716f4edd41666d51ad1803c875ea6435f0c5f84d..6d5df639cbd65966f8780cd751fbe3fccb83ac28 100644
+--- a/apps/mobile/src/features/showcase/ShowcaseCaptureCoordinator.tsx
++++ b/apps/mobile/src/features/showcase/ShowcaseCaptureCoordinator.tsx
+@@ -7,7 +7,7 @@ import {
+   StackActions,
+   useNavigation,
+ } from "@react-navigation/native";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ 
+ import { useConnectionController } from "../connection/useConnectionController";
+ import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";

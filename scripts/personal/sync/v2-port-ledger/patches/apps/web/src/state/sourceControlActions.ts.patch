@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/state/sourceControlActions.ts b/apps/web/src/state/sourceControlActions.ts
+index efda37c1440329a66272b92ce866f56d5d33c5b4..60c71d2d5a8fb1c1eea60de7b9cdbfee9fae57d5 100644
+--- a/apps/web/src/state/sourceControlActions.ts
++++ b/apps/web/src/state/sourceControlActions.ts
+@@ -19,7 +19,7 @@ import type {
+ } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+ import * as Option from "effect/Option";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useCallback } from "react";
+ 
+ import { appAtomRegistry } from "../rpc/atomRegistry";

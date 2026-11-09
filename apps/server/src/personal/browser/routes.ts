@@ -26,12 +26,13 @@ import {
 } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import {
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../../auth/http.ts";
-import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
+import { serveUntilSessionRevoked } from "../auth/sessionRevocationClose.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 import { InputLine } from "./inputLine.ts";
 import { runViewerFrames } from "./viewerFlow.ts";
@@ -85,7 +86,7 @@ export const authenticatePersonalRoute = (requiredScope: AuthEnvironmentScope) =
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "media").pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
         failEnvironmentAuthInvalid(
           EnvironmentAuth.serverAuthCredentialReason(error),
@@ -107,11 +108,14 @@ export const authenticatePersonalRoute = (requiredScope: AuthEnvironmentScope) =
  * by a cookie or a `wsTicket`. The Bearer token is verified by the same
  * session store as every other route.
  */
-export const authenticateBearerPersonalRoute = (requiredScope: AuthEnvironmentScope) =>
+export const authenticateTokenPersonalRoute = (requiredScope: AuthEnvironmentScope) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const authorization = request.headers.authorization;
-    if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) {
+    const hasDirectCredential =
+      typeof authorization === "string" &&
+      (authorization.startsWith("Bearer ") || authorization.startsWith("DPoP "));
+    if (!hasDirectCredential) {
       return yield* failEnvironmentAuthInvalid("missing_credential");
     }
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -126,7 +130,7 @@ export const authenticateBearerPersonalRoute = (requiredScope: AuthEnvironmentSc
         failEnvironmentInternal("internal_error", error),
       ),
     );
-    if (session.method !== "bearer-access-token") {
+    if (session.method !== "bearer-access-token" && session.method !== "dpop-access-token") {
       return yield* failEnvironmentAuthInvalid("invalid_credential");
     }
     if (!session.scopes.includes(requiredScope)) {
@@ -227,8 +231,18 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
     if (request.headers.upgrade?.toLowerCase() !== "websocket") {
       return HttpServerResponse.text("Upgrade Required", { status: 426 });
     }
+    const sessions = yield* SessionStore.SessionStore;
     return yield* serveUntilSessionRevoked({
       sessionId: session.sessionId,
+      until: sessions
+        .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("Failed to watch a stream session for revocation.").pipe(
+              Effect.annotateLogs({ sessionId: session.sessionId, cause }),
+            ),
+          ),
+        ),
       serve: serveBrowserStream(session),
     });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),

@@ -1,5 +1,5 @@
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -324,6 +324,47 @@ describe("client diagnostics route", () => {
         JSON.stringify({ event: "push-shown", sw: "0.0.42", rev: "2026-09-30-recent-tap" }),
       ),
     ).toEqual({ event: "push-shown", sw: "0.0.42", rev: "2026-09-30-recent-tap" });
+  });
+
+  it("accepts the updater state line and drops everything else on it", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "updater-state",
+          state: "needsPermission",
+          targetVersion: "1.66.118",
+          currentVersion: "1.66.117",
+          bearer: "not kept",
+        }),
+      ),
+    ).toEqual({
+      event: "updater-state",
+      state: "needsPermission",
+      targetVersion: "1.66.118",
+      currentVersion: "1.66.117",
+    });
+  });
+
+  it("omits the target when the updater has none, and drops forged version text", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "updater-state",
+          state: "idle",
+          currentVersion: "1.66.117",
+        }),
+      ),
+    ).toEqual({ event: "updater-state", state: "idle", currentVersion: "1.66.117" });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "updater-state",
+          state: "needsPermission",
+          targetVersion: '1.66.118 \n{"event":"forged"}',
+          currentVersion: "x".repeat(33),
+        }),
+      ),
+    ).toEqual({ event: "updater-state", state: "needsPermission" });
   });
 
   it("keeps one record on one bounded line", () => {

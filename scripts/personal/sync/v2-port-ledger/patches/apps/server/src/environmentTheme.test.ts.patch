@@ -1,0 +1,11 @@
+diff --git a/apps/server/src/environmentTheme.test.ts b/apps/server/src/environmentTheme.test.ts
+index 3c3f650b4c3c9148ef0a2bf04fb446e8f6382032..274d184aee1320bb68e5ec9cb3c9013bb1e33b05 100644
+--- a/apps/server/src/environmentTheme.test.ts
++++ b/apps/server/src/environmentTheme.test.ts
+@@ -1,5 +1,5 @@
+ import { EnvironmentThemeFile } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";

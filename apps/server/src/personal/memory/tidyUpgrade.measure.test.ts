@@ -9,9 +9,9 @@ import { describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import {
   PersonalMemoryTidy,
   PersonalMemoryTidyJudge,
@@ -27,7 +27,7 @@ const judge = Layer.succeed(PersonalMemoryTidyJudge, {
   judge: () => Effect.succeed({ decisions: [] }),
 });
 const TestLayer = Layer.mergeAll(tidyLayer.pipe(Layer.provide(judge)), memoryLayer).pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(NodeServices.layer),
 );
 

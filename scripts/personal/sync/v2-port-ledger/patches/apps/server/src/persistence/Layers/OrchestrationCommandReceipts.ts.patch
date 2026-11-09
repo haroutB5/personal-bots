@@ -1,0 +1,12 @@
+diff --git a/apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts b/apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts
+index 989f5d78f8d89e93cc2e12957e1773ce2c164df6..7010308b8942adc413aca9bfd6ba837db822dc3a 100644
+--- a/apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts
++++ b/apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts
+@@ -1,5 +1,5 @@
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
+-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
++import * as SqlClient from "effect/sql/SqlClient";
++import * as SqlSchema from "effect/sql/SqlSchema";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ 

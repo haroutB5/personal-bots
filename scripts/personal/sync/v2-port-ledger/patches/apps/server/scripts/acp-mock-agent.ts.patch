@@ -1,0 +1,706 @@
+diff --git a/apps/server/scripts/acp-mock-agent.ts b/apps/server/scripts/acp-mock-agent.ts
+index 4865354e41f5d09dd4bf28b2e5e30292bdf7cb64..8ac656bb3c509aa19629276faa6e325856551bf2 100644
+--- a/apps/server/scripts/acp-mock-agent.ts
++++ b/apps/server/scripts/acp-mock-agent.ts
+@@ -1,11 +1,14 @@
+ #!/usr/bin/env node
+-// @effect-diagnostics nodeBuiltinImport:off
++// @effect-diagnostics nodeBuiltinImport:off globalDate:off
+ import * as NodeFS from "node:fs";
++import * as NodePath from "node:path";
++import * as NodeZlib from "node:zlib";
++import * as NodeChildProcess from "node:child_process";
+ 
+ import * as Effect from "effect/Effect";
+ import * as Deferred from "effect/Deferred";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+ 
+ import * as EffectAcpAgent from "effect-acp/agent";
+@@ -15,7 +18,18 @@ import type * as AcpSchema from "effect-acp/schema";
+ const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
+ const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+ const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
++/**
++ * The DeepSeek Harness profile: the capabilities, session shape, errors and
++ * the exact prompt/turn event order recorded from dsh 0.2.0-rc.2
++ * (`design/hbots/dsh-harness/probe/out/events-run1.jsonl`). It does NOT
++ * advertise `loadSession`, and it refuses a second prompt while one is in
++ * flight, both of which the adapter relies on.
++ */
++const dshProfile = process.env.T3_ACP_DSH_PROFILE === "1";
++/** The JSON-RPC error text a dsh prompt fails with, when the test sets one. */
++const dshPromptError = process.env.T3_ACP_DSH_PROMPT_ERROR?.trim() || undefined;
+ const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
++const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
+ const emitInterleavedAssistantToolCalls =
+   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
+ const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
+@@ -39,6 +53,8 @@ const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
+ const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
+ const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
+ const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
++// Lists a sign-in method the way Kilo does: `initialize` offers it, sessions still open.
++const offerSignInMethod = process.env.T3_ACP_OFFER_SIGN_IN === "1";
+ const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
+ const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
+ const omitXAiPromptCompleteStopReason =
+@@ -59,6 +75,24 @@ const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+ const initialGrokReasoningEffort =
+   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
+ const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
++const heldToolReleasePath = process.env.T3_ACP_HELD_TOOL_RELEASE_PATH;
++let heldToolRunning = false;
++const busyFirstPrompt = process.env.T3_ACP_BUSY_FIRST_PROMPT === "1";
++/**
++ * Fail prompts as an Effect defect with this text, the way the OpenCode 2 agent
++ * reports "Session already has an active ACP prompt" on the wire (a
++ * defect-shaped JSON-RPC error, not a typed ACP request error).
++ */
++const defectPromptError = process.env.T3_ACP_DEFECT_PROMPT_ERROR?.trim() || undefined;
++const defectPromptCount = Math.max(
++  0,
++  Number.parseInt(process.env.T3_ACP_DEFECT_PROMPT_COUNT ?? "1", 10) || 0,
++);
++/** 1-based prompt number the defect starts at, so a steer can fail the second. */
++const defectPromptStart = Math.max(
++  1,
++  Number.parseInt(process.env.T3_ACP_DEFECT_PROMPT_START ?? "1", 10) || 1,
++);
+ const permissionOptionIds = {
+   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
+   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
+@@ -75,9 +109,14 @@ let currentModeId = antigravityProfile ? "default" : "ask";
+ let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+ let parameterizedModelPicker = false;
+ let currentReasoning = "medium";
++// Starts away from the effort hbots sends, so the dsh profile always exercises
++// `session/set_config_option` rather than a no-op match.
++let dshReasoningEffort = "low";
+ let currentContext = "272k";
+ let currentFast = false;
+ let promptCount = 0;
++let busyPromptsLeft = busyFirstPrompt ? 1 : 0;
++let defectPromptsLeft = defectPromptError ? defectPromptCount : 0;
+ let overlappingFirstPromptId: string | undefined;
+ const cancelledSessions = new Set<string>();
+ 
+@@ -371,6 +410,62 @@ const program = Effect.gen(function* () {
+   const resumeRelease = yield* Deferred.make<void>();
+   const nativeCancelRequested = yield* Deferred.make<void>();
+   const nativeCancelRelease = yield* Deferred.make<void>();
++  // The dsh profile's own turn state: one prompt in flight at a time, and the
++  // cancel that settles the running one.
++  let dshPromptInFlight = false;
++  let dshPromptCount = 0;
++  const dshCancelRequested = yield* Deferred.make<void>();
++  const dshSessionIds = new Set<string>([sessionId]);
++  // The long tool call the second recorded prompt starts, so the cancel can
++  // report it aborted by its own id.
++  const dshRunningToolCallId = "call_00_FI7e8UthkdOSYjYzxjtc5336";
++  // dsh's own session log: the append-only zstd-frame file the adapter's usage
++  // ledger reads. The mock writes it exactly as the real agent does, one frame
++  // per event, under the DSH_HOME the launch environment names.
++  let dshLogFile: string | undefined;
++  let dshLogSeq = 0;
++  const dshSessionHeader = () =>
++    JSON.stringify({
++      type: "session",
++      version: 4,
++      id: sessionId,
++      createdAt: Date.now(),
++      cwd: dshCwd,
++      isSeeded: false,
++      delegationDepth: 0,
++    }) as unknown as Record<string, unknown>;
++  const appendDshLog = (event: Record<string, unknown>) => {
++    if (dshLogFile === undefined) return;
++    try {
++      NodeFS.mkdirSync(NodePath.dirname(dshLogFile), { recursive: true });
++      NodeFS.appendFileSync(
++        dshLogFile,
++        NodeZlib.zstdCompressSync(Buffer.from(`${JSON.stringify(event)}\n`, "utf8")),
++      );
++    } catch {
++      // A missing log only costs the usage test, never the turn.
++    }
++  };
++  const appendDshAssistantStep = (messageId: string, usage: Record<string, number>) => {
++    dshLogSeq += 1;
++    appendDshLog({
++      type: "assistant/message",
++      seq: dshLogSeq,
++      time: Date.now(),
++      data: {
++        turn: 1,
++        step: dshLogSeq,
++        message: {
++          role: "assistant",
++          content: [],
++          source: { kind: "model", provider: "deepseek-official", model: "deepseek-flash" },
++          id: messageId,
++        },
++        usage,
++      },
++    });
++  };
++  let dshCwd = process.cwd();
+   const publishAntigravityCommands = (targetSessionId: string) =>
+     agent.client.sessionUpdate({
+       sessionId: targetSessionId,
+@@ -395,6 +490,21 @@ const program = Effect.gen(function* () {
+       }
+       parameterizedModelPicker =
+         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
++      if (dshProfile) {
++        // Verbatim from the recorded handshake. No `loadSession`, and
++        // `sessionCapabilities.resume` is what the adapter's `resumeMethod`
++        // has to use.
++        return {
++          protocolVersion: 1,
++          agentInfo: { name: "deepseek-harness-acp", version: "0.0.1" },
++          agentCapabilities: {
++            mcpCapabilities: { http: true },
++            promptCapabilities: { image: true, audio: false, embeddedContext: false },
++            sessionCapabilities: { close: {}, list: {}, resume: {} },
++          },
++          authMethods: [],
++        };
++      }
+       if (antigravityProfile) {
+         return {
+           protocolVersion: 1,
+@@ -414,6 +524,17 @@ const program = Effect.gen(function* () {
+         // Grok advertises model state before any session exists; the provider
+         // health check reads it from here without authenticating.
+         _meta: { modelState: modelState() },
++        ...(offerSignInMethod
++          ? {
++              authMethods: [
++                {
++                  id: "mock-login",
++                  name: "Login with Mock",
++                  description: "Run `mock auth login` in the terminal",
++                },
++              ],
++            }
++          : {}),
+       };
+     }),
+   );
+@@ -435,8 +556,28 @@ const program = Effect.gen(function* () {
+     yield* agent.handleLogout(() => Effect.succeed({}));
+   }
+ 
+-  yield* agent.handleCreateSession(() =>
++  yield* agent.handleCreateSession((request) =>
+     Effect.gen(function* () {
++      if (dshProfile) {
++        // dsh has no ACP modes and no `models` list: the model is a config
++        // option, and its values are JSON strings. Its own session log starts
++        // here, next to the harness home the launch environment names.
++        dshCwd = String(request.cwd ?? process.cwd());
++        const dshHome = process.env.DSH_HOME;
++        if (dshHome) {
++          dshLogFile = NodePath.join(
++            dshHome,
++            "sessions",
++            `--${dshCwd.replace(/[\\/:]/g, "-")}--`,
++            sessionId,
++            "session.v4.jsonl.zstd",
++          );
++          NodeFS.mkdirSync(NodePath.dirname(dshLogFile), { recursive: true });
++          NodeFS.writeFileSync(dshLogFile, Buffer.alloc(0));
++          appendDshLog(dshSessionHeader());
++        }
++        return { sessionId, configOptions: dshConfigOptions() };
++      }
+       if (antigravityProfile) {
+         yield* publishAntigravityCommands(sessionId);
+       }
+@@ -449,8 +590,54 @@ const program = Effect.gen(function* () {
+     }),
+   );
+ 
++  /** dsh's config options: `model` (JSON-string values) and `reasoning_effort`. */
++  function dshConfigOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
++    return [
++      {
++        id: "model",
++        name: "Model",
++        category: "model",
++        type: "select",
++        currentValue: '["deepseek-official","deepseek-flash"]',
++        options: [
++          {
++            group: "deepseek-official",
++            name: "DeepSeek",
++            options: [
++              { value: '["deepseek-official","deepseek-flash"]', name: "DeepSeek-V41-Flash" },
++              { value: '["deepseek-official","deepseek-v4-pro"]', name: "DeepSeek-V41-Pro" },
++            ],
++          },
++        ],
++      },
++      {
++        id: "reasoning_effort",
++        name: "Reasoning effort",
++        category: "thought_level",
++        type: "select",
++        currentValue: dshReasoningEffort,
++        options: [
++          { value: "off", name: "Off" },
++          { value: "low", name: "Low" },
++          { value: "high", name: "High" },
++          { value: "max", name: "Max" },
++        ],
++      },
++    ] as ReadonlyArray<AcpSchema.SessionConfigOption>;
++  }
++
+   yield* agent.handleResumeSession((request) =>
+     Effect.gen(function* () {
++      if (dshProfile) {
++        // `session/resume` only: an unknown id is refused with dsh's own text,
++        // which the adapter turns into a renewed session.
++        if (!dshSessionIds.has(request.sessionId)) {
++          return yield* AcpError.AcpRequestError.invalidParams(
++            `Invalid params: session is not resumable: ${request.sessionId}`,
++          );
++        }
++        return { configOptions: dshConfigOptions() };
++      }
+       yield* agent.client.sessionUpdate({
+         sessionId: request.sessionId,
+         update: {
+@@ -495,45 +682,49 @@ const program = Effect.gen(function* () {
+     });
+   };
+ 
+-  yield* agent.handleLoadSession((request) =>
+-    Effect.gen(function* () {
+-      const requestedSessionId = String(request.sessionId ?? sessionId);
+-      if (failLoadSession) {
+-        return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
+-      }
+-      if (hangLoadSessionAfterReplay || delayLoadSessionAfterReplay) {
+-        emitLoadReplayNotifications(requestedSessionId);
++  // dsh does not implement `session/load` at all: leaving the handler
++  // unregistered makes the library answer `-32601 Method not found`, exactly
++  // as the real agent does.
++  if (!dshProfile)
++    yield* agent.handleLoadSession((request) =>
++      Effect.gen(function* () {
++        const requestedSessionId = String(request.sessionId ?? sessionId);
++        if (failLoadSession) {
++          return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
++        }
++        if (hangLoadSessionAfterReplay || delayLoadSessionAfterReplay) {
++          emitLoadReplayNotifications(requestedSessionId);
++          yield* agent.client.sessionUpdate({
++            sessionId: requestedSessionId,
++            update: {
++              sessionUpdate: "user_message_chunk",
++              content: { type: "text", text: "replay-tail" },
++            },
++          });
++          yield* Effect.sleep(loadSessionDelayMs);
++          return {
++            modes: modeState(),
++            models: modelState(),
++            configOptions: configOptions(),
++          };
++        }
++        if (emitLoadReplay) {
++          emitLoadReplayNotifications(requestedSessionId);
++        }
+         yield* agent.client.sessionUpdate({
+           sessionId: requestedSessionId,
+           update: {
+             sessionUpdate: "user_message_chunk",
+-            content: { type: "text", text: "replay-tail" },
++            content: { type: "text", text: "replay" },
+           },
+         });
+-        yield* Effect.sleep(loadSessionDelayMs);
+         return {
+           modes: modeState(),
+           models: modelState(),
+           configOptions: configOptions(),
+         };
+-      }
+-      if (emitLoadReplay) {
+-        emitLoadReplayNotifications(requestedSessionId);
+-      }
+-      yield* agent.client.sessionUpdate({
+-        sessionId: requestedSessionId,
+-        update: {
+-          sessionUpdate: "user_message_chunk",
+-          content: { type: "text", text: "replay" },
+-        },
+-      });
+-      return {
+-        modes: modeState(),
+-        models: modelState(),
+-        configOptions: configOptions(),
+-      };
+-    }),
+-  );
++      }),
++    );
+ 
+   yield* agent.handleSetSessionModel((request) =>
+     Effect.gen(function* () {
+@@ -592,6 +783,26 @@ const program = Effect.gen(function* () {
+     Effect.gen(function* () {
+       const cancelledSessionId = String(sessionId ?? "mock-session-1");
+       cancelledSessions.add(cancelledSessionId);
++      if (dshProfile) {
++        // dsh settles the running prompt ~20 ms after the cancel, and the
++        // tool the turn was running comes back failed. The failed update is
++        // written first, as the recording shows: settling before it made the
++        // cancelled turn's tool card race the prompt response.
++        yield* agent.client.sessionUpdate({
++          sessionId: cancelledSessionId,
++          update: {
++            sessionUpdate: "tool_call_update",
++            toolCallId: dshRunningToolCallId,
++            status: "failed",
++            content: [
++              { type: "content", content: { type: "text", text: "Error: tool call aborted" } },
++            ],
++          },
++        });
++        yield* Effect.sleep("20 millis");
++        yield* Deferred.succeed(dshCancelRequested, undefined);
++        return;
++      }
+       if (completeFirstPromptOnCancel) {
+         yield* Deferred.succeed(nativeCancelRequested, undefined);
+         yield* agent.client.sessionUpdate({
+@@ -620,7 +831,65 @@ const program = Effect.gen(function* () {
+   yield* agent.handlePrompt((request) =>
+     Effect.gen(function* () {
+       const requestedSessionId = String(request.sessionId ?? sessionId);
++      if (heldToolRunning) {
++        return yield* Effect.die(new Error("Session already has an active ACP prompt: mock"));
++      }
+       promptCount += 1;
++      if (heldToolReleasePath && promptCount === 1) {
++        // A real child keeps the remote prompt busy after session/cancel. The
++        // test releases it explicitly, so the race does not depend on timing.
++        heldToolRunning = true;
++        const child = NodeChildProcess.spawn(
++          process.execPath,
++          [
++            "-e",
++            "setInterval(() => { if (require('node:fs').existsSync(process.argv[1])) process.exit(0) }, 10)",
++            heldToolReleasePath,
++          ],
++          { stdio: "ignore", windowsHide: true },
++        );
++        try {
++          const exited = new Promise<void>((resolve, reject) => {
++            child.once("exit", () => resolve());
++            child.once("error", reject);
++          });
++          yield* agent.client.sessionUpdate({
++            sessionId: requestedSessionId,
++            update: {
++              sessionUpdate: "tool_call",
++              toolCallId: "held-shell",
++              title: "Waiting for test command release",
++              kind: "execute",
++              status: "in_progress",
++            },
++          });
++          yield* Effect.promise(() => exited);
++          yield* agent.client.sessionUpdate({
++            sessionId: requestedSessionId,
++            update: {
++              sessionUpdate: "tool_call_update",
++              toolCallId: "held-shell",
++              status: "completed",
++            },
++          });
++          return {
++            stopReason: cancelledSessions.delete(requestedSessionId) ? "cancelled" : "end_turn",
++          };
++        } finally {
++          child.kill();
++          heldToolRunning = false;
++        }
++      }
++      if (promptCount >= defectPromptStart && defectPromptsLeft > 0) {
++        defectPromptsLeft -= 1;
++        return yield* Effect.die(new Error(defectPromptError));
++      }
++      if (busyPromptsLeft > 0) {
++        busyPromptsLeft -= 1;
++        return yield* AcpError.AcpRequestError.internalError(
++          "Session already has an active ACP prompt: mock",
++        );
++      }
+       if (
+         process.env.T3_ACP_CRASH_PROMPT === "1" &&
+         request.prompt.some((part) => part.type === "text" && part.text === "crash now")
+@@ -628,6 +897,240 @@ const program = Effect.gen(function* () {
+         return yield* Effect.sync(() => process.exit(23));
+       }
+ 
++      if (dshProfile) {
++        // One prompt in flight per session, refused with dsh's own text.
++        if (dshPromptInFlight) {
++          return yield* AcpError.AcpRequestError.invalidParams(
++            "Invalid params: a prompt is already in flight for this session",
++          );
++        }
++        dshPromptInFlight = true;
++        dshPromptCount += 1;
++        const promptText = (request.prompt ?? [])
++          .map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
++          .join("\n");
++        try {
++          if (dshPromptError !== undefined) {
++            return yield* AcpError.AcpRequestError.internalError(dshPromptError);
++          }
++          const update = (payload: Parameters<typeof agent.client.sessionUpdate>[0]["update"]) =>
++            agent.client.sessionUpdate({ sessionId: requestedSessionId, update: payload });
++          if (/start-sleep/i.test(promptText)) {
++            // The recorded cancelled turn: a thought, a context reading, then
++            // a `pwsh` tool that runs until the client cancels.
++            yield* update({
++              sessionUpdate: "agent_thought_chunk",
++              messageId: "8c16fb18-4e56-4c16-a9b0-a0301239a625",
++              content: { type: "text", text: "The user wants me to run a long command." },
++            });
++            yield* update({ sessionUpdate: "usage_update", used: 7050, size: 1000000 });
++            yield* update({
++              sessionUpdate: "tool_call",
++              toolCallId: dshRunningToolCallId,
++              title: "pwsh",
++              kind: "other",
++              status: "in_progress",
++              rawInput: { command: promptText },
++            });
++            appendDshAssistantStep("8c16fb18-4e56-4c16-a9b0-a0301239a625", {
++              inputTokens: 6600,
++              outputTokens: 30,
++              cacheReadTokens: 420,
++              cacheWriteTokens: 0,
++              totalTokens: 7050,
++            });
++            yield* Deferred.await(dshCancelRequested);
++            return { stopReason: "cancelled" };
++          }
++          if (/paragraph-probe/i.test(promptText)) {
++            // Two thinking steps split by a tool call, in dsh's own frame
++            // shapes: the order the adapter's reasoning paragraph break is
++            // written for (thought, tool_call, tool_call_update, thought).
++            yield* update({
++              sessionUpdate: "agent_thought_chunk",
++              messageId: "dsh-paragraph-probe-1",
++              content: { type: "text", text: "Let me check the file." },
++            });
++            yield* update({ sessionUpdate: "usage_update", used: 7000, size: 1000000 });
++            yield* update({
++              sessionUpdate: "tool_call",
++              toolCallId: "dsh-paragraph-probe-call",
++              title: "read_file",
++              kind: "other",
++              status: "in_progress",
++              rawInput: { path: promptText },
++            });
++            yield* update({
++              sessionUpdate: "tool_call_update",
++              toolCallId: "dsh-paragraph-probe-call",
++              status: "completed",
++              content: [{ type: "content", content: { type: "text", text: "ok" } }],
++            });
++            yield* update({
++              sessionUpdate: "agent_thought_chunk",
++              messageId: "dsh-paragraph-probe-2",
++              content: { type: "text", text: "The file is fine." },
++            });
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-paragraph-probe-3",
++              content: { type: "text", text: "Done." },
++            });
++            return { stopReason: "end_turn" };
++          }
++          if (/colon-probe/i.test(promptText)) {
++            // The live stub shape from the 2026-10-16 re-measure ("Now the
++            // provider:" right before a call), with the colon arriving in its
++            // own delta and the two tool-call frames dsh really sends.
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-colon-probe-1",
++              content: { type: "text", text: "Now the provider" },
++            });
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-colon-probe-2",
++              content: { type: "text", text: ":" },
++            });
++            yield* update({
++              sessionUpdate: "tool_call",
++              toolCallId: "dsh-colon-probe-call",
++              title: "read_file",
++              kind: "other",
++              status: "in_progress",
++              rawInput: { path: promptText },
++            });
++            yield* update({
++              sessionUpdate: "tool_call_update",
++              toolCallId: "dsh-colon-probe-call",
++              status: "completed",
++              content: [{ type: "content", content: { type: "text", text: "ok" } }],
++            });
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-colon-probe-3",
++              content: { type: "text", text: "Done." },
++            });
++            return { stopReason: "end_turn" };
++          }
++          if (/dsml-probe/i.test(promptText)) {
++            // The leaked tool-call markup a dsh reply carried on 2026-10-15,
++            // in the shape the live row holds it: an invoke block split across
++            // chunks (so a tag really is cut in two), then the three stray
++            // closing tags. `\uFF5C` is the full-width bar dsh fences with.
++            const bar = "\uFF5C";
++            const marker = `${bar}${bar}DSML${bar}${bar}`;
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-dsml-probe-1",
++              content: { type: "text", text: "Before." },
++            });
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-dsml-probe-2",
++              content: {
++                type: "text",
++                text: `<${marker} tool_calls>\n<${marker} invoke name="web_search">\n<${marker} param`,
++              },
++            });
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-dsml-probe-3",
++              content: {
++                type: "text",
++                text:
++                  `eter name="query">tennis scores</${marker} parameter>\n` +
++                  `</${marker} invoke>\n</${marker} tool_calls>`,
++              },
++            });
++            yield* update({
++              sessionUpdate: "agent_message_chunk",
++              messageId: "dsh-dsml-probe-4",
++              content: {
++                type: "text",
++                text: `After.\n\n</${marker} parameter>\n</${marker} invoke>\n</${marker} calls>`,
++              },
++            });
++            return { stopReason: "end_turn" };
++          }
++          // The recorded turn in `events-run1.jsonl`: three committed model
++          // steps, one `usage_update` each, an MCP call and a skill.
++          yield* update({
++            sessionUpdate: "agent_message_chunk",
++            messageId: "cb8ff6d0-2379-4301-bc1a-4e98693bc0f1",
++            content: { type: "text", text: "I'll do these in order." },
++          });
++          yield* update({ sessionUpdate: "usage_update", used: 6652, size: 1000000 });
++          yield* update({
++            sessionUpdate: "tool_call",
++            toolCallId: "call_00_ET_2cnwa0tA6yX29u4h9fdB8740",
++            title: "mcp__t3-code__save_memory",
++            kind: "other",
++            status: "in_progress",
++            rawInput: { text: "hello dsh" },
++          });
++          appendDshAssistantStep("cb8ff6d0-2379-4301-bc1a-4e98693bc0f1", {
++            inputTokens: 6215,
++            outputTokens: 53,
++            cacheReadTokens: 384,
++            cacheWriteTokens: 0,
++            totalTokens: 6652,
++          });
++          yield* update({
++            sessionUpdate: "tool_call_update",
++            toolCallId: "call_00_ET_2cnwa0tA6yX29u4h9fdB8740",
++            status: "completed",
++            content: [{ type: "content", content: { type: "text", text: "ECHO:HELLO DSH" } }],
++          });
++          yield* update({
++            sessionUpdate: "agent_thought_chunk",
++            messageId: "93dc4425-a06a-4922-be77-70bd2df55914",
++            content: { type: "text", text: "Now load the skill probe-falcon." },
++          });
++          yield* update({ sessionUpdate: "usage_update", used: 6722, size: 1000000 });
++          yield* update({
++            sessionUpdate: "tool_call",
++            toolCallId: "call_00_Lre5pY2iDgyWaz8Z2Y1e9700",
++            title: "skill",
++            kind: "other",
++            status: "in_progress",
++            rawInput: { name: "probe-falcon" },
++          });
++          appendDshAssistantStep("93dc4425-a06a-4922-be77-70bd2df55914", {
++            inputTokens: 6300,
++            outputTokens: 20,
++            cacheReadTokens: 402,
++            cacheWriteTokens: 0,
++            totalTokens: 6722,
++          });
++          yield* update({
++            sessionUpdate: "tool_call_update",
++            toolCallId: "call_00_Lre5pY2iDgyWaz8Z2Y1e9700",
++            status: "completed",
++            content: [{ type: "content", content: { type: "text", text: "<skill_content/>" } }],
++          });
++          yield* update({
++            sessionUpdate: "agent_message_chunk",
++            messageId: "ee7650ea-9c90-40aa-a418-e7700f3a9dd6",
++            content: {
++              type: "text",
++              text: "Probey\nECHO:HELLO DSH\nPELICAN\nFALCON-42\nOVER",
++            },
++          });
++          yield* update({ sessionUpdate: "usage_update", used: 6863, size: 1000000 });
++          appendDshAssistantStep("ee7650ea-9c90-40aa-a418-e7700f3a9dd6", {
++            inputTokens: 6400,
++            outputTokens: 40,
++            cacheReadTokens: 423,
++            cacheWriteTokens: 0,
++            totalTokens: 6863,
++          });
++          return { stopReason: "end_turn" };
++        } finally {
++          dshPromptInFlight = false;
++        }
++      }
++
+       if (completeFirstPromptOnCancel && promptCount === 1) {
+         yield* agent.client.sessionUpdate({
+           sessionId: requestedSessionId,
+@@ -1382,6 +1885,16 @@ const program = Effect.gen(function* () {
+         },
+       });
+ 
++      if (emitUsageUpdate) {
++        // ACP `usage_update`: `used` is what the context holds now, `size` its window.
++        for (const used of [12_000, 18_500]) {
++          yield* agent.client.sessionUpdate({
++            sessionId: requestedSessionId,
++            update: { sessionUpdate: "usage_update", used, size: 200_000 },
++          });
++        }
++      }
++
+       return { stopReason: "end_turn" };
+     }),
+   );

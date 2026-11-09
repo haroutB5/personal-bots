@@ -7,9 +7,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { MEMORY_AUTO_APPLY_ENV } from "./memoryAutoApply.ts";
 import type { TidyJudgeOutput } from "./memoryTidy.ts";
 import { PersonalMemoryService } from "./PersonalMemoryService.ts";
@@ -40,7 +40,7 @@ const fakeJudge = (answer: (ref: (needle: string) => string) => TidyJudgeOutput[
 
 const testLayer = (judge: Layer.Layer<PersonalMemoryTidyJudge>) =>
   Layer.mergeAll(tidyLayer.pipe(Layer.provide(judge)), memoryLayer).pipe(
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(NodeServices.layer),
   );
 

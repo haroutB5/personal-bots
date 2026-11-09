@@ -17,7 +17,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -346,3 +346,49 @@ export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
  */
 export const ThreadTurnFollowUp = Schema.Literals(["steer", "queue"]);
 export type ThreadTurnFollowUp = typeof ThreadTurnFollowUp.Type;
+
+// Vendored from HEAD packages/contracts/src/provider.ts 26-54 (removed at U). Owner C9.
+const ProviderSessionStatus = Schema.Literals([
+  "connecting",
+  "ready",
+  "running",
+  "error",
+  "closed",
+]);
+export const ProviderSession = Schema.Struct({
+  provider: ProviderDriverKind,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  status: ProviderSessionStatus,
+  runtimeMode: RuntimeMode,
+  cwd: Schema.optional(TrimmedNonEmptyString),
+  model: Schema.optional(TrimmedNonEmptyString),
+  threadId: ThreadId,
+  resumeCursor: Schema.optional(Schema.Unknown),
+  activeTurnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  lastError: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderSession = typeof ProviderSession.Type;
+
+// Vendored from HEAD packages/contracts/src/server.ts 212-253 (removed at U). Owner C9.
+export const ServerProviderSmokeCheckStatus = Schema.Literals([
+  "checking",
+  "passed",
+  "failed",
+  "waiting_for_limit",
+]);
+export type ServerProviderSmokeCheckStatus = typeof ServerProviderSmokeCheckStatus.Type;
+export const ServerProviderSmokeCheck = Schema.Struct({
+  status: ServerProviderSmokeCheckStatus,
+  version: TrimmedNonEmptyString,
+  checkedAt: Schema.NullOr(IsoDateTime),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  retryAt: Schema.optional(IsoDateTime),
+  model: Schema.optional(TrimmedNonEmptyString),
+  durationMs: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  previousVersion: Schema.optional(TrimmedNonEmptyString),
+  missingModels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  manual: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderSmokeCheck = typeof ServerProviderSmokeCheck.Type;

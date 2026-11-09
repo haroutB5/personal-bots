@@ -18,7 +18,7 @@ export function subscribeBrowserWakeups(
       !mobile
         ? "application-active"
         : elapsed >= BACKGROUND_RECONNECT_AFTER_MS
-          ? "application-active-reconnect"
+          ? "application-active-long"
           : "application-active-probe",
     );
   };

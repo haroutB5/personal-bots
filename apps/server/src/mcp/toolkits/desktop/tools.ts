@@ -1,5 +1,5 @@
 import { McpCapabilityUnavailableError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
@@ -219,7 +219,7 @@ export const ReleaseResult = Schema.Struct({
  * (QA's L8).
  */
 const DESKTOP_MACHINE = (() => {
-  const platform = HostProcessPlatform.defaultValue();
+  const platform = HostProcess.Platform.defaultValue();
   return platform === "win32" ? "Windows PC" : platform === "darwin" ? "Mac" : "Linux PC";
 })();
 

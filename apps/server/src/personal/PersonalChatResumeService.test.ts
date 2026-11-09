@@ -1,8 +1,5 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  CommandId,
-  CorrelationId,
-  EventId,
   MessageId,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   PersonalBotId,
@@ -10,12 +7,11 @@ import {
   ThreadId,
   TurnId,
   type ModelSelection,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
+  type OrchestrationMessageContext,
   type OrchestrationSession,
 } from "@t3tools/contracts";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { describe, expect, it } from "@effect/vitest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,11 +20,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { PersonalEngineV1WiredLive, toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
-import type { PersonalThreadStatus } from "./engine/PersonalEngine.ts";
-import { runMigrations } from "../persistence/Migrations.ts";
+import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
@@ -38,6 +30,7 @@ import {
   PERSONAL_CHAT_RESUME_PROVIDER_GAP_MS,
 } from "./personalChatResumePolicy.ts";
 import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
+import { personalTestDatabase } from "./test/personalReadsTestLayer.ts";
 import { withSchedulersEnv } from "./schedulersSwitch.testFixtures.ts";
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -58,6 +51,11 @@ const HIT_MS = Date.parse("2026-09-27T19:42:36.000Z");
 const RESET_ISO = "2026-09-27T22:00:00.000Z";
 const RESET_MS = Date.parse(RESET_ISO);
 
+interface UserMessage {
+  readonly id: string;
+  readonly createdAt: string;
+}
+
 interface ChatState {
   session: OrchestrationSession | null;
   archivedAt: string | null;
@@ -65,21 +63,30 @@ interface ChatState {
   deleted: boolean;
   /** Null before the turn projection has the failed turn. */
   latestTurnId: TurnId | null;
+  /** The owner's own messages, newest read from here. */
+  readonly messages: Array<UserMessage>;
+}
+
+interface Notice {
+  readonly threadId: ThreadId;
+  readonly delta: string;
+  readonly context?: OrchestrationMessageContext;
 }
 
 interface Harness {
-  readonly dispatched: Array<OrchestrationCommand>;
+  readonly notices: Array<Notice>;
+  readonly sends: Array<PersonalEngine.PersonalSendInput>;
   readonly chats: Map<string, ChatState>;
   /** Slots the task service has free for outside work. */
   freeSlots: number;
   readonly reserved: Set<string>;
   taskOwnsTurn: boolean;
-  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
 }
 
 const makeHarness = (): Harness => ({
-  dispatched: [],
+  notices: [],
+  sends: [],
   chats: new Map([
     [CHAT_A, chatState("turn-a1")],
     [CHAT_B, chatState("turn-b1")],
@@ -87,7 +94,6 @@ const makeHarness = (): Harness => ({
   freeSlots: 5,
   reserved: new Set(),
   taskOwnsTurn: false,
-  statuses: new Map(),
   sequence: 0,
 });
 
@@ -98,72 +104,148 @@ function chatState(turnId: string): ChatState {
     linkArchivedAt: null,
     deleted: false,
     latestTurnId: TurnId.make(turnId),
+    messages: [],
   };
 }
 
 const chat = (harness: Harness, threadId: ThreadId) => harness.chats.get(threadId)!;
 
-const depsLayer = (harness: Harness, fallback?: PersonalModelFallback.PersonalModelFallbackShape) =>
-  PersonalEngineV1WiredLive.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-          dispatch: (command: OrchestrationCommand) =>
-            Effect.sync(() => {
-              harness.dispatched.push(command);
-              return { sequence: harness.dispatched.length };
-            }),
-          subscribeDomainEvents: Effect.succeed(Stream.never),
-          streamDomainEvents: Stream.never,
-        } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-        Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-          getThreadShellById: (threadId: ThreadId) =>
-            Effect.sync(() => {
-              const state = harness.chats.get(threadId);
-              if (state === undefined || state.deleted) return Option.none();
-              return Option.some({
-                id: threadId,
-                session: state.session,
-                archivedAt: state.archivedAt,
-                latestTurn: state.latestTurnId === null ? null : { turnId: state.latestTurnId },
-                modelSelection: { instanceId: INSTANCE, model: "claude-opus-5-5" },
-                runtimeMode: "full-access",
-                interactionMode: "default",
-              });
-            }),
-        } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-        Layer.succeed(PersonalBotRepository.PersonalBotRepository, {
-          getThreadLink: ({ threadId }: { readonly threadId: ThreadId }) =>
-            Effect.sync(() => {
-              const state = harness.chats.get(threadId);
-              if (state === undefined || state.deleted) return Option.none();
-              return Option.some({ threadId, botId: BOT, archivedAt: state.linkArchivedAt });
-            }),
-          getBotById: ({ botId }: { readonly botId: PersonalBotId }) =>
-            Effect.succeed(Option.some({ botId, modelSelection: BOT_MODEL })),
-        } as unknown as PersonalBotRepository.PersonalBotRepository["Service"]),
-        Layer.mock(PersonalTaskService.PersonalTaskService)({
-          ownsThreadTurn: () => Effect.sync(() => harness.taskOwnsTurn),
-          reserveExternalSlot: (key: string) =>
-            Effect.sync(() => {
-              if (harness.reserved.has(key)) return true;
-              if (harness.freeSlots <= 0) return false;
-              harness.freeSlots -= 1;
-              harness.reserved.add(key);
-              return true;
-            }),
-          releaseExternalSlot: (key: string) =>
-            Effect.sync(() => {
-              if (harness.reserved.delete(key)) harness.freeSlots += 1;
-            }),
+const sessionView = (session: OrchestrationSession): PersonalEngine.PersonalSessionView => ({
+  threadId: session.threadId,
+  status:
+    session.status === "ready"
+      ? "waiting"
+      : (session.status as PersonalEngine.PersonalThreadStatus),
+  activeTurnId: session.activeTurnId,
+  lastError: session.lastError,
+  providerInstanceId: session.providerInstanceId ?? null,
+  providerName: session.providerName,
+  providerRetry:
+    session.providerRetry === undefined
+      ? null
+      : {
+          kind: session.providerRetry.kind,
+          provider: session.providerRetry.provider,
+          observedAt: session.providerRetry.observedAt,
+          ...(session.providerRetry.retryAt === undefined
+            ? {}
+            : { retryAt: session.providerRetry.retryAt }),
+          ...(session.providerRetry.attempt === undefined
+            ? {}
+            : { attempt: session.providerRetry.attempt }),
+          ...(session.providerRetry.maxAttempts === undefined
+            ? {}
+            : { maxAttempts: session.providerRetry.maxAttempts }),
+          ...(session.providerRetry.reason === undefined
+            ? {}
+            : { reason: session.providerRetry.reason }),
+          ...(session.providerRetry.auto === undefined ? {} : { auto: session.providerRetry.auto }),
+        },
+  updatedAt: session.updatedAt,
+});
+
+/** A test-local PersonalEngine: only the calls this service makes. */
+const engineDouble = (harness: Harness): PersonalEngine.PersonalEngineShape => {
+  const shape = {
+    latestUserMessage: (input: {
+      readonly threadId: ThreadId;
+      readonly excludeIdPrefix?: string;
+    }) =>
+      Effect.sync(() => {
+        const state = harness.chats.get(input.threadId);
+        if (state === undefined || state.deleted) return Option.none();
+        const newest = state.messages
+          .filter(
+            (message) =>
+              input.excludeIdPrefix === undefined || !message.id.startsWith(input.excludeIdPrefix),
+          )
+          .toSorted(
+            (left, right) =>
+              right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+          )[0];
+        return newest === undefined
+          ? Option.none()
+          : Option.some({
+              id: MessageId.make(newest.id),
+              role: "user",
+              text: "hi",
+              turnId: null,
+              streaming: false,
+              createdAt: newest.createdAt,
+              updatedAt: newest.createdAt,
+            } satisfies PersonalEngine.PersonalMessageView);
+      }),
+    getThread: (threadId: ThreadId) =>
+      Effect.sync(() => {
+        const state = harness.chats.get(threadId);
+        if (state === undefined || state.deleted) return Option.none();
+        return Option.some({
+          id: threadId,
+          title: "Chat",
+          projectId: "project",
+          modelSelection: { instanceId: INSTANCE, model: "claude-opus-5-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          archivedAt: state.archivedAt,
+          session: state.session,
+          latestTurn: state.latestTurnId === null ? null : { turnId: state.latestTurnId },
+        } as unknown as PersonalEngine.PersonalThreadView);
+      }),
+    postNotice: (input: PersonalEngine.PersonalPostNoticeInput) =>
+      Effect.sync(() => {
+        harness.notices.push({
+          threadId: input.threadId,
+          delta: input.text,
+          ...(input.context === undefined ? {} : { context: input.context }),
+        });
+      }),
+    send: (input: PersonalEngine.PersonalSendInput) =>
+      Effect.sync(() => {
+        harness.sends.push(input);
+      }),
+    events: Stream.empty as Stream.Stream<PersonalEngine.PersonalThreadEvent>,
+  };
+  return shape as unknown as PersonalEngine.PersonalEngineShape;
+};
+
+const depsLayer = (
+  harness: Harness,
+  fallback?: PersonalModelFallback.PersonalModelFallbackShape,
+) => {
+  const base = Layer.mergeAll(
+    Layer.succeed(PersonalEngine.PersonalEngine, engineDouble(harness)),
+    Layer.succeed(PersonalBotRepository.PersonalBotRepository, {
+      getThreadLink: ({ threadId }: { readonly threadId: ThreadId }) =>
+        Effect.sync(() => {
+          const state = harness.chats.get(threadId);
+          if (state === undefined || state.deleted) return Option.none();
+          return Option.some({ threadId, botId: BOT, archivedAt: state.linkArchivedAt });
         }),
-        ...(fallback === undefined
-          ? []
-          : [Layer.succeed(PersonalModelFallback.PersonalModelFallback, fallback)]),
-        NodeServices.layer,
-      ),
-    ),
+      getBotById: ({ botId }: { readonly botId: PersonalBotId }) =>
+        Effect.succeed(Option.some({ botId, modelSelection: BOT_MODEL })),
+    } as unknown as PersonalBotRepository.PersonalBotRepository["Service"]),
+    Layer.mock(PersonalTaskService.PersonalTaskService)({
+      ownsThreadTurn: () => Effect.sync(() => harness.taskOwnsTurn),
+      reserveExternalSlot: (key: string) =>
+        Effect.sync(() => {
+          if (harness.reserved.has(key)) return true;
+          if (harness.freeSlots <= 0) return false;
+          harness.freeSlots -= 1;
+          harness.reserved.add(key);
+          return true;
+        }),
+      releaseExternalSlot: (key: string) =>
+        Effect.sync(() => {
+          if (harness.reserved.delete(key)) harness.freeSlots += 1;
+        }),
+    }),
+    SecureRandom.layerWebCrypto,
+    NodeServices.layer,
   );
+  return fallback === undefined
+    ? base
+    : Layer.mergeAll(base, Layer.succeed(PersonalModelFallback.PersonalModelFallback, fallback));
+};
 
 /** A fresh service on the shared database: a server start. */
 const bootService = (
@@ -171,26 +253,7 @@ const bootService = (
   fallback?: PersonalModelFallback.PersonalModelFallbackShape,
 ) => PersonalChatResume.make.pipe(Effect.provide(depsLayer(harness, fallback)));
 
-const setup = Effect.gen(function* () {
-  yield* runMigrations();
-  yield* TestClock.setTime(HIT_MS);
-});
-
-const baseEvent = (harness: Harness, threadId: ThreadId) => {
-  harness.sequence += 1;
-  const id = `evt-${harness.sequence}`;
-  return {
-    sequence: harness.sequence,
-    eventId: EventId.make(id),
-    aggregateKind: "thread" as const,
-    aggregateId: threadId,
-    occurredAt: isoAt(HIT_MS),
-    commandId: CommandId.make(`cmd-${id}`),
-    causationEventId: null,
-    correlationId: CorrelationId.make(`cmd-${id}`),
-    metadata: {},
-  };
-};
+const setup = TestClock.setTime(HIT_MS);
 
 const limitSession = (
   threadId: ThreadId,
@@ -217,13 +280,15 @@ const sessionEvent = (
   harness: Harness,
   threadId: ThreadId,
   session: OrchestrationSession,
-): OrchestrationEvent => {
+): PersonalEngine.PersonalThreadEvent => {
   chat(harness, threadId).session = session;
+  const view = sessionView(session);
   return {
-    ...baseEvent(harness, threadId),
-    type: "thread.session-set",
-    payload: { threadId, session },
-  } as OrchestrationEvent;
+    _tag: "StatusChanged",
+    threadId,
+    status: view.status,
+    session: view,
+  };
 };
 
 const statusSession = (
@@ -241,54 +306,37 @@ const statusSession = (
 });
 
 const turnStartEvent = (
+  _harness: Harness,
+  threadId: ThreadId,
+  messageId: string,
+): PersonalEngine.PersonalThreadEvent => ({
+  _tag: "TurnStartRequested",
+  threadId,
+  messageId: MessageId.make(messageId),
+  interactionMode: "default",
+});
+
+const deletedEvent = (harness: Harness, threadId: ThreadId): PersonalEngine.PersonalThreadEvent => {
+  chat(harness, threadId).deleted = true;
+  return { _tag: "ThreadDeleted", threadId };
+};
+
+/** Feeds one v2 personal event straight into the reactor. */
+const ingestAll = (
+  service: PersonalChatResume.PersonalChatResumeShape,
+  _harness: Harness,
+  event: PersonalEngine.PersonalThreadEvent,
+) => service.ingestDomainEvent(event);
+
+/** The owner's message, as the projection stores it. */
+const insertUserMessage = (
   harness: Harness,
   threadId: ThreadId,
   messageId: string,
-): OrchestrationEvent =>
-  ({
-    ...baseEvent(harness, threadId),
-    type: "thread.turn-start-requested",
-    payload: {
-      threadId,
-      messageId: MessageId.make(messageId),
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdAt: isoAt(HIT_MS),
-    },
-  }) as OrchestrationEvent;
-
-const deletedEvent = (harness: Harness, threadId: ThreadId): OrchestrationEvent => {
-  chat(harness, threadId).deleted = true;
-  return {
-    ...baseEvent(harness, threadId),
-    type: "thread.deleted",
-    payload: { threadId, deletedAt: isoAt(HIT_MS) },
-  } as OrchestrationEvent;
-};
-
-/** Feeds the events production sees, through the real v1-to-personal mapping. */
-const ingestAll = (
-  service: PersonalChatResume.PersonalChatResumeShape,
-  harness: Harness,
-  event: OrchestrationEvent,
+  createdAtMs: number,
 ) =>
-  Effect.gen(function* () {
-    for (const personal of toPersonalEvents(event, harness.statuses)) {
-      yield* service.ingestDomainEvent(personal);
-    }
-  });
-
-/** The owner's message, as the projection stores it. */
-const insertUserMessage = (threadId: ThreadId, messageId: string, createdAtMs: number) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const at = isoAt(createdAtMs);
-    yield* sql`
-      INSERT INTO projection_thread_messages (
-        message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
-      )
-      VALUES (${messageId}, ${threadId}, NULL, 'user', 'hi', 0, ${at}, ${at})
-    `;
+  Effect.sync(() => {
+    chat(harness, threadId).messages.push({ id: messageId, createdAt: isoAt(createdAtMs) });
   });
 
 const resumeRows = Effect.gen(function* () {
@@ -304,12 +352,18 @@ const resumeRows = Effect.gen(function* () {
   `;
 });
 
-const notices = (harness: Harness) =>
-  harness.dispatched.flatMap((command) =>
-    command.type === "thread.message.assistant.delta" ? [command] : [],
-  );
+const notices = (harness: Harness) => harness.notices;
+
 const turnStarts = (harness: Harness) =>
-  harness.dispatched.flatMap((command) => (command.type === "thread.turn.start" ? [command] : []));
+  harness.sends.map((send) => ({
+    threadId: send.threadId,
+    message: {
+      messageId: send.messageId,
+      text: send.text,
+      ...(send.context === undefined ? {} : { context: send.context }),
+    },
+    ...(send.modelSelection === undefined ? {} : { modelSelection: send.modelSelection }),
+  }));
 
 const hitLimit = (
   service: PersonalChatResume.PersonalChatResumeShape,
@@ -326,12 +380,13 @@ const hitLimit = (
     yield* ingestAll(
       service,
       harness,
-      sessionEvent(harness, threadId, { ...limitSession(threadId, retry), status: "stopped" }),
+      sessionEvent(harness, threadId, {
+        ...limitSession(threadId, retry),
+        status: "stopped",
+      }),
     );
     yield* service.drain;
   });
-
-const dbLayer = NodeSqliteClient.layer({ filename: ":memory:" });
 
 describe("PersonalChatResume", () => {
   it.effect("shows the pause, then continues the chat on its own at the reset", () =>
@@ -339,7 +394,7 @@ describe("PersonalChatResume", () => {
       yield* setup;
       const harness = makeHarness();
       const service = yield* bootService(harness);
-      yield* insertUserMessage(CHAT_A, "owner-1", HIT_MS - 60_000);
+      yield* insertUserMessage(harness, CHAT_A, "owner-1", HIT_MS - 60_000);
 
       yield* hitLimit(service, harness, CHAT_A);
 
@@ -398,7 +453,7 @@ describe("PersonalChatResume", () => {
       yield* TestClock.setTime(RESET_MS + 60 * 60_000);
       yield* service.sweep;
       expect(turnStarts(harness)).toHaveLength(1);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("one limit reported twice writes one row and one notice", () =>
@@ -406,7 +461,7 @@ describe("PersonalChatResume", () => {
       yield* setup;
       const harness = makeHarness();
       const service = yield* bootService(harness);
-      yield* insertUserMessage(CHAT_A, "owner-1", HIT_MS - 60_000);
+      yield* insertUserMessage(harness, CHAT_A, "owner-1", HIT_MS - 60_000);
       // The failed turn's completion, then the error session the server writes
       // right after it from a read that had no turn yet: the same limit, two
       // events, and only one row may come of them.
@@ -435,7 +490,7 @@ describe("PersonalChatResume", () => {
 
       expect((yield* resumeRows).map((row) => row.status)).toEqual(["scheduled"]);
       expect(notices(harness)).toHaveLength(1);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("does not continue once the owner wrote in the chat", () =>
@@ -449,7 +504,7 @@ describe("PersonalChatResume", () => {
       // Chat A: the owner's message event. Chat B: only the stored message
       // (as after a restart, when the event was never seen).
       yield* ingestAll(service, harness, turnStartEvent(harness, CHAT_A, "owner-2"));
-      yield* insertUserMessage(CHAT_B, "owner-3", HIT_MS + 10 * 60_000);
+      yield* insertUserMessage(harness, CHAT_B, "owner-3", HIT_MS + 10 * 60_000);
       yield* service.drain;
 
       yield* TestClock.setTime(RESET_MS + PERSONAL_CHAT_RESUME_GRACE_MS);
@@ -459,7 +514,7 @@ describe("PersonalChatResume", () => {
         { threadId: CHAT_A, status: "skipped", outcome: "new_message" },
         { threadId: CHAT_B, status: "skipped", outcome: "new_message" },
       ]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("does not continue a deleted or archived chat", () =>
@@ -482,7 +537,7 @@ describe("PersonalChatResume", () => {
         { threadId: CHAT_A, status: "skipped", outcome: "deleted" },
         { threadId: CHAT_B, status: "skipped", outcome: "archived" },
       ]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("keeps the schedule across a server restart and fires once", () =>
@@ -504,7 +559,7 @@ describe("PersonalChatResume", () => {
       yield* before.sweep;
       expect(turnStarts(harness)).toHaveLength(1);
       expect(yield* resumeRows).toMatchObject([{ threadId: CHAT_A, status: "resumed" }]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("only shows the notice when no reset time was reported", () =>
@@ -527,7 +582,7 @@ describe("PersonalChatResume", () => {
       expect(yield* resumeRows).toMatchObject([
         { threadId: CHAT_A, status: "notice_only", outcome: "no_reset", resumeAt: null },
       ]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect(
@@ -569,7 +624,7 @@ describe("PersonalChatResume", () => {
         yield* service.sweep;
         expect(turnStarts(harness).map((turn) => turn.threadId)).toEqual([CHAT_A]);
         expect(yield* resumeRows).toMatchObject([{ threadId: CHAT_A, status: "resumed" }]);
-      }).pipe(Effect.provide(dbLayer)),
+      }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("leaves task and group turns to their own retry", () =>
@@ -577,13 +632,13 @@ describe("PersonalChatResume", () => {
       yield* setup;
       const harness = makeHarness();
       const service = yield* bootService(harness);
-      yield* insertUserMessage(CHAT_A, "personal-task-t1-1", HIT_MS - 1_000);
-      yield* insertUserMessage(CHAT_B, "personal-group-g1-brief", HIT_MS - 1_000);
+      yield* insertUserMessage(harness, CHAT_A, "personal-task-t1-1", HIT_MS - 1_000);
+      yield* insertUserMessage(harness, CHAT_B, "personal-group-g1-brief", HIT_MS - 1_000);
       yield* hitLimit(service, harness, CHAT_A);
       yield* hitLimit(service, harness, CHAT_B);
       expect(notices(harness)).toEqual([]);
       expect(yield* resumeRows).toEqual([]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("resumes one chat after another, and waits for a free task slot", () =>
@@ -608,7 +663,7 @@ describe("PersonalChatResume", () => {
       yield* TestClock.adjust(PERSONAL_CHAT_RESUME_PROVIDER_GAP_MS);
       yield* service.sweep;
       expect(turnStarts(harness).map((turn) => turn.threadId)).toEqual([CHAT_A, CHAT_B]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("stops continuing a chat that keeps hitting the limit", () =>
@@ -616,7 +671,7 @@ describe("PersonalChatResume", () => {
       yield* setup;
       const harness = makeHarness();
       const service = yield* bootService(harness);
-      yield* insertUserMessage(CHAT_A, "owner-1", HIT_MS - 60_000);
+      yield* insertUserMessage(harness, CHAT_A, "owner-1", HIT_MS - 60_000);
       let now = HIT_MS;
       for (let round = 0; round < 3; round += 1) {
         chat(harness, CHAT_A).latestTurnId = TurnId.make(`turn-a${round}`);
@@ -637,7 +692,7 @@ describe("PersonalChatResume", () => {
       expect(notices(harness).at(-1)?.delta).toBe(
         "Paused: Claude usage limit. It already continued on its own, so send a message to continue.",
       );
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 });
 
@@ -661,7 +716,7 @@ describe("PersonalChatResume with T3CODE_PERSONAL_SCHEDULERS (restored test copi
       const harness = yield* restoredCopyAfterReset("off");
       expect(turnStarts(harness)).toEqual([]);
       expect(yield* resumeRows).toMatchObject([{ threadId: CHAT_A, status: "scheduled" }]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 
   it.effect("on: the same due resume continues the chat once, as before", () =>
@@ -669,6 +724,6 @@ describe("PersonalChatResume with T3CODE_PERSONAL_SCHEDULERS (restored test copi
       const harness = yield* restoredCopyAfterReset("on");
       expect(turnStarts(harness)).toHaveLength(1);
       expect(yield* resumeRows).toMatchObject([{ threadId: CHAT_A, status: "resumed" }]);
-    }).pipe(Effect.provide(dbLayer)),
+    }).pipe(Effect.provide(personalTestDatabase)),
   );
 });

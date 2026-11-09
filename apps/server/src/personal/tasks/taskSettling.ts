@@ -3,16 +3,10 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import {
-  CommandId,
-  ThreadId,
-  type OrchestrationSession,
-  type PersonalTask,
-  type PersonalTaskAttempt,
-} from "@t3tools/contracts";
+import { ThreadId, type PersonalTask, type PersonalTaskAttempt } from "@t3tools/contracts";
 import type { PersonalMessageView, PersonalSessionView } from "../engine/PersonalEngine.ts";
 import type { PersonalEngineError } from "../engine/errors.ts";
-import { toPersonalSessionView } from "../engine/PersonalEngineV1Live.ts";
+import { toPersonalSessionView } from "../engine/PersonalEngineV2Live.ts";
 import { LEASE_MINUTES, attemptMessageId, minutesFrom, type Changed } from "./taskShared.ts";
 import {
   BACKGROUND_WAIT_PROVIDER,
@@ -101,6 +95,8 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   const tryResume = Effect.fn("PersonalTaskService.tryResume")(function* (
     changed: Changed,
     task: PersonalTask,
+    /** The caller already stopped this thread's session; do not wait for a shell that never says so. */
+    options?: { readonly sessionStopped?: boolean },
   ) {
     if (!isWaitingForUser(task.status)) {
       return;
@@ -111,7 +107,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     }
     yield* closeStaleAttempts(task);
     if (task.threadId !== null && notes.some((note) => note.restartSession)) {
-      if (sessionIsAlive(yield* readSession(task.threadId))) {
+      if (options?.sessionStopped !== true && sessionIsAlive(yield* readSession(task.threadId))) {
         resumingThreadIds.add(task.threadId);
         return;
       }

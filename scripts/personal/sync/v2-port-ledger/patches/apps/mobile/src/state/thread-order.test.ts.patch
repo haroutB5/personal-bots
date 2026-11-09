@@ -1,0 +1,36 @@
+diff --git a/apps/mobile/src/state/thread-order.test.ts b/apps/mobile/src/state/thread-order.test.ts
+index 92db3a89b2f4f4500fc205eeb7074dc4f4108f81..21a026ae6ed0886b2a5e04182955e4bdba4233d1 100644
+--- a/apps/mobile/src/state/thread-order.test.ts
++++ b/apps/mobile/src/state/thread-order.test.ts
+@@ -1,6 +1,6 @@
+ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+-import type { Atom } from "effect/unstable/reactivity";
++import type { Atom } from "effect/reactivity";
+ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+ 
+ import { createPendingThreadOrder } from "../features/threads/threadOrder";
+@@ -13,19 +13,19 @@ import {
+ import { environmentThreadShells } from "./threads";
+ 
+ vi.mock("./atom-registry", async () => {
+-  const { AtomRegistry } = await import("effect/unstable/reactivity");
++  const { AtomRegistry } = await import("effect/reactivity");
+   return { appAtomRegistry: AtomRegistry.make() };
+ });
+ vi.mock("./threads", async () => {
+-  const { Atom } = await import("effect/unstable/reactivity");
++  const { Atom } = await import("effect/reactivity");
+   return { environmentThreadShells: { threadShellsAtom: Atom.make([]).pipe(Atom.keepAlive) } };
+ });
+ vi.mock("./server", async () => {
+-  const { Atom } = await import("effect/unstable/reactivity");
++  const { Atom } = await import("effect/reactivity");
+   return { environmentServerConfigsAtom: Atom.make(new Map()).pipe(Atom.keepAlive) };
+ });
+ vi.mock("./use-thread-outbox", async () => {
+-  const { Atom } = await import("effect/unstable/reactivity");
++  const { Atom } = await import("effect/reactivity");
+   return { queuedThreadKeysAtom: Atom.make(new Set<string>()).pipe(Atom.keepAlive) };
+ });
+ 

@@ -11,7 +11,12 @@
  * Kill switch: PB_PERF_OFF=shell-omit-archived serves the full shell again
  * (perfFlags.ts). The client side has its own switch of the same name.
  */
-import type { OrchestrationShellSnapshot, OrchestrationThreadShell } from "@t3tools/contracts";
+import type { OrchestrationThreadShell } from "@t3tools/contracts";
+
+/** Any shell snapshot that carries v1 thread shells. U removed OrchestrationShellSnapshot; C3 binds the v2 one. */
+export interface ShellWithThreads {
+  readonly threads: ReadonlyArray<OrchestrationThreadShell>;
+}
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -25,10 +30,10 @@ export function archivedShellThreadNeeded(thread: OrchestrationThreadShell): boo
   return thread.hasPendingApprovals || thread.hasPendingUserInput;
 }
 
-export function slimShellSnapshot(
-  snapshot: OrchestrationShellSnapshot,
+export function slimShellSnapshot<S extends ShellWithThreads>(
+  snapshot: S,
   archivedThreadIds: ReadonlySet<string>,
-): OrchestrationShellSnapshot {
+): S {
   if (archivedThreadIds.size === 0) return snapshot;
   const threads = snapshot.threads.filter(
     (thread) => !archivedThreadIds.has(thread.id) || archivedShellThreadNeeded(thread),
@@ -57,10 +62,10 @@ export const listArchivedBotThreadIds = Effect.gen(function* () {
 );
 
 /** Slims `snapshot` when the client asked for it and the switch is on. */
-export const maybeSlimShellSnapshot = (
-  snapshot: OrchestrationShellSnapshot,
+export const maybeSlimShellSnapshot = <S extends ShellWithThreads>(
+  snapshot: S,
   requested: boolean,
-): Effect.Effect<OrchestrationShellSnapshot, never, SqlClient.SqlClient> =>
+): Effect.Effect<S, never, SqlClient.SqlClient> =>
   requested && serverPerfOptimizationOn("shell-omit-archived")
     ? listArchivedBotThreadIds.pipe(Effect.map((ids) => slimShellSnapshot(snapshot, ids)))
     : Effect.succeed(snapshot);
@@ -86,7 +91,7 @@ export const listBotThreadIds = (input: {
 
 /** The shells of `ids`, in the shell's own order. */
 export function pickThreadShells(
-  snapshot: OrchestrationShellSnapshot,
+  snapshot: ShellWithThreads,
   ids: ReadonlySet<string>,
 ): ReadonlyArray<OrchestrationThreadShell> {
   if (ids.size === 0) return [];

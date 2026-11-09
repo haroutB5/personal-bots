@@ -1,4 +1,4 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CHAT_NAME_TAKEN_CODE,
   PersonalBotId,
@@ -15,18 +15,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { ServerConfig } from "../config.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { PersonalEngine } from "./engine/PersonalEngine.ts";
 import { PersonalProviders } from "./engine/PersonalProviders.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import {
+  makePersonalEngineHarness,
+  personalEngineTestLayer,
+} from "./test/personalEngineTestLayer.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 import * as PersonalTaskChatArchive from "./PersonalTaskChatArchiveService.ts";
@@ -92,28 +87,15 @@ const claudeSnapshot = (): ServerProvider =>
 // ones the title commands actually wrote.
 const makeLayer = () =>
   PersonalTaskChatArchive.layer.pipe(
-    Layer.provideMerge(PersonalBotService.layer),
-    Layer.provideMerge(
-      Layer.mergeAll(
-        OrchestrationEngineLive.pipe(
-          Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-          Layer.provide(OrchestrationProjectionPipelineLive),
-        ),
-        OrchestrationProjectionSnapshotQueryLive,
-        PersonalBotRepository.layer,
-      ),
-    ),
+    Layer.provideMerge(PersonalBotService.layerRequiringEngine),
+    Layer.provideMerge(PersonalBotRepository.layer),
+    Layer.provideMerge(personalEngineTestLayer(makePersonalEngineHarness())),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed([claudeSnapshot()]),
       }),
     ),
-    Layer.provideMerge(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-chat-titles-test-" })),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -140,15 +122,14 @@ const nextThreadId = () => ThreadId.make(`thread-title-${++threadCount}`);
 const services = Effect.gen(function* () {
   const bots = yield* PersonalBotService.PersonalBotService;
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
-  const snapshots = yield* ProjectionSnapshotQuery;
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* PersonalEngine;
   yield* bots.create(botInput("bot-a"));
   yield* bots.create(botInput("bot-b"));
   const botA = PersonalBotId.make("bot-a");
   const botB = PersonalBotId.make("bot-b");
   const titleOf = (threadId: ThreadId) =>
-    snapshots
-      .getThreadShellById(threadId)
+    engine
+      .getThread(threadId)
       .pipe(Effect.map((shell) => (Option.isSome(shell) ? shell.value.title : null)));
   const owner = (botId: PersonalBotId, title: string) =>
     Effect.gen(function* () {
@@ -162,13 +143,13 @@ const services = Effect.gen(function* () {
       yield* bots.createThread({ botId, threadId, ...(title === undefined ? {} : { title }) });
       return threadId;
     });
-  return { bots, repository, snapshots, engine, botA, botB, titleOf, owner, auto };
+  return { bots, repository, engine, botA, botB, titleOf, owner, auto };
 });
 
 describe("a name the owner types", () => {
   it.effect("is refused on create when the bot has an open chat with it", () =>
     Effect.gen(function* () {
-      const { owner, titleOf, snapshots, bots, botA } = yield* services;
+      const { owner, titleOf, bots, botA, engine } = yield* services;
       const first = yield* owner(botA, "Main");
       assert.strictEqual(yield* titleOf(first), "Main");
       for (const variant of ["Main", "main", "  MAIN  ", "Main "]) {
@@ -179,7 +160,7 @@ describe("a name the owner types", () => {
         assert.strictEqual(error.code, CHAT_NAME_TAKEN_CODE);
         assert.strictEqual(error.message, chatNameTakenMessage(variant.trim()));
         // The refused chat was not made at all.
-        assert.isTrue(Option.isNone(yield* snapshots.getThreadShellById(threadId)));
+        assert.isTrue(Option.isNone(yield* engine.getThread(threadId)));
       }
     }).pipe(Effect.provide(makeLayer())),
   );
@@ -334,15 +315,11 @@ describe("a name a machine picks", () => {
 
   it.effect("sees only live chats of its own bot: deleted and archived ones do not count", () =>
     Effect.gen(function* () {
-      const { owner, auto, bots, repository, engine, botA, botB } = yield* services;
+      const { owner, auto, bots, repository, botA, botB } = yield* services;
       const archived = yield* owner(botA, "Archived name");
       yield* bots.archiveThread({ threadId: archived, archived: true });
       const deleted = yield* auto(botA, "Deleted name");
-      yield* engine.dispatch({
-        type: "thread.delete",
-        commandId: `test:delete:${deleted}` as never,
-        threadId: deleted,
-      });
+      yield* bots.deleteThread({ threadId: deleted });
       const chat = yield* auto(botB);
       assert.strictEqual(
         yield* uniqueAutomaticTitle(repository, { threadId: chat, title: "Archived name" }),
@@ -407,7 +384,7 @@ describe("unarchive", () => {
 describe("a fixed automatic title (relay posts)", () => {
   it.effect("is made unique like any machine title, and stays a metadata (manual) title", () =>
     Effect.gen(function* () {
-      const { bots, botA, titleOf, snapshots } = yield* services;
+      const { bots, botA, titleOf, engine } = yield* services;
       const make = (title: string) =>
         Effect.gen(function* () {
           const threadId = nextThreadId();
@@ -418,8 +395,11 @@ describe("a fixed automatic title (relay posts)", () => {
       const two = yield* make("Weekly upstream sync report");
       assert.strictEqual(yield* titleOf(one), "Weekly upstream sync report");
       assert.strictEqual(yield* titleOf(two), "Weekly upstream sync report 2");
-      const shell = yield* snapshots.getThreadShellById(two);
-      assert.strictEqual(Option.isSome(shell) ? shell.value.titleState?.source : null, "manual");
+      const shell = yield* engine.getThread(two);
+      assert.strictEqual(
+        Option.isSome(shell) ? shell.value.title : null,
+        "Weekly upstream sync report 2",
+      );
     }).pipe(Effect.provide(makeLayer())),
   );
 });

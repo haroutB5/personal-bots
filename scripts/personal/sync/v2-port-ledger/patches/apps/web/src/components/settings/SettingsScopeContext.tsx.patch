@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/settings/SettingsScopeContext.tsx b/apps/web/src/components/settings/SettingsScopeContext.tsx
+index add38f3e1880a585f6e513f44f4db2a3a2ca0fa4..1b2f212edd4422dff4ce1bfb8cc04dd8f3f3fb11 100644
+--- a/apps/web/src/components/settings/SettingsScopeContext.tsx
++++ b/apps/web/src/components/settings/SettingsScopeContext.tsx
+@@ -2,7 +2,7 @@ import { T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
+ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+ import { useAtomValue } from "@effect/atom-react";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { createContext, type ReactNode, useContext, useMemo } from "react";
+ 
+ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";

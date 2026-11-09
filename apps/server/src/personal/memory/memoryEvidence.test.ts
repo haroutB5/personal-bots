@@ -2,9 +2,9 @@ import { PersonalBotId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqlClient from "effect/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { PersonalMemoryService } from "./PersonalMemoryService.ts";
 import {
   PersonalMemoryTidy,
@@ -19,7 +19,7 @@ import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTes
 const botId = PersonalBotId.make("evidence-bot");
 const threadId = ThreadId.make("evidence-thread");
 const base = { scope: "shared", scopeId: null, kind: "note", source: "user" } as const;
-const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const link = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO personal_bots (bot_id, name, description, instructions, avatar_shape, avatar_color,
@@ -219,7 +219,7 @@ describe("memory evidence behaviour", () => {
           }),
       });
       const layer = Layer.mergeAll(memoryLayer, tidyLayer.pipe(Layer.provide(judge))).pipe(
-        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
         Layer.provideMerge(NodeServices.layer),
       );
       return Effect.gen(function* () {

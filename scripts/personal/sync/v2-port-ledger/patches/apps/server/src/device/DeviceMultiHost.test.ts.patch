@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/device/DeviceMultiHost.test.ts b/apps/server/src/device/DeviceMultiHost.test.ts
+index 7a40e1e53c72e9da1f36d462c21ace2098c31cd4..9d8a5faf813e380b9206362e8257d49fe86c4d33 100644
+--- a/apps/server/src/device/DeviceMultiHost.test.ts
++++ b/apps/server/src/device/DeviceMultiHost.test.ts
+@@ -3,7 +3,7 @@ import { ThreadId } from "@t3tools/contracts";
+ import * as Deferred from "effect/Deferred";
+ import * as Fiber from "effect/Fiber";
+ import * as Effect from "effect/Effect";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ import { ServerSettingsService } from "../serverSettings.ts";
+ import { DeviceHostError, DeviceHost } from "./DeviceHost.ts";
+ import { makeWithHosts } from "./DeviceService.ts";

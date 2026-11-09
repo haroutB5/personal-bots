@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off globalDateInEffect:off preferSchemaOverJson:off - local-time dates as Codex prints them; stored verdicts are asserted on verbatim.
+import type { PersonalServerProvider as ServerProvider } from "../engine/PersonalProviders.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -6,7 +7,6 @@ import {
   type OrchestrationThreadShell,
   type PersonalBot,
   type ProviderSession,
-  type ServerProvider,
   type ServerProviderSmokeCheck,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -122,6 +122,15 @@ const makeHarness = (meta = new Map<string, string>()) => {
           return smokeCheck === null ? rest : { ...rest, smokeCheck };
         });
       }),
+    updateProvider: () => Effect.succeed(state.providers),
+    setAutoUpdate: (instanceId, autoUpdate) =>
+      Effect.sync(() => {
+        state.providers = state.providers.map((provider) => {
+          if (provider.instanceId !== instanceId) return provider;
+          const { autoUpdate: _previous, ...rest } = provider;
+          return autoUpdate === null ? rest : { ...rest, autoUpdate };
+        });
+      }),
     runtimeEvents: Stream.empty,
     listSessions: Effect.sync(() => state.sessions),
     stopSession: (threadId) =>
@@ -206,6 +215,28 @@ it.effect("an exited session is forgotten and never restarted for an update", ()
     yield* service.handleProviders(state.providers);
     yield* service.restartStaleSessions;
     assert.deepEqual(state.stopped, []);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("drives SessionStarted, TurnSettled and SessionExited through the fake", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const service = yield* makeWith(deps);
+    state.sessions = [session(BOT_THREAD)];
+    yield* service.handleRuntimeEvent(started(BOT_THREAD));
+
+    setVersion("2.1.264");
+    state.shells.set(BOT_THREAD, shell({ latestTurn: { state: "completed" } }));
+    yield* service.handleRuntimeEvent(settled(BOT_THREAD));
+    assert.deepEqual(state.stopped, [BOT_THREAD]);
+
+    state.sessions = [session(BOT_THREAD)];
+    yield* service.handleRuntimeEvent(started(BOT_THREAD));
+    yield* service.handleRuntimeEvent(exited(BOT_THREAD));
+    setVersion("2.1.265");
+    yield* service.handleProviders(state.providers);
+    yield* service.restartStaleSessions;
+    assert.deepEqual(state.stopped, [BOT_THREAD]);
   }).pipe(Effect.scoped),
 );
 

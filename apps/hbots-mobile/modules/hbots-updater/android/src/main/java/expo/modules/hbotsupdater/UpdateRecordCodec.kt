@@ -13,6 +13,7 @@ object UpdateRecordCodec {
     .put("lastCheckAt", record.lastCheckAt ?: JSONObject.NULL)
     .put("lastOffer", record.lastOffer?.let(::encodeRelease) ?: JSONObject.NULL)
     .put("notifiedCode", record.notifiedCode)
+    .put("permissionNotifiedCode", record.permissionNotifiedCode)
     .put("deferrals", record.deferrals)
     .toString()
 
@@ -36,6 +37,8 @@ object UpdateRecordCodec {
       lastCheckAt = json.nullableLong("lastCheckAt")?.also { if (it < 0) throw JSONException("lastCheckAt") },
       lastOffer = json.nullableRelease("lastOffer"),
       notifiedCode = json.requiredLong("notifiedCode").also { if (it < 0) throw JSONException("notifiedCode") },
+      permissionNotifiedCode = (json.nullableLong("permissionNotifiedCode") ?: 0L)
+        .also { if (it < 0) throw JSONException("permissionNotifiedCode") },
       deferrals = deferrals.toInt(),
     )
   }

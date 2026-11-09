@@ -9,7 +9,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 
 import {
@@ -65,7 +68,7 @@ import {
 import * as ServerConfig from "../config.ts";
 import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
-import { PersonalEngineV1WiredLive } from "./engine/PersonalEngineV1Live.ts";
+import { PersonalEngineV2Live } from "./engine/PersonalEngineV2Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import {
   isPlaceholderChatTitle,
@@ -231,6 +234,11 @@ const toPersonalBotsError = (message: string) => (cause: unknown) =>
 /** A Files-tab row before its URLs are signed (see `PersonalFiles.ts`). */
 export type PersonalFileRecord = Omit<PersonalFile, "url" | "previewUrl" | "expiresAt">;
 
+/** A bot-thread link was created, archived, unarchived or deleted. */
+export interface PersonalBotLinkChange {
+  readonly threadId: ThreadId;
+}
+
 export class PersonalBotService extends Context.Service<
   PersonalBotService,
   {
@@ -292,6 +300,16 @@ export class PersonalBotService extends Context.Service<
       readonly archived: boolean;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
     /**
+     * Link changes have no orchestration event: the archive lives on the
+     * personal link row. A live shell stream subscribes before its snapshot
+     * so a change in that window still lands as one idempotent re-read.
+     */
+    readonly subscribeLinkChanges: Effect.Effect<
+      Stream.Stream<PersonalBotLinkChange>,
+      never,
+      Scope.Scope
+    >;
+    /**
      * Runs `write`, a rename the owner typed for this chat, after checking that
      * no other open chat of the same bot has the name, in one step with the write.
      * Fails with the `chat_name_taken` code and does not run `write` when it
@@ -344,6 +362,9 @@ export const make = Effect.gen(function* () {
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const engine = yield* PersonalEngine.PersonalEngine;
   const providerPort = yield* PersonalProviders;
+  const linkChanges = yield* PubSub.unbounded<PersonalBotLinkChange>();
+  const publishLinkChange = (threadId: ThreadId) =>
+    PubSub.publish(linkChanges, { threadId }).pipe(Effect.asVoid);
   // The registry read this replaces could not fail, so a port failure is a defect here too.
   const providers = { getProviders: providerPort.listProviders().pipe(Effect.orDie) };
   const config = yield* ServerConfig.ServerConfig;
@@ -880,6 +901,7 @@ export const make = Effect.gen(function* () {
           `Personal bot thread '${input.threadId}' could not be read after creation.`,
         );
       }
+      yield* publishLinkChange(link.value.threadId);
       return link.value;
     });
 
@@ -968,7 +990,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
-    });
+    }).pipe(Effect.tap((thread) => publishLinkChange(thread.threadId)));
 
   const updateThread: PersonalBotService["Service"]["updateThread"] = (input) =>
     Effect.gen(function* () {
@@ -1065,7 +1087,7 @@ export const make = Effect.gen(function* () {
             .pipe(Effect.mapError(repositoryError("thread delete")));
         }),
       );
-    });
+    }).pipe(Effect.tap(() => publishLinkChange(input.threadId)));
 
   // The Chats greeting name. Unset (no row yet) reads back as "" so the
   // client can omit the name instead of inventing one.
@@ -1345,6 +1367,9 @@ export const make = Effect.gen(function* () {
     createThread,
     createSharedThread,
     archiveThread,
+    subscribeLinkChanges: Effect.map(PubSub.subscribe(linkChanges), (subscription) =>
+      Stream.fromSubscription(subscription),
+    ),
     withOwnerChatTitle,
     updateThread,
     searchMessages,
@@ -1364,7 +1389,7 @@ export const make = Effect.gen(function* () {
  */
 export const layerRequiringEngine = Layer.effect(PersonalBotService, make);
 
-export const layer = layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1WiredLive));
+export const layer = layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV2Live));
 
 export const PERSONAL_BOTS_SEED_META_KEY = PERSONAL_META_SEEDED;
 export const PERSONAL_BOTS_PROJECT_META_KEY = PERSONAL_META_PROJECT_ID;

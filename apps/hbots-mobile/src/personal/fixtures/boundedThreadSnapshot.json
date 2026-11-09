@@ -1,0 +1,93 @@
+{
+  "snapshotSequence": 46,
+  "projection": {
+    "thread": {
+      "createdBy": "system",
+      "creationSource": "server",
+      "id": "f37b73c4-f46d-4da7-8d7b-32007f18562b",
+      "projectId": "6a422b7e-8463-438b-b4b8-8bdea228acac",
+      "title": "New chat",
+      "providerInstanceId": "claudeAgent",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-sonnet-5-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": null,
+      "worktreePath": null,
+      "pullRequests": [],
+      "activeProviderThreadId": null,
+      "lineage": {
+        "parentThreadId": null,
+        "relationshipToParent": null,
+        "rootThreadId": "f37b73c4-f46d-4da7-8d7b-32007f18562b"
+      },
+      "forkedFrom": null,
+      "createdAt": "2026-11-08T21:03:43.806Z",
+      "updatedAt": "2026-11-08T21:03:43.806Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "lastVisitedAt": "2026-11-08T21:03:43.899Z",
+      "deletedAt": null
+    },
+    "runs": [],
+    "attempts": [],
+    "nodes": [],
+    "subagents": [],
+    "providerSessions": [],
+    "providerThreads": [],
+    "providerTurns": [],
+    "runtimeRequests": [],
+    "messages": [
+      {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "8f32924f-3808-492d-b30b-365e19f63a78",
+        "threadId": "f37b73c4-f46d-4da7-8d7b-32007f18562b",
+        "runId": "run:thread:f37b73c4-f46d-4da7-8d7b-32007f18562b:ordinal:1",
+        "nodeId": "node:run:run%3Athread%3Af37b73c4-f46d-4da7-8d7b-32007f18562b%3Aordinal%3A1:root",
+        "role": "user",
+        "text": "phone flow ping 1794171823895",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-11-08T21:03:43.900Z",
+        "updatedAt": "2026-11-08T21:03:43.900Z"
+      },
+      {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:2d1961bb-d4f1-4542-9d5e-987f426a0699",
+        "threadId": "f37b73c4-f46d-4da7-8d7b-32007f18562b",
+        "runId": "run:thread:f37b73c4-f46d-4da7-8d7b-32007f18562b:ordinal:1",
+        "nodeId": "node:provider:claudeAgent:native-item:2d1961bb-d4f1-4542-9d5e-987f426a0699",
+        "role": "assistant",
+        "text": "Got it.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-11-08T21:03:44.000Z",
+        "updatedAt": "2026-11-08T21:03:44.000Z"
+      }
+    ],
+    "plans": [],
+    "turnItems": [],
+    "checkpointScopes": [],
+    "checkpoints": [],
+    "contextHandoffs": [],
+    "contextTransfers": [],
+    "visibleTurnItems": [],
+    "updatedAt": "2026-11-08T21:03:44.000Z"
+  },
+  "historyCursor": null,
+  "hasMoreHistory": false,
+  "latestLocalTurnOrdinal": 1
+}

@@ -1,5 +1,5 @@
 import type { PersonalBotThread } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 
 import { chatActivityMs } from "./chatActivity";
 import { isChatPinned, snoozeEndMs, soonestWakeFirst, pinnedFirst } from "./chatState";

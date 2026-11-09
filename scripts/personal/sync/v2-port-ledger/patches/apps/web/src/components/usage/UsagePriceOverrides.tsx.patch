@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/usage/UsagePriceOverrides.tsx b/apps/web/src/components/usage/UsagePriceOverrides.tsx
+index 79ad4d473409ee2cebd6561479fa5ab56c2d6448..7856b481ce723bd554ea83cd3617a01b25fe7b25 100644
+--- a/apps/web/src/components/usage/UsagePriceOverrides.tsx
++++ b/apps/web/src/components/usage/UsagePriceOverrides.tsx
+@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useRef, useState } from "react";
+ 
+ import { isElectron } from "../../env";

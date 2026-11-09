@@ -1,7 +1,5 @@
 import {
-  CommandId,
   ComposerContextId,
-  DeepSeekSettings,
   type ModelSelection,
   MessageId,
   type OrchestrationMessageContext,
@@ -18,10 +16,11 @@ import {
   ThreadId,
   isProviderAvailable,
 } from "@t3tools/contracts";
+import { DeepSeekSettings } from "@t3tools/provider-deepseek/settings";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "@t3tools/shared/crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -225,7 +224,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const sql = yield* SqlClient.SqlClient;
   const rel = yield* PersonalProjectionRelations;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
 
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
   const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -314,7 +313,7 @@ export const make = Effect.gen(function* () {
   /** The muted line, as the whole text of an assistant-role notice row. Best effort. */
   const postNotice = (threadId: string, text: string, marker: PersonalChatNoticeMarker) =>
     Effect.gen(function* () {
-      const uuid = yield* crypto.randomUUIDv4;
+      const uuid = yield* crypto.uuidV4().pipe(Effect.orDie);
       const messageId = MessageId.make(`${PERSONAL_NOTICE_MESSAGE_ID_PREFIX}fallback-${uuid}`);
       yield* engine.postNotice({
         threadId: ThreadId.make(threadId),

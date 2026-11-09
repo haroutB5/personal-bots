@@ -9,7 +9,6 @@ import type {
   PreviewAutomationClickInput,
   PreviewAutomationDragInput,
   PreviewAutomationEvaluateInput,
-  PreviewAutomationHistoryInput,
   PreviewAutomationHoverInput,
   PreviewAutomationPressInput,
   PreviewAutomationScrollInput,
@@ -594,7 +593,7 @@ const requireInsideViewport = async (
 
 const pointerOptions = (input: PreviewAutomationClickInput): PointerClickOptions => ({
   button: input.button,
-  clickCount: input.clicks,
+  clickCount: input.clickCount ?? input.clicks,
   modifiers: input.modifiers,
 });
 
@@ -629,69 +628,32 @@ export async function performHover(
   await page.mouseMove(point.x, point.y);
 }
 
-/** Intermediate mouse moves on the way to the drop point, so drag handlers see a drag. */
-const DRAG_STEPS = 8;
-
-/**
- * Drags from one element to another, or from one point to another. The button
- * pressed at the start is always let go again, even when the move or the page
- * fails part way, so a drag can never leave the shared browser holding a press.
- */
+/** Drags from one locator to another, or from one point to another. */
 export async function performDrag(
   page: BrowserPage,
   input: PreviewAutomationDragInput,
   timeoutMs: number,
 ): Promise<void> {
-  if (input.fromLocator !== undefined && input.toLocator !== undefined) {
-    await page.dragLocators(input.fromLocator, input.toLocator, timeoutMs);
+  const source = input.source ?? input.fromLocator;
+  const target = input.target ?? input.toLocator;
+  if (source !== undefined && target !== undefined) {
+    await page.dragLocators(source, target, timeoutMs);
     return;
   }
-  const from = { x: input.fromX ?? 0, y: input.fromY ?? 0 };
-  const to = { x: input.toX ?? 0, y: input.toY ?? 0 };
-  await requireInsideViewport(page, from, "Drag start");
-  await requireInsideViewport(page, to, "Drag end");
-  await page.mouseMove(from.x, from.y);
+  const fromX = input.fromX ?? 0;
+  const fromY = input.fromY ?? 0;
+  const toX = input.toX ?? 0;
+  const toY = input.toY ?? 0;
+  await requireInsideViewport(page, { x: fromX, y: fromY }, "Drag start");
+  await requireInsideViewport(page, { x: toX, y: toY }, "Drag end");
+  await page.mouseMove(fromX, fromY);
   await page.mouseDown();
-  let failure: { readonly cause: unknown } | null = null;
   try {
-    await page.mouseMove(to.x, to.y, DRAG_STEPS);
-    // A second move onto the exact drop point makes the target see dragover before the drop.
-    await page.mouseMove(to.x, to.y);
-  } catch (cause) {
-    failure = { cause };
-  }
-  try {
+    await page.mouseMove(toX, toY, 8);
+    await page.mouseMove(toX, toY);
+  } finally {
     await page.mouseUp();
-  } catch (cause) {
-    failure ??= { cause };
   }
-  if (failure !== null) throw failure.cause;
-}
-
-/** Back, forward or reload; the guard has already looked at where the page is going. */
-export async function performHistory(
-  page: BrowserPage,
-  input: PreviewAutomationHistoryInput,
-  timeoutMs: number,
-): Promise<void> {
-  if (input.action !== "reload") {
-    const history = await page.history();
-    const possible = input.action === "back" ? history.canGoBack : history.canGoForward;
-    if (!possible) {
-      throw new HostOperationError(
-        "PreviewAutomationExecutionError",
-        input.action === "back"
-          ? "This tab has no earlier page to go back to."
-          : "This tab has no later page to go forward to.",
-      );
-    }
-  }
-  if (input.action === "back") await page.goBack();
-  else if (input.action === "forward") await page.goForward();
-  else await page.reload();
-  const readiness = input.readiness ?? "load";
-  if (readiness === "none") return;
-  await page.waitForLoadState?.(readiness === "load" ? "load" : "domcontentloaded", timeoutMs);
 }
 
 export function performType(

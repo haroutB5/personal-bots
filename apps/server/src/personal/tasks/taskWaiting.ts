@@ -1,7 +1,7 @@
 // Parking a task on the user or the shared browser, and bringing it back.
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { CommandId, PersonalTaskId } from "@t3tools/contracts";
+import { PersonalTaskId } from "@t3tools/contracts";
 import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import { type Changed, type WorkItem } from "./taskShared.ts";
 import { isWaitingForUser, sessionIsAlive } from "./taskSessionPolicy.ts";
@@ -90,10 +90,12 @@ export const makeTaskWaiting = (
               );
             }
             const now = yield* DateTime.now;
+            let stoppedSession = false;
             if (input.restartSession && task.threadId !== null) {
               if (sessionIsAlive(yield* readSession(task.threadId))) {
-                // The environment is fixed when a provider process starts; stop
-                // it and queue on the "stopped" session event (tryResume).
+                // The environment is fixed when a provider process starts; stop it
+                // and resume without waiting for a stopped shell, which v2 never
+                // writes (a parked thread stays ready when its turn is over).
                 resumingThreadIds.add(task.threadId);
                 yield* engine
                   .stop({ threadId: task.threadId, terminateProcesses: false })
@@ -102,6 +104,7 @@ export const makeTaskWaiting = (
                       fail("Could not restart the bot's provider session.", cause),
                     ),
                   );
+                stoppedSession = true;
               }
             }
             yield* repository.insertResumeNote({
@@ -112,7 +115,7 @@ export const makeTaskWaiting = (
               createdAt: now,
             });
             const changed: Changed = [];
-            yield* tryResume(changed, task);
+            yield* tryResume(changed, task, { sessionStopped: stoppedSession });
             yield* publish(changed);
             yield* worker.enqueue({ type: "pump" });
             return yield* requireTask(task.taskId);

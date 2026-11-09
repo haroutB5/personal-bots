@@ -3,10 +3,7 @@ import type { KeyValueStore } from "../ports/keyValueStore.ts";
 /**
  * Routing rules for the personal Bots shell and the "Developer view" escape
  * hatch to the upstream T3 UI.
- *
  * Developer view is tab-scoped, so it reads and writes the store the app
- * hands it for the tab: choosing it keeps `/` on the upstream workspace for
- * the rest of the session, and a fresh launch lands on `/bots` again. The upstream routes themselves are always reachable by URL.
  */
 
 export type PersonalTab = "chats" | "tasks" | "computer" | "files";
@@ -61,13 +58,7 @@ function isRoutineEditorPath(path: string): boolean {
 /**
  * How a routed screen sits in the desktop pane (md+, right of the bot list).
  * The phone never reads this: there every screen fills the column.
- *
  * - `conversation`: a chat. It fills the whole pane and centres its own
- *   header, messages and composer on the reading column, so the scroller and
- *   the composer's rule run edge to edge instead of floating in a box.
- * - `column`: lists and detail screens (Tasks, Files, Computer, a bot's chats,
- *   Team) in the reading column, centred in the pane.
- * - `form`: editors and settings, in a narrower centred column.
  */
 export type DesktopPaneLayout = "conversation" | "column" | "form";
 
@@ -92,11 +83,6 @@ export function desktopPaneLayout(pathname: string): DesktopPaneLayout {
  * Which row the desktop bot list (md+) marks as open, read off the route
  * params. A bot's chat (any of its threads, not only the newest one the row
  * links to), its chats list and its editor select that bot; a group chat
- * selects the group. Team/home, settings, the new bot/group forms, Tasks,
- * Files and Computer carry neither param and select nothing.
- *
- * A key rather than an object so the router `select` stays a primitive (no
- * re-render per navigation) and a row compares one string.
  */
 export type SidebarSelectionKey = `bot:${string}` | `group:${string}`;
 

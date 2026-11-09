@@ -1,0 +1,20 @@
+diff --git a/apps/server/src/provider/Layers/ProviderSessionReaper.ts b/apps/server/src/provider/Layers/ProviderSessionReaper.ts
+index bf8199f80eaccde832a9e41b4b38b9abbc70149c..2ba5951a19b21568a206dedbac03d35aefb9f48e 100644
+--- a/apps/server/src/provider/Layers/ProviderSessionReaper.ts
++++ b/apps/server/src/provider/Layers/ProviderSessionReaper.ts
+@@ -13,6 +13,7 @@ import {
+ } from "../Services/ProviderSessionReaper.ts";
+ import { forkParked } from "../../serverActivation.ts";
+ import { ProviderService } from "../Services/ProviderService.ts";
++import { withStallJob } from "../../observability/stallJobs.ts";
+ 
+ const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
+ const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+@@ -139,6 +140,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
+                 defect,
+               }),
+             ),
++            withStallJob("job:provider-session-reaper-sweep"),
+             Effect.repeat(Schedule.spaced(Duration.millis(sweepIntervalMs))),
+           ),
+         );

@@ -113,3 +113,17 @@ export function describeLastCheck(lastCheckAt: number | null, now: number): stri
   }
   return `Checked ${Math.floor(hours / 24)} d ago`;
 }
+
+export interface UpdateBannerModel {
+  readonly text: string;
+}
+
+/** The Bots home banner: shown only while the install permission is missing. */
+export function updateBannerModel(snapshot: UpdateSnapshot | null): UpdateBannerModel | null {
+  if (snapshot === null || snapshot.state !== "needsPermission" || snapshot.target === null) {
+    return null;
+  }
+  return {
+    text: `Update to ${snapshot.target.version} is waiting. Allow hbots to install updates.`,
+  };
+}

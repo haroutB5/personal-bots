@@ -4,12 +4,6 @@ import * as DateTime from "effect/DateTime";
  * Pin, snooze and the wake clock for chats and groups. Pure: every function
  * takes the time it needs, so the screens (and the tests) decide what "now"
  * is. All wall-clock words ("this evening", "tomorrow 09:00") are in the
- * device's own time zone.
- *
- * The server sends `pinnedAt` only on a pinned chat and `snoozedUntil` only on
- * a chat that is snoozed right now (a group sends it as stored, so one in the
- * past means awake). The client also treats a snooze whose time has passed as
- * over, without waiting for the refetch, which is what `nowMs` is for.
  */
 
 /** What a chat link or a group carries about pin and snooze. */
@@ -67,8 +61,6 @@ export function pinnedFirst<T>(rows: ReadonlyArray<T>, isPinned: (row: T) => boo
 export function soonestWakeFirst<T>(rows: ReadonlyArray<T>, wakeMs: (row: T) => number): T[] {
   return rows.toSorted((left, right) => wakeMs(left) - wakeMs(right));
 }
-
-// --- Snooze presets -------------------------------------------------------------
 
 export type SnoozePresetKey = "hour" | "evening" | "tomorrow" | "next-week";
 

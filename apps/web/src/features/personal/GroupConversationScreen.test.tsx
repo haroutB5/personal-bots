@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { GroupConversationScreen } from "./GroupConversationScreen";
@@ -21,10 +22,10 @@ vi.mock("~/components/ui/menu", () => ({
   MenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuSeparator: () => <hr />,
 }));
+vi.mock("./useBotShells", () => ({ useBotShells: () => [] }));
 vi.mock("~/state/entities", () => ({
   useThreadDetail: () => null,
   useThreadStatus: () => "loading",
-  useThreadShells: () => [],
 }));
 vi.mock("~/state/threads", () => ({
   useEnvironmentThread: (_environmentId: string | null, threadId: string | null) => {
@@ -66,7 +67,6 @@ afterEach(() => {
 
 it("does not subscribe to a made-up thread when a deleted group disappears", async () => {
   vi.stubGlobal("window", { setInterval: () => 1, clearInterval: () => {} });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let renderer: ReactTestRenderer | null = null;
   await act(async () => {
     renderer = create(<GroupConversationScreen groupId="deleted-group" />);

@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { classifyFailure } from "./failure";
+import { classifyFailure, DpopRequiredError } from "./failure";
 import { renewSession } from "./renew";
 import type { StoredSession } from "./session";
+
+vi.mock("./dpop", () => ({
+  createDpopProof: async () => ({ proof: "test-proof", thumbprint: "test-thumbprint" }),
+  loadOrCreateDpopKey: async () => ({
+    privateJwk: {},
+    publicJwk: {},
+    thumbprint: "test-thumbprint",
+  }),
+}));
 
 const SESSION: StoredSession = {
   environmentId: "env-1",
@@ -48,6 +57,35 @@ describe("renewSession", () => {
     expect(renewed.expiresAt).toBe(10_000 + 2_592_000 * 1000);
     expect(renewed.environmentId).toBe("env-1");
     expect(renewed.pairedAt).toBe(500);
+  });
+
+  it("renews a bound session with a DPoP proof for the same key", async () => {
+    const fetchSpy = vi.fn(async (_url: URL | string, _init?: RequestInit) =>
+      json(200, { ...tokenBody("new-token", 2_592_000), token_type: "DPoP" }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const renewed = await renewSession({ ...SESSION, authMethod: "dpop" }, 10_000);
+
+    expect(fetchSpy.mock.calls[0]?.[1]?.headers).toEqual({
+      authorization: "DPoP old-token",
+      dpop: "test-proof",
+    });
+    expect(renewed.accessToken).toBe("new-token");
+    expect(renewed.authMethod).toBe("dpop");
+  });
+
+  it("refuses a Bearer answer for a bound session", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, tokenBody("new-token", 2_592_000))),
+    );
+
+    const failure = await renewSession({ ...SESSION, authMethod: "dpop" }, 10_000).catch(
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toBeInstanceOf(DpopRequiredError);
   });
 
   it("keeps the same token when the server says it is not due yet", async () => {

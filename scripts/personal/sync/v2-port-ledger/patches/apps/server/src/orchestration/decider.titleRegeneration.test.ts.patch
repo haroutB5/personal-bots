@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/decider.titleRegeneration.test.ts b/apps/server/src/orchestration/decider.titleRegeneration.test.ts
+index e93580c15f3be3469b0efd74788c6b886e86af93..e34d81dd1c699508a912eecfa3238febe3b7fd83 100644
+--- a/apps/server/src/orchestration/decider.titleRegeneration.test.ts
++++ b/apps/server/src/orchestration/decider.titleRegeneration.test.ts
+@@ -5,7 +5,7 @@ import {
+   ThreadId,
+   type OrchestrationReadModel,
+ } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ 

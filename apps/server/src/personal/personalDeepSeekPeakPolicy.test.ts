@@ -1,6 +1,8 @@
 import { PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK } from "@t3tools/contracts";
+import { DeepSeekSettings } from "@t3tools/provider-deepseek/settings";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import {
   deepSeekPeakEnabledByEnv,
@@ -120,6 +122,16 @@ describe("planPeakFallback", () => {
       reason: "kill_switch",
     });
     expect(planPeakFallback(base({ instanceSettingOn: false }))).toEqual({
+      kind: "none",
+      reason: "setting_off",
+    });
+  });
+
+  it("reads peakSwitch: false from a DeepSeek instance config and holds the switch back", () => {
+    const instance = { driver: "deepseek", config: { peakSwitch: false } };
+    const config = Schema.decodeUnknownSync(DeepSeekSettings)(instance.config);
+
+    expect(planPeakFallback(base({ instanceSettingOn: config.peakSwitch }))).toEqual({
       kind: "none",
       reason: "setting_off",
     });

@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/Normalizer.attachments.test.ts b/apps/server/src/orchestration/Normalizer.attachments.test.ts
+index d44ec58e6a95106a6cbbfbeac3cd718d4ad8c8b0..96239fcaae37bf56897b278ecdcccc4447a739e6 100644
+--- a/apps/server/src/orchestration/Normalizer.attachments.test.ts
++++ b/apps/server/src/orchestration/Normalizer.attachments.test.ts
+@@ -2,7 +2,7 @@
+ import * as NodeFS from "node:fs";
+ import * as NodePath from "node:path";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { describe, expect, it } from "@effect/vitest";
+ import {
+   ClientOrchestrationCommand,

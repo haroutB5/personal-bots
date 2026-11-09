@@ -6,6 +6,7 @@ import expo.modules.hbotsupdater.UpdateEffect.CommitInstall
 import expo.modules.hbotsupdater.UpdateEffect.DeleteAllFiles
 import expo.modules.hbotsupdater.UpdateEffect.DeleteLateFile
 import expo.modules.hbotsupdater.UpdateEffect.DeleteFile
+import expo.modules.hbotsupdater.UpdateEffect.PostNeedsPermission
 import expo.modules.hbotsupdater.UpdateEffect.PostUpdated
 import expo.modules.hbotsupdater.UpdateEffect.PostUpdateReady
 import expo.modules.hbotsupdater.UpdateEffect.ScheduleIdleInstall
@@ -32,12 +33,14 @@ class UpdateReducerTest {
     lastOffer: Release? = null,
     notifiedCode: Long = 1_066_110L,
     deferrals: Int = 0,
+    permissionNotifiedCode: Long = 0L,
   ) = UpdateRecord(
     state = state,
     lastCheckAt = lastCheckAt,
     lastOffer = lastOffer,
     notifiedCode = notifiedCode,
     deferrals = deferrals,
+    permissionNotifiedCode = permissionNotifiedCode,
   )
 
   private fun reduced(
@@ -172,8 +175,8 @@ class UpdateReducerTest {
     reduced(
       record(Idle()),
       UpdateEvent.Offered(next, authenticated = true, canInstall = false),
-      record(NeedsPermission(next), lastCheckAt = now, lastOffer = next),
-      emptyList(),
+      record(NeedsPermission(next), lastCheckAt = now, lastOffer = next, permissionNotifiedCode = next.code),
+      listOf(PostNeedsPermission("1.66.112")),
     )
   }
 
@@ -200,10 +203,10 @@ class UpdateReducerTest {
   @Test
   fun `a newer offer replaces a needs permission target`() {
     reduced(
-      record(NeedsPermission(old), lastOffer = old),
+      record(NeedsPermission(old), lastOffer = old, permissionNotifiedCode = old.code),
       UpdateEvent.Offered(next, authenticated = true, canInstall = false),
-      record(NeedsPermission(next), lastCheckAt = now, lastOffer = next),
-      emptyList(),
+      record(NeedsPermission(next), lastCheckAt = now, lastOffer = next, permissionNotifiedCode = next.code),
+      listOf(PostNeedsPermission("1.66.112")),
     )
   }
 
@@ -441,19 +444,19 @@ class UpdateReducerTest {
   @Test
   fun `granting permission restarts the remembered offer`() {
     reduced(
-      record(NeedsPermission(next), lastCheckAt = 123, lastOffer = next),
+      record(NeedsPermission(next), lastCheckAt = 123, lastOffer = next, permissionNotifiedCode = next.code),
       UpdateEvent.PermissionChanged(true),
-      record(Downloading(next), lastCheckAt = 123, lastOffer = next),
-      listOf(StartDownload),
+      record(Downloading(next), lastCheckAt = 123, lastOffer = next, permissionNotifiedCode = next.code),
+      listOf(StartDownload, ClearNotification),
     )
   }
 
   @Test
   fun `withdrawing permission keeps waiting`() {
     reduced(
-      record(NeedsPermission(next), lastOffer = next),
+      record(NeedsPermission(next), lastOffer = next, permissionNotifiedCode = next.code),
       UpdateEvent.PermissionChanged(false),
-      record(NeedsPermission(next), lastOffer = next),
+      record(NeedsPermission(next), lastOffer = next, permissionNotifiedCode = next.code),
       emptyList(),
     )
   }
@@ -461,20 +464,20 @@ class UpdateReducerTest {
   @Test
   fun `granting permission with no remembered offer stays idle`() {
     reduced(
-      record(NeedsPermission(next)),
+      record(NeedsPermission(next), permissionNotifiedCode = next.code),
       UpdateEvent.PermissionChanged(true),
-      record(Idle()),
-      emptyList(),
+      record(Idle(), permissionNotifiedCode = next.code),
+      listOf(ClearNotification),
     )
   }
 
   @Test
   fun `starting with permission granted restarts the remembered offer`() {
     reduced(
-      record(NeedsPermission(next), lastOffer = next),
+      record(NeedsPermission(next), lastOffer = next, permissionNotifiedCode = next.code),
       UpdateEvent.Started(true),
-      record(Downloading(next), lastOffer = next),
-      listOf(CancelIdleInstall, StartDownload),
+      record(Downloading(next), lastOffer = next, permissionNotifiedCode = next.code),
+      listOf(CancelIdleInstall, StartDownload, ClearNotification),
     )
   }
 
@@ -565,8 +568,92 @@ class UpdateReducerTest {
     reduced(
       record(Installing(next, apk, now), lastOffer = next),
       UpdateEvent.InstallNotPermitted,
-      record(NeedsPermission(next), lastOffer = next),
-      listOf(DeleteFile),
+      record(NeedsPermission(next), lastOffer = next, permissionNotifiedCode = next.code),
+      listOf(DeleteFile, PostNeedsPermission("1.66.112")),
     )
+  }
+
+  @Test
+  fun `the permission notification fires once per target version`() {
+    val waiting = record(Idle())
+    val (first, firstEffects) =
+      UpdateReducer.reduce(waiting, UpdateEvent.Offered(next, authenticated = true, canInstall = false), installed, now)
+    assertEquals(listOf(PostNeedsPermission("1.66.112")), firstEffects)
+
+    val (second, secondEffects) =
+      UpdateReducer.reduce(first, UpdateEvent.Offered(next, authenticated = true, canInstall = false), installed, now)
+    assertEquals(first.state, second.state)
+    assertEquals(emptyList<UpdateEffect>(), secondEffects)
+
+    val (restarted, restartEffects) = UpdateReducer.reduce(second, UpdateEvent.Started(false), installed, now)
+    assertEquals(NeedsPermission(next), restarted.state)
+    assertEquals(listOf(CancelIdleInstall), restartEffects)
+
+    val newer = Release("1.66.113", "d".repeat(64), 46_076_722)
+    val (_, newerEffects) =
+      UpdateReducer.reduce(restarted, UpdateEvent.Offered(newer, authenticated = true, canInstall = false), installed, now)
+    assertEquals(listOf(PostNeedsPermission("1.66.113")), newerEffects)
+  }
+
+  @Test
+  fun `the permission notification does not repeat after permission is granted and withdrawn`() {
+    val waiting = record(NeedsPermission(next), lastOffer = next, permissionNotifiedCode = next.code)
+    val (granted, _) = UpdateReducer.reduce(waiting, UpdateEvent.PermissionChanged(true), installed, now)
+    assertEquals(Downloading(next), granted.state)
+    val (back, backEffects) = UpdateReducer.reduce(
+      granted.copy(state = Installing(next, apk, now)),
+      UpdateEvent.InstallNotPermitted,
+      installed,
+      now,
+    )
+    assertEquals(NeedsPermission(next), back.state)
+    assertEquals(listOf(DeleteFile), backEffects)
+  }
+
+  @Test
+  fun `states other than needs permission never post the permission notification`() {
+    val events = listOf(
+      UpdateEvent.Offered(next, authenticated = true, canInstall = true),
+      UpdateEvent.Offered(next, authenticated = false, canInstall = false),
+      UpdateEvent.Offered(null, authenticated = true, canInstall = false),
+      UpdateEvent.Downloaded(apk),
+      UpdateEvent.DownloadFailed,
+      UpdateEvent.IdleReached,
+      UpdateEvent.UserConfirmed,
+      UpdateEvent.InstallSucceeded,
+      UpdateEvent.InstallFailed,
+      UpdateEvent.WentBackground,
+      UpdateEvent.WentForeground,
+      UpdateEvent.SignedOut(),
+      UpdateEvent.SessionInvalid,
+    )
+    val states = listOf(
+      Idle(),
+      Downloading(next),
+      Ready(next, apk),
+      Installing(next, apk, now),
+      NeedsTap(next, apk),
+    )
+    for (state in states) {
+      for (event in events) {
+        val (_, effects) = UpdateReducer.reduce(record(state, lastOffer = next), event, installed, now)
+        assertEquals(
+          "$state $event",
+          emptyList<UpdateEffect>(),
+          effects.filterIsInstance<PostNeedsPermission>(),
+        )
+      }
+    }
+  }
+
+  @Test
+  fun `signing out keeps the permission notification memory`() {
+    val (cleared, _) = UpdateReducer.reduce(
+      record(NeedsPermission(next), lastOffer = next, permissionNotifiedCode = next.code),
+      UpdateEvent.SignedOut(),
+      installed,
+      now,
+    )
+    assertEquals(next.code, cleared.permissionNotifiedCode)
   }
 }

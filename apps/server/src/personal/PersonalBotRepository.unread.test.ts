@@ -6,10 +6,13 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { seedV2Message, seedV2Thread } from "./test/v2ProjectionSeed.ts";
 
-const testLayer = PersonalBotRepository.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const testLayer = PersonalBotRepository.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+);
 
 const decodeCreateBot = Schema.decodeSync(PersonalBotRepository.CreatePersonalBotInput);
 const decodeInsertThreadLink = Schema.decodeSync(
@@ -117,20 +120,23 @@ const addChat = (chat: ChatFixture) =>
         viewedAt: chat.viewedAt,
       });
     }
-    yield* sql`
-      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, archived_at, deleted_at)
-      VALUES (${chat.id}, 'project-1', ${chat.id}, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z',
-        ${chat.archivedThread === true ? "2026-10-02T11:00:00.000Z" : null},
-        ${chat.deletedThread === true ? "2026-10-02T11:00:00.000Z" : null})
-    `;
+    yield* seedV2Thread({
+      threadId: chat.id,
+      title: chat.id,
+      createdAt: "2026-10-01T00:00:00.000Z",
+      archivedAt: chat.archivedThread === true ? "2026-10-02T11:00:00.000Z" : null,
+      deletedAt: chat.deletedThread === true ? "2026-10-02T11:00:00.000Z" : null,
+    });
     let index = 0;
     for (const [role, createdAt] of chat.messages) {
       index += 1;
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (${`m-${chat.id}-${index}`}, ${chat.id}, ${role}, 'text', 0, ${createdAt}, ${createdAt})
-      `;
+      yield* seedV2Message({
+        messageId: `m-${chat.id}-${index}`,
+        threadId: chat.id,
+        role,
+        text: "text",
+        createdAt,
+      });
     }
     if (chat.relay === true) {
       yield* sql`
@@ -149,6 +155,7 @@ const setBaseline = Effect.gen(function* () {
   yield* sql`
     INSERT INTO personal_meta (key, value)
     VALUES (${PersonalBotRepository.PERSONAL_CHAT_UNREAD_SINCE_META_KEY}, ${BASELINE})
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `;
 });
 

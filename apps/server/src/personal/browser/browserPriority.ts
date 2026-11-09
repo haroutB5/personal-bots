@@ -22,7 +22,7 @@
  */
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { botProcessPriorityDisabled } from "../../provider/botProcessPriority.ts";
+import { botProcessPriorityDisabled } from "@t3tools/provider-core/server/botProcessPriority";
 import { descendantsOf, listProcesses, type ProcessEntry } from "../../provider/processTree.ts";
 
 const BROWSER_IMAGE = /^(brave|chrome|msedge|chromium|chrome-headless-shell)(\.exe)?$/i;
@@ -84,7 +84,6 @@ export async function keepBrowserPriorityNormal(
     ...(skipped === undefined ? {} : { skipped }),
   });
   if (botProcessPriorityDisabled(deps.env)) return none("disabled");
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- the host platform decides whether Windows priority classes exist; tests inject it.
   if ((deps.platform ?? NodeOS.platform()) !== "win32") return none("unsupported-platform");
   const snapshot = await (deps.listProcesses ?? listProcesses)();
   if (snapshot === null) return none("no-process-list");

@@ -1,4 +1,5 @@
 import {
+  RelayManagedEndpoint,
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
@@ -6,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
 export const CLOUD_MINT_PUBLIC_KEY = "cloud-mint-ed25519-public-key";
 export const CLOUD_ENDPOINT_RUNTIME_CONFIG = "cloud-endpoint-runtime-config";
@@ -19,6 +20,8 @@ export const PUBLISH_AGENT_ACTIVITY_SECRET = "cloud-publish-agent-activity";
 // Public tunnel origin the relay issued for this environment. Not secret; kept
 // beside the other link state so every unlink path clears it with them.
 export const CLOUD_ENDPOINT_HTTP_BASE_URL = "cloud-endpoint-http-base-url";
+export const HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET = "cloud-hold-webhooks-while-offline";
+export const CLOUD_LINK_REVOKED = "cloud-link-revoked";
 
 export const encodeEndpointRuntimeConfigJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayManagedEndpointRuntimeConfig),
@@ -45,14 +48,14 @@ export function isAgentActivityPublishingEnabledValue(value: string | null): boo
   return value === "true";
 }
 
-/** Whether agent-activity publishes currently leave this environment: the
-    publish opt-in secret is enabled and the relay link credentials exist.
-    Mirrors the per-publish gate in AgentAwarenessRelay, so the descriptor
-    capability never advertises publishing that the publisher would skip. */
-export const readAgentActivityPublishingActive = (
+/**
+ * Mirrors the per-publish gate in AgentAwarenessRelay, so the descriptor
+    capability never advertises publishing that the publisher would skip.
+ */
+export const readAgentActivityPublishingActive: (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
-): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
+) => Effect.Effect<boolean> = Effect.fn("config.readAgentActivityPublishingActive")(
+  function* (secrets: ServerSecretStore.ServerSecretStore["Service"]) {
     const readSecretString = (name: string) =>
       secrets
         .get(name)
@@ -66,8 +69,7 @@ export const readAgentActivityPublishingActive = (
       readSecretString(RELAY_URL_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
     ]);
-    // Empty strings are as unconfigured as missing files: the publisher's
-    // truthiness gate skips them, so the capability must too.
+    // Match the publisher, which treats empty strings as unconfigured.
     return (
       isAgentActivityPublishingEnabledValue(enabled) &&
       url !== null &&
@@ -75,4 +77,44 @@ export const readAgentActivityPublishingActive = (
       environmentCredential !== null &&
       environmentCredential !== ""
     );
-  }).pipe(Effect.orElseSucceed(() => false));
+  },
+  Effect.orElseSucceed(() => false),
+);
+
+const readSecretString = (name: string) =>
+  ServerSecretStore.ServerSecretStore.pipe(
+    Effect.flatMap((secrets) => secrets.get(name)),
+    Effect.map((bytes) =>
+      Option.isSome(bytes) && bytes.value.length > 0 ? new TextDecoder().decode(bytes.value) : null,
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+
+export const readRelayConnection = Effect.all([
+  readSecretString(RELAY_URL_SECRET),
+  readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+]).pipe(
+  Effect.map(([url, environmentCredential]) =>
+    url && environmentCredential ? { url, environmentCredential } : null,
+  ),
+);
+
+export const readHoldWebhooksWhileOffline = readSecretString(
+  HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
+).pipe(Effect.map((value) => value === "true"));
+
+/**
+ * Keeps the relay-issued public origin so `t3 connect status` and
+ * `t3 pair --connect` can show where the environment is reachable. A manual
+ * endpoint is only the local origin, so nothing is kept for it.
+ */
+export const persistRelayEndpoint = Effect.fn("environment.cloud.persistRelayEndpoint")(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  endpoint: RelayManagedEndpoint,
+) {
+  if (endpoint.providerKind === "manual") {
+    yield* secrets.remove(CLOUD_ENDPOINT_HTTP_BASE_URL);
+    return;
+  }
+  yield* secrets.set(CLOUD_ENDPOINT_HTTP_BASE_URL, new TextEncoder().encode(endpoint.httpBaseUrl));
+});

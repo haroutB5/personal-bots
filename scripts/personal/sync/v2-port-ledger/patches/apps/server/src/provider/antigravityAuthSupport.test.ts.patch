@@ -1,0 +1,278 @@
+diff --git a/apps/server/src/provider/antigravityAuthSupport.test.ts b/apps/server/src/provider/antigravityAuthSupport.test.ts
+index c2402c87c3ca204f9451be37c9c51f9fb694e483..b15a092d4653446cee54221ee7ac61004ca0421a 100644
+--- a/apps/server/src/provider/antigravityAuthSupport.test.ts
++++ b/apps/server/src/provider/antigravityAuthSupport.test.ts
+@@ -1,9 +1,9 @@
+ // @effect-diagnostics-next-line nodeBuiltinImport:off
+ import * as NodeChildProcess from "node:child_process";
+ 
+-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as NodePath from "@effect/platform-node/NodePath";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { ProviderInstanceId } from "@t3tools/contracts";
+ import {
+   HostProcessExecutablePath,
+@@ -11,16 +11,21 @@ import {
+   HostProcessPlatform,
+ } from "@t3tools/shared/hostProcess";
+ import { describe, expect, it } from "@effect/vitest";
++import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
++import * as Redacted from "effect/Redacted";
++import * as Fiber from "effect/Fiber";
+ import * as FileSystem from "effect/FileSystem";
++import * as Exit from "effect/Exit";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as Result from "effect/Result";
+ import * as Schema from "effect/Schema";
++import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import * as Ndjson from "effect/unstable/encoding/Ndjson";
+-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as Ndjson from "effect/encoding/Ndjson";
++import * as ChildProcess from "effect/process/ChildProcess";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import * as AcpErrors from "effect-acp/errors";
+ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+ 
+@@ -35,6 +40,7 @@ import {
+   antigravityProfileSettings,
+   buildAntigravityAcpSpawnInput,
+   isAntigravitySignInRequiredError,
++  makeAntigravityLauncherTree,
+   makeAntigravityStderrHandler,
+   makeAntigravityStdoutTransform,
+   parseAntigravityAuthorizationUrl,
+@@ -265,7 +271,7 @@ describe("Antigravity process environment", () => {
+       );
+       expect(first.profile.toLowerCase()).not.toBe(second.profile.toLowerCase());
+       expect(first.runtimeTemp.toLowerCase()).not.toBe(second.runtimeTemp.toLowerCase());
+-    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
++    }).pipe(Effect.provide(Layer.mergeAll(Crypto.layer, NodePath.layerPosix))),
+   );
+ 
+   it.effect("keeps the unpacked Windows runtime under MAX_PATH for long user names", () =>
+@@ -285,7 +291,7 @@ describe("Antigravity process environment", () => {
+       expect(
+         extracted(path.join(directories.profile, "antigravity-acp", "tmp")).length,
+       ).toBeGreaterThanOrEqual(260);
+-    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerWin32))),
++    }).pipe(Effect.provide(Layer.mergeAll(Crypto.layer, NodePath.layerWin32))),
+   );
+ });
+ 
+@@ -334,6 +340,135 @@ describe("Antigravity authorization URL", () => {
+   );
+ });
+ 
++describe("Antigravity launcher process tree", () => {
++  const ended = { rootPid: 0, found: [], killed: [], snapshotFailed: false };
++
++  it.effect("ends the launcher's descendants before the runtime stops, on every scope close", () =>
++    Effect.gen(function* () {
++      const order: string[] = [];
++      const tree = makeAntigravityLauncherTree(
++        (pid) => Effect.sync(() => void order.push(`outer-${pid}`)),
++        (pid) => Effect.sync(() => (order.push(`terminate-${pid}`), ended)),
++        () => Effect.succeed(123),
++      );
++      // Same order as AntigravityDriver.makeRuntime: temp dir, runtime, tree.
++      const scope = yield* Scope.make();
++      yield* Scope.addFinalizer(
++        scope,
++        Effect.sync(() => void order.push("remove-temp")),
++      );
++      yield* Scope.addFinalizer(
++        scope,
++        Effect.sync(() => void order.push("stop-launcher")),
++      );
++      yield* tree.onProcessStarted(4242);
++      yield* Scope.addFinalizer(scope, tree.terminate);
++      yield* Scope.close(scope, Exit.void);
++      expect(order).toEqual(["outer-4242", "terminate-4242", "stop-launcher", "remove-temp"]);
++    }),
++  );
++
++  it.effect("does nothing when the launcher never started", () =>
++    Effect.gen(function* () {
++      const calls: number[] = [];
++      const tree = makeAntigravityLauncherTree(undefined, (pid) =>
++        Effect.sync(() => (calls.push(pid), ended)),
++      );
++      yield* tree.terminate;
++      expect(calls).toEqual([]);
++    }),
++  );
++
++  it.effect("does not make the runtime wait for the process snapshot", () =>
++    Effect.gen(function* () {
++      const gate = yield* Deferred.make<void>();
++      const calls: Array<readonly [number, number]> = [];
++      const order: string[] = [];
++      const tree = makeAntigravityLauncherTree(
++        (pid) => Effect.sync(() => void order.push(`outer-${pid}`)),
++        (pid, expected) => Effect.sync(() => (calls.push([pid, expected]), ended)),
++        () => Deferred.await(gate).pipe(Effect.as(123)),
++      );
++      // The snapshot is still pending here; waiting for it would never return.
++      yield* tree.onProcessStarted(4242);
++      expect(order).toEqual(["outer-4242"]);
++      expect(calls).toEqual([]);
++      yield* Deferred.succeed(gate, undefined);
++      yield* tree.terminate;
++      expect(calls).toEqual([[4242, 123]]);
++    }),
++  );
++
++  it.effect("waits for the pending start time before ending the descendants", () =>
++    Effect.gen(function* () {
++      const gate = yield* Deferred.make<void>();
++      const calls: Array<readonly [number, number]> = [];
++      const tree = makeAntigravityLauncherTree(
++        undefined,
++        (pid, expected) => Effect.sync(() => (calls.push([pid, expected]), ended)),
++        () => Deferred.await(gate).pipe(Effect.as(123)),
++      );
++      yield* tree.onProcessStarted(4242);
++      const stopped = yield* tree.terminate.pipe(Effect.forkChild({ startImmediately: true }));
++      yield* Effect.yieldNow;
++      expect(calls).toEqual([]);
++      yield* Deferred.succeed(gate, undefined);
++      yield* Fiber.join(stopped);
++      expect(calls).toEqual([[4242, 123]]);
++    }),
++  );
++
++  const unusableStartTimes: ReadonlyArray<readonly [string, number | null]> = [
++    ["missing", null],
++    ["from before the spawn", -20_000],
++    ["from after the spawn", 5_000],
++  ];
++  for (const [label, time] of unusableStartTimes) {
++    it.effect(`ends nothing for a start time that is ${label}`, () =>
++      Effect.gen(function* () {
++        const calls: number[] = [];
++        const tree = makeAntigravityLauncherTree(
++          undefined,
++          (pid) => Effect.sync(() => (calls.push(pid), ended)),
++          () => Effect.succeed(time),
++        );
++        yield* tree.onProcessStarted(4242);
++        yield* tree.terminate;
++        expect(calls).toEqual([]);
++      }),
++    );
++  }
++
++  it.effect("ends nothing, and does not hang, when the snapshot fails", () =>
++    Effect.gen(function* () {
++      const calls: number[] = [];
++      const tree = makeAntigravityLauncherTree(
++        undefined,
++        (pid) => Effect.sync(() => (calls.push(pid), ended)),
++        () => Effect.die(new Error("snapshot failed")),
++      );
++      yield* tree.onProcessStarted(4242);
++      yield* tree.terminate;
++      expect(calls).toEqual([]);
++    }),
++  );
++
++  it.effect("takes one process snapshot on the stop path, not a second one", () =>
++    Effect.gen(function* () {
++      let reads = 0;
++      const tree = makeAntigravityLauncherTree(
++        undefined,
++        () => Effect.succeed(ended),
++        () => Effect.sync(() => (reads++, 123)),
++      );
++      yield* tree.onProcessStarted(4242);
++      yield* tree.terminate;
++      // The start-time read; `end` makes the only snapshot the stop needs.
++      expect(reads).toBe(1);
++    }),
++  );
++});
++
+ describe("Antigravity sign-in errors", () => {
+   it("recognizes native auth-required errors and the blocked-login transport error", () => {
+     expect(isAntigravitySignInRequiredError(AcpErrors.AcpRequestError.authRequired())).toBe(true);
+@@ -639,6 +774,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+         const configSkills = path.join(userHome, ".gemini", "config", "skills");
+         const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
++        yield* fs.makeDirectory(cliSkills, { recursive: true });
+ 
+         yield* prepareAntigravityProfile({ profileDirectory, userHome });
+         const configLink = path.join(profileDirectory, "config", "skills");
+@@ -663,6 +799,42 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+       }),
+   );
+ 
++  // Junctions on Windows, symlinks elsewhere; the former need no privilege.
++  it.effect(
++    "links only skill directories that exist and never creates folders in the user's home",
++    () =>
++      Effect.gen(function* () {
++        if (!symlinksSupported && (yield* HostProcessPlatform) !== "win32") return;
++        const fs = yield* FileSystem.FileSystem;
++        const path = yield* Path.Path;
++        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
++        const userHome = path.join(temporaryDirectory, "home");
++        const profileDirectory = path.join(temporaryDirectory, "profile");
++        const configSkills = path.join(userHome, ".gemini", "config", "skills");
++        const configLink = path.join(profileDirectory, "config", "skills");
++        const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
++
++        // Neither target exists: no link, and nothing appears under the home.
++        yield* fs.makeDirectory(userHome, { recursive: true });
++        yield* prepareAntigravityProfile({ profileDirectory, userHome });
++        expect(yield* fs.exists(configLink)).toBe(false);
++        expect(yield* fs.exists(cliLink)).toBe(false);
++        expect(yield* fs.readDirectory(userHome)).toEqual([]);
++
++        // One target exists: only that one is linked.
++        yield* fs.makeDirectory(configSkills, { recursive: true });
++        yield* prepareAntigravityProfile({ profileDirectory, userHome });
++        expect(yield* fs.readLink(configLink)).toBe(configSkills);
++        expect(yield* fs.exists(cliLink)).toBe(false);
++
++        // The target disappears: the stale link goes and the target is not recreated.
++        yield* fs.remove(configSkills, { recursive: true });
++        yield* prepareAntigravityProfile({ profileDirectory, userHome });
++        expect(Result.isFailure(yield* fs.readLink(configLink).pipe(Effect.result))).toBe(true);
++        expect(yield* fs.exists(configSkills)).toBe(false);
++      }),
++  );
++
+   it.effect("rewrites the GCP block on every launch and never stores the API key", () =>
+     Effect.gen(function* () {
+       const fs = yield* FileSystem.FileSystem;
+@@ -712,10 +884,19 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+       const command = helperCommand;
+       const child = yield* Effect.acquireRelease(
+         Effect.sync(() =>
+-          NodeChildProcess.spawn(command.command, command.args, {
+-            env: { ...command.options.env },
+-            stdio: ["ignore", "ignore", "pipe"],
+-          }),
++          NodeChildProcess.spawn(
++            command.command,
++            command.args.map((arg) => String(arg)),
++            {
++              env: Object.fromEntries(
++                Object.entries(command.options.env ?? {}).map(([key, value]) => [
++                  key,
++                  value === undefined || typeof value === "string" ? value : Redacted.value(value),
++                ]),
++              ),
++              stdio: ["ignore", "ignore", "pipe"],
++            },
++          ),
+         ),
+         (process) => Effect.sync(() => void process.kill()),
+       );

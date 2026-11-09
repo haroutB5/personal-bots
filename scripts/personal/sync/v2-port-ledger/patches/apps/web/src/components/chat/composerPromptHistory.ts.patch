@@ -1,0 +1,17 @@
+diff --git a/apps/web/src/components/chat/composerPromptHistory.ts b/apps/web/src/components/chat/composerPromptHistory.ts
+index f50280f6d242a7dbfee15a0ca620a2b8909bbb4a..4a32b6b4b259c80b5133826638b985b5a8949904 100644
+--- a/apps/web/src/components/chat/composerPromptHistory.ts
++++ b/apps/web/src/components/chat/composerPromptHistory.ts
+@@ -19,6 +19,12 @@ const TRAILING_LEGACY_CONTEXT =
+ export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
+   "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
+ 
++/** What the owner's own bubble shows: the placeholder sent for an attachment-only message is not their text. */
++export function ownerVisibleText(text: string): string {
++  const trimmed = text.trim();
++  return trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT || trimmed.length === 0 ? "" : text;
++}
++
+ export interface ComposerPromptHistoryMessage {
+   readonly id: string;
+   readonly role: string;

@@ -1,12 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as StrandedTurnStarts from "../orchestration/strandedTurnStarts.ts";
 import { forkParked } from "../serverActivation.ts";
-import * as DeepSeekBalanceWatcher from "./deepseek/DeepSeekBalanceWatcher.ts";
-import { PersonalProvidersV1ChainLive } from "./engine/PersonalProvidersV1Live.ts";
+import { layer as PersonalPrewarmSessionLayer } from "./engine/PersonalPrewarmSession.ts";
+import { layer as PersonalProviderSessionsLayer } from "./engine/PersonalProviderSessions.ts";
+import { PersonalProvidersV2Live } from "./engine/PersonalProvidersV2Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
+import * as PersonalBotShellStream from "./PersonalBotShellStream.ts";
 import * as PersonalBotTokenUsage from "./PersonalBotTokenUsageService.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalClaudeCodeReview from "./claudeCodeReview/PersonalClaudeCodeReview.ts";
@@ -14,6 +15,7 @@ import * as PersonalConnectionApprovalService from "./connections/approvalServic
 import * as PersonalConnectionService from "./connections/service.ts";
 import * as WhatsAppSendLog from "./connections/whatsapp/sendLog.ts";
 import * as WhatsAppSession from "./connections/whatsapp/session.ts";
+import * as DeepSeekBalanceWatcher from "./deepseek/DeepSeekBalanceWatcher.ts";
 import * as PersonalDesktop from "./desktop/PersonalDesktop.ts";
 import * as PersonalBrowser from "./browser/PersonalBrowser.ts";
 import * as PersonalBrowserLease from "./browser/BrowserLease.ts";
@@ -36,6 +38,7 @@ import * as PersonalSecretService from "./secrets/PersonalSecretService.ts";
 import * as PersonalTaskChatArchive from "./PersonalTaskChatArchiveService.ts";
 import * as PersonalTaskTitleBackfill from "./taskTitleBackfill.ts";
 import * as PersonalThreadLinkRepair from "./personalThreadLinkRepair.ts";
+import * as PersonalTurnDecisions from "./turnContext/PersonalTurnDecisions.ts";
 import * as PersonalTurnRetry from "./PersonalTurnRetryService.ts";
 import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
 import * as PersonalGroupService from "./groups/PersonalGroupService.ts";
@@ -90,6 +93,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalMemoryTidy.PersonalMemoryTidy).start();
     yield* (yield* PersonalPushService.PersonalPushService).start();
     yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
+    // Warns before a DeepSeek prepaid balance runs dry: a light sweep, a
+    // debounced read after a finished turn, and one notice per low spell.
+    yield* (yield* DeepSeekBalanceWatcher.DeepSeekBalanceWatcher).start();
     // Sets up the Updates bot and its nightly 04:00 update run (the routine service runs it).
     yield* (yield* PersonalClaudeCodeReview.PersonalClaudeCodeReview).start();
     // Re-runs a bot reply that died on a transient provider fault. Subscribes
@@ -113,18 +119,10 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
-    // Additive boot repair: a pending turn-start row left by the last process
-    // can never be consumed (no provider session is running at boot), and one
-    // would otherwise stay "pending" with no turn id for good (QA 1.66.28).
-    yield* forkParked(StrandedTurnStarts.clearStrandedTurnStartsSafely);
     // A chat creation interrupted between its thread and its bot link (a worker
     // statement is an interruption point) leaves an intent row behind; link it
     // now instead of leaving a chat no bot lists (QA 1.66.70).
     yield* forkParked(PersonalThreadLinkRepair.repairPersonalThreadLinksSafely);
-    // Tells the owner before a DeepSeek account runs dry: after each finished
-    // DeepSeek turn (debounced) and on a light half-hour sweep. Silent while no
-    // enabled DeepSeek instance has a key.
-    yield* (yield* DeepSeekBalanceWatcher.DeepSeekBalanceWatcher).start();
   }),
 );
 
@@ -132,11 +130,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
 // opened by earlier steps). SqlClient, orchestration and providers come from
 // the runtime layers the whole group is merged above.
 const PersonalLayerLive = PersonalReactorsLive.pipe(
-  // Consumes the push service below and the provider/orchestration runtime.
-  // The balance watcher rides the same step: it needs the instance key from
-  // settings, the provider's own balance reader, and the warned flag in
-  // personal_meta, all of which the rest of this chain provides.
-  Layer.provideMerge(Layer.merge(PersonalProviderUpdates.layer, DeepSeekBalanceWatcher.layer)),
+  // Both consume the push service, bot repository and provider port below.
+  Layer.provideMerge(Layer.mergeAll(PersonalProviderUpdates.layer, DeepSeekBalanceWatcher.layer)),
   // Consumes the routine service and the bot service/repository below.
   Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),
@@ -165,12 +160,12 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   // task service does, so they sit above both and below the seed.
   Layer.provideMerge(PersonalGroupsDispatcherLive),
   Layer.provideMerge(PersonalGroupService.layerLive),
-  Layer.provideMerge(PersonalBotsSeedLive),
-  Layer.provideMerge(PersonalBotService.layer),
-  // The provider port rides the repository step: the chain is at its step limit.
-  Layer.provideMerge(
-    PersonalBotRepository.layer.pipe(Layer.provideMerge(PersonalProvidersV1ChainLive)),
-  ),
+  // The phone's live shell stream consumes the bot service and its engine.
+  Layer.provideMerge(Layer.mergeAll(PersonalBotShellStream.layer, PersonalBotsSeedLive)),
+  // The command boundary asks the decisions port for the bot's selection and
+  // title seed; it reads the engine the bot service provides.
+  Layer.provideMerge(Layer.mergeAll(PersonalBotService.layer, PersonalTurnDecisions.layer)),
+  Layer.provideMerge(PersonalBotRepository.layer),
 );
 
 // The personal group with the voice-call workers provided to it, as ONE step:
@@ -210,4 +205,10 @@ export const PersonalRuntimeLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),
   Layer.provideMerge(PersonalLayerWithCallSummaryLive),
+  // The provider port sits below every personal consumer.
+  Layer.provideMerge(
+    PersonalProvidersV2Live.pipe(
+      Layer.provideMerge(Layer.merge(PersonalPrewarmSessionLayer, PersonalProviderSessionsLayer)),
+    ),
+  ),
 );

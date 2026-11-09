@@ -1,0 +1,15 @@
+diff --git a/apps/desktop/src/backend/DesktopServerExposure.ts b/apps/desktop/src/backend/DesktopServerExposure.ts
+index a04f4ecbc10066fcffc716a491c81530d1b557a6..8deafeefacd85cc27a1263f458863c3ad680da97 100644
+--- a/apps/desktop/src/backend/DesktopServerExposure.ts
++++ b/apps/desktop/src/backend/DesktopServerExposure.ts
+@@ -17,8 +17,8 @@ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Ref from "effect/Ref";
+ import * as Schema from "effect/Schema";
+-import * as HttpClient from "effect/unstable/http/HttpClient";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as HttpClient from "effect/http/HttpClient";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+ import * as DesktopConfig from "../app/DesktopConfig.ts";

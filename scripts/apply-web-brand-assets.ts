@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -29,12 +29,9 @@ export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
   const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
 
   yield* Effect.forEach(
-    resolveWebIconOverrides(brand, targetDirectory),
+    resolveWebIconOverrides(brand, path.resolve(repoRoot, targetDirectory)),
     (override) =>
-      fs.copyFile(
-        path.join(repoRoot, override.sourceRelativePath),
-        path.join(repoRoot, override.targetRelativePath),
-      ),
+      fs.copyFile(path.join(repoRoot, override.sourceRelativePath), override.targetRelativePath),
     { concurrency: "unbounded" },
   );
 });

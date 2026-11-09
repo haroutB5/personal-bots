@@ -10,6 +10,7 @@
 
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -126,8 +127,36 @@ import Migration0111 from "./Migrations/111_PersonalVoiceCallSummary.ts";
 import Migration0112 from "./Migrations/112_ProviderSessionHistory.ts";
 import Migration0113 from "./Migrations/113_LinuxPathRewrite.ts";
 import Migration0114 from "./Migrations/114_LinuxInstructionPaths.ts";
+import Migration0140 from "./Migrations/140_PersonalThreadRetry.ts";
+import Migration0141 from "./Migrations/141_PersonalNoticeChunks.ts";
+import Migration0142 from "./Migrations/142_PersonalThreadTitleState.ts";
 import MigrationUpstream0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import MigrationUpstream0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
+import MigrationUpstream0055 from "./Migrations/055_OrchestrationV2.ts";
+import MigrationUpstream0056 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
+import MigrationUpstream0057 from "./Migrations/057_ScheduledTaskWebhooks.ts";
+import MigrationUpstream0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
+import MigrationUpstream0059 from "./Migrations/059_McpAppModelContext.ts";
+import MigrationUpstream0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
+import MigrationUpstream0061 from "./Migrations/061_PullRequestReviewGuides.ts";
+import MigrationUpstream0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
+import MigrationUpstream0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
+import MigrationUpstream0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
+import MigrationUpstream0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+import MigrationUpstream0067 from "./Migrations/067_WebhookDedupe.ts";
+import MigrationUpstream0068 from "./Migrations/068_ShellStopRequestIndex.ts";
+import MigrationUpstream0069 from "./Migrations/069_ThreadMessageSearch.ts";
+import MigrationUpstream0070 from "./Migrations/070_PeerLinks.ts";
+import MigrationUpstream0071 from "./Migrations/071_PeerLinkFence.ts";
+import MigrationUpstream0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import MigrationUpstream0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
+import MigrationUpstream0074 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import MigrationUpstream0075 from "./Migrations/075_SubagentDeliveryState.ts";
+import MigrationUpstream0076 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
+import MigrationUpstream0077 from "./Migrations/077_RepairBooleanSettledOverride.ts";
+import MigrationUpstream0078 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
+import MigrationUpstream0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
+import MigrationUpstream0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -257,6 +286,59 @@ const migrationEntries = [
   [112, "ProviderSessionHistory", Migration0112],
   [113, "LinuxPathRewrite", Migration0113],
   [114, "LinuxInstructionPaths", Migration0114],
+  // Upstream 055_OrchestrationV2, renumbered (see upstreamMigrationIds.ts).
+  [115, "OrchestrationV2", MigrationUpstream0055],
+  // Upstream 056_RemoveRedundantProjectionIndexes, renumbered (see upstreamMigrationIds.ts).
+  [116, "RemoveRedundantProjectionIndexes", MigrationUpstream0056],
+  // Upstream 057_ScheduledTaskWebhooks, renumbered (see upstreamMigrationIds.ts).
+  [117, "ScheduledTaskWebhooks", MigrationUpstream0057],
+  // Upstream 058_WebhookRelayDeliveries, renumbered (see upstreamMigrationIds.ts).
+  [118, "WebhookRelayDeliveries", MigrationUpstream0058],
+  // Upstream 059_McpAppModelContext, renumbered (see upstreamMigrationIds.ts).
+  [119, "McpAppModelContext", MigrationUpstream0059],
+  // Upstream 060_ThreadSnapshotWindowIndexes, renumbered (see upstreamMigrationIds.ts).
+  [120, "ThreadSnapshotWindowIndexes", MigrationUpstream0060],
+  // Upstream 061_PullRequestReviewGuides, renumbered (see upstreamMigrationIds.ts).
+  [121, "PullRequestReviewGuides", MigrationUpstream0061],
+  // Upstream 062_ThreadFailureLookupIndex, renumbered (see upstreamMigrationIds.ts).
+  [122, "ThreadFailureLookupIndex", MigrationUpstream0062],
+  // Upstream 064_CanonicalizeThreadPullRequestLinks, renumbered (see upstreamMigrationIds.ts).
+  [123, "CanonicalizeThreadPullRequestLinks", MigrationUpstream0064],
+  // Upstream 065_CodexUsageNativeTurnIndex, renumbered (see upstreamMigrationIds.ts).
+  [124, "CodexUsageNativeTurnIndex", MigrationUpstream0065],
+  // Upstream 066_RepairClientSettlementTimestamps, renumbered (see upstreamMigrationIds.ts).
+  [125, "RepairClientSettlementTimestamps", MigrationUpstream0066],
+  // Upstream 067_WebhookDedupe, renumbered (see upstreamMigrationIds.ts).
+  [126, "WebhookDedupe", MigrationUpstream0067],
+  // Upstream 068_ShellStopRequestIndex, renumbered (see upstreamMigrationIds.ts).
+  [127, "ShellStopRequestIndex", MigrationUpstream0068],
+  // Upstream 069_ThreadMessageSearch, renumbered (see upstreamMigrationIds.ts).
+  [128, "ThreadMessageSearch", MigrationUpstream0069],
+  // Upstream 070_PeerLinks, renumbered (see upstreamMigrationIds.ts).
+  [129, "PeerLinks", MigrationUpstream0070],
+  // Upstream 071_PeerLinkFence, renumbered (see upstreamMigrationIds.ts).
+  [130, "PeerLinkFence", MigrationUpstream0071],
+  // Upstream 072_WaitingLinkRequestIndex, renumbered (see upstreamMigrationIds.ts).
+  [131, "WaitingLinkRequestIndex", MigrationUpstream0072],
+  // Upstream 073_ActiveTurnItemIndexes, renumbered (see upstreamMigrationIds.ts).
+  [132, "ActiveTurnItemIndexes", MigrationUpstream0073],
+  // Upstream 074_ExcludeAttachmentPlaceholdersFromSearch, renumbered (see upstreamMigrationIds.ts).
+  [133, "ExcludeAttachmentPlaceholdersFromSearch", MigrationUpstream0074],
+  // Upstream 075_SubagentDeliveryState, renumbered (see upstreamMigrationIds.ts).
+  [134, "SubagentDeliveryState", MigrationUpstream0075],
+  // Upstream 076_ProjectionProjectsPinArchive, renumbered (see upstreamMigrationIds.ts).
+  [135, "ProjectionProjectsPinArchive", MigrationUpstream0076],
+  // Upstream 077_RepairBooleanSettledOverride, renumbered (see upstreamMigrationIds.ts).
+  [136, "RepairBooleanSettledOverride", MigrationUpstream0077],
+  // Upstream 078_DropOrchestrationEventCorrelationIndex, renumbered (see upstreamMigrationIds.ts).
+  [137, "DropOrchestrationEventCorrelationIndex", MigrationUpstream0078],
+  // Upstream 079_DelegatedRecoveryIndexes, renumbered (see upstreamMigrationIds.ts).
+  [138, "DelegatedRecoveryIndexes", MigrationUpstream0079],
+  // Upstream 080_ScheduledTaskThreadMode, renumbered (see upstreamMigrationIds.ts).
+  [139, "ScheduledTaskThreadMode", MigrationUpstream0080],
+  [140, "PersonalThreadRetry", Migration0140],
+  [141, "PersonalNoticeChunks", Migration0141],
+  [142, "PersonalThreadTitleState", Migration0142],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are
@@ -273,6 +355,43 @@ const makeMigrationLoader = (throughId?: number) =>
         .map(([id, name, migration]) => [`${id}_${name}`, migration]),
     ),
   );
+
+// The first id that is not in a v1 database's history; v1 divergences below it
+// are expected and are logged, but skipping a V2 migration is refused.
+const FIRST_V2_MIGRATION_ID = 115;
+
+// Migrators skip ids up to the highest recorded; reject collisions that would skip V2 schema.
+const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
+  throughId?: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (tables.length === 0) return;
+  const recorded = yield* sql<{
+    readonly migration_id: number;
+    readonly name: string;
+  }>`SELECT migration_id, name FROM effect_sql_migrations`;
+  const latestRecordedId = Math.max(0, ...recorded.map((row) => row.migration_id));
+  const recordedNames = new Map(recorded.map((row) => [row.migration_id, row.name]));
+  const skipped = migrationEntries.flatMap(([id, name]) => {
+    if (
+      id < FIRST_V2_MIGRATION_ID ||
+      id > latestRecordedId ||
+      (throughId !== undefined && id > throughId)
+    )
+      return [];
+    const recordedName = recordedNames.get(id);
+    if (recordedName === name) return [];
+    return [`${id}_${name} (recorded: ${recordedName ?? "nothing"})`];
+  });
+  if (skipped.length === 0) return;
+  return yield* new Migrator.MigrationError({
+    kind: "BadState",
+    message: `This database's migration history would skip required schema migrations: ${skipped.join(", ")}. The migrator skips every id up to the highest recorded id (${latestRecordedId}), regardless of name. It was probably written by a different build. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
+  });
+});
 
 /**
  * Migrator run function - no schema dumping needed
@@ -297,10 +416,36 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  const includesV2 =
+    toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
+  if (includesV2) {
+    yield* assertV2MigrationsCanRun(toMigrationInclusive);
+  }
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+
+  const sql = yield* SqlClient.SqlClient;
+  const recorded = yield* sql<{
+    readonly migration_id: number;
+    readonly name: string;
+  }>`SELECT migration_id, name FROM effect_sql_migrations`;
+  const manifestNames = new Map<number, string>(migrationEntries.map(([id, name]) => [id, name]));
+  const divergent = recorded.flatMap((row) => {
+    const expected = manifestNames.get(row.migration_id);
+    if (expected === undefined) {
+      return [`${row.migration_id}:${row.name} (unknown to this build)`];
+    }
+    return expected === row.name
+      ? []
+      : [`${row.migration_id}:${row.name} (this build: ${expected})`];
+  });
+  if (divergent.length > 0) {
+    yield* Effect.logWarning(
+      "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
+    ).pipe(Effect.annotateLogs({ divergent }));
+  }
   return executedMigrations;
 });

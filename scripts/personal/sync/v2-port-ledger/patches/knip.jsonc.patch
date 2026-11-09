@@ -1,0 +1,22 @@
+diff --git a/knip.jsonc b/knip.jsonc
+index 1bdd744eafdcbe3d83d526f16e2201f3aa7c6bf9..f59a3c02b32d2a5fcff0857331a59193a55739f1 100644
+--- a/knip.jsonc
++++ b/knip.jsonc
+@@ -56,8 +56,15 @@
+     "apps/web": {
+       // Vitest loads this through the per-file @vitest-environment directive.
+       "ignoreDependencies": ["jsdom"],
+-      // Worktree setup (scripts/setup-worktree.ts) runs this directly.
+-      "entry": ["scripts/warm-dep-cache.ts"],
++      // Worktree setup (scripts/setup-worktree.ts) runs this directly. The
++      // generators run by hand (node scripts/generate-*.ts), and the Remotion
++      // Studio/CLI entry (`remotion:studio`, `remotion:render`) is loaded by the
++      // remotion binary.
++      "entry": [
++        "scripts/warm-dep-cache.ts",
++        "scripts/generate-*.ts",
++        "src/features/personal/avatarRemotion/index.ts",
++      ],
+       // UI component modules are copied and adapted as cohesive sets. Keep their
+       // named subcomponents even before they have callers; the file audit still
+       // reports an entire component module when nothing imports it.

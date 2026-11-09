@@ -1,0 +1,29 @@
+diff --git a/apps/web/src/lib/utils.ts b/apps/web/src/lib/utils.ts
+index ca9a3a6340c2e6dc93bea9dff0fae7875c029cfb..c6adf18b801e2c217e20dc7ec059a14c05690f93 100644
+--- a/apps/web/src/lib/utils.ts
++++ b/apps/web/src/lib/utils.ts
+@@ -1,6 +1,6 @@
+ import { MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+ import { type CxOptions, cx } from "class-variance-authority";
+-import * as Encoding from "effect/Encoding";
++import * as Hex from "effect/encoding/Hex";
+ import { extendTailwindMerge } from "tailwind-merge";
+ import { DraftId } from "../composerDraftStore";
+ 
+@@ -35,14 +35,14 @@ export function getLocalFileManagerName(platform: string): string {
+ }
+ 
+ export function randomHex(byteLength: number): string {
+-  return Encoding.encodeHex(globalThis.crypto.getRandomValues(new Uint8Array(byteLength)));
++  return Hex.encode(globalThis.crypto.getRandomValues(new Uint8Array(byteLength)));
+ }
+ 
+ export function randomUUID(): string {
+   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+-  const hex = Encoding.encodeHex(bytes);
++  const hex = Hex.encode(bytes);
+   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+ }
+ 

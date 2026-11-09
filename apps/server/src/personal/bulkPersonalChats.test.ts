@@ -1,28 +1,29 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Stream from "effect/Stream";
 
 import {
   PersonalBotId,
   PersonalBotsError,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
+  type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import { archivePersonalChats, deletePersonalChats } from "./bulkPersonalChats.ts";
 import { deletePersonalChat, type PersonalChatDeleteServices } from "./deletePersonalChat.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
+import {
+  makePersonalEngineHarness,
+  personalEngineTestLayer,
+} from "./test/personalEngineTestLayer.ts";
+import { personalTestDatabase } from "./test/personalReadsTestLayer.ts";
 
 const quiet = ThreadId.make("thread-quiet");
 const working = ThreadId.make("thread-working");
@@ -30,42 +31,26 @@ const member = ThreadId.make("thread-group-member");
 const delegating = ThreadId.make("thread-delegating");
 const kept = ThreadId.make("thread-kept");
 
-/** The real bot service over an in-memory database; the engine records what it is sent. */
-const makeLayer = (dispatched: Array<OrchestrationCommand>) =>
-  PersonalBotService.layer.pipe(
+/**
+ * The real bot service over an in-memory database and the v2 thread engine
+ * fake: it applies thread commands to the v2 projections and records them.
+ */
+const makeLayer = () => {
+  const harness = makePersonalEngineHarness();
+  const layer = PersonalBotService.layerRequiringEngine.pipe(
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            dispatched.push(command);
-            return { sequence: dispatched.length };
-          }),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    ),
+    Layer.provideMerge(personalEngineTestLayer(harness)),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed([]),
       }),
     ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        // The working chat's session is mid-turn; the others have none.
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.succeed(
-            threadId === working
-              ? Option.some({ id: working, session: { threadId: working, status: "running" } })
-              : Option.none(),
-          ),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
+    Layer.provideMerge(personalTestDatabase),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-bulk-test-" })),
     Layer.provideMerge(NodeServices.layer),
   );
+  return { harness, layer };
+};
 
 /** Fake task and group services around the real bot service, recording every cancel. */
 const makeServices = (bots: PersonalBotService.PersonalBotService["Service"]) => {
@@ -91,6 +76,19 @@ const makeServices = (bots: PersonalBotService.PersonalBotService["Service"]) =>
   } as unknown as PersonalChatDeleteServices;
   return { cancels, services };
 };
+
+/** Marks a created chat's latest run as running, so a session is in flight. */
+const markThreadRunning = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+          completed_at, payload_json)
+      VALUES (${`run-${threadId}`}, ${threadId}, 1, 'codex', NULL, 'running',
+        '2026-11-06T00:00:00.000Z', NULL, '{}')
+    `;
+  });
 
 /** A bot with five linked chats; returns every personal table's rows afterwards. */
 const seed = Effect.gen(function* () {
@@ -139,32 +137,35 @@ const snapshot = (tables: Record<string, ReadonlyArray<unknown>>, extra: unknown
   return JSON.stringify({ tables, extra }, null, 1).replaceAll(projectId, "<project>");
 };
 
+const commandLabel = (command: OrchestrationV2ServerCommand) =>
+  command.type === "thread.delete" ? `${command.type}:${command.threadId}` : command.type;
+
 const picked = [quiet, working, member, delegating];
 
 describe("deletePersonalChats", () => {
   it.effect("leaves the same database state, dispatches and cancels as one delete per chat", () =>
     Effect.gen(function* () {
-      const bulkDispatched: Array<OrchestrationCommand> = [];
+      const bulkRun = makeLayer();
       const bulk = yield* Effect.gen(function* () {
         const bots = yield* seed;
-        const seeded = bulkDispatched.length;
+        const seeded = bulkRun.harness.dispatched.length;
         const { cancels, services } = makeServices(bots);
         const result = yield* deletePersonalChats(services, picked);
-        const dispatched = bulkDispatched.slice(seeded);
+        const dispatched = bulkRun.harness.dispatched.slice(seeded);
         return { result, cancels, dispatched, tables: yield* dumpPersonalTables };
-      }).pipe(Effect.provide(makeLayer(bulkDispatched)));
+      }).pipe(Effect.provide(bulkRun.layer));
 
-      const singleDispatched: Array<OrchestrationCommand> = [];
+      const singleRun = makeLayer();
       const single = yield* Effect.gen(function* () {
         const bots = yield* seed;
-        const seeded = singleDispatched.length;
+        const seeded = singleRun.harness.dispatched.length;
         const { cancels, services } = makeServices(bots);
         for (const threadId of picked) {
           yield* Effect.exit(deletePersonalChat(services, threadId));
         }
-        const dispatched = singleDispatched.slice(seeded);
+        const dispatched = singleRun.harness.dispatched.slice(seeded);
         return { cancels, dispatched, tables: yield* dumpPersonalTables };
-      }).pipe(Effect.provide(makeLayer(singleDispatched)));
+      }).pipe(Effect.provide(singleRun.layer));
 
       expect(snapshot(bulk.tables, { dispatched: bulk.dispatched, cancels: bulk.cancels })).toEqual(
         snapshot(single.tables, { dispatched: single.dispatched, cancels: single.cancels }),
@@ -172,12 +173,11 @@ describe("deletePersonalChats", () => {
       // A working chat is not skipped, as a single delete does not skip it:
       // its task is cancelled first, then the chat goes.
       assert.deepEqual(bulk.cancels, ["task-running", "task-parked"]);
-      assert.deepEqual(
-        bulk.dispatched.map(
-          (command) => `${command.type}:${"threadId" in command ? command.threadId : ""}`,
-        ),
-        [`thread.delete:${quiet}`, `thread.delete:${working}`, `thread.delete:${delegating}`],
-      );
+      assert.deepEqual(bulk.dispatched.map(commandLabel), [
+        `thread.delete:${quiet}`,
+        `thread.delete:${working}`,
+        `thread.delete:${delegating}`,
+      ]);
       assert.deepEqual(bulk.result.done, [quiet, working, delegating]);
       assert.deepEqual(
         bulk.result.failed.map((entry) => entry.threadId),
@@ -223,9 +223,10 @@ describe("deletePersonalChats", () => {
 
 describe("archivePersonalChats", () => {
   it.effect("archives and unarchives each chat, reporting one that is gone", () => {
-    const dispatched: Array<OrchestrationCommand> = [];
+    const run = makeLayer();
     return Effect.gen(function* () {
       const bots = yield* seed;
+      yield* markThreadRunning(working);
       const gone = ThreadId.make("thread-gone");
 
       const archived = yield* archivePersonalChats(bots, [quiet, working, gone], true);
@@ -242,13 +243,13 @@ describe("archivePersonalChats", () => {
         .toSorted();
       assert.deepEqual(archivedIds, [quiet, working].toSorted());
 
-      // Archiving the working chat stops its turn and the commands it started.
-      const stops = dispatched.flatMap((command) =>
-        command.type === "thread.session.stop" ? [command] : [],
+      // Archiving the working chat stops its turn.
+      const stops = run.harness.dispatched.flatMap((command) =>
+        command.type === "thread.stop" ? [command] : [],
       );
       assert.deepEqual(
-        stops.map((command) => [command.threadId, command.terminateProcesses]),
-        [[working, true]],
+        stops.map((command) => command.threadId),
+        [working],
       );
 
       const restored = yield* archivePersonalChats(bots, [quiet, working], false);
@@ -257,10 +258,10 @@ describe("archivePersonalChats", () => {
       expect(afterRestore.threads.every((thread) => thread.archivedAt === null)).toBe(true);
       // Unarchiving stops nothing.
       assert.equal(
-        dispatched.filter((command) => command.type === "thread.session.stop").length,
+        run.harness.dispatched.filter((command) => command.type === "thread.stop").length,
         1,
       );
-    }).pipe(Effect.provide(makeLayer(dispatched)));
+    }).pipe(Effect.provide(run.layer));
   });
 
   it.effect("uses the server's own message for a refusal", () =>

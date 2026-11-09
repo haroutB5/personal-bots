@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts b/apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts
+index 7fa23aac390870aa2ba867ac4a27f5227f7f4e62..57633438987a7453b59cfc2abbc8d8a58c103dd4 100644
+--- a/apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts
++++ b/apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   HostProcessArchitecture,
+   HostProcessEnvironment,

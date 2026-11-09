@@ -1,0 +1,40 @@
+diff --git a/apps/server/src/provider/Layers/openCodeUsageLimits.ts b/apps/server/src/provider/Layers/openCodeUsageLimits.ts
+index 74d0bd75b9f870c6b9727439ca68a041ad9d75b6..3eac9f41abf5cdf261d2aec85a1a7b25e2ab138a 100644
+--- a/apps/server/src/provider/Layers/openCodeUsageLimits.ts
++++ b/apps/server/src/provider/Layers/openCodeUsageLimits.ts
+@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ 
+ import {
+   clampPercent,
+@@ -16,7 +16,10 @@ import {
+   makeUsageLimits,
+ } from "../providerUsageLimits.ts";
+ 
+-const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknown) });
++const AuthFile = Schema.Struct({
++  "opencode-go": Schema.optionalKey(Schema.Unknown),
++  opencode: Schema.optionalKey(Schema.Unknown),
++});
+ const ApiAuth = Schema.Struct({ type: Schema.Literal("api"), key: Schema.String });
+ const decodeAuthFile = Schema.decodeEffect(Schema.fromJsonString(AuthFile));
+ const decodeApiAuth = Schema.decodeUnknownOption(ApiAuth);
+@@ -56,8 +59,13 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
+       ));
+     const auth = yield* decodeAuthFile(contents);
+     const apiAuth = decodeApiAuth(auth["opencode-go"]);
++    const consoleAuth = decodeApiAuth(auth.opencode);
+     // OpenCode overlays stored API credentials after environment credentials.
+-    const apiKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
++    const apiKey = (
++      Option.isSome(apiAuth)
++        ? apiAuth.value.key
++        : env.OPENCODE_API_KEY || (Option.isSome(consoleAuth) ? consoleAuth.value.key : undefined)
++    )?.trim();
+     if (!apiKey) return unsupported;
+ 
+     const client = yield* HttpClient.HttpClient;

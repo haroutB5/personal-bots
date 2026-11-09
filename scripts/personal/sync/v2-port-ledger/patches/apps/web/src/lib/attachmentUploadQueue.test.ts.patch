@@ -1,0 +1,433 @@
+diff --git a/apps/web/src/lib/attachmentUploadQueue.test.ts b/apps/web/src/lib/attachmentUploadQueue.test.ts
+index 10b1e2e30a4375985f36c93b57883fbb5499f6bf..d7f8abf611364d2eb1ba72b96d25d805a4d72b34 100644
+--- a/apps/web/src/lib/attachmentUploadQueue.test.ts
++++ b/apps/web/src/lib/attachmentUploadQueue.test.ts
+@@ -1,6 +1,6 @@
+ import { EnvironmentId } from "@t3tools/contracts";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+-import { Atom, AsyncResult } from "effect/unstable/reactivity";
++import { Atom, AsyncResult } from "effect/reactivity";
+ import { appAtomRegistry } from "../rpc/atomRegistry";
+ 
+ import {
+@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
+   executeAtomQuery: vi.fn(),
+   removeUpload: Symbol("remove-upload"),
+   runAtomCommand: vi.fn(),
+-  readPreparedConnection: vi.fn(),
++  awaitPreparedConnection: vi.fn(),
+ }));
+ 
+ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+@@ -28,7 +28,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+ }));
+ 
+ vi.mock("../rpc/atomRegistry", async () => {
+-  const { AtomRegistry } = await import("effect/unstable/reactivity");
++  const { AtomRegistry } = await import("effect/reactivity");
+   return { appAtomRegistry: AtomRegistry.make() };
+ });
+ 
+@@ -48,7 +48,7 @@ vi.mock("../state/attachments", () => ({
+ }));
+ 
+ vi.mock("../state/session", () => ({
+-  readPreparedConnection: mocks.readPreparedConnection,
++  awaitPreparedConnection: mocks.awaitPreparedConnection,
+ }));
+ 
+ import {
+@@ -59,8 +59,11 @@ import {
+   releaseDraftAttachment,
+   releaseDraftAttachments,
+   releasePersistedAttachmentUpload,
++  isTransientUploadFailure,
+   retryAttachmentUpload,
++  setUploadAutoRetryDelaysForTesting,
+   startAttachmentUpload,
++  UPLOAD_AUTO_RETRY_DELAYS_MS,
+   useAttachmentUploadStore,
+ } from "./attachmentUploadQueue";
+ 
+@@ -123,6 +126,17 @@ class TestXmlHttpRequest {
+ const firstEnvironment = EnvironmentId.make("environment-1");
+ const secondEnvironment = EnvironmentId.make("environment-2");
+ 
++/**
++ * Drains the microtasks a start-to-transfer hop takes. Resolving the upload
++ * URL awaits the prepared connection, so the hop is several ticks deep and a
++ * single `Promise.resolve()` no longer reaches the transport.
++ */
++async function flushUploadStart(): Promise<void> {
++  for (let tick = 0; tick < 10; tick += 1) {
++    await Promise.resolve();
++  }
++}
++
+ function makeImage(id: string): ComposerImageAttachment {
+   const file = new File([new Uint8Array([1, 2, 3])], `${id}.png`, { type: "image/png" });
+   return {
+@@ -172,8 +186,8 @@ describe("attachmentUploadQueue", () => {
+     mocks.executeAtomQuery.mockReset();
+     mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: {} });
+     mocks.runAtomCommand.mockReset();
+-    mocks.readPreparedConnection.mockReset();
+-    mocks.readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://environment.test/" });
++    mocks.awaitPreparedConnection.mockReset();
++    mocks.awaitPreparedConnection.mockResolvedValue({ httpBaseUrl: "https://environment.test/" });
+     mocks.runAtomCommand.mockImplementation(
+       async (
+         _registry: unknown,
+@@ -198,9 +212,12 @@ describe("attachmentUploadQueue", () => {
+       },
+     );
+     vi.stubGlobal("XMLHttpRequest", TestXmlHttpRequest);
++    // The automatic retries have their own tests below; the rest see one try.
++    setUploadAutoRetryDelaysForTesting([]);
+   });
+ 
+   afterEach(() => {
++    setUploadAutoRetryDelaysForTesting(UPLOAD_AUTO_RETRY_DELAYS_MS);
+     for (const imageId of Object.keys(useAttachmentUploadStore.getState().uploadsByImageId)) {
+       releaseAttachmentUpload(imageId);
+     }
+@@ -212,28 +229,26 @@ describe("attachmentUploadQueue", () => {
+     async (lateFailure) => {
+       const image = makeFile("reconnect");
+       startAttachmentUpload({ environmentId: firstEnvironment, image });
+-      await Promise.resolve();
++      await flushUploadStart();
+       const firstSettled = awaitAttachmentUploads([image.id]);
+       setConnected(firstEnvironment, false);
+       if (lateFailure) setConnected(firstEnvironment, true);
+       TestXmlHttpRequest.requests[0]!.complete(503);
+       await firstSettled;
+       if (!lateFailure) setConnected(firstEnvironment, true);
+-      await Promise.resolve();
+-      await Promise.resolve();
++      await flushUploadStart();
+       expect(TestXmlHttpRequest.requests).toHaveLength(2);
+       const retrySettled = awaitAttachmentUploads([image.id]);
+       TestXmlHttpRequest.requests[1]!.complete(503);
+       await retrySettled;
+       setConnected(firstEnvironment, true);
+-      await Promise.resolve();
++      await flushUploadStart();
+       expect(TestXmlHttpRequest.requests).toHaveLength(2);
+       expect(readAttachmentUpload(image.id)?.status).toBe("failed");
+ 
+       setConnected(firstEnvironment, false);
+       setConnected(firstEnvironment, true);
+-      await Promise.resolve();
+-      await Promise.resolve();
++      await flushUploadStart();
+       const finalSettled = awaitAttachmentUploads([image.id]);
+       TestXmlHttpRequest.requests[2]!.complete();
+       await finalSettled;
+@@ -242,7 +257,7 @@ describe("attachmentUploadQueue", () => {
+       ).not.toBeNull();
+       setConnected(firstEnvironment, false);
+       setConnected(firstEnvironment, true);
+-      await Promise.resolve();
++      await flushUploadStart();
+       expect(TestXmlHttpRequest.requests).toHaveLength(3);
+     },
+   );
+@@ -250,18 +265,18 @@ describe("attachmentUploadQueue", () => {
+   it("does not retry for another environment or after the attachment is removed", async () => {
+     const image = makeFile("removed");
+     startAttachmentUpload({ environmentId: firstEnvironment, image });
+-    await Promise.resolve();
++    await flushUploadStart();
+     const settled = awaitAttachmentUploads([image.id]);
+     TestXmlHttpRequest.requests[0]!.complete(503);
+     await settled;
+     setConnected(secondEnvironment, false);
+     setConnected(secondEnvironment, true);
+-    await Promise.resolve();
++    await flushUploadStart();
+     expect(TestXmlHttpRequest.requests).toHaveLength(1);
+     setConnected(firstEnvironment, false);
+     setConnected(firstEnvironment, true);
+     releaseAttachmentUpload(image.id);
+-    await Promise.resolve();
++    await flushUploadStart();
+     expect(TestXmlHttpRequest.requests).toHaveLength(1);
+     expect(readAttachmentUpload(image.id)).toBeUndefined();
+   });
+@@ -277,7 +292,7 @@ describe("attachmentUploadQueue", () => {
+       },
+     };
+     startAttachmentUpload({ environmentId: firstEnvironment, image });
+-    await Promise.resolve();
++    await flushUploadStart();
+ 
+     const request = TestXmlHttpRequest.requests[0]!;
+     expect(request.method).toBe("POST");
+@@ -326,7 +341,7 @@ describe("attachmentUploadQueue", () => {
+       source: { _tag: "pasted-text" as const },
+     };
+     startAttachmentUpload({ environmentId: firstEnvironment, image: file });
+-    await Promise.resolve();
++    await flushUploadStart();
+ 
+     expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+       expect.anything(),
+@@ -371,7 +386,7 @@ describe("attachmentUploadQueue", () => {
+     };
+ 
+     startAttachmentUpload({ environmentId: firstEnvironment, image: file });
+-    await Promise.resolve();
++    await flushUploadStart();
+ 
+     expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+       expect.anything(),
+@@ -407,7 +422,7 @@ describe("attachmentUploadQueue", () => {
+         image: file,
+         draftTarget: draftId,
+       });
+-      await Promise.resolve();
++      await flushUploadStart();
+ 
+       // No composer effect is subscribed; only the queue can stamp the draft.
+       const settled = awaitAttachmentUploads([file.id]);
+@@ -433,13 +448,13 @@ describe("attachmentUploadQueue", () => {
+     store.addFiles(draftId, [file]);
+     try {
+       startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+-      await Promise.resolve();
++      await flushUploadStart();
+       let settled = awaitAttachmentUploads([file.id]);
+       TestXmlHttpRequest.requests[0]!.complete(500);
+       await settled;
+       expect(store.getComposerDraft(draftId)?.files[0]?.uploadedAttachmentId).toBeUndefined();
+       retryAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+-      await Promise.resolve();
++      await flushUploadStart();
+       settled = awaitAttachmentUploads([file.id]);
+       TestXmlHttpRequest.requests[1]!.complete();
+       await settled;
+@@ -524,7 +539,7 @@ describe("attachmentUploadQueue", () => {
+         image: replacement,
+         draftTarget: draftId,
+       });
+-      await Promise.resolve();
++      await flushUploadStart();
+       const settled = awaitAttachmentUploads([replacement.id]);
+       TestXmlHttpRequest.requests[0]!.complete();
+       await settled;
+@@ -560,7 +575,7 @@ describe("attachmentUploadQueue", () => {
+     // The verify-then-reupload path crosses several awaits before the
+     // transfer starts; drain microtasks until the XHR exists.
+     for (let hop = 0; hop < 20 && TestXmlHttpRequest.requests.length === 0; hop += 1) {
+-      await Promise.resolve();
++      await flushUploadStart();
+     }
+ 
+     const settled = awaitAttachmentUploads([file.id]);
+@@ -724,7 +739,7 @@ describe("attachmentUploadQueue", () => {
+       attachmentId: "pending-stashed-checking-pdf",
+     });
+     resolveVerification({ _tag: "Success", value: {} });
+-    await Promise.resolve();
++    await flushUploadStart();
+ 
+     expect(readAttachmentUpload(file.id)).toBeUndefined();
+     expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+@@ -813,7 +828,7 @@ describe("attachmentUploadQueue", () => {
+   it("retries rejected uploads", async () => {
+     const image = makeImage("image-retry");
+     startAttachmentUpload({ environmentId: firstEnvironment, image });
+-    await Promise.resolve();
++    await flushUploadStart();
+ 
+     let settled = awaitAttachmentUploads([image.id]);
+     TestXmlHttpRequest.requests[0]!.complete(500);
+@@ -824,7 +839,7 @@ describe("attachmentUploadQueue", () => {
+     });
+ 
+     retryAttachmentUpload({ environmentId: firstEnvironment, image });
+-    await Promise.resolve();
++    await flushUploadStart();
+     settled = awaitAttachmentUploads([image.id]);
+     TestXmlHttpRequest.requests[1]!.complete();
+     await settled;
+@@ -879,13 +894,13 @@ describe("attachmentUploadQueue", () => {
+   it("restores the previous environment after a replacement upload fails", async () => {
+     const image = makeImage("image-move");
+     startAttachmentUpload({ environmentId: firstEnvironment, image });
+-    await Promise.resolve();
++    await flushUploadStart();
+     let settled = awaitAttachmentUploads([image.id]);
+     TestXmlHttpRequest.requests[0]!.complete();
+     await settled;
+ 
+     startAttachmentUpload({ environmentId: secondEnvironment, image });
+-    await Promise.resolve();
++    await flushUploadStart();
+     settled = awaitAttachmentUploads([image.id]);
+     TestXmlHttpRequest.requests[1]!.complete(500);
+     await settled;
+@@ -905,7 +920,7 @@ describe("attachmentUploadQueue", () => {
+     }
+     const otherEnvironmentImage = makeImage("image-other");
+     startAttachmentUpload({ environmentId: secondEnvironment, image: otherEnvironmentImage });
+-    await Promise.resolve();
++    await flushUploadStart();
+ 
+     expect(TestXmlHttpRequest.requests).toHaveLength(4);
+     const otherRequest = TestXmlHttpRequest.requests.find((request) =>
+@@ -920,8 +935,152 @@ describe("attachmentUploadQueue", () => {
+       ...images.slice(0, 3).map((image) => awaitAttachmentUploads([image.id])),
+       awaitAttachmentUploads([otherEnvironmentImage.id]),
+     ]);
+-    await Promise.resolve();
++    await flushUploadStart();
+     TestXmlHttpRequest.requests[4]!.complete();
+     await awaitAttachmentUploads([images[3]!.id]);
+   });
++
++  // Regression: the queue used to read the prepared connection synchronously
++  // from the atom registry. On a screen where nothing had mounted that atom --
++  // a brand-new chat, whose transcript renders no message and therefore no
++  // asset URL -- the read answered `null` every time, so the upload failed at
++  // `resolve-url` and the bytes never left the device, while the server had
++  // already minted the pending upload.
++  it("uploads once the prepared connection arrives, even when it is not mounted yet", async () => {
++    let publish: ((connection: { readonly httpBaseUrl: string }) => void) | null = null;
++    mocks.awaitPreparedConnection.mockReturnValue(
++      new Promise<{ readonly httpBaseUrl: string }>((resolve) => {
++        publish = resolve;
++      }),
++    );
++    const image = makeImage("image-cold");
++
++    startAttachmentUpload({ environmentId: firstEnvironment, image });
++    await flushUploadStart();
++
++    expect(TestXmlHttpRequest.requests).toHaveLength(0);
++    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "uploading" });
++
++    publish!({ httpBaseUrl: "https://environment.test/" });
++    await flushUploadStart();
++
++    const request = TestXmlHttpRequest.requests[0]!;
++    expect(request.method).toBe("POST");
++    expect(request.url).toBe(
++      "https://environment.test/api/attachments/upload/pending-environment-1-image-cold.png",
++    );
++
++    const settled = awaitAttachmentUploads([image.id]);
++    request.complete();
++    await settled;
++    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
++  });
++
++  it("fails as not connected when the prepared connection never arrives", async () => {
++    mocks.awaitPreparedConnection.mockResolvedValue(null);
++    const image = makeImage("image-offline");
++
++    startAttachmentUpload({ environmentId: firstEnvironment, image });
++    await awaitAttachmentUploads([image.id]);
++
++    expect(TestXmlHttpRequest.requests).toHaveLength(0);
++    expect(readAttachmentUpload(image.id)).toMatchObject({
++      status: "failed",
++      reason: "Not connected",
++      attachmentId: "pending-environment-1-image-offline.png",
++    });
++  });
++
++  describe("automatic retries", () => {
++    const failWith = (request: TestXmlHttpRequest, event: "error" | "timeout" | "abort") =>
++      request.listeners.get(event)?.();
++    async function nextRequest(count: number): Promise<TestXmlHttpRequest> {
++      for (let tick = 0; tick < 50 && TestXmlHttpRequest.requests.length < count; tick += 1) {
++        await new Promise((resolve) => setTimeout(resolve, 0));
++      }
++      expect(TestXmlHttpRequest.requests).toHaveLength(count);
++      return TestXmlHttpRequest.requests[count - 1]!;
++    }
++
++    it("sorts failures into transient and final", () => {
++      const transfer = (message: string) => ({
++        step: "transfer" as const,
++        error: new Error(message),
++      });
++      expect(isTransientUploadFailure(transfer("Upload failed"))).toBe(true);
++      expect(isTransientUploadFailure(transfer("Upload timed out"))).toBe(true);
++      expect(isTransientUploadFailure(transfer("Upload rejected (503)"))).toBe(true);
++      expect(isTransientUploadFailure(transfer("Upload rejected (429)"))).toBe(true);
++      expect(isTransientUploadFailure(transfer("Upload rejected (413)"))).toBe(false);
++      expect(isTransientUploadFailure(transfer("Upload cancelled"))).toBe(true);
++      expect(isTransientUploadFailure({ step: "resolve-url", error: null })).toBe(true);
++      expect(isTransientUploadFailure({ step: "mint", error: null })).toBe(true);
++    });
++
++    it("tries a dropped upload again, still uploading, and lands it", async () => {
++      setUploadAutoRetryDelaysForTesting([0, 0]);
++      const image = makeImage("dropped");
++      startAttachmentUpload({ environmentId: firstEnvironment, image });
++      const settled = awaitAttachmentUploads([image.id]);
++      const first = await nextRequest(1);
++      first.progress(1, 3);
++      // The relay ends the request mid-transfer: the browser reports a network error.
++      failWith(first, "error");
++      await new Promise((resolve) => setTimeout(resolve, 0));
++      expect(readAttachmentUpload(image.id)?.status).toBe("uploading");
++      const second = await nextRequest(2);
++      failWith(second, "timeout");
++      (await nextRequest(3)).complete();
++      await settled;
++      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
++      expect(
++        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
++      ).not.toBeNull();
++    });
++
++    it("shows Upload failed only after the third try, with Retry still working", async () => {
++      setUploadAutoRetryDelaysForTesting([0, 0]);
++      const image = makeImage("flaky");
++      startAttachmentUpload({ environmentId: firstEnvironment, image });
++      const settled = awaitAttachmentUploads([image.id]);
++      for (let count = 1; count <= 3; count += 1) failWith(await nextRequest(count), "error");
++      await settled;
++      expect(TestXmlHttpRequest.requests).toHaveLength(3);
++      expect(readAttachmentUpload(image.id)).toMatchObject({
++        status: "failed",
++        reason: "Upload failed",
++      });
++      expect(
++        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
++      ).toBeNull();
++
++      retryAttachmentUpload({ environmentId: firstEnvironment, image });
++      const retried = awaitAttachmentUploads([image.id]);
++      (await nextRequest(4)).complete();
++      await retried;
++      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
++    });
++
++    it("does not retry a file the server refused", async () => {
++      setUploadAutoRetryDelaysForTesting([0, 0]);
++      const image = makeImage("refused");
++      startAttachmentUpload({ environmentId: firstEnvironment, image });
++      const settled = awaitAttachmentUploads([image.id]);
++      (await nextRequest(1)).complete(413);
++      await settled;
++      expect(TestXmlHttpRequest.requests).toHaveLength(1);
++      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "failed" });
++    });
++
++    it("stops retrying once the attachment is removed during the wait", async () => {
++      setUploadAutoRetryDelaysForTesting([20, 20]);
++      const image = makeImage("removed-mid-retry");
++      startAttachmentUpload({ environmentId: firstEnvironment, image });
++      failWith(await nextRequest(1), "error");
++      releaseAttachmentUpload(image.id);
++      await new Promise((resolve) => setTimeout(resolve, 80));
++      expect(TestXmlHttpRequest.requests).toHaveLength(1);
++      expect(readAttachmentUpload(image.id)).toBeUndefined();
++    });
++  });
+ });

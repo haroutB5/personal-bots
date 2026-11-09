@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/state/pullRequests.ts b/apps/web/src/state/pullRequests.ts
+index 365c6812d096b35abf0456f08d2e6d062a4cec3d..fa5a97f9ee05a2c80247670ab6859e4882ea01e9 100644
+--- a/apps/web/src/state/pullRequests.ts
++++ b/apps/web/src/state/pullRequests.ts
+@@ -13,7 +13,7 @@ import type {
+   PullRequestSummary,
+ } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ import { useCallback, useLayoutEffect, useMemo } from "react";
+ 
+ import { connectionAtomRuntime } from "../connection/runtime";

@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { PersonalSettingsScreen } from "./PersonalSettingsScreen";
@@ -28,10 +29,14 @@ vi.mock("@effect/atom-react", () => ({
   // The voice section's own atoms: nothing saved, nothing to refresh.
   useAtomRefresh: () => () => undefined,
 }));
-vi.mock("~/state/server", () => ({
-  primaryServerProvidersAtom: {},
-  serverEnvironment: { updateProvider: {} },
-}));
+vi.mock("~/state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    primaryServerProvidersAtom: {},
+    primaryServerEnvironmentThemesAtom: Atom.make([]),
+    serverEnvironment: { updateProvider: {} },
+  };
+});
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => async (payload: { readonly input: unknown }) => {
     state.calls.push(payload.input);
@@ -147,7 +152,6 @@ function storageStub(store: Map<string, string>) {
 }
 
 async function saveName(next: string) {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   await act(async () => {
     renderer = create(<PersonalSettingsScreen />);
   });
@@ -191,7 +195,6 @@ describe("Settings display name", () => {
 
 describe("Settings About", () => {
   it("shows the installed version", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
     });
@@ -199,7 +202,6 @@ describe("Settings About", () => {
   });
 
   it("offers an available update from the About row", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     stubWindow({ location: { reload: state.reload } });
     state.versionInfo = { label: "v1.9.5", updateAvailable: true };
     await act(async () => {
@@ -222,7 +224,6 @@ describe("Settings chat preferences", () => {
 
   it("reads the defaults when the server has no value, and saves a change there", async () => {
     const store = new Map<string, string>();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     stubWindow({ localStorage: storageStub(store) });
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
@@ -253,7 +254,6 @@ describe("Settings chat preferences", () => {
       showToolSteps: true,
       showRoutinesStrip: false,
     };
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     stubWindow({ localStorage: storageStub(new Map<string, string>()) });
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
@@ -291,7 +291,6 @@ describe("Settings appearance", () => {
    */
   it("defaults to System and writes each choice to the shared appearance key", async () => {
     const store = new Map<string, string>();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     stubWindow({ localStorage: storageStub(store) });
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
@@ -327,7 +326,6 @@ describe("Settings appearance", () => {
 describe("Settings plugins", () => {
   it("lists API keys as a row beside Connections and Passwords, not inline", async () => {
     stubWindow();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
     });
@@ -358,7 +356,6 @@ describe("Settings auto-archive finished task chats", () => {
   const stateLabel = () => findRow().findAllByType("span").at(-1)!.props.children;
 
   it("shows On by default and saves Off through the profile", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     stubWindow();
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
@@ -404,7 +401,6 @@ describe("Settings auto-archive wait", () => {
   const open = async (profile: Record<string, unknown>) => {
     state.profile = { displayName: "Harout", ...profile };
     stubWindow();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
     });
@@ -488,7 +484,6 @@ describe("Settings auto-archive wait", () => {
 describe("Settings removed bots", () => {
   const botsLinks = async () => {
     stubWindow();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
     });
@@ -521,7 +516,6 @@ describe("1.60.22: the Memory row shows how many changes wait for an OK", () => 
     );
 
   it("shows the count when something waits", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     state.memoryWaiting = 82;
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
@@ -531,7 +525,6 @@ describe("1.60.22: the Memory row shows how many changes wait for an OK", () => 
   });
 
   it("shows no badge when nothing waits", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     await act(async () => {
       renderer = create(<PersonalSettingsScreen />);
     });

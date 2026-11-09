@@ -1,0 +1,44 @@
+diff --git a/apps/server/src/http.test.ts b/apps/server/src/http.test.ts
+index ef75d9446158d261bcc8cb7aea1a67b613a61639..49e96cb626d4059de15471a584413394d295ad91 100644
+--- a/apps/server/src/http.test.ts
++++ b/apps/server/src/http.test.ts
+@@ -1,12 +1,12 @@
+ import { expect, it } from "@effect/vitest";
+ import { describe, vi } from "vite-plus/test";
+ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+-import { HttpServerResponse } from "effect/unstable/http";
++import { HttpServerResponse } from "effect/http";
+ import { openMediaFile } from "./assets/MediaFile.ts";
+ 
+ import {
+@@ -394,6 +394,24 @@ describe("assetResponseHeaders", () => {
+     }
+   });
+ 
++  it("sandboxes rendered host files, HTML and SVG alike", () => {
++    expect(
++      assetResponseHeaders("/home/harout/Claude/AI/dev-team/report.html", {
++        mimeType: "text/html",
++      }),
++    ).toMatchObject({
++      "Content-Type": "text/html; charset=utf-8",
++      "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals",
++    });
++    expect(
++      assetResponseHeaders("/home/harout/Claude/AI/dev-team/diagram.svg", {
++        mimeType: "image/svg+xml",
++      }),
++    ).toMatchObject({
++      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
++    });
++  });
++
+   it("downloads uploaded documents without executing their content", () => {
+     expect(assetResponseHeaders("/attachments/upload.html", { download: true })).toMatchObject({
+       "Content-Disposition": "attachment",

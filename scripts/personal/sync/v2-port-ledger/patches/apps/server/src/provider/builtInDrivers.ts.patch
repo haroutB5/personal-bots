@@ -1,0 +1,39 @@
+diff --git a/apps/server/src/provider/builtInDrivers.ts b/apps/server/src/provider/builtInDrivers.ts
+index 60e3402eed428a4e69148a705bc5a39a58a300de..a68283eedf9196f09809843435c7eee7ac439899 100644
+--- a/apps/server/src/provider/builtInDrivers.ts
++++ b/apps/server/src/provider/builtInDrivers.ts
+@@ -23,9 +23,11 @@
+ import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
+ import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
+ import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
++import { DeepSeekDriver, type DeepSeekDriverEnv } from "./Drivers/DeepSeekDriver.ts";
+ import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+ import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
+ import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
++import { RegistryAcpDriver, type RegistryAcpDriverEnv } from "./Drivers/RegistryAcpDriver.ts";
+ import type { AnyProviderDriver } from "./ProviderDriver.ts";
+ 
+ /**
+@@ -37,9 +39,11 @@ export type BuiltInDriversEnv =
+   | ClaudeDriverEnv
+   | CodexDriverEnv
+   | CursorDriverEnv
++  | DeepSeekDriverEnv
+   | GrokDriverEnv
+   | OpenCodeDriverEnv
+-  | AntigravityDriverEnv;
++  | AntigravityDriverEnv
++  | RegistryAcpDriverEnv;
+ 
+ /**
+  * Ordered list of built-in drivers. Order matters only for tie-breaking in
+@@ -50,7 +54,9 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
+   CodexDriver,
+   ClaudeDriver,
+   CursorDriver,
++  DeepSeekDriver,
+   GrokDriver,
+   OpenCodeDriver,
+   AntigravityDriver,
++  RegistryAcpDriver,
+ ];

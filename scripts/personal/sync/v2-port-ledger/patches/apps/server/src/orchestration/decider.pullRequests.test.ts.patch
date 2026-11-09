@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/orchestration/decider.pullRequests.test.ts b/apps/server/src/orchestration/decider.pullRequests.test.ts
+index 7a961af12d5be93f61428f1940d2e190b2c9acab..f1a75a576bc6a9ddd1e45927064e0672614e90c8 100644
+--- a/apps/server/src/orchestration/decider.pullRequests.test.ts
++++ b/apps/server/src/orchestration/decider.pullRequests.test.ts
+@@ -9,7 +9,7 @@ import {
+   type ThreadPullRequestLink,
+   type ThreadPullRequestSnapshot,
+ } from "@t3tools/contracts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Schema from "effect/Schema";

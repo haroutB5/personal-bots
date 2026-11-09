@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/deviceHubAccess.ts b/packages/client-runtime/src/state/deviceHubAccess.ts
+index 9ab65b25e6345665c40fe6e87c333f0aac0aad3f..d07ec68bfcf1818af8eb8ee77bc1a71620d31fe4 100644
+--- a/packages/client-runtime/src/state/deviceHubAccess.ts
++++ b/packages/client-runtime/src/state/deviceHubAccess.ts
+@@ -12,7 +12,7 @@
+  * Callers fetch a fresh one each time they (re)connect a stream.
+  */
+ import * as Effect from "effect/Effect";
+-import type { HttpClient } from "effect/unstable/http";
++import type { HttpClient } from "effect/http";
+ 
+ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+ import type { PreparedConnection } from "../connection/model.ts";

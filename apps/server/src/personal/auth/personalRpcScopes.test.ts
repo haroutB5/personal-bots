@@ -1,4 +1,6 @@
 import {
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   WS_METHODS,
@@ -20,6 +22,11 @@ describe("personal RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.personalBotsTokenUsage)).toBe(
       AuthOrchestrationReadScope,
     );
+  });
+
+  it("gates the device RPCs on the same access scopes as their HTTP twins", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.personalDevicesList)).toBe(AuthAccessReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.personalDevicesRevoke)).toBe(AuthAccessWriteScope);
   });
 
   it("requires operate scope to permanently delete a personal file", () => {

@@ -2,36 +2,32 @@
  * DeepSeekBalanceWatcher - tells the owner before a DeepSeek account runs dry.
  *
  * A prepaid balance is the one provider problem the app can see coming, and it
- * cannot be discovered from a page: the server has to look. This service does
- * that look, cheaply, and only ever sends one notice per low spell.
+ * cannot be discovered from a page: the server has to look.
  *
- * - **After a finished turn.** A `turn.completed` for a DeepSeek instance asks
- *   for a reading, debounced to at most one per instance per five minutes: a
- *   chatty session must not become a balance poll per turn.
- * - **A light timer.** Every thirty minutes it sweeps the instances that are
- *   enabled *and* have a key. With nothing to watch it makes no request at all,
- *   so a disabled or keyless DeepSeek costs nothing.
- * - **The moment a key shows up.** A DeepSeek instance is only watchable once
- *   its probe has called it authenticated, and that probe reads the balance
- *   itself, so a slow one can finish long after boot. The registry's change
- *   stream is watched for an instance reaching that state, and the check it
- *   missed runs then rather than at the next half-hour tick. Debounced like any
- *   other check.
- * - **One notice per spell.** At or below $1.00 the owner is told once, and the
- *   spell may escalate once to the stronger empty notice if the account then
- *   runs out. The announced kind lives in `personal_meta`, so a server restart
- *   does not warn again, and it is cleared only once the balance is back above
- *   $1.50 - a top-up.
+ * - After a finished turn. A `TurnSettled` for a DeepSeek session asks for a
+ *   reading, debounced to at most one per instance per five minutes.
+ * - A light timer. Every thirty minutes it sweeps the instances that are
+ *   enabled and have a key. With nothing to watch it makes no request.
+ * - The moment a key shows up. The registry's change stream is watched for an
+ *   instance reaching authenticated, and the check it missed runs then.
+ * - One notice per spell. At or below $1.00 the owner is told once, and the
+ *   spell may escalate once to the stronger empty notice. The announced kind
+ *   lives in `personal_meta`, so a restart does not warn again, and it is
+ *   cleared only once the balance is back above $1.50.
  *
- * The reading itself is the DeepSeek provider's existing one
- * (`deepSeekBalanceReader`, cached for ten minutes), so the key still only ever
- * travels in the request's Authorization header and the same single reader
- * serves the card. A failed read is silent and changes nothing (see
- * `decideDeepSeekBalanceAlert`).
+ * The reading is the provider's shared one (`deepSeekBalanceReader`, cached for
+ * ten minutes), so the key still only travels in the request's Authorization
+ * header and the same reader serves the card. A failed read is silent and
+ * changes nothing.
  *
  * @module personal/deepseek/DeepSeekBalanceWatcher
  */
-import type { ProviderInstanceId, ProviderRuntimeEvent, ServerProvider } from "@t3tools/contracts";
+import type { ProviderInstanceId, ServerProvider, ThreadId } from "@t3tools/contracts";
+import {
+  DEEPSEEK_AUTH_TOKEN_ENV,
+  deepSeekBalanceReader,
+  type DeepSeekBalanceRead,
+} from "@t3tools/provider-deepseek/server";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,15 +40,9 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { withStallJob } from "../../observability/stallJobs.ts";
-import {
-  deepSeekBalanceReader,
-  type DeepSeekBalanceRead,
-} from "../../provider/Drivers/DeepSeekBalance.ts";
-import { DEEPSEEK_AUTH_TOKEN_ENV } from "../../provider/Drivers/DeepSeekEnvironment.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { PersonalProviders, type PersonalSessionEvent } from "../engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
 import {
@@ -64,16 +54,12 @@ import {
   parseDeepSeekBalanceLastKind,
 } from "./deepSeekBalanceAlert.ts";
 
-/** Any tagged service error; the watcher logs and moves on rather than branching on them. */
+/** Any tagged service error; a meta failure is ignored rather than branched on. */
 interface DepFailure {
   readonly _tag: string;
 }
 
-/**
- * The instances worth spending a request on: DeepSeek, enabled, and carrying a
- * key. `auth.status` is the probe's own reading of the instance environment, so
- * a keyless instance is never asked.
- */
+/** The instances worth spending a request on: DeepSeek, enabled, and carrying a key. */
 export function watchableDeepSeekProviders(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ServerProvider> {
@@ -87,7 +73,7 @@ export function watchableDeepSeekProviders(
 
 export interface DeepSeekBalanceWatcherDeps {
   readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
-  readonly runtimeEvents: Stream.Stream<ProviderRuntimeEvent>;
+  readonly runtimeEvents: Stream.Stream<PersonalSessionEvent>;
   /** Every provider snapshot the registry publishes, newest state each time. */
   readonly providerChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   /** The instance's key, then one reading with it; none when it has no key. */
@@ -108,7 +94,7 @@ export interface DeepSeekBalanceWatcherDeps {
 }
 
 export interface DeepSeekBalanceWatcherShape {
-  /** Parks until server activation, then watches turns and the timer. */
+  /** Parks until server activation, then watches turns, provider changes and the timer. */
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   /** One reading for one instance; `force` skips the debounce (the timer's path). */
   readonly check: (input: {
@@ -123,9 +109,8 @@ export const makeWith = (
   deps: DeepSeekBalanceWatcherDeps,
 ): Effect.Effect<DeepSeekBalanceWatcherShape> => {
   const now = deps.now ?? Date.now;
-  // In memory only: the debounce is about not asking twice within a few
-  // minutes, and a restart may as well ask once. The announced kind, which must
-  // survive a restart, is in `personal_meta` instead.
+  // In memory only: a restart may as well ask once. The announced kind, which
+  // must survive a restart, is in `personal_meta` instead.
   const lastCheckMs = new Map<string, number>();
 
   const evaluate = (
@@ -209,20 +194,32 @@ export const makeWith = (
     }
   });
 
-  const handleRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+  // A turn event names its chat, not its instance; `SessionStarted` is where
+  // that mapping arrives.
+  const sessionInstances = new Map<ThreadId, ProviderInstanceId>();
+
+  const handleRuntimeEvent = (event: PersonalSessionEvent): Effect.Effect<void> =>
     Effect.gen(function* () {
-      if (event.type !== "turn.completed") return;
-      const instanceId = event.providerInstanceId;
-      if (instanceId === undefined) return;
-      yield* check({ instanceId });
+      switch (event._tag) {
+        case "SessionStarted":
+          if (event.instanceId !== null) sessionInstances.set(event.threadId, event.instanceId);
+          return;
+        case "SessionExited":
+          sessionInstances.delete(event.threadId);
+          return;
+        case "TurnSettled": {
+          const instanceId = sessionInstances.get(event.threadId);
+          if (instanceId === undefined) return;
+          yield* check({ instanceId });
+          return;
+        }
+      }
     });
 
   /**
    * The instances already seen watchable since boot. A DeepSeek probe reads the
    * balance itself, so it can call an instance authenticated well after the
    * startup sweep went past; that arrival is when the missed check is taken.
-   * Later snapshots for the same instance are the stream's routine noise and
-   * stay debounced.
    */
   const watchableSinceBoot = new Set<string>();
 
@@ -266,17 +263,15 @@ export class DeepSeekBalanceWatcher extends Context.Service<
 >()("t3/personal/deepseek/DeepSeekBalanceWatcher") {}
 
 /** The instance's key from the server-side settings, whose secrets are materialized. */
-function instanceToken(environment: ReadonlyArray<{ name: string; value: string }> | undefined) {
-  const token = environment
-    ?.find((variable) => variable.name === DEEPSEEK_AUTH_TOKEN_ENV)
-    ?.value.trim();
-  return token !== undefined && token.length > 0 ? token : undefined;
+function instanceToken(
+  environment: ReadonlyArray<{ readonly name: string; readonly value: unknown }> | undefined,
+) {
+  const value = environment?.find((variable) => variable.name === DEEPSEEK_AUTH_TOKEN_ENV)?.value;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const providers = yield* ProviderRegistry;
-  const providerService = yield* ProviderService;
+  const providers = yield* PersonalProviders;
   const serverSettings = yield* ServerSettingsService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const push = yield* PersonalPushService.PersonalPushService;
@@ -292,8 +287,8 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => Option.none<DeepSeekBalanceRead>()));
 
   return yield* makeWith({
-    getProviders: providers.getProviders,
-    runtimeEvents: providerService.streamEvents,
+    getProviders: providers.listProviders().pipe(Effect.orElseSucceed(() => [])),
+    runtimeEvents: providers.sessionEvents,
     providerChanges: providers.streamChanges,
     readBalance,
     getMeta: (key) => bots.getMeta({ key }),

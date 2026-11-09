@@ -1,0 +1,13 @@
+diff --git a/apps/server/integration/orchestrationEngine.integration.test.ts b/apps/server/integration/orchestrationEngine.integration.test.ts
+index 68b566e2ee4abd4dff7f4607acd93f5e812c936a..44768f8985bff119e497ced25fc52f19fd0f3ef6 100644
+--- a/apps/server/integration/orchestrationEngine.integration.test.ts
++++ b/apps/server/integration/orchestrationEngine.integration.test.ts
+@@ -34,7 +34,7 @@ import type {
+   CheckpointDiffFinalizedReceipt,
+   TurnProcessingQuiescedReceipt,
+ } from "../src/orchestration/Services/RuntimeReceiptBus.ts";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ 
+ const asMessageId = (value: string): MessageId => MessageId.make(value);
+ const asProjectId = (value: string): ProjectId => ProjectId.make(value);

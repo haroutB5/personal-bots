@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/preview/addBrowserSurface.test.ts b/apps/web/src/components/preview/addBrowserSurface.test.ts
+index d34de83a23b479bd5a91e23d66c35ed20a1d97c1..8a524464e4fbee0be3269ae3a956dd760c0004a5 100644
+--- a/apps/web/src/components/preview/addBrowserSurface.test.ts
++++ b/apps/web/src/components/preview/addBrowserSurface.test.ts
+@@ -6,7 +6,7 @@ import {
+   type PreviewSessionSnapshot,
+   type ScopedThreadRef,
+ } from "@t3tools/contracts";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+ 
+ import {

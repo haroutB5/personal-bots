@@ -1,0 +1,22 @@
+diff --git a/apps/server/src/provider/Drivers/CodexManagedProvider.ts b/apps/server/src/provider/Drivers/CodexManagedProvider.ts
+index cc6b185d4fd1da15cfe57a830b111326f58eb27e..e4a1a676979acf6480a075bfb766e34104ef0327 100644
+--- a/apps/server/src/provider/Drivers/CodexManagedProvider.ts
++++ b/apps/server/src/provider/Drivers/CodexManagedProvider.ts
+@@ -2,7 +2,7 @@ import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3
+ import * as Effect from "effect/Effect";
+ import * as Stream from "effect/Stream";
+ import * as Option from "effect/Option";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+ import { ServerSettingsService } from "../../serverSettings.ts";
+ import { chatGptModels } from "../CodexChatGptModels.ts";
+@@ -19,7 +19,7 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
+ import { type ProviderDriverCreateInput, type ProviderInstance } from "../ProviderDriver.ts";
+ import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
+ import { withInstanceIdentity } from "./instanceIdentity.ts";
+-import { HttpClient } from "effect/unstable/http";
++import { HttpClient } from "effect/http";
+ const DRIVER = ProviderDriverKind.make("codex");
+ 
+ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (

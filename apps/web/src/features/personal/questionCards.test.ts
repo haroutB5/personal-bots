@@ -1,5 +1,6 @@
 import type { PendingUserInput } from "@t3tools/client-runtime/pending-requests";
-import type { ApprovalRequestId, OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@hbots/personal-client/conversation/wireTypes";
+import type { ApprovalRequestId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import { describeAnswer, deriveQuestionCards, deriveUserInputResolutions } from "./questionCards";

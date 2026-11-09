@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx b/apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
+index 1cf2dfd6b69b1f784506a635e26432546e8a3dc4..7535b22955ab319af9431f8a17bbbde8e511e702 100644
+--- a/apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
++++ b/apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
+@@ -6,7 +6,7 @@ import {
+   useRoute,
+   type StaticScreenProps,
+ } from "@react-navigation/native";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { Alert, Linking, Platform, View } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";

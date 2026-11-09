@@ -1,0 +1,15 @@
+diff --git a/apps/desktop/src/ssh/DesktopSshEnvironment.ts b/apps/desktop/src/ssh/DesktopSshEnvironment.ts
+index b5e724084a21ad6c31bef45eebea4be7894c0ab8..26e307b0c25092f44372a62ab8af7f5eb76a332b 100644
+--- a/apps/desktop/src/ssh/DesktopSshEnvironment.ts
++++ b/apps/desktop/src/ssh/DesktopSshEnvironment.ts
+@@ -22,8 +22,8 @@ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+-import * as HttpClient from "effect/unstable/http/HttpClient";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as HttpClient from "effect/http/HttpClient";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+ 

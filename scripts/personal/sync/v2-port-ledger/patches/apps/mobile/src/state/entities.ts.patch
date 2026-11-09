@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/entities.ts b/apps/mobile/src/state/entities.ts
+index eca98d0563b364910db4b647a4a477c81e33098a..c3b715892e71c5baf7cd98a1da47406353dac2d1 100644
+--- a/apps/mobile/src/state/entities.ts
++++ b/apps/mobile/src/state/entities.ts
+@@ -11,7 +11,7 @@ import type {
+   ScopedThreadRef,
+   ServerConfig,
+ } from "@t3tools/contracts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import { environmentProjects } from "./projects";
+ import { environmentServerConfigsAtom, serverEnvironment } from "./server";

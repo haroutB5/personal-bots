@@ -27,16 +27,14 @@ data class NativeSession(val httpBaseUrl: String, val accessToken: String) {
  * key. The token stays in memory for one check and is never copied into the
  * updater prefs, WorkManager or a log.
  */
-object SessionSource {
-  private const val TAG = "HbotsUpdate"
+object SecureStoreSource {
   private const val PREFS = "SecureStore"
-  private const val KEY = "key_v1-hbots.session.v1"
   private const val KEYSTORE = "AndroidKeyStore"
   private const val AES = "AES/GCM/NoPadding"
 
-  fun read(context: Context): NativeSession? = runCatching {
-    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-      ?: return null
+  fun readString(context: Context, storageKey: String): String? = runCatching {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      .getString("key_v1-$storageKey", null) ?: return null
     val item = JSONObject(raw)
     if (item.optString("scheme") != "aes") return null
     val keychain = item.optString("keystoreAlias", "key_v1")
@@ -49,12 +47,22 @@ object SessionSource {
     val iv = Base64.decode(item.getString("iv"), Base64.DEFAULT)
     cipher.init(Cipher.DECRYPT_MODE, entry.secretKey, GCMParameterSpec(tagLength, iv))
     val plaintext = cipher.doFinal(Base64.decode(item.getString("ct"), Base64.DEFAULT))
-    NativeSession.parse(String(plaintext, StandardCharsets.UTF_8))
-  }.onFailure {
-    Log.w(TAG, "session read failed ${it.javaClass.simpleName}")
+    String(plaintext, StandardCharsets.UTF_8)
   }.getOrNull()
 
   /** Mirrors expo-secure-store 57 AESEncryptor: `AES/<mode>/<padding>:<keychain>:<suffix>`. */
   internal fun keystoreAlias(keychain: String, usesSuffix: Boolean): String =
     if (usesSuffix) "$AES:$keychain:keystoreUnauthenticated" else "$AES:$keychain"
+}
+
+object SessionSource {
+  private const val TAG = "HbotsUpdate"
+  private const val KEY = "hbots.session.v1"
+
+  fun read(context: Context): NativeSession? = runCatching {
+    val raw = SecureStoreSource.readString(context, KEY) ?: return null
+    NativeSession.parse(raw)
+  }.onFailure {
+    Log.w(TAG, "session read failed ${it.javaClass.simpleName}")
+  }.getOrNull()
 }

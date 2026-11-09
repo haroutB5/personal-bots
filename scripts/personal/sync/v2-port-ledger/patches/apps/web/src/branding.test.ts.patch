@@ -1,0 +1,27 @@
+diff --git a/apps/web/src/branding.test.ts b/apps/web/src/branding.test.ts
+index e1c87bcf0595e071d52bf4e8a3ff8f5cce33b254..a5207fbeeee5f91c535480625c27593f33aa0aa9 100644
+--- a/apps/web/src/branding.test.ts
++++ b/apps/web/src/branding.test.ts
+@@ -1,3 +1,6 @@
++// @effect-diagnostics nodeBuiltinImport:off - the drift test reads the manifest file.
++import { PERSONAL_APP_BASE_NAME, PERSONAL_APP_MANIFEST_NAME } from "@t3tools/contracts";
++import * as NodeFS from "node:fs";
+ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+ import {
+   resolveServerBackedAppDisplayName,
+@@ -113,4 +116,15 @@ describe("branding logic", () => {
+       }),
+     ).toBe("T3 Code (Alpha)");
+   });
++
++  it("keeps the guard's app identity in step with branding and the manifest", async () => {
++    const branding = await import("./branding");
++    // The desktop guard refuses any window titled the base name; a literal
++    // here that drifted from the contract would let the Bots UI be driven.
++    expect(branding.APP_BASE_NAME).toBe(PERSONAL_APP_BASE_NAME);
++    const manifest = JSON.parse(
++      NodeFS.readFileSync(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
++    ) as { readonly name?: string };
++    expect(manifest.name).toBe(PERSONAL_APP_MANIFEST_NAME);
++  });
+ });

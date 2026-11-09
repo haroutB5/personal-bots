@@ -1,7 +1,8 @@
 import {
+  AuthSessionId,
   EnvironmentAuthorizationError,
   PersonalBotsError,
-  type ThreadId,
+  ThreadId,
   WS_METHODS,
   WsPersonalRpcGroup,
 } from "@t3tools/contracts";
@@ -9,6 +10,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+
+import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 
 import {
   archivePersonalChats,
@@ -26,6 +29,8 @@ import { deletePersonalChat } from "../deletePersonalChat.ts";
 import { deletePersonalGroup } from "../deletePersonalGroup.ts";
 import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalDesktop from "../desktop/PersonalDesktop.ts";
+import * as PersonalDevices from "../devices/PersonalDevices.ts";
+import * as PersonalBotShellStream from "../PersonalBotShellStream.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import * as PersonalGroupService from "../groups/PersonalGroupService.ts";
 import * as PersonalLeadBots from "../leadBots/PersonalLeadBotService.ts";
@@ -46,10 +51,14 @@ import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalVoiceCallService from "../voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceSampleService from "../voiceCalls/PersonalVoiceSampleService.ts";
 import { listBotThreadIds } from "../personalShellSlim.ts";
+import { makeProviderCatalogAdapter } from "../providerCatalog/ProviderCatalogAdapter.ts";
 import type { PersonalSessionPrewarmer } from "../sessionPrewarm.ts";
 import { purgePersonalBot } from "../purgePersonalBot.ts";
 import { readThreadFullText } from "../threadTextPreviews.ts";
 import { personalWorkingProgress } from "../workingProgress.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 
 export interface PersonalWsHandlerDeps {
   readonly currentSessionId: string;
@@ -76,8 +85,10 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const { currentSessionId, observeRpcEffect, observeRpcStream, sessionPrewarmer, viewing } =
       deps;
     const sql = yield* SqlClient.SqlClient;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const personalEngine = yield* PersonalEngine.PersonalEngine;
     const personalBots = yield* PersonalBotService.PersonalBotService;
+    const personalBotShellStream = yield* PersonalBotShellStream.PersonalBotShellStream;
     const personalBotTokenUsage = yield* PersonalBotTokenUsage.PersonalBotTokenUsage;
     const personalTasks = yield* PersonalTaskService.PersonalTaskService;
     const personalGroups = yield* PersonalGroupService.PersonalGroupService;
@@ -97,6 +108,23 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const personalMemoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
     const personalPush = yield* PersonalPushService.PersonalPushService;
     const personalProviderUpdates = yield* PersonalProviderUpdates.PersonalProviderUpdates;
+    const acpRegistry = yield* AcpRegistrySupport.AcpRegistryCatalog;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const providerCatalog = makeProviderCatalogAdapter({
+      searchRegistry: (input) => acpRegistry.search(input),
+      prepareRegistryAgent: (input) => acpRegistry.prepare(input),
+      getProviders: providerRegistry.getProviders,
+      getSettings: serverSettings.getSettings,
+      setProvider: (input) =>
+        serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId: input.instanceId,
+          instance: input.instance,
+        }),
+      refreshProvider: (instanceId) => providerRegistry.refreshInstance(instanceId),
+      testRun: (input) => personalProviderUpdates.testRun(input),
+    });
     return WsPersonalRpcGroup.of({
       [WS_METHODS.personalBotsList]: (input) =>
         observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(input), {
@@ -108,8 +136,10 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
           Effect.gen(function* () {
             const ids = yield* listBotThreadIds(input);
             if (ids.size === 0) return { threads: [] };
-            const threads = yield* personalEngine.shellSnapshot({ unsettledOnly: false });
-            return { threads: threads.filter((thread) => ids.has(thread.id)) };
+            const threads = yield* personalEngine.threadShells(
+              [...ids].map((threadId) => ThreadId.make(threadId)),
+            );
+            return { threads };
           }).pipe(
             Effect.provideService(SqlClient.SqlClient, sql),
             Effect.mapError(
@@ -120,6 +150,12 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
                 }),
             ),
           ),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalBotsSubscribeThreadShells]: (_input) =>
+        observeRpcStream(
+          WS_METHODS.personalBotsSubscribeThreadShells,
+          personalBotShellStream.subscribe,
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalBotsThreadFullText]: (input) =>
@@ -390,6 +426,28 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
             "rpc.aggregate": "server",
           },
         ),
+      [WS_METHODS.providerCatalogList]: (input) =>
+        observeRpcEffect(WS_METHODS.providerCatalogList, providerCatalog.list(input), {
+          "rpc.aggregate": "provider",
+        }),
+      [WS_METHODS.providerCatalogInstallFacts]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.providerCatalogInstallFacts,
+          providerCatalog.installFacts(input),
+          { "rpc.aggregate": "provider" },
+        ),
+      [WS_METHODS.providerCatalogAdd]: (input) =>
+        observeRpcEffect(WS_METHODS.providerCatalogAdd, providerCatalog.add(input), {
+          "rpc.aggregate": "provider",
+        }),
+      [WS_METHODS.providerTestRun]: (input) =>
+        observeRpcEffect(WS_METHODS.providerTestRun, providerCatalog.testRun(input), {
+          "rpc.aggregate": "provider",
+        }),
+      [WS_METHODS.serverGetSettings]: (_input) =>
+        observeRpcEffect(WS_METHODS.serverGetSettings, providerCatalog.getSettings, {
+          "rpc.aggregate": "server",
+        }),
       [WS_METHODS.personalBotsListFiles]: (_input) =>
         observeRpcEffect(
           WS_METHODS.personalBotsListFiles,
@@ -884,6 +942,25 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
         observeRpcEffect(
           WS_METHODS.personalMemoryTidyRun,
           personalMemoryTidy.run({ dryRun: input.dryRun ?? true }),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalDevicesList]: (_input) =>
+        observeRpcEffect(
+          WS_METHODS.personalDevicesList,
+          PersonalDevices.listPersonalDevices(
+            environmentAuth,
+            AuthSessionId.make(currentSessionId),
+          ),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalDevicesRevoke]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalDevicesRevoke,
+          PersonalDevices.revokePersonalDevice(
+            environmentAuth,
+            AuthSessionId.make(currentSessionId),
+            input.sessionId,
+          ),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushPublicKey]: (_input) =>

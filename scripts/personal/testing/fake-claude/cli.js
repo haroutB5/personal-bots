@@ -266,6 +266,7 @@ const finish = (text, isError) => {
 };
 
 let askRequest = null;
+let setServers = null;
 const mcpConfigArg = (() => {
   const i = args.indexOf("--mcp-config");
   if (i < 0) return null;
@@ -281,7 +282,7 @@ const mcpConfigArg = (() => {
   }
 })();
 async function mcpCall(name, toolArgs) {
-  const server = mcpConfigArg?.mcpServers?.["t3-code"];
+  const server = setServers?.["t3-code"] ?? mcpConfigArg?.mcpServers?.["t3-code"];
   if (!server) throw new Error("no t3-code MCP server in --mcp-config");
   let sessionHeader = null;
   const post = async (body) => {
@@ -398,6 +399,16 @@ lines.on("line", async (line) => {
       respond(message, {});
       finish("Interrupted", true);
       return;
+    }
+    if (subtype === "mcp_set_servers") {
+      // v2 registers MCP servers here after start instead of passing --mcp-config.
+      setServers = message.request?.servers ?? null;
+      // The SDK reads result.errors; a bare {} makes Object.keys(undefined) throw.
+      return respond(message, {
+        added: Object.keys(setServers ?? {}),
+        removed: [],
+        errors: {},
+      });
     }
     return respond(message, {});
   }

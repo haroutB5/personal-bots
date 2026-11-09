@@ -1,0 +1,87 @@
+diff --git a/packages/contracts/src/providerRuntime.ts b/packages/contracts/src/providerRuntime.ts
+index aa2b3b7e15809ae597e2120d68e18a8ae5ae4a8f..87e518a42e809f536703f00679a1988620c3ea2d 100644
+--- a/packages/contracts/src/providerRuntime.ts
++++ b/packages/contracts/src/providerRuntime.ts
+@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
+ import {
+   EventId,
+   IsoDateTime,
++  MessageId,
+   NonNegativeInt,
+   ProviderItemId,
+   PositiveInt,
+@@ -15,7 +16,7 @@ import {
+ } from "./baseSchemas.ts";
+ import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+ import { ProviderUsageLimitsUpdate } from "./providerUsageLimits.ts";
+-import { ProviderApprovalOption } from "./orchestration.ts";
++import { ProviderApprovalOption, ProviderRetryInfo } from "./orchestration.ts";
+ 
+ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
+ const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
+@@ -198,6 +199,7 @@ const FilesPersistedType = Schema.Literal("files.persisted");
+ const ToolDeniedType = Schema.Literal("tool.denied");
+ const RuntimeWarningType = Schema.Literal("runtime.warning");
+ const RuntimeErrorType = Schema.Literal("runtime.error");
++const UserMessageDeliveredType = Schema.Literal("user-message.delivered");
+ 
+ const ProviderRuntimeEventBase = Schema.Struct({
+   eventId: EventId,
+@@ -231,6 +233,8 @@ const SessionStateChangedPayload = Schema.Struct({
+   state: RuntimeSessionState,
+   reason: Schema.optional(TrimmedNonEmptyStringSchema),
+   detail: Schema.optional(Schema.Unknown),
++  /** Normalized rate-limit / retry wait, projected onto the thread session. */
++  retry: Schema.optional(ProviderRetryInfo),
+ });
+ export type SessionStateChangedPayload = typeof SessionStateChangedPayload.Type;
+ 
+@@ -353,6 +357,8 @@ const TurnCompletedPayload = Schema.Struct({
+   totalCostUsd: Schema.optional(Schema.Number),
+   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+   tokenUsage: Schema.optional(TurnTokenUsage),
++  /** A failed turn that stopped on a provider limit, with its reset when reported. */
++  retry: Schema.optional(ProviderRetryInfo),
+ });
+ export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;
+ 
+@@ -807,6 +813,16 @@ const RuntimeWarningPayload = Schema.Struct({
+ });
+ export type RuntimeWarningPayload = typeof RuntimeWarningPayload.Type;
+ 
++/**
++ * The provider has taken in a user message: it drained into a turn (a new one,
++ * or folded into the running one as a steer) rather than waiting in a queue.
++ * Drives the chat's "Queued" -> "Read" status under the owner's latest message.
++ */
++const UserMessageDeliveredPayload = Schema.Struct({
++  messageId: MessageId,
++});
++export type UserMessageDeliveredPayload = typeof UserMessageDeliveredPayload.Type;
++
+ const RuntimeErrorPayload = Schema.Struct({
+   message: TrimmedNonEmptyStringSchema,
+   code: Schema.optional(TrimmedNonEmptyStringSchema),
+@@ -1175,6 +1191,14 @@ const ProviderRuntimeErrorEvent = Schema.Struct({
+ });
+ export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
+ 
++const ProviderRuntimeUserMessageDeliveredEvent = Schema.Struct({
++  ...ProviderRuntimeEventBase.fields,
++  type: UserMessageDeliveredType,
++  payload: UserMessageDeliveredPayload,
++});
++export type ProviderRuntimeUserMessageDeliveredEvent =
++  typeof ProviderRuntimeUserMessageDeliveredEvent.Type;
++
+ export const ProviderRuntimeEventV2 = Schema.Union([
+   ProviderRuntimeSessionStartedEvent,
+   ProviderRuntimeSessionConfiguredEvent,
+@@ -1225,6 +1249,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
+   ProviderRuntimeToolDeniedEvent,
+   ProviderRuntimeWarningEvent,
+   ProviderRuntimeErrorEvent,
++  ProviderRuntimeUserMessageDeliveredEvent,
+ ]);
+ export type ProviderRuntimeEventV2 = typeof ProviderRuntimeEventV2.Type;
+ 

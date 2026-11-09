@@ -1,0 +1,51 @@
+diff --git a/apps/server/src/serverRuntimeStartup.test.ts b/apps/server/src/serverRuntimeStartup.test.ts
+index 4bbdb2e9c8b5d264806ada0c83c221907f8c5c15..10779edabbf0eb6b63bb2b05d84398b3a7bae527 100644
+--- a/apps/server/src/serverRuntimeStartup.test.ts
++++ b/apps/server/src/serverRuntimeStartup.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   DEFAULT_MODEL,
+   DEFAULT_SERVER_SETTINGS,
+@@ -7,7 +7,7 @@ import {
+   ThreadId,
+ } from "@t3tools/contracts";
+ import { assert, it } from "@effect/vitest";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+ import * as Fiber from "effect/Fiber";
+@@ -164,6 +164,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
+       } as never),
+       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+         getUserInputActivity: () => Effect.die("unused"),
++        getPendingInputActivities: () => Effect.succeed([]),
+         listActivitiesByKind: () => Effect.succeed([]),
+         getCommandReadModel: () => Effect.die("unused"),
+         getSnapshot: () => Effect.die("unused"),
+@@ -294,6 +295,7 @@ it.effect.each([
+       } as never),
+       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+         getUserInputActivity: () => Effect.die("unused"),
++        getPendingInputActivities: () => Effect.succeed([]),
+         listActivitiesByKind: () => Effect.succeed([]),
+         getCommandReadModel: () => Effect.die("unused"),
+         getSnapshot: () => Effect.die("unused"),
+@@ -382,6 +384,7 @@ it.effect(
+         } as never),
+         Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+           getUserInputActivity: () => Effect.die("unused"),
++          getPendingInputActivities: () => Effect.succeed([]),
+           listActivitiesByKind: () => Effect.succeed([]),
+           getCommandReadModel: () => Effect.die("unused"),
+           getSnapshot: () => Effect.die("unused"),
+@@ -448,6 +451,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
+       } as never),
+       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+         getUserInputActivity: () => Effect.die("unused"),
++        getPendingInputActivities: () => Effect.succeed([]),
+         listActivitiesByKind: () => Effect.succeed([]),
+         getCommandReadModel: () => Effect.die("unused"),
+         getSnapshot: () => Effect.die("unused"),

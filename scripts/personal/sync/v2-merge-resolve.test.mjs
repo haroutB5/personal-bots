@@ -11,6 +11,8 @@ const { test } = NodeTest;
 
 import {
   backportMatches,
+  cleanMergeHunkErrors,
+  closureErrors,
   countPatchLines,
   followSourceTarget,
   groupFor,
@@ -23,8 +25,12 @@ import {
   parseUnmergedStages,
   planFor,
   renamedIntoV2,
+  removedExportNames,
   SEAM_FILES,
+  seamTypeErrors,
+  stripErrors,
   supersededBy,
+  supersededCreatedBlocksDrop,
   targetFor,
   targetPrFor,
 } from "./v2-merge-resolve.mjs";
@@ -611,4 +617,115 @@ test("fixture D: a content row with no hunk fails the run", () => {
   } finally {
     cleanup(fixture);
   }
+});
+
+test("H.4 closure: a live importer of a parked file fails, a parked one passes", () => {
+  const importers = new Map([
+    [
+      "apps/server/src/personal/a.ts",
+      ["apps/server/src/personal/a.test.ts", "apps/server/src/server.ts"],
+    ],
+  ]);
+
+  NodeAssert.deepEqual(
+    closureErrors({
+      parkedPaths: ["apps/server/src/personal/a.ts", "apps/server/src/personal/a.test.ts"],
+      importers,
+    }),
+    [],
+  );
+
+  const errors = closureErrors({
+    parkedPaths: ["apps/server/src/personal/a.ts"],
+    importers: new Map([["apps/server/src/personal/a.ts", ["apps/server/src/personal/b.ts"]]]),
+  });
+  NodeAssert.equal(errors.length, 1);
+  NodeAssert.match(errors[0], /b\.ts imports parked/);
+});
+
+test("H.4 strip: a removed export with no live caller passes, one with a caller fails", () => {
+  const patch = [
+    "-export const advertisedMcpTool = (tool: unknown) => tool;",
+    "+export const plainTool = (tool: unknown) => tool;",
+  ].join("\n");
+  NodeAssert.deepEqual(removedExportNames(patch), ["advertisedMcpTool"]);
+
+  const removed = new Map([["advertisedMcpTool", "apps/server/src/mcp/a.ts"]]);
+  const sources = new Map([
+    ["apps/server/src/mcp/b.ts", 'import { advertisedMcpTool } from "./a.ts";'],
+  ]);
+
+  NodeAssert.deepEqual(
+    stripErrors({
+      removed,
+      sources: new Map([["apps/server/src/mcp/b.ts", "export const b = 1;"]]),
+      parkedPaths: [],
+    }),
+    [],
+  );
+  const errors = stripErrors({ removed, sources, parkedPaths: [] });
+  NodeAssert.equal(errors.length, 1);
+  NodeAssert.match(errors[0], /still reads it/);
+});
+
+test("H.4 clean-merge hunk: a U file that differs must be a row or a seam", () => {
+  const upstreamFiles = new Set([
+    "apps/server/src/usage/UsageService.ts",
+    "apps/server/src/server.ts",
+  ]);
+  const changedPaths = ["apps/server/src/usage/UsageService.ts", "apps/server/src/server.ts"];
+
+  NodeAssert.deepEqual(
+    cleanMergeHunkErrors({
+      changedPaths,
+      upstreamFiles,
+      parkedPaths: ["apps/server/src/usage/UsageService.ts"],
+    }),
+    [],
+  );
+
+  NodeAssert.deepEqual(cleanMergeHunkErrors({ changedPaths, upstreamFiles, parkedPaths: [] }), [
+    "apps/server/src/usage/UsageService.ts",
+  ]);
+});
+
+test("H.4 superseded-created: a live importer blocks the drop", () => {
+  NodeAssert.equal(
+    supersededCreatedBlocksDrop({
+      created: true,
+      upstreamHas: false,
+      liveImporters: ["apps/server/src/personal/a.ts"],
+    }),
+    true,
+  );
+  NodeAssert.equal(
+    supersededCreatedBlocksDrop({ created: true, upstreamHas: true, liveImporters: ["a.ts"] }),
+    false,
+  );
+  NodeAssert.equal(
+    supersededCreatedBlocksDrop({ created: true, upstreamHas: false, liveImporters: [] }),
+    false,
+  );
+});
+
+test("H.4 seam type: adding a line passes, removing one a U test reads fails", () => {
+  const path = SEAM_FILES[2];
+  const sources = new Map([["apps/server/src/ws.test.ts", "const group = WsRpcGroup.make(a, b);"]]);
+
+  NodeAssert.deepEqual(
+    seamTypeErrors({
+      path,
+      diff: `--- a/${path}\n+++ b/${path}\n@@\n+const personalGroup = 1;`,
+      sources,
+    }),
+    [],
+  );
+
+  const errors = seamTypeErrors({
+    path,
+    diff: `--- a/${path}\n+++ b/${path}\n@@\n-const group = WsRpcGroup.make(a, b);\n+const group = WsRpcGroup.make(a, b, personal);`,
+    sources,
+  });
+  NodeAssert.equal(errors.length, 1);
+  NodeAssert.match(errors[0], /changes group, which .*ws\.test\.ts reads/);
 });

@@ -1,0 +1,21 @@
+diff --git a/apps/server/src/provider/Drivers/GrokDriver.test.ts b/apps/server/src/provider/Drivers/GrokDriver.test.ts
+index 916028edc60c0ef30a897fbd0ab2b0fe5fb327f4..6786337dbbd48afd04b2186d53f82835f07e29d2 100644
+--- a/apps/server/src/provider/Drivers/GrokDriver.test.ts
++++ b/apps/server/src/provider/Drivers/GrokDriver.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { expect, it } from "@effect/vitest";
+ import { ProviderInstanceId } from "@t3tools/contracts";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+@@ -6,8 +6,8 @@ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+-import { HttpClient } from "effect/unstable/http";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import { HttpClient } from "effect/http";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+ import { ServerConfig } from "../../config.ts";

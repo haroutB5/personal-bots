@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/use-thread-outbox-drain.ts b/apps/mobile/src/state/use-thread-outbox-drain.ts
+index 022c0ad6addbeda357185f771ab0fc5ed4fae561..deccf08301e5441121d1b08d744b1a96d3b26fed 100644
+--- a/apps/mobile/src/state/use-thread-outbox-drain.ts
++++ b/apps/mobile/src/state/use-thread-outbox-drain.ts
+@@ -13,7 +13,7 @@ import {
+ } from "@t3tools/contracts";
+ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { Alert } from "react-native";
+ 

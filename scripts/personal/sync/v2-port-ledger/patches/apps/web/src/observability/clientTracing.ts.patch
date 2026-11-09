@@ -1,0 +1,31 @@
+diff --git a/apps/web/src/observability/clientTracing.ts b/apps/web/src/observability/clientTracing.ts
+index e8ccd4173d35a87b306f6011ebd49f0e72b2195a..3fba3a569bdade75d37b501ceae30de870ad14f0 100644
+--- a/apps/web/src/observability/clientTracing.ts
++++ b/apps/web/src/observability/clientTracing.ts
+@@ -2,14 +2,15 @@ import * as Exit from "effect/Exit";
+ import * as Layer from "effect/Layer";
+ import * as ManagedRuntime from "effect/ManagedRuntime";
+ import * as Scope from "effect/Scope";
+-import { HttpClient } from "effect/unstable/http";
+-import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
++import { HttpClient } from "effect/http";
++import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
+ 
+ import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+ import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
+ import * as ClientTracer from "./clientTracer";
+ import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
++import { gzipRequestBodiesLayer } from "./traceGzip";
+ import { isElectron } from "../env";
+ import { APP_VERSION } from "~/branding";
+ 
+@@ -25,7 +26,7 @@ const CLIENT_TRACING_RESOURCE = {
+ } as const;
+ 
+ const delegateRuntimeLayer = Layer.mergeAll(
+-  primaryEnvironmentHttpLayer,
++  gzipRequestBodiesLayer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
+   OtlpExporter.layerFlusher,
+   OtlpSerialization.layerJson,
+   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),

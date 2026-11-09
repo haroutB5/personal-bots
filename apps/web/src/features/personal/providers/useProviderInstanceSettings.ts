@@ -1,41 +1,13 @@
-import { useCallback, useMemo } from "react";
-
-import {
-  defaultInstanceIdForDriver,
-  type EnvironmentId,
-  type ProviderDriverKind,
-  type ProviderInstanceConfig,
-  type ProviderInstanceEnvironmentVariable,
-  type ProviderInstanceId,
-  type ServerSettings,
+import type {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceConfig,
+  ProviderInstanceEnvironmentVariable,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 
 import { buildProviderInstanceUpdatePatch } from "~/components/settings/SettingsPanels.logic";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
-
-/**
- * The instance's saved config. The default slot of a built-in provider may live
- * only in the legacy `settings.providers` blob (no explicit instance yet), the
- * same fallback the desktop provider panel uses; the envelope's `enabled` is
- * then the legacy flag.
- */
-export function resolveInstanceConfig(
-  settings: Pick<ServerSettings, "providers" | "providerInstances">,
-  instanceId: ProviderInstanceId,
-  driver: ProviderDriverKind,
-): { readonly instance: ProviderInstanceConfig; readonly isDefault: boolean } | null {
-  const isDefault = String(instanceId) === String(defaultInstanceIdForDriver(driver));
-  const explicit = settings.providerInstances?.[instanceId];
-  if (explicit !== undefined) return { instance: explicit, isDefault };
-  if (!isDefault) return null;
-  const legacy = (settings.providers as Record<string, unknown>)[driver];
-  if (legacy === undefined || legacy === null || typeof legacy !== "object") return null;
-  const { enabled, ...config } = legacy as { enabled?: boolean } & Record<string, unknown>;
-  return {
-    instance: { driver, enabled: enabled ?? false, config } as ProviderInstanceConfig,
-    isDefault,
-  };
-}
 
 export interface ProviderInstanceSettings {
   readonly instance: ProviderInstanceConfig | null;
@@ -61,59 +33,35 @@ export function useProviderInstanceSettings(
 ): ProviderInstanceSettings {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const resolved = useMemo(
-    () => resolveInstanceConfig(settings, instanceId, driver),
-    [settings, instanceId, driver],
-  );
+  const instance = settings.providerInstances?.[instanceId] ?? null;
 
-  const write = useCallback(
-    (next: ProviderInstanceConfig, isDefault: boolean) => {
-      updateSettings(
-        buildProviderInstanceUpdatePatch({
-          settings,
-          instanceId,
-          instance: next,
-          driver,
-          isDefault,
-        }),
-      );
-    },
-    [driver, instanceId, settings, updateSettings],
-  );
+  const write = (next: ProviderInstanceConfig) => {
+    updateSettings(buildProviderInstanceUpdatePatch({ settings, instanceId, instance: next }));
+  };
 
-  const setEnabled = useCallback(
-    (enabled: boolean) => {
-      if (resolved === null) return;
-      write({ ...resolved.instance, enabled }, resolved.isDefault);
-    },
-    [resolved, write],
-  );
-  const setEnvironment = useCallback(
-    (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>, enabled?: boolean) => {
-      const base: ProviderInstanceConfig =
-        resolved?.instance ?? ({ driver } as ProviderInstanceConfig);
-      write(
-        { ...base, ...(enabled === undefined ? {} : { enabled }), environment: [...environment] },
-        resolved?.isDefault ?? String(instanceId) === String(defaultInstanceIdForDriver(driver)),
-      );
-    },
-    [driver, instanceId, resolved, write],
-  );
-  const setConfig = useCallback(
-    (patch: Record<string, unknown>) => {
-      const base: ProviderInstanceConfig =
-        resolved?.instance ?? ({ driver } as ProviderInstanceConfig);
-      const config = { ...(base.config as Record<string, unknown> | undefined), ...patch };
-      for (const key of Object.keys(config)) {
-        if (config[key] === undefined) delete config[key];
-      }
-      write(
-        { ...base, config } as ProviderInstanceConfig,
-        resolved?.isDefault ?? String(instanceId) === String(defaultInstanceIdForDriver(driver)),
-      );
-    },
-    [driver, instanceId, resolved, write],
-  );
+  const setEnabled = (enabled: boolean) => {
+    if (instance === null) return;
+    write({ ...instance, enabled });
+  };
+  const setEnvironment = (
+    environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+    enabled?: boolean,
+  ) => {
+    const base: ProviderInstanceConfig = instance ?? ({ driver } as ProviderInstanceConfig);
+    write({
+      ...base,
+      ...(enabled === undefined ? {} : { enabled }),
+      environment: [...environment],
+    });
+  };
+  const setConfig = (patch: Record<string, unknown>) => {
+    const base: ProviderInstanceConfig = instance ?? ({ driver } as ProviderInstanceConfig);
+    const config = { ...(base.config as Record<string, unknown> | undefined), ...patch };
+    for (const key of Object.keys(config)) {
+      if (config[key] === undefined) delete config[key];
+    }
+    write({ ...base, config } as ProviderInstanceConfig);
+  };
 
-  return { instance: resolved?.instance ?? null, setEnabled, setEnvironment, setConfig };
+  return { instance, setEnabled, setEnvironment, setConfig };
 }

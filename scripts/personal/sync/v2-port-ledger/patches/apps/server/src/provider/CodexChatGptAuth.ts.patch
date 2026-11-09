@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/CodexChatGptAuth.ts b/apps/server/src/provider/CodexChatGptAuth.ts
+index 365025dbb09c56e73bb222df5b619d4ac29aa145..18c046e4603e7a2f307987ce8ff7029688ecf222 100644
+--- a/apps/server/src/provider/CodexChatGptAuth.ts
++++ b/apps/server/src/provider/CodexChatGptAuth.ts
+@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
+ import * as Semaphore from "effect/Semaphore";
+ import * as ProviderAuthFlow from "./ProviderAuthFlow.ts";
+ import type { ProviderAuthFlowContext } from "./ProviderAuthFlow.ts";
+-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest } from "effect/http";
+ import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
+ import { withChatGptSessionLock } from "./CodexChatGptSessionLock.ts";
+ import { ServerSecretStore } from "../auth/ServerSecretStore.ts";

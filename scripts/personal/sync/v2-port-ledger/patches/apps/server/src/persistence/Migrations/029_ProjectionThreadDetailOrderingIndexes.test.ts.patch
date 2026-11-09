@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.test.ts b/apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.test.ts
+index cd246d16ee874e3c37305705a754e6be0699d72f..43cd9821b611e47ab8dfa48ea224680f8be594c0 100644
+--- a/apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.test.ts
++++ b/apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.test.ts
+@@ -1,7 +1,7 @@
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { runMigrations } from "../Migrations.ts";
+ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";

@@ -183,9 +183,7 @@ export function serverTurnLabel(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Delegation cards
-// ---------------------------------------------------------------------------
 
 const isTerminal = (task: PersonalTask) => PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status);
 
@@ -307,9 +305,7 @@ export function deriveDelegationCard(input: {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Waiting parents
-// ---------------------------------------------------------------------------
 
 function waitingText(names: ReadonlyArray<string>): string {
   if (names.length === 0) return "Waiting on a task";
@@ -344,10 +340,6 @@ const WAITING_TASK_STATUSES: ReadonlyArray<PersonalTask["status"]> = [
  * "Waiting on Developer" per thread whose task is unfinished while the thread
  * has no live turn to show for it: parked on delegated work
  * (`waiting_for_agent`), or still `running` after its turn ended (waiting on
- * background work). Names the bots of the task's unfinished children, and says
- * "Waiting on a task" when there are none. Two tasks in one thread (two chat
- * turns that both delegated) merge their names. A thread with a live turn is
- * "Working" whatever this says: callers check the live turn first.
  */
 export function waitingLabelsByThread(
   tasks: ReadonlyArray<PersonalTask>,

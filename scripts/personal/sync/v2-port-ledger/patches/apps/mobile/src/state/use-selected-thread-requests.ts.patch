@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/use-selected-thread-requests.ts b/apps/mobile/src/state/use-selected-thread-requests.ts
+index 3e0cbe29593688423036978bd408b2c001f2a46e..52c439915aebd24e725534539ddfa08ed00e2ed0 100644
+--- a/apps/mobile/src/state/use-selected-thread-requests.ts
++++ b/apps/mobile/src/state/use-selected-thread-requests.ts
+@@ -20,7 +20,7 @@ import {
+   type ProviderApprovalDecision,
+   type UserInputQuestion,
+ } from "@t3tools/contracts";
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import { threadEnvironment } from "../state/threads";
+ import { scopedRequestKey } from "../lib/scopedEntities";

@@ -1,7 +1,7 @@
 import { PERSONAL_CHAT_NOTICE_CONTEXT_KIND } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { TimelineEntry } from "~/session-logic";
+import type { TimelineEntry } from "@hbots/personal-client/conversation/types";
 
 import { previewOf } from "./BotRow";
 import type { BotSummary } from "./botSummaries";

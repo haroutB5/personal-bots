@@ -1,9 +1,10 @@
+import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { expect, it } from "@effect/vitest";
-import type { OrchestrationShellSnapshot, OrchestrationThreadShell } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemoryWorker } from "../persistence/Layers/Sqlite.ts";
+import { runMigrations } from "../persistence/Migrations.ts";
 import {
   archivedShellThreadNeeded,
   listArchivedBotThreadIds,
@@ -14,6 +15,11 @@ import {
 } from "./personalShellSlim.ts";
 
 const at = "2026-10-26T03:00:00.000Z";
+
+interface ShellSnapshot {
+  readonly snapshotSequence: number;
+  readonly threads: ReadonlyArray<OrchestrationThreadShell>;
+}
 
 const shell = (
   id: string,
@@ -28,8 +34,10 @@ const shell = (
     ...overrides,
   }) as unknown as OrchestrationThreadShell;
 
-const snapshot = (threads: ReadonlyArray<OrchestrationThreadShell>): OrchestrationShellSnapshot =>
-  ({ snapshotSequence: 7, projects: [], threads, updatedAt: at }) as OrchestrationShellSnapshot;
+const snapshot = (threads: ReadonlyArray<OrchestrationThreadShell>): ShellSnapshot => ({
+  snapshotSequence: 7,
+  threads,
+});
 
 it("keeps an archived chat that is working or waiting on the owner", () => {
   expect(archivedShellThreadNeeded(shell("idle"))).toBe(false);
@@ -52,7 +60,6 @@ it("drops idle archived chats and keeps everything else in order", () => {
   const slim = slimShellSnapshot(full, new Set(["archived-idle", "archived-busy"]));
   expect(slim.threads.map((thread) => thread.id)).toEqual(["open", "archived-busy", "unlinked"]);
   expect(slim.snapshotSequence).toBe(7);
-  // Nothing to drop: the same object goes out.
   expect(slimShellSnapshot(full, new Set())).toBe(full);
   expect(slimShellSnapshot(full, new Set(["other"]))).toBe(full);
 });
@@ -66,8 +73,11 @@ it("picks the asked-for shells in the shell's order", () => {
   expect(pickThreadShells(full, new Set())).toEqual([]);
 });
 
+const testLayer = NodeSqliteClient.layer({ filename: ":memory:" });
+
 const seedLinks = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  yield* runMigrations({ toMigrationInclusive: 142 });
   for (const botId of ["bot-1", "bot-2"]) {
     yield* sql`
       INSERT INTO personal_bots (
@@ -96,7 +106,7 @@ it.effect("reads the archived bot chats and one bot's chats", () =>
     expect([...botOne].toSorted()).toEqual(["old-1", "open-1"]);
     const named = yield* listBotThreadIds({ threadIds: ["old-2"] });
     expect([...named]).toEqual(["old-2"]);
-  }).pipe(Effect.provide(SqlitePersistenceMemoryWorker)),
+  }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("slims only when asked and while the switch is on", () =>
@@ -116,5 +126,5 @@ it.effect("slims only when asked and while the switch is on", () =>
       if (previous === undefined) delete process.env.PB_PERF_OFF;
       else process.env.PB_PERF_OFF = previous;
     }
-  }).pipe(Effect.provide(SqlitePersistenceMemoryWorker)),
+  }).pipe(Effect.provide(testLayer)),
 );

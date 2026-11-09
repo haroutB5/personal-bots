@@ -1,0 +1,12 @@
+diff --git a/packages/client-runtime/src/state/archivedThreads.test.ts b/packages/client-runtime/src/state/archivedThreads.test.ts
+index aa16b9cadcd7212cc9de7561e7d44ce4bdf1e038..d2d8bb5e0c677970dd303162c335e0025ebd75c7 100644
+--- a/packages/client-runtime/src/state/archivedThreads.test.ts
++++ b/packages/client-runtime/src/state/archivedThreads.test.ts
+@@ -1,6 +1,6 @@
+ import { EnvironmentId, type OrchestrationShellSnapshot } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
++import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+ import { expect, it } from "vite-plus/test";
+ 
+ import {

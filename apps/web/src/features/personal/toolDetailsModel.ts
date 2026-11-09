@@ -1,5 +1,5 @@
 import { workEntryDisplayLabel } from "~/components/chat/MessagesTimeline.logic";
-import type { WorkLogEntry } from "~/session-logic";
+import type { WorkLogEntry } from "@hbots/personal-client/conversation/types";
 
 type WorkFamily = "command" | "read" | "edit" | "browse" | "other";
 

@@ -1,0 +1,40 @@
+diff --git a/packages/contracts/src/settings.test.ts b/packages/contracts/src/settings.test.ts
+index 1331d2dcb30df1899c111f9863e3ee9cd97eeaeb..6961b75d21bac3dffd97d505c97f3d92e84f895a 100644
+--- a/packages/contracts/src/settings.test.ts
++++ b/packages/contracts/src/settings.test.ts
+@@ -65,15 +65,19 @@ describe("storage cleanup settings", () => {
+ });
+ 
+ describe("ClientSettings rich text composer", () => {
+-  it("enables rich text for new and existing settings without a saved preference", () => {
+-    expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);
+-    expect(decodeClientSettings({ sendShortcut: "mod-enter" }).composerRichTextEnabled).toBe(true);
++  // Decision rich-text-composer-default: rich text stays opt-in here, so this
++  // fails if upstream's on-by-default lands again.
++  it("leaves rich text off for new and existing settings without a saved preference", () => {
++    expect(decodeClientSettings({}).composerRichTextEnabled).toBe(false);
++    expect(decodeClientSettings({ sendShortcut: "mod-enter" }).composerRichTextEnabled).toBe(false);
+   });
+ 
+-  it("preserves an explicit opt-out through patches and persistence", () => {
+-    const preference = { composerRichTextEnabled: false };
+-    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+-    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
++  it("preserves an explicit preference through patches and persistence", () => {
++    for (const enabled of [true, false]) {
++      const preference = { composerRichTextEnabled: enabled };
++      expect(decodeClientSettingsPatch(preference)).toEqual(preference);
++      expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
++    }
+   });
+ });
+ 
+@@ -770,6 +774,8 @@ describe("provider enabled defaults", () => {
+     expect(decoded.providers.cursor.enabled).toBe(false);
+     expect(decoded.providers.grok.enabled).toBe(false);
+     expect(decoded.providers.opencode.enabled).toBe(false);
++    expect(decoded.providers.antigravity.enabled).toBe(false);
++    expect(decoded.providers.deepseek.enabled).toBe(false);
+   });
+ 
+   it("keeps Cursor enabled when an existing user explicitly opted in", () => {

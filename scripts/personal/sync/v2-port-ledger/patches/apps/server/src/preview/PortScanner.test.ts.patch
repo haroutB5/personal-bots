@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/preview/PortScanner.test.ts b/apps/server/src/preview/PortScanner.test.ts
+index d790002f95f15720e2dd22ac03573a4996a5cf04..d4df5c6bebb8aa551a72a479966d9b1c5bcf093e 100644
+--- a/apps/server/src/preview/PortScanner.test.ts
++++ b/apps/server/src/preview/PortScanner.test.ts
+@@ -20,7 +20,7 @@ import * as Scope from "effect/Scope";
+ import * as TestClock from "effect/testing/TestClock";
+ import * as Tracer from "effect/Tracer";
+ import { expect } from "vite-plus/test";
+-import { FetchHttpClient } from "effect/unstable/http";
++import { FetchHttpClient } from "effect/http";
+ 
+ import * as ProcessRunner from "../processRunner.ts";
+ import * as PortScanner from "./PortScanner.ts";

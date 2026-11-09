@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { makeSensitiveExposureStore, rootExposureKey } from "../browser/sensitiveExposureStore.ts";
 import {
   buildMemoryMatchQuery,
@@ -19,7 +19,7 @@ import {
 import { APP_SCOPING_ENV } from "./memoryApps.ts";
 import { personalMemoryTestLayer as memoryLayer } from "../test/personalReadsTestLayer.ts";
 
-const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 /** Runs an effect with an environment switch set, then puts it back. */
 const withEnv = <A, E, R>(name: string, value: string, effect: Effect.Effect<A, E, R>) =>

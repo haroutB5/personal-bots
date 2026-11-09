@@ -22,7 +22,7 @@
     "cwd": "apps/web",
     "commands": [
       "node ../../scripts/personal/node/check-test-tree.mjs --package web",
-      "NODE_ENV=test vp test run --project unit src/features/personal src/authBootstrap.test.ts"
+      "NODE_ENV=test vp test run --project unit src/features/personal src/authBootstrap.test.ts src/components/chat/providerIconUtils.test.ts"
     ]
   },
   {

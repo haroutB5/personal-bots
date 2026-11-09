@@ -22,6 +22,7 @@ import { Tool, Toolkit } from "effect/ai";
 import { downgradeExpectedRefusals } from "../expectedToolRefusals.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { UpdateWorkRecordInput } from "../mcp/toolkits/bots/tools.ts";
+import { mcpThreadScope } from "../personal/testing/mcpThreadScope.ts";
 
 interface Line {
   readonly level: string;
@@ -130,14 +131,14 @@ describe("a tool call the bot got wrong in the server log", () => {
 
   it.effect("a missing capability is one WARN line, not an ERROR with a stack", () =>
     Effect.gen(function* () {
-      const invocation: McpInvocationContext.McpInvocationScope = {
+      const invocation = mcpThreadScope({
         environmentId: EnvironmentId.make("environment-1"),
         threadId: ThreadId.make("thread-1"),
         providerSessionId: "provider-session-1",
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         capabilities: new Set(),
         issuedAt: 1,
-      };
+      });
       const lines = yield* logged(
         McpInvocationContext.requireMcpCapability("bots").pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),

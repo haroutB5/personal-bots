@@ -1,0 +1,2124 @@
+diff --git a/apps/server/src/server.test.ts b/apps/server/src/server.test.ts
+index 221941aa78334b2803e702fd256d1b424a3d1545..be2d1bb20a552a1783af20ebecea04ae178b9e69 100644
+--- a/apps/server/src/server.test.ts
++++ b/apps/server/src/server.test.ts
+@@ -1,11 +1,13 @@
+ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeWS from "@effect/platform-node/NodeWS";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import * as NodeCrypto from "node:crypto";
++import * as NodeTimersPromises from "node:timers/promises";
+ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ 
+ import {
+   type DeviceServiceState,
++  LOCAL_DEVICE_HOST_ID,
+   AuthAccessTokenType,
+   AuthStandardClientScopes,
+   AuthEnvironmentBootstrapTokenType,
+@@ -35,6 +37,7 @@ import {
+   ProviderDriverKind,
+   ProviderInstanceId,
+   type ProviderInstallState,
++  type ProviderCatalogEntry,
+   ProviderSetupError,
+   ResolvedKeybindingRule,
+   type ServerLifecycleStreamEvent,
+@@ -74,7 +77,7 @@ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+ import * as TestClock from "effect/testing/TestClock";
+ import * as Tracer from "effect/Tracer";
+-import { ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcessSpawner } from "effect/process";
+ import {
+   FetchHttpClient,
+   HttpBody,
+@@ -83,11 +86,11 @@ import {
+   HttpClientResponse,
+   HttpRouter,
+   HttpServer,
+-} from "effect/unstable/http";
+-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+-import * as NetAddress from "effect/unstable/net/NetAddress";
+-import * as Socket from "effect/unstable/socket/Socket";
++} from "effect/http";
++import { OtlpSerialization, OtlpTracer } from "effect/observability";
++import { RpcClient, RpcSerialization } from "effect/rpc";
++import * as NetAddress from "effect/net/NetAddress";
++import * as Socket from "effect/socket/Socket";
+ import { vi } from "vite-plus/test";
+ 
+ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+@@ -110,6 +113,28 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+ import * as ServerConfig from "./config.ts";
+ import * as DeviceService from "./device/DeviceService.ts";
+ import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
++import { PersonalEngine } from "./personal/engine/PersonalEngine.ts";
++import { PersonalProviders } from "./personal/engine/PersonalProviders.ts";
++import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
++import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
++import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
++import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
++import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
++import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
++import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
++import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
++import * as PersonalConnectionCredentialStore from "./personal/connections/credentialStore.ts";
++import * as PersonalConnectionService from "./personal/connections/service.ts";
++import * as WhatsAppSendLog from "./personal/connections/whatsapp/sendLog.ts";
++import * as WhatsAppSession from "./personal/connections/whatsapp/session.ts";
++import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
++import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
++import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
++import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
++import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
++import * as PersonalBotTokenUsage from "./personal/PersonalBotTokenUsageService.ts";
++import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
++import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
+ import {
+   isThreadDetailEvent,
+   resolveAvailableEditorsForConfig,
+@@ -128,6 +153,7 @@ import {
+   OrchestrationThreadSettleBlockedError,
+ } from "./orchestration/Errors.ts";
+ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
++import { ProviderCommandReactor } from "./orchestration/Services/ProviderCommandReactor.ts";
+ import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
+ import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
+ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+@@ -143,6 +169,11 @@ import {
+   AntigravityInstallation,
+   AntigravityInstallationError,
+ } from "./provider/AntigravityInstallation.ts";
++import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
++import { CatalogInstaller } from "./provider/catalog/installer.ts";
++import { CatalogInstallError } from "./provider/catalog/errors.ts";
++import { parseRegistry } from "./provider/catalog/registry.ts";
++import catalogRegistryFixture from "./provider/catalog/fixtures/registry-2026-10-20.json" with { type: "json" };
+ import { CodexInstallation } from "./provider/CodexInstallation.ts";
+ import type { ProviderInstance } from "./provider/ProviderDriver.ts";
+ import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
+@@ -154,6 +185,7 @@ import {
+ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+ import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
++import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+ import * as ServerSettings from "./serverSettings.ts";
+ import * as TerminalManager from "./terminal/Manager.ts";
+ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+@@ -167,6 +199,11 @@ import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+ import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
++// personal browser
++import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
++import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
++import type { LiveViewer } from "./personal/desktop/DesktopLiveView.ts";
++import { ViewerFlow } from "./personal/browser/viewerFlow.ts";
+ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+ import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+@@ -533,6 +570,8 @@ const buildAppUnderTest = (options?: {
+     providerAuth?: Partial<ProviderAuthService["Service"]>;
+     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
+     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
++    providerCatalog?: Partial<ProviderCatalog["Service"]>;
++    catalogInstaller?: Partial<CatalogInstaller["Service"]>;
+     codexInstallation?: Partial<CodexInstallation["Service"]>;
+     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
+@@ -575,6 +614,9 @@ const buildAppUnderTest = (options?: {
+     desktopTelemetryReceiver?: Partial<
+       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
+     >;
++    personalBrowser?: Partial<PersonalBrowser.PersonalBrowser["Service"]>;
++    personalDesktop?: Partial<PersonalDesktop.PersonalDesktop["Service"]>;
++    deviceService?: Partial<DeviceService.DeviceService["Service"]>;
+   };
+ }) =>
+   Effect.gen(function* () {
+@@ -715,6 +757,11 @@ const buildAppUnderTest = (options?: {
+       ...options?.layers?.gitVcsDriver,
+     });
+     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
++      // Worktree creation goes through GitManager, which adds the project's
++      // submodule setting and then calls the git driver, so the driver mock serves it.
++      ...(options?.layers?.gitVcsDriver?.createWorktree === undefined
++        ? {}
++        : { createWorktree: options.layers.gitVcsDriver.createWorktree }),
+       ...options?.layers?.gitManager,
+     });
+     const workspaceEntriesLayer = WorkspaceEntries.layer.pipe(
+@@ -790,6 +837,34 @@ const buildAppUnderTest = (options?: {
+             streamChanges: Stream.empty,
+             ...options?.layers?.keybindings,
+           }),
++          // Server-lifetime dispatcher service the WS route shares across clients.
++          Layer.mock(PersonalTaskService.PersonalTaskService)({}),
++          Layer.mock(PersonalGroupService.PersonalGroupService)({}),
++          Layer.mock(PersonalSecretService.PersonalSecretService)({}),
++          Layer.mock(PersonalVoiceCallService.PersonalVoiceCallService)({}),
++          Layer.mock(PersonalVoiceSampleService.PersonalVoiceSampleService)({}),
++          Layer.mock(PersonalLoginService.PersonalLoginService)({}),
++          Layer.mock(PersonalLoginRequestService.PersonalLoginRequestService)({}),
++          Layer.mock(PersonalConnectionService.PersonalConnectionService)({}),
++          Layer.mock(PersonalConnectionApprovalService.PersonalConnectionApprovalService)({}),
++          Layer.mock(PersonalConnectionCredentialStore.PersonalConnectionCredentialStore)({}),
++          // WhatsApp's browser session and its send ledger: in the graph
++          // because the connection service's vendor adapters are built from
++          // them, and never touched by these tests.
++          Layer.mock(WhatsAppSession.WhatsAppSession)({}),
++          Layer.mock(WhatsAppSendLog.WhatsAppSendLog)({}),
++          Layer.mock(PersonalRoutineService.PersonalRoutineService)({}),
++          Layer.mock(PersonalMemoryService.PersonalMemoryService)({}),
++          Layer.mock(PersonalMemoryTidy.PersonalMemoryTidy)({}),
++          Layer.mock(PersonalPushService.PersonalPushService)({}),
++          Layer.mock(PersonalLeadBots.PersonalLeadBotService)({}),
++          Layer.mock(PersonalProviderUpdates.PersonalProviderUpdates)({}),
++          Layer.mock(PersonalProviders)({}),
++          Layer.mock(PersonalEngine)({}),
++          Layer.mock(PersonalBotTokenUsage.PersonalBotTokenUsage)({}),
++          Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
++          // The chat-open session prewarm the WS route builds once.
++          Layer.mock(ProviderCommandReactor)({}),
+           Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
+             current: Effect.succeed([]),
+             streamChanges: Stream.empty,
+@@ -841,6 +916,72 @@ const buildAppUnderTest = (options?: {
+             managedDirectory: "unused-test-antigravity-runtime",
+             ...options?.layers?.antigravityInstallation,
+           }),
++          Layer.mock(ProviderCatalog)({
++            list: () =>
++              Effect.succeed({ entries: [], registryFetchedAt: null, registryStale: false }),
++            installFacts: () => Effect.succeed(null),
++            installRequest: () => Effect.succeed(null),
++            icon: () => Effect.succeed(null),
++            refresh: () => Effect.void,
++            ...options?.layers?.providerCatalog,
++          }),
++          Layer.mock(CatalogInstaller)({
++            runtimesRoot: "unused-test-catalog-runtime",
++            state: () =>
++              Effect.succeed({
++                catalogId: "unused",
++                operationId: null,
++                phase: "idle",
++                downloadedBytes: 0,
++                totalBytes: null,
++                version: null,
++                installedVersion: null,
++                previousVersion: null,
++                canRemove: false,
++                message: null,
++                failure: null,
++              }),
++            changes: () => Stream.empty,
++            start: () =>
++              Effect.succeed({
++                catalogId: "unused",
++                operationId: null,
++                phase: "idle",
++                downloadedBytes: 0,
++                totalBytes: null,
++                version: null,
++                installedVersion: null,
++                previousVersion: null,
++                canRemove: false,
++                message: null,
++                failure: null,
++              }),
++            cancel: () =>
++              Effect.succeed({
++                catalogId: "unused",
++                operationId: null,
++                phase: "idle",
++                downloadedBytes: 0,
++                totalBytes: null,
++                version: null,
++                installedVersion: null,
++                previousVersion: null,
++                canRemove: false,
++                message: null,
++                failure: null,
++              }),
++            remove: () => Effect.void,
++            goBack: () =>
++              Effect.fail(
++                new CatalogInstallError({ kind: "other", detail: "Not supported in test" }),
++              ),
++            acquire: () =>
++              Effect.fail(
++                new CatalogInstallError({ kind: "other", detail: "Not supported in test" }),
++              ),
++            resolve: () => Effect.succeed(null),
++            ...options?.layers?.catalogInstaller,
++          }),
+           Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
+             upsert: () => Effect.void,
+             getBinding: () => Effect.succeedNone,
+@@ -852,6 +993,7 @@ const buildAppUnderTest = (options?: {
+             state: Effect.succeed(EMPTY_DEVICE_STATE),
+             currentReadiness: () => Effect.succeed(null),
+             sessionsForThread: () => Effect.succeed([]),
++            ...options?.layers?.deviceService,
+           }),
+         ),
+       ),
+@@ -974,6 +1116,17 @@ const buildAppUnderTest = (options?: {
+       ),
+       Layer.provide(
+         Layer.mergeAll(
++          // personal browser: never launches Chrome in server tests
++          Layer.mock(PersonalBrowser.PersonalBrowser)({
++            handleAutomationRequest: () => Effect.die("PersonalBrowser not stubbed in this test"),
++            ...options?.layers?.personalBrowser,
++          }),
++          // personal desktop: never touches the real PC in server tests
++          Layer.mock(PersonalDesktop.PersonalDesktop)({
++            available: false,
++            act: () => Effect.die("PersonalDesktop not stubbed in this test"),
++            ...options?.layers?.personalDesktop,
++          }),
+           Layer.mock(PreviewManager.PreviewManager)({
+             open: () => Effect.die("PreviewManager not stubbed in this test"),
+             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
+@@ -1027,6 +1180,7 @@ const buildAppUnderTest = (options?: {
+       Layer.provide(
+         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+           getUserInputActivity: () => Effect.die("unused"),
++          getPendingInputActivities: () => Effect.succeed([]),
+           getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+           getShellSnapshot: () =>
+@@ -1083,68 +1237,48 @@ const buildAppUnderTest = (options?: {
+       ),
+     );
+ 
+-    const appLayer = servedRoutesLayer.pipe(
+-      Layer.provide(resourceTelemetryLayer),
+-      Layer.provide(UsageService.layerTest),
+-      Layer.provide(
+-        Layer.mock(AnalyticsService.AnalyticsService)({
+-          record: () => Effect.void,
+-          flush: Effect.void,
+-          ...options?.layers?.analyticsService,
+-        }),
+-      ),
+-      Layer.provide(
+-        Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
+-          record: () => Effect.void,
+-          ...options?.layers?.browserTraceCollector,
+-        }),
+-      ),
+-      Layer.provide(otlpSerializationLayer(config.otlpTracesExport.protocol)),
+-      Layer.provide(
+-        Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
+-          publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
+-          snapshot: Effect.succeed({ sequence: 0, events: [] }),
+-          stream: Stream.empty,
+-          ...options?.layers?.serverLifecycleEvents,
+-        }),
+-      ),
+-      Layer.provide(
+-        Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
+-          awaitCommandReady: Effect.void,
+-          markHttpListening: Effect.void,
+-          markRunningProviderSessionsForContinuation: Effect.succeed([]),
+-          clearProviderSessionContinuationMarkers: () => Effect.void,
+-          enqueueCommand: (effect) => effect,
+-          ...options?.layers?.serverRuntimeStartup,
+-        }),
+-      ),
+-      Layer.provide(
+-        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+-          reportClientActivity: () => Effect.void,
+-          removeRpcClient: () => Effect.void,
+-          reportHostPowerState: () => Effect.void,
+-          snapshot: Effect.succeed({
+-            hostPower: {
+-              source: "unknown",
+-              idle: "unknown",
+-              idleSeconds: null,
+-              locked: "unknown",
+-              suspended: false,
+-              onBattery: "unknown",
+-              lowPowerMode: "unknown",
+-              thermalState: "unknown",
+-              stale: true,
+-              updatedAt: TEST_EPOCH,
+-            },
+-            leases: [],
+-            activeForegroundLeaseCount: 0,
+-            activeScopeKeys: [],
+-            shouldRunOpportunisticWork: false,
+-            updatedAt: TEST_EPOCH,
++    const appLayer = servedRoutesLayer
++      .pipe(
++        Layer.provide(resourceTelemetryLayer),
++        Layer.provide(UsageService.layerTest),
++        Layer.provide(
++          Layer.mock(AnalyticsService.AnalyticsService)({
++            record: () => Effect.void,
++            flush: Effect.void,
++            ...options?.layers?.analyticsService,
+           }),
+-          streamChanges: Stream.empty,
+-          subscribe: Effect.succeed({
+-            latest: {
++        ),
++        Layer.provide(
++          Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
++            record: () => Effect.void,
++            ...options?.layers?.browserTraceCollector,
++          }),
++        ),
++        Layer.provide(otlpSerializationLayer(config.otlpTracesExport.protocol)),
++        Layer.provide(
++          Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
++            publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
++            snapshot: Effect.succeed({ sequence: 0, events: [] }),
++            stream: Stream.empty,
++            ...options?.layers?.serverLifecycleEvents,
++          }),
++        ),
++        Layer.provide(
++          Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
++            awaitCommandReady: Effect.void,
++            markHttpListening: Effect.void,
++            markRunningProviderSessionsForContinuation: Effect.succeed([]),
++            clearProviderSessionContinuationMarkers: () => Effect.void,
++            enqueueCommand: (effect) => effect,
++            ...options?.layers?.serverRuntimeStartup,
++          }),
++        ),
++        Layer.provide(
++          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
++            reportClientActivity: () => Effect.void,
++            removeRpcClient: () => Effect.void,
++            reportHostPowerState: () => Effect.void,
++            snapshot: Effect.succeed({
+               hostPower: {
+                 source: "unknown",
+                 idle: "unknown",
+@@ -1162,97 +1296,120 @@ const buildAppUnderTest = (options?: {
+               activeScopeKeys: [],
+               shouldRunOpportunisticWork: false,
+               updatedAt: TEST_EPOCH,
+-            },
+-            changes: Stream.empty,
++            }),
++            streamChanges: Stream.empty,
++            subscribe: Effect.succeed({
++              latest: {
++                hostPower: {
++                  source: "unknown",
++                  idle: "unknown",
++                  idleSeconds: null,
++                  locked: "unknown",
++                  suspended: false,
++                  onBattery: "unknown",
++                  lowPowerMode: "unknown",
++                  thermalState: "unknown",
++                  stale: true,
++                  updatedAt: TEST_EPOCH,
++                },
++                leases: [],
++                activeForegroundLeaseCount: 0,
++                activeScopeKeys: [],
++                shouldRunOpportunisticWork: false,
++                updatedAt: TEST_EPOCH,
++              },
++              changes: Stream.empty,
++            }),
++            hasDemand: () => Effect.succeed(false),
++            shouldRunScopeWork: () => Effect.succeed(false),
++            shouldRunOpportunisticWork: Effect.succeed(false),
+           }),
+-          hasDemand: () => Effect.succeed(false),
+-          shouldRunScopeWork: () => Effect.succeed(false),
+-          shouldRunOpportunisticWork: Effect.succeed(false),
+-        }),
+-      ),
+-      Layer.provide(
+-        Layer.mock(ServerEnvironment.ServerEnvironment)({
+-          getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
+-          getDescriptor: Effect.succeed(testEnvironmentDescriptor),
+-          ...options?.layers?.serverEnvironment,
+-        }),
+-      ),
+-      Layer.provide(
+-        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+-          resolve: () => Effect.succeed(null),
+-          ...options?.layers?.repositoryIdentityResolver,
+-        }),
+-      ),
+-      Layer.provide(
+-        Layer.mergeAll(
++        ),
++        Layer.provide(
++          Layer.mock(ServerEnvironment.ServerEnvironment)({
++            getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
++            getDescriptor: Effect.succeed(testEnvironmentDescriptor),
++            ...options?.layers?.serverEnvironment,
++          }),
++        ),
++        Layer.provide(
++          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
++            resolve: () => Effect.succeed(null),
++            ...options?.layers?.repositoryIdentityResolver,
++          }),
++        ),
++        Layer.provide(
++          Layer.mergeAll(
++            Layer.succeed(
++              CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
++              CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
++                applyConfig: () => Effect.succeed({ status: "disabled" }),
++                recoveryRequests: Stream.empty,
++                requestRecovery: () => Effect.void,
++                withLinkStateLock: (effect) => effect,
++                ...options?.layers?.cloudManagedEndpointRuntime,
++              }),
++            ),
++            Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
++              requestCatchUp: () => Effect.void,
++              ...options?.layers?.agentAwarenessRelay,
++            }),
++          ),
++        ),
++        Layer.provide(
+           Layer.succeed(
+-            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
+-            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+-              applyConfig: () => Effect.succeed({ status: "disabled" }),
+-              recoveryRequests: Stream.empty,
+-              requestRecovery: () => Effect.void,
+-              withLinkStateLock: (effect) => effect,
+-              ...options?.layers?.cloudManagedEndpointRuntime,
++            RelayClient.RelayClient,
++            RelayClient.RelayClient.of({
++              resolve: Effect.succeed({
++                status: "missing",
++                version: RelayClient.CLOUDFLARED_VERSION,
++              }),
++              install: Effect.die("unused relay-client install"),
++              installWithProgress: () => Effect.die("unused relay-client install"),
++              ...options?.layers?.relayClient,
+             }),
+           ),
+-          Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
+-            requestCatchUp: () => Effect.void,
+-            ...options?.layers?.agentAwarenessRelay,
++        ),
++        Layer.provide(
++          Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
++            get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
++            getExisting: Effect.succeedNone,
++            hasCredential: Effect.succeed(false),
++            clear: Effect.void,
++            ...options?.layers?.cloudCliTokenManager,
+           }),
+         ),
+-      ),
+-      Layer.provide(
+-        Layer.succeed(
+-          RelayClient.RelayClient,
+-          RelayClient.RelayClient.of({
+-            resolve: Effect.succeed({
+-              status: "missing",
+-              version: RelayClient.CLOUDFLARED_VERSION,
+-            }),
+-            install: Effect.die("unused relay-client install"),
+-            installWithProgress: () => Effect.die("unused relay-client install"),
+-            ...options?.layers?.relayClient,
+-          }),
+-        ),
+-      ),
+-      Layer.provide(
+-        Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
+-          get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
+-          getExisting: Effect.succeedNone,
+-          hasCredential: Effect.succeed(false),
+-          clear: Effect.void,
+-          ...options?.layers?.cloudCliTokenManager,
++        Layer.updateService(PairingGrantStore.PairingGrantStore, (grants) => {
++          const subscribed = options?.onPairingChangesSubscribed;
++          if (!subscribed) return grants;
++          return {
++            ...grants,
++            streamChanges: Stream.unwrap(
++              Effect.gen(function* () {
++                const changes =
++                  yield* Queue.unbounded<PairingGrantStore.BootstrapCredentialChange>();
++                yield* grants.streamChanges.pipe(
++                  Stream.runForEach((change) => Queue.offer(changes, change)),
++                  Effect.forkScoped({ startImmediately: true }),
++                );
++                yield* subscribed;
++                return Stream.fromQueue(changes);
++              }),
++            ),
++          };
+         }),
+-      ),
+-      Layer.updateService(PairingGrantStore.PairingGrantStore, (grants) => {
+-        const subscribed = options?.onPairingChangesSubscribed;
+-        if (!subscribed) return grants;
+-        return {
+-          ...grants,
+-          streamChanges: Stream.unwrap(
+-            Effect.gen(function* () {
+-              const changes = yield* Queue.unbounded<PairingGrantStore.BootstrapCredentialChange>();
+-              yield* grants.streamChanges.pipe(
+-                Stream.runForEach((change) => Queue.offer(changes, change)),
+-                Effect.forkScoped({ startImmediately: true }),
+-              );
+-              yield* subscribed;
+-              return Stream.fromQueue(changes);
+-            }),
+-          ),
+-        };
+-      }),
+-      Layer.provideMerge(makeAuthTestLayer()),
+-      Layer.provideMerge(ServerSecretStore.layer),
+-      Layer.provide(workspaceAndProjectServicesLayer),
+-      Layer.provideMerge(
+-        options?.layers?.httpClient === undefined
+-          ? FetchHttpClient.layer
+-          : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
+-      ),
+-      Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
+-      Layer.provide(layerConfig),
+-    );
++        Layer.provideMerge(makeAuthTestLayer()),
++        Layer.provideMerge(ServerSecretStore.layer),
++        Layer.provide(workspaceAndProjectServicesLayer),
++        Layer.provideMerge(
++          options?.layers?.httpClient === undefined
++            ? FetchHttpClient.layer
++            : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
++        ),
++        Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
++        Layer.provide(layerConfig),
++      )
++      .pipe(Layer.provide(PreviewAutomationBroker.layer));
+ 
+     yield* Layer.build(appLayer);
+     return config;
+@@ -1278,7 +1435,7 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
+     Socket.WebSocketConstructor,
+     (socketUrl, protocols) => {
+       // Socket.makeWebSocket only ever passes its `protocols` option here.
+-      const socket = new NodeSocket.NodeWS.WebSocket(
++      const socket = new NodeWS.WebSocket(
+         socketUrl,
+         protocols as string | string[] | undefined,
+         cookie ? { headers: { cookie } } : undefined,
+@@ -1294,6 +1451,283 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
+   );
+ };
+ 
++interface RawWsClient {
++  readonly socket: NodeWS.WebSocket;
++  readonly closed: Promise<{ readonly code: number; readonly reason: string; readonly at: number }>;
++}
++
++const openRawWsClient = (url: string) => {
++  const { cookie, url: plainUrl } = parseSessionCookieFromWsUrl(url);
++  return Effect.acquireRelease(
++    Effect.callback<RawWsClient, Error>((resume) => {
++      const socket = new NodeWS.WebSocket(plainUrl, cookie ? { headers: { cookie } } : undefined);
++      const closed = new Promise<{ code: number; reason: string; at: number }>((resolve) => {
++        socket.on("close", (code, reason) =>
++          resolve({ code, reason: reason.toString(), at: performance.now() }),
++        );
++      });
++      socket.on("open", () => resume(Effect.succeed({ socket, closed })));
++      socket.on("error", (error) => resume(Effect.fail(error)));
++    }),
++    (client) => Effect.sync(() => client.socket.close()),
++  );
++};
++
++const probeRawWsClient = (client: RawWsClient, id: string) =>
++  Effect.promise(() => {
++    const answered = new Promise<string>((resolve) => {
++      const onMessage = (data: NodeWS.RawData) => {
++        const message = JSON.parse(data.toString()) as {
++          readonly _tag?: string;
++          readonly requestId?: string;
++          readonly exit?: { readonly _tag: string };
++        };
++        if (message._tag === "Exit" && message.requestId === id) {
++          client.socket.off("message", onMessage);
++          resolve(message.exit?._tag ?? "no exit");
++        }
++      };
++      client.socket.on("message", onMessage);
++      client.socket.send(
++        JSON.stringify({
++          _tag: "Request",
++          id,
++          tag: WS_METHODS.serverProbe,
++          payload: {},
++          headers: [],
++        }),
++      );
++    });
++    return Promise.race([answered, NodeTimersPromises.setTimeout(2000, "no response")]);
++  });
++
++const awaitRawWsClose = (client: RawWsClient, withinMs: number) =>
++  Effect.promise(() =>
++    Promise.race([client.closed, NodeTimersPromises.setTimeout(withinMs, null)]),
++  );
++
++const pairClientSessionCookie = (ownerCookie: string, label: string) =>
++  Effect.gen(function* () {
++    const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
++      headers: { cookie: ownerCookie },
++      body: yield* HttpBody.json({ label }),
++    });
++    const pairingBody = (yield* pairingResponse.json) as { readonly credential: string };
++    return yield* getAuthenticatedSessionCookieHeader(pairingBody.credential);
++  });
++
++const revokeClientByLabel = (ownerCookie: string, label: string) =>
++  Effect.gen(function* () {
++    const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
++      headers: { cookie: ownerCookie },
++    });
++    const clients = (yield* clientsResponse.json) as ReadonlyArray<{
++      readonly sessionId: string;
++      readonly client: { readonly label?: string };
++    }>;
++    const sessionId = clients.find((entry) => entry.client.label === label)?.sessionId;
++    assert.isDefined(sessionId);
++    const revokedAt = performance.now();
++    const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
++      headers: { cookie: ownerCookie, "content-type": "application/json" },
++      body: HttpBody.text(jsonRequestBody({ sessionId }), "application/json"),
++    });
++    assert.equal(revokeResponse.status, 200);
++    return revokedAt;
++  });
++
++const assertClosedAsRevoked = (client: RawWsClient, revokedAt: number) =>
++  Effect.gen(function* () {
++    const closed = yield* awaitRawWsClose(client, 1000);
++    assert.isNotNull(closed);
++    assert.equal(closed?.code, 4401);
++    assert.equal(closed?.reason, "session_revoked");
++    assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
++  });
++
++const openChunkStream = (url: string, sessionCookieHeader: string) =>
++  Effect.acquireRelease(
++    Effect.promise(async () => {
++      const NodeHttp = await import("node:http");
++      let received = 0;
++      let endedAt: number | null = null;
++      const request = NodeHttp.get(url, { headers: { cookie: sessionCookieHeader } });
++      const finished = new Promise<void>((resolve) => {
++        const end = () => {
++          endedAt ??= performance.now();
++          resolve();
++        };
++        request.on("error", end);
++        request.on("response", (response) => {
++          assert.equal(response.statusCode, 200);
++          response.on("data", (chunk: Buffer) => {
++            received += chunk.byteLength;
++          });
++          response.on("end", end);
++          response.on("close", end);
++          response.on("error", end);
++        });
++      });
++      return {
++        request,
++        bytes: () => received,
++        isEnded: () => endedAt !== null,
++        ended: (withinMs: number) =>
++          Promise.race([
++            finished.then(() => endedAt),
++            NodeTimersPromises.setTimeout(withinMs, null),
++          ]),
++      };
++    }),
++    (stream) => Effect.sync(() => stream.request.destroy()),
++  );
++
++/** A WebSocket client on raw TCP: it answers pings, never answers the server's close frame, and says when its link dropped. */
++const openHostileWs = (port: number, path: string, cookie: string) =>
++  Effect.acquireRelease(
++    Effect.promise(async () => {
++      const NodeNet = await import("node:net");
++      const socket = NodeNet.connect(port, "127.0.0.1");
++      await new Promise((resolve) => socket.once("connect", resolve));
++      socket.write(
++        `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
++          `Sec-WebSocket-Key: ${NodeCrypto.randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\nCookie: ${cookie}\r\n\r\n`,
++      );
++      const state = {
++        status: "",
++        closeFrameAt: null as number | null,
++        closeCode: null as number | null,
++        closeReason: "",
++        tcpClosedAt: null as number | null,
++      };
++      const frame = (opcode: number, payload: Buffer) => {
++        const mask = NodeCrypto.randomBytes(4);
++        const header =
++          payload.length < 126
++            ? Buffer.from([0x80 | opcode, 0x80 | payload.length])
++            : Buffer.from([0x80 | opcode, 0x80 | 126, payload.length >> 8, payload.length & 0xff]);
++        const masked = Buffer.alloc(payload.length);
++        for (let i = 0; i < payload.length; i++) masked[i] = payload[i]! ^ mask[i % 4]!;
++        return Buffer.concat([header, mask, masked]);
++      };
++      const write = (data: Buffer) => {
++        if (!socket.destroyed && socket.writable) socket.write(data);
++      };
++      let buffer = Buffer.alloc(0);
++      let upgraded = false;
++      const opened = new Promise<void>((resolve) => {
++        socket.on("data", (chunk: Buffer) => {
++          buffer = Buffer.concat([buffer, chunk]);
++          if (!upgraded) {
++            const end = buffer.indexOf("\r\n\r\n");
++            if (end < 0) return;
++            state.status = buffer.subarray(0, end).toString().split("\r\n")[0] ?? "";
++            buffer = buffer.subarray(end + 4);
++            upgraded = true;
++            resolve();
++          }
++          while (buffer.length >= 2) {
++            const opcode = buffer[0]! & 0x0f;
++            let length = buffer[1]! & 0x7f;
++            let offset = 2;
++            if (length === 126) {
++              if (buffer.length < 4) return;
++              length = buffer.readUInt16BE(2);
++              offset = 4;
++            } else if (length === 127) {
++              if (buffer.length < 10) return;
++              length = Number(buffer.readBigUInt64BE(2));
++              offset = 10;
++            }
++            if (buffer.length < offset + length) return;
++            const payload = buffer.subarray(offset, offset + length);
++            buffer = buffer.subarray(offset + length);
++            if (opcode === 8) {
++              state.closeFrameAt ??= performance.now();
++              state.closeCode = payload.length >= 2 ? payload.readUInt16BE(0) : null;
++              state.closeReason = payload.subarray(2).toString();
++            } else if (opcode === 9) {
++              write(frame(10, payload));
++            }
++          }
++        });
++      });
++      socket.on("close", () => {
++        state.tcpClosedAt ??= performance.now();
++      });
++      socket.on("error", () => undefined);
++      await opened;
++      return {
++        state,
++        send: (text: string) => write(frame(1, Buffer.from(text))),
++        ping: () => write(frame(9, Buffer.alloc(0))),
++        destroy: () => socket.destroy(),
++      };
++    }),
++    (client) => Effect.sync(() => client.destroy()),
++  );
++
++type HostileWsClient = Effect.Success<ReturnType<typeof openHostileWs>>;
++
++type HostileScenario = {
++  readonly path: string;
++  readonly input: string;
++  /** Times at which the route's handler received an input from the client. */
++  readonly reached: Array<number>;
++  readonly start: (client: HostileWsClient) => Effect.Effect<void>;
++};
++
++/**
++ * Revokes the client's session, then keeps the hostile client going for 2 s: it either keeps
++ * sending input or only answers and sends pings. Never sends a close frame.
++ */
++const holdAgainstRevoke = (input: {
++  readonly client: HostileWsClient;
++  readonly scenario: HostileScenario;
++  readonly revokedAt: number;
++  readonly behaviour: "sends input" | "pings only";
++}) =>
++  Effect.promise(async () => {
++    const { client, scenario, revokedAt, behaviour } = input;
++    const closeBy = performance.now() + 1500;
++    while (client.state.closeFrameAt === null && performance.now() < closeBy) {
++      await NodeTimersPromises.setTimeout(2);
++    }
++    const holdUntil = performance.now() + 2000;
++    while (performance.now() < holdUntil && client.state.tcpClosedAt === null) {
++      if (behaviour === "sends input") client.send(scenario.input);
++      else client.ping();
++      await NodeTimersPromises.setTimeout(20);
++    }
++    const closeAt = client.state.closeFrameAt ?? revokedAt;
++    return {
++      closeCode: client.state.closeCode,
++      closeReason: client.state.closeReason,
++      reachedAfterClose: scenario.reached.filter((at) => at > closeAt).length,
++      tcpClosedMs: client.state.tcpClosedAt === null ? null : client.state.tcpClosedAt - revokedAt,
++    };
++  });
++
++const eventually = (describeWait: string, ready: () => boolean) =>
++  Effect.promise(async () => {
++    const until = performance.now() + 2000;
++    while (!ready() && performance.now() < until) await NodeTimersPromises.setTimeout(10);
++    return ready();
++  }).pipe(Effect.tap((ok) => Effect.sync(() => assert.isTrue(ok, describeWait))));
++
++const sendWhileOpen = (client: RawWsClient, message: string, forMs: number) =>
++  Effect.promise(async () => {
++    const until = performance.now() + forMs;
++    while (performance.now() < until) {
++      try {
++        client.socket.send(message);
++      } catch {
++        return;
++      }
++      await NodeTimersPromises.setTimeout(5);
++    }
++  });
++
+ const makeWsRpcClient = RpcClient.make(WsRpcGroup);
+ type WsRpcClient =
+   typeof makeWsRpcClient extends Effect.Effect<infer Client, any, any> ? Client : never;
+@@ -1687,6 +2121,7 @@ const assertBrowserApiCorsPreflightHeaders = (
+   assert.deepEqual(splitHeaderTokens(headers["access-control-allow-headers"]), [
+     "authorization",
+     "b3",
++    "content-encoding",
+     "content-type",
+     "dpop",
+     "traceparent",
+@@ -1944,11 +2379,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+       assert.equal(unchanged.headers.vary, "Accept-Encoding");
+       assert.equal(yield* unchanged.text, "");
+ 
+-      for (const resource of [
+-        "/assets/config.json",
+-        "/threads/example",
+-        "/assets/old-ZyXw9876.js",
+-      ]) {
++      // A missing build asset is a 404, never the SPA shell under a script URL.
++      const missing = yield* HttpClient.get("/assets/old-ZyXw9876.js");
++      assert.equal(missing.status, 404);
++      assert.notInclude(missing.headers["content-type"] ?? "", "text/html");
++
++      for (const resource of ["/assets/config.json", "/threads/example"]) {
+         const response = yield* HttpClient.get(resource);
+         assert.equal(response.status, 200);
+         assert.equal(response.headers["cache-control"], "no-cache");
+@@ -1960,6 +2396,44 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+   );
+ 
++  it.effect("serves an older retained release's chunk and 404s unknown build assets", () =>
++    Effect.gen(function* () {
++      const fileSystem = yield* FileSystem.FileSystem;
++      const path = yield* Path.Path;
++      const releases = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-releases-" });
++      const clientDir = (sha: string) => path.join(releases, sha, "dist", "client");
++      for (const sha of ["new111111111", "old000000000"]) {
++        yield* fileSystem.makeDirectory(path.join(clientDir(sha), "assets"), { recursive: true });
++        yield* fileSystem.writeFileString(path.join(clientDir(sha), "index.html"), `<html>${sha}`);
++      }
++      yield* fileSystem.writeFileString(
++        path.join(clientDir("old000000000"), "assets", "Chunk-OldHash1.js"),
++        "export const old = true;",
++      );
++      yield* fileSystem.writeFileString(path.join(releases, "current.txt"), "new111111111");
++      yield* buildAppUnderTest({ config: { staticDir: clientDir("new111111111") } });
++
++      const old = yield* HttpClient.get("/assets/Chunk-OldHash1.js");
++      assert.equal(old.status, 200);
++      assert.include(old.headers["content-type"] ?? "", "javascript");
++      assert.equal(old.headers["cache-control"], "public, max-age=31536000, immutable");
++      assert.equal(yield* old.text, "export const old = true;");
++
++      for (const resource of [
++        "/assets/Unknown-Nope1234.js",
++        "/assets/..%2F..%2Findex.html",
++        "/assets/nested/Chunk-OldHash1.js",
++      ]) {
++        const response = yield* HttpClient.get(resource);
++        assert.oneOf(response.status, [400, 404], resource);
++        assert.notInclude(yield* response.text, "<html>", resource);
++      }
++      // Anything outside /assets/ still falls back to the active shell.
++      const route = yield* HttpClient.get("/bots/some-chat");
++      assert.equal(yield* route.text, "<html>new111111111");
++    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
++  );
++
+   for (const manifest of [
+     { label: "missing", contents: null },
+     { label: "nonmatching", contents: '{"other.js":{"file":"assets/other-AbCd0123.js"}}' },
+@@ -4510,8 +4984,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+       const { cookie, url } = parseSessionCookieFromWsUrl(yield* getWsServerUrl("/ws"));
+       const openSocket = (perMessageDeflate: boolean) =>
+         Effect.acquireRelease(
+-          Effect.callback<NodeSocket.NodeWS.WebSocket, Error>((resume) => {
+-            const socket = new NodeSocket.NodeWS.WebSocket(url, {
++          Effect.callback<NodeWS.WebSocket, Error>((resume) => {
++            const socket = new NodeWS.WebSocket(url, {
+               perMessageDeflate,
+               ...(cookie ? { headers: { cookie } } : {}),
+             });
+@@ -5295,6 +5769,424 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+   );
+ 
++  it.effect("closes the socket of a session that revokes itself and keeps other sockets", () =>
++    Effect.gen(function* () {
++      yield* buildAppUnderTest();
++
++      const bearerToken = yield* getAuthenticatedBearerSessionToken();
++      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
++        headers: { authorization: `Bearer ${bearerToken}` },
++      });
++      const ticketBody = (yield* ticketResponse.json) as { readonly ticket: string };
++      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
++      const bearerSocket = yield* openRawWsClient(
++        `${baseWsUrl}?wsTicket=${encodeURIComponent(ticketBody.ticket)}`,
++      );
++      const ownerSocket = yield* openRawWsClient(yield* getWsServerUrl("/ws"));
++      assert.equal(yield* probeRawWsClient(bearerSocket, "1"), "Success");
++      assert.equal(yield* probeRawWsClient(ownerSocket, "1"), "Success");
++
++      const revokedAt = performance.now();
++      const revokeResponse = yield* HttpClient.post("/api/auth/session/revoke", {
++        headers: { authorization: `Bearer ${bearerToken}` },
++      });
++      assert.equal(revokeResponse.status, 200);
++
++      const closed = yield* awaitRawWsClose(bearerSocket, 1000);
++      assert.isNotNull(closed);
++      assert.equal(closed?.code, 4401);
++      assert.equal(closed?.reason, "session_revoked");
++      assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
++      assert.equal(ownerSocket.socket.readyState, ownerSocket.socket.OPEN);
++      assert.equal(yield* probeRawWsClient(ownerSocket, "2"), "Success");
++    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
++  );
++
++  it.effect("closes only the sockets of the client revoked in settings", () =>
++    Effect.gen(function* () {
++      yield* buildAppUnderTest({ config: { host: "0.0.0.0" } });
++
++      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
++      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
++      const phoneSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseWsUrl, phoneCookie),
++      );
++      const phoneSecondSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseWsUrl, phoneCookie),
++      );
++      const tabletSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseWsUrl, tabletCookie),
++      );
++      const ownerSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseWsUrl, ownerCookie),
++      );
++      assert.equal(yield* probeRawWsClient(phoneSocket, "1"), "Success");
++
++      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
++        headers: { cookie: ownerCookie },
++      });
++      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
++        readonly sessionId: string;
++        readonly client: { readonly label?: string };
++      }>;
++      const phoneSessionId = clients.find((entry) => entry.client.label === "Phone")?.sessionId;
++      assert.isDefined(phoneSessionId);
++
++      const revokedAt = performance.now();
++      const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
++        headers: { cookie: ownerCookie, "content-type": "application/json" },
++        body: HttpBody.text(jsonRequestBody({ sessionId: phoneSessionId }), "application/json"),
++      });
++      assert.equal(revokeResponse.status, 200);
++
++      for (const revoked of [phoneSocket, phoneSecondSocket]) {
++        const closed = yield* awaitRawWsClose(revoked, 1000);
++        assert.isNotNull(closed);
++        assert.equal(closed?.code, 4401);
++        assert.equal(closed?.reason, "session_revoked");
++        assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
++      }
++      assert.equal(yield* probeRawWsClient(tabletSocket, "2"), "Success");
++      assert.equal(yield* probeRawWsClient(ownerSocket, "2"), "Success");
++    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
++  );
++
++  it.effect("closes the sockets of every other session when the others are revoked", () =>
++    Effect.gen(function* () {
++      yield* buildAppUnderTest({ config: { host: "0.0.0.0" } });
++
++      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
++      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
++      const phoneSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseWsUrl, phoneCookie),
++      );
++      const tabletSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseWsUrl, tabletCookie),
++      );
++      const ownerSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseWsUrl, ownerCookie),
++      );
++      assert.equal(yield* probeRawWsClient(tabletSocket, "1"), "Success");
++
++      const revokedAt = performance.now();
++      const revokeOthersResponse = yield* HttpClient.post("/api/auth/clients/revoke-others", {
++        headers: { cookie: ownerCookie },
++      });
++      assert.equal(revokeOthersResponse.status, 200);
++
++      for (const revoked of [phoneSocket, tabletSocket]) {
++        const closed = yield* awaitRawWsClose(revoked, 1000);
++        assert.isNotNull(closed);
++        assert.equal(closed?.code, 4401);
++        assert.equal(closed?.reason, "session_revoked");
++        assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
++      }
++      assert.equal(yield* probeRawWsClient(ownerSocket, "2"), "Success");
++    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
++  );
++
++  it.effect("closes the desktop stream of a revoked session and stops its remote control", () =>
++    Effect.gen(function* () {
++      const log: string[] = [];
++      const control = { taken: false, ended: false, inputs: 0, inputsAfterEnd: 0 };
++      let watchers = 0;
++      yield* buildAppUnderTest({
++        config: { host: "0.0.0.0" },
++        layers: {
++          personalDesktop: {
++            watch: () =>
++              Effect.acquireRelease(
++                Effect.sync(() => {
++                  const id = ++watchers;
++                  return {
++                    ack: () => undefined,
++                    setViewport: (width: number, height: number) =>
++                      void log.push(`${id}:viewport ${width}x${height}`),
++                    setControl: () => undefined,
++                    nudge: () => undefined,
++                    detach: () => void log.push(`${id}:detach`),
++                    stats: () => ({
++                      frames: 0,
++                      bytes: 0,
++                      captures: 0,
++                      unchanged: 0,
++                      locked: 0,
++                      captureMsTotal: 0,
++                      startedAt: 0,
++                    }),
++                  } satisfies LiveViewer;
++                }),
++                (viewer) => Effect.sync(() => viewer.detach()),
++              ),
++            takeControl: () =>
++              Effect.sync(() => {
++                control.taken = true;
++                return {
++                  input: () => {
++                    control.inputs++;
++                    if (control.ended) control.inputsAfterEnd++;
++                    return Promise.resolve();
++                  },
++                  end: () => {
++                    control.ended = true;
++                  },
++                  active: () => !control.ended,
++                  pending: () => 0,
++                };
++              }),
++          },
++        },
++      });
++
++      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
++      const baseUrl = yield* getWsServerUrl("/api/personal/desktop/stream", {
++        authenticated: false,
++      });
++      const phoneSocket = yield* openRawWsClient(appendSessionCookieToWsUrl(baseUrl, phoneCookie));
++      yield* eventually("phone stream attached", () => watchers === 1);
++      const tabletSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseUrl, tabletCookie),
++      );
++      yield* eventually("tablet stream attached", () => watchers === 2);
++      phoneSocket.socket.send(jsonRequestBody({ _tag: "Control", on: true }));
++      yield* eventually("phone holds the PC", () => control.taken);
++
++      const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
++      const inputBlast = yield* Effect.forkChild(
++        sendWhileOpen(
++          phoneSocket,
++          jsonRequestBody({
++            _tag: "Pointer",
++            action: "click",
++            x: 10,
++            y: 10,
++            frameWidth: 1170,
++            frameHeight: 731,
++          }),
++          1200,
++        ),
++      );
++      yield* assertClosedAsRevoked(phoneSocket, revokedAt);
++      yield* Fiber.join(inputBlast);
++
++      assert.isTrue(control.ended);
++      assert.equal(control.inputsAfterEnd, 0);
++      assert.include(log, "1:detach");
++      assert.notInclude(log, "2:detach");
++      assert.equal(tabletSocket.socket.readyState, tabletSocket.socket.OPEN);
++      tabletSocket.socket.send(jsonRequestBody({ _tag: "Viewport", width: 800, height: 600 }));
++      yield* eventually("tablet still reaches its viewer", () =>
++        log.includes("2:viewport 800x600"),
++      );
++    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
++  );
++
++  it.effect("closes the browser stream of a revoked session and keeps other viewers", () =>
++    Effect.gen(function* () {
++      const log: string[] = [];
++      let attached = 0;
++      yield* buildAppUnderTest({
++        config: { host: "0.0.0.0" },
++        layers: {
++          personalBrowser: {
++            attachViewer: ({ sessionId }) =>
++              Effect.acquireRelease(
++                Effect.gen(function* () {
++                  const id = ++attached;
++                  return {
++                    id,
++                    sessionId,
++                    canOperate: true,
++                    outbox: yield* Queue.unbounded<string>(),
++                    flow: new ViewerFlow(),
++                    telemetry: null,
++                  };
++                }),
++                (viewer) => Effect.sync(() => void log.push(`${viewer.id}:detach`)),
++              ),
++            handleViewerMessage: (viewer, raw) =>
++              Effect.sync(() => void log.push(`${viewer.id}:${raw}`)),
++          },
++        },
++      });
++
++      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
++      const baseUrl = yield* getWsServerUrl("/api/personal/browser/stream", {
++        authenticated: false,
++      });
++      const phoneSocket = yield* openRawWsClient(appendSessionCookieToWsUrl(baseUrl, phoneCookie));
++      yield* eventually("phone viewer attached", () => attached === 1);
++      const tabletSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseUrl, tabletCookie),
++      );
++      yield* eventually("tablet viewer attached", () => attached === 2);
++
++      const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
++      const inputBlast = yield* Effect.forkChild(sendWhileOpen(phoneSocket, "phone-input", 1200));
++      yield* assertClosedAsRevoked(phoneSocket, revokedAt);
++      yield* Fiber.join(inputBlast);
++
++      yield* eventually("phone viewer detached", () => log.includes("1:detach"));
++      const phoneInputsAtClose = log.filter((entry) => entry === "1:phone-input").length;
++      yield* Effect.promise(() => NodeTimersPromises.setTimeout(100));
++      assert.equal(log.filter((entry) => entry === "1:phone-input").length, phoneInputsAtClose);
++      assert.notInclude(log, "2:detach");
++      assert.equal(tabletSocket.socket.readyState, tabletSocket.socket.OPEN);
++      tabletSocket.socket.send("tablet-input");
++      yield* eventually("tablet still reaches its viewer", () => log.includes("2:tablet-input"));
++    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
++  );
++
++  it.effect("closes the device hub socket of a revoked session and its upstream link", () =>
++    Effect.gen(function* () {
++      const hubLog: string[] = [];
++      let upstreams = 0;
++      const hub = yield* Effect.acquireRelease(
++        Effect.callback<NodeWS.WebSocketServer, Error>((resume) => {
++          const server = new NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
++          server.on("connection", (upstream) => {
++            const id = ++upstreams;
++            upstream.on("message", (data) => {
++              hubLog.push(`${id}:${data.toString()}`);
++              upstream.send(`echo:${id}:${data.toString()}`);
++            });
++            upstream.on("close", () => hubLog.push(`${id}:closed`));
++          });
++          server.on("listening", () => resume(Effect.succeed(server)));
++          server.on("error", (error) => resume(Effect.fail(error)));
++        }),
++        (server) => Effect.sync(() => server.close()),
++      );
++      const hubPort = (hub.address() as { port: number }).port;
++      yield* buildAppUnderTest({
++        config: { host: "0.0.0.0" },
++        layers: {
++          deviceService: {
++            currentReadiness: () =>
++              Effect.succeed({
++                hostId: LOCAL_DEVICE_HOST_ID,
++                hub: { origin: `http://127.0.0.1:${hubPort}` },
++              } as unknown as DeviceService.DeviceReadiness),
++          },
++        },
++      });
++
++      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
++      const baseUrl = yield* getWsServerUrl(
++        `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/vendor/serve-emu/ws`,
++        { authenticated: false },
++      );
++      const phoneSocket = yield* openRawWsClient(appendSessionCookieToWsUrl(baseUrl, phoneCookie));
++      yield* eventually("phone linked to the hub", () => upstreams === 1);
++      const tabletSocket = yield* openRawWsClient(
++        appendSessionCookieToWsUrl(baseUrl, tabletCookie),
++      );
++      yield* eventually("tablet linked to the hub", () => upstreams === 2);
++
++      const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
++      const inputBlast = yield* Effect.forkChild(sendWhileOpen(phoneSocket, "phone-input", 1200));
++      yield* assertClosedAsRevoked(phoneSocket, revokedAt);
++      yield* Fiber.join(inputBlast);
++
++      yield* eventually("phone hub link closed", () => hubLog.includes("1:closed"));
++      const phoneInputsAtClose = hubLog.filter((entry) => entry === "1:phone-input").length;
++      yield* Effect.promise(() => NodeTimersPromises.setTimeout(100));
++      assert.equal(hubLog.filter((entry) => entry === "1:phone-input").length, phoneInputsAtClose);
++      assert.notInclude(hubLog, "2:closed");
++      assert.equal(tabletSocket.socket.readyState, tabletSocket.socket.OPEN);
++      tabletSocket.socket.send("tablet-input");
++      yield* eventually("tablet still reaches the hub", () => hubLog.includes("2:tablet-input"));
++    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
++  );
++
++  for (const [streamName, hubPath] of [
++    ["stream.mjpeg", "/vendor/serve-sim/helper/abc/stream.mjpeg"],
++    ["stream.avcc", "/vendor/serve-sim/helper/abc/stream.avcc"],
++    ["event-log events", "/vendor/serve-sim/api/event-log/events"],
++  ] as const) {
++    it.effect(`ends the device hub ${streamName} body of a revoked session`, () =>
++      Effect.gen(function* () {
++        const hubLog: string[] = [];
++        const hub = yield* Effect.acquireRelease(
++          Effect.promise(async () => {
++            const NodeHttp = await import("node:http");
++            const server = NodeHttp.createServer((request, response) => {
++              const id = `${hubLog.filter((entry) => entry.endsWith(":open")).length + 1}`;
++              hubLog.push(`${id}:open`);
++              response.writeHead(200, { "content-type": "application/octet-stream" });
++              let open = true;
++              response.on("close", () => {
++                open = false;
++                hubLog.push(`${id}:closed`);
++              });
++              void (async () => {
++                while (open) {
++                  response.write("frame");
++                  await NodeTimersPromises.setTimeout(10);
++                }
++              })();
++            });
++            await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
++            return server;
++          }),
++          (server) =>
++            Effect.sync(() => {
++              server.closeAllConnections();
++              server.close();
++            }),
++        );
++        const hubPort = (hub.address() as { port: number }).port;
++        yield* buildAppUnderTest({
++          config: { host: "0.0.0.0" },
++          layers: {
++            deviceService: {
++              currentReadiness: () =>
++                Effect.succeed({
++                  hostId: LOCAL_DEVICE_HOST_ID,
++                  hub: { origin: `http://127.0.0.1:${hubPort}` },
++                } as unknown as DeviceService.DeviceReadiness),
++            },
++          },
++        });
++
++        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++        const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
++        const server = yield* HttpServer.HttpServer;
++        const port = (server.address as NetAddress.InetAddress).port;
++        const url = `http://127.0.0.1:${port}${DeviceService.DEVICE_HUB_ROUTE_PREFIX}${hubPath}`;
++        const phoneStream = yield* openChunkStream(url, phoneCookie);
++        const tabletStream = yield* openChunkStream(url, tabletCookie);
++        yield* eventually(
++          "phone and tablet receive frames",
++          () => phoneStream.bytes() > 0 && tabletStream.bytes() > 0,
++        );
++
++        const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
++        const endedAt = yield* Effect.promise(() => phoneStream.ended(1000));
++        assert.isNotNull(endedAt);
++        assert.isTrue((endedAt ?? Infinity) - revokedAt <= 1000);
++
++        yield* eventually("phone hub link closed", () => hubLog.includes("1:closed"));
++        const tabletBytesAtRevoke = tabletStream.bytes();
++        yield* Effect.promise(() => NodeTimersPromises.setTimeout(150));
++        assert.notInclude(hubLog, "2:closed");
++        assert.isTrue(tabletStream.bytes() > tabletBytesAtRevoke);
++        assert.isFalse(tabletStream.isEnded());
++      }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
++    );
++  }
++
+   it.effect("allows reusing the desktop bootstrap credential", () =>
+     Effect.gen(function* () {
+       // The desktop-bootstrap grant is delivered over trusted IPC at
+@@ -6036,6 +6928,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+       assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-headers"]), [
+         "authorization",
+         "b3",
++        "content-encoding",
+         "content-type",
+         "dpop",
+         "traceparent",
+@@ -7156,6 +8049,95 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+     });
+   }
+ 
++  for (const refreshUsage of [true, false] as const) {
++    it.effect(`usage refresh drops cached usage reads before probing (${refreshUsage})`, () => {
++      const driver = ProviderDriverKind.make("claudeAgent");
++      const instanceId = ProviderInstanceId.make("claudeAgent");
++      const invalidated: string[] = [];
++      let probed = false;
++      const instance = {
++        instanceId,
++        driverKind: driver,
++        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
++        displayName: undefined,
++        enabled: true,
++        invalidateUsage: Effect.sync(() => {
++          invalidated.push(instanceId);
++        }),
++        snapshot: {
++          resolveMaintenance: () => Effect.never,
++          getSnapshot: Effect.never,
++          refresh: Effect.never,
++          streamChanges: Stream.empty,
++          applyUsageLimits: () => Effect.void,
++        },
++        adapter: {} as ProviderInstance["adapter"],
++        textGeneration: {} as ProviderInstance["textGeneration"],
++      } satisfies ProviderInstance;
++      const probe = Effect.sync(() => {
++        probed = true;
++        // A cached read served here would come back with a fresh "updated" time.
++        assert.deepEqual(invalidated, refreshUsage ? [instanceId] : []);
++        return [];
++      });
++      return Effect.gen(function* () {
++        yield* buildAppUnderTest({
++          layers: {
++            providerInstanceRegistry: { listInstances: Effect.succeed([instance]) },
++            providerRegistry: { refresh: () => probe, refreshInstance: () => probe },
++          },
++        });
++        const wsUrl = yield* getWsServerUrl("/ws");
++        yield* Effect.scoped(
++          withWsRpcClient(wsUrl, (client) =>
++            client[WS_METHODS.serverRefreshProviders](refreshUsage ? { refreshUsage } : {}),
++          ),
++        );
++        assert.isTrue(probed);
++      }).pipe(Effect.provide(NodeHttpServer.layerTest));
++    });
++  }
++
++  it.effect("passes a redeem's lag warning through to the client", () => {
++    const driver = ProviderDriverKind.make("claudeAgent");
++    const instanceId = ProviderInstanceId.make("claudeAgent");
++    const warning = "Reset applied. The provider's usage figures have not caught up yet.";
++    const instance = {
++      instanceId,
++      driverKind: driver,
++      continuationIdentity: { driverKind: driver, continuationKey: instanceId },
++      displayName: undefined,
++      enabled: true,
++      consumeResetCredit: () => Effect.succeed({ outcome: "reset" as const, warning }),
++      snapshot: {
++        resolveMaintenance: () => Effect.never,
++        getSnapshot: Effect.never,
++        refresh: Effect.never,
++        streamChanges: Stream.empty,
++        applyUsageLimits: () => Effect.void,
++      },
++      adapter: {} as ProviderInstance["adapter"],
++      textGeneration: {} as ProviderInstance["textGeneration"],
++    } satisfies ProviderInstance;
++    return Effect.gen(function* () {
++      yield* buildAppUnderTest({
++        layers: {
++          providerInstanceRegistry: {
++            listInstances: Effect.succeed([instance]),
++            getInstance: () => Effect.succeed(instance),
++          },
++        },
++      });
++      const wsUrl = yield* getWsServerUrl("/ws");
++      const result = yield* Effect.scoped(
++        withWsRpcClient(wsUrl, (client) =>
++          client[WS_METHODS.providerConsumeResetCredit]({ instanceId }),
++        ),
++      );
++      assert.deepEqual(result, { outcome: "reset", warning });
++    }).pipe(Effect.provide(NodeHttpServer.layerTest));
++  });
++
+   it.effect("serves config on reconnect without starting provider probes", () =>
+     Effect.gen(function* () {
+       const refresh = vi.fn(() => Effect.never);
+@@ -7362,6 +8344,120 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+   );
+ 
++  /**
++   * `workspaceSnapshots` + `slashCommands` + `skills` measured 119,412 B of a
++   * 145,187 B boot snapshot, and the whole catalog is rebroadcast every ~40 s
++   * because the provider health poll moves `checkedAt`. The personal shell
++   * renders none of the three but does render `usageLimits.checkedAt`, so the
++   * opt-out has to remove exactly those three and leave the liveness data
++   * alone. Run both ways: a no-op implementation fails the `true` case and an
++   * over-eager one fails the `false` case, which protects the IDE composer.
++   */
++  it.effect.each([false, true])(
++    "subscribeServerConfig drops composer workspace data only when asked (omit: %s)",
++    (omitProviderWorkspaceData) =>
++      Effect.gen(function* () {
++        const workspaceData = {
++          slashCommands: [{ name: "review", description: "Review the diff" }],
++          skills: [
++            {
++              name: "pdf",
++              description: "Fill in PDF forms",
++              path: "/repo/.skills/pdf",
++              enabled: true,
++            },
++          ],
++          workspaceSnapshots: [
++            {
++              cwd: "/repo",
++              checkedAt: "2026-04-11T00:00:00.000Z",
++              slashCommands: [{ name: "review", description: "Review the diff" }],
++              skills: [
++                {
++                  name: "pdf",
++                  description: "Fill in PDF forms",
++                  path: "/repo/.skills/pdf",
++                  enabled: true,
++                },
++              ],
++            },
++          ],
++        };
++        const provider = {
++          instanceId: ProviderInstanceId.make("codex"),
++          driver: ProviderDriverKind.make("codex"),
++          enabled: true,
++          installed: true,
++          version: "1.0.0",
++          status: "ready" as const,
++          auth: { status: "authenticated" as const },
++          checkedAt: "2026-04-11T00:00:00.000Z",
++          models: [],
++          usageLimits: {
++            checkedAt: "2026-04-11T00:00:00.000Z",
++            windows: [{ id: "weekly", kind: "weekly" as const, label: "Weekly", usedPercent: 25 }],
++          },
++          ...workspaceData,
++        };
++        // What the ~40 s health poll produces: one moved timestamp, which
++        // republishes the entire catalog to every connected client.
++        const polledProvider = {
++          ...provider,
++          checkedAt: "2026-04-11T00:00:40.000Z",
++          usageLimits: { ...provider.usageLimits, checkedAt: "2026-04-11T00:00:40.000Z" },
++        };
++
++        yield* buildAppUnderTest({
++          layers: {
++            keybindings: {
++              loadConfigState: Effect.succeed({ keybindings: [], issues: [] }),
++              streamChanges: Stream.empty,
++            },
++            providerRegistry: {
++              getProviders: Effect.succeed([provider]),
++              streamChanges: Stream.succeed([polledProvider]),
++            },
++          },
++        });
++
++        const wsUrl = yield* getWsServerUrl("/ws");
++        const events = yield* Effect.scoped(
++          withWsRpcClient(wsUrl, (client) =>
++            client[WS_METHODS.subscribeServerConfig](
++              omitProviderWorkspaceData ? { omitProviderWorkspaceData: true } : {},
++            ).pipe(Stream.take(2), Stream.runCollect),
++          ),
++        );
++
++        const [first, second] = Array.from(events);
++        assert.equal(first?.type, "snapshot");
++        assert.equal(second?.type, "providerStatuses");
++        const snapshotProvider = first?.type === "snapshot" ? first.config.providers[0] : undefined;
++        const republishedProvider =
++          second?.type === "providerStatuses" ? second.payload.providers[0] : undefined;
++
++        for (const shaped of [snapshotProvider, republishedProvider]) {
++          assert.ok(shaped);
++          if (omitProviderWorkspaceData) {
++            assert.deepEqual(shaped.slashCommands, []);
++            assert.deepEqual(shaped.skills, []);
++            assert.equal(shaped.workspaceSnapshots, undefined);
++          } else {
++            assert.deepEqual(shaped.slashCommands, workspaceData.slashCommands);
++            assert.deepEqual(shaped.skills, workspaceData.skills);
++            assert.deepEqual(shaped.workspaceSnapshots, workspaceData.workspaceSnapshots);
++          }
++        }
++
++        // The liveness data the personal usage strip renders survives either
++        // way -- it is the reason the catalog is republished at all.
++        assert.equal(snapshotProvider?.usageLimits?.checkedAt, "2026-04-11T00:00:00.000Z");
++        assert.equal(republishedProvider?.checkedAt, "2026-04-11T00:00:40.000Z");
++        assert.equal(republishedProvider?.usageLimits?.checkedAt, "2026-04-11T00:00:40.000Z");
++        assert.deepEqual(republishedProvider?.usageLimits?.windows, provider.usageLimits.windows);
++      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
++  );
++
+   it.effect.each([false, true])(
+     "routes websocket rpc subscribeServerConfig emits provider status updates (limits: %s)",
+     (hasLimits) =>
+@@ -13240,6 +14336,242 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
+   );
+ });
+ 
++const hostileScenarios = [
++  {
++    name: "/ws",
++    open: () =>
++      Effect.gen(function* () {
++        const reached: Array<number> = [];
++        yield* buildAppUnderTest({
++          layers: {
++            terminalManager: {
++              write: () => Effect.sync(() => void reached.push(performance.now())),
++            },
++          },
++        });
++        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++        const server = yield* HttpServer.HttpServer;
++        let id = 0;
++        const input = () =>
++          JSON.stringify({
++            _tag: "Request",
++            id: `${++id}`,
++            tag: WS_METHODS.terminalWrite,
++            payload: { threadId: "thread-1", terminalId: "default", data: "echo hi\n" },
++            headers: [],
++          });
++        const scenario = {
++          path: "/ws",
++          get input() {
++            return input();
++          },
++          reached,
++          start: (client: HostileWsClient) => Effect.sync(() => void client.send(input())),
++        } satisfies HostileScenario;
++        return {
++          port: (server.address as NetAddress.InetAddress).port,
++          ownerCookie,
++          phoneCookie,
++          scenario,
++        };
++      }),
++  },
++  {
++    name: "desktop stream",
++    open: () =>
++      Effect.gen(function* () {
++        const reached: Array<number> = [];
++        let controlTaken = false;
++        yield* buildAppUnderTest({
++          config: { host: "0.0.0.0" },
++          layers: {
++            personalDesktop: {
++              watch: () =>
++                Effect.sync(
++                  () =>
++                    ({
++                      ack: () => undefined,
++                      setViewport: () => undefined,
++                      setControl: () => undefined,
++                      nudge: () => undefined,
++                      detach: () => undefined,
++                      stats: () => ({
++                        frames: 0,
++                        bytes: 0,
++                        captures: 0,
++                        unchanged: 0,
++                        locked: 0,
++                        captureMsTotal: 0,
++                        startedAt: 0,
++                      }),
++                    }) satisfies LiveViewer,
++                ),
++              takeControl: () =>
++                Effect.sync(() => {
++                  controlTaken = true;
++                  return {
++                    input: () => {
++                      reached.push(performance.now());
++                      return Promise.resolve();
++                    },
++                    end: () => undefined,
++                    active: () => true,
++                    pending: () => 0,
++                  };
++                }),
++            },
++          },
++        });
++        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++        const server = yield* HttpServer.HttpServer;
++        const input = jsonRequestBody({
++          _tag: "Pointer",
++          action: "click",
++          x: 10,
++          y: 10,
++          frameWidth: 1170,
++          frameHeight: 731,
++        });
++        const scenario = {
++          path: "/api/personal/desktop/stream",
++          input,
++          reached,
++          start: (client: HostileWsClient) =>
++            Effect.gen(function* () {
++              client.send(jsonRequestBody({ _tag: "Control", on: true }));
++              yield* eventually("phone holds the PC", () => controlTaken);
++              client.send(input);
++            }),
++        } satisfies HostileScenario;
++        return {
++          port: (server.address as NetAddress.InetAddress).port,
++          ownerCookie,
++          phoneCookie,
++          scenario,
++        };
++      }),
++  },
++  {
++    name: "browser stream",
++    open: () =>
++      Effect.gen(function* () {
++        const reached: Array<number> = [];
++        yield* buildAppUnderTest({
++          config: { host: "0.0.0.0" },
++          layers: {
++            personalBrowser: {
++              attachViewer: ({ sessionId }: { readonly sessionId: string }) =>
++                Effect.gen(function* () {
++                  return {
++                    id: 1,
++                    sessionId,
++                    canOperate: true,
++                    outbox: yield* Queue.unbounded<string>(),
++                    flow: new ViewerFlow(),
++                    telemetry: null,
++                  };
++                }),
++              handleViewerMessage: (_viewer: unknown, raw: string) =>
++                Effect.sync(() => {
++                  if (raw === "phone-input") reached.push(performance.now());
++                }),
++            } as any,
++          },
++        });
++        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++        const server = yield* HttpServer.HttpServer;
++        const scenario = {
++          path: "/api/personal/browser/stream",
++          input: "phone-input",
++          reached,
++          start: (client: HostileWsClient) => Effect.sync(() => void client.send("phone-input")),
++        } satisfies HostileScenario;
++        return {
++          port: (server.address as NetAddress.InetAddress).port,
++          ownerCookie,
++          phoneCookie,
++          scenario,
++        };
++      }),
++  },
++  {
++    name: "device hub socket",
++    open: () =>
++      Effect.gen(function* () {
++        const reached: Array<number> = [];
++        const hub = yield* Effect.acquireRelease(
++          Effect.callback<NodeWS.WebSocketServer, Error>((resume) => {
++            const wss = new NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
++            wss.on("connection", (upstream) => {
++              upstream.on("message", () => void reached.push(performance.now()));
++            });
++            wss.on("listening", () => resume(Effect.succeed(wss)));
++            wss.on("error", (error) => resume(Effect.fail(error)));
++          }),
++          (wss) => Effect.sync(() => wss.close()),
++        );
++        const hubPort = (hub.address() as { port: number }).port;
++        yield* buildAppUnderTest({
++          config: { host: "0.0.0.0" },
++          layers: {
++            deviceService: {
++              currentReadiness: () =>
++                Effect.succeed({
++                  hostId: LOCAL_DEVICE_HOST_ID,
++                  hub: { origin: `http://127.0.0.1:${hubPort}` },
++                } as unknown as DeviceService.DeviceReadiness),
++            },
++          },
++        });
++        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
++        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
++        const server = yield* HttpServer.HttpServer;
++        const scenario = {
++          path: `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/vendor/serve-emu/ws`,
++          input: "phone-input",
++          reached,
++          start: (client: HostileWsClient) => Effect.sync(() => void client.send("phone-input")),
++        } satisfies HostileScenario;
++        return {
++          port: (server.address as NetAddress.InetAddress).port,
++          ownerCookie,
++          phoneCookie,
++          scenario,
++        };
++      }),
++  },
++] as const;
++
++for (const { name, open } of hostileScenarios) {
++  for (const behaviour of ["sends input", "pings only"] as const) {
++    it.live(
++      `cuts the ${name} link of a revoked client that ${behaviour} and never closes`,
++      () =>
++        Effect.gen(function* () {
++          const { port, ownerCookie, phoneCookie, scenario } = yield* open();
++          const client = yield* openHostileWs(port, scenario.path, phoneCookie);
++          assert.match(client.state.status, /101/);
++          yield* scenario.start(client);
++          yield* eventually("input reaches before revoke", () => scenario.reached.length >= 1);
++          const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
++          const held = yield* holdAgainstRevoke({ client, scenario, revokedAt, behaviour });
++          assert.equal(held.closeCode, 4401);
++          assert.equal(held.closeReason, "session_revoked");
++          assert.equal(held.reachedAfterClose, 0);
++          assert.isNotNull(held.tcpClosedMs);
++          assert.isTrue((held.tcpClosedMs ?? Infinity) <= 1500);
++        }).pipe(
++          Effect.scoped,
++          Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer))),
++        ),
++      15000,
++    );
++  }
++}
++
+ it.live(
+   "reports thread HTTP and WebSocket transfer budgets",
+   () =>
+@@ -13532,3 +14864,244 @@ it.live(
+     }).pipe(Effect.provide(NodeServices.layer)),
+   120_000,
+ );
++
++const registryWiringEntry: ProviderCatalogEntry = {
++  catalogId: "amp-acp",
++  source: "registry",
++  name: "Amp",
++  publisher: "Sourcegraph",
++  description: "ACP agent",
++  website: null,
++  repository: null,
++  license: "MIT",
++  openSource: true,
++  version: "0.5.1",
++  iconUrl: "/api/provider-catalog/icon/amp-acp",
++  distribution: { kind: "binary", label: "Binary" },
++  downloadBytes: null,
++  sha256Checked: true,
++  cost: { kind: "unknown", label: "Unknown", detail: null },
++  signInLabel: null,
++  popularRank: null,
++  supported: { ok: true },
++  added: null,
++};
++
++it.effect("provider catalog serves list, facts, add and registry installation over RPC", () =>
++  Effect.gen(function* () {
++    let settings = DEFAULT_SERVER_SETTINGS;
++    const calls: string[] = [];
++    const agent = parseRegistry(catalogRegistryFixture)!.agents.find(
++      (candidate) => candidate.id === "amp-acp",
++    )!;
++    const state = {
++      catalogId: agent.id,
++      operationId: "catalog-install",
++      phase: "starting" as const,
++      downloadedBytes: 10,
++      totalBytes: 10,
++      version: agent.version,
++      installedVersion: null,
++      previousVersion: null,
++      canRemove: false,
++      message: null,
++      failure: null,
++    };
++    yield* buildAppUnderTest({
++      layers: {
++        serverSettings: {
++          getSettings: Effect.sync(() => settings),
++          updateSettings: (patch) =>
++            Effect.sync(() => {
++              settings = {
++                ...settings,
++                providerInstances: { ...settings.providerInstances, ...patch.providerInstances },
++              };
++              return settings;
++            }),
++        },
++        providerCatalog: {
++          list: () =>
++            Effect.succeed({
++              entries: [registryWiringEntry],
++              registryFetchedAt: null,
++              registryStale: false,
++            }),
++          installFacts: () =>
++            Effect.succeed({
++              catalogId: agent.id,
++              version: agent.version,
++              distribution: { kind: "binary", label: "Binary" },
++              downloadBytes: 10,
++              requiredBytes: 25,
++              sha256Checked: true,
++              host: "github.com",
++              runsInstallScripts: false,
++            }),
++          installRequest: () => Effect.succeed({ agent }),
++        },
++        catalogInstaller: {
++          start: () =>
++            Effect.sync(() => {
++              calls.push("start");
++              return state;
++            }),
++          cancel: () =>
++            Effect.sync(() => {
++              calls.push("cancel");
++              return { ...state, phase: "cancelled" as const };
++            }),
++          changes: () => Stream.succeed(state),
++          goBack: () =>
++            Effect.sync(() => {
++              calls.push("go-back");
++              return {
++                catalogId: agent.id,
++                version: "0.9.0",
++                previousVersion: agent.version,
++                kind: "binary" as const,
++                agentName: "Amp",
++                agentVersion: "0.9.0",
++                directory: "unused",
++                runner: "native" as const,
++                entry: "agent.exe",
++                args: [],
++                env: {},
++              };
++            }),
++          remove: () =>
++            Effect.sync(() => {
++              calls.push("remove");
++            }),
++          state: () => Effect.succeed(state),
++        },
++        providerRegistry: { refreshInstance: () => Effect.succeed([]) },
++      },
++    });
++    yield* Effect.scoped(
++      withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
++        Effect.gen(function* () {
++          assert.equal(
++            (yield* client[WS_METHODS.providerCatalogList]({})).entries[0]?.catalogId,
++            agent.id,
++          );
++          assert.equal(
++            (yield* client[WS_METHODS.providerCatalogInstallFacts]({ catalogId: agent.id }))
++              .sha256Checked,
++            true,
++          );
++          const added = yield* client[WS_METHODS.providerCatalogAdd]({ catalogId: agent.id });
++          assert.equal(settings.providerInstances[added.instanceId]?.driver, "registry");
++          assert.deepEqual(
++            yield* client[WS_METHODS.providerCatalogAdd]({ catalogId: agent.id }),
++            added,
++          );
++          assert.equal((yield* client[WS_METHODS.providerInstallStart](added)).phase, "starting");
++          assert.equal(
++            (yield* client[WS_METHODS.providerInstallSubscribe](added).pipe(
++              Stream.runHead,
++              Effect.map(Option.getOrThrow),
++            )).driver,
++            "registry",
++          );
++          assert.equal(
++            (yield* client[WS_METHODS.providerInstallCancel]({
++              ...added,
++              operationId: "catalog-install",
++            })).phase,
++            "cancelled",
++          );
++          yield* client[WS_METHODS.serverUpdateProvider]({
++            ...added,
++            provider: ProviderDriverKind.make("registry"),
++            rollback: true,
++          });
++          yield* client[WS_METHODS.providerInstallRemove](added);
++          // The owner's own settings writes still work.
++          yield* client[WS_METHODS.serverUpdateSettings]({ patch: {} });
++        }),
++      ),
++    );
++    assert.deepEqual(calls, ["start", "cancel", "go-back", "remove"]);
++  }).pipe(Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer)))),
++);
++
++it.effect(
++  "provider catalog refuses bot credentials for add, install, cancel, remove, Go back and settings writes",
++  () =>
++    Effect.gen(function* () {
++      yield* buildAppUnderTest();
++      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
++        clientMetadata: { deviceType: "bot" },
++      });
++      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
++        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
++      });
++      const { ticket } = yield* responseJsonEffect<{ ticket: string }>(ticketResponse);
++      const url = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
++      yield* Effect.scoped(
++        withWsRpcClient(url, (client) =>
++          Effect.gen(function* () {
++            yield* client[WS_METHODS.providerCatalogList]({});
++            const target = { instanceId: ProviderInstanceId.make("registry-test") };
++            const errors = [
++              yield* client[WS_METHODS.providerCatalogAdd]({ catalogId: "amp-acp" }).pipe(
++                Effect.flip,
++              ),
++              yield* client[WS_METHODS.providerInstallStart](target).pipe(Effect.flip),
++              yield* client[WS_METHODS.providerInstallCancel]({
++                ...target,
++                operationId: "test",
++              }).pipe(Effect.flip),
++              yield* client[WS_METHODS.providerInstallRemove](target).pipe(Effect.flip),
++              // A settings patch can add or drop provider instances, so it is owner-only too.
++              yield* client[WS_METHODS.serverUpdateSettings]({ patch: {} }).pipe(Effect.flip),
++              yield* client[WS_METHODS.serverUpdateProvider]({
++                ...target,
++                provider: ProviderDriverKind.make("registry"),
++                rollback: true,
++              }).pipe(Effect.flip),
++            ];
++            for (const error of errors) assert.equal(error._tag, "EnvironmentAuthorizationError");
++          }),
++        ),
++      );
++    }).pipe(Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer)))),
++);
++
++it.effect("provider catalog icon requires sign-in and sets safe SVG and cache headers", () =>
++  Effect.gen(function* () {
++    let reads = 0;
++    yield* buildAppUnderTest({
++      layers: {
++        providerCatalog: {
++          icon: (id) =>
++            Effect.sync(() => {
++              reads++;
++              return id === "amp-acp" ? '<svg xmlns="http://www.w3.org/2000/svg" />' : null;
++            }),
++        },
++      },
++    });
++    const anonymous = yield* HttpClient.get("/api/provider-catalog/icon/amp-acp");
++    assert.equal(anonymous.status, 401);
++    assert.equal(reads, 0);
++    const cookie = yield* getAuthenticatedSessionCookieHeader();
++    const response = yield* HttpClient.get("/api/provider-catalog/icon/amp-acp", {
++      headers: { cookie },
++    });
++    assert.equal(response.status, 200);
++    assert.include(response.headers["content-type"] ?? "", "image/svg+xml");
++    assert.include(response.headers["content-security-policy"] ?? "", "default-src 'none'");
++    assert.equal(response.headers["x-content-type-options"], "nosniff");
++    assert.equal(response.headers["cache-control"], "private, max-age=86400");
++    const missing = yield* HttpClient.get("/api/provider-catalog/icon/missing", {
++      headers: { cookie },
++    });
++    assert.equal(missing.status, 404);
++    const malformed = yield* HttpClient.get("/api/provider-catalog/icon/%ZZ", {
++      headers: { cookie },
++    });
++    assert.equal(malformed.status, 404);
++  }).pipe(Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer)))),
++);

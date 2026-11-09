@@ -4,6 +4,7 @@ import {
   type PersonalRoutine,
   type PersonalTask,
   type PersonalTaskStatus,
+  type PersonalTaskWorkRecord,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -182,8 +183,6 @@ function formatNextRunDateTime(
  * Scheduled routines only: an event routine has no next run. See `routineHook`.
  * Shown in the user's zone like every other time in the app; the routine's own
  * zone decides when it fires, not how the instant reads. A run on today's
- * London date reads "Today, HH:MM" ("Next: Today, 14:30"); any other day keeps
- * the weekday ("Next: Sat 17 Oct, 14:30").
  */
 export function routineNextRunLabel(
   routine: Pick<PersonalRoutine, "enabled" | "nextDueAt">,
@@ -219,4 +218,16 @@ export function mergeTaskLists(
     }
   }
   return merged;
+}
+
+/** Whether the record holds anything the bot or the server added beyond the objective. */
+export function workRecordIsEmpty(record: PersonalTaskWorkRecord): boolean {
+  return (
+    record.decisions.length === 0 &&
+    record.evidence.length === 0 &&
+    record.outstanding.length === 0 &&
+    record.nextStep.length === 0 &&
+    record.lastResult.length === 0 &&
+    record.updates.length === 0
+  );
 }

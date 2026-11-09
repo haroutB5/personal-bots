@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/operations/commands.test.ts b/packages/client-runtime/src/operations/commands.test.ts
+index dde2d3f2fab92be2ab424534a0060a9e90949dda..9e16acebcf13483aa0f3460de9a22d56b7428458 100644
+--- a/packages/client-runtime/src/operations/commands.test.ts
++++ b/packages/client-runtime/src/operations/commands.test.ts
+@@ -7,7 +7,7 @@ import {
+   type ClientOrchestrationCommand,
+ } from "@t3tools/contracts";
+ import { describe, expect, it } from "@effect/vitest";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";

@@ -1,0 +1,11 @@
+diff --git a/apps/server/src/relay/AgentAwarenessRelay.test.ts b/apps/server/src/relay/AgentAwarenessRelay.test.ts
+index a3784aa780d135542c1edcd18c6c788065d02976..513297b0de70232c456c83206659f00b91ec007e 100644
+--- a/apps/server/src/relay/AgentAwarenessRelay.test.ts
++++ b/apps/server/src/relay/AgentAwarenessRelay.test.ts
+@@ -1,5 +1,5 @@
+ import * as NodeCrypto from "node:crypto";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ 
+ import type {
+   EnvironmentId,

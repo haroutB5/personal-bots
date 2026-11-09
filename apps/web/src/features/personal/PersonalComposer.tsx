@@ -5,7 +5,7 @@ import type {
   MutableRefObject,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -18,9 +18,9 @@ import {
   personalReplyContext,
   type PersonalReplyQuote,
   type ThreadId,
-  type ThreadTurnFollowUp,
   withPersonalFollowUp,
 } from "@t3tools/contracts";
+import type { ThreadTurnFollowUp } from "@hbots/personal-client/conversation/wireTypes";
 import { truncate } from "@t3tools/shared/String";
 import { ArrowUp, CircleAlert, CircleDashed, FileText, Plus, Square, X } from "lucide-react";
 
@@ -49,7 +49,7 @@ import { prepareImageForAttachment } from "~/lib/imageCompression";
 import { newMessageId, randomUUID } from "~/lib/utils";
 import { useServerConfigs } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
-import type { Thread } from "~/types";
+import type { ChatThread } from "@hbots/personal-client/conversation/chatThread";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { PendingOutgoingMessage } from "./MessageList";
@@ -75,7 +75,7 @@ import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
 const ROUND_BUTTON =
-  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-inset focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
 
 /** Marks the hidden field resizeTextarea measures against. */
 const MEASURE_FIELD_ATTRIBUTE = "data-composer-measure";
@@ -326,7 +326,7 @@ export function PersonalComposer({
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
-  thread: Thread;
+  thread: Pick<ChatThread, "modelSelection" | "runtimeMode" | "interactionMode">;
   /** Null while the bot is still loading (a cold deep link). */
   botName: string | null;
   /**
@@ -401,10 +401,7 @@ export function PersonalComposer({
     readonly avatarColor: string;
   } | null;
 }): JSX.Element {
-  const threadRef = useMemo(
-    () => scopeThreadRef(environmentId, threadId),
-    [environmentId, threadId],
-  );
+  const threadRef = scopeThreadRef(environmentId, threadId);
   const draft = useComposerThreadDraft(threadRef);
   const setPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addImages = useComposerDraftStore((store) => store.addImages);
@@ -423,6 +420,7 @@ export function PersonalComposer({
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const offlineRef = useRef(offlineNotice !== null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a send's retry loop spans renders and awaits, and reads this ref to stop when the connection drops mid-loop
   useEffect(() => {
     offlineRef.current = offlineNotice !== null;
   }, [offlineNotice]);
@@ -444,10 +442,10 @@ export function PersonalComposer({
   // its text) and come back only if the send fails; the draft store keeps them
   // until the server accepts, so a failure loses nothing.
   const [inFlightIds, setInFlightIds] = useState<ReadonlySet<string>>(NO_IDS);
-  const attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment> = useMemo(
-    () => [...draft.images, ...draft.files].filter((attachment) => !inFlightIds.has(attachment.id)),
-    [draft.files, draft.images, inFlightIds],
-  );
+  const attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment> = [
+    ...draft.images,
+    ...draft.files,
+  ].filter((attachment) => !inFlightIds.has(attachment.id));
   /** The text just sent, while a late keyboard event could put it back. */
   const sentEchoRef = useRef<{ readonly text: string; readonly until: number } | null>(null);
   /**
@@ -544,6 +542,7 @@ export function PersonalComposer({
   // and puts the caret back where an insertion left it. Both belong to the same
   // "the draft text changed" moment, and both must happen before paint: an
   // inserted mention that lost the caret would drop it to the end of the line.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sizes the textarea DOM node to its text and places its caret before paint
   useLayoutEffect(() => {
     resizeTextarea(textareaRef.current, prompt);
     const at = pendingCaret.current;
@@ -557,6 +556,7 @@ export function PersonalComposer({
 
   // The owner switched chats with a chat chip while typing: this composer is
   // the new chat's, and takes the focus over so the keyboard stays up.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands DOM focus to the textarea on mount when a chat switch asked for it
   useLayoutEffect(() => {
     if (consumeComposerRefocus()) textareaRef.current?.focus({ preventScroll: true });
   }, []);
@@ -1025,6 +1025,7 @@ export function PersonalComposer({
   };
 
   // The screen's tapped choices send through this composer's own path.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the screen's imperative send handle while mounted and clears it on unmount
   useEffect(() => {
     if (quickSendRef === undefined) return;
     quickSendRef.current = (text) => send(text);
@@ -1035,6 +1036,7 @@ export function PersonalComposer({
 
   // Picking Reply puts the cursor in the field, after the menu has handed focus back.
   const replyMessageId = replyTo?.messageId ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer moves DOM focus to the textarea after the reply menu returns focus
   useEffect(() => {
     if (replyMessageId === null) return;
     const timer = setTimeout(() => textareaRef.current?.focus({ preventScroll: true }), 120);
@@ -1138,7 +1140,7 @@ export function PersonalComposer({
               <button
                 type="button"
                 aria-label={`Open ${attachment.name}`}
-                className="flex min-w-0 items-center gap-2 self-stretch outline-none focus-visible:ring-2"
+                className="flex min-w-0 items-center gap-2 self-stretch outline-none focus-visible:ring-inset focus-visible:ring-2"
                 onClick={() =>
                   setPreview({
                     ...attachment,

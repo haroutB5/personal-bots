@@ -1,5 +1,6 @@
 import * as React from "react";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { clearPendingWrapup, pendingWrapupFor } from "./chatChipHandoff";
@@ -81,9 +82,6 @@ vi.mock("@t3tools/client-runtime/state/threads", () => ({
   requestOlderThreadTurns: () => {},
   threadHasOlderTurns: () => false,
 }));
-vi.mock("~/components/ChatView.logic", () => ({
-  buildRunningThreadTurnInterruptInput: () => null,
-}));
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuTrigger: ({
@@ -110,20 +108,17 @@ vi.mock("~/components/ui/menu", () => ({
   MenuSeparator: () => <hr />,
 }));
 vi.mock("~/lib/contextWindow", () => ({ deriveLatestContextWindowSnapshot: () => null }));
-vi.mock("~/session-logic", () => ({
-  derivePhase: () => "ready",
-  deriveTimelineEntriesWithState: () => ({ entries: [] }),
-  deriveWorkLogEntries: () => [],
-}));
 vi.mock("~/state/lazyThreadShells", () => ({
   useLazyThreadShells: () => ({ pending: false }),
-  withLazyThreadShells: <A,>(atom: A) => atom,
 }));
 vi.mock("~/state/entities", () => ({
   useProject: () => null,
   useThreadDetail: () => state.thread,
-  useThreadShell: () => state.shell,
-  useThreadShells: () => {
+  useThreadStatus: () => "ready",
+}));
+vi.mock("./useBotShells", () => ({
+  useBotShell: () => state.shell,
+  useBotShells: () => {
     const shellOf = (id: string, title: string, archivedAt: string | null, extra = {}) => ({
       id,
       environmentId: "env-1",
@@ -151,7 +146,6 @@ vi.mock("~/state/entities", () => ({
         : []),
     ];
   },
-  useThreadStatus: () => "ready",
 }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
 vi.mock("~/state/threads", () => ({
@@ -277,6 +271,7 @@ vi.mock("./conversationModel", () => ({
   // The pending-summary window only starts the 15-second refresh loop; these
   // tests have no call cards at all, so it is always false.
   voiceCallSummaryPending: () => false,
+  runningTurnInterruptInput: () => null,
   resolveConversationHeaderName: ({ botName }: { botName: string | null }) =>
     botName === null ? { status: "loading" } : { status: "ready", name: botName },
   // A final failed turn: Retry would show on an open chat.
@@ -563,7 +558,6 @@ const THREAD = {
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
     setInterval: () => 1,
     clearInterval: () => {},

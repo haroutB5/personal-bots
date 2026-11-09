@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/CodexChatGptHandoff.ts b/apps/server/src/provider/CodexChatGptHandoff.ts
+index 2a1dce4a6a9607cb3592d352337e6916771c496f..41bc6c2d8c2f9e11eb25afb827de8de21608dd63 100644
+--- a/apps/server/src/provider/CodexChatGptHandoff.ts
++++ b/apps/server/src/provider/CodexChatGptHandoff.ts
+@@ -3,7 +3,7 @@ import { ProviderSetupError } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import * as Stream from "effect/Stream";
+-import { FetchHttpClient } from "effect/unstable/http";
++import { FetchHttpClient } from "effect/http";
+ import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+ import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+ import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";

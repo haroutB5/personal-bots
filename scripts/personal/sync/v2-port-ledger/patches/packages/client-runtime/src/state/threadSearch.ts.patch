@@ -1,0 +1,13 @@
+diff --git a/packages/client-runtime/src/state/threadSearch.ts b/packages/client-runtime/src/state/threadSearch.ts
+index 6dae630aab7ebbcf7de0263bdbbcaa12ed21798c..ff7874d77bb6a7c16a363af0087b7575d179994a 100644
+--- a/packages/client-runtime/src/state/threadSearch.ts
++++ b/packages/client-runtime/src/state/threadSearch.ts
+@@ -6,7 +6,7 @@ import {
+ } from "@t3tools/contracts";
+ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ export interface EnvironmentThreadSearchMatch extends OrchestrationThreadSearchMatch {
+   readonly environmentId: EnvironmentId;

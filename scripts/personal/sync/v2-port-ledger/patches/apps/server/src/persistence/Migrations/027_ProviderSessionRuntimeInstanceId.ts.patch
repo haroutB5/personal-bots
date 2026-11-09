@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts b/apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts
+index 7ae0e55b13c5ec725e7c3d88f838de674c325bad..3acf4b9fdf2de4fdf4509311a5f1477777234463 100644
+--- a/apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts
++++ b/apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts
+@@ -15,7 +15,7 @@
+  * multiple instances of the same driver. Keeping that compatibility at the
+  * persistence boundary keeps the fallback out of active routing code.
+  */
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ import * as Effect from "effect/Effect";
+ 
+ export default Effect.gen(function* () {

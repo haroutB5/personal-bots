@@ -5,8 +5,6 @@
  * The PC's CPU, RAM and disk for the line under the Bots page header
  * (SystemStatsLine.tsx). The numbers come from
  * `GET /api/personal/performance/summary` (server
- * personal/performance/systemSummaryRoute.ts), which never starts the
- * Performance tab's sampler.
  */
 
 export const SYSTEM_SUMMARY_URL = "/api/personal/performance/summary";

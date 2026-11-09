@@ -2,11 +2,11 @@ import {
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   PersonalBotId,
   ThreadId,
-  type OrchestrationLatestTurn,
   type OrchestrationSession,
   type OrchestrationSessionProviderRetry,
   type PersonalBrowserStatus,
 } from "@t3tools/contracts";
+import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { TimelineEntry } from "./types.ts";
@@ -25,6 +25,7 @@ import {
   placeSecretRequestCards,
   providerWaitState,
   resolveConversationHeaderName,
+  runningTurnInterruptInput,
   conversationHeaderStateLabel,
 } from "./conversationModel.ts";
 import type { QuestionCardItem } from "./questionCards.ts";
@@ -842,5 +843,22 @@ describe("conversationHeaderStateLabel", () => {
     expect(label("waiting", true)).toBe("Waiting for you");
     expect(label("needs_help", true)).toBe("Needs your help");
     expect(label("idle", false)).toBe("Idle");
+  });
+});
+
+describe("runningTurnInterruptInput", () => {
+  const id = ThreadId.make("thread-1");
+
+  it("targets the thread while its turn runs", () => {
+    expect(runningTurnInterruptInput({ id, session: session("running") })).toEqual({
+      threadId: id,
+    });
+  });
+
+  it("offers no Stop when nothing runs", () => {
+    expect(runningTurnInterruptInput({ id, session: session("ready") })).toBeNull();
+    expect(runningTurnInterruptInput({ id, session: session("error") })).toBeNull();
+    expect(runningTurnInterruptInput({ id, session: null })).toBeNull();
+    expect(runningTurnInterruptInput(null)).toBeNull();
   });
 });

@@ -1,0 +1,15 @@
+diff --git a/apps/server/src/project/AgentSessionScanner.ts b/apps/server/src/project/AgentSessionScanner.ts
+index 8a8f3b310e032ddb4197abb02ef8e1edca3a10f2..cb35dab7edbc5ae2212afe41177341b7871ee7a6 100644
+--- a/apps/server/src/project/AgentSessionScanner.ts
++++ b/apps/server/src/project/AgentSessionScanner.ts
+@@ -592,8 +592,8 @@ function transcriptIdentity(filePath: string, stats: FileSystem.File.Info) {
+     filePath,
+     size: Number(stats.size),
+     mtimeMs: Option.match(stats.mtime, { onNone: () => null, onSome: (date) => date.getTime() }),
+-    device: stats.dev,
+-    inode: Option.getOrNull(stats.ino),
++    device: Number(stats.dev),
++    inode: Option.match(stats.ino, { onNone: () => null, onSome: (ino) => Number(ino) }),
+     birthtimeMs: Option.match(stats.birthtime, {
+       onNone: () => null,
+       onSome: (date) => date.getTime(),

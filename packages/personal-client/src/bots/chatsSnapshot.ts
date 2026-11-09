@@ -12,15 +12,6 @@ import type { KeyValueStore } from "../ports/keyValueStore.ts";
  * Cold-start snapshot for the Chats list. After each successful
  * `personalBots.list` the screen persists just enough to paint instantly on
  * the next launch: identity, avatar, the bot's static title and a one-line preview.
- * Live state (working dots, rate limits, review row) is deliberately absent —
- * it needs live data and stays neutral until the list arrives.
- *
- * Never message bodies, never secrets. This is structural, not a convention:
- * {@link ChatsSnapshotRowInput} has no field a message body can enter. The
- * stored preview is a server-authored turn label when there is one, else the
- * thread title — both already server-side metadata. The rendered row shows the
- * newest message line, but that line lives only in memory, because the
- * snapshot is at rest in the key value store with no credential in front of it.
  */
 export const ChatsSnapshotRow = Schema.Struct({
   botId: Schema.String,
@@ -63,8 +54,6 @@ const STORAGE_KEY = "t3code:chats-snapshot:v3";
  * Keys written by earlier shapes of this snapshot. A v2 entry has no `pinned`
  * flag, so painting it would reproduce the bug v3 fixes (pinned box missing on
  * the very first paint) and then reshuffle the rows when the live list landed.
- * Reading drops them instead of migrating: one cold start falls back to the
- * skeleton, and nothing stale is left sitting in storage.
  */
 const LEGACY_STORAGE_KEYS = ["t3code:chats-snapshot:v2"] as const;
 /** Phone-first lists are short; beyond this the snapshot stops paying for itself. */
@@ -178,9 +167,12 @@ function removeLegacyQuietly(store: KeyValueStore): void {
   }
 }
 
+const decodeChatsSnapshot = Schema.decodeSync(ChatsSnapshotJson);
+const encodeChatsSnapshot = Schema.encodeSync(ChatsSnapshotJson);
+
 function readEnvelope(store: KeyValueStore): typeof ChatsSnapshotEnvelope.Type | null {
   const stored = store.getItem(STORAGE_KEY);
-  return stored === null ? null : Schema.decodeSync(ChatsSnapshotJson)(stored);
+  return stored === null ? null : decodeChatsSnapshot(stored);
 }
 
 /**
@@ -214,9 +206,6 @@ export function readChatsSnapshot(
  * The saved snapshot before the environment is known. The app boots with no
  * environment id for a few hundred milliseconds (it arrives with the
  * connection), and waiting for it left the skeleton on screen while a good
- * snapshot sat in storage. The entry is read as-is here and never deleted: the
- * environment check happens as soon as the id is known (readChatsSnapshot),
- * which replaces a foreign snapshot with the skeleton. Never throws.
  */
 export function readChatsSnapshotBeforeEnvironment(store: KeyValueStore): ChatsSnapshot | null {
   try {
@@ -236,7 +225,7 @@ export function writeChatsSnapshot(
   snapshot: ChatsSnapshot,
 ): void {
   try {
-    store.setItem(STORAGE_KEY, Schema.encodeSync(ChatsSnapshotJson)({ environmentId, snapshot }));
+    store.setItem(STORAGE_KEY, encodeChatsSnapshot({ environmentId, snapshot }));
   } catch {
     removeQuietly(store);
   }
@@ -246,9 +235,6 @@ export function writeChatsSnapshot(
  * Removes every row matching `predicate`, and drops the entry entirely once
  * nothing is left. Deletion happens from screens the Chats list is not mounted
  * behind, so the only writer (`ChatsScreen`'s persist effect) may not run for
- * a long time — until it does, a cold start would keep painting the deleted
- * chat as a live deep link. Returns the rows that survived, or null when the
- * snapshot is gone. Never throws.
  */
 export function dropChatFromSnapshot(
   store: KeyValueStore,

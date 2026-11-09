@@ -1,0 +1,44 @@
+diff --git a/apps/web/src/components/settings/providerStatus.ts b/apps/web/src/components/settings/providerStatus.ts
+index 8b6b95479686aaf74c2a543eb0aa54dbea5661b4..fc52014387f61aff81240e3db6c3f79ca6641d91 100644
+--- a/apps/web/src/components/settings/providerStatus.ts
++++ b/apps/web/src/components/settings/providerStatus.ts
+@@ -4,6 +4,8 @@ import type {
+   ServerProviderCompatibilityAdvisory,
+ } from "@t3tools/contracts";
+ 
++import { providerApiKeyField } from "./providerApiKeys";
++
+ /**
+  * Visual treatment for each server-reported provider status. Centralized so
+  * the default-driver card and per-instance cards share the same language.
+@@ -54,6 +56,15 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
+     };
+   }
+   if (provider.auth.status === "unauthenticated") {
++    // A provider whose only way in is an API key is not "not authenticated":
++    // it is waiting for one paste. Say the step, not a failure.
++    const apiKeyField = providerApiKeyField(provider.driver);
++    if (apiKeyField?.required === true) {
++      return {
++        headline: `Add your ${apiKeyField.label}`,
++        detail: provider.message ?? null,
++      };
++    }
+     return {
+       headline: "Not authenticated",
+       detail: provider.message ?? null,
+@@ -159,11 +170,9 @@ export function getProviderVersionAdvisoryPresentation(
+ 
+   return {
+     title: label,
+-    detail:
+-      advisory.message ??
+-      (versionLabel
+-        ? `${label}: install ${versionLabel}.`
+-        : `${label}: install the latest provider version.`),
++    detail: versionLabel
++      ? `${label}: ${versionLabel} is available.`
++      : (advisory.message ?? `${label}: install the latest provider version.`),
+     updateCommand: advisory.updateCommand,
+     emphasis: "normal" as const,
+     targetVersion: null,

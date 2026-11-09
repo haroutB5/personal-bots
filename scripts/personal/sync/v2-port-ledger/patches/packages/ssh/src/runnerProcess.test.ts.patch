@@ -1,0 +1,19 @@
+diff --git a/packages/ssh/src/runnerProcess.test.ts b/packages/ssh/src/runnerProcess.test.ts
+index f26bbc39415e4d5b9d6994776ea2e01780c6abfa..6d4d459ffbe197017bf916e77ce26bbaf778bc5b 100644
+--- a/packages/ssh/src/runnerProcess.test.ts
++++ b/packages/ssh/src/runnerProcess.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { assert, describe, it } from "@effect/vitest";
+ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+ import * as Deferred from "effect/Deferred";
+@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import * as NodeNet from "node:net";
+ 
+ import { buildRemoteStopScript, buildRemoteT3RunnerScript } from "./tunnel.ts";

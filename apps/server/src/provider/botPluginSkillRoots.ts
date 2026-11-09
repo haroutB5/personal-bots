@@ -2,17 +2,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import {
-  PERSONAL_BOT_ID_PATTERN,
-  PERSONAL_BOT_PLUGINS_DIR,
-  PERSONAL_BOT_SHARED_PLUGIN,
-} from "./Layers/ClaudeAdapter.ts";
+/** The bot plugin folders under `<baseDir>/bot-plugins`. */
+export const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
+export const PERSONAL_BOT_SHARED_PLUGIN = "_shared";
+export const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-/** Where a bot's own plugin folder keeps its manifest. */
-export const PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
+const PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
 
-/** The `skills` path a plugin manifest names, when it is a usable relative path. */
-export const readPluginManifestSkillsField = (text: string): string | undefined => {
+const readPluginManifestSkillsField = (text: string): string | undefined => {
   if (text.trim().length === 0) return undefined;
   let parsed: unknown;
   try {
@@ -33,31 +30,23 @@ export const readPluginManifestSkillsField = (text: string): string | undefined 
   return trimmed.split(/[\\/]/).includes("..") ? undefined : trimmed;
 };
 
-/** The folder a plugin manifest declares for its skills, when it declares one. */
-const declaredPluginSkillsDir = (
+const declaredPluginSkillsDir = Effect.fn("botPluginSkillRoots.declaredPluginSkillsDir")(function* (
   pluginDir: string,
-): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const manifestPath = path.join(pluginDir, ...PLUGIN_MANIFEST_PATH);
-    const exists = yield* fileSystem.exists(manifestPath).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) return undefined;
-    const text = yield* fileSystem
-      .readFileString(manifestPath)
-      .pipe(Effect.orElseSucceed(() => ""));
-    const skills = readPluginManifestSkillsField(text);
-    return skills === undefined ? undefined : path.resolve(pluginDir, skills);
-  });
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifestPath = path.join(pluginDir, ...PLUGIN_MANIFEST_PATH);
+  const exists = yield* fileSystem.exists(manifestPath).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) return undefined;
+  const text = yield* fileSystem.readFileString(manifestPath).pipe(Effect.orElseSucceed(() => ""));
+  const skills = readPluginManifestSkillsField(text);
+  return skills === undefined ? undefined : path.resolve(pluginDir, skills);
+});
 
 /**
- * The skill folders a bot's own plugins keep their skills in: the shared
- * folder every bot loads (`<baseDir>/bot-plugins/_shared/`), then the bot's own
- * (`<baseDir>/bot-plugins/<botId>/`). A plugin names the folder in its
- * manifest; one that names nothing usable falls back to `.claude/skills`,
- * where hbots installs them. Only folders that exist are named, and an unknown
- * or unsafe bot id gets the shared folder alone, so a bot never reaches
- * another bot's skills.
+ * The skill folders a bot's plugins keep: the shared folder, then the bot's own.
+ * A manifest names the folder, falling back to `.claude/skills`; an unsafe bot
+ * id gets the shared folder alone, so a bot never reaches another bot's skills.
  */
 export const resolvePersonalBotPluginSkillDirs = Effect.fn("resolvePersonalBotPluginSkillDirs")(
   function* (input: {

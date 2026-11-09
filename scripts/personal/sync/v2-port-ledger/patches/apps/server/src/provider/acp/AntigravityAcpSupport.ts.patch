@@ -1,0 +1,224 @@
+diff --git a/apps/server/src/provider/acp/AntigravityAcpSupport.ts b/apps/server/src/provider/acp/AntigravityAcpSupport.ts
+index 8f2877330bbedfc9c32c4508617316e3e4682b60..24644ca1fe77d399b6565d4a1842260b5d34b58b 100644
+--- a/apps/server/src/provider/acp/AntigravityAcpSupport.ts
++++ b/apps/server/src/provider/acp/AntigravityAcpSupport.ts
+@@ -5,15 +5,16 @@ import {
+   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+   type ProviderSendTurnInput,
+   type RuntimeMode,
++  type ProviderOptionSelections,
+ } from "@t3tools/contracts";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Path from "effect/Path";
+ import * as Scope from "effect/Scope";
+ import * as Stream from "effect/Stream";
+-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ import * as EffectAcpErrors from "effect-acp/errors";
+ import type * as EffectAcpSchema from "effect-acp/schema";
+ 
+@@ -30,6 +31,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
+   | "authMethodId"
+   | "cancelBehavior"
+   | "clientCapabilities"
++  | "isAllowedConfigOptionValue"
++  | "isConfigOptionCurrentValueMatching"
+   | "onStderr"
+   | "resumeMethod"
+   | "transformSessionUpdate"
+@@ -65,6 +68,8 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
+       authMethodId: input.authMethod ?? "oauth-personal",
+       resumeMethod: "resume",
+       cancelBehavior: "wait-for-prompt",
++      isAllowedConfigOptionValue: isAntigravityAllowedConfigOptionValue,
++      isConfigOptionCurrentValueMatching: isAntigravityConfigOptionCurrentValueMatching,
+       clientCapabilities: {
+         fs: {
+           readTextFile: input.clientFileSystem === true,
+@@ -88,6 +93,77 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
+   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
+ });
+ 
++export function parseAntigravityModel(model: string | null | undefined): {
++  readonly family: string | undefined;
++  readonly effort: "low" | "medium" | "high" | undefined;
++} {
++  if (!model) return { family: undefined, effort: undefined };
++  const match = model.match(/^(gemini-(?:4-argon|3\.8-flash))(?:-(low|medium|high))?$/u);
++  if (!match) return { family: model, effort: undefined };
++  return {
++    family: match[1],
++    effort: match[2] as "low" | "medium" | "high" | undefined,
++  };
++}
++
++export function currentAntigravityModel(
++  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
++): string | undefined {
++  const model = configOptions.find((option) => option.id === "model");
++  if (model?.type !== "select" || !model.currentValue) return undefined;
++  const thinking = configOptions.find((option) => option.id === "thinking_level");
++  const effort =
++    thinking?.type === "select" &&
++    (thinking.currentValue === "low" ||
++      thinking.currentValue === "medium" ||
++      thinking.currentValue === "high")
++      ? thinking.currentValue
++      : undefined;
++  return effort ? `${model.currentValue}-${effort}` : model.currentValue;
++}
++
++export function matchesAntigravityModelSelection(
++  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
++  targetModel: string,
++): boolean {
++  const parsed = parseAntigravityModel(targetModel);
++  const modelOption = configOptions.find((option) => option.id === "model");
++  if (modelOption?.type !== "select" || modelOption.currentValue !== parsed.family) {
++    return false;
++  }
++  if (parsed.effort) {
++    const thinkingOption = configOptions.find((option) => option.id === "thinking_level");
++    return thinkingOption?.type === "select" && thinkingOption.currentValue === parsed.effort;
++  }
++  return true;
++}
++
++export function isAntigravityAllowedConfigOptionValue(
++  configOption: EffectAcpSchema.SessionConfigOption,
++  value: string,
++): boolean {
++  if (configOption.id === "model") {
++    const options = antigravityModelOptions([configOption]);
++    return options.some((opt) => opt.value === value);
++  }
++  return false;
++}
++
++export function isAntigravityConfigOptionCurrentValueMatching(
++  configOption: EffectAcpSchema.SessionConfigOption,
++  value: string | boolean,
++  allConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
++): boolean {
++  if (configOption.id === "model" && typeof value === "string") {
++    const parsed = parseAntigravityModel(value);
++    if (parsed.effort) {
++      return currentAntigravityModel(allConfigOptions) === value;
++    }
++    return configOption.type === "select" && configOption.currentValue === value;
++  }
++  return false;
++}
++
+ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
+   switch (runtimeMode) {
+     case "full-access":
+@@ -105,7 +181,20 @@ export function antigravityModelOptions(
+ ) {
+   const model = configOptions.find((option) => option.id === "model");
+   if (model?.type !== "select") return [];
+-  return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
++  const entries = model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
++  // Runtime 1.4 groups these native IDs into a family in configOptions.
++  // setModel still accepts the concrete IDs and validates account availability.
++  return entries.flatMap((entry) =>
++    /^gemini-(?:4-argon|3\.8-flash)$/u.test(entry.value)
++      ? [
++          entry,
++          ...["low", "medium", "high"].map((effort) => ({
++            ...entry,
++            value: `${entry.value}-${effort}`,
++          })),
++        ]
++      : [entry],
++  );
+ }
+ 
+ /**
+@@ -118,14 +207,38 @@ export function resolveAntigravityModel(input: {
+   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+   readonly model: string | null | undefined;
+   readonly defaultModel?: string | undefined;
++  readonly options?: ProviderOptionSelections | undefined;
+ }): string | undefined {
+   const modelConfig = input.configOptions.find((option) => option.id === "model");
+-  const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
+-  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) return input.model;
++  const current =
++    currentAntigravityModel(input.configOptions) ??
++    (modelConfig?.type === "select" ? modelConfig.currentValue : undefined);
++  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) {
++    const parsed = parseAntigravityModel(input.model);
++    const rawEffort = input.options?.find((option) => option.id === "effort")?.value;
++    const isExplicitEffort = rawEffort === "low" || rawEffort === "medium" || rawEffort === "high";
++    const isDefaultEffort = rawEffort === "default" || rawEffort === "";
++    if (parsed.family && (isExplicitEffort || isDefaultEffort || parsed.effort)) {
++      const targetEffort = isExplicitEffort
++        ? rawEffort
++        : isDefaultEffort
++          ? undefined
++          : parsed.effort;
++      return targetEffort ? `${parsed.family}-${targetEffort}` : parsed.family;
++    }
++    return input.model;
++  }
+   const options = antigravityModelOptions(input.configOptions);
+-  return input.defaultModel && options.some((option) => option.value === input.defaultModel)
+-    ? input.defaultModel
+-    : current;
++  const normalizedDefault = input.defaultModel
++    ? parseAntigravityModel(input.defaultModel).family
++    : undefined;
++  if (input.defaultModel && options.some((option) => option.value === input.defaultModel)) {
++    return input.defaultModel;
++  }
++  if (normalizedDefault && options.some((option) => option.value === normalizedDefault)) {
++    return normalizedDefault;
++  }
++  return current;
+ }
+ 
+ /** Never replace a saved selection with the default returned by a cold resume. */
+@@ -136,16 +249,20 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
+       "getConfigOptions" | "setModel"
+     >;
+     readonly model: string | null | undefined;
++    readonly options?: ProviderOptionSelections | undefined;
+     /** Model to select for the provider default alias. See `resolveAntigravityModel`. */
+     readonly defaultModel?: string | undefined;
+     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+   }): Effect.fn.Return<string | undefined, E> {
+     const configOptions = yield* input.runtime.getConfigOptions;
+     const modelConfig = configOptions.find((option) => option.id === "model");
+-    const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
++    const current =
++      currentAntigravityModel(configOptions) ??
++      (modelConfig?.type === "select" ? modelConfig.currentValue : undefined);
+     const resolved = resolveAntigravityModel({
+       configOptions,
+       model: input.model,
++      options: input.options,
+       defaultModel: input.defaultModel,
+     });
+     // The default alias never sends an internal ID. It selects the manifest
+@@ -164,6 +281,16 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
+       );
+     }
+     yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
++    const updatedOptions = yield* input.runtime.getConfigOptions;
++    if (!matchesAntigravityModelSelection(updatedOptions, resolved)) {
++      return yield* Effect.fail(
++        input.mapError(
++          EffectAcpErrors.AcpRequestError.invalidParams(
++            `Antigravity model selection '${resolved}' could not be confirmed by the runtime.`,
++          ),
++        ),
++      );
++    }
+     return resolved;
+   },
+ );

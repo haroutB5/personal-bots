@@ -1,0 +1,33 @@
+diff --git a/apps/server/src/bin.test.ts b/apps/server/src/bin.test.ts
+index aecf82eeac678b1de7ee17b682ce97701429005c..2aaa0b95c1894237021cebb6d24e4be1ed6ebce7 100644
+--- a/apps/server/src/bin.test.ts
++++ b/apps/server/src/bin.test.ts
+@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
+ import * as NodeChildProcess from "node:child_process";
+ 
+ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   CommandId,
+   EnvironmentOrchestrationHttpApi,
+@@ -21,13 +21,13 @@ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as DateTime from "effect/DateTime";
+ import * as Layer from "effect/Layer";
+-import * as HttpRouter from "effect/unstable/http/HttpRouter";
+-import * as HttpServer from "effect/unstable/http/HttpServer";
+-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+-import * as CliError from "effect/unstable/cli/CliError";
++import * as HttpRouter from "effect/http/HttpRouter";
++import * as HttpServer from "effect/http/HttpServer";
++import * as HttpApi from "effect/http-api/HttpApi";
++import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
++import * as CliError from "effect/cli/CliError";
+ import * as TestConsole from "effect/testing/TestConsole";
+-import { Command } from "effect/unstable/cli";
++import { Command } from "effect/cli";
+ 
+ import { cli, makeCli } from "./bin.ts";
+ import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";

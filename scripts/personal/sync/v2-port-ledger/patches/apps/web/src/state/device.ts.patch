@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/state/device.ts b/apps/web/src/state/device.ts
+index 9a42cb0b1305d50aa8f131aac8db2e43f77ce089..ae790e8fd02203e7637147742858ddc0f8f82970 100644
+--- a/apps/web/src/state/device.ts
++++ b/apps/web/src/state/device.ts
+@@ -8,7 +8,7 @@ import {
+ import type { DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ import { connectionAtomRuntime } from "../connection/runtime";
+ import { appAtomRegistry } from "../rpc/atomRegistry";

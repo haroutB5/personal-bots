@@ -1,19 +1,14 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
-  CorrelationId,
-  EventId,
   MessageId,
   PersonalBotId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
   type ModelSelection,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type OrchestrationSession,
-  type ProviderSendTurnInput,
+  type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -22,17 +17,8 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
-import { PersonalEngineV1Live, toPersonalEvents } from "./engine/PersonalEngineV1Live.ts";
-import {
-  ThreadBackgroundLivenessService,
-  make as makeThreadBackgroundLiveness,
-} from "../orchestration/ThreadBackgroundLiveness.ts";
-import { ProjectionThreadMessageRepository } from "../persistence/Services/ProjectionThreadMessages.ts";
-import type { PersonalThreadStatus } from "./engine/PersonalEngine.ts";
-import * as PersonalEngine from "./engine/PersonalEngine.ts";
+import type * as PersonalEngine from "./engine/PersonalEngine.ts";
+import { PersonalEngine as PersonalEngineTag } from "./engine/PersonalEngine.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalTurnRetry from "./PersonalTurnRetryService.ts";
 import { PERSONAL_TURN_RETRY_DELAYS_MS } from "./personalTurnRetryPolicy.ts";
@@ -41,6 +27,8 @@ import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
 const THREAD = ThreadId.make("thread-1");
 const INSTANCE = ProviderInstanceId.make("opencode");
 const OWNER_MESSAGE = MessageId.make("msg-from-owner");
+const CONTINUATION_PROMPT = "Continue where you left off.";
+const CONTINUATION_PREFIX = "personal-continue:";
 
 /** Verbatim from the incident that motivated this: the reply died, not the send. */
 const UPSTREAM_FAILURE =
@@ -50,32 +38,30 @@ const USAGE_LIMIT_FAILURE = "You've hit your session limit · resets 10:10pm (Eu
 const [FIRST_DELAY_MS, SECOND_DELAY_MS] = PERSONAL_TURN_RETRY_DELAYS_MS;
 
 interface Harness {
-  readonly dispatched: Array<OrchestrationCommand>;
-  readonly sends: Array<ProviderSendTurnInput>;
+  readonly dispatched: Array<OrchestrationV2ServerCommand>;
+  readonly continuations: Array<PersonalEngine.PersonalContinueTurnInput>;
   session: OrchestrationSession | null;
   /** The thread is linked to a live personal bot. */
   isBotThread: boolean;
-  /** The next sendTurn call throws instead of starting a turn. */
+  /** The next continueTurn call throws instead of starting a turn. */
   failSend: boolean;
   /** A task attempt drives (or just drove) the thread's turn. */
   taskOwnsTurn: boolean;
   /** The bot's model selection as it is now (edits land here). */
   botModelSelection: ModelSelection;
-  readonly statuses: Map<string, PersonalThreadStatus>;
   sequence: number;
-  /** The adapter can continue a turn without a prompt. */
+  /** The adapter can continue a turn without a prompt. Kept for the case name. */
   promptless: boolean;
 }
 
 const makeHarness = (): Harness => ({
   dispatched: [],
-  sends: [],
+  continuations: [],
   session: null,
   isBotThread: true,
   failSend: false,
   taskOwnsTurn: false,
   botModelSelection: { instanceId: INSTANCE, model: "big-pickle" },
-  statuses: new Map(),
   sequence: 0,
   promptless: true,
 });
@@ -97,56 +83,115 @@ const makeSession = (input: {
   updatedAt: "2026-09-17T10:00:00.000Z",
 });
 
+const sessionView = (session: OrchestrationSession): PersonalEngine.PersonalSessionView => ({
+  threadId: session.threadId,
+  status:
+    session.status === "ready"
+      ? "waiting"
+      : (session.status as PersonalEngine.PersonalThreadStatus),
+  activeTurnId: session.activeTurnId,
+  lastError: session.lastError,
+  providerInstanceId: session.providerInstanceId ?? null,
+  providerName: session.providerName,
+  providerRetry:
+    session.providerRetry === undefined
+      ? null
+      : {
+          kind: session.providerRetry.kind,
+          provider: session.providerRetry.provider,
+          observedAt: session.providerRetry.observedAt,
+          ...(session.providerRetry.retryAt === undefined
+            ? {}
+            : { retryAt: session.providerRetry.retryAt }),
+          ...(session.providerRetry.attempt === undefined
+            ? {}
+            : { attempt: session.providerRetry.attempt }),
+          ...(session.providerRetry.maxAttempts === undefined
+            ? {}
+            : { maxAttempts: session.providerRetry.maxAttempts }),
+          ...(session.providerRetry.reason === undefined
+            ? {}
+            : { reason: session.providerRetry.reason }),
+          ...(session.providerRetry.auto === undefined ? {} : { auto: session.providerRetry.auto }),
+        },
+  updatedAt: session.updatedAt,
+});
+
+const applyRetryMark = (
+  session: OrchestrationSession,
+  retry: PersonalEngine.PersonalProviderRetryMark | null,
+): OrchestrationSession => {
+  if (retry === null) {
+    const { providerRetry: _dropped, ...rest } = session;
+    return rest;
+  }
+  return {
+    ...session,
+    providerRetry: {
+      kind: "retrying",
+      auto: retry.auto,
+      attempt: retry.attempt,
+      maxAttempts: retry.maxAttempts,
+      ...(retry.retryAt === null ? {} : { retryAt: retry.retryAt }),
+      provider: session.providerName ?? "provider",
+      observedAt: "2026-09-17T10:00:00.000Z",
+    },
+  };
+};
+
+/** A test-local PersonalEngine: only the calls this service makes. */
+const engineDouble = (harness: Harness): PersonalEngine.PersonalEngineShape => {
+  const shape = {
+    getThread: (threadId: ThreadId) =>
+      Effect.sync(() =>
+        threadId === THREAD && harness.session !== null
+          ? Option.some({
+              id: THREAD,
+              title: "Chat",
+              projectId: "project",
+              modelSelection: { instanceId: INSTANCE, model: "big-pickle" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              archivedAt: null,
+              session: harness.session,
+            } as unknown as PersonalEngine.PersonalThreadView)
+          : Option.none(),
+      ),
+    setProviderRetry: (input: PersonalEngine.PersonalSetProviderRetryInput) =>
+      Effect.sync(() => {
+        if (harness.session === null) return;
+        harness.session = applyRetryMark(harness.session, input.retry);
+      }),
+    continueTurn: (input: PersonalEngine.PersonalContinueTurnInput) =>
+      Effect.suspend(() => {
+        if (harness.failSend) return Effect.die(new Error("provider is still down"));
+        harness.continuations.push(input);
+        harness.sequence += 1;
+        const messageId = MessageId.make(`${CONTINUATION_PREFIX}${harness.sequence}`);
+        // The v2 engine continues the turn with a system message, never by
+        // re-sending the owner's message.
+        harness.dispatched.push({
+          type: "message.dispatch",
+          commandId: CommandId.make(`personal-engine:continue:${messageId}`),
+          threadId: input.threadId,
+          messageId,
+          text: CONTINUATION_PROMPT,
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "system",
+          creationSource: "server",
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        } as OrchestrationV2ServerCommand);
+        return Effect.void;
+      }),
+    events: Stream.empty as Stream.Stream<PersonalEngine.PersonalThreadEvent>,
+  };
+  return shape as unknown as PersonalEngine.PersonalEngineShape;
+};
+
 const makeLayer = (harness: Harness) =>
   PersonalTurnRetry.layer.pipe(
-    Layer.provideMerge(PersonalEngineV1Live),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            harness.dispatched.push(command);
-            // The projection is the reactor's own read-back, so a session the
-            // reactor writes must be what it reads next.
-            if (command.type === "thread.session.set") harness.session = command.session;
-            return { sequence: harness.dispatched.length };
-          }),
-        subscribeDomainEvents: Effect.succeed(Stream.never),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() =>
-            threadId === THREAD && harness.session !== null
-              ? Option.some({
-                  id: THREAD,
-                  session: harness.session,
-                  archivedAt: null,
-                  modelSelection: { instanceId: INSTANCE, model: "big-pickle" },
-                })
-              : Option.none(),
-          ),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
-    Layer.provideMerge(Layer.succeed(ProjectionThreadMessageRepository, {} as never)),
-    Layer.provideMerge(
-      Layer.succeed(ThreadBackgroundLivenessService, makeThreadBackgroundLiveness()),
-    ),
-    Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
-    Layer.provideMerge(
-      Layer.succeed(ProviderService, {
-        getCapabilities: () => Effect.succeed({ promptlessTurnContinuation: harness.promptless }),
-        sendTurn: (input: ProviderSendTurnInput) =>
-          Effect.suspend(() => {
-            if (harness.failSend) {
-              return Effect.die(new Error("provider is still down"));
-            }
-            harness.sends.push(input);
-            return Effect.succeed({ threadId: THREAD, turnId: TurnId.make("turn-retry") });
-          }),
-      } as unknown as ProviderService["Service"]),
-    ),
+    Layer.provideMerge(Layer.succeed(PersonalEngineTag, engineDouble(harness))),
     Layer.provideMerge(
       Layer.succeed(PersonalBotRepository.PersonalBotRepository, {
         getThreadLink: ({ threadId }: { readonly threadId: ThreadId }) =>
@@ -176,68 +221,49 @@ const makeLayer = (harness: Harness) =>
     Layer.provideMerge(NodeServices.layer),
   );
 
-const baseEvent = (harness: Harness) => {
-  harness.sequence += 1;
-  const id = `evt-${harness.sequence}`;
-  return {
-    sequence: harness.sequence,
-    eventId: EventId.make(id),
-    aggregateKind: "thread" as const,
-    aggregateId: THREAD,
-    occurredAt: "2026-09-17T10:00:00.000Z",
-    commandId: CommandId.make(`cmd-${id}`),
-    causationEventId: null,
-    correlationId: CorrelationId.make(`cmd-${id}`),
-    metadata: {},
-  };
-};
+const turnStartEvent = (
+  _harness: Harness,
+  messageId: MessageId,
+): PersonalEngine.PersonalThreadEvent => ({
+  _tag: "TurnStartRequested",
+  threadId: THREAD,
+  messageId,
+  interactionMode: "default",
+});
 
-const turnStartEvent = (harness: Harness, messageId: MessageId): OrchestrationEvent =>
-  ({
-    ...baseEvent(harness),
-    type: "thread.turn-start-requested",
-    payload: {
-      threadId: THREAD,
-      messageId,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdAt: "2026-09-17T10:00:00.000Z",
-    },
-  }) as OrchestrationEvent;
+const interruptEvent = (_harness: Harness): PersonalEngine.PersonalThreadEvent => ({
+  _tag: "TurnStopRequested",
+  threadId: THREAD,
+});
 
-const interruptEvent = (harness: Harness): OrchestrationEvent =>
-  ({
-    ...baseEvent(harness),
-    type: "thread.turn-interrupt-requested",
-    payload: { threadId: THREAD, createdAt: "2026-09-17T10:00:00.000Z" },
-  }) as OrchestrationEvent;
-
-const sessionEvent = (harness: Harness, session: OrchestrationSession): OrchestrationEvent => {
+const sessionEvent = (
+  harness: Harness,
+  session: OrchestrationSession,
+): PersonalEngine.PersonalThreadEvent => {
   harness.session = session;
-  return {
-    ...baseEvent(harness),
-    type: "thread.session-set",
-    payload: { threadId: THREAD, session },
-  } as OrchestrationEvent;
+  const view = sessionView(session);
+  return { _tag: "StatusChanged", threadId: THREAD, status: view.status, session: view };
 };
 
-/** Feeds the events production sees, through the real v1-to-personal mapping. */
+/** Feeds one v2 personal event straight into the reactor. */
 const ingestAll = (
   service: PersonalTurnRetry.PersonalTurnRetryShape,
-  harness: Harness,
-  event: OrchestrationEvent,
-) =>
-  Effect.gen(function* () {
-    for (const personal of toPersonalEvents(event, harness.statuses)) {
-      yield* service.ingestDomainEvent(personal);
-    }
-  });
+  _harness: Harness,
+  event: PersonalEngine.PersonalThreadEvent,
+) => service.ingestDomainEvent(event);
 
-/** Every command that would put a second copy of the message on the thread. */
+/** The continuation commands the engine actually dispatched. */
+const continuationCommands = (harness: Harness) =>
+  harness.dispatched.filter(
+    (command) =>
+      command.type === "message.dispatch" && command.messageId.startsWith(CONTINUATION_PREFIX),
+  );
+
+/** Every command that would put another message on the thread. */
 const messageCreatingCommands = (harness: Harness) =>
   harness.dispatched.filter(
     (command) =>
-      command.type === "thread.turn.start" || command.type === "thread.message.user.append",
+      command.type === "message.dispatch" && !command.messageId.startsWith(CONTINUATION_PREFIX),
   );
 
 const autoMarker = (harness: Harness) => harness.session?.providerRetry;
@@ -262,7 +288,7 @@ const failOwnerTurn = (
 /** The provider accepted the continuation and then failed the turn again. */
 const failRetriedTurn = (retry: PersonalTurnRetry.PersonalTurnRetryShape, harness: Harness) =>
   Effect.gen(function* () {
-    // turn.started clears the marker, exactly as the runtime ingestion does.
+    // The running session clears the marker, exactly as turn.started does.
     yield* ingestAll(
       retry,
       harness,
@@ -290,13 +316,16 @@ it.effect("retries a transient reply failure and never re-sends the message", ()
 
         // The chat is told before anything is spent.
         expect(autoMarker(harness)).toMatchObject({ auto: "pending", attempt: 1, maxAttempts: 2 });
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
 
         yield* TestClock.adjust(FIRST_DELAY_MS!);
-        expect(harness.sends).toHaveLength(1);
-        // Continuation of the turn already on the thread: no message, no id.
-        expect(harness.sends[0]).toMatchObject({ threadId: THREAD, continuation: true });
-        expect(harness.sends[0]).not.toHaveProperty("input");
+        expect(continuationCommands(harness)).toHaveLength(1);
+        // A continuation of the turn already on the thread: the engine posts
+        // its own system message and the owner's message is never sent again.
+        expect(harness.continuations[0]).toMatchObject({
+          threadId: THREAD,
+          interactionMode: "default",
+        });
         expect(messageCreatingCommands(harness)).toHaveLength(0);
       }),
       makeLayer(harness),
@@ -313,12 +342,12 @@ it.effect("sends a short prompt to an adapter that cannot continue without one",
         const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
         yield* failOwnerTurn(retry, harness);
         yield* TestClock.adjust(FIRST_DELAY_MS!);
-        expect(harness.sends).toHaveLength(1);
-        expect(harness.sends[0]).toMatchObject({
+        const [continuation] = continuationCommands(harness);
+        expect(continuation).toMatchObject({
+          type: "message.dispatch",
           threadId: THREAD,
-          input: "Continue where you left off.",
+          text: CONTINUATION_PROMPT,
         });
-        expect(harness.sends[0]).not.toHaveProperty("continuation");
         expect(messageCreatingCommands(harness)).toHaveLength(0);
       }),
       makeLayer(harness),
@@ -340,8 +369,13 @@ it.effect("the retried reply carries the bot's current model selection and effor
           options: [{ id: "reasoningEffort", value: "max" }],
         };
         yield* TestClock.adjust(FIRST_DELAY_MS!);
-        expect(harness.sends).toHaveLength(1);
-        expect(harness.sends[0]!.modelSelection).toEqual(harness.botModelSelection);
+        expect(continuationCommands(harness)).toHaveLength(1);
+        const firstContinuation = continuationCommands(harness)[0]!;
+        expect(
+          firstContinuation.type === "message.dispatch"
+            ? firstContinuation.modelSelection
+            : undefined,
+        ).toEqual(harness.botModelSelection);
       }),
       makeLayer(harness),
     );
@@ -359,7 +393,7 @@ it.effect("does not retry a usage limit, however transient the wait looks", () =
         expect(autoMarker(harness)).toBeUndefined();
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
         // Not one billed run: the provider has already said no.
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
         expect(messageCreatingCommands(harness)).toHaveLength(0);
       }),
       makeLayer(harness),
@@ -376,12 +410,12 @@ it.effect("stops after the cap and says it gave up", () =>
         yield* failOwnerTurn(retry, harness);
 
         yield* TestClock.adjust(FIRST_DELAY_MS!);
-        expect(harness.sends).toHaveLength(1);
+        expect(continuationCommands(harness)).toHaveLength(1);
         yield* failRetriedTurn(retry, harness);
         expect(autoMarker(harness)).toMatchObject({ auto: "pending", attempt: 2 });
 
         yield* TestClock.adjust(SECOND_DELAY_MS!);
-        expect(harness.sends).toHaveLength(2);
+        expect(continuationCommands(harness)).toHaveLength(2);
         yield* failRetriedTurn(retry, harness);
 
         // Third failure: the attempts are spent and the chat must say so
@@ -391,7 +425,7 @@ it.effect("stops after the cap and says it gave up", () =>
         expect(harness.session?.lastError).toBe(UPSTREAM_FAILURE);
 
         yield* TestClock.adjust(SECOND_DELAY_MS! * 10);
-        expect(harness.sends).toHaveLength(2);
+        expect(continuationCommands(harness)).toHaveLength(2);
         expect(messageCreatingCommands(harness)).toHaveLength(0);
       }),
       makeLayer(harness),
@@ -413,7 +447,7 @@ it.effect("drops a pending retry when the owner presses Stop", () =>
 
         expect(autoMarker(harness)).toBeUndefined();
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
       }),
       makeLayer(harness),
     );
@@ -429,7 +463,7 @@ it.effect("leaves a task or routine turn to its own attempt ledger", () =>
         // Task attempts use a deterministic `personal-task-` message id.
         yield* failOwnerTurnWithMessage(retry, harness, MessageId.make("personal-task-abc-1"));
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
         expect(autoMarker(harness)).toBeUndefined();
       }),
       makeLayer(harness),
@@ -451,7 +485,7 @@ it.effect("leaves a group member's turn to its round", () =>
           MessageId.make("personal-group-round-1-brief-2"),
         );
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
         expect(autoMarker(harness)).toBeUndefined();
       }),
       makeLayer(harness),
@@ -468,7 +502,7 @@ it.effect("leaves an owner turn a task adopted to the task's own retry", () =>
         const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
         yield* failOwnerTurn(retry, harness);
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
         expect(autoMarker(harness)).toBeUndefined();
       }),
       makeLayer(harness),
@@ -491,7 +525,7 @@ it.effect("does not re-arm a retry from the session its own Stop wrote back", ()
         yield* ingestAll(retry, harness, sessionEvent(harness, cleared!));
         yield* retry.drain;
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
         expect(autoMarker(harness)).toBeUndefined();
       }),
       makeLayer(harness),
@@ -508,7 +542,7 @@ it.effect("ignores a thread that is not a personal bot chat", () =>
         const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
         yield* failOwnerTurn(retry, harness);
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
         expect(autoMarker(harness)).toBeUndefined();
       }),
       makeLayer(harness),
@@ -531,7 +565,7 @@ it.effect("counts a continuation that never reached the provider as a spent atte
         expect(autoMarker(harness)).toMatchObject({ auto: "pending", attempt: 2 });
         yield* TestClock.adjust(SECOND_DELAY_MS!);
         expect(autoMarker(harness)).toMatchObject({ auto: "exhausted" });
-        expect(harness.sends).toHaveLength(0);
+        expect(continuationCommands(harness)).toHaveLength(0);
       }),
       makeLayer(harness),
     );

@@ -49,6 +49,26 @@ export const ALLOWED_STRINGS: ReadonlyArray<AllowedStrings> = [
     strings: ["https://t3.codes/schema/t3.json", "See https://t3.codes for documentation"],
     why: "Schema URL and description of the T3 project file contract.",
   },
+  {
+    id: "shared-pairing-link-builder",
+    ruleId: "upstream-deep-link",
+    strings: ["t3code://pair?"],
+    why: "The shared pairing-link builder. The phone never calls it.",
+  },
+  {
+    id: "shared-connect-troubleshooting-url",
+    ruleId: "eas-owner",
+    strings: [
+      "https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md",
+    ],
+    why: "A help link in the shared connect error helper. The phone never renders it.",
+  },
+  {
+    id: "shared-hosted-app-url",
+    ruleId: "upstream-host",
+    strings: ["https://app.t3.codes"],
+    why: "The hosted web app origin in shared connect auth. The phone never opens it.",
+  },
 ];
 
 const CONTEXT_CHARS = 60;

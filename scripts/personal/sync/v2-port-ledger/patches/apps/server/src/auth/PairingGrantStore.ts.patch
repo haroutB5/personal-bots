@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/auth/PairingGrantStore.ts b/apps/server/src/auth/PairingGrantStore.ts
+index ec27c0a4e1473f092af1dcd7059fb2e70c671b8c..6c866c2a484d2b2af6fa0c57e298952f33f2d24b 100644
+--- a/apps/server/src/auth/PairingGrantStore.ts
++++ b/apps/server/src/auth/PairingGrantStore.ts
+@@ -6,7 +6,7 @@ import {
+   type ServerAuthBootstrapMethod,
+ } from "@t3tools/contracts";
+ import * as Context from "effect/Context";
+-import * as Crypto from "effect/Crypto";
++import * as Crypto from "@t3tools/shared/crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";

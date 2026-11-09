@@ -7,25 +7,22 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
-import * as NodeServices from "@t3tools/shared/nodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
-  CommandId,
-  CorrelationId,
   EnvironmentId,
-  EventId,
   MessageId,
   PersonalBotId,
   PersonalSecretRequestId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type OrchestrationSession,
+  type OrchestrationV2ServerCommand,
   type PersonalTask,
-  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -39,34 +36,30 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 
+import { withProviderSessionEnvironment } from "@t3tools/provider-core/server/mcpSession";
+import { mcpThreadScope } from "../testing/mcpThreadScope.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { withProviderSessionEnvironment } from "../../mcp/McpProviderSession.ts";
 import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
 import { PersonalToolkitHandlersLive } from "../../mcp/toolkits/personal/handlers.ts";
 import { PersonalToolkit } from "../../mcp/toolkits/personal/tools.ts";
-import { makeEventNdjsonLogStore } from "../../provider/Layers/EventNdjsonLogger.ts";
+import { makeEventNdjsonLogStore } from "../../provider/EventNdjsonLogger.ts";
 import { makeProviderEventSecretFilter } from "../../provider/secretEventRedaction.ts";
 import { PersonalMemoryService } from "../memory/PersonalMemoryService.ts";
 import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
 import { PersonalRoutineService } from "../routines/PersonalRoutineService.ts";
-import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionThreadMessageRepository,
-  type ProjectionThreadMessage,
-  type ProjectionThreadMessageRepositoryShape,
-} from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { PersonalProviders } from "../engine/PersonalProviders.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { PERSONAL_BOT_APP_RULES } from "../personalBotInstructions.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
-import { PersonalEngineV1Live, toPersonalEvents } from "../engine/PersonalEngineV1Live.ts";
+import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
+import { PERSONAL_V2_RELATIONS } from "../engine/PersonalProjectionRelationsV2Live.ts";
+import { personalEngineTestLayer } from "../test/personalEngineTestLayer.ts";
+import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import * as PersonalSecretService from "./PersonalSecretService.ts";
@@ -101,103 +94,65 @@ const text = (value: unknown) =>
   });
 
 interface Harness {
-  readonly dispatched: Array<OrchestrationCommand>;
-  readonly sessions: Map<string, OrchestrationSession>;
-  readonly messages: Map<string, Array<ProjectionThreadMessage>>;
-  readonly statuses: Map<string, PersonalThreadStatus>;
+  readonly dispatched: Array<OrchestrationV2ServerCommand>;
+  /** The provider session the task service reads for each thread. */
+  readonly sessions: Map<string, PersonalEngine.PersonalSessionView>;
   sequence: number;
 }
 
-const makeHarness = (): Harness => ({
-  dispatched: [],
-  sessions: new Map(),
-  messages: new Map(),
-  statuses: new Map(),
-  sequence: 0,
+const makeHarness = (): Harness => ({ dispatched: [], sessions: new Map(), sequence: 0 });
+
+const toV1Session = (session: PersonalEngine.PersonalSessionView): OrchestrationSession => ({
+  threadId: session.threadId,
+  status: session.status === "waiting" ? "ready" : session.status,
+  providerName: session.providerName,
+  providerInstanceId: ProviderInstanceId.make(session.providerInstanceId ?? "codex"),
+  runtimeMode: "full-access",
+  activeTurnId: session.activeTurnId,
+  lastError: session.lastError,
+  updatedAt: session.updatedAt,
 });
+
+/** The v2 engine, with the provider session the harness last reported for a thread. */
+const engineLayer = (harness: Harness) =>
+  Layer.effect(
+    PersonalEngine.PersonalEngine,
+    Effect.gen(function* () {
+      const base = yield* PersonalEngine.PersonalEngine;
+      return {
+        ...base,
+        getThread: (threadId: ThreadId) =>
+          base.getThread(threadId).pipe(
+            Effect.map(
+              Option.map((shell) => {
+                const session = harness.sessions.get(threadId);
+                return session === undefined ? shell : { ...shell, session: toV1Session(session) };
+              }),
+            ),
+          ),
+      } as PersonalEngine.PersonalEngine["Service"];
+    }),
+  ).pipe(Layer.provide(personalEngineTestLayer(harness)));
 
 const makeLayer = (harness: Harness) =>
   PersonalSessionAccess.layer.pipe(
     Layer.provideMerge(PersonalSecretService.layerLive),
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(
-      PersonalBotService.layerRequiringEngine.pipe(Layer.provideMerge(PersonalEngineV1Live)),
-    ),
+    Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
+    Layer.provideMerge(engineLayer(harness)),
     Layer.provideMerge(ServerSecretStore.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            harness.dispatched.push(command);
-            return { sequence: harness.dispatched.length };
-          }),
-        subscribeDomainEvents: Effect.succeed(Stream.never),
-        streamDomainEvents: Stream.never,
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
-    ),
     Layer.provideMerge(
       Layer.mock(PersonalProviders)({
         listProviders: () => Effect.succeed([]),
       }),
     ),
-    Layer.provideMerge(ThreadBackgroundLiveness.layer),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getProjectShellById: () => Effect.succeed(Option.none()),
-        getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() => {
-            const session = harness.sessions.get(threadId);
-            return session === undefined ? Option.none() : Option.some({ id: threadId, session });
-          }),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ProjectionThreadMessageRepository, {
-        listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-          Effect.sync(() => harness.messages.get(threadId) ?? []),
-        getByMessageId: ({ messageId }: { readonly messageId: MessageId }) =>
-          Effect.sync(() => {
-            for (const list of harness.messages.values()) {
-              const found = list.find((message) => message.messageId === messageId);
-              if (found !== undefined) return Option.some(found);
-            }
-            return Option.none();
-          }),
-        getLatestAssistantMessageForTurn: ({
-          threadId,
-          turnId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly turnId: TurnId;
-        }) =>
-          Effect.sync(() => {
-            const hit = (harness.messages.get(threadId) ?? [])
-              .filter((message) => message.role === "assistant" && message.turnId === turnId)
-              .at(-1);
-            return hit === undefined ? Option.none() : Option.some(hit);
-          }),
-        getLatestAssistantMessageAfter: ({
-          threadId,
-          afterMessageId,
-        }: {
-          readonly threadId: ThreadId;
-          readonly afterCreatedAt: string;
-          readonly afterMessageId: MessageId;
-        }) =>
-          Effect.sync(() => {
-            const list = harness.messages.get(threadId) ?? [];
-            const anchor = list.findIndex((message) => message.messageId === afterMessageId);
-            const hit = list.slice(anchor + 1).findLast((message) => message.role === "assistant");
-            return hit === undefined ? Option.none() : Option.some(hit);
-          }),
-      } as unknown as ProjectionThreadMessageRepositoryShape),
-    ),
+    Layer.provideMerge(Layer.succeed(PersonalProjectionRelations, PERSONAL_V2_RELATIONS)),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-secrets-" })),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(personalTestDatabase),
   );
 
 const botId = (key: string) => PersonalBotId.make(`bot-${key}`);
@@ -219,41 +174,40 @@ const seedBots = Effect.gen(function* () {
 
 const makeSession = (
   threadId: ThreadId,
-  status: OrchestrationSession["status"],
+  status: PersonalThreadStatus,
   activeTurnId: TurnId | null,
   updatedAt: string,
-): OrchestrationSession => ({
+): PersonalEngine.PersonalSessionView => ({
   threadId,
   status,
-  providerName: "codex",
-  runtimeMode: "full-access",
   activeTurnId,
   lastError: null,
+  providerInstanceId: "codex",
+  providerName: "codex",
+  providerRetry: null,
   updatedAt,
 });
 
-const setSession = (harness: Harness, session: OrchestrationSession) =>
+const setSession = (harness: Harness, session: PersonalEngine.PersonalSessionView) =>
   Effect.gen(function* () {
     const service = yield* PersonalTaskService.PersonalTaskService;
-    harness.sessions.set(session.threadId, session);
+    const sql = yield* SqlClient.SqlClient;
     harness.sequence += 1;
-    const id = `evt-${harness.sequence}`;
-    const event = {
-      sequence: harness.sequence,
-      eventId: EventId.make(id),
-      aggregateKind: "thread",
-      aggregateId: session.threadId,
-      type: "thread.session-set",
-      occurredAt: session.updatedAt,
-      commandId: CommandId.make(`cmd-${id}`),
-      causationEventId: null,
-      correlationId: CorrelationId.make(`cmd-${id}`),
-      metadata: {},
-      payload: { threadId: session.threadId, session },
-    } as OrchestrationEvent;
-    for (const personal of toPersonalEvents(event, harness.statuses)) {
-      yield* service.ingestDomainEvent(personal);
+    harness.sessions.set(session.threadId, session);
+    if (session.status !== "running") {
+      // The projection derives the thread's status from its newest run.
+      yield* sql`
+        UPDATE orchestration_v2_projection_runs
+        SET status = 'completed', completed_at = ${session.updatedAt}
+        WHERE thread_id = ${session.threadId} AND status = 'running'
+      `;
     }
+    yield* service.ingestDomainEvent({
+      _tag: "StatusChanged",
+      threadId: session.threadId,
+      status: session.status,
+      session,
+    });
     yield* service.drain;
   });
 
@@ -266,27 +220,44 @@ const beginTurn = (harness: Harness, threadId: ThreadId) =>
     return turnId;
   });
 
+/** Writes the assistant reply the way the engine projects one, then ends the turn. */
 const endTurn = (harness: Harness, threadId: ThreadId, turnId: TurnId, reply: string) =>
   Effect.gen(function* () {
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const sql = yield* SqlClient.SqlClient;
     const now = DateTime.formatIso(yield* DateTime.now);
-    harness.messages.set(threadId, [
-      ...(harness.messages.get(threadId) ?? []),
-      {
-        messageId: MessageId.make(`msg-${turnId}`),
-        threadId,
-        turnId,
-        role: "assistant",
-        text: reply,
-        isStreaming: false,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-    yield* setSession(harness, makeSession(threadId, "ready", null, now));
+    const messageId = MessageId.make(`msg-${turnId}`);
+    const message = {
+      id: messageId,
+      threadId,
+      runId: turnId,
+      nodeId: null,
+      role: "assistant",
+      text: reply,
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* sql`
+      INSERT OR REPLACE INTO orchestration_v2_projection_messages
+        (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES (${messageId}, ${threadId}, ${turnId}, NULL, 'assistant', 0, ${now}, ${now},
+        ${JSON.stringify(message)})
+    `;
+    yield* service.ingestDomainEvent({
+      _tag: "MessageSent",
+      threadId,
+      messageId,
+      role: "assistant",
+      text: reply,
+      streaming: false,
+    });
+    yield* setSession(harness, makeSession(threadId, "waiting", null, now));
   });
 
 const turnStarts = (harness: Harness) =>
-  harness.dispatched.flatMap((command) => (command.type === "thread.turn.start" ? [command] : []));
+  harness.dispatched.flatMap((command) => (command.type === "message.dispatch" ? [command] : []));
 
 const reload = (taskId: PersonalTask["taskId"]) =>
   Effect.gen(function* () {
@@ -374,26 +345,25 @@ describe("personal secret requests", () => {
         expect(fulfilled.status).toBe("fulfilled");
         expect(text(fulfilled)).not.toContain(SECRET_VALUE);
 
-        // The live session cannot take new env: it is stopped first, and the
-        // task waits for that before it queues.
-        const stops = harness.dispatched.filter(
-          (command) => command.type === "thread.session.stop",
-        );
+        // The live session cannot take new env: it is stopped first. The task
+        // queues at once; v2 has no stopped shell event to wait for.
+        const stops = harness.dispatched.filter((command) => command.type === "thread.stop");
         expect(stops.map((command) => command.threadId)).toEqual([threadId]);
-        expect((yield* reload(task.taskId)).status).toBe("waiting_for_user");
+        expect((yield* reload(task.taskId)).status).toBe("queued");
         expect(turnStarts(harness).length).toBe(startsBefore);
 
-        const stoppedAt = DateTime.formatIso(yield* DateTime.now);
-        yield* setSession(harness, makeSession(threadId, "stopped", null, stoppedAt));
+        yield* tasks.drain;
         const resumed = turnStarts(harness).slice(startsBefore);
         expect(resumed.length).toBe(1);
         expect(resumed[0]!.threadId).toBe(threadId);
-        expect(resumed[0]!.message.text).toContain(
+        expect(resumed[0]!.text).toContain(
           "Secret GITHUB_TOKEN is now available as the environment variable PB_SECRET_GITHUB_TOKEN in new shell commands. Do not print it.",
         );
         expect((yield* reload(task.taskId)).status).toBe("running");
 
-        // Once: another stop event, a sweep and a second fulfil change nothing.
+        // Once: a late stopped event, a sweep and a second fulfil change nothing.
+        const stoppedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* setSession(harness, makeSession(threadId, "stopped", null, stoppedAt));
         yield* setSession(harness, makeSession(threadId, "stopped", null, stoppedAt));
         yield* tasks.sweep;
         yield* tasks.drain;
@@ -982,9 +952,9 @@ describe("brokered secrets", () => {
           );
           const resumed = turnStarts(harness).slice(startsBefore);
           expect(resumed.length).toBe(1);
-          expect(resumed[0]!.message.text).toContain("secret_request");
-          expect(resumed[0]!.message.text).toContain("{{secret:VERCEL_TOKEN}}");
-          expect(resumed[0]!.message.text).not.toContain("PB_SECRET_VERCEL_TOKEN");
+          expect(resumed[0]!.text).toContain("secret_request");
+          expect(resumed[0]!.text).toContain("{{secret:VERCEL_TOKEN}}");
+          expect(resumed[0]!.text).not.toContain("PB_SECRET_VERCEL_TOKEN");
         }),
       ),
     ),
@@ -2353,7 +2323,7 @@ describe("secrets boundary: a bot that tries to print its keys", () => {
   /** What a bot's `echo $VAR` is: the platform shell, started with the session's environment. */
   const shellEcho = (env: NodeJS.ProcessEnv, variable: string) =>
     Effect.gen(function* () {
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const [command, args] =
         platform === "win32"
           ? ["cmd.exe", ["/d", "/s", "/c", `echo %${variable}%`]]
@@ -2439,86 +2409,73 @@ describe("secrets boundary: a bot that tries to print its keys", () => {
               .pipe(Stream.unwrap, Stream.runCollect);
           }).pipe(
             Effect.provide(handlerLayer),
-            Effect.provideService(McpInvocationContext, {
-              environmentId: EnvironmentId.make("env"),
-              threadId,
-              providerSessionId: "session",
-              providerInstanceId: ProviderInstanceId.make("codex"),
-              capabilities: new Set(["personal" as const]),
-              issuedAt: 1,
-            }),
+            Effect.provideService(
+              McpInvocationContext,
+              mcpThreadScope({
+                environmentId: EnvironmentId.make("env"),
+                threadId,
+                providerSessionId: "session",
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                capabilities: new Set(["personal" as const]),
+                issuedAt: 1,
+              }),
+            ),
           );
           const brokerText = encode(brokerResult);
           // The API echoed the Authorization header it received; the bot gets it masked.
           expect(brokerText).toContain("[secret API_KEY]");
           expect(brokerText).not.toContain(BROKERED);
 
-          // --- What the adapter would emit: output of the shell, the tool result and a
-          // reply that quotes both, with the key split across deltas (as tokens arrive).
-          const event = (type: string, extra: Record<string, unknown>, id: string) =>
-            ({
-              eventId: id,
-              provider: "claudeAgent",
-              providerInstanceId: "claudeAgent",
-              threadId,
-              createdAt: "2026-10-07T00:00:00.000Z",
-              type,
-              turnId,
-              ...extra,
-            }) as unknown as ProviderRuntimeEvent;
+          // --- What the adapter would emit: the shell's output in chunks, the tool
+          // result, and a reply snapshot that quotes both.
           const reply = `Here you go: ${envOutput} and ${brokerText} and ${base64(`user:${envOutput}`)}`;
-          const cut = (text: string, size: number) =>
-            Array.from({ length: Math.ceil(text.length / size) }, (_, index) =>
-              text.slice(index * size, (index + 1) * size),
+          const cut = (value: string, size: number) =>
+            Array.from({ length: Math.ceil(value.length / size) }, (_, index) =>
+              value.slice(index * size, (index + 1) * size),
             );
-          const emitted: Array<ProviderRuntimeEvent> = [
-            event(
-              "item.started",
-              { itemId: "cmd", payload: { itemType: "command_execution" } },
-              "e0",
+          const event = (body: Record<string, unknown>) =>
+            ({
+              driver: "claudeAgent",
+              threadId,
+              ...body,
+            }) as unknown as ProviderAdapter.ProviderAdapterV2Event;
+          const emitted: Array<ProviderAdapter.ProviderAdapterV2Event> = [
+            ...cut(envOutput, 7).map((chunk) =>
+              event({ type: "command_output.delta", threadId, itemId: "cmd", chunk }),
             ),
-            ...cut(envOutput, 7).map((piece, index) =>
-              event(
-                "content.delta",
-                { itemId: "cmd", payload: { streamKind: "command_output", delta: piece } },
-                `cmd-${index}`,
-              ),
-            ),
-            event(
-              "item.completed",
-              {
-                itemId: "cmd",
-                payload: {
-                  itemType: "command_execution",
-                  detail: `echo $PB_SECRET_ENV_KEY -> ${envOutput}`,
-                  data: { output: envOutput, exitCode: 0 },
-                },
+            event({
+              type: "turn_item.updated",
+              turnItem: {
+                id: "cmd",
+                threadId,
+                status: "completed",
+                detail: `echo $PB_SECRET_ENV_KEY -> ${envOutput}`,
+                data: { output: envOutput, exitCode: 0 },
               },
-              "e1",
-            ),
-            ...cut(reply, 5).map((piece, index) =>
-              event(
-                "content.delta",
-                { itemId: "msg", payload: { streamKind: "assistant_text", delta: piece } },
-                `msg-${index}`,
-              ),
-            ),
-            event(
-              "item.completed",
-              { itemId: "msg", payload: { itemType: "assistant_message" } },
-              "e2",
-            ),
-            event("turn.completed", { payload: { state: "completed" } }, "e3"),
+            }),
+            event({
+              type: "message.updated",
+              message: { id: "msg", threadId, role: "assistant", text: reply, streaming: false },
+            }),
+            event({
+              type: "turn.terminal",
+              providerThreadId: "provider-thread",
+              providerTurnId: turnId,
+              runOrdinal: 1,
+              status: "completed",
+              failure: null,
+              threadDisposition: "reusable",
+            }),
           ];
 
-          // --- 1. The chat: what reaches the bus, and the messages built from the deltas.
+          // --- 1. The chat: command output arrives in chunks, so the key is split.
           expect(secretRedactor.size()).toBe(2);
           const filter = makeProviderEventSecretFilter();
           const published = emitted.flatMap((entry) => filter.process(entry));
-          const chat = published
-            .filter((entry) => entry.type === "content.delta")
-            .map((entry) => (entry.payload as { delta: string }).delta);
-          const transcript = chat.join("");
+          const transcript = published
+            .filter((entry) => entry.type === "command_output.delta")
+            .map((entry) => entry.chunk)
+            .join("");
           const everything = encode(published);
           for (const leak of [ENV_VALUE, BROKERED, base64(ENV_VALUE), base64(BROKERED)]) {
             expect(everything, leak).not.toContain(leak);

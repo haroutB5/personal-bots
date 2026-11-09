@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/ServerUpdateAction.test.tsx b/apps/web/src/components/ServerUpdateAction.test.tsx
+index 6c388bca4f982208fc48ae55590188b63e290337..a7b295f601620a9eddcea04df634f252fedfce95 100644
+--- a/apps/web/src/components/ServerUpdateAction.test.tsx
++++ b/apps/web/src/components/ServerUpdateAction.test.tsx
+@@ -3,7 +3,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
+ import { renderToStaticMarkup } from "react-dom/server";
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+ 
+ const testState = vi.hoisted(() => ({

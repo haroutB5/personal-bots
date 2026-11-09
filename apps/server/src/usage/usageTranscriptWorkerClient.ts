@@ -1,11 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - worker owns synchronous JSON parsing.
-import { isSea } from "node:sea";
+import * as NodeSea from "node:sea";
 import * as NodeTimers from "node:timers";
-import { Worker } from "node:worker_threads";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import type { TranscriptParsePosition, TranscriptParseResult } from "./usageTranscriptReader.ts";
 
-let worker: Worker | undefined;
+let worker: NodeWorkerThreads.Worker | undefined;
 let idleTimer: ReturnType<typeof NodeTimers.setTimeout> | undefined;
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -18,9 +18,9 @@ export function readDeepSeekOnWorker(
   const run = queue.then(() => {
     // The executable has no sibling worker script. Its existing inline path
     // remains available, as it does when the worker switch is off.
-    if (isSea()) throw new Error("Transcript worker needs a script runtime");
+    if (NodeSea.isSea()) throw new Error("Transcript worker needs a script runtime");
     if (idleTimer !== undefined) NodeTimers.clearTimeout(idleTimer);
-    const active = (worker ??= new Worker(
+    const active = (worker ??= new NodeWorkerThreads.Worker(
       new URL(
         import.meta.url.endsWith(".ts")
           ? "../usage-transcript-worker.ts"
@@ -66,6 +66,7 @@ export function readDeepSeekOnWorker(
       active.once("error", onError);
       active.once("exit", onExit);
       try {
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a worker port takes no target origin
         active.postMessage({ filePath, resumeFrom, options });
       } catch (error) {
         onError(error instanceof Error ? error : new Error(String(error)));

@@ -24,6 +24,7 @@ import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSession
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { PersonalToolkitHandlersLive } from "./handlers.ts";
 import { PersonalToolkit } from "./tools.ts";
+import { mcpThreadScope } from "../../../personal/testing/mcpThreadScope.ts";
 
 const encodeResult = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const epoch = DateTime.makeUnsafe("2026-09-23T00:00:00.000Z");
@@ -159,14 +160,17 @@ function call(
     return encodeResult(result);
   }).pipe(
     Effect.provide(layer),
-    Effect.provideService(McpInvocationContext, {
-      environmentId: EnvironmentId.make("env"),
-      threadId: ThreadId.make("thread"),
-      providerSessionId: "session",
-      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-      capabilities: new Set(["personal" as const]),
-      issuedAt: 1,
-    }),
+    Effect.provideService(
+      McpInvocationContext,
+      mcpThreadScope({
+        environmentId: EnvironmentId.make("env"),
+        threadId: ThreadId.make("thread"),
+        providerSessionId: "session",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        capabilities: new Set(["personal" as const]),
+        issuedAt: 1,
+      }),
+    ),
   );
 }
 

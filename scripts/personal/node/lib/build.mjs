@@ -1,9 +1,9 @@
 // Stage a release the way build.ps1 does: build the web client and server,
 // verify the bundle, copy the dist and the runtime externals, write VERSION and
 // client/version.txt. Staging never touches current.txt; only activate does.
-import fs from "node:fs";
-import path from "node:path";
-import { spawnSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 import { loadRepoEnv, readText, utcStamp } from "./util.mjs";
 
 const REQUIRED_DIST = ["bin.mjs", "client/index.html", "claude-history-worker.mjs"];
@@ -16,27 +16,30 @@ const OPTIONAL_PUBLIC_CONFIG = [
 ];
 
 function git(repoRoot, args) {
-  const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${(result.stderr || "").trim()}`);
+  const result = NodeChildProcess.spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+  if (result.status !== 0)
+    throw new Error(`git ${args.join(" ")} failed: ${(result.stderr || "").trim()}`);
   return result.stdout.trim();
 }
 
 function resolveVp(repoRoot) {
-  const candidate = path.join(repoRoot, "node_modules", ".bin", "vp");
-  if (fs.existsSync(candidate)) return candidate;
+  const candidate = NodePath.join(repoRoot, "node_modules", ".bin", "vp");
+  if (NodeFS.existsSync(candidate)) return candidate;
   return null;
 }
 
 function runVp(repoRoot, args, nodeExe, env) {
   const vp = resolveVp(repoRoot);
   if (!vp) {
-    throw new Error("vite-plus (vp) is not installed in this checkout. Run the repo install first (vp i).");
+    throw new Error(
+      "vite-plus (vp) is not installed in this checkout. Run the repo install first (vp i).",
+    );
   }
   const firstLine = (readText(vp) || "").split(/\r?\n/, 1)[0] || "";
   const isScript = firstLine.startsWith("#!");
   const command = isScript && /node/.test(firstLine) ? nodeExe : vp;
   const commandArgs = command === vp ? args : [vp, ...args];
-  const result = spawnSync(command, commandArgs, {
+  const result = NodeChildProcess.spawnSync(command, commandArgs, {
     cwd: repoRoot,
     env,
     stdio: "inherit",
@@ -58,9 +61,23 @@ export function assertPublicConfig(repoRoot) {
   return values;
 }
 
-export function missingBakedPublicConfig({ binPath, values }) {
-  const text = readText(binPath);
-  if (!text) throw new Error(`Cannot check the T3 Connect public config: ${binPath} is missing.`);
+function readTextTree(directory) {
+  if (!NodeFS.existsSync(directory)) return "";
+  let text = "";
+  for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+    const file = NodePath.join(directory, entry.name);
+    if (entry.isDirectory()) text += readTextTree(file);
+    else if (/\.(?:mjs|cjs|js|html|css)$/iu.test(entry.name)) text += readText(file);
+  }
+  return text;
+}
+
+export function missingBakedPublicConfig({ binPath, clientDirectory, values }) {
+  const binText = readText(binPath);
+  if (!binText)
+    throw new Error(`Cannot check the T3 Connect public config: ${binPath} is missing.`);
+  const text =
+    clientDirectory === undefined ? binText : `${binText}\n${readTextTree(clientDirectory)}`;
   const missing = [];
   for (const name of REQUIRED_PUBLIC_CONFIG) {
     if (!values[name] || !text.includes(values[name])) missing.push(name);
@@ -104,15 +121,22 @@ export function stageRelease({
     process.stdout.write("Building web client and server (vp run --filter t3 build)...\n");
     const env = { ...process.env };
     for (const [key, value] of Object.entries(envValues)) if (value) env[key] = value;
-    Object.assign(env, { PATH: `${path.join(repoRoot, "node_modules", ".bin")}${path.delimiter}${env.PATH ?? ""}` });
+    Object.assign(env, {
+      PATH: `${NodePath.join(repoRoot, "node_modules", ".bin")}${NodePath.delimiter}${env.PATH ?? ""}`,
+    });
     runVp(repoRoot, ["run", "--filter", "t3", "build"], nodeExe, env);
   }
 
-  const dist = path.join(repoRoot, "apps", "server", "dist");
+  const dist = NodePath.join(repoRoot, "apps", "server", "dist");
   for (const required of REQUIRED_DIST) {
-    if (!fs.existsSync(path.join(dist, required))) throw new Error(`Build output is missing apps/server/dist/${required}.`);
+    if (!NodeFS.existsSync(NodePath.join(dist, required)))
+      throw new Error(`Build output is missing apps/server/dist/${required}.`);
   }
-  const missing = missingBakedPublicConfig({ binPath: path.join(dist, "bin.mjs"), values: envValues });
+  const missing = missingBakedPublicConfig({
+    binPath: NodePath.join(dist, "bin.mjs"),
+    clientDirectory: NodePath.join(dist, "client"),
+    values: envValues,
+  });
   if (missing.length) {
     throw new Error(
       `Build refused: the server bundle is missing the T3 Connect public config (${missing.join(", ")}). ` +
@@ -120,48 +144,74 @@ export function stageRelease({
     );
   }
 
-  const releaseDir = path.join(paths.releasesDir, name);
-  const releaseDist = path.join(releaseDir, "dist");
-  fs.mkdirSync(releaseDir, { recursive: true });
-  fs.rmSync(releaseDist, { recursive: true, force: true });
-  fs.cpSync(dist, releaseDist, { recursive: true, dereference: false });
+  const releaseDir = NodePath.join(paths.releasesDir, name);
+  const releaseDist = NodePath.join(releaseDir, "dist");
+  NodeFS.mkdirSync(releaseDir, { recursive: true });
+  NodeFS.rmSync(releaseDist, { recursive: true, force: true });
+  NodeFS.cpSync(dist, releaseDist, { recursive: true, dereference: false });
 
-  const releaseModules = path.join(releaseDir, "node_modules");
-  const serverModules = path.join(repoRoot, "apps", "server", "node_modules");
+  const releaseModules = NodePath.join(releaseDir, "node_modules");
+  const serverModules = NodePath.join(repoRoot, "apps", "server", "node_modules");
   let externalsMode;
   if (copyExternals) {
-    fs.rmSync(releaseModules, { recursive: true, force: true });
+    NodeFS.rmSync(releaseModules, { recursive: true, force: true });
     process.stdout.write("Copying runtime externals into the release...\n");
-    const result = spawnSync(nodeExe, ["--disable-warning=ExperimentalWarning", path.join(repoRoot, "scripts", "personal", "copy-externals.mjs"), path.join(repoRoot, "apps", "server"), releaseModules], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) throw new Error(`copy-externals.mjs failed (exit ${result.status}): ${(result.stderr || "").trim()}`);
+    const result = NodeChildProcess.spawnSync(
+      nodeExe,
+      [
+        "--disable-warning=ExperimentalWarning",
+        NodePath.join(repoRoot, "scripts", "personal", "copy-externals.mjs"),
+        NodePath.join(repoRoot, "apps", "server"),
+        releaseModules,
+      ],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if (result.status !== 0)
+      throw new Error(
+        `copy-externals.mjs failed (exit ${result.status}): ${(result.stderr || "").trim()}`,
+      );
     externalsMode = "copied";
-  } else if (!fs.existsSync(releaseModules)) {
-    fs.symlinkSync(serverModules, releaseModules, process.platform === "win32" ? "junction" : "dir");
+  } else if (!NodeFS.existsSync(releaseModules)) {
+    NodeFS.symlinkSync(
+      serverModules,
+      releaseModules,
+      process.platform === "win32" ? "junction" : "dir",
+    );
     externalsMode = "junction";
   } else {
-    externalsMode = fs.lstatSync(releaseModules).isSymbolicLink() ? "junction" : "copied";
+    externalsMode = NodeFS.lstatSync(releaseModules).isSymbolicLink() ? "junction" : "copied";
   }
 
   // Externals must resolve from the release before it can be called staged.
   let cliText = "";
   if (verifyExternals) {
-    const resolveResult = spawnSync(
+    const resolveResult = NodeChildProcess.spawnSync(
       nodeExe,
-      ["-e", `const r=require('node:module').createRequire(${JSON.stringify(path.join(releaseDist, "bin.mjs"))});r.resolve('node-pty');r.resolve('playwright-core')`],
+      [
+        "-e",
+        `const r=require('node:module').createRequire(${JSON.stringify(NodePath.join(releaseDist, "bin.mjs"))});r.resolve('node-pty');r.resolve('playwright-core')`,
+      ],
       { encoding: "utf8" },
     );
     if (resolveResult.status !== 0) {
-      throw new Error(`node-pty or playwright-core does not resolve from ${releaseDir}. Check ${releaseModules}.`);
+      throw new Error(
+        `node-pty or playwright-core does not resolve from ${releaseDir}. Check ${releaseModules}.`,
+      );
     }
-    const cli = spawnSync(nodeExe, [path.join(releaseDist, "bin.mjs"), "--version"], { encoding: "utf8" });
-    if (cli.status !== 0) throw new Error(`The staged CLI failed to start (t3 --version exited ${cli.status}).`);
+    const cli = NodeChildProcess.spawnSync(
+      nodeExe,
+      [NodePath.join(releaseDist, "bin.mjs"), "--version"],
+      { encoding: "utf8" },
+    );
+    if (cli.status !== 0)
+      throw new Error(`The staged CLI failed to start (t3 --version exited ${cli.status}).`);
     cliText = String(cli.stdout).trim();
   }
 
-  const appVersionFile = path.join(repoRoot, "scripts", "personal", "app-version.txt");
+  const appVersionFile = NodePath.join(repoRoot, "scripts", "personal", "app-version.txt");
   const appVersion = (readText(appVersionFile) || "").split(/\r?\n/)[0].trim();
   const builtAtText = utcStamp(builtAt);
   const version = [
@@ -177,11 +227,24 @@ export function stageRelease({
     `externals=${externalsMode}`,
     `repo=${repoRoot}`,
   ];
-  fs.writeFileSync(path.join(releaseDir, "VERSION"), `${version.join("\n")}\n`);
-  const indexHtml = readText(path.join(releaseDist, "client", "index.html")) || "";
+  NodeFS.writeFileSync(NodePath.join(releaseDir, "VERSION"), `${version.join("\n")}\n`);
+  const indexHtml = readText(NodePath.join(releaseDist, "client", "index.html")) || "";
   const match = indexHtml.match(/\/assets\/(index-[A-Za-z0-9_-]+\.js)/);
   const clientEntry = match ? match[1] : "";
-  fs.writeFileSync(path.join(releaseDist, "client", "version.txt"), `${[...version, `client=${clientEntry}`].join("\n")}\n`);
+  NodeFS.writeFileSync(
+    NodePath.join(releaseDist, "client", "version.txt"),
+    `${[...version, `client=${clientEntry}`].join("\n")}\n`,
+  );
 
-  return { name, dir: releaseDir, sha, branch, dirty, version: appVersion, builtAt: builtAtText, externalsMode, clientEntry };
+  return {
+    name,
+    dir: releaseDir,
+    sha,
+    branch,
+    dirty,
+    version: appVersion,
+    builtAt: builtAtText,
+    externalsMode,
+    clientEntry,
+  };
 }

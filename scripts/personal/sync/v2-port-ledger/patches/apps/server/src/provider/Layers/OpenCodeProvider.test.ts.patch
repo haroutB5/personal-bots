@@ -1,0 +1,79 @@
+diff --git a/apps/server/src/provider/Layers/OpenCodeProvider.test.ts b/apps/server/src/provider/Layers/OpenCodeProvider.test.ts
+index 55e159197e6b538a73e046d43762951ce7d220a1..1db2603e3106df6a34b2639b515fe800f2777856 100644
+--- a/apps/server/src/provider/Layers/OpenCodeProvider.test.ts
++++ b/apps/server/src/provider/Layers/OpenCodeProvider.test.ts
+@@ -1,7 +1,8 @@
+ import * as NodeAssert from "node:assert/strict";
++import * as NodePath from "@effect/platform-node/NodePath";
+ import * as NodeCrypto from "node:crypto";
+ 
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import { it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Fiber from "effect/Fiber";
+@@ -9,7 +10,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Schema from "effect/Schema";
+ import * as TestClock from "effect/testing/TestClock";
+-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientResponse } from "effect/http";
+ import { beforeEach } from "vite-plus/test";
+ 
+ import { OpenCodeSettings } from "@t3tools/contracts";
+@@ -69,7 +70,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
+           );
+         }),
+       ),
+-      Effect.provide(NodeServices.layer),
++      Effect.provide(Layer.merge(NodeServices.layer, NodePath.layerPosix)),
+     );
+     NodeAssert.equal(limits.unavailable, undefined);
+     NodeAssert.equal(
+@@ -115,6 +116,46 @@ it.effect("does not read local credentials for external or disabled OpenCode ins
+   }),
+ );
+ 
++it.effect(
++  "reads Go Plus usage from an existing Console key without requiring a duplicate login",
++  () =>
++    Effect.gen(function* () {
++      let called = false;
++      const limits = yield* readOpenCodeGoUsageLimits({
++        enabled: true,
++        serverUrl: "",
++        environment: {
++          OPENCODE_AUTH_CONTENT: '{"opencode":{"type":"api","key":"console-test-key"}}',
++        },
++      }).pipe(
++        Effect.provideService(
++          HttpClient.HttpClient,
++          HttpClient.make((request) => {
++            called = true;
++            NodeAssert.equal(request.headers.authorization, "Bearer console-test-key");
++            return Effect.succeed(
++              HttpClientResponse.fromWeb(
++                request,
++                Response.json({
++                  usage: Object.fromEntries(
++                    ["rolling", "weekly", "monthly"].map((id) => [
++                      id,
++                      { percent: 0, resetsAt: "2026-10-23T12:00:00.000Z" },
++                    ]),
++                  ),
++                }),
++              ),
++            );
++          }),
++        ),
++        Effect.provide(NodeServices.layer),
++      );
++      NodeAssert.equal(called, true);
++      NodeAssert.equal(limits.windows.length, 3);
++      NodeAssert.equal(limits.unavailable, undefined);
++    }),
++);
++
+ it.effect("keeps Go entitlement absence distinct from failed or malformed usage responses", () =>
+   Effect.gen(function* () {
+     for (const [status, reason] of [

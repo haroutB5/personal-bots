@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/threads/NewTaskRouteScreen.tsx b/apps/mobile/src/features/threads/NewTaskRouteScreen.tsx
+index 1ba1409d7976f26c4d9d1a0ef2f03886916d2682..93772c741eb08b46a4381c5e279fca7b3a5bfda1 100644
+--- a/apps/mobile/src/features/threads/NewTaskRouteScreen.tsx
++++ b/apps/mobile/src/features/threads/NewTaskRouteScreen.tsx
+@@ -11,7 +11,7 @@ import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operation
+ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { useEffect, useRef, useState } from "react";
+ import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";

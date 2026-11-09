@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/state/query.ts b/apps/mobile/src/state/query.ts
+index c29d01d397bc0d149be7ef9306cf6161e74e365d..c7b0eef57e38c6bc50bb35f4e24279545fff950f 100644
+--- a/apps/mobile/src/state/query.ts
++++ b/apps/mobile/src/state/query.ts
+@@ -1,7 +1,7 @@
+ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+ import * as Cause from "effect/Cause";
+ import * as Option from "effect/Option";
+-import { AsyncResult, Atom } from "effect/unstable/reactivity";
++import { AsyncResult, Atom } from "effect/reactivity";
+ 
+ const EMPTY_ASYNC_RESULT_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
+   Atom.withLabel("mobile-environment-query:empty"),

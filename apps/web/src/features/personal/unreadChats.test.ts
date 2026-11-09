@@ -1,5 +1,5 @@
 import type { PersonalBotThread, PersonalTask } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 

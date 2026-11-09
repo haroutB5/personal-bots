@@ -1,0 +1,13 @@
+diff --git a/apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx b/apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx
+index 930e6c1ec83e31c2a0dc03f2b7fb753bd457efe5..3945b4d7ba4a597f04f293f8e359e8d9a2584d8a 100644
+--- a/apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx
++++ b/apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx
+@@ -2,7 +2,7 @@ import { MaterialListRow } from "../../components/MaterialListRow";
+ import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
+ import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+-import { AsyncResult } from "effect/unstable/reactivity";
++import { AsyncResult } from "effect/reactivity";
+ import { LegendList } from "@legendapp/list/react-native";
+ import {
+   isAtomCommandInterrupted,

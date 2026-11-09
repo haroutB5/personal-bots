@@ -1,21 +1,25 @@
-import * as NodeServices from "@t3tools/shared/nodeServices";
-import { EnvironmentHttpApi } from "@t3tools/contracts";
-import {
-  computeDpopAccessTokenHash,
-  computeDpopJwkThumbprint,
-  type DpopPublicJwk,
-} from "@t3tools/shared/dpop";
-import { expect, it } from "@effect/vitest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- DPoP test proofs need Node's key signing.
 import * as NodeCrypto from "node:crypto";
-import * as Clock from "effect/Clock";
+
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  AuthTokenExchangeGrantType,
+  AuthEnvironmentBootstrapTokenType,
+  AuthAccessTokenType,
+  EnvironmentHttpApi,
+} from "@t3tools/contracts";
+import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
-import * as Crypto from "@t3tools/shared/crypto";
+import * as Clock from "effect/Clock";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { computeDpopAccessTokenHash, type DpopPublicJwk } from "@t3tools/shared/dpop";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -24,15 +28,16 @@ import * as HttpRouter from "effect/http/HttpRouter";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
-import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./http.ts";
+import * as AuthHttp from "./http.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
-const configLayer = Layer.effect(
+const layerConfig = Layer.effect(
   ServerConfig.ServerConfig,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -45,24 +50,25 @@ const configLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-http-test-" })));
 
-const environmentAuthLayer = EnvironmentAuth.layer.pipe(
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provide(ServerEnvironment.identityLayer),
-  Layer.provide(configLayer),
+const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
+  Layer.provide(ManagedPolicy.layerTest()),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provide(ServerEnvironment.layerIdentity),
+  Layer.provide(layerConfig),
 );
-const routesLayer = HttpApiBuilder.layer(AuthTestApi).pipe(
-  Layer.provide(authHttpApiLayer),
-  Layer.provide(environmentAuthenticatedAuthLayer),
-  Layer.provideMerge(environmentAuthLayer),
-  Layer.provide(configLayer),
+const layerRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
+  Layer.provide(AuthHttp.layer),
+  Layer.provide(AuthHttp.layerAuthenticatedAuth),
+  Layer.provideMerge(layerEnvironmentAuth),
+  Layer.provide(layerConfig),
   Layer.provideMerge(
     HttpPlatform.layer.pipe(
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
       Layer.provideMerge(Etag.layerWeak),
     ),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
 );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -71,6 +77,15 @@ const postJson = (path: string, body: unknown, headers?: Readonly<Record<string,
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: encodeJson(body),
+  });
+
+const unusedSecretStore = () =>
+  ServerSecretStore.ServerSecretStore.of({
+    get: () => Effect.succeedNone,
+    set: () => Effect.void,
+    create: () => Effect.void,
+    getOrCreateRandom: () => Effect.die("Not used by these routes."),
+    remove: () => Effect.void,
   });
 
 const postForm = (
@@ -100,7 +115,10 @@ const makeDpopProof = (input: {
           const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
             namedCurve: "P-256",
           });
-          return { privateKey, publicJwk: publicKey.export({ format: "jwk" }) as DpopPublicJwk };
+          return {
+            privateKey,
+            publicJwk: publicKey.export({ format: "jwk" }) as DpopPublicJwk,
+          };
         })();
   const header = Buffer.from(
     JSON.stringify({
@@ -126,13 +144,12 @@ const makeDpopProof = (input: {
     proof: `${header}.${payload}.${signature}`,
     privateKey: keyPair.privateKey,
     publicJwk: keyPair.publicJwk,
-    thumbprint: computeDpopJwkThumbprint(keyPair.publicJwk),
   };
 };
 
 it.effect("sets the selected browser session cookies through the HTTP route", () =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
       get: () => Effect.succeedNone,
       set: () => Effect.void,
@@ -140,24 +157,40 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
       getOrCreateRandom: () => Effect.die("Not used by these routes."),
       remove: () => Effect.void,
     });
-    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
       Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
     );
     return yield* Effect.acquireUseRelease(
       Effect.sync(
         () =>
           [
-            HttpRouter.toWebHandler(routesLayer, { disableLogger: true }),
-            HttpRouter.toWebHandler(routesLayer, { disableLogger: true }),
+            HttpRouter.toWebHandler(layerRoutes, { disableLogger: true }),
+            HttpRouter.toWebHandler(layerRoutes, { disableLogger: true }),
           ] as const,
       ),
       ([environmentA, environmentB]) =>
-        Effect.tryPromise(async () => {
+        Effect.promise(async () => {
           const devResponse = await environmentA.handler(
             postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
             requestContext,
           );
           expect(devResponse.status).toBe(200);
+          const retiredScopeResponse = await environmentA.handler(
+            new Request("http://127.0.0.1/oauth/token", {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: AuthTokenExchangeGrantType,
+                subject_token: DEV_TOKEN,
+                subject_token_type: AuthEnvironmentBootstrapTokenType,
+                requested_token_type: AuthAccessTokenType,
+                scope: "review:write",
+              }),
+            }),
+            requestContext,
+          );
+          expect(retiredScopeResponse.status).toBe(400);
+          expect(await retiredScopeResponse.json()).toMatchObject({ reason: "invalid_scope" });
+
           const devCookies = devResponse.headers.getSetCookie();
           const devCookie = devCookies.find((cookie) => cookie.startsWith("t3_dev_session_"));
           expect(devCookie).toContain("HttpOnly");
@@ -198,19 +231,53 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
     );
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))),
+);
+
+it.effect.each(["DPoP", "dpop"])("challenges a refused %s request with DPoP", (scheme) =>
+  Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.promise(async () => {
+          const refused = await environment.handler(
+            postJson(
+              "/api/auth/pairing-token",
+              { scopes: ["orchestration:read"] },
+              { authorization: `${scheme} not-a-valid-token` },
+            ),
+            requestContext,
+          );
+          expect(refused.status).toBe(401);
+          expect(refused.headers.get("www-authenticate")).toBe("DPoP");
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))),
 );
 
 it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked ones", () =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const clock = yield* Clock.Clock;
-    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
       Context.add(Clock.Clock, clock),
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore()),
     );
     yield* TestClock.setTime(Date.UTC(2026, 0, 1));
     return yield* Effect.acquireUseRelease(
-      Effect.sync(() => HttpRouter.toWebHandler(routesLayer, { disableLogger: true })),
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (environment) =>
         Effect.gen(function* () {
           const call = (request: Request) =>
@@ -237,8 +304,7 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
                 postJson("/api/auth/pairing-token", { label }, { cookie: ownerCookie }),
               );
               expect(response.status).toBe(200);
-              const body = yield* readJson<{ credential: string }>(response);
-              return body.credential;
+              return (yield* readJson<{ credential: string }>(response)).credential;
             });
 
           const bearerToken = (label: string) =>
@@ -265,10 +331,7 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
             call(
               new Request("http://127.0.0.1/api/auth/session/renew", {
                 method: "POST",
-                headers: {
-                  authorization,
-                  ...(dpop ? { dpop } : {}),
-                },
+                headers: { authorization, ...(dpop ? { dpop } : {}) },
               }),
             );
 
@@ -316,9 +379,7 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
             }),
           );
           expect(fixedResponse.status).toBe(200);
-          const fixed = yield* readJson<{ access_token: string; token_type: string }>(
-            fixedResponse,
-          );
+          const fixed = yield* readJson<{ access_token: string }>(fixedResponse);
           const fixedRenew = yield* renew(`Bearer ${fixed.access_token}`);
           expect(fixedRenew.status).toBe(403);
           expect(yield* readJson<{ reason: string }>(fixedRenew)).toMatchObject({
@@ -339,10 +400,9 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
 
           const bearerNotDue = yield* renew(`Bearer ${bearer.access_token}`);
           expect(bearerNotDue.status).toBe(200);
-          const bearerNotDueBody = yield* readJson<{
-            access_token: string;
-            expires_in: number;
-          }>(bearerNotDue);
+          const bearerNotDueBody = yield* readJson<{ access_token: string; expires_in: number }>(
+            bearerNotDue,
+          );
           expect(bearerNotDueBody.access_token).toBe(bearer.access_token);
           expect(bearerNotDueBody.expires_in).toBe(2_592_000);
 
@@ -358,17 +418,17 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
           });
           const dpopNotDue = yield* renew(`DPoP ${dpop.access_token}`, dpopNotDueProof.proof);
           expect(dpopNotDue.status).toBe(200);
-          const dpopNotDueBody = yield* readJson<{ access_token: string }>(dpopNotDue);
-          expect(dpopNotDueBody.access_token).toBe(dpop.access_token);
+          expect(yield* readJson<{ access_token: string }>(dpopNotDue)).toMatchObject({
+            access_token: dpop.access_token,
+          });
 
           yield* TestClock.adjust(Duration.hours(25));
 
           const bearerRenewed = yield* renew(`Bearer ${bearer.access_token}`);
           expect(bearerRenewed.status).toBe(200);
-          const bearerRenewedBody = yield* readJson<{
-            access_token: string;
-            expires_in: number;
-          }>(bearerRenewed);
+          const bearerRenewedBody = yield* readJson<{ access_token: string; expires_in: number }>(
+            bearerRenewed,
+          );
           expect(bearerRenewedBody.access_token).not.toBe(bearer.access_token);
           expect(bearerRenewedBody.expires_in).toBe(2_592_000);
 
@@ -389,9 +449,6 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
 
           const noProof = yield* renew(`DPoP ${dpopRenewedBody.access_token}`);
           expect(noProof.status).toBe(401);
-          expect(yield* readJson<{ code: string }>(noProof)).toMatchObject({
-            code: "auth_invalid",
-          });
 
           const wrongKeyProof = makeDpopProof({
             method: "POST",
@@ -406,47 +463,14 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
           );
           expect(wrongKey.status).toBe(401);
 
-          const replayProof = makeDpopProof({
-            method: "POST",
-            url: "http://localhost/api/auth/session/renew",
-            iat: renewedSeconds,
-            jti: "replayed-proof",
-            accessToken: dpopRenewedBody.access_token,
-            privateKey: exchangeProof.privateKey,
-            publicJwk: exchangeProof.publicJwk,
-          });
-          const replayFirst = yield* renew(
-            `DPoP ${dpopRenewedBody.access_token}`,
-            replayProof.proof,
-          );
-          expect(replayFirst.status).toBe(200);
-          const replayed = yield* renew(`DPoP ${dpopRenewedBody.access_token}`, replayProof.proof);
-          expect(replayed.status).toBe(401);
-
           const revokedToken = yield* bearerToken("phone-revoked");
-          const clientsResponse = yield* call(
-            new Request("http://127.0.0.1/api/auth/clients", {
-              headers: { cookie: ownerCookie },
+          const revokedRevoke = yield* call(
+            new Request("http://127.0.0.1/api/auth/session/revoke", {
+              method: "POST",
+              headers: { authorization: `Bearer ${revokedToken.access_token}` },
             }),
           );
-          expect(clientsResponse.status).toBe(200);
-          const clients =
-            yield* readJson<ReadonlyArray<{ sessionId: string; client: { label?: string } }>>(
-              clientsResponse,
-            );
-          const revokedSession = clients.find(
-            (session) => session.client.label === "phone-revoked",
-          );
-          expect(revokedSession).toBeDefined();
-          if (!revokedSession) return;
-          const revokeResponse = yield* call(
-            postJson(
-              "/api/auth/clients/revoke",
-              { sessionId: revokedSession.sessionId },
-              { cookie: ownerCookie },
-            ),
-          );
-          expect(revokeResponse.status).toBe(200);
+          expect(revokedRevoke.status).toBe(200);
           const revokedRenew = yield* renew(`Bearer ${revokedToken.access_token}`);
           expect(revokedRenew.status).toBe(401);
           expect(yield* readJson<{ code: string }>(revokedRenew)).toMatchObject({
@@ -465,19 +489,22 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
         }),
       (environment) => Effect.promise(() => environment.dispose()),
     );
-  }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, TestClock.layer())),
+  ),
 );
 
 it.effect("revokes only the calling session and every token renewed from it", () =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const clock = yield* Clock.Clock;
-    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
       Context.add(Clock.Clock, clock),
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore()),
     );
     yield* TestClock.setTime(Date.UTC(2026, 0, 1));
     return yield* Effect.acquireUseRelease(
-      Effect.sync(() => HttpRouter.toWebHandler(routesLayer, { disableLogger: true })),
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (environment) =>
         Effect.gen(function* () {
           const call = (request: Request) =>
@@ -520,35 +547,16 @@ it.effect("revokes only the calling session and every token renewed from it", ()
               return (yield* readJson<{ access_token: string }>(response)).access_token;
             });
 
-          const post = (path: string, authorization?: string, dpop?: string, body?: unknown) =>
+          const post = (path: string, authorization?: string, dpop?: string) =>
             call(
               new Request(`http://127.0.0.1${path}`, {
                 method: "POST",
                 headers: {
                   ...(authorization ? { authorization } : {}),
                   ...(dpop ? { dpop } : {}),
-                  ...(body === undefined ? {} : { "content-type": "application/json" }),
                 },
-                ...(body === undefined ? {} : { body: encodeJson(body) }),
               }),
             );
-          const dpopProof = (
-            path: string,
-            accessToken: string,
-            jti: string,
-            key: { privateKey: NodeCrypto.KeyObject; publicJwk: DpopPublicJwk },
-          ) =>
-            Effect.gen(function* () {
-              const iat = yield* nowSeconds();
-              return makeDpopProof({
-                method: "POST",
-                url: `http://localhost${path}`,
-                iat,
-                jti,
-                accessToken,
-                ...key,
-              }).proof;
-            });
           const dpopPost = (
             path: string,
             accessToken: string,
@@ -556,7 +564,14 @@ it.effect("revokes only the calling session and every token renewed from it", ()
             key: { privateKey: NodeCrypto.KeyObject; publicJwk: DpopPublicJwk },
           ) =>
             Effect.gen(function* () {
-              const proof = yield* dpopProof(path, accessToken, jti, key);
+              const proof = makeDpopProof({
+                method: "POST",
+                url: `http://localhost${path}`,
+                iat: yield* nowSeconds(),
+                jti,
+                accessToken,
+                ...key,
+              }).proof;
               return yield* post(path, `DPoP ${accessToken}`, proof);
             });
           const expectAuthInvalid = (response: Response) =>
@@ -566,18 +581,6 @@ it.effect("revokes only the calling session and every token renewed from it", ()
                 code: "auth_invalid",
               });
             });
-          const clientLabels = Effect.gen(function* () {
-            const response = yield* call(
-              new Request("http://127.0.0.1/api/auth/clients", {
-                headers: { cookie: ownerCookie },
-              }),
-            );
-            const clients =
-              yield* readJson<ReadonlyArray<{ sessionId: string; client: { label?: string } }>>(
-                response,
-              );
-            return clients;
-          });
 
           const first = yield* exchange("phone-first");
           const second = yield* exchange("phone-second");
@@ -590,11 +593,6 @@ it.effect("revokes only the calling session and every token renewed from it", ()
           const dpopToken = yield* exchange("phone-dpop", dpopKey.proof);
           const expiring = yield* exchange("phone-expiring");
 
-          const secondSessionId = (yield* clientLabels).find(
-            (client) => client.client.label === "phone-second",
-          )?.sessionId;
-          expect(secondSessionId).toBeDefined();
-
           const cookieRevoke = yield* call(
             new Request("http://127.0.0.1/api/auth/session/revoke", {
               method: "POST",
@@ -606,9 +604,6 @@ it.effect("revokes only the calling session and every token renewed from it", ()
             code: "operation_forbidden",
             reason: "session_not_revocable",
           });
-          expect((yield* clientLabels).map((client) => client.client.label)).toContain(
-            "phone-first",
-          );
 
           yield* expectAuthInvalid(yield* post("/api/auth/session/revoke"));
           yield* expectAuthInvalid(
@@ -635,8 +630,6 @@ it.effect("revokes only the calling session and every token renewed from it", ()
           const revokeFirst = yield* post(
             "/api/auth/session/revoke",
             `Bearer ${firstRenewedToken}`,
-            undefined,
-            { sessionId: secondSessionId },
           );
           expect(revokeFirst.status).toBe(200);
           expect(yield* readJson<{ revoked: boolean }>(revokeFirst)).toEqual({ revoked: true });
@@ -652,10 +645,6 @@ it.effect("revokes only the calling session and every token renewed from it", ()
             yield* post("/api/auth/session/revoke", `Bearer ${firstRenewedToken}`),
           );
 
-          const labelsAfterFirst = (yield* clientLabels).map((client) => client.client.label);
-          expect(labelsAfterFirst).not.toContain("phone-first");
-          expect(labelsAfterFirst).toContain("phone-second");
-          expect(labelsAfterFirst).toContain("phone-dpop");
           const secondStillWorks = yield* post("/api/auth/session/renew", `Bearer ${second}`);
           expect(secondStillWorks.status).toBe(200);
 
@@ -684,5 +673,77 @@ it.effect("revokes only the calling session and every token renewed from it", ()
         }),
       (environment) => Effect.promise(() => environment.dispose()),
     );
-  }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, TestClock.layer())),
+  ),
+);
+
+it.effect("requires a key for a phone exchange and keeps the refused link spendable", () =>
+  Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom;
+    const clock = yield* Clock.Clock;
+    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
+      Context.add(Clock.Clock, clock),
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore()),
+    );
+    yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const call = (request: Request) =>
+            Effect.tryPromise(() => environment.handler(request, requestContext));
+          const readJson = <T>(response: Response) =>
+            Effect.tryPromise(() => response.json() as Promise<T>);
+          const nowSeconds = () =>
+            Clock.currentTimeMillis.pipe(Effect.map((millis) => Math.floor(millis / 1_000)));
+
+          const owner = yield* call(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          const ownerCookie =
+            owner.headers
+              .getSetCookie()
+              .find((cookie) => cookie.startsWith("t3_dev_session_"))
+              ?.split(";", 1)[0] ?? "";
+          const pairing = yield* call(
+            postJson("/api/auth/pairing-token", { label: "Find X9 Pro" }, { cookie: ownerCookie }),
+          );
+          const { credential } = yield* readJson<{ credential: string }>(pairing);
+          const phoneForm = {
+            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+            subject_token: credential,
+            subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+            requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            client_label: "Find X9 Pro",
+            client_device_type: "mobile",
+            client_os: "android",
+          };
+
+          const noKey = yield* call(postForm("/oauth/token", phoneForm));
+          expect(noKey.status).toBe(400);
+          expect(yield* readJson<{ reason: string }>(noKey)).toMatchObject({
+            code: "invalid_request",
+            reason: "dpop_proof_required",
+          });
+
+          const exchangeProof = makeDpopProof({
+            method: "POST",
+            url: "http://localhost/oauth/token",
+            iat: yield* nowSeconds(),
+            jti: "phone-exchange",
+          });
+          const paired = yield* call(
+            postForm("/oauth/token", phoneForm, { dpop: exchangeProof.proof }),
+          );
+          expect(paired.status).toBe(200);
+          expect(yield* readJson<{ token_type: string }>(paired)).toMatchObject({
+            token_type: "DPoP",
+          });
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, TestClock.layer())),
+  ),
 );

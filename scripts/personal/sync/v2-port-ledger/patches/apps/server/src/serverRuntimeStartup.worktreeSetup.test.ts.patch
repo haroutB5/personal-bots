@@ -1,0 +1,10 @@
+diff --git a/apps/server/src/serverRuntimeStartup.worktreeSetup.test.ts b/apps/server/src/serverRuntimeStartup.worktreeSetup.test.ts
+index fda60d88971665c3fb4e290f3b163b5e8bab8c98..d58ffaff885da68d59d01476ec051f0cb1522fa7 100644
+--- a/apps/server/src/serverRuntimeStartup.worktreeSetup.test.ts
++++ b/apps/server/src/serverRuntimeStartup.worktreeSetup.test.ts
+@@ -1,4 +1,4 @@
+-import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeServices from "@t3tools/shared/nodeServices";
+ import {
+   EventId,
+   type OrchestrationCommand,

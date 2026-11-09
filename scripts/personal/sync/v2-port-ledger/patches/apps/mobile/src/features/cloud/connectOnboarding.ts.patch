@@ -1,0 +1,10 @@
+diff --git a/apps/mobile/src/features/cloud/connectOnboarding.ts b/apps/mobile/src/features/cloud/connectOnboarding.ts
+index 9d3944331a7bcbca6c37f0505e66d278ff7348ee..a320b8b8422b68407c0a9640c0267f09f5e6d25c 100644
+--- a/apps/mobile/src/features/cloud/connectOnboarding.ts
++++ b/apps/mobile/src/features/cloud/connectOnboarding.ts
+@@ -1,4 +1,4 @@
+-import { Atom } from "effect/unstable/reactivity";
++import { Atom } from "effect/reactivity";
+ 
+ import { appAtomRegistry } from "../../state/atom-registry";
+ 

@@ -1,0 +1,36 @@
+diff --git a/apps/server/src/provider/providerSnapshot.ts b/apps/server/src/provider/providerSnapshot.ts
+index c5503a175498531c0db635b89c0ed455066c1174..5e40af9e1dd9ed52cee120bed99d15ac975a673d 100644
+--- a/apps/server/src/provider/providerSnapshot.ts
++++ b/apps/server/src/provider/providerSnapshot.ts
+@@ -8,13 +8,14 @@ import type {
+   ServerProviderSlashCommand,
+   ServerProviderModel,
+   ServerProviderState,
++  ServerProviderUsageBalance,
+   ServerProviderUsageLimits,
+ } from "@t3tools/contracts";
+ import * as Effect from "effect/Effect";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ import { readCustomModelEntries } from "@t3tools/shared/model";
+ import { isWindowsCommandNotFound } from "../processRunner.ts";
+ import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
+@@ -58,6 +59,7 @@ export interface ProviderProbeResult {
+   readonly auth: ServerProviderAuth;
+   readonly message?: string;
+   readonly usageLimits?: ServerProviderUsageLimits;
++  readonly usageBalance?: ServerProviderUsageBalance;
+ }
+ 
+ export interface ServerProviderPresentation {
+@@ -240,6 +242,7 @@ export function buildServerProvider(input: {
+     slashCommands: [...(input.slashCommands ?? [])],
+     skills: [...(input.skills ?? [])],
+     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
++    ...(input.probe.usageBalance ? { usageBalance: input.probe.usageBalance } : {}),
+     ...(versionAdvisory ? { versionAdvisory } : {}),
+   };
+ }

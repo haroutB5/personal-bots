@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import { botEffectiveModelSelection, type EnvironmentId } from "@t3tools/contracts";
@@ -11,7 +11,7 @@ import { ChevronLeft, Ellipsis, NotebookPen, Pencil, Plus } from "lucide-react";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
-import { useThreadDetail, useThreadShells } from "~/state/entities";
+import { useThreadDetail } from "~/state/entities";
 import { useLazyThreadShells } from "~/state/lazyThreadShells";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -55,6 +55,7 @@ import { useLongPress } from "./useLongPress";
 import { isChatUnread, useChatSeenState, useRefetchOnTurnsSettled } from "./unreadChats";
 import { UnreadDot } from "./UnreadChatsBadge";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
+import { useBotShells } from "./useBotShells";
 import {
   BulkNoticeLine,
   NO_TOUCH_SELECT,
@@ -71,7 +72,7 @@ import {
 const ignoreLongPress = () => {};
 
 const ICON_LINK =
-  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
 
 /** A row in select mode: the whole row toggles; no swipe, no opening the chat. */
 function SelectableThreadRow({
@@ -199,7 +200,7 @@ function ThreadRow({
   onWake?: ((row: BotThreadRow) => void) | undefined;
 }) {
   const threadId = row.link.threadId;
-  const longPress = useLongPress(useCallback(() => onLongPress(threadId), [onLongPress, threadId]));
+  const longPress = useLongPress(() => onLongPress(threadId));
   const archiveThread = useAtomCommand(personalBotArchiveThread);
   const deleteChat = useDeleteChat(environmentId);
   const [busy, setBusy] = useState(false);
@@ -275,7 +276,7 @@ function ThreadRow({
               type="button"
               disabled={busy}
               onClick={() => void setArchived(false)}
-              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40 pointer-coarse:sr-only"
+              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] disabled:opacity-40 pointer-coarse:sr-only"
             >
               Unarchive
             </button>
@@ -283,7 +284,7 @@ function ThreadRow({
               type="button"
               disabled={busy}
               onClick={() => void onDelete()}
-              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40 pointer-coarse:sr-only"
+              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] disabled:opacity-40 pointer-coarse:sr-only"
             >
               Delete
             </button>
@@ -308,7 +309,7 @@ function ThreadRow({
               type="button"
               aria-label={`Wake ${title} now`}
               onClick={() => onWake(row)}
-              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
             >
               Wake now
             </button>
@@ -343,20 +344,20 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     list.data?.archivedCounts === undefined || !archiveRequested ? null : { botId },
     list.dataUpdatedAt,
   );
-  const links = useMemo(() => {
-    const active = list.data?.threads ?? [];
-    if (list.data?.archivedCounts === undefined) return active;
-    const activeIds = new Set(active.map((link) => link.threadId));
-    return [
-      ...active,
-      ...(archivedLinks.data?.threads.filter(
-        (link) => link.archivedAt !== null && !activeIds.has(link.threadId),
-      ) ?? []),
-    ];
-  }, [list.data, archivedLinks.data]);
+  const activeLinks = list.data?.threads ?? [];
+  const activeLinkIds = new Set(activeLinks.map((link) => link.threadId));
+  const links =
+    list.data?.archivedCounts === undefined
+      ? activeLinks
+      : [
+          ...activeLinks,
+          ...(archivedLinks.data?.threads.filter(
+            (link) => link.archivedAt !== null && !activeLinkIds.has(link.threadId),
+          ) ?? []),
+        ];
   // The connect-time shell has no idle archived chats: load this bot's.
   useLazyThreadShells(environmentId, { botId });
-  const shells = useThreadShells();
+  const shells = useBotShells(environmentId);
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const providers = useAtomValue(primaryServerProvidersAtom);
   const modelLabel = bot === null ? null : botActiveModelShortLabel(bot, providers);
@@ -366,7 +367,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const [wrapupError, setWrapupError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
-  const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  const tasks = taskFeed === null ? [] : [...taskFeed.values()];
   useRefreshBotsForTaskThreads({
     bots: list.data?.bots ?? null,
     links: list.data?.threads ?? null,
@@ -380,19 +381,10 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   // One timer for the nearest wake time: it moves the clock past it (a woken chat is back in the
   // list at once) and refetches, which brings it back unread at the top.
   const wakeClock = useSnoozeWakeClock(list.data?.threads, list.refresh);
-  const rows = useMemo(
-    () =>
-      bot === null || list.data === null
-        ? { active: [], archived: [], snoozed: [] }
-        : botThreadRows(
-            bot.botId,
-            links,
-            shells.filter((shell) => shell.environmentId === environmentId),
-            relayThreadIds,
-            wakeClock,
-          ),
-    [bot, environmentId, list.data, links, relayThreadIds, shells, wakeClock],
-  );
+  const rows =
+    bot === null || list.data === null
+      ? { active: [], archived: [], snoozed: [] }
+      : botThreadRows(bot.botId, links, shells, relayThreadIds, wakeClock);
   const archivedCount =
     list.data?.archivedCounts === undefined
       ? rows.archived.length
@@ -404,20 +396,20 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   // bot's own count cannot disagree with this list (2026-10-16).
   const chatSeen = useChatSeenState();
   const showsUnread = bot !== null;
-  const unreadThreadIds = useMemo(() => {
-    if (!showsUnread) return new Set<string>();
-    const taskChats = taskChatThreadIds(
-      rows.active.map((row) => row.link),
-      tasks,
-    );
-    return new Set(
-      rows.active
-        .filter(
-          (row) => isOwnerChat(row.link, taskChats) && isChatUnread(row.link, chatSeen, row.shell),
-        )
-        .map((row) => row.link.threadId as string),
-    );
-  }, [chatSeen, rows.active, showsUnread, tasks]);
+  const taskChats = taskChatThreadIds(
+    rows.active.map((row) => row.link),
+    tasks,
+  );
+  const unreadThreadIds = new Set(
+    showsUnread
+      ? rows.active
+          .filter(
+            (row) =>
+              isOwnerChat(row.link, taskChats) && isChatUnread(row.link, chatSeen, row.shell),
+          )
+          .map((row) => row.link.threadId as string)
+      : [],
+  );
   // The list refetches when one of these chats finishes a turn, so a reply
   // that lands while this screen is open lights its dot (the Bots list does
   // the same through its preview key). Trailing, like the Bots list.
@@ -435,13 +427,10 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
       (newest, row) => (newest === null || row.updatedMs > newest.updatedMs ? row : newest),
       null,
     )?.link.threadId ?? null;
-  const wrapupThreadRef = useMemo(
-    () =>
-      environmentId === null || newestThreadId === null
-        ? null
-        : scopeThreadRef(environmentId, newestThreadId),
-    [environmentId, newestThreadId],
-  );
+  const wrapupThreadRef =
+    environmentId === null || newestThreadId === null
+      ? null
+      : scopeThreadRef(environmentId, newestThreadId);
   const wrapupThread = useThreadDetail(wrapupThreadRef);
   const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
     environmentId,
@@ -476,38 +465,29 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const selecting = selection !== null;
   const sectionRows =
     selection === null ? [] : selection.section === "archived" ? rows.archived : rows.active;
-  const sectionIds = useMemo(
-    () => sectionRows.map((row) => row.link.threadId as string),
-    [sectionRows],
-  );
+  const sectionIds = sectionRows.map((row) => row.link.threadId as string);
   const chosen = selection === null ? [] : visibleSelection(selection.ids, sectionIds);
   const everySelected = selection !== null && allChatsSelected(selection.ids, sectionIds);
 
-  const enterSelect = useCallback((section: ChatSection, first: string | null) => {
+  const enterSelect = (section: ChatSection, first: string | null) => {
     setNotice(null);
     setActionError(null);
     setSelection({ section, ids: new Set(first === null ? [] : [first]) });
-  }, []);
-  const selectFromActive = useCallback(
-    (threadId: string) => enterSelect("active", threadId),
-    [enterSelect],
-  );
-  const selectFromArchived = useCallback(
-    (threadId: string) => enterSelect("archived", threadId),
-    [enterSelect],
-  );
-  const toggle = useCallback((threadId: string) => {
+  };
+  const selectFromActive = (threadId: string) => enterSelect("active", threadId);
+  const selectFromArchived = (threadId: string) => enterSelect("archived", threadId);
+  const toggle = (threadId: string) => {
     setSelection((current) =>
       current === null ? current : { ...current, ids: toggleChatSelection(current.ids, threadId) },
     );
-  }, []);
+  };
   const toggleAll = () => {
     setSelection((current) =>
       current === null ? current : { ...current, ids: new Set(everySelected ? [] : sectionIds) },
     );
   };
 
-  const exitSelect = useCallback(() => setSelection(null), []);
+  const exitSelect = () => setSelection(null);
   useEscapeToExit(selecting, exitSelect);
 
   // Snooze asks when: the sheet is for the chosen chats (select mode) or one swiped row.
@@ -763,7 +743,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
               onClick={() => newChat.open()}
               disabled={newChat.starting}
               aria-busy={newChat.starting}
-              className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] md:flex-1 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
+              className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] md:flex-1 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
             >
               <Plus aria-hidden="true" className="size-5" strokeWidth={1.75} />
               New chat
@@ -773,7 +753,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
               onClick={() => void onWrapup()}
               disabled={wrapupDisabled}
               aria-busy={wrapupSending}
-              className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] md:flex-1 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
+              className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] md:flex-1 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
             >
               <NotebookPen aria-hidden="true" className="size-5" strokeWidth={1.75} />
               Wrapup

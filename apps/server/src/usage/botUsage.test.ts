@@ -2,7 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { UsageBotAggregator } from "./botUsage.ts";
 import { createOverrideRateTable, parseRateTable } from "./usagePricing.ts";
-import { initialCodexScanState, parseCodexLine, type UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
+import { initialCodexScanState, parseCodexLine } from "../provider/Drivers/codexUsage.ts";
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
@@ -335,8 +336,7 @@ describe("UsageBotAggregator", () => {
       const agg = aggregator();
       const file = agg.beginFile();
       for (const line of lines) {
-        const parsed = parseCodexLine(line, state);
-        if (parsed !== null) file.add(parsed);
+        for (const parsed of parseCodexLine(line, state)) file.add(parsed);
       }
       expect(agg.finish()[0]).toMatchObject({
         provider: "codex",

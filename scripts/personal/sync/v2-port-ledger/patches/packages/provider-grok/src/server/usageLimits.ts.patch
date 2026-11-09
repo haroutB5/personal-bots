@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/provider/Layers/grokUsageLimits.ts b/apps/server/src/provider/Layers/grokUsageLimits.ts
+index 7dc561d07ec00dcd0d2ea4cda760ef9d1a3a4504..27ae53bb6638b6d2d14b4a0f28342f7cb4bde893 100644
+--- a/apps/server/src/provider/Layers/grokUsageLimits.ts
++++ b/apps/server/src/provider/Layers/grokUsageLimits.ts
+@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
+ import * as Option from "effect/Option";
+ import * as Path from "effect/Path";
+ import * as Schema from "effect/Schema";
+-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
++import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ import {
+   clampPercent,
+   makeUnavailableUsageLimits,

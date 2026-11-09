@@ -10,7 +10,7 @@
  */
 import * as NodeHttp from "node:http";
 
-import * as NodeServices from "@t3tools/shared/nodeServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   PersonalTaskId,
@@ -20,12 +20,13 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
@@ -107,9 +108,15 @@ const realChromeLayer = PersonalBrowser.makeLayer({
   Layer.provideMerge(PersonalLoginRepository.layer),
   Layer.provideMerge(taskService),
   Layer.provideMerge(PreviewManager.layer),
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-chrome-" })),
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(
+    Layer.succeed(
+      SecureRandom.SecureRandom,
+      SecureRandom.make((size) => new Uint8Array(size).fill(7)),
+    ),
+  ),
 );
 
 const threadId = ThreadId.make("thread-chrome");
@@ -276,6 +283,5 @@ describe.skipIf(!braveAvailable)("bot browser actions in a real Brave (1.66.6)",
         const stillThere = (yield* run(request("status"))) as PreviewAutomationStatus;
         expect(stillThere.tabId).toBe(second.tabId);
       }).pipe(Effect.scoped, Effect.provide(realChromeLayer)),
-    180_000,
   );
 });

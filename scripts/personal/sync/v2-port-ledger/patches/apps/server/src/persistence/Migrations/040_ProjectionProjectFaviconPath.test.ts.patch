@@ -1,0 +1,13 @@
+diff --git a/apps/server/src/persistence/Migrations/040_ProjectionProjectFaviconPath.test.ts b/apps/server/src/persistence/Migrations/040_ProjectionProjectFaviconPath.test.ts
+index 524831e891ab4b3a3c528e0c2837fbb73bd390dd..2894ef698ccbb4b8be69f69fd0cd2abc658f8b85 100644
+--- a/apps/server/src/persistence/Migrations/040_ProjectionProjectFaviconPath.test.ts
++++ b/apps/server/src/persistence/Migrations/040_ProjectionProjectFaviconPath.test.ts
+@@ -1,7 +1,7 @@
+ import { assert, it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+-import * as SqlClient from "effect/unstable/sql/SqlClient";
++import * as SqlClient from "effect/sql/SqlClient";
+ 
+ import { runMigrations } from "../Migrations.ts";
+ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
