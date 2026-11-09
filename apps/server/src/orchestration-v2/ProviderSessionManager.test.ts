@@ -54,6 +54,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { PersonalTurnContext } from "../personal/turnContext/PersonalTurnContext.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -604,6 +605,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly personalTurnContextLayer?: Layer.Layer<PersonalTurnContext>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -688,6 +690,7 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.personalTurnContextLayer === undefined ? [] : [input.personalTurnContextLayer]),
         ),
       ),
     ),
@@ -760,6 +763,7 @@ function runBrowserAccessScenario(input: {
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
+  readonly personalBot?: boolean;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -809,6 +813,13 @@ function runBrowserAccessScenario(input: {
           idleTimeoutMs: 1_000,
           mcpConfigs,
           projectServiceLayer: layerProjectService,
+          ...(input.personalBot === undefined
+            ? {}
+            : {
+                personalTurnContextLayer: Layer.mock(PersonalTurnContext)({
+                  isPersonalBotThread: () => Effect.succeed(input.personalBot === true),
+                }),
+              }),
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
             projectSettingsOverrides: {
@@ -4362,6 +4373,20 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect.each([true, false] as const)(
+  "ProviderSessionManagerV2 grants the bots and personal tools only to a personal-bot thread (%s)",
+  (personalBot) =>
+    Effect.gen(function* () {
+      const config = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: false,
+        projectOverride: false,
+        personalBot,
+      });
+      assert.equal(config?.capabilities?.has("bots"), personalBot);
+      assert.equal(config?.capabilities?.has("personal"), personalBot);
     }),
 );
 

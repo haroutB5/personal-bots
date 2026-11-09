@@ -202,7 +202,9 @@ import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import { PersonalServerLayerLive } from "./personal/PersonalServerLayerLive.ts";
 import { layer as PersonalTurnContextLayer } from "./personal/turnContext/PersonalTurnContext.ts";
-import { layer as PersonalSessionAccessLayer } from "./personal/secrets/PersonalSessionAccess.ts";
+import { layerLive as PersonalSessionAccessLayer } from "./personal/secrets/PersonalSessionAccess.ts";
+import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
+import * as PersonalVoiceCallRepository from "./personal/voiceCalls/PersonalVoiceCallRepository.ts";
 import { personalHttpRoutesLayer } from "./personal/http/routes.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -574,7 +576,16 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
+// The v2 provider services read it to give personal-bot threads their persona, secrets and bot tools.
+const layerPersonalTurnContext = PersonalTurnContextLayer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(PersonalSessionAccessLayer),
+  Layer.provide(PersonalBotRepository.layer),
+  Layer.provide(PersonalVoiceCallRepository.layer),
+);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(layerPersonalTurnContext),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderUsageAnalytics.layer),
   Layer.provide(layerCheckpointStore),
@@ -677,12 +688,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
-  Layer.provideMerge(
-    PersonalTurnContextLayer.pipe(
-      Layer.provide(ProjectionStoreV2.layer),
-      Layer.provide(PersonalSessionAccessLayer),
-    ),
-  ),
+  Layer.provideMerge(layerPersonalTurnContext),
   Layer.provideMerge(PersonalServerLayerLive),
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
