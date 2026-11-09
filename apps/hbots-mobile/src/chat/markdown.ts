@@ -1,8 +1,7 @@
 /**
- * Turns the markdown a bot writes into the spans a native `Text` draws. The
- * web renders full markdown; a phone chat needs the shapes that change how a
- * reply reads: paragraphs, headings, bold, italic, inline and fenced code,
- * bullets and numbered lists. Anything else stays literal.
+ * Turns markdown into the shapes a native `Text` draws: paragraphs, headings,
+ * bold, italic, inline and fenced code, lists, quotes and GitHub tables.
+ * Anything else stays literal.
  */
 
 export interface FileLink {
@@ -20,20 +19,42 @@ export type InlineSpan =
   | { readonly kind: "link"; readonly text: string; readonly href: string }
   | ({ readonly kind: "file" } & FileLink);
 
-export interface MarkdownBlock {
-  readonly kind: "paragraph" | "heading" | "bullet" | "number" | "code" | "quote";
+export type TableAlign = "left" | "center" | "right";
+
+export interface MarkdownCell {
   readonly spans: ReadonlyArray<InlineSpan>;
   readonly text: string;
-  readonly marker?: string;
-  readonly language?: string;
-  /** 0 for a top-level list item, 1 for a nested one, and so on. */
-  readonly depth?: number;
-  /** Set when the block is nothing but file links, so it renders as chips. */
-  readonly files?: ReadonlyArray<FileLink>;
 }
 
+export interface MarkdownTable {
+  readonly header: ReadonlyArray<MarkdownCell>;
+  readonly aligns: ReadonlyArray<TableAlign>;
+  readonly rows: ReadonlyArray<ReadonlyArray<MarkdownCell>>;
+}
+
+export type MarkdownBlock =
+  | {
+      readonly kind: "paragraph" | "heading" | "quote";
+      readonly spans: ReadonlyArray<InlineSpan>;
+      readonly text: string;
+      /** Set when the block is nothing but file links, so it renders as chips. */
+      readonly files?: ReadonlyArray<FileLink>;
+    }
+  | {
+      readonly kind: "bullet" | "number";
+      readonly spans: ReadonlyArray<InlineSpan>;
+      readonly text: string;
+      readonly marker: string;
+      /** 0 for a top-level list item, 1 for a nested one, and so on. */
+      readonly depth: number;
+      readonly files?: ReadonlyArray<FileLink>;
+    }
+  | { readonly kind: "code"; readonly text: string; readonly language?: string }
+  | { readonly kind: "table"; readonly table: MarkdownTable };
+
 const FENCE = /^```([\w-]*)\s*$/u;
-const HEADING = /^(#{1,4})\s+(.*)$/u;
+const HEADING = /^(#{1,6})\s+(.*)$/u;
+const TABLE_DELIMITER = /^:?-+:?$/u;
 const BULLET = /^( *)[-*+]\s+(.*)$/u;
 const NUMBER = /^( *)(\d+)[.)]\s+(.*)$/u;
 const QUOTE = /^>\s?(.*)$/u;
@@ -42,6 +63,88 @@ const MAX_LIST_DEPTH = 3;
 
 function listDepth(spaces: string): number {
   return Math.min(MAX_LIST_DEPTH, Math.floor(spaces.length / 2));
+}
+
+/** Whether a line has a pipe that separates table cells rather than escaped text. */
+function hasTablePipe(line: string): boolean {
+  let slashes = 0;
+  for (const char of line) {
+    if (char === "\\") {
+      slashes += 1;
+      continue;
+    }
+    if (char === "|" && slashes % 2 === 0) return true;
+    slashes = 0;
+  }
+  return false;
+}
+
+/** Splits a table row on unescaped pipes and drops the optional outer pipes. */
+function tableRow(line: string): ReadonlyArray<string> | null {
+  const trimmed = line.trim();
+  if (!hasTablePipe(trimmed)) return null;
+  const cells: string[] = [];
+  let cell = "";
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index] ?? "";
+    if (char === "\\" && trimmed[index + 1] === "|") {
+      cell += "|";
+      index += 1;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(cell);
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  cells.push(cell);
+  if (trimmed.startsWith("|") && cells.length > 1) cells.shift();
+  if (cells.length > 1 && (cells.at(-1) ?? "").trim().length === 0) cells.pop();
+  return cells.map((value) => value.trim());
+}
+
+function tableAligns(line: string): ReadonlyArray<TableAlign> | null {
+  const cells = tableRow(line);
+  if (cells === null) return null;
+  const aligns: TableAlign[] = [];
+  for (const cell of cells) {
+    if (!TABLE_DELIMITER.test(cell)) return null;
+    aligns.push(
+      cell.startsWith(":") && cell.endsWith(":") ? "center" : cell.endsWith(":") ? "right" : "left",
+    );
+  }
+  return aligns;
+}
+
+function tableCell(text: string): MarkdownCell {
+  return { text, spans: inline(text) };
+}
+
+function tableAt(
+  lines: ReadonlyArray<string>,
+  start: number,
+): { readonly table: MarkdownTable; readonly last: number } | null {
+  const headerLine = lines[start] ?? "";
+  const delimiterLine = lines[start + 1];
+  if (delimiterLine === undefined || !hasTablePipe(headerLine)) return null;
+  const header = tableRow(headerLine);
+  const aligns = tableAligns(delimiterLine);
+  if (header === null || aligns === null || header.length !== aligns.length) return null;
+  const rows: MarkdownCell[][] = [];
+  let last = start + 1;
+  for (let index = start + 2; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (line.trim().length === 0 || !hasTablePipe(line)) break;
+    const cells = tableRow(line) ?? [];
+    rows.push(aligns.map((_, column) => tableCell(cells[column] ?? "")));
+    last = index;
+  }
+  return {
+    table: { header: header.map(tableCell), aligns, rows },
+    last,
+  };
 }
 
 function fileBasename(path: string): string {
@@ -135,13 +238,13 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
     }
   };
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
     if (code !== null) {
       if (FENCE.test(line)) {
         const text = code.lines.join("\n");
         blocks.push({
           kind: "code",
-          spans: [{ kind: "text", text }],
           text,
           ...(code.language.length > 0 ? { language: code.language } : {}),
         });
@@ -207,13 +310,19 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
       });
       continue;
     }
+    const table = tableAt(lines, index);
+    if (table !== null) {
+      flushParagraph();
+      blocks.push({ kind: "table", table: table.table });
+      index = table.last;
+      continue;
+    }
     paragraph.push(line);
   }
   if (code !== null) {
     const text = code.lines.join("\n");
     blocks.push({
       kind: "code",
-      spans: [{ kind: "text", text }],
       text,
       ...(code.language.length > 0 ? { language: code.language } : {}),
     });
@@ -223,19 +332,22 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
 }
 
 /**
- * Lists and code blocks put a flexing column inside a shrink-to-fit bubble.
- * Android lays that out during an unclamped intrinsic pass, so the column
- * collapses and later rows overlap. Those messages need a definite width.
+ * Lists and code blocks put a flexing column inside a shrink-to-fit bubble, and
+ * a table puts a horizontal scroll there. Android lays that out during an
+ * unclamped intrinsic pass, so it collapses. Those messages need a definite width.
  */
 export function markdownNeedsWidth(source: string): boolean {
-  return markdownBlocks(source).some(
-    (block) =>
+  return markdownBlocks(source).some((block) => {
+    if (
       block.kind === "bullet" ||
       block.kind === "number" ||
       block.kind === "code" ||
-      block.files !== undefined ||
-      block.spans.some((span) => span.kind === "file"),
-  );
+      block.kind === "table"
+    ) {
+      return true;
+    }
+    return block.files !== undefined || block.spans.some((span) => span.kind === "file");
+  });
 }
 
 /**

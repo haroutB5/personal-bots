@@ -28,7 +28,16 @@ import {
   IconPaperclip,
 } from "@tabler/icons-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, createElement } from "react";
-import { Animated, FlatList, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Animated,
+  FlatList,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
@@ -50,6 +59,7 @@ import {
   type FileLink,
   type InlineSpan,
   type MarkdownBlock,
+  type MarkdownTable,
 } from "./markdown";
 
 export interface MessageListHandle {
@@ -344,12 +354,12 @@ function MarkdownBody({
   readonly onOpenLink?: ((href: string) => void) | undefined;
   readonly tone: "assistant" | "user";
 }) {
-  const blocks = useMemo(() => markdownBlocks(text), [text]);
+  const blocks = useMemo(() => keyedList(markdownBlocks(text), blockKey), [text]);
   return (
     <View style={styles.markdown}>
-      {blocks.map((block) => (
+      {blocks.map(({ key, item: block }) => (
         <Block
-          key={`${block.kind}:${block.text}`}
+          key={key}
           block={block}
           onOpenFile={onOpenFile}
           onOpenLink={onOpenLink}
@@ -358,6 +368,27 @@ function MarkdownBody({
       ))}
     </View>
   );
+}
+
+/** Stable render keys from item content, with a count for repeated items. */
+function keyedList<T>(
+  items: ReadonlyArray<T>,
+  seed: (item: T) => string,
+): ReadonlyArray<{ readonly key: string; readonly item: T }> {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const base = seed(item);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    return { key: `${base}#${count}`, item };
+  });
+}
+
+function blockKey(block: MarkdownBlock): string {
+  if (block.kind === "table") {
+    return `table:${block.table.header.map((cell) => cell.text).join("|")}`;
+  }
+  return `${block.kind}:${block.text}`;
 }
 
 function replyBody(
@@ -385,6 +416,82 @@ function replyBody(
   };
 }
 
+const TABLE_CELL_WIDTH = 7;
+const TABLE_CELL_MIN_WIDTH = 72;
+const TABLE_CELL_MAX_WIDTH = 200;
+const TABLE_CELL_PADDING = 20;
+
+function tableColumnWidths(table: MarkdownTable): ReadonlyArray<number> {
+  return table.header.map((_, column) => {
+    let longest = 0;
+    for (const cell of [table.header[column], ...table.rows.map((row) => row[column])]) {
+      const length =
+        cell?.spans.reduce(
+          (total, span) => total + (span.kind === "file" ? span.label.length : span.text.length),
+          0,
+        ) ?? 0;
+      longest = Math.max(longest, length);
+    }
+    return Math.min(
+      TABLE_CELL_MAX_WIDTH,
+      Math.max(TABLE_CELL_MIN_WIDTH, longest * TABLE_CELL_WIDTH + TABLE_CELL_PADDING),
+    );
+  });
+}
+
+function TableGrid({
+  table,
+  onOpenFile,
+  onOpenLink,
+}: {
+  readonly table: MarkdownTable;
+  readonly onOpenFile?: ((path: string) => void) | undefined;
+  readonly onOpenLink?: ((href: string) => void) | undefined;
+}) {
+  const widths = useMemo(() => tableColumnWidths(table), [table]);
+  const rows = useMemo(
+    () => keyedList([table.header, ...table.rows], (row) => row.map((cell) => cell.text).join("|")),
+    [table],
+  );
+  return (
+    <ScrollView horizontal style={styles.tableScroll} showsHorizontalScrollIndicator={false}>
+      <View style={styles.table}>
+        {rows.map(({ key: rowKey, item: row }, rowIndex) => (
+          <View
+            key={rowKey}
+            style={[styles.tableRow, rowIndex === 0 ? styles.tableHeaderRow : null]}
+          >
+            {keyedList(row, (cell) => cell.text).map(
+              ({ key: cellKey, item: cell }, columnIndex) => (
+                <View
+                  key={cellKey}
+                  style={[
+                    styles.tableCell,
+                    { width: widths[columnIndex] ?? TABLE_CELL_MIN_WIDTH },
+                    columnIndex < row.length - 1 ? styles.tableCellDivider : null,
+                    rowIndex < rows.length - 1 ? styles.tableRowDivider : null,
+                  ]}
+                >
+                  <SpanText
+                    spans={cell.spans}
+                    style={[
+                      styles.tableText,
+                      rowIndex === 0 ? styles.tableHeaderText : null,
+                      { textAlign: table.aligns[columnIndex] ?? "left" },
+                    ]}
+                    onOpenFile={onOpenFile}
+                    onOpenLink={onOpenLink}
+                  />
+                </View>
+              ),
+            )}
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
 function Block({
   block,
   onOpenFile,
@@ -397,7 +504,7 @@ function Block({
   readonly tone: "assistant" | "user";
 }) {
   const base = tone === "user" ? styles.userText : styles.assistantText;
-  if (block.files !== undefined) {
+  if ("files" in block && block.files !== undefined) {
     return <FileChips files={block.files} onOpenFile={onOpenFile} />;
   }
   switch (block.kind) {
@@ -457,6 +564,8 @@ function Block({
           />
         </View>
       );
+    case "table":
+      return <TableGrid table={block.table} onOpenFile={onOpenFile} onOpenLink={onOpenLink} />;
     case "paragraph":
       return (
         <SpanText
@@ -1126,6 +1235,26 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   codeText: { color: tokens.text, fontSize: 13, lineHeight: 19, fontFamily: "monospace" },
+  tableScroll: { maxWidth: "100%", flexGrow: 0 },
+  table: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  tableRow: { flexDirection: "row" },
+  tableHeaderRow: { backgroundColor: tokens.surface },
+  tableCell: { paddingHorizontal: 10, paddingVertical: 7, justifyContent: "center" },
+  tableCellDivider: {
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: tokens.border,
+  },
+  tableRowDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: tokens.border,
+  },
+  tableText: { color: tokens.text, fontSize: 13, lineHeight: 18 },
+  tableHeaderText: { color: tokens.sectionLabel, fontWeight: "700" },
   listRow: { flexDirection: "row", gap: 6, alignItems: "flex-start" },
   marker: { minWidth: 12, fontSize: 14, lineHeight: 21, color: tokens.textSecondary },
   flex: { flex: 1 },
