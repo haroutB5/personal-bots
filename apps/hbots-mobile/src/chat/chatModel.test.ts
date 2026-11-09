@@ -5,9 +5,10 @@ const at = (iso: string) => DateTime.fromDateUnsafe(new Date(iso));
 
 import {
   buildChatChips,
+  chatContextUsage,
   chatSendModelSelection,
   chatHeaderModel,
-  latestUsedTokens,
+  contextUsageLabel,
 } from "./chatModel";
 
 describe("chatHeaderModel", () => {
@@ -20,11 +21,26 @@ describe("chatHeaderModel", () => {
       latestTurn: null,
       activities: [],
       providers: [],
-      usedTokens: null,
+      contextUsage: null,
       nowMs: Date.parse("2026-11-04T12:00:00.000Z"),
       fallbackBotName: "Assistant",
     });
     expect(header.botName).toBe("Assistant");
+  });
+
+  it("shows the chat's context use with the window size", () => {
+    const header = chatHeaderModel({
+      bot: null,
+      shell: null,
+      title: "Hbots",
+      session: null,
+      latestTurn: null,
+      activities: [],
+      providers: [],
+      contextUsage: { usedTokens: 84_000, maxTokens: 1_000_000 },
+      nowMs: Date.parse("2026-11-09T12:00:00.000Z"),
+    });
+    expect(header.contextBadge).toBe("84k / 1m");
   });
 });
 
@@ -91,14 +107,81 @@ describe("chatSendModelSelection", () => {
   });
 });
 
-describe("latestUsedTokens", () => {
-  it("reads the newest context-window activity", () => {
-    expect(
-      latestUsedTokens([
-        { kind: "context-window.updated", payload: { usedTokens: 10 } },
-        { kind: "tool.completed", payload: {} },
-        { kind: "context-window.updated", payload: { usedTokens: 42 } },
-      ]),
-    ).toBe(42);
+function projection(input: {
+  readonly activeProviderThreadId: string | null;
+  readonly providerThreads?: ReadonlyArray<unknown>;
+  readonly providerTurns?: ReadonlyArray<unknown>;
+  readonly visibleTurnItems?: ReadonlyArray<unknown>;
+}) {
+  return {
+    thread: { activeProviderThreadId: input.activeProviderThreadId },
+    providerThreads: input.providerThreads ?? [],
+    providerTurns: input.providerTurns ?? [],
+    visibleTurnItems: input.visibleTurnItems ?? [],
+    contextTransfers: [],
+  } as never;
+}
+
+describe("chatContextUsage", () => {
+  it("reads the active provider thread's own report", () => {
+    const usage = chatContextUsage(
+      projection({
+        activeProviderThreadId: "thread-now",
+        providerThreads: [
+          {
+            id: "thread-old",
+            contextUsage: { usedTokens: 500_000, maxTokens: 1_000_000 },
+            updatedAt: at("2026-11-09T10:00:00.000Z"),
+          },
+          {
+            id: "thread-now",
+            contextUsage: { usedTokens: 84_000, maxTokens: 1_000_000 },
+            updatedAt: at("2026-11-09T11:00:00.000Z"),
+          },
+        ],
+      }),
+    );
+    expect(usage).toEqual({ usedTokens: 84_000, maxTokens: 1_000_000 });
+    expect(contextUsageLabel(usage)).toBe("84k / 1m");
+  });
+
+  it("reads the newest turn before the provider thread reports its own use", () => {
+    const usage = chatContextUsage(
+      projection({
+        activeProviderThreadId: "thread-now",
+        providerThreads: [
+          { id: "thread-now", contextUsage: null, updatedAt: at("2026-11-09T11:00:00.000Z") },
+        ],
+        providerTurns: [
+          {
+            providerThreadId: "thread-now",
+            tokenUsage: {
+              usedTokens: 40_000,
+              maxTokens: 200_000,
+              updatedAt: "2026-11-09T10:00:00.000Z",
+            },
+          },
+          {
+            providerThreadId: "thread-now",
+            tokenUsage: {
+              usedTokens: 120_000,
+              maxTokens: 200_000,
+              updatedAt: "2026-11-09T11:00:00.000Z",
+            },
+          },
+        ],
+      }),
+    );
+    expect(contextUsageLabel(usage)).toBe("120k / 200k");
+  });
+
+  it("keeps the number when the window size is unknown", () => {
+    expect(contextUsageLabel({ usedTokens: 612_000, maxTokens: null })).toBe("612k");
+  });
+
+  it("shows nothing before the chat reports any use", () => {
+    expect(chatContextUsage(null)).toBeNull();
+    expect(chatContextUsage(projection({ activeProviderThreadId: null }))).toBeNull();
+    expect(contextUsageLabel(null)).toBeNull();
   });
 });
