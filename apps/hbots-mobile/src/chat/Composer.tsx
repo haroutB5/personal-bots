@@ -30,6 +30,7 @@ import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import {
   IconArrowUp,
   IconFile,
+  IconPaperclip,
   IconPhone,
   IconPlus,
   IconSquare,
@@ -159,7 +160,6 @@ export function Composer({
   };
 
   const pickPhotos = async () => {
-    setAttachOpen(false);
     setPicking(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -586,10 +586,10 @@ export function Composer({
       ) : null}
       <View style={styles.row}>
         <Pressable
-          onPress={() => setAttachOpen(true)}
+          onPress={() => void pickPhotos()}
           disabled={picking || sending || preparing}
           accessibilityRole="button"
-          accessibilityLabel="Add photos, camera or files"
+          accessibilityLabel="Add photos"
           style={styles.roundButton}
         >
           <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
@@ -605,12 +605,21 @@ export function Composer({
             maxFontSizeMultiplier={1.6}
             style={styles.field}
           />
+          <Pressable
+            onPress={() => setAttachOpen(true)}
+            disabled={picking || sending || preparing}
+            accessibilityRole="button"
+            accessibilityLabel="Attach camera or files"
+            style={styles.fieldIconButton}
+          >
+            <IconPaperclip size={19} color={tokens.textSecondary} strokeWidth={1.75} />
+          </Pressable>
           {bot !== null && botTakesVoiceCalls(bot) ? (
             <Pressable
               onPress={() => onSendError("Voice calls arrive with the voice update.")}
               accessibilityRole="button"
               accessibilityLabel={`Call ${botName}`}
-              style={styles.callButton}
+              style={styles.fieldIconButton}
             >
               <IconPhone size={19} color={tokens.textSecondary} strokeWidth={1.75} />
             </Pressable>
@@ -652,11 +661,6 @@ export function Composer({
         </Text>
       ) : null}
       <SheetShell visible={attachOpen} title="Attach" onClose={() => setAttachOpen(false)}>
-        <SheetAction
-          label="Photos"
-          detail="From your photo library"
-          onPress={() => void pickPhotos()}
-        />
         <SheetAction label="Camera" detail="Take a photo" onPress={() => void pickCamera()} />
         <SheetAction
           label="Files"
@@ -732,7 +736,7 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   field: { flex: 1, color: tokens.text, fontSize: 16, lineHeight: 22, paddingVertical: 10 },
-  callButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  fieldIconButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   sendButton: {
     width: 44,
     height: 44,
