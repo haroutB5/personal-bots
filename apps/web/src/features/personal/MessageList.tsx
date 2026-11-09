@@ -48,8 +48,13 @@ import { MemoryChangeCard } from "./MemoryChangeCard";
 import { ToolDetails } from "./ToolDetails";
 import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadStatus";
 import { consumeChatSwitched } from "./chatChipHandoff";
-import { ChoiceButtons, type ChoicesState } from "./ChoiceButtons";
-import { mayHaveChoices, splitChoices } from "./choices";
+import { ChoiceButtons } from "./ChoiceButtons";
+import {
+  choicesStates,
+  mayHaveChoices,
+  splitChoices,
+  type ChoicesState,
+} from "@hbots/personal-client/conversation/choices";
 import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { ReplyQuoteChip } from "./ReplyQuote";
@@ -63,6 +68,8 @@ import {
   TRANSCRIPT_WINDOW_SIZE,
   TRANSCRIPT_WINDOW_STEP,
 } from "./transcriptWindow";
+
+export { choicesStates };
 
 /** A message the user sent that the server has not echoed back yet. */
 export interface PendingOutgoingMessage {
@@ -720,39 +727,6 @@ function ApprovalCard({
 
 const NO_PINNED_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const NO_QUEUED: ReadonlyArray<OutboxRow> = [];
-
-/**
- * Where each reply's tap-to-answer block stands, by item id (only replies that
- * have a well-formed one appear). A set stays open while nothing was said
- * after it; once the owner sent anything, it is used, and the option that
- * message repeats is marked as the pick. A set also waits while the chat
- * cannot take a message (`busy`).
- */
-export function choicesStates(
-  items: ReadonlyArray<ConversationItem>,
-  busy: boolean,
-): ReadonlyMap<string, ChoicesState> {
-  const states = new Map<string, ChoicesState>();
-  let laterOwnerText: string | null | undefined;
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index]!;
-    if (item.kind !== "message" && item.kind !== "group-message") continue;
-    if (item.message.role === "user") {
-      laterOwnerText = item.message.text.trim();
-      continue;
-    }
-    if (item.message.role !== "assistant" || !mayHaveChoices(item.message.text)) continue;
-    const options = splitChoices(item.message.text).options;
-    if (options === null) continue;
-    states.set(
-      item.id,
-      laterOwnerText === undefined
-        ? { kind: "open", disabled: busy }
-        : { kind: "used", picked: options.find((option) => option === laterOwnerText) ?? null },
-    );
-  }
-  return states;
-}
 
 /** Read-only cards keep their text for reading and VoiceOver; a disabled fieldset turns every control off. */
 function lockCard(key: string, readOnly: boolean, card: ReactNode): ReactNode {

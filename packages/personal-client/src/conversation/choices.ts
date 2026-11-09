@@ -1,18 +1,6 @@
-/**
- * Tap-to-answer choices. A bot ends a reply with a fenced block tagged
- * `choices`, one short option per line:
- *
- *     ```choices
- *     Yes, ship it
- *     Not yet
- *     ```
- *
- * The chat draws the block as buttons; a tap sends that line as the owner's
- * next message. Only a well-formed block at the very end of the reply becomes
- * buttons: anything else (no closing fence, one option, nine, a line too long
- * to be a button, more text after it) is left to the markdown renderer, which
- * shows it as the plain code block it looks like.
- */
+/** A bot's trailing `choices` fence becomes tap-to-answer buttons; malformed blocks stay code. */
+
+import type { ConversationItem } from "./conversationModel.ts";
 
 export const CHOICES_FENCE = "```choices";
 export const CHOICES_MIN = 2;
@@ -25,6 +13,15 @@ export interface ChoicesSplit {
   readonly body: string;
   readonly options: ReadonlyArray<string> | null;
 }
+
+/**
+ * Where a set of choices stands. `open`: the latest reply's, tappable unless
+ * the chat is busy. `used`: the owner sent something after it, so the set is
+ * greyed out; `picked` is the option that message was, when it was one.
+ */
+export type ChoicesState =
+  | { readonly kind: "open"; readonly disabled: boolean }
+  | { readonly kind: "used"; readonly picked: string | null };
 
 /** A closing fence: ``` alone on its line. */
 const CLOSING_FENCE = /(?:^|\n)```[ \t]*(?=\n|$)/;
@@ -43,11 +40,7 @@ function parseOptions(block: string): ReadonlyArray<string> | null {
   return options.length >= CHOICES_MIN && options.length <= CHOICES_MAX ? options : null;
 }
 
-/**
- * Splits a reply into its text and its trailing choices. `streaming`: a block
- * still being written (opened, not closed) is held back so it does not flash
- * as a code block and then turn into buttons.
- */
+/** Splits a reply into its text and trailing choices; a streaming block is held back. */
 export function splitChoices(text: string, streaming = false): ChoicesSplit {
   const start = text.lastIndexOf(CHOICES_FENCE);
   if (start === -1) return { body: text, options: null };
@@ -78,4 +71,31 @@ export function splitChoices(text: string, streaming = false): ChoicesSplit {
 /** Whether a reply could hold a block at all; the cheap check before parsing. */
 export function mayHaveChoices(text: string): boolean {
   return text.includes(CHOICES_FENCE);
+}
+
+/** Where each reply's choices stand: open until the owner speaks, then used with the pick. */
+export function choicesStates(
+  items: ReadonlyArray<ConversationItem>,
+  busy: boolean,
+): ReadonlyMap<string, ChoicesState> {
+  const states = new Map<string, ChoicesState>();
+  let laterOwnerText: string | null | undefined;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    if (item.kind !== "message" && item.kind !== "group-message") continue;
+    if (item.message.role === "user") {
+      laterOwnerText = item.message.text.trim();
+      continue;
+    }
+    if (item.message.role !== "assistant" || !mayHaveChoices(item.message.text)) continue;
+    const options = splitChoices(item.message.text).options;
+    if (options === null) continue;
+    states.set(
+      item.id,
+      laterOwnerText === undefined
+        ? { kind: "open", disabled: busy }
+        : { kind: "used", picked: options.find((option) => option === laterOwnerText) ?? null },
+    );
+  }
+  return states;
 }

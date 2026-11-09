@@ -6,6 +6,12 @@ import {
 } from "@hbots/personal-client/conversation/conversationModel";
 import { replyQuoteForMessage } from "@hbots/personal-client/feed/messageReply";
 import { ownerVisibleText } from "@hbots/personal-client/feed/composerText";
+import {
+  choicesStates,
+  mayHaveChoices,
+  splitChoices,
+  type ChoicesState,
+} from "@hbots/personal-client/conversation/choices";
 import { turnStartByAssistantItem } from "@hbots/personal-client/feed/contextUsed";
 import { groupSystemLabel } from "@hbots/personal-client/conversation/groupModel";
 import type { LatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
@@ -34,6 +40,7 @@ import { isChatCard, renderChatCard } from "./cards/registry";
 import type { ChatEnvironment } from "./chatEnvironment";
 import { scrollIndexForItem } from "./messageListModel";
 import { AttachmentImage } from "./AttachmentImage";
+import { ChoiceButtons } from "./ChoiceButtons";
 import {
 
   /* eslint-disable react/refs -- the list owns imperative scroll and swipe handles */
@@ -353,6 +360,31 @@ function MarkdownBody({
   );
 }
 
+function replyBody(
+  text: string,
+  streaming: boolean,
+  itemId: string,
+  states: ReadonlyMap<string, ChoicesState>,
+  onChoose: ((text: string) => Promise<boolean>) | undefined,
+): {
+  readonly body: string;
+  readonly options: ReadonlyArray<string> | null;
+  readonly state: ChoicesState | null;
+} {
+  if (onChoose === undefined || !mayHaveChoices(text)) {
+    return { body: text, options: null, state: null };
+  }
+  const split = splitChoices(text, streaming);
+  const state = states.get(itemId) ?? null;
+  const draw = split.options !== null && state !== null;
+  const heldBack = split.options === null && split.body !== text;
+  return {
+    body: draw || heldBack ? split.body : text,
+    options: draw ? split.options : null,
+    state: draw ? state : null,
+  };
+}
+
 function Block({
   block,
   onOpenFile,
@@ -573,12 +605,13 @@ export function MessageList({
   currentUserId,
   activities: _activities,
   latestTurn: _latestTurn,
-  busy: _busy,
+  busy,
   latestMessageStatus,
   onReply,
   onMessageMenu,
   onOpenFile,
   onOpenLink,
+  onChoose,
   onCancelQueued,
   onRetryQueued,
   onLoadEarlier,
@@ -609,6 +642,8 @@ export function MessageList({
   }) => void;
   readonly onOpenFile: ((path: string) => void) | undefined;
   readonly onOpenLink: ((href: string) => void) | undefined;
+  /** Sends an option from a reply's choices block; absent where nothing can be sent. */
+  readonly onChoose?: ((text: string) => Promise<boolean>) | undefined;
   readonly onCancelQueued: (id: string) => void;
   readonly onRetryQueued: (id: string) => void;
   readonly onLoadEarlier: (() => void) | null;
@@ -640,6 +675,7 @@ export function MessageList({
     [items, pending, queued],
   );
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
+  const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
   const lastReveal = useRef<string | null>(null);
   const scrollToCard = useCallback(
     (itemId: string) => {
@@ -808,6 +844,8 @@ export function MessageList({
           const message = item.message;
           const text = ownerVisibleText(message.text);
           if (text.length === 0) return null;
+          const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
+          const body = reply.body;
           const sentAt = Number.isNaN(Date.parse(message.createdAt))
             ? null
             : new Date(message.createdAt);
@@ -818,7 +856,12 @@ export function MessageList({
                 align="start"
                 sentAt={sentAt}
                 onReply={() =>
-                  onReply(replyQuoteForMessage({ message, botName: item.speaker.name }))
+                  onReply(
+                    replyQuoteForMessage({
+                      message: { id: message.id, role: message.role, text: body },
+                      botName: item.speaker.name,
+                    }),
+                  )
                 }
               >
                 <Pressable
@@ -826,14 +869,14 @@ export function MessageList({
                     onMessageMenu({
                       messageId: String(message.id),
                       name: item.speaker.name,
-                      text,
+                      text: body,
                       sentAt,
                     })
                   }
                   delayLongPress={350}
                   style={[
                     styles.assistantPress,
-                    markdownNeedsWidth(text) ? styles.assistantWide : null,
+                    markdownNeedsWidth(body) ? styles.assistantWide : null,
                   ]}
                 >
                   {item.showSpeaker ? (
@@ -852,11 +895,18 @@ export function MessageList({
                     </View>
                   ) : null}
                   <MarkdownBody
-                    text={text}
+                    text={body}
                     tone="assistant"
                     onOpenFile={onOpenFile}
                     onOpenLink={onOpenLink}
                   />
+                  {reply.options !== null && reply.state !== null ? (
+                    <ChoiceButtons
+                      options={reply.options}
+                      state={reply.state}
+                      onChoose={onChoose}
+                    />
+                  ) : null}
                   {message.attachments?.map((attachment) =>
                     isImageAttachment(attachment) ? (
                       <AttachmentImage
@@ -926,25 +976,39 @@ export function MessageList({
           );
         }
         if (text.length === 0) return null;
+        const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
+        const body = reply.body;
         return (
           <View style={styles.messageRowStart}>
             <SwipeMessageRow
               align="start"
               sentAt={sentAt}
-              onReply={() => onReply(replyQuoteForMessage({ message, botName }))}
+              onReply={() =>
+                onReply(
+                  replyQuoteForMessage({
+                    message: { id: message.id, role: message.role, text: body },
+                    botName,
+                  }),
+                )
+              }
             >
               <Pressable
                 onLongPress={() =>
-                  onMessageMenu({ messageId: String(message.id), name: botName, text, sentAt })
+                  onMessageMenu({
+                    messageId: String(message.id),
+                    name: botName,
+                    text: body,
+                    sentAt,
+                  })
                 }
                 delayLongPress={350}
                 style={[
                   styles.assistantPress,
-                  markdownNeedsWidth(text) ? styles.assistantWide : null,
+                  markdownNeedsWidth(body) ? styles.assistantWide : null,
                 ]}
               >
                 <MarkdownBody
-                  text={text}
+                  text={body}
                   tone="assistant"
                   onOpenFile={onOpenFile}
                   onOpenLink={onOpenLink}
@@ -966,6 +1030,9 @@ export function MessageList({
                     </View>
                   ),
                 )}
+                {reply.options !== null && reply.state !== null ? (
+                  <ChoiceButtons options={reply.options} state={reply.state} onChoose={onChoose} />
+                ) : null}
                 {contextTurns.has(String(message.id)) ? (
                   <Text style={styles.contextUsed}>{"Context used ⌄"}</Text>
                 ) : null}

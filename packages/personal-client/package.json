@@ -173,6 +173,10 @@
       "types": "./src/conversation/conversationModel.ts",
       "import": "./src/conversation/conversationModel.ts"
     },
+    "./conversation/choices": {
+      "types": "./src/conversation/choices.ts",
+      "import": "./src/conversation/choices.ts"
+    },
     "./conversation/delegationModel": {
       "types": "./src/conversation/delegationModel.ts",
       "import": "./src/conversation/delegationModel.ts"

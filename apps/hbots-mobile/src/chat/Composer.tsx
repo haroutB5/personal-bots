@@ -73,6 +73,11 @@ function sizeOf(uri: string, fallback: number): number {
   }
 }
 
+/** Sends a plain message without touching the draft; used by tap-to-answer choices. */
+export interface ComposerControl {
+  readonly sendText: (text: string) => Promise<boolean>;
+}
+
 export function Composer({
   native,
   chat,
@@ -87,6 +92,7 @@ export function Composer({
   onSendError,
   onInterrupt,
   onSent,
+  control,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -105,6 +111,7 @@ export function Composer({
   readonly onSendError: (message: string | null) => void;
   readonly onInterrupt: () => Promise<void>;
   readonly onSent: () => void;
+  readonly control?: { current: ComposerControl | null } | undefined;
 }) {
   const key = draftKey(native.environmentId, threadId);
   const [text, setText] = useState(() => native.client.ports.kv.getItem(key) ?? "");
@@ -251,12 +258,15 @@ export function Composer({
     }
   };
 
-  const storeBlobs = async (messageId: string): Promise<boolean> => {
-    if (attachments.length === 0) return true;
+  const storeBlobs = async (
+    messageId: string,
+    snapshot: ReadonlyArray<DraftAttachment>,
+  ): Promise<boolean> => {
+    if (snapshot.length === 0) return true;
     try {
       await putOutboxBlobs(
         messageId,
-        attachments.map((attachment) => ({
+        snapshot.map((attachment) => ({
           id: attachment.id,
           blob: {
             uri: attachment.uri,
@@ -284,9 +294,11 @@ export function Composer({
     textValue: string,
     createdAt: string,
     followUp: ThreadTurnFollowUp | null,
+    snapshot: ReadonlyArray<DraftAttachment>,
+    quote: PersonalReplyQuote | null,
   ): Promise<boolean> => {
     try {
-      const stored = await storeBlobs(messageId);
+      const stored = await storeBlobs(messageId, snapshot);
       if (!stored) {
         setError("Couldn't save those photos on this device. Your draft is still here.");
         return false;
@@ -301,15 +313,15 @@ export function Composer({
         text: textValue,
         sendText: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
         createdAt,
-        replyTo,
+        replyTo: quote,
         turn: {
           modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
-          titleSeed: titleSeedFor(textValue, attachments),
+          titleSeed: titleSeedFor(textValue, snapshot),
           runtimeMode: thread.runtimeMode,
           interactionMode: thread.interactionMode,
           followUp,
         },
-        attachments: attachments.map((attachment) => ({
+        attachments: snapshot.map((attachment) => ({
           id: attachment.id,
           kind: attachment.kind,
           name: attachment.name,
@@ -332,117 +344,181 @@ export function Composer({
     }
   };
 
-  const send = async (followUp?: ThreadTurnFollowUp) => {
-    if (!canSend || sending) return;
-    const textValue = text.trim();
-    const snapshot = attachments;
+  const sendingRef = useRef(false);
+
+  const submit = async ({
+    textValue,
+    snapshot,
+    followUp,
+    quote,
+    clearDraftAfter,
+  }: {
+    readonly textValue: string;
+    readonly snapshot: ReadonlyArray<DraftAttachment>;
+    readonly followUp: ThreadTurnFollowUp | undefined;
+    readonly quote: PersonalReplyQuote | null;
+    readonly clearDraftAfter: boolean;
+  }): Promise<boolean> => {
+    if (sendingRef.current) return false;
+    sendingRef.current = true;
     const messageId = newOutboxId();
     const createdAt = new Date().toISOString();
     setSending(true);
     setError(null);
     onSendError(null);
-    if (snapshot.length > 0) {
-      const stored = await storeBlobs(messageId);
-      if (!stored) {
-        setSending(false);
-        setError("Couldn't save those photos on this device. Your draft is still here.");
-        return;
-      }
-    }
-    if (offline || hasOutboxForThread(threadId)) {
-      try {
-        const queued = await queue(messageId, textValue, createdAt, followUp ?? null);
-        if (queued) setText("");
-      } finally {
-        setSending(false);
-      }
-      return;
-    }
-    let uploaded: ReadonlyArray<ChatAttachment> = [];
-    if (snapshot.length > 0) {
-      setPreparing(true);
-      uploaded = (await uploadDraftAttachments(native, chat, snapshot)) ?? [];
-      setPreparing(false);
-      if (uploaded.length !== snapshot.length) {
-        setSending(false);
-        setError("An attachment didn't upload. Remove it or try again.");
-        void deleteOutboxBlobs(messageId);
-        return;
-      }
-    }
-    const turn = {
-      modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
-      titleSeed: titleSeedFor(textValue, snapshot),
-      runtimeMode: thread.runtimeMode,
-      interactionMode: thread.interactionMode,
-      followUp: followUp ?? null,
-    };
-    const context = withPersonalFollowUp(
-      replyTo !== null ? personalReplyContext(replyTo) : null,
-      followUp,
-    );
-    onPendingChange((pending) => [
-      ...pending,
-      {
-        id: messageId,
-        threadId,
-        text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-        createdAt,
-        attachments: snapshot.map((attachment) => ({
-          id: attachment.id,
-          name: attachment.name,
-        })),
-        ...(replyTo !== null ? { replyTo } : {}),
-      },
-    ]);
     try {
-      const result = await startTurn({
-        environmentId: native.environmentId,
-        input: {
-          commandId: CommandId.make(outboxCommandId(messageId)),
-          threadId: ThreadId.make(threadId),
-          message: {
-            messageId: MessageId.make(messageId),
-            role: "user",
-            text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-            attachments: uploaded,
-            ...(context !== null ? { context } : {}),
-          },
-          modelSelection: turn.modelSelection,
-          titleSeed: turn.titleSeed,
-          runtimeMode: turn.runtimeMode,
-          interactionMode: turn.interactionMode,
-          ...(followUp !== undefined ? { followUp } : {}),
+      if (snapshot.length > 0) {
+        const stored = await storeBlobs(messageId, snapshot);
+        if (!stored) {
+          setError("Couldn't save those photos on this device. Your draft is still here.");
+          return false;
+        }
+      }
+      if (offline || hasOutboxForThread(threadId)) {
+        const queued = await queue(
+          messageId,
+          textValue,
           createdAt,
+          followUp ?? null,
+          snapshot,
+          quote,
+        );
+        if (!queued) return false;
+        if (clearDraftAfter) setText("");
+        return true;
+      }
+      let uploaded: ReadonlyArray<ChatAttachment> = [];
+      if (snapshot.length > 0) {
+        setPreparing(true);
+        uploaded = (await uploadDraftAttachments(native, chat, snapshot)) ?? [];
+        setPreparing(false);
+        if (uploaded.length !== snapshot.length) {
+          setError("An attachment didn't upload. Remove it or try again.");
+          void deleteOutboxBlobs(messageId);
+          return false;
+        }
+      }
+      const turn = {
+        modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
+        titleSeed: titleSeedFor(textValue, snapshot),
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        followUp: followUp ?? null,
+      };
+      const context = withPersonalFollowUp(
+        quote !== null ? personalReplyContext(quote) : null,
+        followUp,
+      );
+      onPendingChange((pending) => [
+        ...pending,
+        {
+          id: messageId,
+          threadId,
+          text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          createdAt,
+          attachments: snapshot.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+          })),
+          ...(quote !== null ? { replyTo: quote } : {}),
         },
-      });
-      onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-      if (result._tag === "Success") {
-        clearDraft();
-        void deleteOutboxBlobs(messageId);
-        onSent();
-        return;
-      }
-      const outcome = classifySendFailure(squashAtomCommandFailure(result));
-      if (outcome.kind === "rejected") {
-        setError(outcome.message);
-        void deleteOutboxBlobs(messageId);
-        return;
-      }
-      const queued = await queue(messageId, textValue, createdAt, followUp ?? null);
-      if (!queued) return;
-      onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-      setText("");
-    } catch {
-      const queued = await queue(messageId, textValue, createdAt, followUp ?? null);
-      if (queued) {
+      ]);
+      try {
+        const result = await startTurn({
+          environmentId: native.environmentId,
+          input: {
+            commandId: CommandId.make(outboxCommandId(messageId)),
+            threadId: ThreadId.make(threadId),
+            message: {
+              messageId: MessageId.make(messageId),
+              role: "user",
+              text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+              attachments: uploaded,
+              ...(context !== null ? { context } : {}),
+            },
+            modelSelection: turn.modelSelection,
+            titleSeed: turn.titleSeed,
+            runtimeMode: turn.runtimeMode,
+            interactionMode: turn.interactionMode,
+            ...(followUp !== undefined ? { followUp } : {}),
+            createdAt,
+          },
+        });
         onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-        setText("");
+        if (result._tag === "Success") {
+          if (clearDraftAfter) clearDraft();
+          void deleteOutboxBlobs(messageId);
+          onSent();
+          return true;
+        }
+        const outcome = classifySendFailure(squashAtomCommandFailure(result));
+        if (outcome.kind === "rejected") {
+          setError(outcome.message);
+          void deleteOutboxBlobs(messageId);
+          return false;
+        }
+        const queued = await queue(
+          messageId,
+          textValue,
+          createdAt,
+          followUp ?? null,
+          snapshot,
+          quote,
+        );
+        if (!queued) return false;
+        onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+        if (clearDraftAfter) setText("");
+        return true;
+      } catch {
+        const queued = await queue(
+          messageId,
+          textValue,
+          createdAt,
+          followUp ?? null,
+          snapshot,
+          quote,
+        );
+        if (!queued) return false;
+        onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+        if (clearDraftAfter) setText("");
+        return true;
       }
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
+
+  const send = async (followUp?: ThreadTurnFollowUp) => {
+    if (!canSend || sending) return;
+    await submit({
+      textValue: text.trim(),
+      snapshot: attachments,
+      followUp,
+      quote: replyTo,
+      clearDraftAfter: true,
+    });
+  };
+
+  const sendChoice = async (option: string): Promise<boolean> => {
+    if (sending || preparing) return false;
+    return submit({
+      textValue: option,
+      snapshot: [],
+      followUp: undefined,
+      quote: null,
+      clearDraftAfter: false,
+    });
+  };
+
+  useEffect(() => {
+    if (control === undefined) return;
+    // eslint-disable-next-line react/immutability -- the chat screen owns this ref for choice sends
+    control.current = { sendText: sendChoice };
+    return () => {
+      if (control.current?.sendText === sendChoice) control.current = null;
+    };
+  });
 
   const stop = async () => {
     await onInterrupt();

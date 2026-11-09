@@ -58,6 +58,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
 import { Composer } from "../chat/Composer";
+import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatHeaderModel, findChatBot } from "../chat/chatModel";
 import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
@@ -164,6 +165,7 @@ export function ChatScreen({
     listHeight,
   });
   const messageListControl = useRef<MessageListHandle | null>(null);
+  const composerControl = useRef<ComposerControl | null>(null);
   const revealCard = (itemId: string) => messageListControl.current?.scrollToCard(itemId);
 
   const interrupt = native.client.useAtomCommand(chat.thread.interruptTurn, {
@@ -767,6 +769,7 @@ export function ChatScreen({
               onOpenLink={(url) => {
                 void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
               }}
+              onChoose={(text) => composerControl.current?.sendText(text) ?? Promise.resolve(false)}
               onCancelQueued={(id) => removeOutboxEntry(id)}
               onRetryQueued={(id) => {
                 retryOutboxEntry(id);
@@ -825,6 +828,7 @@ export function ChatScreen({
                       setActionError(failureText(result, "Couldn't stop this turn."));
                     }}
                     onSent={() => undefined}
+                    control={composerControl}
                   />
                 </View>
               </>

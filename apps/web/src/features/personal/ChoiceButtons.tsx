@@ -3,16 +3,11 @@ import { useRef, useState } from "react";
 
 import { Check } from "lucide-react";
 
+import type { ChoicesState } from "@hbots/personal-client/conversation/choices";
+
 import { cn } from "~/lib/utils";
 
-/**
- * Where a set of choices stands. `open`: the latest reply's, tappable unless
- * the chat is busy. `used`: the owner sent something after it, so the set is
- * greyed out; `picked` is the option that message was, when it was one.
- */
-export type ChoicesState =
-  | { readonly kind: "open"; readonly disabled: boolean }
-  | { readonly kind: "used"; readonly picked: string | null };
+export type { ChoicesState };
 
 /**
  * A bot's tap-to-answer options (`splitChoices`), as buttons in the chip and
@@ -72,7 +67,7 @@ export function ChoiceButtons({
             aria-pressed={isPicked}
             onClick={() => choose(option)}
             className={cn(
-              "flex min-h-11 max-w-full min-w-0 items-center gap-1.5 rounded-[var(--personal-radius-button)] border px-3.5 py-2 text-left text-[15px] leading-snug font-medium break-words outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+              "flex min-h-11 max-w-full min-w-0 items-center gap-1.5 rounded-[var(--personal-radius-button)] border px-3.5 py-2 text-left text-[15px] leading-snug font-medium break-words outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
               isPicked
                 ? "border-[var(--personal-text-secondary)] bg-[var(--personal-fill-muted)] text-[var(--personal-text)]"
                 : "border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]",

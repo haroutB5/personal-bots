@@ -1,8 +1,24 @@
+import { MessageId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { CHOICE_MAX_CHARS, splitChoices } from "./choices";
+import type { ConversationItem } from "./conversationModel.ts";
+import { CHOICE_MAX_CHARS, choicesStates, splitChoices } from "./choices.ts";
 
 const block = (...lines: string[]) => ["```choices", ...lines, "```"].join("\n");
+
+const message = (id: string, role: "user" | "assistant", text: string): ConversationItem => ({
+  kind: "message",
+  id,
+  message: {
+    id: MessageId.make(id),
+    role,
+    text,
+    turnId: null,
+    streaming: false,
+    createdAt: "2026-11-09T08:00:00.000Z",
+    updatedAt: "2026-11-09T08:00:00.000Z",
+  } as never,
+});
 
 describe("splitChoices", () => {
   it("turns a closing block into options and drops it from the text", () => {
@@ -65,5 +81,42 @@ describe("splitChoices", () => {
 
   it("leaves text without a block untouched", () => {
     expect(splitChoices("Just words.")).toEqual({ body: "Just words.", options: null });
+  });
+});
+
+describe("choicesStates", () => {
+  const reply = `Ship it?\n\n${block("Yes, ship it", "Not yet")}`;
+
+  it("opens the latest reply and greys an earlier one once the owner spoke", () => {
+    const states = choicesStates(
+      [
+        message("bot-1", "assistant", reply),
+        message("user-1", "user", "Yes, ship it"),
+        message("bot-2", "assistant", block("A", "B")),
+      ],
+      false,
+    );
+    expect(states.get("bot-1")).toEqual({ kind: "used", picked: "Yes, ship it" });
+    expect(states.get("bot-2")).toEqual({ kind: "open", disabled: false });
+  });
+
+  it("marks a different owner message as no pick and waits while busy", () => {
+    const states = choicesStates(
+      [message("bot-1", "assistant", reply), message("user-1", "user", "Something else")],
+      true,
+    );
+    expect(states.get("bot-1")).toEqual({ kind: "used", picked: null });
+    expect(choicesStates([message("bot-1", "assistant", reply)], true).get("bot-1")).toEqual({
+      kind: "open",
+      disabled: true,
+    });
+  });
+
+  it("leaves malformed blocks out of the map", () => {
+    const states = choicesStates(
+      [message("bot-1", "assistant", `Pick:\n${block("Only one")}`)],
+      false,
+    );
+    expect(states.size).toBe(0);
   });
 });
