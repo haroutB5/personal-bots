@@ -35,3 +35,17 @@ Binary only. The previous release is `b24e01472562` (1.67.1). No migration runs,
 - The Update all card notice still says how many updates started when one of them failed; the failure is on the row and in its detail.
 - `--compact-db` stays unused by this release.
 - The pre-release checks are the test. No QA recheck after live (Harout, 27 Oct).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=940b7da26df2f10c7ddd7dd96c0f6ca038402e0c release=940b7da26df2 json-sha256=49acce2f62bc501f5bdb5bab6e69415048c5f5040984ee0c591d1cfe32dfce0c result=PASS -->
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+<!-- gate-evidence:end -->
