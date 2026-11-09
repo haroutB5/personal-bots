@@ -1,4 +1,4 @@
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
   MessageId,
@@ -207,7 +207,15 @@ export function ChatScreen({
     [botId, links, list.data?.bots, shells, threadId],
   );
   const thread = view.thread;
-  const projects: ReadonlyArray<{ id: string; workspaceRoot: string }> = [];
+  const projectId = thread?.projectId ?? null;
+  const projectRoot = useAtomValue(chat.projectRootAtom(environmentId, projectId));
+  const projects = useMemo(
+    () =>
+      projectId === null || projectRoot === null
+        ? []
+        : [{ id: projectId, workspaceRoot: projectRoot }],
+    [projectId, projectRoot],
+  );
   const chatCwd = resolveChatCwd(thread, projects);
   const shell = record?.shell ?? null;
   const archived = shell?.archivedAt != null;

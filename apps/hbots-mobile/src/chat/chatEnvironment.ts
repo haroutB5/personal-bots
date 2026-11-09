@@ -1,6 +1,8 @@
 import type {
   EnvironmentId,
+  OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadProjection,
+  ProjectId,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -25,6 +27,29 @@ import { toChatThread, type ChatThread } from "@hbots/personal-client/conversati
 
 export type ChatEnvironment = ReturnType<typeof createChatEnvironment>;
 
+/**
+ * The project's folder, projected to one string. The shell snapshot is rebuilt
+ * with every streamed message, so views read the folder rather than the
+ * snapshot and stay put while the projects themselves do not move.
+ */
+export function createProjectRootAtom(
+  snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
+) {
+  const family = Atom.family((environmentId: EnvironmentId) =>
+    Atom.family((projectId: ProjectId | null) =>
+      Atom.make((get): string | null => {
+        if (projectId === null) return null;
+        const snapshot = get(snapshotAtom(environmentId));
+        return (
+          snapshot?.projects.find((project) => project.id === projectId)?.workspaceRoot ?? null
+        );
+      }).pipe(Atom.withLabel(`native-project-root:${environmentId}:${projectId ?? "none"}`)),
+    ),
+  );
+  return (environmentId: EnvironmentId, projectId: ProjectId | null) =>
+    family(environmentId)(projectId);
+}
+
 export function createChatEnvironment(native: NativePersonal) {
   const states = createEnvironmentThreadStateAtoms(native.runtime);
   const details = createEnvironmentThreadDetailAtoms(states.stateAtom);
@@ -35,7 +60,14 @@ export function createChatEnvironment(native: NativePersonal) {
   const thread = createThreadEnvironmentAtoms(native.runtime, snapshotAtom);
   const attachments = createAttachmentEnvironmentAtoms(native.runtime);
   const assets = createAssetEnvironmentAtoms(native.runtime);
-  return { states, details, thread, attachments, assets };
+  return {
+    states,
+    details,
+    thread,
+    attachments,
+    assets,
+    projectRootAtom: createProjectRootAtom(snapshotAtom),
+  };
 }
 
 export function useThreadRef(
