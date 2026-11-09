@@ -9,6 +9,8 @@ import type {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createAttachmentEnvironmentAtoms } from "@t3tools/client-runtime/state/attachments";
 import { createAssetEnvironmentAtoms } from "@t3tools/client-runtime/state/assets";
+import { scopeProject } from "@t3tools/client-runtime/state/models";
+import { createProjectEnvironmentAtoms } from "@t3tools/client-runtime/state/projects";
 import {
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadStateAtoms,
@@ -60,12 +62,22 @@ export function createChatEnvironment(native: NativePersonal) {
   const thread = createThreadEnvironmentAtoms(native.runtime, snapshotAtom);
   const attachments = createAttachmentEnvironmentAtoms(native.runtime);
   const assets = createAssetEnvironmentAtoms(native.runtime);
+  const projects = createProjectEnvironmentAtoms(native.runtime, {
+    projectAtom: (ref) =>
+      Atom.make((get) => {
+        const project = get(snapshotAtom(ref.environmentId))?.projects.find(
+          (candidate) => candidate.id === ref.projectId,
+        );
+        return project === undefined ? null : scopeProject(ref.environmentId, project);
+      }),
+  });
   return {
     states,
     details,
     thread,
     attachments,
     assets,
+    projects,
     projectRootAtom: createProjectRootAtom(snapshotAtom),
   };
 }

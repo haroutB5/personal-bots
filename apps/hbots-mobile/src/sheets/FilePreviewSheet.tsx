@@ -1,9 +1,13 @@
-import type { AssetResource } from "@t3tools/contracts";
+import type { AssetResource, ProjectReadFileResult } from "@t3tools/contracts";
+import { ProjectReadFileError } from "@t3tools/contracts";
 import {
   assetUrlStateFromResult,
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/reactivity";
+import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,18 +24,27 @@ import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import {
   filePreviewErrorText,
+  filePreviewRoute,
   filePreviewState,
-  isTextFilePath,
-  type FileTextRead,
+  fileTextRead,
+  type FilePreviewSource,
+  type FileReadOutcome,
 } from "./filePreviewModel";
 import { SheetShell } from "./SheetShell";
 
 const TEXT_READ_TIMEOUT_MS = 15_000;
 
+const isProjectReadFileError = Schema.is(ProjectReadFileError);
+
+const EMPTY_FILE_READ_ATOM = Atom.make(
+  AsyncResult.initial<ProjectReadFileResult, never>(false),
+).pipe(Atom.withLabel("native-file-read:empty"));
+
 /**
- * The chat's file sheet. The file's URL is an asset atom, the same path the
- * web viewer uses, so a personal chat resolves it under the Personal project's
- * folder and a project chat under its worktree.
+ * The chat's file sheet. Text reads through the project file RPC, the same read
+ * the web Files tab uses. Images keep the asset URL, which the server only
+ * issues for previewable types. A personal chat resolves both under the
+ * Personal project's folder and a project chat under its worktree.
  */
 export function FilePreviewSheet({
   native,
@@ -48,16 +61,17 @@ export function FilePreviewSheet({
   readonly path: string | null;
   readonly onClose: () => void;
 }) {
+  const route = path === null ? "unsupported" : filePreviewRoute(path);
   const resource = useMemo<AssetResource | null>(
     () =>
-      visible && path !== null && cwd !== null
+      visible && path !== null && cwd !== null && route === "image"
         ? {
             _tag: "draft-workspace-file",
             cwd,
             path,
           }
         : null,
-    [cwd, path, visible],
+    [cwd, path, route, visible],
   );
   const urlAtom = useMemo(
     () =>
@@ -70,59 +84,68 @@ export function FilePreviewSheet({
     [chat.assets, native.environmentId, resource],
   );
   const asset = assetUrlStateFromResult(useAtomValue(urlAtom), native.httpBaseUrl);
-  const url = asset._tag === "Success" ? asset.url : null;
   const refreshAsset = useAtomRefresh(urlAtom);
+
+  const readAtom = useMemo(
+    () =>
+      visible && path !== null && cwd !== null && route === "text"
+        ? chat.projects.readFile({
+            environmentId: native.environmentId,
+            input: { cwd, relativePath: path, allowMissing: true },
+          })
+        : EMPTY_FILE_READ_ATOM,
+    [chat.projects, cwd, native.environmentId, path, route, visible],
+  );
+  const readResult = useAtomValue(readAtom);
+  const refreshRead = useAtomRefresh(readAtom);
+  const outcome: FileReadOutcome = useMemo(() => {
+    if (route !== "text") return { _tag: "Pending" };
+    if (AsyncResult.isSuccess(readResult)) return { _tag: "Loaded", result: readResult.value };
+    if (AsyncResult.isFailure(readResult)) {
+      const cause = Cause.squash(readResult.cause);
+      return {
+        _tag: "Failed",
+        failure: isProjectReadFileError(cause) ? (cause.failure ?? null) : null,
+      };
+    }
+    return { _tag: "Pending" };
+  }, [readResult, route]);
+
   const [attempt, setAttempt] = useState(0);
-  const [textRead, setTextRead] = useState<{
-    readonly key: string;
-    readonly state: FileTextRead;
-  }>({ key: "", state: { _tag: "Pending" } });
+  const readKey = `${attempt}:${cwd ?? ""}:${path ?? ""}`;
+  const [timedOutKey, setTimedOutKey] = useState<string | null>(null);
 
-  const readKey = `${attempt}:${path ?? ""}:${url ?? ""}`;
-  const text: FileTextRead = textRead.key === readKey ? textRead.state : { _tag: "Pending" };
-
+  // A read that has not settled in 15 s stops waiting. Retry starts a fresh key.
+  const settled = outcome._tag !== "Pending";
   useEffect(() => {
-    if (url === null || path === null || !isTextFilePath(path)) return;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TEXT_READ_TIMEOUT_MS);
-    let live = true;
-    void (async () => {
-      try {
-        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
-        if (!live) return;
-        if (!response.ok) {
-          setTextRead({ key: readKey, state: { _tag: "Failed" } });
-          return;
-        }
-        const value = await response.text();
-        if (live) setTextRead({ key: readKey, state: { _tag: "Loaded", text: value } });
-      } catch {
-        if (live) {
-          setTextRead({
-            key: readKey,
-            state: { _tag: controller.signal.aborted ? "TimedOut" : "Failed" },
-          });
-        }
-      } finally {
-        clearTimeout(timeout);
-      }
-    })();
-    return () => {
-      live = false;
-      clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [path, readKey, url]);
+    if (!visible || route !== "text" || settled) return;
+    const timeout = setTimeout(() => setTimedOutKey(readKey), TEXT_READ_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [readKey, route, settled, visible]);
 
-  // A missing file is remembered by the asset atom. Retry asks it again and
-  // starts a fresh read, so a file created after the first look opens here.
+  const read = timedOutKey === readKey ? ({ _tag: "TimedOut" } as const) : fileTextRead(outcome);
+
+  // A missing file is remembered by the query. Retry asks both sources again, so
+  // a file created after the first look opens here.
   const retry = () => {
     refreshAsset();
+    refreshRead();
     setAttempt((value) => value + 1);
+  };
+  // Closing ends this look at the file, so a reopen gets its own 15 s.
+  const close = () => {
+    setTimedOutKey(null);
+    onClose();
   };
 
   const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
-  const preview = filePreviewState({ folder: cwd, path, asset, text });
+  const source: FilePreviewSource =
+    route === "text"
+      ? { _tag: "Text", read }
+      : route === "image"
+        ? { _tag: "Image", asset }
+        : { _tag: "Unsupported" };
+  const preview = filePreviewState({ folder: cwd, path, source });
 
   const content = (() => {
     switch (preview._tag) {
@@ -144,6 +167,9 @@ export function FilePreviewSheet({
             <Text style={styles.code} selectable>
               {preview.text}
             </Text>
+            {read._tag === "Loaded" && read.truncated ? (
+              <Text style={styles.truncated}>Showing the first 1 MB of this file.</Text>
+            ) : null}
           </ScrollView>
         );
       case "Image":
@@ -184,7 +210,7 @@ export function FilePreviewSheet({
   })();
 
   return (
-    <SheetShell visible={visible} title={name} onClose={onClose}>
+    <SheetShell visible={visible} title={name} onClose={close}>
       <View style={styles.body}>
         <Text style={styles.path} numberOfLines={2}>
           {path ?? ""}
@@ -222,5 +248,11 @@ const styles = StyleSheet.create({
   },
   scrollContent: { padding: 12 },
   code: { color: tokens.text, fontSize: 13, lineHeight: 19, fontFamily: "monospace" },
+  truncated: {
+    color: tokens.textTertiary,
+    fontSize: 12,
+    lineHeight: 17,
+    paddingTop: 10,
+  },
   image: { width: "100%", height: 420, borderRadius: 12, backgroundColor: tokens.bg },
 });
