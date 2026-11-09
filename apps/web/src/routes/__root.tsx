@@ -11,7 +11,7 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { lazy, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
@@ -23,9 +23,6 @@ import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachine
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
-import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
-import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
-import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
@@ -33,7 +30,6 @@ import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepA
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
-import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -57,6 +53,33 @@ import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useAtomValue } from "@effect/atom-react";
 import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/server";
 import { readProject } from "../state/entities";
+import { MANAGED_AUTH_SKIPPED } from "../cloud/managedAuthBoot";
+import { DeferredMount } from "../lib/DeferredMount";
+
+// Dialogs that open only on a later event (a sign-in, a relay-client install,
+// an SSH prompt, the theme editor) stay off the boot path. DeferredMount mounts
+// them once the app has settled. The state that opens each one lives outside
+// the component, so a later mount misses nothing.
+const ConnectOnboardingDialog = lazy(() =>
+  import("../components/cloud/ConnectOnboardingDialog").then((module) => ({
+    default: module.ConnectOnboardingDialog,
+  })),
+);
+const RelayClientInstallDialog = lazy(() =>
+  import("../components/cloud/RelayClientInstallDialog").then((module) => ({
+    default: module.RelayClientInstallDialog,
+  })),
+);
+const SshPasswordPromptDialog = lazy(() =>
+  import("../components/desktop/SshPasswordPromptDialog").then((module) => ({
+    default: module.SshPasswordPromptDialog,
+  })),
+);
+const ThemeEditorHost = lazy(() =>
+  import("../components/settings/ThemeEditorHost").then((module) => ({
+    default: module.ThemeEditorHost,
+  })),
+);
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
@@ -209,9 +232,11 @@ function RootRouteBranch() {
           <DesktopWebLinkCoordinator />
         ) : null}
         {isElectron ? <RunningThreadKeepAlive /> : null}
-        <RelayClientInstallDialog />
-        <ConnectOnboardingDialog />
-        <SshPasswordPromptDialog />
+        <DeferredMount>
+          <RelayClientInstallDialog />
+          {MANAGED_AUTH_SKIPPED ? null : <ConnectOnboardingDialog />}
+          <SshPasswordPromptDialog />
+        </DeferredMount>
         <SnapShotCoordinator />
         <ReopenClosedViewShortcut />
         <ConfirmDialogHost />
@@ -225,7 +250,9 @@ function RootRouteBranch() {
         ) : null}
         {appShell}
         {/* Keep the theme editor above the router so drafts survive navigation. */}
-        <ThemeEditorHost />
+        <DeferredMount>
+          <ThemeEditorHost />
+        </DeferredMount>
       </FirstRunGate>
     </>
   );
