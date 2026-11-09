@@ -10,6 +10,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -162,6 +163,69 @@ const mockEdgeConnect = () =>
     queueMicrotask(() => socket.emit("connect"));
     return socket;
   });
+
+const captureLogs = () => {
+  const logs: Array<{ readonly level: string; readonly message: string }> = [];
+  const logger = Logger.make(({ logLevel, message }) => {
+    logs.push({ level: logLevel, message: String(message) });
+  });
+  return { logs, layer: Logger.layer([logger], { mergeWithExisting: false }) };
+};
+
+describe("ConnectReachability no_connector log level", () => {
+  const noConnector = { status: 530, body: { cloudflareError: 1033 } };
+
+  it.effect("warns on a single no_connector right after a restart", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const { logs, layer: loggerLayer } = captureLogs();
+      const layer = reachabilityLayer(Effect.succeed(noConnector), () => Effect.succeed(false));
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        expect(yield* reachability.check).toMatchObject({ cause: "no_connector" });
+        expect(logs.map(({ level }) => level)).toEqual(["Warn"]);
+      }).pipe(Effect.provide(layer), Effect.provide(loggerLayer));
+    }),
+  );
+
+  it.effect("errors once when no_connector persists into the confirming check", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const { logs, layer: loggerLayer } = captureLogs();
+      const layer = reachabilityLayer(Effect.succeed(noConnector), () => Effect.succeed(false));
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        // The first sighting schedules its own confirming check two minutes later.
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.minutes(2));
+        yield* reachability.check;
+        expect(logs.map(({ level }) => level)).toEqual(["Warn", "Error"]);
+      }).pipe(Effect.provide(layer), Effect.provide(loggerLayer));
+    }),
+  );
+
+  it.effect("warns again after a healthy check resets the state", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const { logs, layer: loggerLayer } = captureLogs();
+      let status = noConnector.status;
+      const layer = reachabilityLayer(
+        Effect.sync(() => ({ status, body: { cloudflareError: 1033 } })),
+        () => Effect.succeed(false),
+      );
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        yield* reachability.check;
+        yield* reachability.check;
+        status = 200;
+        yield* reachability.check;
+        status = noConnector.status;
+        yield* reachability.check;
+        expect(logs.map(({ level }) => level)).toEqual(["Warn", "Error", "Info", "Warn"]);
+      }).pipe(Effect.provide(layer), Effect.provide(loggerLayer));
+    }),
+  );
+});
 
 describe("ConnectReachability stale connector recovery", () => {
   it.effect("restarts cloudflared when Cloudflare has no connector but it reports ready", () =>

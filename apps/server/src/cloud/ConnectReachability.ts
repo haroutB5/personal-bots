@@ -56,6 +56,11 @@ export interface ReachabilityFacts {
 
 type Unreachable = Extract<EnvironmentConnectReachability, { status: "unreachable" }>;
 
+// A no_connector result right after a restart can clear within seconds. Warn on the
+// first sighting in an unreachable run, error once if a later check still finds it,
+// then stay quiet until a healthy check starts a new run.
+type NoConnectorReport = "none" | "warned" | "errored";
+
 function exitNodeHint(exitNode: TailscaleExitNode | null): string | null {
   if (!exitNode) return null;
   const name = exitNode.name ? ` "${exitNode.name}"` : "";
@@ -222,6 +227,7 @@ const make = Effect.gen(function* () {
   // Checks update this as they finish, even when a newer check already did. A dead streak
   // or a restart backoff that began before a healthy check no longer counts.
   const lastHealthyOrder = yield* Ref.make(0);
+  const noConnectorReport = yield* Ref.make<NoConnectorReport>("none");
   const deadConnectorRef = yield* SynchronizedRef.make<{
     readonly streak: {
       readonly pid: number;
@@ -369,6 +375,7 @@ const make = Effect.gen(function* () {
     const result = classifyReachability(facts, DateTime.formatIso(yield* DateTime.now));
     if (result.status === "reachable") {
       yield* Ref.update(lastHealthyOrder, (healthy) => Math.max(healthy, order));
+      yield* Ref.set(noConnectorReport, "none");
     }
     const previous = yield* Ref.modify(latestRef, (current) =>
       Option.isSome(current) && current.value.order > order
@@ -394,7 +401,26 @@ const make = Effect.gen(function* () {
           result.status === "unreachable" &&
           last.cause !== result.cause),
     });
-    if (!changed || (result.status === "unreachable" && result.cause === "not_linked")) {
+    if (result.status === "unreachable" && result.cause === "not_linked") {
+      return result;
+    }
+    if (result.status === "unreachable" && result.cause === "no_connector") {
+      const level = yield* Ref.modify(noConnectorReport, (report) =>
+        report === "none"
+          ? (["warning", "warned"] as const)
+          : report === "warned" || changed
+            ? (["error", "errored"] as const)
+            : ([null, report] as const),
+      );
+      if (level !== null) {
+        const log = level === "warning" ? Effect.logWarning : Effect.logError;
+        yield* log(`\n${formatReachabilityFailure(result)}`).pipe(
+          Effect.annotateLogs({ cause: result.cause }),
+        );
+      }
+      return result;
+    }
+    if (!changed) {
       return result;
     }
     if (result.status === "unreachable") {
