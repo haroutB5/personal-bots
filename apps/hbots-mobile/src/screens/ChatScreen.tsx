@@ -39,10 +39,11 @@ import {
 } from "@hbots/personal-client/composer/outbox";
 import { hidesBotPreviews } from "@hbots/personal-client/conversation/previewPrivacy";
 import {
-  buildChatSettingsTarget,
-  chatSettingsHeader,
-  chatSettingsRows,
+  chatSettingsArchiveInput,
+  chatSettingsSheet,
+  quotedChatName,
   type ChatSettingsRowId,
+  type ChatSettingsTarget,
 } from "@hbots/personal-client/bots/chatSettingsModel";
 import { DEFAULT_TOKEN_USAGE_WINDOW } from "@hbots/personal-client/usage/tokenUsagePresentation";
 import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
@@ -131,14 +132,14 @@ export function ChatScreen({
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [replyTo, setReplyTo] = useState<PersonalReplyQuote | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsThreadId, setSettingsThreadId] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [usageWindow, setUsageWindow] = useState(DEFAULT_TOKEN_USAGE_WINDOW);
   const [newChatOpen, setNewChatOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [renameThreadId, setRenameThreadId] = useState<string | null>(null);
+  const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   const [messageMenu, setMessageMenu] = useState<MessageMenuTarget | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -177,7 +178,7 @@ export function ChatScreen({
   const updateThreads = native.client.useAtomCommand(native.bots.personalBotUpdateThreads, {
     reportFailure: false,
   });
-  const archiveThread = native.client.useAtomCommand(native.bots.personalBotArchiveThread, {
+  const archiveThreads = native.client.useAtomCommand(native.bots.personalBotArchiveThreads, {
     reportFailure: false,
   });
   const deleteThread = native.client.useAtomCommand(native.bots.personalBotDeleteThread, {
@@ -293,32 +294,40 @@ export function ChatScreen({
     [botId, links, shells, threadId],
   );
   const running = thread?.session?.status === "running" || thread?.session?.status === "starting";
-  const settingsTarget = useMemo(() => {
-    if (shell === null) return null;
-    const bot = record?.bot ?? null;
-    return buildChatSettingsTarget({
-      threadId,
-      currentThreadId: threadId,
-      kind: archived ? "archived" : "chat",
-      link: link ?? syntheticLink(botId, threadId, shell),
-      shell,
-      waitingLabel: null,
-      unread: false,
-      hidePreviews: bot !== null && hidesBotPreviews(bot),
-      openChatBusy: running,
-      nowMs: now,
-    });
-  }, [archived, botId, link, now, record?.bot, running, shell, threadId]);
-  const settingsHeader = settingsTarget === null ? null : chatSettingsHeader(settingsTarget, now);
-  const settingsGroups =
-    settingsTarget === null
-      ? []
-      : chatSettingsRows(settingsTarget, {
-          turnsUnavailable: false,
-          wrapupSending: false,
-          threadLoading: thread === null,
-          nowMs: now,
-        });
+  const hidePreviews = record?.bot != null && hidesBotPreviews(record.bot);
+  // The strip shows the open chat even before its link is in the list; the menu does the same.
+  const sheetLinks = useMemo(
+    () =>
+      link === null && shell !== null ? [...links, syntheticLink(botId, threadId, shell)] : links,
+    [botId, link, links, shell, threadId],
+  );
+  const settings = useMemo(
+    () =>
+      chatSettingsSheet({
+        threadId: settingsThreadId,
+        currentThreadId: threadId,
+        links: sheetLinks,
+        shells,
+        hidePreviews,
+        openChatBusy: running,
+        openChatLoaded: thread !== null,
+        turnsUnavailable: false,
+        wrapupSending: false,
+        nowMs: now,
+      }),
+    [hidePreviews, now, running, settingsThreadId, sheetLinks, shells, thread, threadId],
+  );
+  const renameShell =
+    renameThreadId === null
+      ? null
+      : (shells.find((candidate) => candidate.id === renameThreadId) ?? null);
+  const renameInitialTitle =
+    renameThreadId === null
+      ? ""
+      : renameThreadId === threadId
+        ? (thread?.title ?? shell?.title ?? "")
+        : (renameShell?.title ?? "");
+
   const contextMessageId = useMemo(() => lastTurnStartMessageId(cards.items), [cards.items]);
 
   useEffect(() => {
@@ -393,31 +402,48 @@ export function ChatScreen({
     };
   }, [environmentId, search, searchMessages, searchOpen, shells]);
 
-  const togglePin = async () => {
-    setSettingsOpen(false);
+  const closeSettings = () => setSettingsThreadId(null);
+
+  const togglePin = async (target: ChatSettingsTarget) => {
+    closeSettings();
     const result = await updateThreads({
       environmentId,
       input: {
-        threadIds: [ThreadId.make(threadId)],
-        pinned: link?.pinnedAt === undefined,
+        threadIds: [ThreadId.make(target.threadId)],
+        pinned: !target.pinned,
       },
     });
     setActionError(failureText(result, "Couldn't update this chat."));
   };
 
-  const archive = async () => {
-    setSettingsOpen(false);
-    const result = await archiveThread({
+  const archiveChat = async (target: Pick<ChatSettingsTarget, "threadId" | "archived">) => {
+    closeSettings();
+    const unavailable = target.archived
+      ? "Couldn't unarchive this chat."
+      : "Couldn't archive this chat.";
+    const input = chatSettingsArchiveInput(target);
+    const result = await archiveThreads({
       environmentId,
-      input: { threadId: ThreadId.make(threadId), archived: !archived },
+      input: {
+        threadIds: input.threadIds.map((id) => ThreadId.make(id)),
+        archived: input.archived,
+      },
     });
-    setActionError(failureText(result, "Couldn't archive this chat."));
+    if (result._tag !== "Success") {
+      setActionError(failureText(result, unavailable));
+      return;
+    }
+    const failed = result.value.failed[0];
+    setActionError(
+      failed === undefined ? null : failed.message.length > 0 ? failed.message : unavailable,
+    );
   };
 
-  const remove = async () => {
-    setSettingsOpen(false);
+  const remove = async (target: ChatSettingsTarget) => {
+    closeSettings();
+    const other = target.threadId !== threadId;
     const ok = await native.client.ports.confirm.confirm({
-      title: "Delete this chat?",
+      title: other ? `Delete ${quotedChatName(target.title)}?` : "Delete this chat?",
       body: "The chat and its messages are removed for good.",
       confirmLabel: "Delete",
       destructive: true,
@@ -425,10 +451,10 @@ export function ChatScreen({
     if (!ok) return;
     const result = await deleteThread({
       environmentId,
-      input: { threadId: ThreadId.make(threadId) },
+      input: { threadId: ThreadId.make(target.threadId) },
     });
     if (result._tag === "Success") {
-      onBack();
+      if (!other) onBack();
       return;
     }
     setActionError(failureText(result, "Couldn't delete this chat."));
@@ -453,9 +479,9 @@ export function ChatScreen({
     setActionError(failureText(result, "Couldn't stop this turn."));
   };
 
-  const wrapup = async () => {
-    setSettingsOpen(false);
-    if (record?.bot == null || thread === null) return;
+  const wrapup = async (target: ChatSettingsTarget) => {
+    closeSettings();
+    if (target.threadId !== threadId || record?.bot == null || thread === null) return;
     const messageId = newOutboxId();
     const result = await startTurn({
       environmentId,
@@ -479,48 +505,53 @@ export function ChatScreen({
   };
 
   const onSettingsRow = (id: ChatSettingsRowId) => {
+    const target = settings?.target ?? null;
+    if (target === null) {
+      closeSettings();
+      return;
+    }
     switch (id) {
       case "pin":
       case "unpin":
-        void togglePin();
+        void togglePin(target);
         return;
       case "snooze":
-        setSettingsOpen(false);
-        setSnoozeOpen(true);
+        closeSettings();
+        setSnoozeThreadId(target.threadId);
         return;
       case "wake":
-        setSettingsOpen(false);
+        closeSettings();
         void updateThreads({
           environmentId,
           input: {
-            threadIds: [ThreadId.make(threadId)],
+            threadIds: [ThreadId.make(target.threadId)],
             snoozedUntil: null,
           },
         });
         return;
       case "markUnread":
-        setSettingsOpen(false);
+        closeSettings();
         void updateThreads({
           environmentId,
           input: {
-            threadIds: [ThreadId.make(threadId)],
+            threadIds: [ThreadId.make(target.threadId)],
             markUnread: true,
           },
         });
         return;
       case "rename":
-        setSettingsOpen(false);
-        setRenameOpen(true);
+        closeSettings();
+        setRenameThreadId(target.threadId);
         return;
       case "wrapup":
-        void wrapup();
+        void wrapup(target);
         return;
       case "archive":
       case "unarchive":
-        void archive();
+        void archiveChat(target);
         return;
       case "delete":
-        void remove();
+        void remove(target);
         return;
     }
   };
@@ -665,7 +696,7 @@ export function ChatScreen({
               onPress={() => {
                 if (!chip.current) onOpenChat(botId, chip.threadId);
               }}
-              onLongPress={() => setSettingsOpen(true)}
+              onLongPress={() => setSettingsThreadId(chip.threadId)}
               delayLongPress={350}
               accessibilityRole="tab"
               accessibilityState={{ selected: chip.current }}
@@ -786,7 +817,10 @@ export function ChatScreen({
             {archived ? (
               <View style={[styles.archiveBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
                 <Text style={styles.archiveText}>Archived · Unarchive to send messages again.</Text>
-                <Pressable onPress={() => void archive()} accessibilityRole="button">
+                <Pressable
+                  onPress={() => void archiveChat({ threadId, archived })}
+                  accessibilityRole="button"
+                >
                   <Text style={styles.archiveAction}>Unarchive</Text>
                 </Pressable>
               </View>
@@ -851,7 +885,7 @@ export function ChatScreen({
         }}
         onChatSettings={() => {
           setMenuOpen(false);
-          setSettingsOpen(true);
+          setSettingsThreadId(threadId);
         }}
         onSearch={() => {
           setMenuOpen(false);
@@ -884,10 +918,10 @@ export function ChatScreen({
         }}
       />
       <ChatSettingsSheet
-        visible={settingsOpen}
-        header={settingsHeader}
-        groups={settingsGroups}
-        onClose={() => setSettingsOpen(false)}
+        visible={settingsThreadId !== null}
+        header={settings?.header ?? null}
+        groups={settings?.groups ?? []}
+        onClose={closeSettings}
         onSelect={onSettingsRow}
       />
       <BotUsageSheet
@@ -934,25 +968,25 @@ export function ChatScreen({
       <RenameChatSheet
         native={native}
         chat={chat}
-        visible={renameOpen}
-        threadId={threadId}
-        initialTitle={thread?.title ?? shell?.title ?? ""}
+        visible={renameThreadId !== null}
+        threadId={renameThreadId ?? threadId}
+        initialTitle={renameInitialTitle}
         takenTitles={links
           .filter(
             (candidate) =>
               candidate.botId === botId &&
               candidate.archivedAt === null &&
-              candidate.threadId !== threadId,
+              candidate.threadId !== renameThreadId,
           )
           .map((candidate) => shells.find((item) => item.id === candidate.threadId)?.title ?? "")}
-        onClose={() => setRenameOpen(false)}
+        onClose={() => setRenameThreadId(null)}
         onSaved={() => setActionError(null)}
       />
       <SnoozeSheet
         native={native}
-        visible={snoozeOpen}
-        threadIds={[threadId]}
-        onClose={() => setSnoozeOpen(false)}
+        visible={snoozeThreadId !== null}
+        threadIds={snoozeThreadId === null ? [] : [snoozeThreadId]}
+        onClose={() => setSnoozeThreadId(null)}
         onSnoozed={() => setActionError(null)}
         onError={setActionError}
       />
