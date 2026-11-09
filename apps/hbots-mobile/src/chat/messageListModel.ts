@@ -9,3 +9,11 @@ export function scrollIndexForItem(
   const index = rows.findIndex((row) => row.key === itemId);
   return index < 0 ? null : rows.length - 1 - index;
 }
+
+/**
+ * A mostly horizontal drag replies to the message, unless the touch began
+ * inside a horizontal scroller such as a wide table.
+ */
+export function claimsReplySwipe(dx: number, dy: number, beganInScroller: boolean): boolean {
+  return !beganInScroller && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.4;
+}
