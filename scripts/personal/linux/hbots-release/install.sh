@@ -37,10 +37,11 @@ for file in "$here"/lib/*.mjs; do
   install_file "$file" "$dest/lib/$(basename -- "$file")"
 done
 
-# The pinned helper tools the runner imports or executes (PINS.json) plus the
-# shared heavy-job lock wrapper. They come from the same reviewed tree as the
-# runner, so installing cannot restore a helper the repo already fixed.
-tools=(check-release-notes.mjs check-gate-evidence.mjs gate-common.mjs ops-common.mjs notify-release.mjs heavy-job.sh)
+# The pinned helper tools the runner imports or executes (PINS.json), the gate
+# evidence collector, and the shared heavy-job lock wrapper. They come from the
+# same reviewed tree as the runner, so installing cannot restore a helper the
+# repo already fixed.
+tools=(check-release-notes.mjs check-gate-evidence.mjs gate-common.mjs gate-evidence.mjs ops-common.mjs notify-release.mjs heavy-job.sh)
 for file in "${tools[@]}"; do
   [[ -f "$tools_src/$file" ]] || { echo "missing tool source: $tools_src/$file" >&2; exit 1; }
   install_file "$tools_src/$file" "$tools_dest/$file"

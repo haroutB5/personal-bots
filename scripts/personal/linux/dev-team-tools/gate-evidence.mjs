@@ -36,7 +36,17 @@ try {
     const stdio=['ignore',fd,fd,'ignore','ignore','ignore','ignore','ignore','ignore','ignore'];
     if(linkOf(8)!==null) stdio[8]=8;
     if(linkOf(9)!==null) stdio[9]=9;
-    try {for(const command of d.commands){const r=spawnSync('bash',['-o','pipefail','-c',command],{cwd:path.resolve(v.repo,(d.cwd??'.').replaceAll('\\','/')),env:{...process.env,PATH:`${v.repo}/node_modules/.bin:${process.env.PATH}`,NO_COLOR:'1'},stdio});commands.push({command,exit:r.status??1})}} finally{fs.closeSync(fd)}
+    const cwd=path.resolve(v.repo,(d.cwd??'.').replaceAll('\\','/'));
+    const env={...process.env,PATH:`${cwd}/node_modules/.bin:${v.repo}/node_modules/.bin:${process.env.PATH}`,NO_COLOR:'1'};
+    try {
+      // The repo root holds another vite-plus copy; letting it win mixes two vitest instances in one run.
+      const ownVp=path.join(cwd,'node_modules/.bin/vp');
+      if(fs.existsSync(ownVp)){
+        const found=path.resolve(spawnSync('bash',['-c','command -v vp'],{cwd,env,encoding:'utf8'}).stdout.trim()||'.');
+        if(found!==ownVp)throw new Error(`${d.id}: vp resolves to ${found}, expected ${ownVp}`);
+      }
+      for(const command of d.commands){const r=spawnSync('bash',['-o','pipefail','-c',command],{cwd,env,stdio});commands.push({command,exit:r.status??1})}
+    } finally{fs.closeSync(fd)}
     const text=fs.readFileSync(log,'utf8').replace(/\x1b\[[0-9;?]*[A-Za-z]/g,'');
     const g={id:d.id,kind:d.kind,title:d.title??d.id,cwd:d.cwd??'.',commands,exit:commands.find(c=>c.exit!==0)?.exit??0,seconds:(Date.now()-started)/1000,log};
     if(d.kind==='vitest'){

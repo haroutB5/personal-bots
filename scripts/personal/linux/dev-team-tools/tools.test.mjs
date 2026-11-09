@@ -84,6 +84,32 @@ test('evidence real commands, notes ancestry, failures and tampering',()=>{
  assert.equal(node('check-gate-evidence.mjs',[]).status,2);
  } finally {fs.rmSync(root,{recursive:true,force:true})}
 });
+test('a gate cwd with its own vp wins over the repo root copy',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-vp-'));
+ try {
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),cwd=path.join(repo,'packages/personal-client');
+  for(const dir of [path.join(repo,'node_modules/.bin'),path.join(cwd,'node_modules/.bin')])fs.mkdirSync(dir,{recursive:true});
+  for(const [dir,out] of [[path.join(repo,'node_modules/.bin'),'root-vp'],[path.join(cwd,'node_modules/.bin'),'local-vp']]){
+   fs.writeFileSync(path.join(dir,'vp'),`#!/bin/sh\necho ${out}\n`);fs.chmodSync(path.join(dir,'vp'),0o755);
+  }
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','fixture');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  const fixture=path.join(root,'command.mjs');fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));`);
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}`]}));
+  defs.push({id:'personal-client',kind:'vitest',cwd:'packages/personal-client',commands:['vp test; echo "Tests 1 passed (1)"']});
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
+  const r=node('gate-evidence.mjs',[...args,'--gates-json',defFile],{env:jobEnv(lockBase())});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const pc=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8')).gates.find(g=>g.id==='personal-client');
+  assert.equal(pc.exit,0);
+  assert.match(fs.readFileSync(pc.log,'utf8'),/local-vp/);
+ } finally {fs.rmSync(root,{recursive:true,force:true})}
+});
 test('staging wrapper uses build and copied externals without activation',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-stage-wrapper-test-'));
  try {fs.mkdirSync(path.join(root,'scripts/personal/node'),{recursive:true});fs.writeFileSync(path.join(root,'scripts/personal/node/hbots.mjs'),"console.log(JSON.stringify(process.argv.slice(2)));process.exitCode=17");const r=run('bash',[path.join(here,'build.sh'),root],{env:jobEnv(lockBase())});assert.equal(r.status,17,r.stderr);assert.deepEqual(JSON.parse(r.stdout),['build','--copy-externals'])}finally{fs.rmSync(root,{recursive:true,force:true})}
