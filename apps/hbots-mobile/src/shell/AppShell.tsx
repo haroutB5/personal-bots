@@ -399,6 +399,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
               onOpenTask={(taskId) => navigation.navigate("Task", { taskId })}
               onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
             />
           )}
         </Stack.Screen>

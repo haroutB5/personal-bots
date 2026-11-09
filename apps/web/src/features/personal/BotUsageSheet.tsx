@@ -26,7 +26,7 @@ import { UsageRangeControl } from "./UsageRangeControl";
 import { useSheetDragDismiss } from "./useSheetDragDismiss";
 
 const ICON_BUTTON =
-  "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
 
 const SECTION_LABEL = "text-[13px] leading-[18px] font-semibold text-[var(--personal-text)]";
 
@@ -156,7 +156,7 @@ function BotUsageSheetBody({
         <button
           type="button"
           onClick={() => onOpenChat(bot.botId)}
-          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-4 text-[15px] leading-5 font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-4 text-[15px] leading-5 font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <MessageSquare aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
           <span className="truncate">Open {bot.name} chat</span>
@@ -213,7 +213,7 @@ function Tile({
         className={cn(
           "font-bold tabular-nums text-[var(--personal-text)]",
           // "not priced" is the one word that has to fit a third of the sheet.
-          value.length > 8 ? "text-[16px] leading-[26px]" : "text-[20px] leading-[26px]",
+          value.length > 8 ? "text-base leading-6.5" : "text-xl leading-6.5",
         )}
       >
         {value}
@@ -316,7 +316,7 @@ function ModelsBlock({ row }: { readonly row: TokenUsageRowView }): JSX.Element 
       <ul className="flex flex-col">
         {row.models.map((model) => (
           <li
-            key={`${model.provider}:${model.model}`}
+            key={`${model.provider}:${model.modelId}`}
             data-testid="bot-usage-model"
             data-provider={model.provider}
             className="border-t border-[var(--personal-border)] py-3 first:border-t-0"
