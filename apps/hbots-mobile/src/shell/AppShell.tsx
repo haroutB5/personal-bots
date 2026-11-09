@@ -253,7 +253,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
-          animation: "slide_from_right",
+          animation: "fade",
           contentStyle: { backgroundColor: tokens.bg },
         }}
       >
