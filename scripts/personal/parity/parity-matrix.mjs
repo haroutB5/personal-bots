@@ -238,7 +238,10 @@ for (const file of routeFiles) {
   );
 }
 // Screens a route does not render directly (shell states, offline, unreachable).
-const routedComponents = new Set(routeFiles.flatMap((f) => importsFor(f)));
+// The root route renders those shell states itself, so its imports do not make a screen routed.
+const routedComponents = new Set(
+  routeFiles.filter((f) => !f.endsWith("/__root.tsx")).flatMap((f) => importsFor(f)),
+);
 for (const file of views) {
   if (/Screen\.tsx$/.test(file) && !routedComponents.has(file)) {
     add("screen", file, file.split("/").pop().replace(".tsx", ""), 1, {
