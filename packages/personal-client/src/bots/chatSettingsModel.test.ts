@@ -4,8 +4,10 @@ import type { EnvironmentThreadShell } from "./threadShell.ts";
 
 import {
   buildChatSettingsTarget,
+  chatSettingsArchiveInput,
   chatSettingsHeader,
   chatSettingsRows,
+  chatSettingsSheet,
   type ChatSettingsRowContext,
 } from "./chatSettingsModel.ts";
 
@@ -101,5 +103,77 @@ describe("chatSettingsRows", () => {
     });
     expect(ids(chatSettingsRows(sleeping, context()))).toContain("wake");
     expect(ids(chatSettingsRows(sleeping, context()))).not.toContain("snooze");
+  });
+});
+
+describe("chatSettingsSheet", () => {
+  const CURRENT = "chat-a";
+  const HELD = "chat-b";
+  const links = [link({ threadId: CURRENT }), link({ threadId: HELD })];
+  const shells = [
+    shell({ id: CURRENT as EnvironmentThreadShell["id"], title: "The open chat" }),
+    shell({ id: HELD as EnvironmentThreadShell["id"], title: "Can you check what's..." }),
+  ];
+
+  const sheet = (threadId: string | null) =>
+    chatSettingsSheet({
+      threadId,
+      currentThreadId: CURRENT,
+      links,
+      shells,
+      hidePreviews: false,
+      openChatBusy: true,
+      openChatLoaded: true,
+      turnsUnavailable: false,
+      wrapupSending: false,
+      nowMs: NOW,
+    });
+
+  it("targets the held chat's own id and title", () => {
+    const held = sheet(HELD);
+    expect(held?.target.threadId).toBe("chat-b");
+    expect(held?.target.title).toBe("Can you check what's...");
+    expect(held?.target.isOpenChat).toBe(false);
+  });
+
+  it("archives only the held chat", () => {
+    const held = sheet(HELD);
+    expect(held).not.toBeNull();
+    expect(chatSettingsArchiveInput(held!.target)).toEqual({
+      threadIds: ["chat-b"],
+      archived: true,
+    });
+  });
+
+  it("leaves out the wrap-up row on a chat whose thread is not loaded", () => {
+    expect(ids(sheet(HELD)!.groups)).toEqual([
+      "pin",
+      "snooze",
+      "markUnread",
+      "rename",
+      "archive",
+      "delete",
+    ]);
+    expect(ids(sheet(CURRENT)!.groups)).toEqual([
+      "pin",
+      "snooze",
+      "markUnread",
+      "rename",
+      "wrapup",
+      "archive",
+      "delete",
+    ]);
+  });
+
+  it("targets the open chat when opened from the header or the menu", () => {
+    const open = sheet(CURRENT);
+    expect(open?.target.threadId).toBe("chat-a");
+    expect(open?.target.title).toBe("The open chat");
+    expect(open?.target.isOpenChat).toBe(true);
+  });
+
+  it("is closed with no target, and for a chat that is gone", () => {
+    expect(sheet(null)).toBeNull();
+    expect(sheet("chat-gone")).toBeNull();
   });
 });

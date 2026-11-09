@@ -238,6 +238,68 @@ export function chatSettingsRows(
   return [state, edit, end].filter((group) => group.length > 0);
 }
 
+export interface ChatSettingsSheet {
+  readonly target: ChatSettingsTarget;
+  readonly header: ChatSettingsHeader;
+  readonly groups: ReadonlyArray<ReadonlyArray<ChatSettingsRow>>;
+}
+
+/**
+ * The sheet for one chat id, a held chip or the open chat, or null when it is
+ * closed or the chat is gone. Everything the sheet names and acts on comes
+ * from this target, never from the thread the screen happens to show.
+ */
+export function chatSettingsSheet(input: {
+  /** The chat the sheet is for; null when closed. */
+  readonly threadId: string | null;
+  readonly currentThreadId: string;
+  readonly links: ReadonlyArray<PersonalBotThread>;
+  readonly shells: ReadonlyArray<EnvironmentThreadShell>;
+  readonly hidePreviews: boolean;
+  /** The open chat's busy flag, which a held chat's shell may not carry. */
+  readonly openChatBusy: boolean;
+  /** The open chat's thread has loaded; a held chat's thread is never loaded. */
+  readonly openChatLoaded: boolean;
+  readonly turnsUnavailable: boolean;
+  readonly wrapupSending: boolean;
+  readonly nowMs: number;
+}): ChatSettingsSheet | null {
+  if (input.threadId === null) return null;
+  const link = input.links.find((candidate) => candidate.threadId === input.threadId);
+  const shell = input.shells.find((candidate) => candidate.id === input.threadId);
+  if (link === undefined || shell === undefined) return null;
+  const isOpenChat = input.threadId === input.currentThreadId;
+  const target = buildChatSettingsTarget({
+    threadId: input.threadId,
+    currentThreadId: input.currentThreadId,
+    kind: "chat",
+    link,
+    shell,
+    waitingLabel: null,
+    unread: !isOpenChat && link.unread === true,
+    hidePreviews: input.hidePreviews,
+    openChatBusy: input.openChatBusy,
+    nowMs: input.nowMs,
+  });
+  const groups = chatSettingsRows(target, {
+    turnsUnavailable: input.turnsUnavailable,
+    wrapupSending: input.wrapupSending,
+    threadLoading: isOpenChat && !input.openChatLoaded,
+    nowMs: input.nowMs,
+  }).map((group) => (isOpenChat ? group : group.filter((row) => row.id !== "wrapup")));
+  return { target, header: chatSettingsHeader(target, input.nowMs), groups };
+}
+
+/** The archive request for the sheet's target: the one chat the sheet was opened for. */
+export function chatSettingsArchiveInput(
+  target: Pick<ChatSettingsTarget, "threadId" | "archived">,
+): {
+  readonly threadIds: ReadonlyArray<string>;
+  readonly archived: boolean;
+} {
+  return { threadIds: [target.threadId], archived: !target.archived };
+}
+
 /** What a screen reader hears after a chip's (or the header's) name: the gesture has no visible control. */
 export const CHAT_SETTINGS_HINT = "Touch and hold for chat settings.";
 
