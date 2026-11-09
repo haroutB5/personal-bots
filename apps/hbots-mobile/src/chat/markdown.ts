@@ -5,17 +5,20 @@
  * bullets and numbered lists. Anything else stays literal.
  */
 
+export interface FileLink {
+  readonly path: string;
+  readonly label: string;
+  /** The last path segment, drawn in the chip. */
+  readonly name: string;
+}
+
 export type InlineSpan =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "bold"; readonly text: string }
   | { readonly kind: "italic"; readonly text: string }
   | { readonly kind: "code"; readonly text: string }
-  | { readonly kind: "link"; readonly text: string; readonly href: string };
-
-export interface FileLink {
-  readonly path: string;
-  readonly label: string;
-}
+  | { readonly kind: "link"; readonly text: string; readonly href: string }
+  | ({ readonly kind: "file" } & FileLink);
 
 export interface MarkdownBlock {
   readonly kind: "paragraph" | "heading" | "bullet" | "number" | "code" | "quote";
@@ -41,6 +44,31 @@ function listDepth(spaces: string): number {
   return Math.min(MAX_LIST_DEPTH, Math.floor(spaces.length / 2));
 }
 
+function fileBasename(path: string): string {
+  return (
+    path
+      .split(/[\\/]/u)
+      .filter((part) => part.length > 0)
+      .at(-1) ?? path
+  );
+}
+
+/** A code span that names a file rather than code: a path with a separator. */
+function pathLike(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.length > 2 &&
+    !trimmed.includes("\n") &&
+    /[/\\]/u.test(trimmed) &&
+    !/^[a-z]+:\/\//iu.test(trimmed) &&
+    linkTarget(trimmed).kind === "file"
+  );
+}
+
+function fileLink(path: string, label: string): { readonly kind: "file" } & FileLink {
+  return { kind: "file", path, label, name: fileBasename(path) || label };
+}
+
 function inline(text: string): ReadonlyArray<InlineSpan> {
   const spans: InlineSpan[] = [];
   const pattern =
@@ -52,11 +80,17 @@ function inline(text: string): ReadonlyArray<InlineSpan> {
     const token = match[0];
     const link = LINK.exec(token);
     if (link !== null) {
-      spans.push({ kind: "link", text: link[1] ?? "", href: link[2] ?? "" });
+      const label = link[1] ?? "";
+      const href = link[2] ?? "";
+      const target = linkTarget(href);
+      spans.push(
+        target.kind === "file" ? fileLink(target.path, label) : { kind: "link", text: label, href },
+      );
     } else if (token.startsWith("**") || token.startsWith("__")) {
       spans.push({ kind: "bold", text: token.slice(2, -2) });
     } else if (token.startsWith("`")) {
-      spans.push({ kind: "code", text: token.slice(1, -1) });
+      const code = token.slice(1, -1);
+      spans.push(pathLike(code) ? fileLink(code.trim(), code) : { kind: "code", text: code });
     } else {
       spans.push({ kind: "italic", text: token.slice(1, -1) });
     }
@@ -67,8 +101,8 @@ function inline(text: string): ReadonlyArray<InlineSpan> {
 }
 
 /**
- * A block is a file list when every non-blank span is a link to a file. Those
- * render as chips, as the web does, instead of a run of underlined labels.
+ * A block is a file list when every non-blank span is a file. Those render as
+ * chips, as the web does, instead of a run of underlined labels.
  */
 function fileFields(spans: ReadonlyArray<InlineSpan>): {
   readonly files?: ReadonlyArray<FileLink>;
@@ -79,10 +113,8 @@ function fileFields(spans: ReadonlyArray<InlineSpan>): {
       if (span.text.trim().length > 0) return {};
       continue;
     }
-    if (span.kind !== "link") return {};
-    const target = linkTarget(span.href);
-    if (target.kind !== "file") return {};
-    files.push({ path: target.path, label: span.text });
+    if (span.kind !== "file") return {};
+    files.push({ path: span.path, label: span.label, name: span.name });
   }
   return files.length > 0 ? { files } : {};
 }
@@ -201,7 +233,8 @@ export function markdownNeedsWidth(source: string): boolean {
       block.kind === "bullet" ||
       block.kind === "number" ||
       block.kind === "code" ||
-      block.files !== undefined,
+      block.files !== undefined ||
+      block.spans.some((span) => span.kind === "file"),
   );
 }
 

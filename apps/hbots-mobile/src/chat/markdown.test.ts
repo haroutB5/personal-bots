@@ -25,16 +25,16 @@ describe("markdownBlocks", () => {
     expect(blocks[0]?.text).toBe("first line\nsecond line");
   });
 
-  it("turns markdown links into link spans, keeping the label and target", () => {
+  it("turns external markdown links into link spans, keeping the label and target", () => {
     const blocks = markdownBlocks(
-      "Read [the plan](docs/plan.md) and [the site](https://example.com).",
+      "Read [the plan](https://example.com/plan) and [the docs](http://example.com).",
     );
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.spans).toEqual([
       { kind: "text", text: "Read " },
-      { kind: "link", text: "the plan", href: "docs/plan.md" },
+      { kind: "link", text: "the plan", href: "https://example.com/plan" },
       { kind: "text", text: " and " },
-      { kind: "link", text: "the site", href: "https://example.com" },
+      { kind: "link", text: "the docs", href: "http://example.com" },
       { kind: "text", text: "." },
     ]);
   });
@@ -68,6 +68,10 @@ describe("markdownNeedsWidth", () => {
     expect(markdownNeedsWidth("[a](docs/a.md)\n[b](docs/b.json)")).toBe(true);
   });
 
+  it("asks for a definite width for an inline file chip", () => {
+    expect(markdownNeedsWidth("See `/home/harout/run/result.json` now.")).toBe(true);
+  });
+
   it("leaves a paragraph able to hug its text", () => {
     expect(markdownNeedsWidth("plain **bold** and `code` text")).toBe(false);
   });
@@ -80,8 +84,12 @@ describe("file links", () => {
     );
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.files).toEqual([
-      { path: ".personal-bots/qa/run/RESULT.md", label: "home-relative" },
-      { path: "~/.ssh/id_rsa", label: "ssh" },
+      {
+        path: ".personal-bots/qa/run/RESULT.md",
+        label: "home-relative",
+        name: "RESULT.md",
+      },
+      { path: "~/.ssh/id_rsa", label: "ssh", name: "id_rsa" },
     ]);
   });
 
@@ -95,9 +103,55 @@ describe("file links", () => {
     ]);
   });
 
-  it("keeps a file link inside prose as an ordinary span", () => {
-    const blocks = markdownBlocks("Read [the plan](docs/plan.md) before you start.");
-    expect(blocks[0]?.files).toBeUndefined();
+  it("turns an absolute path in inline code into a file span with its basename", () => {
+    const blocks = markdownBlocks("`/home/harout/.personal-bots/run/restart-1.67.0-result.json`");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.spans).toEqual([
+      {
+        kind: "file",
+        path: "/home/harout/.personal-bots/run/restart-1.67.0-result.json",
+        label: "/home/harout/.personal-bots/run/restart-1.67.0-result.json",
+        name: "restart-1.67.0-result.json",
+      },
+    ]);
+  });
+
+  it("puts a chip inside a sentence and inside a bullet", () => {
+    const blocks = markdownBlocks(
+      "Evidence: `/home/harout/run/result.json` is ready.\n\n- See [the report](/home/harout/qa/REPORT.md) now.",
+    );
+    expect(blocks.map((block) => block.kind)).toEqual(["paragraph", "bullet"]);
+    expect(blocks[0]?.spans).toEqual([
+      { kind: "text", text: "Evidence: " },
+      {
+        kind: "file",
+        path: "/home/harout/run/result.json",
+        label: "/home/harout/run/result.json",
+        name: "result.json",
+      },
+      { kind: "text", text: " is ready." },
+    ]);
+    expect(blocks[1]?.spans).toEqual([
+      { kind: "text", text: "See " },
+      {
+        kind: "file",
+        path: "/home/harout/qa/REPORT.md",
+        label: "the report",
+        name: "REPORT.md",
+      },
+      { kind: "text", text: " now." },
+    ]);
+  });
+
+  it("leaves text that is not a path in inline code", () => {
+    const blocks = markdownBlocks("Run `vp test` and `/`.");
+    expect(blocks[0]?.spans).toEqual([
+      { kind: "text", text: "Run " },
+      { kind: "code", text: "vp test" },
+      { kind: "text", text: " and " },
+      { kind: "code", text: "/" },
+      { kind: "text", text: "." },
+    ]);
   });
 });
 

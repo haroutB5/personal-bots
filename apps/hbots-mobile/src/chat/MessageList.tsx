@@ -63,27 +63,30 @@ function isImageAttachment(attachment: ChatAttachment): attachment is ImageAttac
   return attachment.type === "image";
 }
 
-function pathLike(text: string): boolean {
-  const trimmed = text.trim();
-  return (
-    trimmed.length > 2 &&
-    !trimmed.includes("\n") &&
-    /[/\\]/.test(trimmed) &&
-    !/^[a-z]+:\/\//i.test(trimmed)
-  );
-}
-
 function SpanText({
   spans,
   style,
+  containerStyle,
   onOpenFile,
   onOpenLink,
 }: {
   readonly spans: ReadonlyArray<InlineSpan>;
   readonly style?: object;
+  readonly containerStyle?: object;
   readonly onOpenFile?: ((path: string) => void) | undefined;
   readonly onOpenLink?: ((href: string) => void) | undefined;
 }) {
+  if (spans.some((span) => span.kind === "file")) {
+    return (
+      <SpanFlow
+        spans={spans}
+        style={style}
+        containerStyle={containerStyle}
+        onOpenFile={onOpenFile}
+        onOpenLink={onOpenLink}
+      />
+    );
+  }
   return (
     <Text style={style}>
       {spans.map((span) => {
@@ -108,12 +111,7 @@ function SpanText({
           }
           if (target.kind === "file") {
             return (
-              <Text
-                key={`${span.kind}:${span.text}`}
-                style={styles.fileChip}
-                accessibilityRole="link"
-                onPress={() => onOpenFile?.(target.path)}
-              >
+              <Text key={`${span.kind}:${span.text}`} style={styles.fileNameOnly}>
                 {span.text}
               </Text>
             );
@@ -130,21 +128,16 @@ function SpanText({
           );
         }
         if (span.kind === "code") {
-          if (onOpenFile !== undefined && pathLike(span.text)) {
-            return (
-              <Text
-                key={`${span.kind}:${span.text}`}
-                style={styles.fileChip}
-                accessibilityRole="link"
-                onPress={() => onOpenFile(span.text.trim())}
-              >
-                {span.text}
-              </Text>
-            );
-          }
           return (
             <Text key={`${span.kind}:${span.text}`} style={styles.inlineCode}>
               {span.text}
+            </Text>
+          );
+        }
+        if (span.kind === "file") {
+          return (
+            <Text key={`${span.kind}:${span.path}`} style={styles.fileNameOnly}>
+              {span.name}
             </Text>
           );
         }
@@ -154,12 +147,126 @@ function SpanText({
   );
 }
 
-function fileBasename(path: string): string {
+type FlowWord = {
+  readonly text: string;
+  readonly format: "text" | "bold" | "italic" | "code" | "link";
+  readonly href?: string;
+};
+
+type FlowPiece =
+  | { readonly kind: "word"; readonly key: string; readonly word: FlowWord }
+  | { readonly kind: "file"; readonly key: string; readonly file: FileLink }
+  | { readonly kind: "break"; readonly key: string };
+
+function flowPieces(spans: ReadonlyArray<InlineSpan>): ReadonlyArray<FlowPiece> {
+  const pieces: FlowPiece[] = [];
+  let serial = 0;
+  for (const span of spans) {
+    if (span.kind === "file") {
+      pieces.push({ kind: "file", key: `file:${serial++}`, file: span });
+      continue;
+    }
+    const format = span.kind;
+    const sources = span.text.split("\n");
+    sources.forEach((source, lineIndex) => {
+      if (lineIndex > 0) pieces.push({ kind: "break", key: `break:${serial++}` });
+      for (const token of source.match(/\s+|\S+/gu) ?? []) {
+        if (!/^\s+$/u.test(token)) {
+          const href = span.kind === "link" ? span.href : undefined;
+          pieces.push({
+            kind: "word",
+            key: `word:${serial++}`,
+            word: { text: token, format, ...(href ? { href } : {}) },
+          });
+          continue;
+        }
+        const previous = pieces.at(-1);
+        if (previous?.kind === "word") {
+          pieces[pieces.length - 1] = {
+            ...previous,
+            word: { ...previous.word, text: previous.word.text + token },
+          };
+        } else if (previous !== undefined && previous.kind !== "break") {
+          pieces.push({
+            kind: "word",
+            key: `word:${serial++}`,
+            word: { text: token, format: "text" },
+          });
+        }
+      }
+    });
+  }
+  return pieces;
+}
+
+type FlowLine = { readonly key: string; readonly pieces: ReadonlyArray<FlowPiece> };
+
+function flowLines(pieces: ReadonlyArray<FlowPiece>): ReadonlyArray<FlowLine> {
+  const lines: FlowPiece[][] = [[]];
+  for (const piece of pieces) {
+    if (piece.kind === "break") lines.push([]);
+    else lines[lines.length - 1]!.push(piece);
+  }
+  let pieceSerial = 0;
+  return lines.map((line) => ({ key: `line:${pieceSerial++}`, pieces: line }));
+}
+
+function SpanFlow({
+  spans,
+  style,
+  containerStyle,
+  onOpenFile,
+  onOpenLink,
+}: {
+  readonly spans: ReadonlyArray<InlineSpan>;
+  readonly style?: object;
+  readonly containerStyle?: object;
+  readonly onOpenFile?: ((path: string) => void) | undefined;
+  readonly onOpenLink?: ((href: string) => void) | undefined;
+}) {
+  const lines = useMemo(() => flowLines(flowPieces(spans)), [spans]);
   return (
-    path
-      .split(/[\\/]/u)
-      .filter((part) => part.length > 0)
-      .at(-1) ?? path
+    <View style={[styles.flow, containerStyle]}>
+      {lines.map((line) => (
+        <View key={line.key} style={styles.flowLine}>
+          {line.pieces.length === 0 ? <Text style={style}>{"\u200b"}</Text> : null}
+          {line.pieces.map((piece) => {
+            if (piece.kind === "break") return null;
+            if (piece.kind === "file") {
+              return <FileChip key={piece.key} file={piece.file} onOpenFile={onOpenFile} />;
+            }
+            const word = piece.word;
+            const href = word.href;
+            const wordStyle = [
+              style,
+              word.format === "bold"
+                ? styles.bold
+                : word.format === "italic"
+                  ? styles.italic
+                  : word.format === "code"
+                    ? styles.inlineCode
+                    : word.format === "link"
+                      ? styles.link
+                      : null,
+            ];
+            return (
+              <Text
+                key={piece.key}
+                style={wordStyle}
+                accessibilityRole={word.format === "link" ? "link" : undefined}
+                onPress={
+                  word.format === "link" && href !== undefined
+                    ? () => onOpenLink?.(href)
+                    : undefined
+                }
+              >
+                {word.text}
+              </Text>
+            );
+          })}
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -183,7 +290,7 @@ function FileChip({
   readonly file: FileLink;
   readonly onOpenFile?: ((path: string) => void) | undefined;
 }) {
-  const name = fileBasename(file.path) || file.label;
+  const name = file.name || file.label;
   return (
     <Pressable
       accessibilityRole="link"
@@ -192,7 +299,7 @@ function FileChip({
       style={({ pressed }) => [styles.fileChipButton, pressed ? styles.fileChipPressed : null]}
     >
       {createElement(fileIcon(name), {
-        size: 16,
+        size: 15,
         color: tokens.textSecondary,
         strokeWidth: 1.75,
       })}
@@ -286,7 +393,8 @@ function Block({
           <Text style={[base, styles.marker]}>{marker}</Text>
           <SpanText
             spans={block.spans}
-            style={[base, styles.flex]}
+            style={base}
+            containerStyle={styles.flex}
             onOpenFile={onOpenFile}
             onOpenLink={onOpenLink}
           />
@@ -299,7 +407,8 @@ function Block({
           <Text style={[base, styles.marker]}>{`${block.marker ?? "1"}.`}</Text>
           <SpanText
             spans={block.spans}
-            style={[base, styles.flex]}
+            style={base}
+            containerStyle={styles.flex}
             onOpenFile={onOpenFile}
             onOpenLink={onOpenLink}
           />
@@ -917,27 +1026,28 @@ const styles = StyleSheet.create({
     color: tokens.text,
     fontSize: 14,
   },
-  fileChip: {
-    color: tokens.text,
-    textDecorationLine: "underline",
-    backgroundColor: tokens.fillMuted,
-    fontSize: 14,
-  },
+  fileNameOnly: { color: tokens.text, fontSize: 14 },
+  flow: { maxWidth: "100%" },
+  flowLine: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", minHeight: 22 },
   fileList: { gap: 6, alignItems: "flex-start" },
   fileChipButton: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 6,
     maxWidth: "100%",
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: tokens.borderStrong,
+    borderRadius: 8,
     backgroundColor: tokens.fillMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginVertical: 1,
   },
   fileChipPressed: { opacity: 0.7 },
-  fileChipName: { color: tokens.text, fontSize: 14, lineHeight: 19, flexShrink: 1 },
+  fileChipName: {
+    color: tokens.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    flexShrink: 1,
+  },
   heading: { fontSize: 16, lineHeight: 22, fontWeight: "700" },
   codeBlock: {
     backgroundColor: tokens.surface,
