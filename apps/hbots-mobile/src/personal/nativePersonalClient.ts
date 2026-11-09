@@ -14,6 +14,7 @@ import {
   PrimaryConnectionTarget,
   type SupervisorConnectionState,
 } from "@t3tools/client-runtime/connection";
+import { KnownSessionGrants } from "@t3tools/client-runtime/state/runtime";
 import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
@@ -54,7 +55,7 @@ import { phoneHasInternet, resetNetworkClient } from "./networkReset";
 import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
-import { canManageDevices } from "../sessionScopes";
+import { canManageDevices, grantedScopes } from "../sessionScopes";
 import { authMethodOf } from "../sessionAuth";
 
 const connectedState = (generation: number): SupervisorConnectionState => ({
@@ -125,6 +126,7 @@ export type NativePersonalRuntime =
   | Persistence.EnvironmentCacheStore
   | ShellSnapshotLoader.ShellSnapshotLoader
   | ThreadSnapshotLoader
+  | KnownSessionGrants
   | SecureRandom.SecureRandom;
 
 export interface NativePersonal {
@@ -257,6 +259,10 @@ export function createNativePersonal(
         load: () => Effect.succeed(Option.none()),
       }),
       Layer.succeed(ThreadSnapshotLoader, loader),
+      Layer.succeed(KnownSessionGrants, {
+        authenticated: true,
+        scopes: grantedScopes(stored.scope),
+      }),
       Layer.succeed(
         SecureRandom.SecureRandom,
         SecureRandom.make((size) => ExpoCrypto.getRandomBytes(size)),
