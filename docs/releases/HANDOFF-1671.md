@@ -6,7 +6,7 @@ Based on 1.67.0 (`9a19f3f7538c`). Branch `release/hbots-1.67.1`. No migration; t
 
 1.67.0 put the server on the v2 orchestrator. This release closes the phone gaps that showed up after that move and hardens the release tools. Files, reply choices and photos now open from the phone, the tab-hold menu targets the chat it names, question cards come from the v2 projection, and usage can be read by model. On the tooling side a release gate resolves its own `vp`, heavy jobs are capped so they cannot starve the live server, the release fixture reaper is fixed, and the runner gained an opt-in `--compact-db` step.
 
-The first 1.67.1 cut rolled back on `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`, a defect inherited from 1.67.0: the v2 adapter lost the SDK warning filter in the orchestrator move. This cut restores it and is the only runtime change since that cut.
+Two 1.67.1 cuts rolled back during startup. The first hit `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`, a defect inherited from 1.67.0: the v2 adapter lost the SDK warning filter in the orchestrator move. The second hit a `no_connector` ERROR about a second after the restart, while Cloudflare re-registered the tunnel. This cut restores the filter and treats the first `no_connector` in a run as a warning.
 
 ## What changed
 
@@ -21,6 +21,7 @@ The first 1.67.1 cut rolled back on `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`, a defect
 - **Release fixture reaper.** Fixtures are staged before rename and their units are tagged by cache, so two caches never reap each other's fixtures.
 - **Opt-in `--compact-db`.** The runner can VACUUM the live state database inside the stopped backup window. This release does not pass it; Harout has not approved the stopped window.
 - **SDK warning filter restored on the v2 adapter.** `ClaudeAdapterV2` calls `installClaudeSdkWarningFilter()` at load, as the v1 adapter did before the v2 move. Without it every `bypassPermissions` session logs `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` and the runner's log scan rolls the release back. A regression test asserts the filter is installed after the module loads.
+- **Transient no-connector warns.** `ConnectReachability` logs WARN on the first `no_connector` in an unreachable run, and one ERROR only when the next check still finds no connector. A healthy check resets the state. This covers the second or so after a restart when Cloudflare has not re-registered the tunnel. Three tests cover the warn, the single escalation and the reset.
 
 ## Verification
 
@@ -44,7 +45,7 @@ Binary only. The previous release is `9a19f3f7538c` (1.67.0). No migration runs,
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=75ed700a7ae5405ebe46a81acd01634835d8bd47 release=75ed700a7ae5 json-sha256=84857d65d1eb89e88dc55299044ac52f54c3f37e9423d7a03cc275898eb0c9ad result=PASS -->
+<!-- gate-evidence:begin sha=b24e01472562b37a5eadbda7986d0343626593d7 release=b24e01472562 json-sha256=f9095ac931281217820c9022762ccb6c21991f4fa7de6f20619ad8e4fbebe7a3 result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
