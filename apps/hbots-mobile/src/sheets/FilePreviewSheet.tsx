@@ -18,11 +18,15 @@ import {
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import {
+  filePreviewErrorText,
+  filePreviewState,
+  isTextFilePath,
+  type FileTextRead,
+} from "./filePreviewModel";
 import { SheetShell } from "./SheetShell";
 
-const TEXT_EXTENSIONS =
-  /\.(?:txt|md|markdown|json|jsonc|ts|tsx|js|jsx|css|scss|html|xml|yml|yaml|toml|ini|cfg|log|sh|bash|zsh|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|sql|env)$/i;
-const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
+const TEXT_READ_TIMEOUT_MS = 15_000;
 
 /**
  * The chat's file sheet. The file's URL is an asset atom, the same path the
@@ -44,9 +48,6 @@ export function FilePreviewSheet({
   readonly path: string | null;
   readonly onClose: () => void;
 }) {
-  const [text, setText] = useState<string | null>(null);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-
   const resource = useMemo<AssetResource | null>(
     () =>
       visible && path !== null && cwd !== null
@@ -68,50 +69,119 @@ export function FilePreviewSheet({
           }),
     [chat.assets, native.environmentId, resource],
   );
-  const state = assetUrlStateFromResult(useAtomValue(urlAtom), native.httpBaseUrl);
-  const url = state._tag === "Success" ? state.url : null;
+  const asset = assetUrlStateFromResult(useAtomValue(urlAtom), native.httpBaseUrl);
+  const url = asset._tag === "Success" ? asset.url : null;
   const refreshAsset = useAtomRefresh(urlAtom);
   const [attempt, setAttempt] = useState(0);
+  const [textRead, setTextRead] = useState<{
+    readonly key: string;
+    readonly state: FileTextRead;
+  }>({ key: "", state: { _tag: "Pending" } });
+
+  const readKey = `${attempt}:${path ?? ""}:${url ?? ""}`;
+  const text: FileTextRead = textRead.key === readKey ? textRead.state : { _tag: "Pending" };
 
   useEffect(() => {
+    if (url === null || path === null || !isTextFilePath(path)) return;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TEXT_READ_TIMEOUT_MS);
     let live = true;
-    // eslint-disable-next-line react/set-state-in-effect -- opening a file clears the last read
-    setText(null);
-    setFetchError(null);
-    if (url === null || path === null || !TEXT_EXTENSIONS.test(path)) return;
     void (async () => {
       try {
-        const response = await fetch(url, { cache: "no-store" });
+        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
         if (!live) return;
         if (!response.ok) {
-          setFetchError("Couldn't read that file.");
+          setTextRead({ key: readKey, state: { _tag: "Failed" } });
           return;
         }
-        setText(await response.text());
+        const value = await response.text();
+        if (live) setTextRead({ key: readKey, state: { _tag: "Loaded", text: value } });
       } catch {
-        if (live) setFetchError("Couldn't open that file.");
+        if (live) {
+          setTextRead({
+            key: readKey,
+            state: { _tag: controller.signal.aborted ? "TimedOut" : "Failed" },
+          });
+        }
+      } finally {
+        clearTimeout(timeout);
       }
     })();
     return () => {
       live = false;
+      clearTimeout(timeout);
+      controller.abort();
     };
-    // eslint-disable-next-line react/exhaustive-effect-dependencies -- attempt retries the same read
-  }, [attempt, path, url]);
+  }, [path, readKey, url]);
 
   // A missing file is remembered by the asset atom. Retry asks it again and
-  // re-reads the text, so a file created after the first look opens here.
+  // starts a fresh read, so a file created after the first look opens here.
   const retry = () => {
     refreshAsset();
     setAttempt((value) => value + 1);
   };
 
   const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
-  const error = fetchError ?? (state._tag === "Failure" ? "Couldn't open that file." : null);
-  const canShowImage = path !== null && IMAGE_EXTENSIONS.test(path);
-  const wrongKind =
-    state._tag === "Success" && path !== null && !canShowImage && !TEXT_EXTENSIONS.test(path)
-      ? "This file can't be shown on the phone."
-      : null;
+  const preview = filePreviewState({ folder: cwd, path, asset, text });
+
+  const content = (() => {
+    switch (preview._tag) {
+      case "NoFolder":
+        return (
+          <Text style={styles.notice} accessibilityRole="alert">
+            This chat has no folder to open files from.
+          </Text>
+        );
+      case "Loading":
+        return (
+          <View style={styles.center}>
+            <ActivityIndicator color={tokens.textSecondary} />
+          </View>
+        );
+      case "Text":
+        return (
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+            <Text style={styles.code} selectable>
+              {preview.text}
+            </Text>
+          </ScrollView>
+        );
+      case "Image":
+        return (
+          <Image
+            source={{ uri: preview.url }}
+            style={styles.image}
+            resizeMode="contain"
+            accessibilityLabel={name}
+          />
+        );
+      case "Unsupported":
+        return (
+          <Text style={styles.notice} accessibilityRole="alert">
+            This file can&apos;t be shown on the phone.
+          </Text>
+        );
+      case "Denied":
+        return (
+          <Text style={styles.notice} accessibilityRole="alert">
+            This file holds credentials or machine state, so it is never shown.
+          </Text>
+        );
+      case "Error":
+        return (
+          <View style={styles.center}>
+            <Text style={styles.error} accessibilityRole="alert">
+              {filePreviewErrorText(preview.reason)}
+            </Text>
+            <Pressable onPress={retry} accessibilityRole="button" style={styles.retry}>
+              <Text style={styles.retryText}>Try again</Text>
+            </Pressable>
+          </View>
+        );
+      default:
+        return assertNever(preview);
+    }
+  })();
 
   return (
     <SheetShell visible={visible} title={name} onClose={onClose}>
@@ -119,50 +189,21 @@ export function FilePreviewSheet({
         <Text style={styles.path} numberOfLines={2}>
           {path ?? ""}
         </Text>
-        {state._tag === "Loading" ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={tokens.textSecondary} />
-          </View>
-        ) : error !== null ? (
-          <View style={styles.center}>
-            <Text style={styles.error} accessibilityRole="alert">
-              {error}
-            </Text>
-            <Pressable onPress={retry} accessibilityRole="button" style={styles.retry}>
-              <Text style={styles.retryText}>Try again</Text>
-            </Pressable>
-          </View>
-        ) : wrongKind !== null ? (
-          <Text style={styles.error} accessibilityRole="alert">
-            {wrongKind}
-          </Text>
-        ) : text !== null ? (
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-            <Text style={styles.code} selectable>
-              {text}
-            </Text>
-          </ScrollView>
-        ) : url !== null && canShowImage ? (
-          <Image
-            source={{ uri: url }}
-            style={styles.image}
-            resizeMode="contain"
-            accessibilityLabel={name}
-          />
-        ) : (
-          <View style={styles.center}>
-            <ActivityIndicator color={tokens.textSecondary} />
-          </View>
-        )}
+        {content}
       </View>
     </SheetShell>
   );
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled file preview state: ${JSON.stringify(value)}`);
 }
 
 const styles = StyleSheet.create({
   body: { padding: 12, gap: 10, maxHeight: 620 },
   path: { color: tokens.textTertiary, fontSize: 12, lineHeight: 17 },
   center: { paddingVertical: 32, alignItems: "center", gap: 12 },
+  notice: { color: tokens.textSecondary, fontSize: 14, lineHeight: 20, textAlign: "center" },
   error: { color: tokens.error, fontSize: 14, lineHeight: 20, textAlign: "center" },
   retry: {
     minHeight: 44,

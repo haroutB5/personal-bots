@@ -3,6 +3,7 @@ import {
   type AssetCreateUrlResult,
   AssetProtectedFileError,
   type AssetResource,
+  AssetWorkspaceAssetNotFoundError,
   EnvironmentId,
   ThreadId,
   WS_METHODS,
@@ -46,6 +47,18 @@ describe("asset URL failure reasons", () => {
     expect(failureFor(new AssetProtectedFileError({ resource }))).toEqual({
       _tag: "Failure",
       protectedFile: true,
+    });
+  });
+
+  it("marks a missing path so the preview can say the file is gone", () => {
+    const resource = {
+      _tag: "draft-workspace-file",
+      cwd: "/home/user/workspace",
+      path: "notes/removed.md",
+    } as const;
+    expect(failureFor(new AssetWorkspaceAssetNotFoundError({ resource }))).toEqual({
+      _tag: "Failure",
+      notFound: true,
     });
   });
 
