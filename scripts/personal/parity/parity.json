@@ -932,7 +932,7 @@
       "scope": "personal",
       "layout": false,
       "logic": {
-        "files": 6,
+        "files": 7,
         "inPackage": [],
         "direct": ["offlineBanner.ts", "outbox.ts"]
       },
@@ -985,7 +985,7 @@
       "component": "BotUsageSheet",
       "logic": {
         "files": 7,
-        "inPackage": ["botModelLabel.ts"],
+        "inPackage": ["tokenUsagePresentation.ts"],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -996,7 +996,7 @@
       "id": "sheet:ChatFilePreview.tsx#sheet-in-chatfilepreview",
       "kind": "sheet",
       "title": "Sheet in ChatFilePreview",
-      "web": "ChatFilePreview.tsx:392",
+      "web": "ChatFilePreview.tsx:383",
       "primitive": "Sheet",
       "logic": {
         "files": 2,
@@ -1005,7 +1005,7 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Open \"Sheet in ChatFilePreview\" from its screen on Android. Same fields, buttons and confirm wording as ChatFilePreview.tsx:392. Back closes only the sheet."
+      "check": "Open \"Sheet in ChatFilePreview\" from its screen on Android. Same fields, buttons and confirm wording as ChatFilePreview.tsx:383. Back closes only the sheet."
     },
     {
       "id": "sheet:ChatSettingsSheet.tsx#chatsettingssheet",
@@ -1083,7 +1083,7 @@
       "web": "NewChatDialog.tsx:30",
       "component": "NewChatDialog",
       "logic": {
-        "files": 39,
+        "files": 40,
         "inPackage": [
           "perfFlags.ts",
           "usePersonalBots.ts",
@@ -1121,7 +1121,7 @@
       "logic": {
         "files": 37,
         "inPackage": [
-          "botModelLabel.ts",
+          "tokenUsagePresentation.ts",
           "usageStrip.ts",
           "usagePresentation.ts",
           "usePersonalBots.ts",
@@ -1205,10 +1205,10 @@
       "id": "sheet:TeamScreen.tsx#new-team-with",
       "kind": "sheet",
       "title": "New team with",
-      "web": "TeamScreen.tsx:817",
+      "web": "TeamScreen.tsx:731",
       "primitive": "Sheet",
       "logic": {
-        "files": 61,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -1220,6 +1220,7 @@
         "direct": [
           "botsBackStack.ts",
           "botSummaries.ts",
+          "useBotShells.ts",
           "botModelLabel.ts",
           "commandFeedback.ts",
           "conversationModel.ts",
@@ -1237,7 +1238,7 @@
       },
       "pr": "A11",
       "status": "done",
-      "check": "Open \"New team with\" from its screen on Android. Same fields, buttons and confirm wording as TeamScreen.tsx:817. Back closes only the sheet."
+      "check": "Open \"New team with\" from its screen on Android. Same fields, buttons and confirm wording as TeamScreen.tsx:731. Back closes only the sheet."
     },
     {
       "id": "sheet:computer/ComputerActivityCard.tsx#computeractivitysheet",
@@ -1445,15 +1446,15 @@
       "id": "action:BotThreadsScreen.tsx#select-chats",
       "kind": "action",
       "title": "Select chats",
-      "web": "BotThreadsScreen.tsx:632",
+      "web": "BotThreadsScreen.tsx:612",
       "via": "menu",
       "logic": {
-        "files": 78,
+        "files": 80,
         "inPackage": [
+          "usePersonalBots.ts",
           "unreadChats.ts",
           "chatState.ts",
           "ownerChats.ts",
-          "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
           "conversationModel.ts",
@@ -1481,26 +1482,27 @@
           "useSnoozeWakeClock.ts",
           "useLongPress.ts",
           "unreadChats.ts",
-          "usePersonalBackTarget.ts"
+          "usePersonalBackTarget.ts",
+          "useBotShells.ts"
         ]
       },
       "pr": "A9",
       "status": "done",
-      "check": "Tap \"Select chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:632 does, checked on the web app."
+      "check": "Tap \"Select chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:612 does, checked on the web app."
     },
     {
       "id": "action:BotThreadsScreen.tsx#select-archived-chats",
       "kind": "action",
       "title": "Select archived chats",
-      "web": "BotThreadsScreen.tsx:639",
+      "web": "BotThreadsScreen.tsx:619",
       "via": "menu",
       "logic": {
-        "files": 78,
+        "files": 80,
         "inPackage": [
+          "usePersonalBots.ts",
           "unreadChats.ts",
           "chatState.ts",
           "ownerChats.ts",
-          "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
           "conversationModel.ts",
@@ -1528,21 +1530,22 @@
           "useSnoozeWakeClock.ts",
           "useLongPress.ts",
           "unreadChats.ts",
-          "usePersonalBackTarget.ts"
+          "usePersonalBackTarget.ts",
+          "useBotShells.ts"
         ]
       },
       "pr": "A9",
       "status": "done",
-      "check": "Tap \"Select archived chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:639 does, checked on the web app."
+      "check": "Tap \"Select archived chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:619 does, checked on the web app."
     },
     {
       "id": "action:ChatsScreen.tsx#new-bot",
       "kind": "action",
       "title": "New bot",
-      "web": "ChatsScreen.tsx:890",
+      "web": "ChatsScreen.tsx:846",
       "via": "menu",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -1564,6 +1567,7 @@
           "usePinBot.ts",
           "chatSections.ts",
           "chatState.ts",
+          "useBotShells.ts",
           "useBulkChatActions.ts",
           "useGroupChatState.ts",
           "useSnoozeWakeClock.ts",
@@ -1593,16 +1597,16 @@
       },
       "pr": "A2",
       "status": "done",
-      "check": "Tap \"New bot\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:890 does, checked on the web app."
+      "check": "Tap \"New bot\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:846 does, checked on the web app."
     },
     {
       "id": "action:ChatsScreen.tsx#new-group",
       "kind": "action",
       "title": "New group",
-      "web": "ChatsScreen.tsx:891",
+      "web": "ChatsScreen.tsx:847",
       "via": "menu",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -1624,6 +1628,7 @@
           "usePinBot.ts",
           "chatSections.ts",
           "chatState.ts",
+          "useBotShells.ts",
           "useBulkChatActions.ts",
           "useGroupChatState.ts",
           "useSnoozeWakeClock.ts",
@@ -1653,16 +1658,16 @@
       },
       "pr": "A2",
       "status": "done",
-      "check": "Tap \"New group\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:891 does, checked on the web app."
+      "check": "Tap \"New group\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:847 does, checked on the web app."
     },
     {
       "id": "action:ChatsScreen.tsx#new-team",
       "kind": "action",
       "title": "New team",
-      "web": "ChatsScreen.tsx:894",
+      "web": "ChatsScreen.tsx:850",
       "via": "menu",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -1684,6 +1689,7 @@
           "usePinBot.ts",
           "chatSections.ts",
           "chatState.ts",
+          "useBotShells.ts",
           "useBulkChatActions.ts",
           "useGroupChatState.ts",
           "useSnoozeWakeClock.ts",
@@ -1713,16 +1719,16 @@
       },
       "pr": "A2",
       "status": "done",
-      "check": "Tap \"New team\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:894 does, checked on the web app."
+      "check": "Tap \"New team\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:850 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#stop",
       "kind": "action",
       "title": "Stop",
-      "web": "ConversationScreen.tsx:1597",
+      "web": "ConversationScreen.tsx:1499",
       "via": "menu",
       "logic": {
-        "files": 132,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1748,6 +1754,8 @@
           "botModelLabel.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "perfFlags.ts",
           "avatarMotion.ts",
           "threadLoadProblem.ts",
@@ -1795,6 +1803,7 @@
           "usePrewarmChatSession.ts",
           "taskPresentation.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "useRefreshBotsForTaskThreads.ts",
           "wrapupChat.ts",
           "useDeleteChat.ts",
@@ -1810,16 +1819,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1597 does, checked on the web app."
+      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1499 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#switch-model",
       "kind": "action",
       "title": "Switch model...",
-      "web": "ConversationScreen.tsx:1600",
+      "web": "ConversationScreen.tsx:1502",
       "via": "menu",
       "logic": {
-        "files": 132,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1845,6 +1854,8 @@
           "botModelLabel.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "perfFlags.ts",
           "avatarMotion.ts",
           "threadLoadProblem.ts",
@@ -1892,6 +1903,7 @@
           "usePrewarmChatSession.ts",
           "taskPresentation.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "useRefreshBotsForTaskThreads.ts",
           "wrapupChat.ts",
           "useDeleteChat.ts",
@@ -1907,16 +1919,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Switch model...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1600 does, checked on the web app."
+      "check": "Tap \"Switch model...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1502 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#chat-settings",
       "kind": "action",
       "title": "Chat settings...",
-      "web": "ConversationScreen.tsx:1611",
+      "web": "ConversationScreen.tsx:1513",
       "via": "menu",
       "logic": {
-        "files": 132,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1942,6 +1954,8 @@
           "botModelLabel.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "perfFlags.ts",
           "avatarMotion.ts",
           "threadLoadProblem.ts",
@@ -1989,6 +2003,7 @@
           "usePrewarmChatSession.ts",
           "taskPresentation.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "useRefreshBotsForTaskThreads.ts",
           "wrapupChat.ts",
           "useDeleteChat.ts",
@@ -2004,16 +2019,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Chat settings...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1611 does, checked on the web app."
+      "check": "Tap \"Chat settings...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1513 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#call",
       "kind": "action",
       "title": "Call",
-      "web": "ConversationScreen.tsx:1623",
+      "web": "ConversationScreen.tsx:1525",
       "via": "menu",
       "logic": {
-        "files": 132,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2039,6 +2054,8 @@
           "botModelLabel.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "perfFlags.ts",
           "avatarMotion.ts",
           "threadLoadProblem.ts",
@@ -2086,6 +2103,7 @@
           "usePrewarmChatSession.ts",
           "taskPresentation.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "useRefreshBotsForTaskThreads.ts",
           "wrapupChat.ts",
           "useDeleteChat.ts",
@@ -2101,16 +2119,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Call\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1623 does, checked on the web app."
+      "check": "Tap \"Call\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1525 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#new-chat",
       "kind": "action",
       "title": "New chat",
-      "web": "ConversationScreen.tsx:1632",
+      "web": "ConversationScreen.tsx:1534",
       "via": "menu",
       "logic": {
-        "files": 132,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2136,6 +2154,8 @@
           "botModelLabel.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "perfFlags.ts",
           "avatarMotion.ts",
           "threadLoadProblem.ts",
@@ -2183,6 +2203,7 @@
           "usePrewarmChatSession.ts",
           "taskPresentation.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "useRefreshBotsForTaskThreads.ts",
           "wrapupChat.ts",
           "useDeleteChat.ts",
@@ -2198,16 +2219,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"New chat\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1632 does, checked on the web app."
+      "check": "Tap \"New chat\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1534 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#all-chats",
       "kind": "action",
       "title": "All chats",
-      "web": "ConversationScreen.tsx:1646",
+      "web": "ConversationScreen.tsx:1548",
       "via": "menu",
       "logic": {
-        "files": 132,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2233,6 +2254,8 @@
           "botModelLabel.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "perfFlags.ts",
           "avatarMotion.ts",
           "threadLoadProblem.ts",
@@ -2280,6 +2303,7 @@
           "usePrewarmChatSession.ts",
           "taskPresentation.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "useRefreshBotsForTaskThreads.ts",
           "wrapupChat.ts",
           "useDeleteChat.ts",
@@ -2295,18 +2319,20 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"All chats\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1646 does, checked on the web app."
+      "check": "Tap \"All chats\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1548 does, checked on the web app."
     },
     {
       "id": "action:DelegationCard.tsx#open-chat",
       "kind": "action",
       "title": "Open chat",
-      "web": "DelegationCard.tsx:190",
+      "web": "DelegationCard.tsx:188",
       "via": "menu",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "commandFeedback.ts",
           "delegationModel.ts",
           "previewPrivacy.ts",
@@ -2315,7 +2341,7 @@
       },
       "pr": "A6",
       "status": "done",
-      "check": "Tap \"Open chat\" on Android. The server state changes exactly as the web action at DelegationCard.tsx:190 does, checked on the web app."
+      "check": "Tap \"Open chat\" on Android. The server state changes exactly as the web action at DelegationCard.tsx:188 does, checked on the web app."
     },
     {
       "id": "action:FilesScreen.tsx#select-files",
@@ -2344,10 +2370,10 @@
       "id": "action:GroupConversationScreen.tsx#group-settings",
       "kind": "action",
       "title": "Group settings...",
-      "web": "GroupConversationScreen.tsx:598",
+      "web": "GroupConversationScreen.tsx:544",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 69,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2356,6 +2382,8 @@
           "chatState.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "chatState.ts",
           "useGroupChatState.ts",
           "conversationModel.ts",
@@ -2370,21 +2398,22 @@
           "resumeLastChat.ts",
           "staleNotifications.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "usePersonalGroups.ts"
         ]
       },
       "pr": "A10",
       "status": "done",
-      "check": "Tap \"Group settings...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:598 does, checked on the web app."
+      "check": "Tap \"Group settings...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:544 does, checked on the web app."
     },
     {
       "id": "action:GroupConversationScreen.tsx#stop",
       "kind": "action",
       "title": "Stop",
-      "web": "GroupConversationScreen.tsx:600",
+      "web": "GroupConversationScreen.tsx:546",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 69,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2393,6 +2422,8 @@
           "chatState.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "chatState.ts",
           "useGroupChatState.ts",
           "conversationModel.ts",
@@ -2407,21 +2438,22 @@
           "resumeLastChat.ts",
           "staleNotifications.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "usePersonalGroups.ts"
         ]
       },
       "pr": "A10",
       "status": "done",
-      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:600 does, checked on the web app."
+      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:546 does, checked on the web app."
     },
     {
       "id": "action:GroupConversationScreen.tsx#unpin-group-pin-group",
       "kind": "action",
       "title": "Unpin group / Pin group",
-      "web": "GroupConversationScreen.tsx:611",
+      "web": "GroupConversationScreen.tsx:557",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 69,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2430,6 +2462,8 @@
           "chatState.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "chatState.ts",
           "useGroupChatState.ts",
           "conversationModel.ts",
@@ -2444,21 +2478,22 @@
           "resumeLastChat.ts",
           "staleNotifications.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "usePersonalGroups.ts"
         ]
       },
       "pr": "A10",
       "status": "done",
-      "check": "Tap \"Unpin group / Pin group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:611 does, checked on the web app."
+      "check": "Tap \"Unpin group / Pin group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:557 does, checked on the web app."
     },
     {
       "id": "action:GroupConversationScreen.tsx#snooze",
       "kind": "action",
       "title": "Snooze...",
-      "web": "GroupConversationScreen.tsx:614",
+      "web": "GroupConversationScreen.tsx:560",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 69,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2467,6 +2502,8 @@
           "chatState.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "chatState.ts",
           "useGroupChatState.ts",
           "conversationModel.ts",
@@ -2481,21 +2518,22 @@
           "resumeLastChat.ts",
           "staleNotifications.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "usePersonalGroups.ts"
         ]
       },
       "pr": "A10",
       "status": "done",
-      "check": "Tap \"Snooze...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:614 does, checked on the web app."
+      "check": "Tap \"Snooze...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:560 does, checked on the web app."
     },
     {
       "id": "action:GroupConversationScreen.tsx#unarchive-group",
       "kind": "action",
       "title": "Unarchive group",
-      "web": "GroupConversationScreen.tsx:618",
+      "web": "GroupConversationScreen.tsx:564",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 69,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2504,6 +2542,8 @@
           "chatState.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "chatState.ts",
           "useGroupChatState.ts",
           "conversationModel.ts",
@@ -2518,21 +2558,22 @@
           "resumeLastChat.ts",
           "staleNotifications.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "usePersonalGroups.ts"
         ]
       },
       "pr": "A10",
       "status": "done",
-      "check": "Tap \"Unarchive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:618 does, checked on the web app."
+      "check": "Tap \"Unarchive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:564 does, checked on the web app."
     },
     {
       "id": "action:GroupConversationScreen.tsx#archive-group",
       "kind": "action",
       "title": "Archive group",
-      "web": "GroupConversationScreen.tsx:622",
+      "web": "GroupConversationScreen.tsx:568",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 69,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2541,6 +2582,8 @@
           "chatState.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "chatState.ts",
           "useGroupChatState.ts",
           "conversationModel.ts",
@@ -2555,21 +2598,22 @@
           "resumeLastChat.ts",
           "staleNotifications.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "usePersonalGroups.ts"
         ]
       },
       "pr": "A10",
       "status": "done",
-      "check": "Tap \"Archive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:622 does, checked on the web app."
+      "check": "Tap \"Archive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:568 does, checked on the web app."
     },
     {
       "id": "action:GroupConversationScreen.tsx#delete-group",
       "kind": "action",
       "title": "Delete group",
-      "web": "GroupConversationScreen.tsx:624",
+      "web": "GroupConversationScreen.tsx:570",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 69,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2578,6 +2622,8 @@
           "chatState.ts"
         ],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "chatState.ts",
           "useGroupChatState.ts",
           "conversationModel.ts",
@@ -2592,12 +2638,13 @@
           "resumeLastChat.ts",
           "staleNotifications.ts",
           "usePersonalBots.ts",
+          "useBotShells.ts",
           "usePersonalGroups.ts"
         ]
       },
       "pr": "A10",
       "status": "done",
-      "check": "Tap \"Delete group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:624 does, checked on the web app."
+      "check": "Tap \"Delete group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:570 does, checked on the web app."
     },
     {
       "id": "action:GroupSettingsSheet.tsx#message-privately",
@@ -2705,12 +2752,14 @@
       "id": "action:PersonalComposer.tsx#photos",
       "kind": "action",
       "title": "Photos",
-      "web": "PersonalComposer.tsx:1308",
+      "web": "PersonalComposer.tsx:1310",
       "via": "menu",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["conversationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/wireTypes.ts",
+          "packages/personal-client/src/conversation/chatThread.ts",
           "outbox.ts",
           "outboxBlobs.ts",
           "outboxFlush.ts",
@@ -2724,18 +2773,20 @@
       },
       "pr": "A5",
       "status": "done",
-      "check": "Tap \"Photos\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1308 does, checked on the web app."
+      "check": "Tap \"Photos\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1310 does, checked on the web app."
     },
     {
       "id": "action:PersonalComposer.tsx#camera",
       "kind": "action",
       "title": "Camera",
-      "web": "PersonalComposer.tsx:1316",
+      "web": "PersonalComposer.tsx:1318",
       "via": "menu",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["conversationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/wireTypes.ts",
+          "packages/personal-client/src/conversation/chatThread.ts",
           "outbox.ts",
           "outboxBlobs.ts",
           "outboxFlush.ts",
@@ -2749,18 +2800,20 @@
       },
       "pr": "A5",
       "status": "done",
-      "check": "Tap \"Camera\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1316 does, checked on the web app."
+      "check": "Tap \"Camera\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1318 does, checked on the web app."
     },
     {
       "id": "action:PersonalComposer.tsx#files",
       "kind": "action",
       "title": "Files",
-      "web": "PersonalComposer.tsx:1325",
+      "web": "PersonalComposer.tsx:1327",
       "via": "menu",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["conversationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/wireTypes.ts",
+          "packages/personal-client/src/conversation/chatThread.ts",
           "outbox.ts",
           "outboxBlobs.ts",
           "outboxFlush.ts",
@@ -2774,18 +2827,20 @@
       },
       "pr": "A5",
       "status": "done",
-      "check": "Tap \"Files\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1325 does, checked on the web app."
+      "check": "Tap \"Files\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1327 does, checked on the web app."
     },
     {
       "id": "action:PersonalComposer.tsx#send-now",
       "kind": "action",
       "title": "Send now",
-      "web": "PersonalComposer.tsx:1459",
+      "web": "PersonalComposer.tsx:1461",
       "via": "menu",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["conversationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/wireTypes.ts",
+          "packages/personal-client/src/conversation/chatThread.ts",
           "outbox.ts",
           "outboxBlobs.ts",
           "outboxFlush.ts",
@@ -2799,18 +2854,20 @@
       },
       "pr": "A5",
       "status": "done",
-      "check": "Tap \"Send now\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1459 does, checked on the web app."
+      "check": "Tap \"Send now\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1461 does, checked on the web app."
     },
     {
       "id": "action:PersonalComposer.tsx#queue-after-this-turn",
       "kind": "action",
       "title": "Queue after this turn",
-      "web": "PersonalComposer.tsx:1468",
+      "web": "PersonalComposer.tsx:1470",
       "via": "menu",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["conversationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/wireTypes.ts",
+          "packages/personal-client/src/conversation/chatThread.ts",
           "outbox.ts",
           "outboxBlobs.ts",
           "outboxFlush.ts",
@@ -2824,7 +2881,7 @@
       },
       "pr": "A5",
       "status": "done",
-      "check": "Tap \"Queue after this turn\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1468 does, checked on the web app."
+      "check": "Tap \"Queue after this turn\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1470 does, checked on the web app."
     },
     {
       "id": "action:PinnedStrip.tsx#unpin",
@@ -2862,7 +2919,7 @@
       "web": "ReplyableMessage.tsx:307",
       "via": "menu",
       "logic": {
-        "files": 9,
+        "files": 11,
         "inPackage": [],
         "direct": [
           "messageReply.ts",
@@ -2883,7 +2940,7 @@
       "web": "ReplyableMessage.tsx:308",
       "via": "menu",
       "logic": {
-        "files": 9,
+        "files": 11,
         "inPackage": [],
         "direct": [
           "messageReply.ts",
@@ -2904,7 +2961,7 @@
       "web": "ReplyableMessage.tsx:309",
       "via": "menu",
       "logic": {
-        "files": 9,
+        "files": 11,
         "inPackage": [],
         "direct": [
           "messageReply.ts",
@@ -2963,13 +3020,14 @@
       "id": "action:computer/ComputerScreen.tsx#page-forward",
       "kind": "action",
       "title": "Page forward",
-      "web": "computer/ComputerScreen.tsx:1265",
+      "web": "computer/ComputerScreen.tsx:1269",
       "via": "menu",
       "logic": {
-        "files": 66,
+        "files": 67,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
+          "useBotShells.ts",
           "overlayInert.ts",
           "usePersonalAutomation.ts",
           "usePersonalBots.ts",
@@ -2987,19 +3045,20 @@
       },
       "pr": "A16",
       "status": "done",
-      "check": "Tap \"Page forward\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1265 does, checked on the web app."
+      "check": "Tap \"Page forward\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1269 does, checked on the web app."
     },
     {
       "id": "action:computer/ComputerScreen.tsx#reload",
       "kind": "action",
       "title": "Reload",
-      "web": "computer/ComputerScreen.tsx:1266",
+      "web": "computer/ComputerScreen.tsx:1270",
       "via": "menu",
       "logic": {
-        "files": 66,
+        "files": 67,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
+          "useBotShells.ts",
           "overlayInert.ts",
           "usePersonalAutomation.ts",
           "usePersonalBots.ts",
@@ -3017,19 +3076,20 @@
       },
       "pr": "A16",
       "status": "done",
-      "check": "Tap \"Reload\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1266 does, checked on the web app."
+      "check": "Tap \"Reload\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1270 does, checked on the web app."
     },
     {
       "id": "action:computer/ComputerScreen.tsx#escape",
       "kind": "action",
       "title": "Escape",
-      "web": "computer/ComputerScreen.tsx:1270",
+      "web": "computer/ComputerScreen.tsx:1274",
       "via": "menu",
       "logic": {
-        "files": 66,
+        "files": 67,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
+          "useBotShells.ts",
           "overlayInert.ts",
           "usePersonalAutomation.ts",
           "usePersonalBots.ts",
@@ -3047,19 +3107,20 @@
       },
       "pr": "A16",
       "status": "done",
-      "check": "Tap \"Escape\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1270 does, checked on the web app."
+      "check": "Tap \"Escape\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1274 does, checked on the web app."
     },
     {
       "id": "action:computer/ComputerScreen.tsx#reload-2",
       "kind": "action",
       "title": "Reload",
-      "web": "computer/ComputerScreen.tsx:1397",
+      "web": "computer/ComputerScreen.tsx:1401",
       "via": "menu",
       "logic": {
-        "files": 66,
+        "files": 67,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
+          "useBotShells.ts",
           "overlayInert.ts",
           "usePersonalAutomation.ts",
           "usePersonalBots.ts",
@@ -3077,19 +3138,20 @@
       },
       "pr": "A16",
       "status": "done",
-      "check": "Tap \"Reload\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1397 does, checked on the web app."
+      "check": "Tap \"Reload\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1401 does, checked on the web app."
     },
     {
       "id": "action:computer/ComputerScreen.tsx#close-browser",
       "kind": "action",
       "title": "Close browser",
-      "web": "computer/ComputerScreen.tsx:1402",
+      "web": "computer/ComputerScreen.tsx:1406",
       "via": "menu",
       "logic": {
-        "files": 66,
+        "files": 67,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
+          "useBotShells.ts",
           "overlayInert.ts",
           "usePersonalAutomation.ts",
           "usePersonalBots.ts",
@@ -3107,21 +3169,21 @@
       },
       "pr": "A16",
       "status": "done",
-      "check": "Tap \"Close browser\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1402 does, checked on the web app."
+      "check": "Tap \"Close browser\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1406 does, checked on the web app."
     },
     {
       "id": "action:BotThreadsScreen.tsx#long-press",
       "kind": "action",
       "title": "long press",
-      "web": "BotThreadsScreen.tsx:202",
+      "web": "BotThreadsScreen.tsx:203",
       "via": "gesture",
       "logic": {
-        "files": 78,
+        "files": 80,
         "inPackage": [
+          "usePersonalBots.ts",
           "unreadChats.ts",
           "chatState.ts",
           "ownerChats.ts",
-          "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
           "conversationModel.ts",
@@ -3149,26 +3211,27 @@
           "useSnoozeWakeClock.ts",
           "useLongPress.ts",
           "unreadChats.ts",
-          "usePersonalBackTarget.ts"
+          "usePersonalBackTarget.ts",
+          "useBotShells.ts"
         ]
       },
       "pr": "A9",
       "status": "done",
-      "check": "Perform \"long press\" on Android where BotThreadsScreen.tsx:202 offers it. The same result appears on the web app after a refresh."
+      "check": "Perform \"long press\" on Android where BotThreadsScreen.tsx:203 offers it. The same result appears on the web app after a refresh."
     },
     {
       "id": "action:BotThreadsScreen.tsx#swipe-to-delete",
       "kind": "action",
       "title": "swipe to delete",
-      "web": "BotThreadsScreen.tsx:240",
+      "web": "BotThreadsScreen.tsx:241",
       "via": "gesture",
       "logic": {
-        "files": 78,
+        "files": 80,
         "inPackage": [
+          "usePersonalBots.ts",
           "unreadChats.ts",
           "chatState.ts",
           "ownerChats.ts",
-          "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
           "conversationModel.ts",
@@ -3196,12 +3259,13 @@
           "useSnoozeWakeClock.ts",
           "useLongPress.ts",
           "unreadChats.ts",
-          "usePersonalBackTarget.ts"
+          "usePersonalBackTarget.ts",
+          "useBotShells.ts"
         ]
       },
       "pr": "A9",
       "status": "done",
-      "check": "Perform \"swipe to delete\" on Android where BotThreadsScreen.tsx:240 offers it. The same result appears on the web app after a refresh."
+      "check": "Perform \"swipe to delete\" on Android where BotThreadsScreen.tsx:241 offers it. The same result appears on the web app after a refresh."
     },
     {
       "id": "action:BotUsageSheet.tsx#drag-a-sheet-down-to-close",
@@ -3211,7 +3275,7 @@
       "via": "gesture",
       "logic": {
         "files": 7,
-        "inPackage": ["botModelLabel.ts"],
+        "inPackage": ["tokenUsagePresentation.ts"],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -3222,7 +3286,7 @@
       "id": "action:ChatFilePreview.tsx#drag-a-sheet-down-to-close",
       "kind": "action",
       "title": "drag a sheet down to close",
-      "web": "ChatFilePreview.tsx:377",
+      "web": "ChatFilePreview.tsx:372",
       "via": "gesture",
       "logic": {
         "files": 2,
@@ -3231,16 +3295,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Perform \"drag a sheet down to close\" on Android where ChatFilePreview.tsx:377 offers it. The same result appears on the web app after a refresh."
+      "check": "Perform \"drag a sheet down to close\" on Android where ChatFilePreview.tsx:372 offers it. The same result appears on the web app after a refresh."
     },
     {
       "id": "action:ChatsScreen.tsx#swipe-to-delete",
       "kind": "action",
       "title": "swipe to delete",
-      "web": "ChatsScreen.tsx:1171",
+      "web": "ChatsScreen.tsx:1127",
       "via": "gesture",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "personalMode.ts",
           "relativeTime.ts",
@@ -3262,6 +3326,7 @@
           "usePinBot.ts",
           "chatSections.ts",
           "chatState.ts",
+          "useBotShells.ts",
           "useBulkChatActions.ts",
           "useGroupChatState.ts",
           "useSnoozeWakeClock.ts",
@@ -3291,7 +3356,7 @@
       },
       "pr": "A3",
       "status": "done",
-      "check": "Perform \"swipe to delete\" on Android where ChatsScreen.tsx:1171 offers it. The same result appears on the web app after a refresh."
+      "check": "Perform \"swipe to delete\" on Android where ChatsScreen.tsx:1127 offers it. The same result appears on the web app after a refresh."
     },
     {
       "id": "action:ConversationSidePanel.tsx#drag-to-resize-the-desktop-column",
@@ -3498,7 +3563,7 @@
       "logic": {
         "files": 37,
         "inPackage": [
-          "botModelLabel.ts",
+          "tokenUsagePresentation.ts",
           "usageStrip.ts",
           "usagePresentation.ts",
           "usePersonalBots.ts",
@@ -3525,7 +3590,7 @@
       "web": "ReplyableMessage.tsx:104",
       "via": "gesture",
       "logic": {
-        "files": 9,
+        "files": 11,
         "inPackage": [],
         "direct": [
           "messageReply.ts",
@@ -3569,10 +3634,10 @@
       "id": "action:TeamScreen.tsx#drag-a-bot-between-teams",
       "kind": "action",
       "title": "drag a bot between teams",
-      "web": "TeamScreen.tsx:513",
+      "web": "TeamScreen.tsx:467",
       "via": "gesture",
       "logic": {
-        "files": 61,
+        "files": 62,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -3584,6 +3649,7 @@
         "direct": [
           "botsBackStack.ts",
           "botSummaries.ts",
+          "useBotShells.ts",
           "botModelLabel.ts",
           "commandFeedback.ts",
           "conversationModel.ts",
@@ -3601,7 +3667,7 @@
       },
       "pr": "A11",
       "status": "done",
-      "check": "Perform \"drag a bot between teams\" on Android where TeamScreen.tsx:513 offers it. The same result appears on the web app after a refresh."
+      "check": "Perform \"drag a bot between teams\" on Android where TeamScreen.tsx:467 offers it. The same result appears on the web app after a refresh."
     },
     {
       "id": "action:computer/ComputerSheet.tsx#drag-a-sheet-down-to-close",
@@ -3710,9 +3776,11 @@
       "title": "DelegationCard",
       "web": "DelegationCard.tsx:1",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/timeline.ts",
+          "packages/personal-client/src/conversation/types.ts",
           "commandFeedback.ts",
           "delegationModel.ts",
           "previewPrivacy.ts",
@@ -3799,7 +3867,7 @@
       "title": "PersonalOfflineBanner",
       "web": "PersonalOfflineBanner.tsx:1",
       "logic": {
-        "files": 27,
+        "files": 28,
         "inPackage": ["usePersonalBots.ts"],
         "direct": ["offlineBanner.ts", "outbox.ts", "usePersonalBots.ts", "updateStatus.ts"]
       },
@@ -3815,7 +3883,7 @@
       "logic": {
         "files": 37,
         "inPackage": [
-          "botModelLabel.ts",
+          "tokenUsagePresentation.ts",
           "usageStrip.ts",
           "usagePresentation.ts",
           "usePersonalBots.ts",
@@ -5805,12 +5873,14 @@
       "id": "setting:PersonalComposer.tsx#message-message-x",
       "kind": "setting",
       "title": "Message / Message x",
-      "web": "PersonalComposer.tsx:1339",
+      "web": "PersonalComposer.tsx:1341",
       "via": "field",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["conversationModel.ts"],
         "direct": [
+          "packages/personal-client/src/conversation/wireTypes.ts",
+          "packages/personal-client/src/conversation/chatThread.ts",
           "outbox.ts",
           "outboxBlobs.ts",
           "outboxFlush.ts",
@@ -5870,7 +5940,7 @@
       "id": "setting:QuestionCard.tsx#or-type-your-own-answer",
       "kind": "setting",
       "title": "Or type your own answer",
-      "web": "QuestionCard.tsx:224",
+      "web": "QuestionCard.tsx:221",
       "via": "field",
       "logic": {
         "files": 3,
@@ -6320,7 +6390,7 @@
       "id": "setting:providers/ProviderPage.tsx#server-address",
       "kind": "setting",
       "title": "Server address",
-      "web": "providers/ProviderPage.tsx:1606",
+      "web": "providers/ProviderPage.tsx:1597",
       "via": "field",
       "logic": {
         "files": 59,
@@ -6409,7 +6479,7 @@
       "id": "pref:profile#displayName",
       "kind": "pref",
       "title": "displayName",
-      "web": "packages/contracts/src/personalBots.ts:973",
+      "web": "packages/contracts/src/personalBots.ts:974",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6419,7 +6489,7 @@
       "id": "pref:profile#teamChange",
       "kind": "pref",
       "title": "teamChange",
-      "web": "packages/contracts/src/personalBots.ts:974",
+      "web": "packages/contracts/src/personalBots.ts:975",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6429,7 +6499,7 @@
       "id": "pref:profile#autoArchiveTaskChats",
       "kind": "pref",
       "title": "autoArchiveTaskChats",
-      "web": "packages/contracts/src/personalBots.ts:978",
+      "web": "packages/contracts/src/personalBots.ts:979",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6439,7 +6509,7 @@
       "id": "pref:profile#voiceCalls",
       "kind": "pref",
       "title": "voiceCalls",
-      "web": "packages/contracts/src/personalBots.ts:982",
+      "web": "packages/contracts/src/personalBots.ts:983",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6449,7 +6519,7 @@
       "id": "pref:profile#autoArchiveTaskChatsAfterMinutes",
       "kind": "pref",
       "title": "autoArchiveTaskChatsAfterMinutes",
-      "web": "packages/contracts/src/personalBots.ts:986",
+      "web": "packages/contracts/src/personalBots.ts:987",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6459,7 +6529,7 @@
       "id": "pref:profile#usageVisibility",
       "kind": "pref",
       "title": "usageVisibility",
-      "web": "packages/contracts/src/personalBots.ts:989",
+      "web": "packages/contracts/src/personalBots.ts:990",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6469,7 +6539,7 @@
       "id": "pref:profile#showToolSteps",
       "kind": "pref",
       "title": "showToolSteps",
-      "web": "packages/contracts/src/personalBots.ts:996",
+      "web": "packages/contracts/src/personalBots.ts:997",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6479,7 +6549,7 @@
       "id": "pref:profile#showRoutinesStrip",
       "kind": "pref",
       "title": "showRoutinesStrip",
-      "web": "packages/contracts/src/personalBots.ts:998",
+      "web": "packages/contracts/src/personalBots.ts:999",
       "storage": "server",
       "pr": "A14",
       "status": "done",
@@ -6709,6 +6779,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -6777,6 +6848,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -6846,6 +6918,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -6914,6 +6987,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -6983,6 +7057,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7051,6 +7126,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7120,6 +7196,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7259,6 +7336,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7327,6 +7405,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7395,6 +7474,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7501,6 +7581,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7606,6 +7687,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7674,6 +7756,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7779,6 +7862,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -7884,6 +7968,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -8371,6 +8456,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -8667,6 +8753,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -8924,6 +9011,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -8993,6 +9081,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -9062,6 +9151,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -9330,6 +9420,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -9650,6 +9741,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -9718,6 +9810,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -9787,6 +9880,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -9855,6 +9949,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -9924,6 +10019,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10087,6 +10183,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10131,7 +10228,7 @@
       "id": "rpc:personalBotsThreadShells",
       "kind": "rpc",
       "title": "personalBotsThreadShells (query)",
-      "web": "state/lazyThreadShells.ts:35",
+      "web": "state/lazyThreadShells.ts:22",
       "rpcKind": "query",
       "wire": null,
       "contract": null,
@@ -10168,6 +10265,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10236,6 +10334,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10304,6 +10403,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10372,6 +10472,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10441,6 +10542,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10509,6 +10611,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10577,6 +10680,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10645,6 +10749,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10713,6 +10818,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10782,6 +10888,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10851,6 +10958,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10920,6 +11028,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -10989,6 +11098,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11058,6 +11168,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11127,6 +11238,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11196,6 +11308,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11265,6 +11378,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11334,6 +11448,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11403,6 +11518,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11472,6 +11588,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
@@ -11541,6 +11658,7 @@
         "InAppNotifications.tsx",
         "MemoryScreen.tsx",
         "MemoryTidyPanels.tsx",
+        "MessageSearchResults.tsx",
         "NewChatDialog.tsx",
         "NewGroupScreen.tsx",
         "NewTeamForm.tsx",
