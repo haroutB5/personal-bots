@@ -35,6 +35,11 @@ const RUNTIME_UNIT_DIR =
   process.env.HBOTS_RELEASE_FIXTURE_RUNTIME_DIR ||
   NodePath.join(process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`, "systemd", "user");
 
+// The unit name carries a hash of its cache dir. Compute it here so the test checks the naming
+// contract without reading it back from the code that writes it.
+const unitTag = (dir) =>
+  NodeCrypto.createHash("sha256").update(NodePath.resolve(dir)).digest("hex").slice(0, 8);
+
 const TERMINAL = [
   "live_verified",
   "live_verified_doc_update_failed",
@@ -142,6 +147,20 @@ function runChild(mode, info) {
     timeout: 180_000,
   });
 }
+
+const REAPER_SPIN_SCRIPT = NodePath.join(SCRATCH, "fixture-reaper-spin.mjs");
+NodeFS.writeFileSync(
+  REAPER_SPIN_SCRIPT,
+  `import * as NodeFS from "node:fs";
+import { reapOrphans } from ${JSON.stringify(envUrl("tests/env.mjs"))};
+const end = Date.now() + Number(process.argv[2]);
+const removed = [];
+while (Date.now() < end) {
+  for (const p of reapOrphans().removed) removed.push(p);
+}
+NodeFS.writeFileSync(process.argv[3], JSON.stringify(removed));
+`,
+);
 
 NodeTest.test("prepare, guards-only and dry-run pass and do not restart the server", async (t) => {
   const env = await prepared(t);
@@ -702,7 +721,7 @@ NodeTest.test("a dry run lists orphan fixtures and stray unit files and removes 
       createdAt: new Date().toISOString(),
     }),
   );
-  const strayUnit = `hbots-fixture-${NodeCrypto.randomBytes(4).toString("hex")}.service`;
+  const strayUnit = `hbots-fixture-${unitTag(cache)}-${NodeCrypto.randomBytes(4).toString("hex")}.service`;
   const strayFile = NodePath.join(config, strayUnit);
   NodeFS.writeFileSync(strayFile, "[Unit]\nDescription=stray\n");
   try {
@@ -731,6 +750,172 @@ NodeTest.test("a dry run lists orphan fixtures and stray unit files and removes 
     NodeFS.rmSync(deadUnitFile, { force: true });
     NodeFS.rmSync(strayFile, { force: true });
   }
+});
+
+NodeTest.test("a reaper never removes a live fixture that belongs to another cache", () => {
+  const base = NodeFS.mkdtempSync(NodePath.join(SCRATCH, "cross-cache-"));
+  const cacheA = NodePath.join(base, "cache-a");
+  const cacheB = NodePath.join(base, "cache-b");
+  const unitsA = NodePath.join(base, "units-a");
+  const unitsB = NodePath.join(base, "units-b");
+  for (const dir of [cacheA, cacheB, unitsA, unitsB]) NodeFS.mkdirSync(dir, { recursive: true });
+  const owner = { ownerPid: process.pid, ownerStart: procStart(process.pid) };
+  const taggedDir = NodePath.join(cacheA, "hbots-release-fixture-keep-TAGA01");
+  const legacyDir = NodePath.join(cacheA, "hbots-release-fixture-old-LEGACY");
+  const taggedUnit = `hbots-fixture-${unitTag(cacheA)}-TAGA01.service`;
+  const legacyUnit = "hbots-fixture-LEGACY.service";
+  const taggedFile = NodePath.join(unitsA, taggedUnit);
+  const legacyFile = NodePath.join(unitsA, legacyUnit);
+  const writeFixture = (dir, unit, unitFile) => {
+    NodeFS.mkdirSync(dir, { recursive: true });
+    NodeFS.writeFileSync(unitFile, "[Unit]\nDescription=live owner fixture\n");
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "fixture.json"),
+      JSON.stringify({
+        schema: 1,
+        unit,
+        unitFile,
+        dir,
+        port: 0,
+        ...owner,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+  };
+  writeFixture(taggedDir, taggedUnit, taggedFile);
+  writeFixture(legacyDir, legacyUnit, legacyFile);
+  try {
+    const foreign = reapOrphans({ cacheDir: cacheB, unitDirs: [unitsA, unitsB] });
+    NodeAssert.deepEqual(foreign.orphans, [], "cache A dirs are not cache B's business");
+    NodeAssert.deepEqual(foreign.strayUnits, [], "a live unit from another cache is not a stray");
+    NodeAssert.deepEqual(foreign.removed, []);
+    NodeAssert.equal(NodeFS.existsSync(taggedFile), true, "cache A tagged unit file intact");
+    NodeAssert.equal(NodeFS.existsSync(taggedDir), true, "cache A tagged fixture intact");
+    NodeAssert.equal(NodeFS.existsSync(legacyFile), true, "cache A pre-tag unit file intact");
+    NodeAssert.equal(NodeFS.existsSync(legacyDir), true, "cache A pre-tag fixture intact");
+
+    const own = reapOrphans({ cacheDir: cacheA, unitDirs: [unitsA] });
+    NodeAssert.equal(own.live.length, 2, "the owning cache sees both fixtures live");
+    NodeAssert.deepEqual(own.removed, []);
+
+    const strayUnit = `hbots-fixture-${unitTag(cacheB)}-STRAY1.service`;
+    const strayFile = NodePath.join(unitsB, strayUnit);
+    NodeFS.writeFileSync(strayFile, "[Unit]\nDescription=stray\n");
+    const stray = reapOrphans({ cacheDir: cacheB, unitDirs: [unitsA, unitsB] });
+    NodeAssert.deepEqual(
+      stray.strayUnits.map((s) => s.unit),
+      [strayUnit],
+      "the cache's own tagged stray is still removed",
+    );
+    NodeAssert.equal(NodeFS.existsSync(strayFile), false);
+    NodeAssert.equal(NodeFS.existsSync(taggedFile), true, "cache A unit still intact");
+  } finally {
+    NodeFS.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("a record naming another dir's unit is ignored, the dir suffix decides", () => {
+  const cache = cacheRoot();
+  const config = configUnitDir();
+  NodeFS.mkdirSync(cache, { recursive: true });
+  NodeFS.mkdirSync(config, { recursive: true });
+  const dir = NodeFS.mkdtempSync(NodePath.join(cache, "hbots-release-fixture-mismatch-"));
+  const suffix = NodePath.basename(dir).split("-").pop();
+  const foreignUnit = `hbots-fixture-${unitTag(NodePath.join(SCRATCH, "other-cache"))}-FOREIGN.service`;
+  const foreignFile = NodePath.join(config, foreignUnit);
+  NodeFS.writeFileSync(foreignFile, "[Unit]\nDescription=not this dir's unit\n");
+  NodeFS.writeFileSync(
+    NodePath.join(dir, "fixture.json"),
+    JSON.stringify({
+      schema: 1,
+      unit: foreignUnit,
+      unitFile: foreignFile,
+      dir,
+      port: 0,
+      ownerPid: 99999999,
+      ownerStart: "1",
+      createdAt: new Date().toISOString(),
+    }),
+  );
+  try {
+    const r = reapOrphans();
+    const orphan = r.orphans.find((o) => o.dir === dir);
+    NodeAssert.deepEqual(orphan.units, [
+      `hbots-fixture-${unitTag(cache)}-${suffix}.service`,
+      `hbots-fixture-${suffix}.service`,
+    ]);
+    NodeAssert.equal(NodeFS.existsSync(foreignFile), true, "the foreign unit file is untouched");
+    NodeAssert.equal(NodeFS.existsSync(dir), false, "the orphan dir is still removed");
+  } finally {
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+    NodeFS.rmSync(foreignFile, { force: true });
+  }
+});
+
+NodeTest.test("a spinning reaper never removes a fixture that is still being created", async () => {
+  const report = NodePath.join(
+    SCRATCH,
+    `race-removed-${process.pid}-${NodeCrypto.randomBytes(3).toString("hex")}.json`,
+  );
+  const childEnv = { ...process.env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  const spin = spawn(process.execPath, [REAPER_SPIN_SCRIPT, "4000", report], {
+    env: childEnv,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  spin.stderr.on("data", (d) => (stderr += d));
+  const exited = new Promise((resolve) => spin.once("exit", resolve));
+  const created = [];
+  const errors = [];
+  const end = Date.now() + 2500;
+  let failure = null;
+  try {
+    while (Date.now() < end) {
+      let env;
+      try {
+        env = await makeEnv({ name: "race" });
+        created.push(env.tmp);
+      } catch (e) {
+        errors.push(String(e.message));
+      } finally {
+        if (env) env.stop();
+      }
+    }
+  } catch (e) {
+    failure = e;
+  }
+  await exited;
+  if (failure) throw failure;
+  NodeAssert.deepEqual(errors, [], `makeEnv errors: ${errors.join("; ")}`);
+  NodeAssert.ok(created.length >= 3, `only ${created.length} fixtures made`);
+  if (NodeFS.existsSync(report)) {
+    const removed = JSON.parse(NodeFS.readFileSync(report, "utf8"));
+    NodeAssert.deepEqual(
+      removed.filter((p) => created.includes(p)),
+      [],
+      `the reaper removed in-flight fixtures\n${stderr}`,
+    );
+    NodeFS.rmSync(report, { force: true });
+  } else {
+    NodeAssert.fail(`the spinning reaper did not report\n${stderr}`);
+  }
+});
+
+NodeTest.test("importing the harness outside node --test prints no test summary", () => {
+  const childEnv = { ...process.env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  const r = sh(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import(${JSON.stringify(NodeURL.pathToFileURL(NodePath.join(ROOT, "tests", "env.mjs")).href)})`,
+    ],
+    { env: childEnv },
+  );
+  NodeAssert.equal(r.status, 0, r.stderr);
+  NodeAssert.doesNotMatch(r.stdout + r.stderr, /tests 0/);
 });
 
 NodeTest.test("the fixture harness refuses to load under Vitest", () => {
