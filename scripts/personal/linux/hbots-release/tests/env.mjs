@@ -19,9 +19,18 @@ export const RUNNER = path.join(ROOT, "hbots-release.mjs");
 export const LAUNCHER = path.join(ROOT, "hbots-release-launch.mjs");
 const REAL_TOOLS = "/home/harout/Claude/AI/dev-team/tools";
 const FIXTURE_PREFIX = "hbots-release-fixture-";
-const UNIT_NAME = /^hbots-fixture-[A-Za-z0-9]+\.service$/;
+const STAGING_PREFIX = `.${FIXTURE_PREFIX}staging-`;
+const UNIT_PREFIX = "hbots-fixture-";
+const UNIT_NAME = /^hbots-fixture-(?:[a-f0-9]{8}-)?[A-Za-z0-9]+\.service$/;
+const SAFE_SUFFIX = /^[A-Za-z0-9]+$/;
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
+
+// A fixture unit carries a short hash of its cache dir, so two caches can share the runtime unit
+// dir and each reaper only treats unit files with its own tag as its strays.
+function cacheTag(cacheDir) {
+  return crypto.createHash("sha256").update(path.resolve(cacheDir)).digest("hex").slice(0, 8);
+}
 
 export const cacheRoot = () =>
   process.env.HBOTS_RELEASE_FIXTURE_CACHE || path.join(os.homedir(), ".cache");
@@ -118,10 +127,23 @@ function writeRecord(dir, record) {
   fs.renameSync(`${file}.tmp`, file);
 }
 
-function fixtureUnit(dir, record) {
-  if (record && typeof record.unit === "string" && UNIT_NAME.test(record.unit)) return record.unit;
-  const unit = `hbots-fixture-${path.basename(dir).split("-").pop()}.service`;
-  return UNIT_NAME.test(unit) ? unit : null;
+const unitSuffix = (unit) => unit.slice(UNIT_PREFIX.length, -".service".length);
+
+// A record names the fixture's unit only when that name carries this dir's suffix and either this
+// cache's tag or none (a fixture written before the tag existed). A record-less old leak offers
+// both names so its pre-tag unit file still converges.
+function fixtureUnits(dir, record, cacheDir) {
+  const suffix = path.basename(dir).split("-").pop();
+  const tag = cacheTag(cacheDir);
+  const recorded = record?.unit;
+  if (
+    typeof recorded === "string" &&
+    UNIT_NAME.test(recorded) &&
+    (unitSuffix(recorded) === suffix || unitSuffix(recorded) === `${tag}-${suffix}`)
+  )
+    return [recorded];
+  if (!SAFE_SUFFIX.test(suffix)) return [];
+  return [`${UNIT_PREFIX}${tag}-${suffix}.service`, `${UNIT_PREFIX}${suffix}.service`];
 }
 
 function isFixtureDir(dir, cacheDir) {
@@ -166,15 +188,18 @@ export function reapOrphans({
     .map((e) => path.join(cacheDir, e.name));
   result.scanned = fixtureDirs.length;
   const liveUnits = new Set();
+  const ownUnitPrefix = `${UNIT_PREFIX}${cacheTag(cacheDir)}-`;
   for (const dir of fixtureDirs) {
     const record = readRecord(dir);
+    if (!record && !fs.existsSync(dir)) continue; // removed by its owner while we looked
     if (ownerLive(record)) {
-      const unit = fixtureUnit(dir, record);
-      if (unit) liveUnits.add(unit);
-      result.live.push({ dir, unit, ownerPid: record.ownerPid });
+      const units = fixtureUnits(dir, record, cacheDir);
+      for (const unit of units) liveUnits.add(unit);
+      result.live.push({ dir, unit: units[0] ?? null, ownerPid: record.ownerPid });
       continue;
     }
-    result.orphans.push({ dir, unit: fixtureUnit(dir, record), reason: orphanReason(record) });
+    const units = fixtureUnits(dir, record, cacheDir);
+    result.orphans.push({ dir, unit: units[0] ?? null, units, reason: orphanReason(record) });
   }
   const fixtureBases = fixtureDirs.map((dir) => path.basename(dir));
   for (const dir of dirs) {
@@ -186,7 +211,8 @@ export function reapOrphans({
     }
     for (const name of names) {
       if (!UNIT_NAME.test(name) || liveUnits.has(name)) continue;
-      const suffix = name.slice("hbots-fixture-".length, -".service".length);
+      if (!name.startsWith(ownUnitPrefix)) continue;
+      const suffix = name.slice(ownUnitPrefix.length, -".service".length);
       if (fixtureBases.some((base) => base.endsWith(`-${suffix}`))) continue;
       result.strayUnits.push({ unit: name, file: path.join(dir, name) });
     }
@@ -196,25 +222,24 @@ export function reapOrphans({
   const changedUnits = new Set();
   for (const orphan of result.orphans) {
     let stopped = true;
-    if (orphan.unit) {
-      const stop = sh("systemctl", ["--user", "stop", orphan.unit]);
+    for (const unit of orphan.units) {
+      const stop = sh("systemctl", ["--user", "stop", unit]);
       if (stop.status !== 0 && !/not loaded|not found/i.test(stop.stderr)) {
-        result.failed.push(`stop ${orphan.unit}: ${stop.stderr.trim()}`);
+        result.failed.push(`stop ${unit}: ${stop.stderr.trim()}`);
         stopped = false;
-      } else {
-        changedUnits.add(orphan.unit);
-        for (const dir of dirs) {
-          const file = path.join(dir, orphan.unit);
-          if (!isOwnedUnitFile(file, dirs) || !fs.existsSync(file)) continue;
-          fs.rmSync(file, { force: true });
-          result.removed.push(file);
-        }
+        continue;
+      }
+      changedUnits.add(unit);
+      for (const dir of dirs) {
+        const file = path.join(dir, unit);
+        if (!isOwnedUnitFile(file, dirs) || !fs.existsSync(file)) continue;
+        fs.rmSync(file, { force: true });
+        result.removed.push(file);
       }
     }
     if (stopped && isFixtureDir(orphan.dir, cacheDir)) {
       try {
-        fs.rmSync(orphan.dir, { recursive: true, force: true });
-        result.removed.push(orphan.dir);
+        if (removeFixtureDir(orphan.dir)) result.removed.push(orphan.dir);
       } catch (e) {
         result.failed.push(`remove ${orphan.dir}: ${e.message}`);
       }
@@ -234,6 +259,35 @@ export function reapOrphans({
   return result;
 }
 
+// A fixture is built under a hidden staging name the reaper ignores, gets its record there, and is
+// renamed into place. The final dir is therefore never visible to a concurrent reaper without a record.
+function stagingFixture(cacheDir, name) {
+  for (;;) {
+    const staging = fs.mkdtempSync(path.join(cacheDir, STAGING_PREFIX));
+    const suffix = path.basename(staging).slice(STAGING_PREFIX.length);
+    const dir = path.join(cacheDir, `${FIXTURE_PREFIX}${name}-${suffix}`);
+    if (!fs.existsSync(dir)) return { staging, dir, suffix };
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+// A fixture leaves the scanned namespace by rename, never by deleting its record in place, so a
+// concurrent reaper sees either a live fixture or no fixture at that path.
+function removeFixtureDir(dir) {
+  const trash = path.join(
+    path.dirname(dir),
+    `${STAGING_PREFIX}deleted-${path.basename(dir)}-${crypto.randomBytes(3).toString("hex")}`,
+  );
+  try {
+    fs.renameSync(dir, trash);
+  } catch (e) {
+    if (e.code === "ENOENT") return false;
+    throw e;
+  }
+  fs.rmSync(trash, { recursive: true, force: true });
+  return true;
+}
+
 export async function makeEnv({
   name = "t",
   baselineVersion = "9.9.0",
@@ -244,35 +298,42 @@ export async function makeEnv({
   reapOrphans();
   const cacheDir = cacheRoot();
   fs.mkdirSync(cacheDir, { recursive: true });
-  const tmp = fs.mkdtempSync(path.join(cacheDir, `${FIXTURE_PREFIX}${name}-`));
-  const home = path.join(tmp, ".personal-bots"); // the runner's HOME is tmp; cfg.home = tmp/.personal-bots
   const port = await freePort();
-  const unit = `hbots-fixture-${path.basename(tmp).split("-").pop()}.service`;
-  for (const d of [
-    "run",
-    "releases",
-    "logs",
-    "backups",
-    "flags",
-    "dev/userdata/logs/provider",
-    "dev/runtime",
-    "tools",
-    "docs",
-  ])
-    fs.mkdirSync(path.join(home, d), { recursive: true });
+  const { staging, dir: tmp, suffix } = stagingFixture(cacheDir, name);
+  const home = path.join(tmp, ".personal-bots"); // the runner's HOME is tmp; cfg.home = tmp/.personal-bots
+  const build = path.join(staging, ".personal-bots");
+  const unit = `${UNIT_PREFIX}${cacheTag(cacheDir)}-${suffix}.service`;
   const env = { tmp, home, port, unit, baselineVersion, targetVersion, constants };
-  env.unitFile = path.join(unitDir(), unit);
-  fs.mkdirSync(path.dirname(env.unitFile), { recursive: true });
-  writeRecord(tmp, {
-    schema: 1,
-    unit,
-    unitFile: env.unitFile,
-    dir: tmp,
-    port,
-    ownerPid: process.pid,
-    ownerStart: procStart(process.pid),
-    createdAt: new Date().toISOString(),
-  });
+  try {
+    for (const d of [
+      "run",
+      "releases",
+      "logs",
+      "backups",
+      "flags",
+      "dev/userdata/logs/provider",
+      "dev/runtime",
+      "tools",
+      "docs",
+    ])
+      fs.mkdirSync(path.join(build, d), { recursive: true });
+    env.unitFile = path.join(unitDir(), unit);
+    fs.mkdirSync(path.dirname(env.unitFile), { recursive: true });
+    writeRecord(staging, {
+      schema: 1,
+      unit,
+      unitFile: env.unitFile,
+      dir: tmp,
+      port,
+      ownerPid: process.pid,
+      ownerStart: procStart(process.pid),
+      createdAt: new Date().toISOString(),
+    });
+    fs.renameSync(staging, tmp);
+  } catch (e) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw e;
+  }
   liveEnvs.add(env);
 
   // git repo: commit 1 = rollback baseline, commit 2 = the notes commit
@@ -519,8 +580,13 @@ export function cleanup(env) {
     if (fs.existsSync(env.unitFile ?? "")) fs.rmSync(env.unitFile, { force: true });
     sh("systemctl", ["--user", "daemon-reload"]);
   }
-  if (env.tmp && isFixtureDir(env.tmp, cacheRoot()))
-    fs.rmSync(env.tmp, { recursive: true, force: true });
+  if (env.tmp && isFixtureDir(env.tmp, cacheRoot())) {
+    try {
+      removeFixtureDir(env.tmp);
+    } catch {
+      fs.rmSync(env.tmp, { recursive: true, force: true });
+    }
+  }
   liveEnvs.delete(env);
 }
 
@@ -530,7 +596,8 @@ export function cleanupAll() {
 
 const isCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (!isCli) {
-  after(cleanupAll);
+  // node:test prints an empty report when after() is registered in a plain script (probes, helpers).
+  if (process.env.NODE_TEST_CONTEXT) after(cleanupAll);
   process.once("exit", cleanupAll);
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.once(signal, () => {
@@ -545,7 +612,7 @@ if (isCli) {
   const result = reapOrphans({ dryRun });
   for (const orphan of result.orphans)
     console.log(
-      `${dryRun ? "would remove" : "remove"} ${orphan.dir} unit=${orphan.unit ?? "-"} reason=${orphan.reason}`,
+      `${dryRun ? "would remove" : "remove"} ${orphan.dir} units=${orphan.units.join(",") || "-"} reason=${orphan.reason}`,
     );
   for (const stray of result.strayUnits)
     console.log(`${dryRun ? "would remove" : "remove"} stray unit ${stray.file}`);
