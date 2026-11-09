@@ -5,7 +5,7 @@
 // Nothing here ever opens a live database (state.sqlite, statev2.sqlite) or its -wal/-shm; sizes come from stat only.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { run, runAsync, readJson, atomicWrite, round1 } from "./util.mjs";
+import { run, runAsync, readJson, atomicWrite, round1, sha256File } from "./util.mjs";
 import * as NodeURL from "node:url";
 
 const DBCHECK = NodePath.join(
@@ -172,6 +172,71 @@ export async function verifyBackup(cfg, destDir, expectMigration) {
   );
   writeManifest(destDir, manifest);
   return { ...check, seconds: round1((Date.now() - t0) / 1000) };
+}
+
+/** Checkpoint, integrity-check, digest and manifest entry for ONE database COPY. Used before a compact. */
+export async function verifyDatabaseCopy(cfg, destDir, name, expectMigration) {
+  const t0 = Date.now();
+  const file = NodePath.join(destDir, name);
+  if (!NodeFS.existsSync(file)) throw new Error(`backup ${destDir} has no ${name}`);
+  const r = await runAsync(
+    cfg.node,
+    ["--disable-warning=ExperimentalWarning", DBCHECK, file],
+    { low: true, timeoutMs: 60 * 60_000 },
+  );
+  if (r.code !== 0) throw new Error(`backup check of ${name} failed: ${r.err.slice(0, 300)}`);
+  const check = JSON.parse(r.out);
+  if (check.ic !== "ok") throw new Error(`backup integrity_check of ${name}: ${check.ic}`);
+  if (expectMigration != null && check.mig !== Number(expectMigration))
+    throw new Error(`backup ${name} is at migration ${check.mig}; expected ${expectMigration}`);
+  const manifest = readJson(NodePath.join(destDir, "backup.json")) ?? {};
+  manifest.databases = {
+    ...(manifest.databases ?? {}),
+    [name]: { bytes: check.bytes, sha256: check.sha256, ic: check.ic, mig: check.mig },
+  };
+  manifest.preCompactValidation = {
+    schema: 1,
+    method: "stopped-reflink-copy-integrity-check",
+    database: name,
+    ic: check.ic,
+    mig: check.mig,
+    rows: check.rows,
+    mem: check.mem,
+    bytes: check.bytes,
+    sha256: check.sha256,
+    at: new Date().toISOString(),
+  };
+  writeManifest(destDir, manifest);
+  return { ...check, seconds: round1((Date.now() - t0) / 1000) };
+}
+
+/** Puts the verified copy of one database back, atomically, and drops the failed run's WAL and shared memory. */
+export function restoreDatabase(cfg, destDir, name, { expectedSha256 } = {}) {
+  const src = NodePath.join(destDir, name);
+  const dst = NodePath.join(cfg.stateDir, name);
+  if (!NodeFS.existsSync(src)) throw new Error(`backup copy ${src} is missing; cannot restore ${name}`);
+  const tmp = NodePath.join(cfg.stateDir, `.${name}.restore-${process.pid}`);
+  try {
+    NodeFS.copyFileSync(src, tmp);
+    const fd = NodeFS.openSync(tmp, "r+");
+    try {
+      NodeFS.fsyncSync(fd);
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+    for (const suffix of ["-wal", "-shm", "-journal"]) NodeFS.rmSync(dst + suffix, { force: true });
+    NodeFS.renameSync(tmp, dst);
+  } finally {
+    NodeFS.rmSync(tmp, { force: true });
+  }
+  const restoreSha256 = sha256File(dst);
+  const expected = expectedSha256 ?? sha256File(src);
+  return {
+    restored: true,
+    restoreBytes: NodeFS.statSync(dst).size,
+    restoreSha256,
+    restoreVerified: restoreSha256 === expected,
+  };
 }
 
 /** Newest-N retention, only ever called after the fresh backup verified. Only timestamp dirs with backup.json. */
