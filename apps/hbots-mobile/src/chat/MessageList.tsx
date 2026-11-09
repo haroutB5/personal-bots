@@ -27,7 +27,16 @@ import {
   IconPhoto,
   IconPaperclip,
 } from "@tabler/icons-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState, createElement } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  createContext,
+  createElement,
+  useContext,
+} from "react";
 import {
   Animated,
   FlatList,
@@ -47,7 +56,7 @@ import { tokens } from "../shell/tokens";
 import type { CardContext } from "./cards/types";
 import { isChatCard, renderChatCard } from "./cards/registry";
 import type { ChatEnvironment } from "./chatEnvironment";
-import { scrollIndexForItem } from "./messageListModel";
+import { claimsReplySwipe, scrollIndexForItem } from "./messageListModel";
 import { AttachmentImage } from "./AttachmentImage";
 import { ChoiceButtons } from "./ChoiceButtons";
 import {
@@ -421,6 +430,18 @@ const TABLE_CELL_MIN_WIDTH = 72;
 const TABLE_CELL_MAX_WIDTH = 200;
 const TABLE_CELL_PADDING = 20;
 
+interface HorizontalScrollTouch {
+  readonly began: () => void;
+  readonly ended: () => void;
+}
+
+/**
+ * A horizontal scroller reports touches so the enclosing message row does not
+ * take its drag for the reply swipe. The row's PanResponder only sees the
+ * gesture, not where the touch started.
+ */
+const HorizontalScrollTouchContext = createContext<HorizontalScrollTouch | null>(null);
+
 function tableColumnWidths(table: MarkdownTable): ReadonlyArray<number> {
   return table.header.map((_, column) => {
     let longest = 0;
@@ -453,9 +474,15 @@ function TableGrid({
     () => keyedList([table.header, ...table.rows], (row) => row.map((cell) => cell.text).join("|")),
     [table],
   );
+  const scrollTouch = useContext(HorizontalScrollTouchContext);
   return (
     <ScrollView horizontal style={styles.tableScroll} showsHorizontalScrollIndicator={false}>
-      <View style={styles.table}>
+      <View
+        style={styles.table}
+        onTouchStart={scrollTouch?.began}
+        onTouchEnd={scrollTouch?.ended}
+        onTouchCancel={scrollTouch?.ended}
+      >
         {rows.map(({ key: rowKey, item: row }, rowIndex) => (
           <View
             key={rowKey}
@@ -600,11 +627,23 @@ function SwipeMessageRow({
   // eslint-disable-next-line react/refs -- the animated value is created once
   const translateX = useRef(new Animated.Value(0)).current;
   const [revealed, setRevealed] = useState(false);
+  const beganInScroller = useRef(false);
+  const scrollTouch = useMemo<HorizontalScrollTouch>(
+    () => ({
+      began: () => {
+        beganInScroller.current = true;
+      },
+      ended: () => {
+        beganInScroller.current = false;
+      },
+    }),
+    [beganInScroller],
+  );
   const responder = useRef(
     // eslint-disable-next-line react/refs -- the responder is created once
     PanResponder.create({
       onMoveShouldSetPanResponder: (_event, gesture) =>
-        Math.abs(gesture.dx) > 10 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.4,
+        claimsReplySwipe(gesture.dx, gesture.dy, beganInScroller.current),
       onPanResponderMove: (_event, gesture) => {
         const direction = align === "end" ? -1 : 1;
         const next = Math.max(0, Math.min(72, gesture.dx * direction));
@@ -648,7 +687,9 @@ function SwipeMessageRow({
         style={[styles.swipeContent, { transform: [{ translateX }] }]}
         {...panHandlers}
       >
-        {children}
+        <HorizontalScrollTouchContext.Provider value={scrollTouch}>
+          {children}
+        </HorizontalScrollTouchContext.Provider>
       </Animated.View>
     </View>
   );
