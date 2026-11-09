@@ -1,6 +1,7 @@
 export {
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,
+  isPrimaryEnvironmentRequestError,
   PrimaryEnvironmentRequestError,
   resolveInitialServerAuthGateState,
   stripPairingTokenFromUrl,

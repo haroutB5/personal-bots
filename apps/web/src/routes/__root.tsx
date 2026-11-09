@@ -45,7 +45,11 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useUiStateStore } from "../uiStateStore";
 import { configureClientTracing } from "../observability/clientTracing";
-import { resolveInitialServerAuthGateState } from "../environments/primary";
+import {
+  isPrimaryEnvironmentRequestError,
+  resolveInitialServerAuthGateState,
+} from "../environments/primary";
+import { PersonalUnreachableScreen } from "../features/personal/PersonalUnreachableScreen";
 import { GUEST_PAGE_PATH } from "../guestPage";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
@@ -258,12 +262,33 @@ function RootRouteBranch() {
   );
 }
 
-function RootRouteErrorView({ error }: ErrorComponentProps) {
+function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
   const message = errorMessage(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
   const report = errorReport(error, pathname);
+
+  // The personal shell on a phone: an unreachable laptop is a state to
+  // recover from, not a crash to report. Retrying re-runs the auth bootstrap.
+  if (isPersonalPath(pathname) && isPrimaryEnvironmentRequestError(error) && error.unreachable) {
+    return (
+      <PersonalUnreachableScreen
+        onRetry={async () => {
+          // Keep the fallback mounted while the failed bootstrap retries.
+          // Clearing the boundary first can leave an empty cold-launch root.
+          try {
+            await resolveInitialServerAuthGateState();
+          } catch (retryError) {
+            if (isPrimaryEnvironmentRequestError(retryError) && retryError.unreachable) return;
+            // Let the router surface permanent errors from the next attempt.
+          }
+          await router.invalidate();
+          reset();
+        }}
+      />
+    );
+  }
 
   return (
     <StandalonePage>
