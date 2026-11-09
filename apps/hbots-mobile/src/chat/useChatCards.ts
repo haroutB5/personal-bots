@@ -9,11 +9,6 @@ import type {
 import * as Redacted from "effect/Redacted";
 import * as DateTime from "effect/DateTime";
 import {
-  derivePendingRequests,
-  deriveUserInputHistory,
-} from "@t3tools/client-runtime/pending-requests";
-import type { PendingUserInput } from "@hbots/personal-client/conversation/wireTypes";
-import {
   placeDelegationCards,
   type ConversationItem,
 } from "@hbots/personal-client/conversation/conversationModel";
@@ -29,8 +24,10 @@ import { placeChatCards } from "@hbots/personal-client/conversation/feedCards";
 import { deriveLeadBotChangeCards } from "@hbots/personal-client/conversation/leadBotChangeCards";
 import { deriveMemoryCards } from "@hbots/personal-client/conversation/memoryCards";
 import {
-  deriveQuestionCards,
-  deriveUserInputResolutions,
+  createQuestionCardProjector,
+  pendingQuestionRequests,
+  type QuestionProjection,
+  type QuestionRequest,
 } from "@hbots/personal-client/conversation/questionCards";
 import {
   deriveSecretRequestCards,
@@ -49,7 +46,7 @@ import { readSecretOutcomeHistory, writeSecretOutcomeHistory } from "./secretOut
 
 interface SeenUserInputs {
   readonly threadId: string;
-  readonly requests: ReadonlyMap<string, PendingUserInput>;
+  readonly requests: ReadonlyMap<string, QuestionRequest>;
 }
 
 /**
@@ -63,7 +60,7 @@ export function useChatCards(input: {
   readonly chat: ChatEnvironment;
   readonly environmentId: EnvironmentId | null;
   readonly threadId: string;
-  readonly activities: Parameters<typeof derivePendingRequests>[0];
+  readonly projection: QuestionProjection | null;
   readonly items: ReadonlyArray<ConversationItem>;
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly botName: string;
@@ -78,7 +75,11 @@ export function useChatCards(input: {
   readonly rulesUsage: PersonalMemoryRulesUsage | null;
 } {
   const { native, environmentId, threadId } = input;
-  const { userInputs } = useMemo(() => derivePendingRequests(input.activities), [input.activities]);
+  const [projectQuestions] = useState(() => createQuestionCardProjector());
+  const userInputs = useMemo(
+    () => (input.projection === null ? [] : pendingQuestionRequests(input.projection)),
+    [input.projection],
+  );
 
   // Remember every request this screen showed, so an answered card keeps its
   // place with the answer instead of vanishing under the thumb.
@@ -93,27 +94,21 @@ export function useChatCards(input: {
       (request) => seen.requests.get(request.requestId)?.createdAt !== request.createdAt,
     )
   ) {
-    const requests = new Map<string, PendingUserInput>(sameThread ? seen.requests : []);
+    const requests = new Map<string, QuestionRequest>(sameThread ? seen.requests : []);
     for (const request of userInputs) requests.set(request.requestId, request);
     setSeen({ threadId, requests });
   }
 
-  const questionCards = useMemo(() => {
-    const asked = new Map<string, PendingUserInput>(
-      deriveUserInputHistory(input.activities).map((request) => [
-        request.requestId as string,
-        request,
-      ]),
-    );
-    if (seen.threadId === threadId) {
-      for (const [requestId, request] of seen.requests) {
-        if ((asked.get(requestId)?.createdAt ?? "") < request.createdAt) {
-          asked.set(requestId, request);
-        }
-      }
-    }
-    return deriveQuestionCards(userInputs, asked, deriveUserInputResolutions(input.activities));
-  }, [input.activities, seen, threadId, userInputs]);
+  const questionCards = useMemo(
+    () =>
+      input.projection === null
+        ? []
+        : projectQuestions(
+            input.projection,
+            seen.threadId === threadId ? seen.requests : new Map(),
+          ),
+    [input.projection, projectQuestions, seen, threadId],
+  );
 
   const memoryQuery = native.bots.usePersonalMemoryCards(environmentId, threadId);
   const memoryChanges = useMemo(

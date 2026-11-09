@@ -239,7 +239,7 @@ export function ChatScreen({
     chat,
     environmentId,
     threadId,
-    activities: thread?.activities ?? [],
+    projection: view.projection,
     items,
     bots: list.data?.bots ?? [],
     botName: record?.bot?.name ?? "Bot",

@@ -85,6 +85,7 @@ export function useThreadRef(
 
 export interface ThreadDetailView {
   readonly thread: ChatThread | null;
+  readonly projection: OrchestrationV2ThreadProjection | null;
   readonly status: EnvironmentThreadStatus;
   readonly state: EnvironmentThreadState;
   readonly error: unknown;
@@ -127,5 +128,11 @@ export function useThreadDetailView(
   const status = useAtomValue(ref === null ? emptyStatus : chat.details.statusAtom(ref));
   const state = useAtomValue(ref === null ? emptyState : chat.details.stateAtom(ref));
   const error = useAtomValue(ref === null ? emptyError : chat.details.errorAtom(ref));
-  return { thread, status, state, error };
+  return {
+    thread,
+    projection: rawThread === null ? null : rawThread.projection,
+    status,
+    state,
+    error,
+  };
 }
