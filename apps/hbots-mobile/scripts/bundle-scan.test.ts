@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
+import { duplicatePackages } from "./bundleDuplicates";
 import { ALLOWED_STRINGS, BUNDLE_RULES, scanBundle } from "./bundleScan";
 
 const PACKAGE_ROOT = NodePath.resolve(__dirname, "..");
@@ -55,6 +56,7 @@ describe("bundle scan rules", () => {
 describe("the bundled app", () => {
   let workDir = "";
   let bundle = "";
+  let sources: Array<string> = [];
 
   // oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- bundles the app once for the scan
   beforeAll(() => {
@@ -62,6 +64,7 @@ describe("the bundled app", () => {
     NodeFS.mkdirSync(scratch, { recursive: true });
     workDir = NodeFS.mkdtempSync(NodePath.join(scratch, "bundle-"));
     const output = NodePath.join(workDir, "index.android.bundle");
+    const sourceMap = NodePath.join(workDir, "index.android.bundle.map");
     NodeChildProcess.execFileSync(
       process.execPath,
       [
@@ -75,6 +78,8 @@ describe("the bundled app", () => {
         "index.ts",
         "--bundle-output",
         output,
+        "--sourcemap-output",
+        sourceMap,
         "--assets-dest",
         NodePath.join(workDir, "assets"),
       ],
@@ -85,6 +90,8 @@ describe("the bundled app", () => {
       },
     );
     bundle = NodeFS.readFileSync(output, "latin1");
+    sources = (JSON.parse(NodeFS.readFileSync(sourceMap, "utf8")) as { sources: Array<string> })
+      .sources;
   }, 240_000);
 
   afterAll(() => {
@@ -96,5 +103,10 @@ describe("the bundled app", () => {
   it("is real, and contains no forbidden string beyond the two allowed ones", () => {
     expect(bundle.length).toBeGreaterThan(1_000_000);
     expect(scanBundle(bundle)).toEqual([]);
+  });
+
+  it("resolves every package from a single root", () => {
+    expect(sources.length).toBeGreaterThan(7_000);
+    expect(duplicatePackages(sources)).toEqual([]);
   });
 });

@@ -44,6 +44,10 @@ EXPO_NO_GIT_STATUS=1 npx expo prebuild --clean --platform android
 
 [[ -f $apk ]] || fail "no APK at $apk"
 
+map=$app_dir/android/app/build/generated/sourcemaps/react/release/index.android.bundle.map
+[[ -f $map ]] || fail "no bundle source map at $map"
+node "$app_dir/scripts/check-bundle-duplicates.ts" "$map"
+
 sdk=${ANDROID_HOME:-$HOME/Android/Sdk}
 apksigner=$(find "$sdk/build-tools" -mindepth 2 -maxdepth 2 -name apksigner -type f | sort -V | tail -n 1)
 [[ -x $apksigner ]] || fail "apksigner not found under $sdk/build-tools"
