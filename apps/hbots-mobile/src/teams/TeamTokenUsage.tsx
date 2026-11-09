@@ -2,16 +2,20 @@ import type { PersonalBot, PersonalBotTokenUsageWindowId } from "@t3tools/contra
 import {
   DEFAULT_TOKEN_USAGE_WINDOW,
   TOKEN_USAGE_WINDOWS,
+  buildTokenUsageModelRows,
   formatCostCompact,
   formatIdleBots,
   formatModelsAndShare,
   formatShare,
   formatTokenCount,
+  providerColor,
+  tokenUsageBotButtonLabel,
 } from "@hbots/personal-client/usage/tokenUsagePresentation";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { BotUsageSheet } from "../sheets/BotUsageSheet";
 import { tokens } from "../shell/tokens";
 import { teamUsageModel } from "./teamScreenModel";
 
@@ -21,10 +25,18 @@ const REFRESH_MS = 10 * 60_000;
 const POLL_MS = 4_000;
 const MAX_POLLS = 30;
 
+const USAGE_VIEWS = [
+  { id: "bot", label: "By bot" },
+  { id: "model", label: "By model" },
+] as const;
+
+type UsageView = (typeof USAGE_VIEWS)[number]["id"];
+
 /**
  * Token usage under the team cards, the phone form of the web Team page's
- * table: the range, the total, each provider's share and one row per bot,
- * heaviest first. Every label comes from the shared presentation module.
+ * table: the range, the total and each provider's share. The list shows one
+ * row per bot or, switched, one row per provider and model. A bot row opens
+ * that bot's sheet on the same range.
  */
 export function TeamTokenUsage({
   native,
@@ -32,17 +44,22 @@ export function TeamTokenUsage({
   listedBotIds,
   modelNames,
   nowMs,
+  onOpenChats,
 }: {
   readonly native: NativePersonal;
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly listedBotIds: ReadonlySet<string>;
   readonly modelNames: ReadonlyMap<string, string>;
   readonly nowMs: number;
+  readonly onOpenChats: (botId: string) => void;
 }) {
   const usage = native.bots.usePersonalTokenUsage(native.environmentId);
   const [windowId, setWindowId] = useState<PersonalBotTokenUsageWindowId>(
     DEFAULT_TOKEN_USAGE_WINDOW,
   );
+  const [view, setView] = useState<UsageView>("bot");
+  const [openBotId, setOpenBotId] = useState<string | null>(null);
+  const [openModelKey, setOpenModelKey] = useState<string | null>(null);
   const model = teamUsageModel({
     result: usage.data,
     windowId,
@@ -51,6 +68,17 @@ export function TeamTokenUsage({
     modelNames,
     nowMs,
   });
+  const modelRows = model.table === null ? [] : buildTokenUsageModelRows(model.table);
+  const sheetBot =
+    openBotId === null ? null : (bots.find((bot) => bot.botId === openBotId) ?? null);
+  const selectWindow = (id: PersonalBotTokenUsageWindowId) => {
+    setWindowId(id);
+    setOpenModelKey(null);
+  };
+  const selectView = (id: UsageView) => {
+    setView(id);
+    setOpenModelKey(null);
+  };
 
   useEffect(() => {
     const timer = setInterval(usage.refresh, REFRESH_MS);
@@ -99,7 +127,7 @@ export function TeamTokenUsage({
               accessibilityRole="button"
               accessibilityState={{ selected }}
               accessibilityLabel={range.label}
-              onPress={() => setWindowId(range.id)}
+              onPress={() => selectWindow(range.id)}
               style={[styles.range, selected ? styles.rangeSelected : null]}
             >
               <Text
@@ -154,38 +182,152 @@ export function TeamTokenUsage({
             </View>
 
             <View style={styles.sectionLine} />
-            <Text style={styles.sectionLabel} maxFontSizeMultiplier={1.4}>
-              By bot
-            </Text>
-            <View style={styles.botRows}>
-              {model.table.rows.map((row) => (
-                <View key={row.botId} style={styles.botRow}>
-                  <View style={styles.botRank}>
-                    {row.rank === null ? null : (
-                      <Text style={styles.rankText} maxFontSizeMultiplier={1.3}>
-                        {String(row.rank)}
+            <View style={styles.viewHeader}>
+              <View style={styles.viewSwitch} accessibilityRole="tablist">
+                {USAGE_VIEWS.map((option) => {
+                  const selected = option.id === view;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={option.label}
+                      onPress={() => selectView(option.id)}
+                      style={[styles.viewOption, selected ? styles.viewOptionSelected : null]}
+                    >
+                      <Text
+                        style={[
+                          styles.viewOptionText,
+                          selected ? styles.viewOptionTextSelected : null,
+                        ]}
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        {option.label}
                       </Text>
-                    )}
-                  </View>
-                  <View style={styles.botText}>
-                    <Text style={styles.botName} numberOfLines={1} maxFontSizeMultiplier={1.4}>
-                      {row.name}
-                    </Text>
-                    <Text style={styles.botMeta} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-                      {row.tokens === 0 ? "No use" : formatModelsAndShare(row)}
-                    </Text>
-                  </View>
-                  <View style={styles.botNumbers}>
-                    <Text style={styles.botTokens} maxFontSizeMultiplier={1.3}>
-                      {formatTokenCount(row.tokens)}
-                    </Text>
-                    <Text style={styles.botMeta} maxFontSizeMultiplier={1.3}>
-                      {formatCostCompact(row.cost)}
-                    </Text>
-                  </View>
-                </View>
-              ))}
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {view === "bot" ? (
+                <Text style={styles.viewHint} maxFontSizeMultiplier={1.3}>
+                  Tap a bot for its models
+                </Text>
+              ) : null}
             </View>
+            {view === "bot" ? (
+              <View style={styles.botRows}>
+                {model.table.rows.map((row) => (
+                  <Pressable
+                    key={row.botId}
+                    accessibilityRole="button"
+                    accessibilityLabel={tokenUsageBotButtonLabel(row)}
+                    onPress={() => setOpenBotId(row.botId)}
+                    style={({ pressed }) => [styles.botRow, pressed ? styles.pressed : null]}
+                  >
+                    <View style={styles.botRank}>
+                      {row.rank === null ? null : (
+                        <Text style={styles.rankText} maxFontSizeMultiplier={1.3}>
+                          {String(row.rank)}
+                        </Text>
+                      )}
+                    </View>
+                    <View style={styles.botText}>
+                      <Text style={styles.botName} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+                        {row.name}
+                      </Text>
+                      <Text style={styles.botMeta} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                        {row.tokens === 0 ? "No use" : formatModelsAndShare(row)}
+                      </Text>
+                    </View>
+                    <View style={styles.botNumbers}>
+                      <Text style={styles.botTokens} maxFontSizeMultiplier={1.3}>
+                        {formatTokenCount(row.tokens)}
+                      </Text>
+                      <Text style={styles.botMeta} maxFontSizeMultiplier={1.3}>
+                        {formatCostCompact(row.cost)}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            ) : (
+              <>
+                <View style={styles.modelRows}>
+                  {modelRows.map((row) => {
+                    const expanded = openModelKey === row.key;
+                    const cost = formatCostCompact(row.cost);
+                    const botsLabel = `${String(row.bots.length)} ${
+                      row.bots.length === 1 ? "bot" : "bots"
+                    }`;
+                    return (
+                      <View key={row.key}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityState={{ expanded }}
+                          accessibilityLabel={`${row.label}, ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of bots, ${botsLabel}${cost === "" ? "" : `, ${cost}`}. ${expanded ? "Hide bots" : "Show bots"}`}
+                          onPress={() => setOpenModelKey(expanded ? null : row.key)}
+                          style={({ pressed }) => [
+                            styles.modelRow,
+                            pressed ? styles.pressed : null,
+                          ]}
+                        >
+                          <View
+                            style={[styles.dot, { backgroundColor: providerColor(row.provider) }]}
+                          />
+                          <View style={styles.modelText}>
+                            <Text
+                              style={styles.modelName}
+                              numberOfLines={1}
+                              maxFontSizeMultiplier={1.4}
+                            >
+                              {row.model}
+                            </Text>
+                            <Text
+                              style={styles.modelMeta}
+                              numberOfLines={1}
+                              maxFontSizeMultiplier={1.3}
+                            >
+                              {`${row.providerLabel} · ${botsLabel} · ${formatShare(row.sharePercent)}`}
+                            </Text>
+                          </View>
+                          <View style={styles.modelNumbers}>
+                            <Text style={styles.modelTokens} maxFontSizeMultiplier={1.3}>
+                              {formatTokenCount(row.tokens)}
+                            </Text>
+                            {cost === "" ? null : (
+                              <Text style={styles.modelMeta} maxFontSizeMultiplier={1.3}>
+                                {cost}
+                              </Text>
+                            )}
+                          </View>
+                        </Pressable>
+                        {expanded ? (
+                          <View style={styles.modelBots}>
+                            {row.bots.map((bot) => (
+                              <View key={bot.botId} style={styles.modelBotRow}>
+                                <Text
+                                  style={styles.modelBotName}
+                                  numberOfLines={1}
+                                  maxFontSizeMultiplier={1.4}
+                                >
+                                  {bot.name}
+                                </Text>
+                                <Text style={styles.modelBotTokens} maxFontSizeMultiplier={1.3}>
+                                  {formatTokenCount(bot.tokens)}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+                <Text style={styles.modelNote} maxFontSizeMultiplier={1.4}>
+                  By model counts bot chats only. Outside Bots has no model split.
+                </Text>
+              </>
+            )}
 
             {model.table.idleBotNames.length === 0 ? null : (
               <Text style={styles.idle} maxFontSizeMultiplier={1.4}>
@@ -231,6 +373,19 @@ export function TeamTokenUsage({
           {model.pending ? `${model.updated} · Updating…` : model.updated}
         </Text>
       )}
+
+      <BotUsageSheet
+        visible={openBotId !== null}
+        bot={sheetBot}
+        usage={usage.data}
+        windowId={windowId}
+        onWindowChange={selectWindow}
+        onClose={() => setOpenBotId(null)}
+        onOpenChat={(botId) => {
+          setOpenBotId(null);
+          onOpenChats(botId);
+        }}
+      />
     </View>
   );
 }
@@ -285,7 +440,25 @@ const styles = StyleSheet.create({
   providerName: { color: tokens.text, fontSize: 14 },
   providerValue: { color: tokens.textSecondary, fontSize: 13 },
   sectionLine: { height: StyleSheet.hairlineWidth, backgroundColor: tokens.border, marginTop: 2 },
-  sectionLabel: { color: tokens.textSecondary, fontSize: 13, fontWeight: "500" },
+  viewHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  viewSwitch: {
+    flexDirection: "row",
+    gap: 2,
+    borderRadius: 18,
+    padding: 2,
+    backgroundColor: tokens.fillMuted,
+  },
+  viewOption: {
+    minHeight: 30,
+    paddingHorizontal: 12,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  viewOptionSelected: { backgroundColor: tokens.primary },
+  viewOptionText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "600" },
+  viewOptionTextSelected: { color: tokens.primaryText },
+  viewHint: { flex: 1, color: tokens.textTertiary, fontSize: 11, textAlign: "right" },
   botRows: { gap: 10 },
   botRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   botRank: { width: 16 },
@@ -295,6 +468,37 @@ const styles = StyleSheet.create({
   botMeta: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16 },
   botNumbers: { alignItems: "flex-end" },
   botTokens: { color: tokens.text, fontSize: 14, fontWeight: "600" },
+  modelRows: { gap: 0 },
+  modelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: tokens.border,
+  },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  modelText: { flex: 1, minWidth: 0 },
+  modelName: { color: tokens.text, fontSize: 15, fontWeight: "600" },
+  modelMeta: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16 },
+  modelNumbers: { alignItems: "flex-end" },
+  modelTokens: {
+    color: tokens.text,
+    fontSize: 14,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+  },
+  modelBots: { gap: 3, paddingLeft: 16, paddingBottom: 8 },
+  modelBotRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  modelBotName: { flex: 1, color: tokens.textSecondary, fontSize: 13 },
+  modelBotTokens: { color: tokens.text, fontSize: 13, fontVariant: ["tabular-nums"] },
+  modelNote: { color: tokens.textTertiary, fontSize: 12, lineHeight: 16 },
+  pressed: { opacity: 0.7 },
   idle: { color: tokens.textTertiary, fontSize: 12, lineHeight: 16 },
   split: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16 },
   errorRow: {

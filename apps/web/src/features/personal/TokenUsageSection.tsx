@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 
 import type {
@@ -30,6 +30,7 @@ import {
 } from "./usagePresentation";
 import {
   barWidthPercent,
+  buildTokenUsageModelRows,
   buildTokenUsageTable,
   DEFAULT_TOKEN_USAGE_WINDOW,
   findTokenUsageWindow,
@@ -47,18 +48,27 @@ import {
   TOKEN_USAGE_POLL_MS,
   tokenUsageBotButtonLabel,
   tokenUsageProviderLabel,
+  type TokenUsageModelRowView,
   type TokenUsageRowView,
   type TokenUsageTable,
 } from "./tokenUsagePresentation";
 
 /**
  * Token usage on the Team screen, under the team diagram: the total, who it
- * belongs to by provider, and one row per bot, heaviest first. A bot row opens
- * that bot's sheet (BotUsageSheet) with every model in full; the sheet is
- * driven by `?usage=<botId>` so Back closes it and stays on Team.
+ * belongs to by provider, then one row per bot or one row per provider and
+ * model, heaviest first. A bot row opens that bot's sheet (BotUsageSheet) with
+ * every model in full; the sheet is driven by `?usage=<botId>` so Back closes
+ * it and stays on Team.
  */
 /** The refresh while the card is open: what is shown is never older than this by much. */
 export const TOKEN_USAGE_REFRESH_MS = 10 * 60_000;
+
+const USAGE_VIEWS = [
+  { id: "bot", label: "By bot" },
+  { id: "model", label: "By model" },
+] as const;
+
+type UsageView = (typeof USAGE_VIEWS)[number]["id"];
 
 const pageVisible = (): boolean =>
   typeof document === "undefined" || document.visibilityState !== "hidden";
@@ -86,12 +96,14 @@ export function useTokenUsageRefresh(input: {
   const pollsRef = useRef(0);
   const refreshRef = useRef(input.refresh);
   const updatedRef = useRef(input.dataUpdatedAt);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the timer and visibility callbacks on the latest refresh and data time
   useEffect(() => {
     refreshRef.current = input.refresh;
     updatedRef.current = input.dataUpdatedAt;
   });
   const [visible, setVisible] = useState(pageVisible);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the visibility state and refresh in step with the document's visibilitychange event
   useEffect(() => {
     const onChange = () => {
       const nowVisible = pageVisible();
@@ -104,12 +116,14 @@ export function useTokenUsageRefresh(input: {
     return () => document.removeEventListener("visibilitychange", onChange);
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the ten-minute refresh timer in step with the page's visibility
   useEffect(() => {
     if (!visible) return;
     const timer = window.setInterval(() => refreshRef.current(), TOKEN_USAGE_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [visible]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the poll timer in step with the server's warming or refreshing status
   useEffect(() => {
     if (!isTokenUsagePending(status)) {
       pollsRef.current = 0;
@@ -161,10 +175,7 @@ export function TokenUsageSection({
   // streams: the same figure the usage sheet's DeepSeek card shows, so the two
   // never disagree.
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const balanceLine = useMemo(
-    () => selectDeepSeekBalanceLine(providers, nowMs),
-    [providers, nowMs],
-  );
+  const balanceLine = selectDeepSeekBalanceLine(providers, nowMs);
 
   const sheet = useUsageSheetRoute();
 
@@ -227,20 +238,20 @@ export function TokenUsageCard({
     DEFAULT_TOKEN_USAGE_WINDOW,
   );
   const [noteOpen, setNoteOpen] = useState(false);
+  const [view, setView] = useState<UsageView>("bot");
+  const [openModelKey, setOpenModelKey] = useState<string | null>(null);
   const selected = findTokenUsageWindow(result, windowId);
-  const botById = useMemo(() => new Map(bots.map((bot) => [bot.botId as string, bot])), [bots]);
-  const table = useMemo(
-    () =>
-      selected === null
-        ? null
-        : buildTokenUsageTable({
-            window: selected,
-            bots: bots.map((bot) => ({ botId: bot.botId, name: bot.name })),
-            listedBotIds,
-            modelNames,
-          }),
-    [bots, listedBotIds, modelNames, selected],
-  );
+  const botById = new Map(bots.map((bot) => [bot.botId as string, bot]));
+  const table =
+    selected === null
+      ? null
+      : buildTokenUsageTable({
+          window: selected,
+          bots: bots.map((bot) => ({ botId: bot.botId, name: bot.name })),
+          listedBotIds,
+          modelNames,
+        });
+  const modelRows = table === null ? [] : buildTokenUsageModelRows(table);
   const updated = formatUpdated(result?.readAt ?? null, nowMs);
   const refreshing = result?.status === "refreshing";
   const counting = result?.status === "warming";
@@ -281,7 +292,7 @@ export function TokenUsageCard({
               <div className="flex min-w-0 flex-col">
                 <span
                   data-testid="token-usage-total"
-                  className="text-[32px] leading-9 font-bold tracking-[-0.02em] text-[var(--personal-text)] tabular-nums"
+                  className="text-3xl leading-9 font-bold tracking-tight text-[var(--personal-text)] tabular-nums"
                 >
                   0
                 </span>
@@ -304,18 +315,66 @@ export function TokenUsageCard({
             />
             <ProviderMix table={table} />
             <div className="border-t border-[var(--personal-border)]" />
-            <h3 className="flex items-baseline justify-between gap-3 text-[13px] leading-[18px] font-medium text-[var(--personal-text-secondary)]">
-              <span>By bot</span>
-              <span>tap a bot for its models</span>
-            </h3>
-            <BotRows table={table} botById={botById} onOpenBot={onOpenBot} openBotId={openBotId} />
-            {table.idleBotNames.length === 0 ? null : (
-              <p
-                data-testid="token-usage-idle"
-                className="text-[12px] leading-4 text-[var(--personal-text-tertiary)]"
+            <div className="flex items-center justify-between gap-3">
+              <div
+                role="tablist"
+                aria-label="Show usage by"
+                className="grid grid-cols-2 gap-1 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] p-1"
               >
-                {formatIdleBots(table.idleBotNames)}
-              </p>
+                {USAGE_VIEWS.map((option) => {
+                  const on = option.id === view;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={on}
+                      onClick={() => {
+                        setView(option.id);
+                        setOpenModelKey(null);
+                      }}
+                      data-testid={`token-usage-view-${option.id}`}
+                      className={cn(
+                        "min-h-11 rounded-[8px] px-3 text-[13px] leading-[18px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
+                        on
+                          ? "bg-[var(--personal-primary)] font-semibold text-[var(--personal-primary-text)]"
+                          : "font-medium text-[var(--personal-text-secondary)]",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {view === "bot" ? (
+                <span className="text-[12px] leading-4 text-[var(--personal-text-secondary)]">
+                  tap a bot for its models
+                </span>
+              ) : null}
+            </div>
+            {view === "bot" ? (
+              <>
+                <BotRows
+                  table={table}
+                  botById={botById}
+                  onOpenBot={onOpenBot}
+                  openBotId={openBotId}
+                />
+                {table.idleBotNames.length === 0 ? null : (
+                  <p
+                    data-testid="token-usage-idle"
+                    className="text-[12px] leading-4 text-[var(--personal-text-tertiary)]"
+                  >
+                    {formatIdleBots(table.idleBotNames)}
+                  </p>
+                )}
+              </>
+            ) : (
+              <ByModelRows
+                rows={modelRows}
+                openKey={openModelKey}
+                onToggle={(key) => setOpenModelKey((current) => (current === key ? null : key))}
+              />
             )}
             <div className="flex flex-col gap-2.5 border-t border-[var(--personal-border)] pt-3">
               {selected === null ? null : (
@@ -392,7 +451,7 @@ function UsageHero({
         <div className="flex min-w-0 flex-col">
           <span
             data-testid="token-usage-total"
-            className="text-[32px] leading-9 font-bold tracking-[-0.02em] text-[var(--personal-text)] tabular-nums"
+            className="text-3xl leading-9 font-bold tracking-tight text-[var(--personal-text)] tabular-nums"
           >
             {formatTokenCount(table.total)}
           </span>
@@ -406,11 +465,11 @@ function UsageHero({
             aria-expanded={noteOpen}
             aria-controls="usage-price-note"
             onClick={onToggleNote}
-            className="flex min-h-11 shrink-0 flex-col items-end justify-center rounded-[10px] px-1 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            className="flex min-h-11 shrink-0 flex-col items-end justify-center rounded-[10px] px-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
           >
             <span
               data-testid="token-usage-total-cost"
-              className="text-[20px] leading-6 font-semibold text-[var(--personal-text)] tabular-nums"
+              className="text-xl leading-6 font-semibold text-[var(--personal-text)] tabular-nums"
             >
               {cost}
             </span>
@@ -525,6 +584,112 @@ function BotRows({
 const ROW_GRID =
   "grid min-h-16 w-full grid-cols-[40px_1fr_16px] items-center gap-x-2.5 rounded-[10px] p-2 text-left";
 
+/**
+ * Every bot's models folded into one row per provider and model, heaviest
+ * first. A row expands to the bots that ran it; Outside Bots has no models to
+ * count, so this view is bots only.
+ */
+function ByModelRows({
+  rows,
+  openKey,
+  onToggle,
+}: {
+  readonly rows: ReadonlyArray<TokenUsageModelRowView>;
+  readonly openKey: string | null;
+  readonly onToggle: (key: string) => void;
+}): JSX.Element | null {
+  if (rows.length === 0) return null;
+  return (
+    <>
+      <ul data-testid="token-usage-models" className="-mx-2 flex flex-col">
+        {rows.map((row) => {
+          const expanded = openKey === row.key;
+          const cost = formatCostCompact(row.cost);
+          const botsLabel = `${String(row.bots.length)} ${row.bots.length === 1 ? "bot" : "bots"}`;
+          return (
+            <li key={row.key}>
+              <button
+                type="button"
+                onClick={() => onToggle(row.key)}
+                aria-expanded={expanded}
+                data-model-usage-row={row.key}
+                aria-label={`${row.label}, ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of bots, ${botsLabel}${cost === "" ? "" : `, ${cost}`}. ${expanded ? "Hide bots" : "Show bots"}`}
+                className={cn(
+                  ROW_GRID,
+                  "outline-none active:bg-[var(--personal-fill-muted)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
+                )}
+              >
+                <span aria-hidden="true" className="grid size-10 place-items-center">
+                  <ProviderDot provider={row.provider} />
+                </span>
+                <span aria-hidden="true" className="flex min-w-0 flex-col gap-1.25">
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+                      {row.label}
+                    </span>
+                    <span className="shrink-0 text-[16px] leading-5 font-semibold text-[var(--personal-text)] tabular-nums">
+                      {formatTokenCount(row.tokens)}
+                    </span>
+                  </span>
+                  <span className="flex items-baseline justify-between gap-2 text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
+                    <span>
+                      {botsLabel} · {formatShare(row.sharePercent)}
+                    </span>
+                    {cost === "" ? null : (
+                      <span
+                        data-testid="token-usage-model-cost"
+                        className={cn(
+                          "shrink-0",
+                          row.cost.kind === "unpriced"
+                            ? "text-[var(--personal-text-tertiary)]"
+                            : "",
+                        )}
+                      >
+                        {cost}
+                      </span>
+                    )}
+                  </span>
+                </span>
+                <ChevronRight
+                  aria-hidden="true"
+                  className={cn(
+                    "size-4 text-[var(--personal-text-tertiary)] transition-transform",
+                    expanded ? "rotate-90" : "",
+                  )}
+                  strokeWidth={2}
+                />
+              </button>
+              {expanded ? (
+                <ul
+                  data-testid="token-usage-model-bots"
+                  className="mb-2 ml-[50px] flex flex-col gap-1"
+                >
+                  {row.bots.map((bot) => (
+                    <li
+                      key={bot.botId}
+                      className="flex items-baseline justify-between gap-3 text-[13px] leading-[18px]"
+                    >
+                      <span className="min-w-0 truncate text-[var(--personal-text-secondary)]">
+                        {bot.name}
+                      </span>
+                      <span className="shrink-0 text-[var(--personal-text)] tabular-nums">
+                        {formatTokenCount(bot.tokens)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-[12px] leading-4 text-[var(--personal-text-tertiary)]">
+        By model counts bot chats only. Outside Bots has no model split.
+      </p>
+    </>
+  );
+}
+
 function TokenUsageRow({
   row,
   bot,
@@ -549,7 +714,7 @@ function TokenUsageRow({
       data-bot-usage-row={bot.botId}
       className={cn(
         ROW_GRID,
-        "outline-none active:bg-[var(--personal-fill-muted)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+        "outline-none active:bg-[var(--personal-fill-muted)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
       )}
     >
       <span aria-hidden="true" className="relative grid size-10 place-items-center">
@@ -563,7 +728,7 @@ function TokenUsageRow({
           </span>
         )}
       </span>
-      <span aria-hidden="true" className="flex min-w-0 flex-col gap-[5px]">
+      <span aria-hidden="true" className="flex min-w-0 flex-col gap-1.25">
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
             {bot.name}
@@ -618,7 +783,7 @@ function OutsideBotsRow({
           <Laptop className="size-[18px]" strokeWidth={1.8} />
         </span>
       </span>
-      <span className="flex min-w-0 flex-col gap-[5px]">
+      <span className="flex min-w-0 flex-col gap-1.25">
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
             Outside Bots
@@ -680,7 +845,7 @@ function UsageSkeleton({ counting }: { readonly counting: boolean }): JSX.Elemen
       {[0, 1, 2].map((index) => (
         <div key={index} aria-hidden="true" className="flex min-h-16 items-center gap-3 px-0">
           <div className={cn(block, "size-8 shrink-0 rounded-full")} />
-          <div className="flex flex-1 flex-col gap-[7px]">
+          <div className="flex flex-1 flex-col gap-1.75">
             <div className={cn(block, "h-3.5 w-3/5")} />
             <div className={cn(block, "h-1.5 w-[85%]")} />
           </div>

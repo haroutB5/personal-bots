@@ -37,8 +37,8 @@ function costText(cost: TokenCostView): string {
 }
 
 /**
- * One bot's token use, every model in full. A bottom sheet over the chat: the
- * phone has no Team card to open it from, and the range control is the same.
+ * One bot's token use, every model in full. A bottom sheet over the chat or the
+ * Team card, with the range control the card already shows.
  */
 export function BotUsageSheet({
   visible,
@@ -188,7 +188,7 @@ export function BotUsageSheet({
 
               <Text style={styles.section}>Models</Text>
               {row.models.map((model) => (
-                <View key={`${model.provider}:${model.model}`} style={styles.modelRow}>
+                <View key={`${model.provider}:${model.modelId}`} style={styles.modelRow}>
                   <View style={[styles.dot, { backgroundColor: providerColor(model.provider) }]} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.modelName}>{model.model}</Text>

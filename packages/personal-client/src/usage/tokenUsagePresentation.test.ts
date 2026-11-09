@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   barWidthPercent,
+  buildTokenUsageModelRows,
   buildTokenUsageTable,
   costViewOf,
   findTokenUsageWindow,
@@ -479,6 +480,97 @@ describe("buildTokenUsageTable", () => {
       "Antigravity · Unknown model",
       "Codex · GPT-6.1-Sol",
     ]);
+  });
+});
+
+describe("buildTokenUsageModelRows", () => {
+  const names = new Map([
+    ["claude-opus-5-5", "Claude Opus 5.5"],
+    ["deepseek-flash", "DeepSeek V4.1 Flash"],
+  ]);
+
+  it("folds two bots on the same route into one row, sums its price, and ranks routes by tokens", () => {
+    const table = buildTokenUsageTable({
+      [USAGE_WINDOW_KEY]: windowOf([
+        row("cto", totals(0, 0, 0, 500), 1, [
+          model("claude", "claude-opus-5-5", totals(0, 0, 0, 500), 30, 100),
+        ]),
+        row("backend", totals(0, 0, 0, 300), 1, [
+          model("claude", "claude-opus-5-5", totals(0, 0, 0, 300), 18),
+        ]),
+        row("qa", totals(0, 0, 0, 200), 1, [
+          model("opencode", "deepseek-flash", totals(0, 0, 0, 200), 4),
+        ]),
+      ]),
+      bots: BOTS,
+      listedBotIds: new Set(),
+      modelNames: names,
+    });
+
+    const rows = buildTokenUsageModelRows(table);
+
+    expect(
+      rows.map((entry) => [
+        entry.label,
+        entry.tokens,
+        entry.sharePercent,
+        formatCostCompact(entry.cost),
+        entry.bots.map((bot) => [bot.name, bot.tokens]),
+      ]),
+    ).toEqual([
+      [
+        "Claude · Opus 5.5",
+        800,
+        80,
+        "$48.00+",
+        [
+          ["CTO", 500],
+          ["Backend", 300],
+        ],
+      ],
+      ["OpenCode · DeepSeek V4.1 Flash", 200, 20, "$4.00", [["QA", 200]]],
+    ]);
+  });
+
+  it("keeps the same model id apart when two providers ran it", () => {
+    const table = buildTokenUsageTable({
+      [USAGE_WINDOW_KEY]: windowOf([
+        row("cto", totals(0, 0, 0, 1000), 1, [
+          model("claude", "claude-opus-5-5", totals(0, 0, 0, 600), 30),
+          model("opencode", "claude-opus-5-5", totals(0, 0, 0, 400), 1),
+        ]),
+      ]),
+      bots: BOTS,
+      listedBotIds: new Set(),
+      modelNames: names,
+    });
+
+    expect(
+      buildTokenUsageModelRows(table).map((entry) => [entry.provider, entry.modelId, entry.tokens]),
+    ).toEqual([
+      ["claude", "claude-opus-5-5", 600],
+      ["opencode", "claude-opus-5-5", 400],
+    ]);
+  });
+
+  it("counts only the bots' models, never Outside Bots", () => {
+    const table = buildTokenUsageTable({
+      [USAGE_WINDOW_KEY]: windowOf(
+        [
+          row("cto", totals(0, 0, 0, 100), 1, [
+            model("claude", "claude-opus-5-5", totals(0, 0, 0, 100), 3),
+          ]),
+        ],
+        totals(0, 0, 0, 900),
+      ),
+      bots: BOTS,
+      listedBotIds: new Set(),
+      modelNames: names,
+    });
+
+    expect(
+      buildTokenUsageModelRows(table).map((entry) => [entry.tokens, entry.sharePercent]),
+    ).toEqual([[100, 100]]);
   });
 });
 

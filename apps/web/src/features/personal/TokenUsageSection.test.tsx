@@ -182,6 +182,7 @@ afterEach(async () => {
 const render = async (
   props: Partial<Parameters<typeof TokenUsageCard>[0]> = {},
 ): Promise<ReactTestRenderer> => {
+  // oxlint-disable-next-line t3code/require-disposable-render -- this card's existing react-test-renderer harness owns the act environment for the test
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   await act(async () => {
     renderer = create(
@@ -208,6 +209,10 @@ const textOf = (node: ReactTestInstance): string =>
   node.children.map((child) => (typeof child === "string" ? child : textOf(child))).join("");
 const radios = (tree: ReactTestRenderer) =>
   tree.root.findAll((node) => node.type === "button" && node.props.role === "radio");
+const viewTabs = (tree: ReactTestRenderer) =>
+  tree.root.findAll((node) => node.type === "button" && node.props.role === "tab");
+const modelRows = (tree: ReactTestRenderer) =>
+  tree.root.findAll((node) => node.props["data-model-usage-row"] !== undefined);
 const byTestId = (tree: ReactTestRenderer, id: string) =>
   tree.root.findAll((node) => node.props["data-testid"] === id);
 
@@ -275,6 +280,33 @@ describe("TokenUsageCard", () => {
     expect(rowsOf(tree)[0]!.props["aria-label"]).toBe(
       "CTO, 120.4M tokens, 54% of bots. Show models",
     );
+  });
+
+  it("switches to By model, ranks the bots' models, and expands one model's bots", async () => {
+    const tree = await render({ result: PRICED });
+    expect(viewTabs(tree).map(textOf)).toEqual(["By bot", "By model"]);
+    expect(viewTabs(tree).map((tab) => tab.props["aria-selected"])).toEqual([true, false]);
+
+    await act(async () => viewTabs(tree)[1]!.props.onClick());
+
+    expect(modelRows(tree).map((row) => row.props["data-model-usage-row"])).toEqual([
+      "claude\u0000claude-opus-5-5",
+      "deepseek\u0000deepseek-flash",
+    ]);
+    expect(textOf(modelRows(tree)[0]!)).toContain("1 bot · 47%");
+    expect(textOf(modelRows(tree)[0]!)).toContain("$200.00");
+    expect(textOf(modelRows(tree)[1]!)).toContain("$10.50");
+    expect(byTestId(tree, "token-usage-model-bots")).toHaveLength(0);
+
+    await act(async () => modelRows(tree)[0]!.props.onClick());
+    expect(textOf(byTestId(tree, "token-usage-model-bots")[0]!)).toBe("CTO104.0M");
+    expect(textOf(tree.root.findByType("section"))).toContain(
+      "By model counts bot chats only. Outside Bots has no model split.",
+    );
+
+    await act(async () => viewTabs(tree)[0]!.props.onClick());
+    expect(rowsOf(tree)).toHaveLength(4);
+    expect(modelRows(tree)).toHaveLength(0);
   });
 
   it("shows the headline total and its tokens split, which add up", async () => {

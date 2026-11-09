@@ -29,6 +29,14 @@ export function botsHomeState(input: {
   return input.query.trim().length > 0 ? "no-match" : "empty";
 }
 
+/** The Groups section exists only when there is a group to draw; the + makes one. */
+export function groupsSectionVisible(input: {
+  readonly groups: number;
+  readonly archived: number;
+}): boolean {
+  return input.groups > 0 || input.archived > 0;
+}
+
 /** What tapping a bot opens: its newest chat, or a fresh chat when it has none. */
 export type BotTapTarget =
   | { readonly kind: "chat"; readonly threadId: string }

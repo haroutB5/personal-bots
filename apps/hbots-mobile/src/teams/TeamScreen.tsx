@@ -54,6 +54,7 @@ export function TeamScreen({
   onOpenBot,
   onOpenTask,
   onOpenChat,
+  onOpenChats,
 }: {
   readonly native: NativePersonal;
   readonly onBack: () => void;
@@ -62,6 +63,7 @@ export function TeamScreen({
   readonly onOpenBot: (botId: string) => void;
   readonly onOpenTask: (taskId: string) => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
+  readonly onOpenChats: (botId: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId;
@@ -393,6 +395,7 @@ export function TeamScreen({
               listedBotIds={listedBotIds}
               modelNames={modelNames}
               nowMs={now}
+              onOpenChats={onOpenChats}
             />
           </>
         )}

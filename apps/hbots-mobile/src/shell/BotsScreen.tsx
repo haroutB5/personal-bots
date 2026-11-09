@@ -54,7 +54,7 @@ import type { UpdateSnapshot } from "../updater";
 import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
-import { botsHomeState, botTapTarget } from "./botsHomeState";
+import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
@@ -315,7 +315,6 @@ export function BotsScreen({
   onOpenChat,
   onOpenChats,
   onOpenGroup,
-  onNewGroup,
   onOpenTeam,
   onOpenSettings,
 }: {
@@ -327,7 +326,6 @@ export function BotsScreen({
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
   readonly onOpenGroup: (groupId: string) => void;
-  readonly onNewGroup: () => void;
   readonly onOpenTeam: () => void;
   readonly onOpenSettings: () => void;
 }) {
@@ -353,6 +351,10 @@ export function BotsScreen({
       nowMs: now,
     });
   }, [groupsFeed, groupsList.data, list.data?.bots, now]);
+  const showGroups = groupsSectionVisible({
+    groups: groupSections.groups.length,
+    archived: groupSections.archived.length,
+  });
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [actionBot, setActionBot] = useState<BotSummary | null>(null);
@@ -721,24 +723,11 @@ export function BotsScreen({
           </View>
         ) : null}
 
-        {loaded ? (
+        {loaded && showGroups ? (
           <View style={styles.groupsSection}>
             <View style={styles.groupsHeadingRow}>
               <Text style={styles.groupsHeading}>Groups</Text>
-              <Pressable
-                onPress={onNewGroup}
-                accessibilityRole="button"
-                accessibilityLabel="New group"
-                style={styles.groupsNewButton}
-              >
-                <Text style={styles.groupsNewText}>New</Text>
-              </Pressable>
             </View>
-            {groupSections.groups.length === 0 ? (
-              <Text style={styles.groupsEmpty}>
-                Start a group when two bots should answer in the same conversation.
-              </Text>
-            ) : null}
             {groupSections.groups.map((row) => (
               <GroupChatRow
                 key={row.groupId}
@@ -1191,20 +1180,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textTransform: "uppercase",
     letterSpacing: 0.4,
-  },
-  groupsNewButton: {
-    minHeight: 32,
-    paddingHorizontal: 10,
-    borderRadius: 16,
-    justifyContent: "center",
-  },
-  groupsNewText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "600" },
-  groupsEmpty: {
-    color: tokens.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    paddingHorizontal: 4,
-    paddingBottom: 4,
   },
   groupsArchivedLabel: {
     color: tokens.textSecondary,

@@ -251,6 +251,8 @@ export interface TokenUsageModelView {
   readonly provider: UsageProviderKind;
   /** The provider's short name: "Claude", "Codex", "OpenCode". */
   readonly providerLabel: string;
+  /** The id the provider reports. The route identity is provider plus this id. */
+  readonly modelId: string;
   /** The model as the picker names it, e.g. "Opus 5.5", "V4.1 Flash". */
   readonly model: string;
   /** The line as drawn: "DeepSeek · V4.1 Flash". */
@@ -259,6 +261,8 @@ export interface TokenUsageModelView {
   /** Share of the bot's own tokens, 0 to 100. */
   readonly sharePercent: number;
   readonly cost: TokenCostView;
+  /** Tokens of this route with no price, so several bots' costs add up exactly. */
+  readonly unpricedTokens: number;
   /** New input, cached input and output of this route. They add up to `tokens`. */
   readonly split: TokenSplit;
 }
@@ -470,6 +474,95 @@ export function buildTokenUsageTable(input: {
   };
 }
 
+/** One bot's part of a provider+model route in the By model view. */
+export interface TokenUsageModelBotView {
+  readonly botId: string;
+  readonly name: string;
+  readonly tokens: number;
+}
+
+/** One provider+model route across every bot, for the usage card's By model view. */
+export interface TokenUsageModelRowView {
+  /** Provider plus the raw model id: the route identity. */
+  readonly key: string;
+  readonly provider: UsageProviderKind;
+  readonly providerLabel: string;
+  readonly modelId: string;
+  readonly model: string;
+  readonly label: string;
+  readonly tokens: number;
+  /** Share of what the bots used in the window (Outside Bots left out), 0 to 100. */
+  readonly sharePercent: number;
+  readonly cost: TokenCostView;
+  /** The bots that used the route, most tokens first. */
+  readonly bots: ReadonlyArray<TokenUsageModelBotView>;
+}
+
+/**
+ * The window's bot rows folded into one row per provider and raw model id, the
+ * By model view. Only bot chats are counted: Outside Bots has no model split.
+ * A route's cost adds its priced parts and keeps the "+" when some of its
+ * tokens have no price.
+ */
+export function buildTokenUsageModelRows(
+  table: TokenUsageTable,
+): ReadonlyArray<TokenUsageModelRowView> {
+  const routes = new Map<
+    string,
+    {
+      provider: UsageProviderKind;
+      providerLabel: string;
+      modelId: string;
+      model: string;
+      label: string;
+      tokens: number;
+      costUsd: number;
+      unpricedTokens: number;
+      bots: TokenUsageModelBotView[];
+    }
+  >();
+  for (const row of table.rows) {
+    for (const model of row.models) {
+      const key = `${model.provider}\u0000${model.modelId}`;
+      const route = routes.get(key) ?? {
+        provider: model.provider,
+        providerLabel: model.providerLabel,
+        modelId: model.modelId,
+        model: model.model,
+        label: model.label,
+        tokens: 0,
+        costUsd: 0,
+        unpricedTokens: 0,
+        bots: [],
+      };
+      route.tokens += model.tokens;
+      if (model.cost.kind === "priced" || model.cost.kind === "partial") {
+        route.costUsd += model.cost.usd;
+      }
+      route.unpricedTokens += model.unpricedTokens;
+      route.bots.push({ botId: row.botId, name: row.name, tokens: model.tokens });
+      routes.set(key, route);
+    }
+  }
+  return [...routes.entries()]
+    .map(([key, route]): TokenUsageModelRowView => ({
+      key,
+      provider: route.provider,
+      providerLabel: route.providerLabel,
+      modelId: route.modelId,
+      model: route.model,
+      label: route.label,
+      tokens: route.tokens,
+      sharePercent: share(route.tokens, table.botsTotal),
+      cost: costViewOf(route.tokens, {
+        costUsd: route.costUsd,
+        unpricedTokens: route.unpricedTokens,
+      }),
+      bots: route.bots.toSorted((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name)),
+    }))
+    .toSorted((a, b) => b.tokens - a.tokens || a.label.localeCompare(b.label));
+}
+
 /** A bot's provider+model lines, heaviest first, each with its own price. */
 function modelViewsOf(
   models: ReadonlyArray<PersonalBotTokenUsageModel>,
@@ -484,11 +577,13 @@ function modelViewsOf(
       return {
         provider: entry.provider,
         providerLabel: provider,
+        modelId: entry.model,
         model,
         label: `${provider} · ${withoutProviderPrefix(provider, model)}`,
         tokens,
         sharePercent: share(tokens, botTokens),
         cost: costViewOf(tokens, entry),
+        unpricedTokens: entry.unpricedTokens,
         split: splitOf(entry.totals),
       };
     })

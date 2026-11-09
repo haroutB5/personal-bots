@@ -399,6 +399,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
               onOpenTask={(taskId) => navigation.navigate("Task", { taskId })}
               onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
             />
           )}
         </Stack.Screen>
@@ -558,7 +559,6 @@ function TabsWithBots({
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
             onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
             onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
-            onNewGroup={() => navigation.navigate("GroupNew")}
             onOpenTeam={() => navigation.navigate("Team")}
             onOpenSettings={() => navigation.navigate("Settings")}
           />
