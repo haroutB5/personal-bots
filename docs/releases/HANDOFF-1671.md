@@ -6,6 +6,8 @@ Based on 1.67.0 (`9a19f3f7538c`). Branch `release/hbots-1.67.1`. No migration; t
 
 1.67.0 put the server on the v2 orchestrator. This release closes the phone gaps that showed up after that move and hardens the release tools. Files, reply choices and photos now open from the phone, the tab-hold menu targets the chat it names, question cards come from the v2 projection, and usage can be read by model. On the tooling side a release gate resolves its own `vp`, heavy jobs are capped so they cannot starve the live server, the release fixture reaper is fixed, and the runner gained an opt-in `--compact-db` step.
 
+The first 1.67.1 cut rolled back on `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`, a defect inherited from 1.67.0: the v2 adapter lost the SDK warning filter in the orchestrator move. This cut restores it and is the only runtime change since that cut.
+
 ## What changed
 
 - **Phone file and photo controls.** File paths render as compact chips. A reply with choices draws tap-to-send buttons at the reply width. The composer's plus button opens the photo picker, and the paperclip opens a sheet with clear load states. Text files read through the project file RPC.
@@ -18,6 +20,7 @@ Based on 1.67.0 (`9a19f3f7538c`). Branch `release/hbots-1.67.1`. No migration; t
 - **Heavy-job caps.** Heavy jobs are hard-capped at 6G RAM and 4G swap inside their own scope, so an over-limit job is OOM-killed instead of starving `hbots.service`. Gradle APK builds pass `HEAVY_JOB_MEMORY_MAX=7G HEAVY_JOB_SWAP_MAX=8G` on that call only.
 - **Release fixture reaper.** Fixtures are staged before rename and their units are tagged by cache, so two caches never reap each other's fixtures.
 - **Opt-in `--compact-db`.** The runner can VACUUM the live state database inside the stopped backup window. This release does not pass it; Harout has not approved the stopped window.
+- **SDK warning filter restored on the v2 adapter.** `ClaudeAdapterV2` calls `installClaudeSdkWarningFilter()` at load, as the v1 adapter did before the v2 move. Without it every `bypassPermissions` session logs `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` and the runner's log scan rolls the release back. A regression test asserts the filter is installed after the module loads.
 
 ## Verification
 
@@ -41,7 +44,7 @@ Binary only. The previous release is `9a19f3f7538c` (1.67.0). No migration runs,
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=3b841ee4a094723c6b147f04bfa528a94e154772 release=3b841ee4a094 json-sha256=e469bc88a072eee64771ddadc97866a8dbd2894f9a8d184998115a40424bcd64 result=PASS -->
+<!-- gate-evidence:begin sha=75ed700a7ae5405ebe46a81acd01634835d8bd47 release=75ed700a7ae5 json-sha256=84857d65d1eb89e88dc55299044ac52f54c3f37e9423d7a03cc275898eb0c9ad result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
