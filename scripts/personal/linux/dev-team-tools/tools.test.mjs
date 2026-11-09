@@ -161,6 +161,19 @@ test('staging wrapper uses build and copied externals without activation',()=>{
  try {fs.mkdirSync(path.join(root,'scripts/personal/node'),{recursive:true});fs.writeFileSync(path.join(root,'scripts/personal/node/hbots.mjs'),"console.log(JSON.stringify(process.argv.slice(2)));process.exitCode=17");const r=run('bash',[path.join(here,'build.sh'),root],{env:jobEnv(lockBase())});assert.equal(r.status,17,r.stderr);assert.deepEqual(JSON.parse(r.stdout),['build','--copy-externals'])}finally{fs.rmSync(root,{recursive:true,force:true})}
 });
 
+test('startup scan requires the Claude SDK warning filter marker',async()=>{
+ const {checksB}=await import('../hbots-release/lib/verify.mjs');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-marker-log-'));
+ try{
+  const log=path.join(dir,'server.log');
+  const stall="[10:00:00.000] INFO (#1): stall recorder on profiler: 'continuous'";
+  fs.writeFileSync(log,`${stall}\n`);
+  const check=()=>checksB({}, {'migration-before':'1','migration-after':'1'}, {serverLog:log,logByte:0}, {}, ()=>{});
+  assert.throws(check,/Claude SDK warning filter startup marker absent/);
+  fs.writeFileSync(log,`${stall}\nclaude sdk warning filter installed\n`);
+  assert.doesNotThrow(check);
+ }finally{fs.rmSync(dir,{recursive:true,force:true})}
+});
 test('restore staging copies every database in the backup and nothing else',async()=>{
  const {stageDatabases}=await import('./restore-test.mjs');
  const {DatabaseSync}=await import('node:sqlite');

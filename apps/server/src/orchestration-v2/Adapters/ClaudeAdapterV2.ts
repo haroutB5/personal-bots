@@ -253,6 +253,7 @@ import { installClaudeSdkWarningFilter } from "../../provider/Layers/claudeSdkWa
 // call, so every bypassPermissions session logged the harmless
 // CLAUDE_SDK_CAN_USE_TOOL_SHADOWED warning and the release runner rolled back.
 installClaudeSdkWarningFilter();
+console.info("claude sdk warning filter installed");
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
