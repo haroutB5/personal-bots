@@ -4,31 +4,52 @@ import ReactDOM from "react-dom/client";
 import "@fontsource-variable/inter";
 import "./index.css";
 
+import { MANAGED_AUTH_SKIPPED } from "./cloud/managedAuthBoot";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { checkStaleReleaseAtBoot } from "./features/personal/staleRelease";
+import { chunkRecovery } from "./lib/chunkLoadRecovery";
+import { clearChunkReloadGuard } from "./lib/chunkReloadGuard";
+import { installRouterChunkReloadGuard } from "./lib/routerChunkReloadGuard";
 
 const router = startAppServices();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
-let chunkLoadFailed = false;
+// Set when a reload is on its way, so the boot below skips painting this page.
 let reloadScheduled = false;
-window.addEventListener("vite:preloadError", (event) => {
-  chunkLoadFailed = true;
-  if (reloadOnceForChunkLoadError()) {
+
+// The first open after a release boots the previous client from the saved shell; go straight to the new one.
+if (!isElectron) {
+  void checkStaleReleaseAtBoot(() => {
     reloadScheduled = true;
-    event.preventDefault();
-  }
+  });
+}
+
+// A failed chunk usually means a deploy went stale; reload only while the server answers (lib/chunkLoadRecovery).
+let chunkLoadFailed = false;
+let reloadStarted = false;
+window.addEventListener("vite:preloadError", () => {
+  chunkLoadFailed = true;
+  const outcome = chunkRecovery().onPreloadError();
+  if (outcome.kind !== "check") return;
+  reloadScheduled = true;
+  void outcome.settled.then((result) => {
+    if (result === "reloaded") reloadStarted = true;
+    else if (!reloadStarted) reloadScheduled = false;
+  });
 });
+
+// The router's own reload for a missing route chunk gets the same rule.
+installRouterChunkReloadGuard(() => chunkRecovery().away());
 
 const app = <AppRoot router={router} />;
 
 // Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
 const managedAuthShellModule =
-  clerkPublishableKey && hasCloudPublicConfig()
+  clerkPublishableKey && hasCloudPublicConfig() && !MANAGED_AUTH_SKIPPED
     ? isElectron
       ? import("./components/clerk/ElectronManagedAuthShell")
       : import("./components/clerk/BrowserManagedAuthShell")
@@ -38,7 +59,9 @@ export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
   router.load(),
 ])
-  .then(([ManagedAuthShell]) => {
+  .then(async ([ManagedAuthShell]) => {
+    // A chunk that failed during load is still being judged: paint once it is known whether a reload is coming.
+    await chunkRecovery().idle();
     // Route chunk failures resolve router.load() and surface later through the error boundary.
     if (reloadScheduled) return;
     if (!chunkLoadFailed) clearChunkReloadGuard();

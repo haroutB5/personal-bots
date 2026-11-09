@@ -52,6 +52,17 @@ import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { startWorkspaceFocus } from "./lib/workspaceFocus";
 import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
+import { keepBotsBehindChats } from "./features/personal/botsBackStack";
+import {
+  browserLocalStorage,
+  resumeLastChatAtBoot,
+  trackLastChat,
+} from "./features/personal/resumeLastChat";
+import {
+  isStandaloneDisplay,
+  registerPersonalServiceWorker,
+} from "./features/personal/serviceWorker";
+import { collapseBeforeNavigating, installOverlayBack } from "./lib/overlayBack";
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells } from "./state/threads";
 import { resolveThreadRouteTarget } from "./threadRoutes";
@@ -169,7 +180,29 @@ export function startAppServices(): AppRouter {
   startProviderAuthDelivery();
 
   // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-  const router = getRouter(isElectron ? createHashHistory() : createBrowserHistory());
+  const baseHistory = isElectron ? createHashHistory() : createBrowserHistory();
+  // Personal: a relaunch of the installed app at /bots reopens the chat that was open when it was evicted.
+  const resumedChat = isElectron
+    ? null
+    : resumeLastChatAtBoot(baseHistory, {
+        storage: browserLocalStorage(),
+        now: Date.now(),
+        standalone: isStandaloneDisplay(),
+      });
+  // Personal: going back from any bot chat lands on /bots, and Android Back closes an open sheet first.
+  const history = keepBotsBehindChats(baseHistory);
+  const overlayBack = isElectron ? null : installOverlayBack();
+  if (overlayBack !== null) collapseBeforeNavigating(history, overlayBack);
+  if (!isElectron) {
+    trackLastChat(history, { storage: browserLocalStorage(), now: Date.now, document, window });
+  }
+  const router = getRouter(history);
+
+  // Production builds on secure origins only: offline app shell and push clicks.
+  registerPersonalServiceWorker((path) => router.history.push(path), {
+    route: router.matchRoutes(router.history.location.pathname, {}).at(-1)?.fullPath ?? null,
+    resumed: resumedChat !== null,
+  });
 
   if (isElectron) {
     syncDocumentElectronPlatformClasses(navigator.platform);
