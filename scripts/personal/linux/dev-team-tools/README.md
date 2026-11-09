@@ -34,10 +34,15 @@ The file's text identifies the last holder; it is current only while locked.
 `HEAVY_JOB_BASE` moves the whole set (tests only). The wrapper sets absolute
 nice 10 and ionice idle. Nested calls retaining fds 8 and 9 reuse both locks.
 Do not detach a job inside the wrapper. The job runs in its own user scope
-(`heavy-job-PID.scope`, CPUWeight 20) with a soft `MemoryHigh` of 5G: past it
-the kernel reclaims from the job and slows it, it is never killed, and the live
-server keeps its pages. Set `HEAVY_JOB_MEMORY_HIGH=6G` for a bigger job or `off`
-for the old behaviour; without `systemd-run --user` it warns and runs unscoped.
+(`heavy-job-PID.scope`, CPUWeight 20) with a soft `MemoryHigh` of 5G, a hard
+`MemoryMax` of 6G and a hard `MemorySwapMax` of 4G. Past MemoryHigh the kernel
+reclaims from the job and slows it; past the hard caps it kills the job inside
+the scope, so a runaway build or emulator cannot push the box to 90% swap. Two
+jobs at both limits leave room for the hbots server. Each cap takes a size such
+as 8G, or `off`: `HEAVY_JOB_MEMORY_HIGH`, `HEAVY_JOB_MEMORY_MAX`,
+`HEAVY_JOB_SWAP_MAX`. Raise the hard caps for a known-big job such as an
+emulator. `HEAVY_JOB_MEMORY_HIGH=off` runs unscoped, and without
+`systemd-run --user` the wrapper warns and runs unscoped.
 
 Gate definitions use the PowerShell shape, with POSIX shell commands:
 `[{"id":"server-tests","kind":"vitest","cwd":"apps/server","commands":["vp test run src/personal src/mcp"]}, ...]`.

@@ -24,6 +24,40 @@ test('job runs in its own scope with a soft MemoryHigh; off is the kill switch',
  const bad=run('bash',[path.join(here,'heavy-job.sh'),'--label','test bad','--','true'],{env:jobEnv(lockBase(),{HEAVY_JOB_MEMORY_HIGH:'lots'})});
  assert.equal(bad.status,2);
 });
+test('hard caps default to 6G RAM and 4G swap and take per-job overrides',()=>{
+ const caps=(extra={})=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-caps-')),bin=path.join(dir,'bin'),args=path.join(dir,'args');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin,'systemd-run'),'#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$SYSTEMD_RUN_ARGS"\n',{mode:0o755});
+  const r=run('bash',[path.join(here,'heavy-job.sh'),'--label','caps test','--','bash','-c','echo job-ran'],{env:{...process.env,HEAVY_JOB_BASE:path.join(dir,'gate'),HEAVY_JOB_SLOTS:'1',SYSTEMD_RUN_ARGS:args,PATH:`${bin}:${process.env.PATH}`,...extra}});
+  return {r,argv:fs.existsSync(args)?fs.readFileSync(args,'utf8').trim().split('\n'):[]};
+ };
+ const pick=(argv,key)=>{const out=[];for(let i=0;i<argv.length-1;i++)if(argv[i]==='-p'&&argv[i+1].startsWith(`${key}=`))out.push(argv[i+1]);return out};
+ const defaults=caps();
+ assert.equal(defaults.r.status,0,defaults.r.stderr);
+ assert.deepEqual(pick(defaults.argv,'MemoryHigh'),['MemoryHigh=5G']);
+ assert.deepEqual(pick(defaults.argv,'MemoryMax'),['MemoryMax=6G']);
+ assert.deepEqual(pick(defaults.argv,'MemorySwapMax'),['MemorySwapMax=4G']);
+ assert.deepEqual(pick(defaults.argv,'CPUWeight'),['CPUWeight=20']);
+ assert.equal(defaults.argv.at(-1),'echo job-ran');
+ assert.match(defaults.r.stderr,/MemoryHigh 5G, MemoryMax 6G, MemorySwapMax 4G/);
+ const custom=caps({HEAVY_JOB_MEMORY_HIGH:'4G',HEAVY_JOB_MEMORY_MAX:'8G',HEAVY_JOB_SWAP_MAX:'6G'});
+ assert.equal(custom.r.status,0,custom.r.stderr);
+ assert.deepEqual(pick(custom.argv,'MemoryHigh'),['MemoryHigh=4G']);
+ assert.deepEqual(pick(custom.argv,'MemoryMax'),['MemoryMax=8G']);
+ assert.deepEqual(pick(custom.argv,'MemorySwapMax'),['MemorySwapMax=6G']);
+ const off=caps({HEAVY_JOB_MEMORY_MAX:'off',HEAVY_JOB_SWAP_MAX:'off'});
+ assert.equal(off.r.status,0,off.r.stderr);
+ assert.deepEqual(pick(off.argv,'MemoryHigh'),['MemoryHigh=5G']);
+ assert.deepEqual(pick(off.argv,'MemoryMax'),[]);
+ assert.deepEqual(pick(off.argv,'MemorySwapMax'),[]);
+ assert.match(off.r.stderr,/MemoryMax off, MemorySwapMax off/);
+ for(const bad of [{HEAVY_JOB_MEMORY_MAX:'lots'},{HEAVY_JOB_SWAP_MAX:'0'}]) {
+  const r=caps(bad);
+  assert.equal(r.r.status,2);
+  assert.match(r.r.stderr,/must be off or a size/);
+ }
+});
 test('contending lock reports holder and times out',async()=>{
  const base=lockBase();
  const env=jobEnv(base,{HEAVY_JOB_SLOTS:'1'});
