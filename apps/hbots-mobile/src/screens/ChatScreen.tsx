@@ -14,6 +14,7 @@ import {
   IconChevronLeft,
   IconDeviceLaptop,
   IconDots,
+  IconPlus,
   IconSearch,
   IconX,
 } from "@tabler/icons-react-native";
@@ -60,7 +61,7 @@ import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
 import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
-import { buildChatChips, chatHeaderModel, findChatBot } from "../chat/chatModel";
+import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
 import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
@@ -261,16 +262,7 @@ export function ChatScreen({
           }),
     [cards.items, thread],
   );
-  const usedTokens = useMemo(() => {
-    if (thread === null) return null;
-    for (let index = thread.activities.length - 1; index >= 0; index -= 1) {
-      const activity = thread.activities[index];
-      if (activity?.kind !== "context-window.updated") continue;
-      const payload = activity.payload as { readonly usedTokens?: unknown } | null;
-      if (typeof payload?.usedTokens === "number") return payload.usedTokens;
-    }
-    return null;
-  }, [thread]);
+  const contextUsage = useMemo(() => chatContextUsage(view.projection), [view.projection]);
   const providerWait = providerWaitState(thread?.session ?? null) !== null;
   const cachedBot = useMemo(
     () =>
@@ -287,7 +279,7 @@ export function ChatScreen({
     latestTurn: thread?.latestTurn ?? null,
     activities: thread?.activities ?? [],
     providers,
-    usedTokens,
+    contextUsage,
     nowMs: now,
     fallbackBotName: cachedBot?.name ?? null,
   });
@@ -652,9 +644,6 @@ export function ChatScreen({
                   >
                     {header.chatTitle}
                   </Text>
-                  {header.contextBadge !== null ? (
-                    <Text style={styles.contextBadge}>{header.contextBadge}</Text>
-                  ) : null}
                 </View>
                 {thread !== null ? (
                   <View style={styles.subtitleRow}>
@@ -669,6 +658,16 @@ export function ChatScreen({
                         {header.state === "idle" ? header.modelLabel : ` · ${header.modelLabel}`}
                       </Text>
                     ) : null}
+                    {header.contextBadge !== null ? (
+                      <Text
+                        style={styles.contextBadge}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={1.2}
+                        accessibilityLabel={`Context ${header.contextBadge} tokens`}
+                      >
+                        {header.contextBadge}
+                      </Text>
+                    ) : null}
                   </View>
                 ) : null}
               </View>
@@ -679,6 +678,14 @@ export function ChatScreen({
             </View>
           )}
 
+          <Pressable
+            onPress={() => setNewChatOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`New chat with ${header.botName}`}
+            style={styles.iconButton}
+          >
+            <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
+          </Pressable>
           <Pressable
             onPress={() => setMenuOpen(true)}
             accessibilityRole="button"
@@ -1149,10 +1156,11 @@ const styles = StyleSheet.create({
     borderColor: tokens.borderStrong,
     borderRadius: 999,
     paddingHorizontal: 5,
+    flexShrink: 0,
   },
-  subtitleRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  subtitleRow: { flexDirection: "row", alignItems: "center", gap: 5, minWidth: 0 },
   stateDot: { width: 7, height: 7, borderRadius: 999 },
-  subtitle: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17 },
+  subtitle: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
   modelLabel: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
   iconButton: { width: 42, height: 44, alignItems: "center", justifyContent: "center" },
   chipScroll: { height: 48, flexGrow: 0 },

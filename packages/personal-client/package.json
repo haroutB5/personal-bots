@@ -173,6 +173,10 @@
       "types": "./src/conversation/conversationModel.ts",
       "import": "./src/conversation/conversationModel.ts"
     },
+    "./conversation/contextWindowTokens": {
+      "types": "./src/conversation/contextWindowTokens.ts",
+      "import": "./src/conversation/contextWindowTokens.ts"
+    },
     "./conversation/choices": {
       "types": "./src/conversation/choices.ts",
       "import": "./src/conversation/choices.ts"

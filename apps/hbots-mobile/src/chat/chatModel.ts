@@ -2,11 +2,16 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type OrchestrationSession,
+  type OrchestrationV2ThreadProjection,
   type PersonalBot,
   type PersonalBotThread,
   type ServerProvider,
   botEffectiveModelSelection,
 } from "@t3tools/contracts";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+} from "@t3tools/client-runtime/state/context-window";
 import * as DateTime from "effect/DateTime";
 import type {
   EnvironmentThreadShell,
@@ -22,6 +27,7 @@ import {
   isTurnThinking,
   type ConversationState,
 } from "@hbots/personal-client/conversation/conversationModel";
+import { formatContextWindowTokens } from "@hbots/personal-client/conversation/contextWindowTokens";
 
 export interface ChatBotRecord {
   readonly bot: PersonalBot;
@@ -55,17 +61,52 @@ export function findChatBot(
   return { bot, link, shell };
 }
 
-export function latestUsedTokens(
-  activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
-): number | null {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
-    if (activity === undefined || activity.kind !== "context-window.updated") continue;
-    if (typeof activity.payload !== "object" || activity.payload === null) continue;
-    const used = (activity.payload as { readonly usedTokens?: unknown }).usedTokens;
-    if (typeof used === "number" && Number.isFinite(used) && used > 0) return used;
-  }
-  return null;
+/** The open chat's context use, in tokens, with the window size when the provider reports one. */
+export interface ChatContextUsage {
+  readonly usedTokens: number;
+  readonly maxTokens: number | null;
+}
+
+/**
+ * The chat's context use from the v2 projection, the source the web composer
+ * reads. The active provider thread's own report wins, then its newest turn's
+ * usage, then the last compaction's token count. Null when the chat has never
+ * reported one.
+ */
+export function chatContextUsage(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "contextTransfers" | "providerThreads" | "providerTurns" | "visibleTurnItems"
+  > | null,
+): ChatContextUsage | null {
+  if (projection === null) return null;
+  const providerThread =
+    projection.providerThreads.find(
+      (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+    ) ?? null;
+  const live = latestProviderTurnTokenUsage(projection.providerTurns, projection, providerThread);
+  const snapshot = deriveLatestContextWindowSnapshot(
+    projection.visibleTurnItems,
+    live,
+    providerThread,
+  );
+  if (snapshot === null) return null;
+  const rawMaxTokens = snapshot.maxTokens;
+  const maxTokens =
+    typeof rawMaxTokens === "number" && Number.isFinite(rawMaxTokens) && rawMaxTokens > 0
+      ? rawMaxTokens
+      : null;
+  return { usedTokens: snapshot.usedTokens, maxTokens };
+}
+
+/** "84k / 1m" with the window size, "84k" when the window is unknown, null before any report. */
+export function contextUsageLabel(usage: ChatContextUsage | null): string | null {
+  if (usage === null) return null;
+  const used = contextBadgeLabel(usage.usedTokens);
+  if (used === null) return null;
+  return usage.maxTokens === null
+    ? used
+    : `${used} / ${formatContextWindowTokens(usage.maxTokens)}`;
 }
 
 export function chatHeaderModel(input: {
@@ -81,7 +122,7 @@ export function chatHeaderModel(input: {
     readonly turnId: string | null;
   }>;
   readonly providers: ReadonlyArray<ServerProvider>;
-  readonly usedTokens: number | null;
+  readonly contextUsage: ChatContextUsage | null;
   readonly nowMs: number;
   /** The last list's name for this bot, used when the live list is offline. */
   readonly fallbackBotName?: string | null;
@@ -104,7 +145,7 @@ export function chatHeaderModel(input: {
     chatTitle: conversationChatTitle(input.title),
     muted: mute.muted,
     muteLabel: mute.muted ? mutedUntilLabel(mute, input.nowMs) : null,
-    contextBadge: contextBadgeLabel(input.usedTokens),
+    contextBadge: contextUsageLabel(input.contextUsage),
     state,
     stateLabel: conversationHeaderStateLabel({
       state,
