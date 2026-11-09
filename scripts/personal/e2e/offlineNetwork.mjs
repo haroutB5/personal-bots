@@ -24,6 +24,7 @@ import {
   newChatOnBotScreen,
   openBots,
   pairContext,
+  recordEveryResource,
   transcript,
 } from "./lib.mjs";
 import { sendButton, typeAndSend, userMessages, waitingRows } from "./offlineQueue.mjs";
@@ -93,6 +94,7 @@ async function expectNoFallback(page) {
 async function warmChat(page, origin, title) {
   await openBots(page, origin);
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  await recordEveryResource(page);
   await page.reload({ waitUntil: "load" });
   await page.getByLabel("Search bots and chats").waitFor({ state: "visible" });
   await expect

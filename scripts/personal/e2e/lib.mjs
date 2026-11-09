@@ -78,6 +78,15 @@ export async function pairContext(browser, origin, pairUrl) {
   return state;
 }
 
+/**
+ * Keeps a resource timing entry for every request the page makes. Browsers keep 250 by default and
+ * drop the rest, and the Bots boot alone makes more than that, so a lazy chunk fetched after the boot
+ * would be missing from performance.getEntriesByType("resource") even though it loaded.
+ */
+export async function recordEveryResource(page) {
+  await page.context().addInitScript(() => performance.setResourceTimingBufferSize(10_000));
+}
+
 /** The suite is hermetic: nothing but the throwaway server is reachable (no Clerk, no CDNs). */
 export async function blockExternal(context, origin) {
   const allowed = new URL(origin).origin;

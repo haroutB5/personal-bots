@@ -15,7 +15,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { expect } from "./expect.mjs";
-import { composer, newChatOnBotScreen, openBots, transcript } from "./lib.mjs";
+import { composer, newChatOnBotScreen, openBots, recordEveryResource, transcript } from "./lib.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -140,6 +140,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
   // the laptop is away is answered from it) and the app has loaded its deferred chunks (the dialogs it mounts
   // ten seconds after it settles). A laptop that drops in the first seconds of a cold page cannot be tested fairly.
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  await recordEveryResource(page);
   await page.reload({ waitUntil: "load" });
   await page.getByLabel("Search bots and chats").waitFor({ state: "visible" });
   await expect
