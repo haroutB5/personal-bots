@@ -38,3 +38,19 @@ Binary only. The previous release is `9a19f3f7538c` (1.67.0). No migration runs,
 - Harout owns the real-phone check for the arm64 APK.
 - `--compact-db` is documented and tested but not used by this release.
 - The pre-release checks are the test. No QA recheck after live (Harout, 27 Oct).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=3b841ee4a094723c6b147f04bfa528a94e154772 release=3b841ee4a094 json-sha256=e469bc88a072eee64771ddadc97866a8dbd2894f9a8d184998115a40424bcd64 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
