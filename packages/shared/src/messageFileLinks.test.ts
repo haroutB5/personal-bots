@@ -60,6 +60,11 @@ describe("messageFileLinkPaths", () => {
     ]);
   });
 
+  it("finds a link between snake_case words the renderer shields", () => {
+    expect([...messageFileLinkPaths("some_var [x](qa/a_b.md) other_var")]).toEqual(["qa/a_b.md"]);
+    expect([...messageFileLinkPaths("some_var and `qa/a_b.md` other_var")]).toEqual(["qa/a_b.md"]);
+  });
+
   it("returns both paths when a message links two files", () => {
     expect([
       ...messageFileLinkPaths("Text in [a.md](docs/a.md), image in [b.png](docs/b.png)."),

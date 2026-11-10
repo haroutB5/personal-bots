@@ -42,11 +42,44 @@ export function pathLike(text: string): boolean {
 const LINK = /^\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)$/u;
 
 /** The same inline token pattern the chat's markdown renderer runs. */
-const INLINE_TOKEN =
+export const INLINE_TOKEN =
   /(\*\*(?:\*(?!\*)|[^*])+\*\*|__(?:_(?!_)|[^_])+__|\*(?![\s*])[^*\n]*[^\s*]\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+(?:\s+"[^"]*")?\))/gu;
 
 /** Mirrors the renderer's nesting limit for emphasis. */
-const MAX_INLINE_DEPTH = 4;
+export const MAX_INLINE_DEPTH = 4;
+
+/** Stands in for an underscore CommonMark keeps literal; offsets stay equal. */
+export const LITERAL_UNDERSCORE = "\uE000";
+
+function isWordChar(char: string | undefined): boolean {
+  return char !== undefined && /[\p{L}\p{N}]/u.test(char);
+}
+
+/**
+ * CommonMark keeps an underscore literal when a letter or digit sits on both
+ * sides of the run, so `snake_case` never opens or closes emphasis. Swap those
+ * underscores for a marker before parsing and restore them at extraction.
+ */
+export function shieldIntrawordUnderscores(text: string): string {
+  if (!text.includes("_")) return text;
+  let result = "";
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== "_") {
+      result += text[index];
+      continue;
+    }
+    let end = index;
+    while (text[end + 1] === "_") end += 1;
+    const literal = isWordChar(text[index - 1]) && isWordChar(text[end + 1]);
+    result += (literal ? LITERAL_UNDERSCORE : "_").repeat(end - index + 1);
+    index = end;
+  }
+  return result;
+}
+
+export function unshieldUnderscores(text: string): string {
+  return text.includes(LITERAL_UNDERSCORE) ? text.replaceAll(LITERAL_UNDERSCORE, "_") : text;
+}
 
 /**
  * Every file path an assistant message shows as a link or a path-like code
@@ -56,7 +89,7 @@ const MAX_INLINE_DEPTH = 4;
 export function messageFileLinkPaths(text: string): ReadonlySet<string> {
   const paths = new Set<string>();
   try {
-    collectFilePaths(text, 0, paths);
+    collectFilePaths(shieldIntrawordUnderscores(text), 0, paths);
   } catch {
     // A malformed escape in one link must not fail the whole grant check.
   }
@@ -68,7 +101,7 @@ function collectFilePaths(source: string, depth: number, paths: Set<string>): vo
     const token = match[0];
     const link = LINK.exec(token);
     if (link !== null) {
-      const target = linkTarget(link[2] ?? "");
+      const target = linkTarget(unshieldUnderscores(link[2] ?? ""));
       if (target.kind === "file") paths.add(target.path);
       continue;
     }
@@ -77,7 +110,7 @@ function collectFilePaths(source: string, depth: number, paths: Set<string>): vo
       continue;
     }
     if (token.startsWith("`")) {
-      const code = token.slice(1, -1);
+      const code = unshieldUnderscores(token.slice(1, -1));
       if (pathLike(code)) paths.add(code.trim());
       continue;
     }

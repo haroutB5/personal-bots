@@ -4,7 +4,14 @@
  * Anything else stays literal.
  */
 
-import { linkTarget, pathLike } from "@t3tools/shared/messageFileLinks";
+import {
+  INLINE_TOKEN,
+  linkTarget,
+  MAX_INLINE_DEPTH,
+  pathLike,
+  shieldIntrawordUnderscores,
+  unshieldUnderscores,
+} from "@t3tools/shared/messageFileLinks";
 
 export { linkTarget };
 
@@ -74,40 +81,6 @@ const NUMBER = /^( *)(\d+)[.)]\s+(.*)$/u;
 const QUOTE = /^>\s?(.*)$/u;
 const LINK = /^\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)$/u;
 const MAX_LIST_DEPTH = 3;
-/** Stands in for an underscore CommonMark keeps literal; offsets stay equal. */
-const LITERAL_UNDERSCORE = "\uE000";
-
-function isWordChar(char: string | undefined): boolean {
-  return char !== undefined && /[\p{L}\p{N}]/u.test(char);
-}
-
-/**
- * CommonMark keeps an underscore literal when a letter or digit sits on both
- * sides of the run, so `snake_case` never opens or closes emphasis. Swap those
- * underscores for a marker before parsing and restore them inside the spans.
- */
-function shieldIntrawordUnderscores(text: string): string {
-  if (!text.includes("_")) return text;
-  let result = "";
-  for (let index = 0; index < text.length; index += 1) {
-    if (text[index] !== "_") {
-      result += text[index];
-      continue;
-    }
-    let end = index;
-    while (text[end + 1] === "_") end += 1;
-    const literal = isWordChar(text[index - 1]) && isWordChar(text[end + 1]);
-    result += (literal ? LITERAL_UNDERSCORE : "_").repeat(end - index + 1);
-    index = end;
-  }
-  return result;
-}
-
-function unshieldUnderscores(text: string): string {
-  return text.includes(LITERAL_UNDERSCORE) ? text.replaceAll(LITERAL_UNDERSCORE, "_") : text;
-}
-/** Stops a pathological run of nested emphasis from recursing without end. */
-const MAX_INLINE_DEPTH = 4;
 
 function listDepth(spaces: string): number {
   return Math.min(MAX_LIST_DEPTH, Math.floor(spaces.length / 2));
@@ -211,10 +184,8 @@ function fileLink(path: string, label: string): { readonly kind: "file" } & File
 function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
   const source = shieldIntrawordUnderscores(text);
   const spans: InlineSpan[] = [];
-  const pattern =
-    /(\*\*(?:\*(?!\*)|[^*])+\*\*|__(?:_(?!_)|[^_])+__|\*(?![\s*])[^*\n]*[^\s*]\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+(?:\s+"[^"]*")?\))/gu;
   let last = 0;
-  for (const match of source.matchAll(pattern)) {
+  for (const match of source.matchAll(INLINE_TOKEN)) {
     const index = match.index ?? 0;
     if (index > last) {
       spans.push({ kind: "text", text: unshieldUnderscores(source.slice(last, index)) });

@@ -541,6 +541,8 @@ describe("messageFileLinkPaths", () => {
     "| File |\n| --- |\n| [plan](docs/plan.md) |",
     "- [a](docs/a.md)\n- [b](docs/b.png)",
     "[a.md](docs/a.md), [b.png](docs/b.png)",
+    "some_var [x](qa/a_b.md) other_var",
+    "some_var and `qa/a_b.md` other_var",
     "Plain /home/harout/x.md and [web](https://example.com/a/b) and [call](tel:5551234).",
     "Run `vp test` and `/`.",
   ];
