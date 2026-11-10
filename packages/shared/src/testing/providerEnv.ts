@@ -3,6 +3,8 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { afterAll } from "vite-plus/test";
+
 // Agent shells carry real provider credentials (CLIProxy sets ANTHROPIC_AUTH_TOKEN and
 // ANTHROPIC_BASE_URL) and the agent's own T3 state. Tests that read the ambient environment
 // then pass or fail by who runs them. Tests that need one of these variables set it
@@ -39,7 +41,11 @@ if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
 if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
   const dataHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-test-xdg-data-"));
   process.env.XDG_DATA_HOME = dataHome;
-  process.once("exit", () => {
+  // A worker can end without firing process exit, which leaked one dir per test
+  // file until /tmp filled. afterAll runs per file; exit stays as the fallback.
+  const cleanup = () => {
     NodeFS.rmSync(dataHome, { recursive: true, force: true });
-  });
+  };
+  afterAll(cleanup);
+  process.once("exit", cleanup);
 }
