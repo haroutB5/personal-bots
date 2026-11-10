@@ -38,7 +38,7 @@ export type FileTextRead =
 export type FilePreviewSource =
   | { readonly _tag: "Text"; readonly asset: AssetUrlState; readonly read: FileTextRead }
   | { readonly _tag: "Image"; readonly asset: AssetUrlState }
-  | { readonly _tag: "Unsupported" };
+  | { readonly _tag: "Unsupported"; readonly asset: AssetUrlState };
 
 export interface FilePreviewInput {
   readonly path: string | null;
@@ -69,8 +69,12 @@ export function filePreviewState(input: FilePreviewInput): FilePreviewState {
   // The sheet is closed until a file is picked.
   if (input.path === null) return { _tag: "Loading" };
   switch (input.source._tag) {
-    case "Unsupported":
-      return { _tag: "Unsupported" };
+    case "Unsupported": {
+      // The type has no phone preview, but the mint still reports a protected
+      // or missing file before the sheet calls it unsupported.
+      const failure = assetFailureState(input.source.asset);
+      return failure ?? { _tag: "Unsupported" };
+    }
     case "Image": {
       const failure = assetFailureState(input.source.asset);
       if (failure !== null) return failure;

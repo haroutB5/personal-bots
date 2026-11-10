@@ -117,13 +117,13 @@ export function FilePreviewSheet({
   const route = request === null ? "unsupported" : filePreviewRoute(request.path);
   const resource = useMemo<AssetResource | null>(
     () =>
-      visible && request !== null && route !== "unsupported"
+      visible && request !== null
         ? {
             _tag: "message-file",
             threadId: ThreadId.make(threadId),
             messageId: request.messageId,
             path: request.path,
-            disposition: route === "text" ? "download" : "inline",
+            disposition: route === "image" ? "inline" : "download",
           }
         : null,
     [request, route, threadId, visible],
@@ -152,7 +152,7 @@ export function FilePreviewSheet({
       ? { _tag: "Text", asset, read }
       : route === "image"
         ? { _tag: "Image", asset }
-        : { _tag: "Unsupported" };
+        : { _tag: "Unsupported", asset };
   const preview = filePreviewState({ path: request?.path ?? null, source });
 
   const path = request?.path ?? null;

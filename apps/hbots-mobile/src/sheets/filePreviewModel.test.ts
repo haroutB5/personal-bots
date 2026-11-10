@@ -119,8 +119,27 @@ describe("filePreviewState", () => {
     });
   });
 
-  it("leaves an unsupported type unsupported", () => {
-    expect(state("archive.zip", { _tag: "Unsupported" })).toEqual({ _tag: "Unsupported" });
+  it("leaves an unsupported type unsupported once the mint succeeds", () => {
+    expect(
+      state("archive.zip", { _tag: "Unsupported", asset: success("https://x/a.zip") }),
+    ).toEqual({
+      _tag: "Unsupported",
+    });
+    expect(state("archive.zip", { _tag: "Unsupported", asset: { _tag: "Loading" } })).toEqual({
+      _tag: "Loading",
+    });
+  });
+
+  it("still reports a protected or missing file with no phone preview", () => {
+    expect(
+      state("config", {
+        _tag: "Unsupported",
+        asset: { _tag: "Failure", protectedFile: true },
+      }),
+    ).toEqual({ _tag: "Denied" });
+    expect(
+      state("config", { _tag: "Unsupported", asset: { _tag: "Failure", notFound: true } }),
+    ).toEqual({ _tag: "Error", reason: "not-found" });
   });
 });
 
