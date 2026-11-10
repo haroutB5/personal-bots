@@ -24,11 +24,21 @@ function statusColor(status: WorkStepStatus): string {
   }
 }
 
+const MAX_STEP_TEXT_CHARS = 500;
+
+function cappedStepText(step: WorkStep): string {
+  const label = workStepLabel(step);
+  if (label.length <= MAX_STEP_TEXT_CHARS) return label;
+  return `${label.slice(0, MAX_STEP_TEXT_CHARS).trimEnd()}…`;
+}
+
 function StepRow({ step }: { readonly step: WorkStep }) {
   return (
     <View style={styles.stepRow}>
       <View style={[styles.dot, { backgroundColor: statusColor(step.status) }]} />
       <Text
+        numberOfLines={2}
+        ellipsizeMode="tail"
         style={[
           styles.stepText,
           step.kind === "thinking" && styles.thoughtText,
@@ -36,7 +46,7 @@ function StepRow({ step }: { readonly step: WorkStep }) {
           step.status === "cancelled" && styles.cancelledText,
         ]}
       >
-        {workStepLabel(step)}
+        {cappedStepText(step)}
       </Text>
     </View>
   );
@@ -52,7 +62,11 @@ export function LiveWorkRow({ work }: { readonly work: RunWork }) {
   if (work.phase === "idle") return null;
 
   if (work.phase === "working") {
-    const line = work.current === null ? "Starting…" : workStepLabel(work.current);
+    const line = work.waitingOnBackground
+      ? "Waiting on background work"
+      : work.current === null
+        ? "Starting…"
+        : workStepLabel(work.current);
     return (
       <View
         style={styles.liveRow}
@@ -103,6 +117,16 @@ export function LiveWorkRow({ work }: { readonly work: RunWork }) {
           {work.steps.map((step) => (
             <StepRow key={step.id} step={step} />
           ))}
+          {work.deferredCount > 0 ? (
+            <View style={styles.stepRow}>
+              <View style={[styles.dot, styles.moreDot]} />
+              <Text style={[styles.stepText, styles.moreText]}>
+                {`${work.deferredCount} more ${
+                  work.deferredCount === 1 ? "step" : "steps"
+                } not loaded`}
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -151,4 +175,6 @@ const styles = StyleSheet.create({
   },
   thoughtText: { color: tokens.textTertiary, fontStyle: "italic" },
   cancelledText: { color: tokens.textTertiary },
+  moreDot: { backgroundColor: tokens.textTertiary },
+  moreText: { color: tokens.textTertiary, fontStyle: "italic" },
 });
