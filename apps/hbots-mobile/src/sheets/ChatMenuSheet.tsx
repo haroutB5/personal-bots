@@ -90,7 +90,7 @@ function Tile({
         {label}
       </Text>
       {detail == null ? null : (
-        <Text style={styles.tileDetail} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+        <Text style={styles.tileDetail} numberOfLines={2} maxFontSizeMultiplier={1.2}>
           {detail}
         </Text>
       )}
@@ -297,7 +297,13 @@ const styles = StyleSheet.create({
   },
   tileSelected: { borderWidth: StyleSheet.hairlineWidth, borderColor: tokens.borderStrong },
   tileLabel: { color: tokens.text, fontSize: 12, lineHeight: 16, fontWeight: "500" },
-  tileDetail: { color: tokens.textTertiary, fontSize: 10, lineHeight: 13, marginTop: -3 },
+  tileDetail: {
+    color: tokens.textTertiary,
+    fontSize: 10,
+    lineHeight: 13,
+    marginTop: -3,
+    textAlign: "center",
+  },
   muteChoices: { flexDirection: "row", flexWrap: "wrap", gap: 8, padding: 4, paddingTop: 8 },
   muteChoice: {
     minHeight: 40,
