@@ -106,6 +106,99 @@ describe("markdown features the chat renders", () => {
     ]);
   });
 
+  it("renders code inside bold as a code span and a path as a file", () => {
+    const blocks = markdownBlocks(
+      "**The release branch is `integ/next-release` at `c293f92d41`.**",
+    );
+    expect(blocks[0]).toMatchObject({
+      kind: "paragraph",
+      spans: [
+        {
+          kind: "bold",
+          text: "The release branch is `integ/next-release` at `c293f92d41`.",
+          spans: [
+            { kind: "text", text: "The release branch is " },
+            {
+              kind: "file",
+              path: "integ/next-release",
+              label: "integ/next-release",
+              name: "next-release",
+            },
+            { kind: "text", text: " at " },
+            { kind: "code", text: "c293f92d41" },
+            { kind: "text", text: "." },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("renders a link inside bold as a link", () => {
+    const blocks = markdownBlocks("**See [the plan](https://example.com/plan) now**");
+    expect(blocks[0]).toMatchObject({
+      kind: "paragraph",
+      spans: [
+        {
+          kind: "bold",
+          text: "See [the plan](https://example.com/plan) now",
+          spans: [
+            { kind: "text", text: "See " },
+            { kind: "link", text: "the plan", href: "https://example.com/plan" },
+            { kind: "text", text: " now" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("renders italics inside bold as italic", () => {
+    const blocks = markdownBlocks("**really *very* good**");
+    expect(blocks[0]).toMatchObject({
+      kind: "paragraph",
+      spans: [
+        {
+          kind: "bold",
+          text: "really *very* good",
+          spans: [
+            { kind: "text", text: "really " },
+            { kind: "italic", text: "very" },
+            { kind: "text", text: " good" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("renders code inside italics as a code span", () => {
+    const blocks = markdownBlocks("*run `vp test` now*");
+    expect(blocks[0]).toMatchObject({
+      kind: "paragraph",
+      spans: [
+        {
+          kind: "italic",
+          text: "run `vp test` now",
+          spans: [
+            { kind: "text", text: "run " },
+            { kind: "code", text: "vp test" },
+            { kind: "text", text: " now" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("leaves a plain bold run and a plain code span unchanged", () => {
+    const blocks = markdownBlocks("**bold** and `code`");
+    expect(blocks[0]).toMatchObject({
+      kind: "paragraph",
+      spans: [
+        { kind: "bold", text: "bold" },
+        { kind: "text", text: " and " },
+        { kind: "code", text: "code" },
+      ],
+    });
+  });
+
   it("keeps a blockquote with inline formatting", () => {
     const blocks = markdownBlocks("> **quoted** text");
     expect(blocks[0]).toMatchObject({
