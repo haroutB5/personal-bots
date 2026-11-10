@@ -71,8 +71,23 @@ describe("messageFileLinkPaths", () => {
     ]).toEqual(["docs/a.md", "docs/b.png"]);
   });
 
+  it("ignores a link inside a fenced or unclosed code block", () => {
+    expect([...messageFileLinkPaths("```\n[hidden](docs/a.md)\n```\n[shown](docs/b.md)")]).toEqual([
+      "docs/b.md",
+    ]);
+    expect([...messageFileLinkPaths("```ts\n[hidden](docs/a.md)\n```")]).toEqual([]);
+    expect([...messageFileLinkPaths("before\n```\n[hidden](docs/a.md)")]).toEqual([]);
+    expect([...messageFileLinkPaths("~~~\n[shown](docs/a.md)\n~~~")]).toEqual(["docs/a.md"]);
+  });
+
   it("does not throw on a malformed file URL escape", () => {
     expect([...messageFileLinkPaths("[bad](file:///tmp/100%.md)")]).toEqual([]);
+  });
+
+  it("skips only the link with a malformed file URL escape", () => {
+    expect([...messageFileLinkPaths("[bad](file:///tmp/100%.md) and [good](docs/ok.md)")]).toEqual([
+      "docs/ok.md",
+    ]);
   });
 });
 

@@ -543,6 +543,10 @@ describe("messageFileLinkPaths", () => {
     "[a.md](docs/a.md), [b.png](docs/b.png)",
     "some_var [x](qa/a_b.md) other_var",
     "some_var and `qa/a_b.md` other_var",
+    "```\n[hidden](docs/a.md)\n```\n[shown](docs/b.md)",
+    "```ts\n[hidden](docs/a.md)\n```",
+    "before\n```\n[hidden](docs/a.md)",
+    "[bad](file:///tmp/100%.md) and [good](docs/ok.md)",
     "Plain /home/harout/x.md and [web](https://example.com/a/b) and [call](tel:5551234).",
     "Run `vp test` and `/`.",
   ];

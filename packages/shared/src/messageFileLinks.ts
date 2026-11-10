@@ -20,7 +20,13 @@ export function linkTarget(href: string): FileLinkTarget {
   if (/^https?:\/\//iu.test(trimmed)) return { kind: "external", url: trimmed };
   if (trimmed.startsWith("//")) return { kind: "external", url: `https:${trimmed}` };
   if (/^file:\/\//iu.test(trimmed)) {
-    const withoutScheme = decodeURIComponent(trimmed.replace(/^file:\/\//iu, ""));
+    let withoutScheme: string;
+    try {
+      withoutScheme = decodeURIComponent(trimmed.replace(/^file:\/\//iu, ""));
+    } catch {
+      // A malformed escape refuses this one link, not the whole message.
+      return { kind: "blocked" };
+    }
     return { kind: "file", path: withoutScheme.replace(/^\/(?=[A-Za-z]:[\\/])/u, "") };
   }
   if (/^[a-z][a-z0-9+.-]*:/iu.test(trimmed)) return { kind: "blocked" };
@@ -81,6 +87,20 @@ export function unshieldUnderscores(text: string): string {
   return text.includes(LITERAL_UNDERSCORE) ? text.replaceAll(LITERAL_UNDERSCORE, "_") : text;
 }
 
+/** Same fence rule the chat renderer uses. A fence left open hides the rest. */
+const FENCE = /^```([\w-]*)\s*$/u;
+
+function* linesOutsideFences(text: string): Generator<string> {
+  let fenced = false;
+  for (const line of text.replaceAll("\r\n", "\n").split("\n")) {
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (!fenced) yield line;
+  }
+}
+
 /**
  * Every file path an assistant message shows as a link or a path-like code
  * span. The server grants a read only for a member of this set, matched
@@ -88,10 +108,12 @@ export function unshieldUnderscores(text: string): string {
  */
 export function messageFileLinkPaths(text: string): ReadonlySet<string> {
   const paths = new Set<string>();
-  try {
-    collectFilePaths(shieldIntrawordUnderscores(text), 0, paths);
-  } catch {
-    // A malformed escape in one link must not fail the whole grant check.
+  for (const line of linesOutsideFences(text)) {
+    try {
+      collectFilePaths(shieldIntrawordUnderscores(line), 0, paths);
+    } catch {
+      // A malformed escape in one link must not fail the whole grant check.
+    }
   }
   return paths;
 }
