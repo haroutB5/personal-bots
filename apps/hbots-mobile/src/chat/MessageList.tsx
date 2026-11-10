@@ -46,6 +46,8 @@ import {
   StyleSheet,
   Text,
   View,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
@@ -613,6 +615,65 @@ function SentAt({ at, align }: { readonly at: Date; readonly align: "start" | "e
   );
 }
 
+const LONG_PRESS_MS = 350;
+const LONG_PRESS_SLOP = 10;
+
+/**
+ * A long-press target that never claims the touch responder: a Pressable
+ * would take the gesture from a table's horizontal scroller inside it.
+ * A still finger opens the menu; a moving one or a scroll cancels it.
+ */
+function LongPressSurface({
+  onLongPress,
+  style,
+  children,
+}: {
+  readonly onLongPress: () => void;
+  readonly style: StyleProp<ViewStyle>;
+  readonly children: React.ReactNode;
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const origin = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  const cancel = useCallback(() => {
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    origin.current = null;
+  }, []);
+  useEffect(() => cancel, [cancel]);
+  return (
+    <View
+      style={style}
+      onTouchStart={(event) => {
+        cancel();
+        const { pageX, pageY } = event.nativeEvent;
+        origin.current = { x: pageX, y: pageY };
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          origin.current = null;
+          onLongPress();
+        }, LONG_PRESS_MS);
+      }}
+      onTouchMove={(event) => {
+        const start = origin.current;
+        if (start === null) return;
+        const { pageX, pageY } = event.nativeEvent;
+        if (
+          Math.abs(pageX - start.x) > LONG_PRESS_SLOP ||
+          Math.abs(pageY - start.y) > LONG_PRESS_SLOP
+        ) {
+          cancel();
+        }
+      }}
+      onTouchEnd={cancel}
+      onTouchCancel={cancel}
+    >
+      {children}
+    </View>
+  );
+}
+
 function SwipeMessageRow({
   onReply,
   align,
@@ -1014,7 +1075,7 @@ export function MessageList({
                   )
                 }
               >
-                <Pressable
+                <LongPressSurface
                   onLongPress={() =>
                     onMessageMenu({
                       messageId: String(message.id),
@@ -1023,7 +1084,6 @@ export function MessageList({
                       sentAt,
                     })
                   }
-                  delayLongPress={350}
                   style={[
                     styles.assistantPress,
                     markdownNeedsWidth(body) || reply.options !== null
@@ -1076,7 +1136,7 @@ export function MessageList({
                       </View>
                     ),
                   )}
-                </Pressable>
+                </LongPressSurface>
               </SwipeMessageRow>
             </View>
           );
@@ -1144,7 +1204,7 @@ export function MessageList({
                 )
               }
             >
-              <Pressable
+              <LongPressSurface
                 onLongPress={() =>
                   onMessageMenu({
                     messageId: String(message.id),
@@ -1153,7 +1213,6 @@ export function MessageList({
                     sentAt,
                   })
                 }
-                delayLongPress={350}
                 style={[
                   styles.assistantPress,
                   markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
@@ -1188,7 +1247,7 @@ export function MessageList({
                 {contextTurns.has(String(message.id)) ? (
                   <Text style={styles.contextUsed}>{"Context used ⌄"}</Text>
                 ) : null}
-              </Pressable>
+              </LongPressSurface>
             </SwipeMessageRow>
           </View>
         );
