@@ -246,7 +246,7 @@ describe("PersonalReleaseNotices", () => {
         "Release landed: hbots 1.60.18 (release abc123def456) is live. Smoke exit 0. No rollback.",
       );
       expect(turn.text).toContain("restart-1.60.18.log");
-      expect(turn.text).toContain("start QA now");
+      expect(turn.text).toContain("Confirm the live release. No QA recheck is needed.");
       expect(turn.context?.records[0]).toMatchObject({
         kind: PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
         payload: { notice: "release-landed" },

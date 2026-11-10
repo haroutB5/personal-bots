@@ -111,7 +111,7 @@ export function releaseNoticeText(notice: ReleaseNotice): string {
     notice.outcome === "waiting"
       ? "Check the blockers and the log; the waiter is still running."
       : notice.outcome === "live"
-        ? "Confirm the live release and start QA now."
+        ? "Confirm the live release. No QA recheck is needed."
         : notice.outcome === "rollback_failed"
           ? "Check status.ps1 and the log now and tell Harout plainly."
           : "Read the log, fix the cause and re-arm.";

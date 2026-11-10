@@ -116,7 +116,7 @@ describe("chat notices", () => {
       "Release notice from the app's release waiter (the user did not type this).",
       "Release landed: hbots 1.60.18 (release abc123def456) is live. Smoke exit 0. No rollback.",
       "Log: C:\\logs\\restart-1.60.18.log",
-      "Confirm the live release and start QA now.",
+      "Confirm the live release. No QA recheck is needed.",
     ].join("\n");
     const marker = { notice: "release-landed", provider: "Release" };
     const notice = readChatNotice({ context: context(marker) } as never)!;
