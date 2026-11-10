@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterAll } from "vite-plus/test";
+import { afterAll, inject } from "vite-plus/test";
 
 // Agent shells carry real provider credentials (CLIProxy sets ANTHROPIC_AUTH_TOKEN and
 // ANTHROPIC_BASE_URL) and the agent's own T3 state. Tests that read the ambient environment
@@ -39,7 +39,16 @@ if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
 // ambient value points the suite at the developer's own accounts. Each worker gets an empty
 // data home instead. Tests that need a layout write their own and pass it explicitly.
 if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
-  const root = process.env.T3CODE_TEST_XDG_ROOT ?? NodeOS.tmpdir();
+  // The run root comes from xdgGlobalSetup through Vitest's provided context; a
+  // setup file runs before any test, so the context is always available here.
+  const runRoot = (() => {
+    try {
+      return (inject as (key: string) => unknown)("T3CODE_TEST_XDG_ROOT") as string | undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const root = runRoot ?? NodeOS.tmpdir();
   const dataHome = NodeFS.mkdtempSync(NodePath.join(root, "t3-test-xdg-data-"));
   process.env.XDG_DATA_HOME = dataHome;
   // A worker can end without firing process exit, which leaked one dir per test

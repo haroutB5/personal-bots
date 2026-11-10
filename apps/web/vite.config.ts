@@ -391,6 +391,11 @@ export default defineConfig(() => {
     },
     worker: { format: "es" },
     test: {
+      // One run-scoped XDG root for every per-file data home (providerEnv.ts), so a
+      // worker killed at teardown cannot leave /tmp/t3-test-xdg-data-* behind. This
+      // sits at the root: Vitest strips a project's globalSetup when the project
+      // extends the root config, so a project-level entry would never run.
+      globalSetup: ["../../packages/shared/src/testing/xdgGlobalSetup.ts"],
       projects: [
         defineProject(unitTestProject),
         defineProject(browserTestProject),
