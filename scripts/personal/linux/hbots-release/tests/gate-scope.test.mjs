@@ -81,7 +81,8 @@ const withFixture = (body) => {
 NodeTest.test("a mobile-only diff skips server-tests and e2e", () => {
   NodeAssert.deepEqual(classifyGateScope(["apps/hbots-mobile/app.json"]), {
     action: "skip",
-    reason: "every changed path is under apps/hbots-mobile/, under docs/, or a markdown file",
+    reason:
+      "every changed path is under apps/hbots-mobile/, under docs/, or a markdown file outside the code trees",
     changedPaths: ["apps/hbots-mobile/app.json"],
   });
 });
@@ -90,8 +91,28 @@ NodeTest.test("a docs-only diff skips", () => {
   NodeAssert.equal(classifyGateScope(["docs/releases/HANDOFF-1672.md"]).action, "skip");
 });
 
-NodeTest.test("markdown outside docs skips", () => {
-  NodeAssert.equal(classifyGateScope(["README.md", "apps/server/README.md"]).action, "skip");
+NodeTest.test("markdown outside docs and code trees skips", () => {
+  NodeAssert.equal(classifyGateScope(["README.md", "apps/hbots-mobile/README.md"]).action, "skip");
+});
+
+NodeTest.test("markdown inside a code tree runs", () => {
+  for (const file of ["apps/server/README.md", "apps/web/src/x.md", "packages/shared/y.md"]) {
+    NodeAssert.equal(classifyGateScope([file]).action, "run", file);
+  }
+});
+
+NodeTest.test("mobile and doc files a server gate reads run", () => {
+  for (const file of [
+    "apps/hbots-mobile/src/pairing.ts",
+    "apps/hbots-mobile/src/dpop.ts",
+    "docs/user/t3-connect-troubleshooting.md",
+  ]) {
+    NodeAssert.equal(
+      classifyGateScope(["apps/hbots-mobile/src/App.tsx", file]).action,
+      "run",
+      file,
+    );
+  }
 });
 
 NodeTest.test("mobile plus packages/shared runs", () => {

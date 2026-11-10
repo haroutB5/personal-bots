@@ -21,7 +21,7 @@ Add `--force-backup` for a big release without a migration change. A changed mig
 `--legacy-no-evidence` lets `--guards-only` and `--dry-run` accept a release that has no gate evidence (1.66.95); a real run never does.
 The runner prints its own help with `--help`. Logs: `~/.personal-bots/logs/restart-<ver>[-mode].log`; result: `~/.personal-bots/run/restart-<ver>[-mode]-result.json`.
 
-Gate scope: `server-tests` and `e2e` are skipped only when every path from the live release to the candidate is under `apps/hbots-mobile/`, under `docs/`, or a markdown file. The collector records the base sha and the paths, and the seal and `check-gate-evidence` recompute that diff themselves and refuse a skip they cannot justify. Every other path runs the full gate; a missing or unknown base runs it too.
+Gate scope: `server-tests` and `e2e` are skipped only when every path from the live release to the candidate is under `apps/hbots-mobile/`, under `docs/`, or a markdown file outside `apps/server/`, `apps/web/` and `packages/`. Mobile files the server imports (`src/pairing.ts`, `src/dpop.ts`) and `docs/user/t3-connect-troubleshooting.md`, which a server test reads, always run the full gate. The collector records the base sha and the paths, and the seal and `check-gate-evidence` recompute that diff themselves and refuse a skip they cannot justify. Every other path runs the full gate; a missing or unknown base runs it too.
 
 ## What a real run does
 

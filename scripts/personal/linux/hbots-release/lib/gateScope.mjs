@@ -12,8 +12,22 @@ export const SAFE_PREFIXES = ["apps/hbots-mobile/", "docs/"];
 
 const run = (reason) => ({ action: "run", reason, changedPaths: [] });
 
-const isSafe = (file) =>
-  SAFE_PREFIXES.some((prefix) => file.startsWith(prefix)) || file.endsWith(".md");
+// Allowlisted paths that a server or web gate still reads: server code imports
+// these mobile modules, and a server test checks this doc. They always run.
+export const GATED_PATHS = [
+  "apps/hbots-mobile/src/pairing.ts",
+  "apps/hbots-mobile/src/dpop.ts",
+  "docs/user/t3-connect-troubleshooting.md",
+];
+// Markdown under these trees can become a code input (a ?raw import, a prompt
+// or skill file), so it is not on the allowlist there.
+export const CODE_TREES = ["apps/server/", "apps/web/", "packages/"];
+
+const isSafe = (file) => {
+  if (GATED_PATHS.includes(file)) return false;
+  if (SAFE_PREFIXES.some((prefix) => file.startsWith(prefix))) return true;
+  return file.endsWith(".md") && !CODE_TREES.some((tree) => file.startsWith(tree));
+};
 
 /** Classify changed paths into a full run or a mobile/docs-only skip. Pure. */
 export function classifyGateScope(paths) {
@@ -40,7 +54,8 @@ export function classifyGateScope(paths) {
   }
   return {
     action: "skip",
-    reason: "every changed path is under apps/hbots-mobile/, under docs/, or a markdown file",
+    reason:
+      "every changed path is under apps/hbots-mobile/, under docs/, or a markdown file outside the code trees",
     changedPaths,
   };
 }
