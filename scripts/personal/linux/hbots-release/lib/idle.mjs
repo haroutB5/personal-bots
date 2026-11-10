@@ -116,6 +116,18 @@ export function sendWaitingAlerts({
 }
 
 /** True while a heavy-job.sh holder (a build, a gate run) owns the lock. flock -n takes and drops it at once. */
+/**
+ * A lock file's label only names a holder while the pid that wrote it lives.
+ * The gate file keeps the last runner's text ("hbots-release 1.67.1") after it
+ * exits, and a normal job holding the gate shared would otherwise report that
+ * dead release as the blocker (the 1.67.2 waiter did exactly that).
+ */
+const labelPid = (line) => {
+  const match = /(?:^|\s)pid=(\d+)(?:\s|$)/.exec(line);
+  return match === null ? null : Number(match[1]);
+};
+const pidAlive = (pid) => pid !== null && pid > 0 && NodeFS.existsSync(`/proc/${pid}`);
+
 export function heavyLockHeld(lockPath) {
   if (!NodeFS.existsSync(lockPath)) return { held: false, holder: null };
   const r = run("flock", ["-n", "-E", "75", lockPath, "true"], { timeout: 10_000 });
@@ -129,7 +141,9 @@ export function heavyLockHeld(lockPath) {
     if (!fileLockedInProcLocks(file)) continue;
     try {
       const line = NodeFS.readFileSync(file, "utf8").trim().split("\n")[0];
-      if (line) labels.push(line.slice(0, 160));
+      if (!line) continue;
+      if (!pidAlive(labelPid(line))) continue;
+      labels.push(line.slice(0, 160));
     } catch {}
   }
   return { held: r.code === 75 || r.code === 1, holder: labels.join(" | ") || null };

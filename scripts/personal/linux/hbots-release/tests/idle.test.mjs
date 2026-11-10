@@ -5,6 +5,7 @@ import {
   classifyOrphan,
   dueWaitingAlerts,
   hasSessionAncestor,
+  heavyLockHeld,
   newestEventLog,
   sendWaitingAlerts,
   waitingSummary,
@@ -251,5 +252,44 @@ NodeTest.test("desk panel shows both running heavy jobs and the 5-bot cap", asyn
     NodeAssert.match(result.stdout, /job2/);
   } finally {
     for (const holder of holders) holder.kill("SIGTERM");
+  }
+});
+
+NodeTest.test("a gate label names a blocker only while its pid lives", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { spawn, spawnSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hbots-heavy-label-"));
+  const gate = path.join(root, "omarchy-heavy.lock");
+  const dead = spawn("sh", ["-c", "exit 0"], { stdio: "ignore" });
+  const deadPid = dead.pid;
+  await new Promise((resolve) => dead.once("exit", resolve));
+  // The last runner left its label behind; a normal job now holds the gate shared.
+  fs.writeFileSync(
+    gate,
+    `pid=${deadPid} started=2026-11-10T00:00:00Z label=hbots-release 1.67.1 cwd=/x\n`,
+  );
+  const shared = spawn("flock", ["-s", gate, "sleep", "15"], { stdio: "ignore" });
+  try {
+    const heldBySomeoneElse = () =>
+      spawnSync("flock", ["-n", "-E", "75", gate, "true"]).status !== 0;
+    for (let i = 0; i < 100 && !heldBySomeoneElse(); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    NodeAssert.ok(heldBySomeoneElse(), "the fixture holds the gate");
+    // A dead pid is not a blocker: the 1.67.2 waiter named the stale 1.67.1 release.
+    NodeAssert.deepEqual(heavyLockHeld(gate), { held: true, holder: null });
+    // A live holder's own label is still named.
+    fs.writeFileSync(
+      gate,
+      `pid=${shared.pid} started=2026-11-10T00:00:00Z label=release-cleanup tests cwd=/x\n`,
+    );
+    const live = heavyLockHeld(gate);
+    NodeAssert.equal(live.held, true);
+    NodeAssert.match(live.holder ?? "", /label=release-cleanup tests/);
+  } finally {
+    shared.kill("SIGTERM");
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
