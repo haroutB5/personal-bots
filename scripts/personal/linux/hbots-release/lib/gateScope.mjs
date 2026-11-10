@@ -112,5 +112,12 @@ if (invokedDirectly()) {
   const changedPaths = git("diff", "--no-renames", "--name-only", baseSha, headSha)
     .split("\n")
     .filter(Boolean);
-  console.log(JSON.stringify({ baseSha, headSha, ...classifyGateScope(changedPaths) }, null, 2));
+  const scope = classifyGateScope(changedPaths);
+  console.log(
+    JSON.stringify(
+      { baseSha, headSha, ...scope, skippedGates: scope.action === "skip" ? SKIPPABLE_GATES : [] },
+      null,
+      2,
+    ),
+  );
 }

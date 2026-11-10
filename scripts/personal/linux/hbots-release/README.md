@@ -21,6 +21,8 @@ Add `--force-backup` for a big release without a migration change. A changed mig
 `--legacy-no-evidence` lets `--guards-only` and `--dry-run` accept a release that has no gate evidence (1.66.95); a real run never does.
 The runner prints its own help with `--help`. Logs: `~/.personal-bots/logs/restart-<ver>[-mode].log`; result: `~/.personal-bots/run/restart-<ver>[-mode]-result.json`.
 
+Gate scope: `server-tests` and `e2e` are skipped only when every path from the live release to the candidate is under `apps/hbots-mobile/`, under `docs/`, or a markdown file. The collector records the base sha and the paths, and the seal and `check-gate-evidence` recompute that diff themselves and refuse a skip they cannot justify. Every other path runs the full gate; a missing or unknown base runs it too.
+
 ## What a real run does
 
 1. Guards: pinned helpers, unit and smoke CLI, seal of dist/node_modules/tools copy/gate evidence, concurrency rule 5, release notes check, gate evidence check, migration levels from git, backup plan (reflink + disk), active release, no other waiter.
@@ -41,6 +43,7 @@ The launcher starts the runner with `systemd-run --user --unit=hbots-release-<mo
 The step runs only inside the stopped backup window, after the pre-restart backup copy exists and its integrity check passed. It compacts the database the new release opens: `statev2.sqlite` when present, otherwise `state.sqlite`. The last database present is the live one, the same rule the backup uses. A root that still has the pre-1.67 `state.sqlite` keeps that file untouched as the rollback database.
 
 Order inside the step:
+
 1. `PRAGMA wal_checkpoint(TRUNCATE)`.
 2. `PRAGMA auto_vacuum = INCREMENTAL`, then `VACUUM`. Incremental matches the server's own `DatabaseMaintenance.compact`, and `DatabaseStorage` reclaims free pages later only when `auto_vacuum` is 2.
 3. Rebuild the `orchestration_v2_message_search` FTS index, because VACUUM can renumber message rowids and that index is keyed by rowid. The SQL mirrors `apps/server/src/orchestration-v2/messageSearchIndex.ts`.
@@ -49,6 +52,7 @@ Order inside the step:
 `SQLITE_TMPDIR` and `TMPDIR` point at a per-run folder under `~/.personal-bots/tmp`, on the same disk as the database. `/tmp` is a RAM disk and must not hold a multi-GB VACUUM temporary file.
 
 Guards and limits:
+
 - The flag forces the pre-restart backup even when `--migration-before` equals `--migration-after`.
 - Before VACUUM, the step needs the database size plus 2 GB free on its filesystem. If there is less, it logs the reason, records `compact.skipped`, and starts the release without compacting.
 - The VACUUM child has a hard limit of 15 minutes (`HBOTS_RELEASE_TEST_COMPACT_TIMEOUT_MS` in tests only). The runner kills a stuck child.
