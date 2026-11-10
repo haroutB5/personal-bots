@@ -8,6 +8,8 @@ import {
   AssetCreateUrlInput,
   AssetPreviewTypeValidationError,
   AssetResource,
+  MessageId,
+  type OrchestrationV2ConversationMessage,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   TurnItemId,
@@ -103,6 +105,29 @@ const oversizedScreenshotItem = {
   },
 };
 
+const messageFixtures = new Map<string, OrchestrationV2ConversationMessage>();
+const messageKey = (threadId: string, messageId: string) => `${threadId}:${messageId}`;
+
+const conversationMessage = (input: {
+  readonly id: string;
+  readonly threadId: string;
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+}): OrchestrationV2ConversationMessage => ({
+  id: MessageId.make(input.id),
+  threadId: ThreadId.make(input.threadId),
+  runId: null,
+  nodeId: null,
+  role: input.role,
+  text: input.text,
+  createdBy: "agent",
+  creationSource: "provider",
+  attachments: [],
+  streaming: false,
+  createdAt: DateTime.makeUnsafe("2026-10-05T00:00:00.000Z"),
+  updatedAt: DateTime.makeUnsafe("2026-10-05T00:00:00.000Z"),
+});
+
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
   Layer.mock(Orchestrator.OrchestratorV2)({
@@ -114,6 +139,8 @@ const layerTest = Layer.mergeAll(
             ? oversizedScreenshotItem
             : null,
       ),
+    getMessage: ({ threadId, messageId }) =>
+      Effect.succeed(messageFixtures.get(messageKey(threadId, messageId)) ?? null),
   }),
   layerConfig,
   WorkspacePaths.layer,
@@ -1690,6 +1717,265 @@ describe("AssetAccess", () => {
 
       const missing = yield* issueAsHome("nope.bin", "download").pipe(Effect.flip);
       expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+});
+
+describe("message-file grant", () => {
+  const issueAs = (
+    resource: AssetResource,
+    input: { readonly cwd: string; readonly home: string },
+  ) =>
+    issueAssetUrl({ resource, workspaceRoot: input.cwd }).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, input.home),
+    );
+
+  const messageFile = (
+    input: {
+      readonly threadId?: string;
+      readonly messageId?: string;
+      readonly path: string;
+      readonly disposition?: "inline" | "download";
+    } = { path: "docs/plan.md" },
+  ) =>
+    ({
+      _tag: "message-file",
+      threadId: ThreadId.make(input.threadId ?? "thread-1"),
+      messageId: MessageId.make(input.messageId ?? "message-1"),
+      path: input.path,
+      disposition: input.disposition ?? "download",
+    }) satisfies AssetResource;
+
+  const useMessages = (messages: ReadonlyArray<OrchestrationV2ConversationMessage>) => {
+    messageFixtures.clear();
+    for (const message of messages) {
+      messageFixtures.set(messageKey(message.threadId, message.id), message);
+    }
+  };
+
+  it.effect("serves a file linked in an assistant message as a download", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(path.join(cwd, "docs"), { recursive: true });
+      yield* fs.writeFileString(path.join(cwd, "docs", "plan.md"), "the plan");
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Here is [the plan](docs/plan.md) for review.",
+        }),
+      ]);
+
+      const issued = yield* issueAs(messageFile(), { cwd, home });
+      expect(issued.sourcePath).toBe(path.join(yield* fs.realPath(cwd), "docs", "plan.md"));
+      const token = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(token, "plan.md")).toMatchObject({
+        kind: "file",
+        download: true,
+        fileName: "plan.md",
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves a tilde path and an image linked in an assistant message", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-home-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(home, "notes.md"), "notes");
+      yield* fs.writeFile(path.join(cwd, "shot.png"), screenshotPng);
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Notes in `~/notes.md`, shot in [shot](shot.png).",
+        }),
+      ]);
+
+      const notes = yield* issueAs(messageFile({ path: "~/notes.md" }), { cwd, home });
+      expect(notes.sourcePath).toBe(path.join(yield* fs.realPath(home), "notes.md"));
+      const shot = yield* issueAs(messageFile({ path: "shot.png", disposition: "inline" }), {
+        cwd,
+        home,
+      });
+      expect(shot.imageDimensions).toMatchObject({ width: 390, height: 844 });
+      const token = shot.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(token, "shot.png")).toMatchObject({
+        kind: "file",
+        mimeType: "image/png",
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses a path the message does not link", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-unlinked-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(cwd, "plan.md"), "plan");
+      yield* fs.writeFileString(path.join(cwd, "other.md"), "other");
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Here is [the plan](plan.md).",
+        }),
+      ]);
+
+      const error = yield* issueAs(messageFile({ path: "other.md" }), { cwd, home }).pipe(
+        Effect.flip,
+      );
+      expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses a path linked only by a user or system message", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-role-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(cwd, "plan.md"), "plan");
+
+      for (const role of ["user", "system"] as const) {
+        useMessages([
+          conversationMessage({
+            id: "message-1",
+            threadId: "thread-1",
+            role,
+            text: "Here is [the plan](plan.md).",
+          }),
+        ]);
+        const error = yield* issueAs(messageFile({ path: "plan.md" }), { cwd, home }).pipe(
+          Effect.flip,
+        );
+        expect(error._tag, role).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses a message that belongs to another thread", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-thread-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(cwd, "plan.md"), "plan");
+      useMessages([
+        conversationMessage({
+          id: "message-2",
+          threadId: "thread-2",
+          role: "assistant",
+          text: "Here is [the plan](plan.md).",
+        }),
+      ]);
+
+      const error = yield* issueAs(messageFile({ path: "plan.md" }), { cwd, home }).pipe(
+        Effect.flip,
+      );
+      expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses a protected path even when the message links it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-protected-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(path.join(home, ".ssh"), { recursive: true });
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(home, ".ssh", "config"), "Host *");
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Config: [ssh](~/.ssh/config).",
+        }),
+      ]);
+
+      const error = yield* issueAs(messageFile({ path: "~/.ssh/config" }), { cwd, home }).pipe(
+        Effect.flip,
+      );
+      expect(error._tag).toBe("AssetProtectedFileError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses a traversal variant of a linked path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-traversal-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(path.join(cwd, "docs"), { recursive: true });
+      yield* fs.makeDirectory(path.join(home, ".ssh"), { recursive: true });
+      yield* fs.writeFileString(path.join(cwd, "docs", "plan.md"), "plan");
+      yield* fs.writeFileString(path.join(home, ".ssh", "config"), "Host *");
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Here is [the plan](docs/plan.md).",
+        }),
+      ]);
+
+      for (const requested of [
+        "docs/../.ssh/config",
+        "./docs/plan.md",
+        "docs/plan.md/../../.ssh/config",
+      ]) {
+        const error = yield* issueAs(messageFile({ path: requested }), { cwd, home }).pipe(
+          Effect.flip,
+        );
+        expect(error._tag, requested).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("stops serving a file once the message no longer links it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-edited-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(cwd, "plan.md"), "plan");
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Here is [the plan](plan.md).",
+        }),
+      ]);
+
+      const issued = yield* issueAs(messageFile({ path: "plan.md" }), { cwd, home });
+      const token = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(token, "plan.md")).toMatchObject({ kind: "file" });
+
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "The link is gone.",
+        }),
+      ]);
+      expect(yield* resolveAsset(token, "plan.md")).toBeNull();
     }).pipe(Effect.provide(layerTest)),
   );
 });

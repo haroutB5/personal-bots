@@ -14,6 +14,7 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  MessageId,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   ToolActivityNativeAppReference,
@@ -32,6 +33,7 @@ import {
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
+import { messageFileLinkPaths } from "@t3tools/shared/messageFileLinks";
 import {
   isProjectFaviconPath,
   PROJECT_FAVICON_FALLBACK_MARKER,
@@ -123,6 +125,19 @@ const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("media-file-exact"),
+    filePath: Schema.String,
+    download: Schema.optionalKey(Schema.Boolean),
+    device: Schema.String,
+    inode: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("message-file"),
+    threadId: ThreadId,
+    messageId: MessageId,
+    /** The path exactly as the message links it; the grant is re-checked on it. */
+    path: Schema.String,
     filePath: Schema.String,
     download: Schema.optionalKey(Schema.Boolean),
     device: Schema.String,
@@ -448,6 +463,42 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
   },
 );
 
+const finalizeHostFileAsset = Effect.fn("AssetAccess.finalizeHostFileAsset")(function* (input: {
+  readonly resource: AssetResource;
+  readonly path: string;
+  readonly cwd: string | undefined;
+  readonly disposition: "inline" | "download";
+  readonly expiresAt: number;
+}) {
+  if (input.cwd === undefined) {
+    return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+  }
+  const homeDir = yield* HostProcess.HomeDirectory;
+  const candidates = hostFileCandidates({ path: input.path, cwd: input.cwd, homeDir });
+  let requestedPath: string | null = null;
+  for (const candidate of candidates) {
+    if (isProtectedHostPath(candidate)) {
+      return yield* new AssetProtectedFileError({ resource: input.resource });
+    }
+    const found = yield* resolveCanonicalFile(candidate).pipe(Effect.orElseSucceed(() => null));
+    if (found !== null) {
+      requestedPath = candidate;
+      break;
+    }
+  }
+  requestedPath ??= candidates[0] ?? null;
+  if (requestedPath === null) {
+    return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+  }
+  return yield* finalizeAbsoluteMediaFileAsset({
+    requestedPath,
+    workspaceRoot: input.cwd,
+    resource: input.resource,
+    expiresAt: input.expiresAt,
+    download: input.disposition === "download",
+  });
+});
+
 const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileAsset")(
   function* (input: {
     readonly workspaceRoot: string;
@@ -596,35 +647,64 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       break;
     }
     case "host-file": {
-      const homeDir = yield* HostProcess.HomeDirectory;
-      const candidates = hostFileCandidates({
+      const finalized = yield* finalizeHostFileAsset({
+        resource: input.resource,
         path: input.resource.path,
         cwd: input.resource.cwd,
-        homeDir,
-      });
-      let requestedPath: string | null = null;
-      for (const candidate of candidates) {
-        if (isProtectedHostPath(candidate)) {
-          return yield* new AssetProtectedFileError({ resource: input.resource });
-        }
-        const found = yield* resolveCanonicalFile(candidate).pipe(Effect.orElseSucceed(() => null));
-        if (found !== null) {
-          requestedPath = candidate;
-          break;
-        }
-      }
-      requestedPath ??= candidates[0] ?? null;
-      if (requestedPath === null) {
-        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
-      }
-      const finalized = yield* finalizeAbsoluteMediaFileAsset({
-        requestedPath,
-        workspaceRoot: input.resource.cwd,
-        resource: input.resource,
+        disposition: input.resource.disposition,
         expiresAt,
-        download: input.resource.disposition === "download",
       });
       claims = finalized.claims;
+      fileName = finalized.fileName;
+      sourcePath = finalized.claims.filePath;
+      imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
+      break;
+    }
+    case "message-file": {
+      if (!input.workspaceRoot) {
+        return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+      }
+      // A missing message, another role, another thread's message, or a path
+      // the message does not link all report the same miss, so the endpoint
+      // does not reveal which paths exist.
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const message = yield* orchestrator
+        .getMessage({
+          threadId: input.resource.threadId,
+          messageId: input.resource.messageId,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+          ),
+        );
+      if (
+        message === null ||
+        message.role !== "assistant" ||
+        !messageFileLinkPaths(message.text).has(input.resource.path)
+      ) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      const finalized = yield* finalizeHostFileAsset({
+        resource: input.resource,
+        path: input.resource.path,
+        cwd: input.workspaceRoot,
+        disposition: input.resource.disposition,
+        expiresAt,
+      });
+      claims = {
+        version: 1,
+        kind: "message-file",
+        threadId: input.resource.threadId,
+        messageId: input.resource.messageId,
+        path: input.resource.path,
+        filePath: finalized.claims.filePath,
+        ...(finalized.claims.download ? { download: true } : {}),
+        device: finalized.claims.device,
+        inode: finalized.claims.inode,
+        expiresAt,
+      };
       fileName = finalized.fileName;
       sourcePath = finalized.claims.filePath;
       imageDimensions = finalized.imageDimensions;
@@ -931,6 +1011,46 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
+const serveAbsoluteMediaFileClaim = Effect.fn("AssetAccess.serveAbsoluteMediaFileClaim")(
+  function* (claims: {
+    readonly filePath: string;
+    readonly download?: boolean;
+    readonly device: string;
+    readonly inode: string;
+  }) {
+    const path = yield* Path.Path;
+    const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to resolve canonical media path.", {
+          filePath: claims.filePath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    if (canonicalFile !== claims.filePath) return null;
+    const mimeType = claims.download
+      ? "application/octet-stream"
+      : hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
+    if (!mimeType) return null;
+    const file = yield* openMediaFile(canonicalFile, claims).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to open canonical media file.", { filePath: canonicalFile, cause }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return file
+      ? ({
+          kind: "file",
+          path: canonicalFile,
+          mimeType,
+          file,
+          ...(claims.download ? { download: true, fileName: path.basename(canonicalFile) } : {}),
+        } satisfies ResolvedAsset)
+      : null;
+  },
+);
+
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
@@ -1030,37 +1150,25 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
+  if (claims.kind === "message-file") {
+    if (decodedPath !== path.basename(claims.filePath)) return null;
+    // A message edited or deleted after the URL was minted stops granting.
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const message = yield* orchestrator
+      .getMessage({ threadId: claims.threadId, messageId: claims.messageId })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (
+      message === null ||
+      message.role !== "assistant" ||
+      !messageFileLinkPaths(message.text).has(claims.path)
+    ) {
+      return null;
+    }
+    return yield* serveAbsoluteMediaFileClaim(claims);
+  }
   if (claims.kind === "media-file-exact") {
     if (decodedPath !== path.basename(claims.filePath)) return null;
-    const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
-      Effect.tapError((cause) =>
-        Effect.logError("Failed to resolve canonical media path.", {
-          filePath: claims.filePath,
-          cause,
-        }),
-      ),
-      Effect.orElseSucceed(() => null),
-    );
-    if (canonicalFile !== claims.filePath) return null;
-    const mimeType = claims.download
-      ? "application/octet-stream"
-      : hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
-    if (!mimeType) return null;
-    const file = yield* openMediaFile(canonicalFile, claims).pipe(
-      Effect.tapError((cause) =>
-        Effect.logError("Failed to open canonical media file.", { filePath: canonicalFile, cause }),
-      ),
-      Effect.orElseSucceed(() => null),
-    );
-    return file
-      ? ({
-          kind: "file",
-          path: canonicalFile,
-          mimeType,
-          file,
-          ...(claims.download ? { download: true, fileName: path.basename(canonicalFile) } : {}),
-        } satisfies ResolvedAsset)
-      : null;
+    return yield* serveAbsoluteMediaFileClaim(claims);
   }
   if (claims.kind === "workspace-file-exact") {
     if (decodedPath !== path.basename(claims.relativePath)) return null;

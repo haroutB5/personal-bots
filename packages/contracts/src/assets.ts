@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
+import {
+  MessageId,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TurnItemId,
+} from "./baseSchemas.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -44,6 +50,16 @@ export const AssetResource = Schema.Union([
   // `download` serves any type as an attachment, never rendered.
   Schema.TaggedStruct("host-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.Literals(["inline", "download"]),
+  }),
+  // One host file named by a chat link, granted per message. The session may
+  // read it only while an assistant message in that thread still links it; a
+  // user or system message never grants. The server reloads the message and
+  // parses its own copy, so no client path list is trusted.
+  Schema.TaggedStruct("message-file", {
+    threadId: ThreadId,
+    messageId: MessageId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     disposition: Schema.Literals(["inline", "download"]),
   }),
@@ -212,7 +228,8 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
     // validation as media files, so they share its message.
     return this.resource._tag === "media-file" ||
       this.resource._tag === "draft-workspace-file" ||
-      this.resource._tag === "host-file"
+      this.resource._tag === "host-file" ||
+      this.resource._tag === "message-file"
       ? "Only images, videos, audio, HTML, and PDF files can be previewed."
       : "Only browser documents and images can be previewed.";
   }
@@ -252,7 +269,9 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   },
 ) {
   override get message(): string {
-    return this.resource._tag === "media-file" || this.resource._tag === "host-file"
+    return this.resource._tag === "media-file" ||
+      this.resource._tag === "host-file" ||
+      this.resource._tag === "message-file"
       ? "Media file was not found."
       : this.resource._tag === "tool-output-image"
         ? "Tool output image was not found."
