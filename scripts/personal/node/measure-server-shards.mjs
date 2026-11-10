@@ -42,7 +42,15 @@ const runLane = (commands, index) =>
         : commands[at];
       const child = NodeChildProcess.spawn("bash", ["-o", "pipefail", "-c", command], {
         cwd: serverDir,
-        env: { ...process.env, NO_COLOR: "1" },
+        env: {
+          ...process.env,
+          NO_COLOR: "1",
+          PATH: [
+            NodePath.join(serverDir, "node_modules/.bin"),
+            NodePath.join(repoRoot, "node_modules/.bin"),
+            process.env.PATH,
+          ].join(":"),
+        },
         stdio: ["ignore", "inherit", "inherit"],
       });
       child.once("error", () => resolve({ index, wallSeconds: wall(), exit: 1, report }));
