@@ -52,6 +52,12 @@ import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelation
  * said Ready). One place covers every source: the turn-start event. Each
  * sweep also unarchives an archived chat whose newer turn is still running,
  * whatever the Settings toggle says.
+ *
+ * The T3 thread controls are the other archive source: `t3_thread_organize`
+ * and the web sidebar archive the orchestration thread, not the bot link.
+ * The link follows both ways here, or the chat keeps its chips on the phone
+ * (the list filters on the link's `archivedAt`). A thread without a link row
+ * is not a bot chat and is left alone.
  */
 export class PersonalTaskChatArchive extends Context.Service<
   PersonalTaskChatArchive,
@@ -193,6 +199,31 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * The T3 archive already changed the orchestration thread; the bot link must
+   * follow so the chat leaves (or returns to) the phone's chips and the bot
+   * chat lists. `bots.archiveThread` is the manual archive: the link, the
+   * session stop and, on the way back, the name. Repeating the state the link
+   * is already in does nothing, so the RPC and the engine cannot undo each
+   * other.
+   */
+  const syncThreadArchive = (threadId: ThreadId, archived: boolean) =>
+    Effect.gen(function* () {
+      const link = yield* repository.getThreadLink({ threadId });
+      if (Option.isNone(link) || (link.value.archivedAt !== null) === archived) return;
+      yield* bots.archiveThread({ threadId, archived });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal chat archive sync failed", {
+              threadId,
+              archived,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   /** Archived chats whose newer turn is still running (`archivedBusyChatsSql`). */
   const healArchivedBusy = Effect.gen(function* () {
     const busy = yield* sql.unsafe<{ readonly threadId: string }>(archivedBusyChatsSql(rel));
@@ -249,15 +280,22 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const onThreadEvent = (event: PersonalEngine.PersonalThreadEvent) => {
+    switch (event._tag) {
+      case "TurnStartRequested":
+        return unarchiveForTurn(event.threadId).pipe(Effect.asVoid);
+      case "ThreadArchived":
+        return syncThreadArchive(event.threadId, true);
+      case "ThreadUnarchived":
+        return syncThreadArchive(event.threadId, false);
+      default:
+        return Effect.void;
+    }
+  };
+
   const start: PersonalTaskChatArchiveShape["start"] = Effect.fn("PersonalTaskChatArchive.start")(
     function* () {
-      yield* forkParked(
-        Stream.runForEach(engine.events, (event) =>
-          event._tag === "TurnStartRequested"
-            ? unarchiveForTurn(event.threadId).pipe(Effect.asVoid)
-            : Effect.void,
-        ),
-      );
+      yield* forkParked(Stream.runForEach(engine.events, onThreadEvent));
       yield* forkParked(
         runSweep.pipe(
           withStallJob("job:task-chat-archive-sweep"),

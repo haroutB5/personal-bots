@@ -138,6 +138,8 @@ export const toPersonalEvents = (
   switch (event.type) {
     case "thread.archived":
       return Effect.succeed([{ _tag: "ThreadArchived", threadId: event.threadId }]);
+    case "thread.unarchived":
+      return Effect.succeed([{ _tag: "ThreadUnarchived", threadId: event.threadId }]);
     case "thread.deleted":
       return Effect.succeed([{ _tag: "ThreadDeleted", threadId: event.threadId }]);
     case "message.updated": {
