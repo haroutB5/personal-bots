@@ -29,6 +29,7 @@ import {
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
+  textPreviewRows,
   type FilePreviewSource,
   type FileTextRead,
   type ImageSizeRead,
@@ -307,12 +308,15 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled file preview state: ${JSON.stringify(value)}`);
 }
 
-/** A short file keeps the sheet's height. A large one draws its lines lazily. */
+/** A short file keeps the sheet's height. A large one, or one with a very long
+ * line, draws wrapped rows lazily so no Text node lays out a huge line. */
 function TextPreview({ text, truncated }: { readonly text: string; readonly truncated: boolean }) {
+  const rows = useMemo(() => textPreviewRows(text), [text]);
+  const wraps = useMemo(() => rows.length !== text.split("\n").length, [rows, text]);
   const notice = truncated ? (
     <Text style={styles.truncated}>Showing the first 1 MB of this file.</Text>
   ) : null;
-  if (text.length <= LAZY_TEXT_CHARS) {
+  if (text.length <= LAZY_TEXT_CHARS && !wraps) {
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         <Text style={styles.code} selectable>
@@ -322,13 +326,12 @@ function TextPreview({ text, truncated }: { readonly text: string; readonly trun
       </ScrollView>
     );
   }
-  const lines = text.split("\n");
   return (
     <FlatList
       style={[styles.scroll, styles.lazyScroll]}
       contentContainerStyle={styles.scrollContent}
-      data={lines}
-      keyExtractor={(_line, index) => String(index)}
+      data={rows}
+      keyExtractor={(_row, index) => String(index)}
       renderItem={({ item }) => (
         <Text style={styles.code} selectable>
           {item.length === 0 ? " " : item}

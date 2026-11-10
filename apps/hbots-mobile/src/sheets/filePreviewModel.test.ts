@@ -3,9 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   FILE_PREVIEW_TOO_LARGE_TEXT,
+  TEXT_PREVIEW_MAX_ROW_CHARS,
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
+  textPreviewRows,
   type FilePreviewSource,
   type FileTextRead,
   type ImageSizeRead,
@@ -165,6 +167,32 @@ describe("filePreviewState", () => {
     expect(
       state("config", { _tag: "Unsupported", asset: { _tag: "Failure", notFound: true } }),
     ).toEqual({ _tag: "Error", reason: "not-found" });
+  });
+});
+
+describe("textPreviewRows", () => {
+  it("keeps ordinary lines as they are", () => {
+    expect(textPreviewRows("one\ntwo\n")).toEqual(["one", "two", ""]);
+  });
+
+  it("splits a line longer than the row cap", () => {
+    const line = "x".repeat(TEXT_PREVIEW_MAX_ROW_CHARS * 2 + 1);
+    const rows = textPreviewRows(line);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.length <= TEXT_PREVIEW_MAX_ROW_CHARS)).toBe(true);
+    expect(rows.join("")).toBe(line);
+  });
+
+  it("splits the one-megabyte line that used to hang the sheet", () => {
+    const line = "a".repeat(1024 * 1024);
+    const rows = textPreviewRows(line);
+    expect(rows.length).toBeGreaterThan(500);
+    expect(rows.every((row) => row.length <= TEXT_PREVIEW_MAX_ROW_CHARS)).toBe(true);
+    expect(rows.join("")).toBe(line);
+  });
+
+  it("leaves an empty file as one empty row", () => {
+    expect(textPreviewRows("")).toEqual([""]);
   });
 });
 

@@ -56,6 +56,28 @@ export type FilePreviewSource =
 /** The sentence both routes show when the file is beyond the phone's preview cap. */
 export const FILE_PREVIEW_TOO_LARGE_TEXT = "This file is too large to preview on the phone.";
 
+/** The longest row the sheet draws. A single long line is split before layout. */
+export const TEXT_PREVIEW_MAX_ROW_CHARS = 2_000;
+
+/**
+ * The rows the sheet draws. Newlines split first, then any line over the row
+ * cap splits into equal chunks, so no single Text node lays out a huge line.
+ * Joining the rows loses the inserted breaks only, never a character.
+ */
+export function textPreviewRows(text: string): string[] {
+  const rows: string[] = [];
+  for (const line of text.split("\n")) {
+    if (line.length <= TEXT_PREVIEW_MAX_ROW_CHARS) {
+      rows.push(line);
+      continue;
+    }
+    for (let index = 0; index < line.length; index += TEXT_PREVIEW_MAX_ROW_CHARS) {
+      rows.push(line.slice(index, index + TEXT_PREVIEW_MAX_ROW_CHARS));
+    }
+  }
+  return rows;
+}
+
 export interface FilePreviewInput {
   readonly path: string | null;
   readonly source: FilePreviewSource;
