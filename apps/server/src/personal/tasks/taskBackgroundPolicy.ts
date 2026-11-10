@@ -40,6 +40,69 @@ export const PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS = 60_000;
 const NEGATED_WAIT =
   /\b(?:nothing|no one|none)\b[^.!?]{0,30}\b(?:waiting|running|pending)\b|\b(?:not|no longer|isn't|aren't|won't|will not)\b[^.!?]{0,20}\b(?:waiting|running|blocked)\b/gi;
 
+/** Chat clients turn I'm into I’m; match the words, not the keyboard. */
+const straightenQuotes = (text: string): string =>
+  text.replace(/[\u2018\u2019\u201A\u02BC\u2032]/g, "'").replace(/[\u201C\u201D\u201E]/g, '"');
+
+/** Markdown emphasis and code markers are noise for phrase matching. */
+const stripMarkup = (text: string): string => text.replace(/[*_`~]+/g, " ");
+
+/**
+ * A line whose own status is the wait ("Waiting on…", "Still waiting for…",
+ * "Queued behind…"). "Waiting:" followed by a release version is a report,
+ * not the bot waiting, so the wait needs its object, and "Queued AVD
+ * screens use…" is a description, not a status.
+ */
+const STATUS_LINE =
+  /^(?:still\s+|now\s+|currently\s+)?(?:waiting\s+(?:on|for)|queued\s+(?:behind|for|on|up)|blocked\s+(?:on|for|by)|parked\s+(?:on|for|by))\b/i;
+
+/**
+ * "Running" is a status only when it names the bot's own work and closes
+ * there ("Running the full personal suite now"); "Still running: Builder
+ * is…" is a report about another party and stays released, and "Running
+ * changed test modules … can block" is a gerund, not a status.
+ */
+const STATUS_RUNNING =
+  /^(?:still\s+|now\s+|currently\s+)?running\s*:?\s*(?:(?:the|my|our|a|an)\s+)?(?:[a-z][\w-]*\s+){0,3}(?:gate|gates|build|builds|job|jobs|test|tests|suite|suites|run|runs|typecheck|lint|proof|deploy|deployment|backup|worker|workers|check|checks|script|scripts|pipeline|command|commands|export|exports|browser|release)\b(?:\s+(?:now|currently|at the moment))?(?:[.!;,]|$)/i;
+
+/**
+ * "Waiting on you" asks the owner a question; the task is not waiting on
+ * background work it will wake for, so the status-line rule must not hold it
+ * (Verifier F4: "Still waiting on you" is a correct release).
+ */
+const WAITS_ON_OWNER =
+  /^(?:still\s+|now\s+|currently\s+)?(?:waiting|blocked|parked)\s+(?:on|for)\s*:?\s*(?:you|your|yours|harout|the user)\b/i;
+
+/** A short label before the status ("Status: …", "Update. …"). */
+const LABEL_PREFIX =
+  /^(?:status|update|state|progress|next|note|summary|result|tl;?dr|current state)\b[.:]\s*/i;
+
+/** Strip list bullets, quotes, headings and a label before a status test. */
+const stripLead = (text: string): string => {
+  let out = text.trim();
+  for (let i = 0; i < 8; i++) {
+    const before = out;
+    out = out
+      .replace(/^>\s*/, "")
+      .replace(/^(?:[-+*•]|\d{1,3}[.)])\s+/, "")
+      .replace(/^#{1,6}\s*/, "")
+      .trim();
+    if (out === before) break;
+  }
+  const labelled = out.replace(LABEL_PREFIX, "").trim();
+  return labelled.length > 0 ? labelled : out;
+};
+
+/**
+ * The bot's own work stated in third person ("Gate is waiting for a heavy
+ * slot", "the full suite is still running"). A third-party subject
+ * ("Verifier", "the task", "the review") never matches, and "held" is not a
+ * verb here, so a finished report that only names who holds the slots stays
+ * released (task c919f948).
+ */
+const OWN_WORK_WAIT =
+  /(?:^|[.!?;]\s+|,\s+)(?:(?:my|the|our|both|all)\s+)?(?:[a-z][\w-]*\s+){0,3}(?:gate|gates|build|builds|job|jobs|test|tests|suite|suites|run|runs|typecheck|lint|proof|deploy|deployment|backup|worker|workers|check|checks|script|scripts|pipeline|command|commands|export|exports|browser|release)\b\s+(?:is|are|was|were)\s+(?:still\s+|now\s+|currently\s+)?(?:waiting|queued|running|blocked|parked|in progress)\b/i;
+
 /**
  * Whether the bot's reply says it is still waiting for work to finish, rather
  * than reporting a result. Deliberately narrow: only the newest line (or the
@@ -52,13 +115,13 @@ const NEGATED_WAIT =
  */
 export const saysItIsWaiting = (text: string | undefined): boolean => {
   if (text === undefined) return false;
-  const lines = text
+  const lines = straightenQuotes(text)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const lastLine = lines.at(-1) ?? "";
   const line = (lastLine.length > 0 ? lastLine : text).slice(-600);
-  const tail = line.replace(NEGATED_WAIT, " ").replace(/\s+/g, " ").trim();
+  const tail = stripMarkup(line.replace(NEGATED_WAIT, " ")).replace(/\s+/g, " ").trim();
   if (tail.length === 0) return false;
   // "I'll report/merge/continue/pick this up ... once it finishes/appears."
   if (
@@ -85,13 +148,38 @@ export const saysItIsWaiting = (text: string | undefined): boolean => {
   // by other bots" does not (task c919f948, 3 Nov, held for hours and counted
   // busy by the release idle gate; Verifier F1).
   if (/\b(?:i'?m|i am|i'?ve been|we'?re|we are)\b[^.!?]{0,30}\bheld\b/i.test(tail)) return true;
+  // A status line after list bullets, emphasis and a label are stripped:
+  // "**Still waiting on:** X", "- Waiting on X", "Status: queued behind…",
+  // "**Status.** Waiting on…". Check every sentence, so a status that
+  // follows a report ("…live. Waiting for 15:54:31.") still counts. "Waiting
+  // on you" is a question to the owner, not background work, and stays
+  // released.
+  const statusWait = tail.split(/(?<=[.!?])\s+/).some((sentence) => {
+    const lead = stripLead(sentence);
+    if (WAITS_ON_OWNER.test(lead)) return false;
+    return STATUS_LINE.test(lead) || STATUS_RUNNING.test(lead);
+  });
+  if (statusWait) return true;
+  // "the full report comes when they're done" names the bot's own report and
+  // the condition it waits for, even when the sentence before it is a report.
+  if (
+    /\b(?:full\s+)?(?:report|results?|update)\b[^.!?]{0,40}\b(?:comes?|follows?|lands?)\s+when\b/i.test(
+      tail,
+    )
+  ) {
+    return true;
+  }
+  // The bot's own work in third person: "Gate is waiting for a heavy slot",
+  // "the full suite is still running". Third-party subjects and "held by"
+  // do not match here.
+  if (OWN_WORK_WAIT.test(tail)) return true;
   // An explicit wait or watch by the bot itself, with nothing finished to
-  // report: first person ("I'm waiting on…", "I will wait for…") or a
-  // sentence-opening status ("Waiting on…", "Still waiting for…"). A
+  // report: first person ("I'm waiting on…", "I will wait for…", "I wait for
+  // it to finish") or a sentence-opening status ("Waiting on…"). A
   // third-party state ("the task is waiting for review") is not the bot
   // waiting and must not hold its task.
   if (
-    /\b(?:i'?m|i am|i'?ve been|i'?ll|i will|we'?re|we are|we'?ve been)\b[^.!?]{0,40}\b(?:waiting|wait|watches?|watching|blocked|parked)\b|\b(?:i|we)\b[^.!?]{0,20}\bre-?armed the watch\b|\bwatch(?:er)? is still running\b|\b(?:^|[.!?]\s+)(?:still\s+|now\s+|currently\s+)?(?:waiting|blocked|parked)\s+(?:on|for)\b/i.test(
+    /\b(?:i'?m|i am|i'?ve been|i'?ll|i will|we'?re|we are|we'?ve been)\b[^.!?]{0,40}\b(?:waiting|wait|watches?|watching|blocked|parked)\b|\b(?:i|we)\s+(?:still\s+|now\s+|currently\s+)?(?:wait|waiting)\b|\b(?:i|we)\b[^.!?]{0,20}\bre-?armed the watch\b|\bwatch(?:er)? is still running\b/i.test(
       tail,
     )
   ) {

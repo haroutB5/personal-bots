@@ -986,6 +986,82 @@ describe("stated wait: the bot's own words", () => {
     }
   });
 
+  // 10 Nov 2026, Verifier F4. These three shapes were held by the old rule
+  // at 2b84d25399 and released by 342a10b4fe, though each is the bot's own
+  // wait; the narrowing only knew straight apostrophes and a bare sentence
+  // opening.
+  it("holds a wait written with typographic quotes", () => {
+    for (const text of [
+      "I’m waiting on the install before the gates.",
+      "I’ve been waiting on the final personal suite.",
+      "We’re waiting for the heavy slot.",
+      "**I’m waiting on** the install before the gates.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(true);
+    }
+  });
+
+  it("holds a wait behind a markdown, bullet or label prefix", () => {
+    for (const text of [
+      "**Still waiting on:** Shipper's result for the F1 fix, and Verifier's second check of Android 0.219.",
+      "**Still running:** Shipper is deploying the notification fix (task `2f4b846d`). After it come the server side of future games, then Android 0.215.0. Each one waits for the one before it to pass, so the full report comes when they're done.",
+      "**Status.** Waiting on the heavy slot for the full gate.",
+      "- Waiting on the heavy slot for the full gate.",
+      "* Waiting on the gate.",
+      "1. Waiting on the gate.",
+      "> Still waiting on the final suite.",
+      "Status: waiting on Verifier.",
+      "**Status:** queued behind two other gates.",
+      "**Update.** Running the full personal suite now.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(true);
+    }
+  });
+
+  it("holds a third-person wait when the subject is the bot's own work", () => {
+    for (const text of [
+      "Gate is waiting for a heavy slot; nothing else to report yet.",
+      "The build is waiting on the sampler.",
+      "My gate is queued for the next heavy slot.",
+      "Our full suite is still running.",
+      "The release is blocked on the emulator slot.",
+      "F1 deployment is still running. Android 0.213.2 is live.",
+      "The pipeline is running the gates and build now; the morning report follows.",
+      "Idle window is running with no client. Waiting for 15:54:31.",
+      "Gates are queued through `heavy-job.sh` one at a time; slot 1 is held by another bot's emulator job and slot 2 needs 6 GB free, so the runner is waiting for a slot before starting. I'll report gate results, push and write `RESULT.md` when the sequence finishes.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(true);
+    }
+  });
+
+  it("still releases third-party states and waits on the owner after a prefix", () => {
+    for (const text of [
+      "The task is waiting for review.",
+      "The review is waiting for Verifier.",
+      "**Status.** Verifier is waiting for the branch to be pushed.",
+      "**Still waiting on you:** attach the two signing key files to your password manager entry.",
+      "Still waiting on you, when you're at the laptop: attach the two signing key files.",
+      "Waiting on you: pick one of the options above.",
+      "Status: the task is waiting for review.",
+      "**Still running:** Builder is making the app show your bots instantly, removing the unneeded permissions.",
+      "**Still waiting:** 1.66.114 hasn't installed yet, because the machine hasn't had a quiet moment.",
+      "**Waiting:** 1.66.114 installs once the bots are idle.",
+      "**Releases are waiting their turn.** 1.66.114 has been waiting to install for several hours.",
+      "Queued AVD screens use stubbed answers.",
+      "Running changed test modules from inside the live root can block on the live state file.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(false);
+    }
+  });
+
+  it("holds a present-tense wait the older rule knew (f846fd8a)", () => {
+    expect(
+      saysItIsWaiting(
+        "It started 2 minutes ago and is still within its window. I wait for it to finish.",
+      ),
+    ).toBe(true);
+  });
+
   it("still holds the OpenCode replies whose last line is the bot's own wait", () => {
     for (const text of [
       // Shipper's original case, 9 Nov: the task must stay running until its wake turn.
