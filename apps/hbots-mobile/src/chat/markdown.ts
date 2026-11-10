@@ -13,8 +13,18 @@ export interface FileLink {
 
 export type InlineSpan =
   | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "bold"; readonly text: string }
-  | { readonly kind: "italic"; readonly text: string }
+  | {
+      readonly kind: "bold";
+      readonly text: string;
+      /** The parsed inner spans, set only when the inner text carries markup. */
+      readonly spans?: ReadonlyArray<InlineSpan>;
+    }
+  | {
+      readonly kind: "italic";
+      readonly text: string;
+      /** The parsed inner spans, set only when the inner text carries markup. */
+      readonly spans?: ReadonlyArray<InlineSpan>;
+    }
   | { readonly kind: "code"; readonly text: string }
   | { readonly kind: "link"; readonly text: string; readonly href: string }
   | ({ readonly kind: "file" } & FileLink);
@@ -60,6 +70,8 @@ const NUMBER = /^( *)(\d+)[.)]\s+(.*)$/u;
 const QUOTE = /^>\s?(.*)$/u;
 const LINK = /^\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)$/u;
 const MAX_LIST_DEPTH = 3;
+/** Stops a pathological run of nested emphasis from recursing without end. */
+const MAX_INLINE_DEPTH = 4;
 
 function listDepth(spaces: string): number {
   return Math.min(MAX_LIST_DEPTH, Math.floor(spaces.length / 2));
@@ -172,10 +184,10 @@ function fileLink(path: string, label: string): { readonly kind: "file" } & File
   return { kind: "file", path, label, name: fileBasename(path) || label };
 }
 
-function inline(text: string): ReadonlyArray<InlineSpan> {
+function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
   const spans: InlineSpan[] = [];
   const pattern =
-    /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+(?:\s+"[^"]*")?\))/gu;
+    /(\*\*(?:\*(?!\*)|[^*])+\*\*|__(?:_(?!_)|[^_])+__|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+(?:\s+"[^"]*")?\))/gu;
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     const index = match.index ?? 0;
@@ -190,17 +202,40 @@ function inline(text: string): ReadonlyArray<InlineSpan> {
         target.kind === "file" ? fileLink(target.path, label) : { kind: "link", text: label, href },
       );
     } else if (token.startsWith("**") || token.startsWith("__")) {
-      spans.push({ kind: "bold", text: token.slice(2, -2) });
+      spans.push(emphasis("bold", token.slice(2, -2), depth));
     } else if (token.startsWith("`")) {
       const code = token.slice(1, -1);
       spans.push(pathLike(code) ? fileLink(code.trim(), code) : { kind: "code", text: code });
     } else {
-      spans.push({ kind: "italic", text: token.slice(1, -1) });
+      spans.push(emphasis("italic", token.slice(1, -1), depth));
     }
     last = index + token.length;
   }
   if (last < text.length) spans.push({ kind: "text", text: text.slice(last) });
   return spans.length === 0 ? [{ kind: "text", text }] : spans;
+}
+
+/**
+ * Bold or italic text. When the inner text carries its own markup (code, a
+ * link, or the other emphasis), it keeps the parsed children so each of them
+ * draws with the inherited weight. Plain runs stay a single `text` string.
+ */
+function emphasis(kind: "bold" | "italic", inner: string, depth: number): InlineSpan {
+  if (depth >= MAX_INLINE_DEPTH) return { kind, text: inner };
+  const spans = inline(inner, depth + 1);
+  const plain = spans.length === 1 && spans[0]?.kind === "text";
+  return plain ? { kind, text: inner } : { kind, text: inner, spans };
+}
+
+/** Whether a span list holds a file link, at any depth of bold or italic. */
+export function hasFileSpan(spans: ReadonlyArray<InlineSpan>): boolean {
+  return spans.some((span) => {
+    if (span.kind === "file") return true;
+    if (span.kind === "bold" || span.kind === "italic") {
+      return span.spans !== undefined && hasFileSpan(span.spans);
+    }
+    return false;
+  });
 }
 
 /**
@@ -346,7 +381,7 @@ export function markdownNeedsWidth(source: string): boolean {
     ) {
       return true;
     }
-    return block.files !== undefined || block.spans.some((span) => span.kind === "file");
+    return block.files !== undefined || hasFileSpan(block.spans);
   });
 }
 

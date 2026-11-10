@@ -64,6 +64,7 @@ import { ChoiceButtons } from "./ChoiceButtons";
 import {
 
   /* eslint-disable react/refs -- the list owns imperative scroll and swipe handles */
+  hasFileSpan,
   linkTarget,
   markdownBlocks,
   markdownNeedsWidth,
@@ -91,6 +92,65 @@ function isImageAttachment(attachment: ChatAttachment): attachment is ImageAttac
   return attachment.type === "image";
 }
 
+type OpenLink = ((href: string) => void) | undefined;
+
+/** One span drawn inside a paragraph. Bold and italic recurse into their children. */
+function spanNode(span: InlineSpan, index: number, onOpenLink: OpenLink): React.ReactNode {
+  const key = `${span.kind}:${index}`;
+  if (span.kind === "bold" || span.kind === "italic") {
+    return (
+      <Text key={key} style={span.kind === "bold" ? styles.bold : styles.italic}>
+        {span.spans === undefined ? span.text : spanNodes(span.spans, onOpenLink)}
+      </Text>
+    );
+  }
+  if (span.kind === "link") {
+    const target = linkTarget(span.href);
+    if (target.kind === "blocked") {
+      return <Text key={key}>{span.text}</Text>;
+    }
+    if (target.kind === "file") {
+      return (
+        <Text key={key} style={styles.fileNameOnly}>
+          {span.text}
+        </Text>
+      );
+    }
+    return (
+      <Text
+        key={key}
+        style={styles.link}
+        accessibilityRole="link"
+        onPress={() => onOpenLink?.(target.url)}
+      >
+        {span.text}
+      </Text>
+    );
+  }
+  if (span.kind === "code") {
+    return (
+      <Text key={key} style={styles.inlineCode}>
+        {span.text}
+      </Text>
+    );
+  }
+  if (span.kind === "file") {
+    return (
+      <Text key={key} style={styles.fileNameOnly}>
+        {span.name}
+      </Text>
+    );
+  }
+  return <Text key={key}>{span.text}</Text>;
+}
+
+function spanNodes(
+  spans: ReadonlyArray<InlineSpan>,
+  onOpenLink: OpenLink,
+): ReadonlyArray<React.ReactNode> {
+  return spans.map((span, index) => spanNode(span, index, onOpenLink));
+}
+
 function SpanText({
   spans,
   style,
@@ -104,7 +164,7 @@ function SpanText({
   readonly onOpenFile?: ((path: string) => void) | undefined;
   readonly onOpenLink?: ((href: string) => void) | undefined;
 }) {
-  if (spans.some((span) => span.kind === "file")) {
+  if (hasFileSpan(spans)) {
     return (
       <SpanFlow
         spans={spans}
@@ -115,96 +175,53 @@ function SpanText({
       />
     );
   }
-  return (
-    <Text style={style}>
-      {spans.map((span) => {
-        if (span.kind === "bold") {
-          return (
-            <Text key={`${span.kind}:${span.text}`} style={styles.bold}>
-              {span.text}
-            </Text>
-          );
-        }
-        if (span.kind === "italic") {
-          return (
-            <Text key={`${span.kind}:${span.text}`} style={styles.italic}>
-              {span.text}
-            </Text>
-          );
-        }
-        if (span.kind === "link") {
-          const target = linkTarget(span.href);
-          if (target.kind === "blocked") {
-            return <Text key={`${span.kind}:${span.text}`}>{span.text}</Text>;
-          }
-          if (target.kind === "file") {
-            return (
-              <Text key={`${span.kind}:${span.text}`} style={styles.fileNameOnly}>
-                {span.text}
-              </Text>
-            );
-          }
-          return (
-            <Text
-              key={`${span.kind}:${span.text}`}
-              style={styles.link}
-              accessibilityRole="link"
-              onPress={() => onOpenLink?.(target.url)}
-            >
-              {span.text}
-            </Text>
-          );
-        }
-        if (span.kind === "code") {
-          return (
-            <Text key={`${span.kind}:${span.text}`} style={styles.inlineCode}>
-              {span.text}
-            </Text>
-          );
-        }
-        if (span.kind === "file") {
-          return (
-            <Text key={`${span.kind}:${span.path}`} style={styles.fileNameOnly}>
-              {span.name}
-            </Text>
-          );
-        }
-        return <Text key={`${span.kind}:${span.text}`}>{span.text}</Text>;
-      })}
-    </Text>
-  );
+  return <Text style={style}>{spanNodes(spans, onOpenLink)}</Text>;
 }
 
 type FlowWord = {
   readonly text: string;
-  readonly format: "text" | "bold" | "italic" | "code" | "link";
+  readonly format: "text" | "code" | "link";
+  readonly bold?: boolean;
+  readonly italic?: boolean;
   readonly href?: string;
 };
+
+type FlowEmphasis = { readonly bold?: boolean; readonly italic?: boolean };
 
 type FlowPiece =
   | { readonly kind: "word"; readonly key: string; readonly word: FlowWord }
   | { readonly kind: "file"; readonly key: string; readonly file: FileLink }
   | { readonly kind: "break"; readonly key: string };
 
-function flowPieces(spans: ReadonlyArray<InlineSpan>): ReadonlyArray<FlowPiece> {
+/** Only the set flags, so exact optional property types stay happy. */
+function emphasisFields(style: FlowEmphasis): FlowEmphasis {
+  return {
+    ...(style.bold === true ? { bold: true } : {}),
+    ...(style.italic === true ? { italic: true } : {}),
+  };
+}
+
+function flowPieces(
+  spans: ReadonlyArray<InlineSpan>,
+  emphasis: FlowEmphasis = {},
+  counter = { value: 0 },
+): ReadonlyArray<FlowPiece> {
   const pieces: FlowPiece[] = [];
-  let serial = 0;
-  for (const span of spans) {
-    if (span.kind === "file") {
-      pieces.push({ kind: "file", key: `file:${serial++}`, file: span });
-      continue;
-    }
-    const format = span.kind;
-    const sources = span.text.split("\n");
+  const pushWords = (
+    text: string,
+    format: FlowWord["format"],
+    style: FlowEmphasis,
+    href?: string,
+  ) => {
+    const sources = text.split("\n");
     sources.forEach((source, lineIndex) => {
-      if (lineIndex > 0) pieces.push({ kind: "break", key: `break:${serial++}` });
+      if (lineIndex > 0) pieces.push({ kind: "break", key: `break:${counter.value++}` });
       for (const token of source.match(/\s+|\S+/gu) ?? []) {
         if (!/^\s+$/u.test(token)) {
-          const href = span.kind === "link" ? span.href : undefined;
           pieces.push({
             kind: "word",
-            key: `word:${serial++}`,
-            word: { text: token, format, ...(href ? { href } : {}) },
+            key: `word:${counter.value++}`,
+            word: { text: token, format, ...emphasisFields(style), ...(href ? { href } : {}) },
           });
           continue;
         }
@@ -217,12 +234,26 @@ function flowPieces(spans: ReadonlyArray<InlineSpan>): ReadonlyArray<FlowPiece> 
         } else if (previous !== undefined && previous.kind !== "break") {
           pieces.push({
             kind: "word",
-            key: `word:${serial++}`,
-            word: { text: token, format: "text" },
+            key: `word:${counter.value++}`,
+            word: { text: token, format: "text", ...emphasisFields(style) },
           });
         }
       }
     });
+  };
+  for (const span of spans) {
+    if (span.kind === "file") {
+      pieces.push({ kind: "file", key: `file:${counter.value++}`, file: span });
+      continue;
+    }
+    if (span.kind === "bold" || span.kind === "italic") {
+      const inner: FlowEmphasis =
+        span.kind === "bold" ? { ...emphasis, bold: true } : { ...emphasis, italic: true };
+      if (span.spans === undefined) pushWords(span.text, "text", inner);
+      else pieces.push(...flowPieces(span.spans, inner, counter));
+      continue;
+    }
+    pushWords(span.text, span.kind, emphasis, span.kind === "link" ? span.href : undefined);
   }
   return pieces;
 }
@@ -267,15 +298,13 @@ function SpanFlow({
             const href = word.href;
             const wordStyle = [
               style,
-              word.format === "bold"
-                ? styles.bold
-                : word.format === "italic"
-                  ? styles.italic
-                  : word.format === "code"
-                    ? styles.inlineCode
-                    : word.format === "link"
-                      ? styles.link
-                      : null,
+              word.bold === true ? styles.bold : null,
+              word.italic === true ? styles.italic : null,
+              word.format === "code"
+                ? styles.inlineCode
+                : word.format === "link"
+                  ? styles.link
+                  : null,
             ];
             return (
               <Text
