@@ -4,6 +4,10 @@
  * Anything else stays literal.
  */
 
+import { linkTarget, pathLike } from "@t3tools/shared/messageFileLinks";
+
+export { linkTarget };
+
 export interface FileLink {
   readonly path: string;
   readonly label: string;
@@ -197,18 +201,6 @@ function fileBasename(path: string): string {
       .split(/[\\/]/u)
       .filter((part) => part.length > 0)
       .at(-1) ?? path
-  );
-}
-
-/** A code span that names a file rather than code: a path with a separator. */
-function pathLike(text: string): boolean {
-  const trimmed = text.trim();
-  return (
-    trimmed.length > 2 &&
-    !trimmed.includes("\n") &&
-    /[/\\]/u.test(trimmed) &&
-    !/^[a-z]+:\/\//iu.test(trimmed) &&
-    linkTarget(trimmed).kind === "file"
   );
 }
 
@@ -421,27 +413,4 @@ export function markdownNeedsWidth(source: string): boolean {
     }
     return block.files !== undefined || hasFileSpan(block.spans);
   });
-}
-
-/**
- * Where a markdown link goes. A file path opens in the file sheet. Only http
- * and https leave the app: other schemes such as tel: or javascript: are shown
- * as plain text, because a bot's reply must not hand them to the system.
- */
-export function linkTarget(
-  href: string,
-):
-  | { readonly kind: "external"; readonly url: string }
-  | { readonly kind: "file"; readonly path: string }
-  | { readonly kind: "blocked" } {
-  const trimmed = href.trim();
-  if (/^[A-Za-z]:[\\/]/u.test(trimmed)) return { kind: "file", path: trimmed };
-  if (/^https?:\/\//iu.test(trimmed)) return { kind: "external", url: trimmed };
-  if (trimmed.startsWith("//")) return { kind: "external", url: `https:${trimmed}` };
-  if (/^file:\/\//iu.test(trimmed)) {
-    const withoutScheme = decodeURIComponent(trimmed.replace(/^file:\/\//iu, ""));
-    return { kind: "file", path: withoutScheme.replace(/^\/(?=[A-Za-z]:[\\/])/u, "") };
-  }
-  if (/^[a-z][a-z0-9+.-]*:/iu.test(trimmed)) return { kind: "blocked" };
-  return { kind: "file", path: trimmed };
 }

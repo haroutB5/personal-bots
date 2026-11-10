@@ -331,6 +331,10 @@
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"
     },
+    "./messageFileLinks": {
+      "types": "./src/messageFileLinks.ts",
+      "import": "./src/messageFileLinks.ts"
+    },
     "./imageDimensions": {
       "types": "./src/imageDimensions.ts",
       "import": "./src/imageDimensions.ts"
