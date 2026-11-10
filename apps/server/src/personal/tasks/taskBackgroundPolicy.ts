@@ -79,10 +79,19 @@ export const saysItIsWaiting = (text: string | undefined): boolean => {
     return true;
   }
   if (/\b(?:still|currently)\s+(?:queued|in progress|in the background)\b/i.test(tail)) return true;
-  if (/\bqueued behind\b|\bheld (?:up )?(?:by|behind|on)\b/i.test(tail)) return true;
-  // An explicit wait or watch, with nothing finished to report.
+  if (/\bqueued behind\b/i.test(tail)) return true;
+  // The bot itself held up, not a slot it only names: "I'm held up by the
+  // emulator" holds, while a finished report saying "the heavy slots are held
+  // by other bots" does not (task c919f948, 3 Nov, held for hours and counted
+  // busy by the release idle gate; Verifier F1).
+  if (/\b(?:i'?m|i am|i'?ve been|we'?re|we are)\b[^.!?]{0,30}\bheld\b/i.test(tail)) return true;
+  // An explicit wait or watch by the bot itself, with nothing finished to
+  // report: first person ("I'm waiting on…", "I will wait for…") or a
+  // sentence-opening status ("Waiting on…", "Still waiting for…"). A
+  // third-party state ("the task is waiting for review") is not the bot
+  // waiting and must not hold its task.
   if (
-    /\b(?:waiting|wait|waits|watch|watches|watching|blocked|parked)\s+(?:on|for|by|behind)\b|\bre-?armed the watch\b|\bwatch(?:er)? is still running\b/i.test(
+    /\b(?:i'?m|i am|i'?ve been|i'?ll|i will|we'?re|we are|we'?ve been)\b[^.!?]{0,40}\b(?:waiting|wait|watches?|watching|blocked|parked)\b|\b(?:i|we)\b[^.!?]{0,20}\bre-?armed the watch\b|\bwatch(?:er)? is still running\b|\b(?:^|[.!?]\s+)(?:still\s+|now\s+|currently\s+)?(?:waiting|blocked|parked)\s+(?:on|for)\b/i.test(
       tail,
     )
   ) {

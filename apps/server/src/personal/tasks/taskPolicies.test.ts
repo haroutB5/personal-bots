@@ -955,4 +955,60 @@ describe("stated wait: the bot's own words", () => {
     );
     expect(step).toMatchObject({ kind: "finish", capped: false, capSource: null });
   });
+
+  // 10 Nov 2026, Verifier F1: a scan of the 374 OpenCode final replies since
+  // 1 Nov held 17. This one, task c919f948 (3 Nov), is a complete report whose
+  // last line only mentions that other bots hold the heavy slots; nothing of
+  // the bot's is running and its work record says nothing is outstanding. It
+  // matched the "held by" pattern and kept the task busy for hours, which also
+  // holds the release idle gate (qa/release-cleanup/VERIFY.md, F1).
+  it("does not hold a finished report that only names work other bots hold (c919f948)", () => {
+    const text =
+      "Nothing of mine is running. No process matches `hbots-l3b`, no `l3b` throwaway root exists, and the throwaway server PID is gone. The two heavy slots are held by other bots, the Verifier's emulator and A1's APK rebuild. The work record now says nothing outstanding.";
+    expect(saysItIsWaiting(text)).toBe(false);
+    const step = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({ last: waiting(text), statedWait: saysItIsWaiting(text) }),
+    );
+    expect(step).toMatchObject({ kind: "finish", capped: false, capSource: null });
+  });
+
+  it("does not hold a reply that only states another party is waiting or held", () => {
+    for (const text of [
+      "The review is waiting for Verifier.",
+      "The task is waiting for review.",
+      "Verifier is waiting for the branch to be pushed.",
+      "The gate is held up by another bot.",
+      "PR 12 is held behind the release queue.",
+      "The build is held on the shared heavy lock.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(false);
+    }
+  });
+
+  it("still holds the OpenCode replies whose last line is the bot's own wait", () => {
+    for (const text of [
+      // Shipper's original case, 9 Nov: the task must stay running until its wake turn.
+      "Waiting on the gate now; I'll pick up with the APK build when it reports.",
+      // The 16 real waits from the 10 Nov recount of the 374 OpenCode replies.
+      "I'll report PASS/FAIL with the 11-item table when the sampler and the hour capture land.",
+      "Queue sample is running and shows 9 items with both match wants and the Serie A league want present at every sample so far. I will resume when the 10-minute window closes, then merge to main and write the app sheet entry.",
+      "Route is implemented and its 29 tests pass. The same game's cold full build measured 15.7 s with 197 build-order entries. Both heavy slots are held by Verifier and Shipper AVDs, so the full gates and `next start` build are queued behind them; I'll resume as soon as the install job gets a slot.",
+      "Status: the code and tests are in, the publish script is verified both ways, and the proof harness is ready. The full gate is queued behind another bot's emulator, which holds the only usable heavy slot with 2.5 GB free; I'll run the gate and the emulator proof as soon as that slot frees.",
+      "Waiting on the heavy-job slot for the full repo gate. The worker-level proof is already green, and the gate job is queued and alive.",
+      "The build is still queued behind another verifier emulator and a gate. I'll reuse the team's proven emulator check commands while waiting.",
+      "Queued behind two other gates. Waiting for the slot, then I'll read the gate table and continue the release.",
+      "A2 code is in place and the web baseline is captured from the throwaway (4 bots, Assistant pinned, Developer replied \"Got it.\", live CPU/RAM/disk line). The full unit gate is queued behind another bot's emulator and will start as soon as a heavy slot frees; I'll pick up from there, run the lanes and pixel diff, and report the shas and exit codes.",
+      "Waiting on the gates.",
+      "State and per-PR detail are in `/home/harout/Claude/AI/dev-team/qa/hbots-v2-port-A6b-A8/REPORT.md`. I will continue from the worktree when you reopen after 1.66.117 is live.",
+      "Still waiting on the final personal suite; I will pick up the moment it posts its result.",
+      "Two jobs are running in the background: the full server gate and an independent comment review. The targeted failures, C12 suite, and server typecheck are already green. I'll resume as soon as the full gate reports.",
+      "The full server gate is still running through the suite; all focused gates are green. I'll finish pending-check, commit, push, and write the report as soon as it lands.",
+      "The gates are still running. I will wait for their completion notifications rather than poll.",
+      "Both gates are still running in the background. I'll continue when they report.",
+      "Still waiting on the emulator baseline for a heavy slot. No release action taken yet; the build starts as soon as the slot frees.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(true);
+    }
+  });
 });
