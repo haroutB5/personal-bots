@@ -19,8 +19,8 @@
       "rpc": 130
     },
     "byStatus": {
-      "done": 353,
-      "planned": 27,
+      "done": 352,
+      "planned": 28,
       "n/a": 53,
       "unassigned": 0
     },
@@ -1098,10 +1098,10 @@
       "check": "Open \"New chat with\" from its screen on Android. Same fields, buttons and confirm wording as NewChatDialog.tsx:30. Back closes only the sheet."
     },
     {
-      "id": "sheet:PersonalResetCredits.tsx#redeem-a-banked-x-reset",
+      "id": "sheet:PersonalResetCredits.tsx#alertdialog-in-personalresetcredits",
       "kind": "sheet",
-      "title": "Redeem a banked x reset?",
-      "web": "PersonalResetCredits.tsx:101",
+      "title": "AlertDialog in PersonalResetCredits",
+      "web": "PersonalResetCredits.tsx:105",
       "primitive": "AlertDialog",
       "logic": {
         "files": 4,
@@ -1109,8 +1109,8 @@
         "direct": ["usagePresentation.ts"]
       },
       "pr": "A2",
-      "status": "done",
-      "check": "Open \"Redeem a banked x reset?\" from its screen on Android. Same fields, buttons and confirm wording as PersonalResetCredits.tsx:101. Back closes only the sheet."
+      "status": "planned",
+      "check": "Open \"AlertDialog in PersonalResetCredits\" from its screen on Android. Same fields, buttons and confirm wording as PersonalResetCredits.tsx:105. Back closes only the sheet."
     },
     {
       "id": "sheet:PersonalUsageStrip.tsx#sheet-in-personalusagestrip",
