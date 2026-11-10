@@ -8,7 +8,7 @@ const A1_A2_ITEMS = [
   "action:PersonalShell.tsx#edge-swipe-back",
   "action:useChatSwipeBack.tsx#edge-swipe-back",
   "screen:routes/_personal.bots.tsx#bots",
-  "sheet:PersonalResetCredits.tsx#redeem-a-banked-x-reset",
+  "sheet:PersonalResetCredits.tsx#alertdialog-in-personalresetcredits",
   "sheet:PersonalUsageStrip.tsx#sheet-in-personalusagestrip",
   "action:ChatsScreen.tsx#new-bot",
   "action:ChatsScreen.tsx#new-group",
