@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { MarkdownTable } from "./markdown";
 import {
   claimsReplySwipe,
+  LONG_PRESS_SLOP,
+  opensMessageMenu,
   scrollIndexForItem,
   TABLE_CELL_MAX_WIDTH,
   tableColumnWidths,
@@ -41,6 +43,23 @@ describe("claimsReplySwipe", () => {
 
   it("ignores a drag that is more diagonal than horizontal", () => {
     expect(claimsReplySwipe(10, 9, false)).toBe(false);
+  });
+});
+
+describe("opensMessageMenu", () => {
+  it("opens on a still finger that began on the message body", () => {
+    expect(opensMessageMenu(false, 0, 0)).toBe(true);
+    expect(opensMessageMenu(false, LONG_PRESS_SLOP, -LONG_PRESS_SLOP)).toBe(true);
+  });
+
+  it("stays shut when the touch began on a link or a choice button", () => {
+    expect(opensMessageMenu(true, 0, 0)).toBe(false);
+    expect(opensMessageMenu(true, 2, 3)).toBe(false);
+  });
+
+  it("stays shut when the finger moved past the slop", () => {
+    expect(opensMessageMenu(false, LONG_PRESS_SLOP + 1, 0)).toBe(false);
+    expect(opensMessageMenu(false, 0, -LONG_PRESS_SLOP - 1)).toBe(false);
   });
 });
 

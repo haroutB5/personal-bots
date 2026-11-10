@@ -60,10 +60,12 @@ import { isChatCard, renderChatCard } from "./cards/registry";
 import type { ChatEnvironment } from "./chatEnvironment";
 import {
   claimsReplySwipe,
+  opensMessageMenu,
   scrollIndexForItem,
   TABLE_CELL_MIN_WIDTH,
   tableColumnWidths,
 } from "./messageListModel";
+import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./messageTouch";
 import { AttachmentImage } from "./AttachmentImage";
 import { ChoiceButtons } from "./ChoiceButtons";
 import {
@@ -99,6 +101,29 @@ function isImageAttachment(attachment: ChatAttachment): attachment is ImageAttac
 
 type OpenLink = ((href: string) => void) | undefined;
 
+/** A link inside a paragraph; touching it owns the press instead of the menu. */
+function LinkText({
+  text,
+  href,
+  onOpenLink,
+}: {
+  readonly text: string;
+  readonly href: string;
+  readonly onOpenLink: OpenLink;
+}) {
+  const markInteractive = useMarkInteractiveTouch();
+  return (
+    <Text
+      style={styles.link}
+      accessibilityRole="link"
+      onPressIn={markInteractive}
+      onPress={() => onOpenLink?.(href)}
+    >
+      {text}
+    </Text>
+  );
+}
+
 /** One span drawn inside a paragraph. Bold and italic recurse into their children. */
 function spanNode(span: InlineSpan, index: number, onOpenLink: OpenLink): React.ReactNode {
   const key = `${span.kind}:${index}`;
@@ -121,16 +146,7 @@ function spanNode(span: InlineSpan, index: number, onOpenLink: OpenLink): React.
         </Text>
       );
     }
-    return (
-      <Text
-        key={key}
-        style={styles.link}
-        accessibilityRole="link"
-        onPress={() => onOpenLink?.(target.url)}
-      >
-        {span.text}
-      </Text>
-    );
+    return <LinkText key={key} text={span.text} href={target.url} onOpenLink={onOpenLink} />;
   }
   if (span.kind === "code") {
     return (
@@ -289,6 +305,7 @@ function SpanFlow({
   readonly onOpenLink?: ((href: string) => void) | undefined;
 }) {
   const lines = useMemo(() => flowLines(flowPieces(spans)), [spans]);
+  const markInteractive = useMarkInteractiveTouch();
   return (
     <View style={[styles.flow, containerStyle]}>
       {lines.map((line) => (
@@ -316,6 +333,9 @@ function SpanFlow({
                 key={piece.key}
                 style={wordStyle}
                 accessibilityRole={word.format === "link" ? "link" : undefined}
+                onPressIn={
+                  word.format === "link" && href !== undefined ? markInteractive : undefined
+                }
                 onPress={
                   word.format === "link" && href !== undefined
                     ? () => onOpenLink?.(href)
@@ -353,10 +373,12 @@ function FileChip({
   readonly onOpenFile?: ((path: string) => void) | undefined;
 }) {
   const name = file.name || file.label;
+  const markInteractive = useMarkInteractiveTouch();
   return (
     <Pressable
       accessibilityRole="link"
       accessibilityLabel={`Open ${name}`}
+      onPressIn={markInteractive}
       onPress={() => onOpenFile?.(file.path)}
       style={({ pressed }) => [styles.fileChipButton, pressed ? styles.fileChipPressed : null]}
     >
@@ -627,12 +649,13 @@ function SentAt({ at, align }: { readonly at: Date; readonly align: "start" | "e
 }
 
 const LONG_PRESS_MS = 350;
-const LONG_PRESS_SLOP = 10;
+const MESSAGE_ACCESSIBILITY_ACTIONS = [{ name: "longpress" }];
 
 /**
- * A long-press target that never claims the touch responder: a Pressable
- * would take the gesture from a table's horizontal scroller inside it.
- * A still finger opens the menu; a moving one or a scroll cancels it.
+ * A long-press target that never claims the touch responder, so a table's
+ * horizontal scroller keeps its drag. A still finger on the body opens the
+ * menu, unless the touch began on a link, file chip or choice button; the body
+ * stays one accessible node with the menu as its long-press action.
  */
 function LongPressSurface({
   onLongPress,
@@ -645,43 +668,65 @@ function LongPressSurface({
 }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const origin = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  const latest = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  const startedOnInteractive = useRef(false);
+  const markInteractive = useCallback(() => {
+    startedOnInteractive.current = true;
+  }, []);
   const cancel = useCallback(() => {
     if (timer.current !== null) {
       clearTimeout(timer.current);
       timer.current = null;
     }
     origin.current = null;
+    latest.current = null;
   }, []);
-  useEffect(() => cancel, [cancel]);
+  const reset = useCallback(() => {
+    cancel();
+    startedOnInteractive.current = false;
+  }, [cancel]);
+  useEffect(() => reset, [reset]);
   return (
-    <View
-      style={style}
-      onTouchStart={(event) => {
-        cancel();
-        const { pageX, pageY } = event.nativeEvent;
-        origin.current = { x: pageX, y: pageY };
-        timer.current = setTimeout(() => {
-          timer.current = null;
-          origin.current = null;
-          onLongPress();
-        }, LONG_PRESS_MS);
-      }}
-      onTouchMove={(event) => {
-        const start = origin.current;
-        if (start === null) return;
-        const { pageX, pageY } = event.nativeEvent;
-        if (
-          Math.abs(pageX - start.x) > LONG_PRESS_SLOP ||
-          Math.abs(pageY - start.y) > LONG_PRESS_SLOP
-        ) {
+    <MarkInteractiveTouchProvider value={markInteractive}>
+      <View
+        style={style}
+        accessible
+        accessibilityActions={MESSAGE_ACCESSIBILITY_ACTIONS}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === "longpress") onLongPress();
+        }}
+        onTouchStart={(event) => {
           cancel();
-        }
-      }}
-      onTouchEnd={cancel}
-      onTouchCancel={cancel}
-    >
-      {children}
-    </View>
+          const { pageX, pageY } = event.nativeEvent;
+          origin.current = { x: pageX, y: pageY };
+          latest.current = { x: pageX, y: pageY };
+          timer.current = setTimeout(() => {
+            timer.current = null;
+            const start = origin.current;
+            const end = latest.current;
+            origin.current = null;
+            latest.current = null;
+            const interactive = startedOnInteractive.current;
+            startedOnInteractive.current = false;
+            if (
+              start !== null &&
+              end !== null &&
+              opensMessageMenu(interactive, end.x - start.x, end.y - start.y)
+            ) {
+              onLongPress();
+            }
+          }, LONG_PRESS_MS);
+        }}
+        onTouchMove={(event) => {
+          const { pageX, pageY } = event.nativeEvent;
+          latest.current = { x: pageX, y: pageY };
+        }}
+        onTouchEnd={reset}
+        onTouchCancel={reset}
+      >
+        {children}
+      </View>
+    </MarkInteractiveTouchProvider>
   );
 }
 
