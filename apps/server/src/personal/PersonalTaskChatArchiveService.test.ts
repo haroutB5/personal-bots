@@ -737,6 +737,61 @@ describe("PersonalTaskChatArchive", () => {
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 
+  it.effect(
+    "the T3 thread archive archives a bot chat's link and unarchive clears it; other threads are left alone",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seed(harness, [{ id: "chat-t3-archived" }]);
+        const repository = yield* PersonalBotRepository.PersonalBotRepository;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
+            const events = harness.events!;
+            // What the engine publishes after the T3 organize tool dispatches thread.archive.
+            yield* Queue.offer(events, {
+              _tag: "ThreadArchived",
+              threadId: ThreadId.make("chat-t3-archived"),
+            });
+            yield* Queue.offer(events, {
+              _tag: "ThreadArchived",
+              threadId: ThreadId.make("thread-not-a-bot-chat"),
+            });
+            const archived = yield* settle(
+              linkState("chat-t3-archived").pipe(
+                Effect.map((row) => row?.archivedAt != null),
+                Effect.orElseSucceed(() => false),
+              ),
+            );
+            expect(archived).toBe(true);
+            expect(sessionStops(harness).map((command) => command.threadId)).toEqual([
+              "chat-t3-archived",
+            ]);
+            expect(
+              Option.isNone(
+                yield* repository.getThreadLink({
+                  threadId: ThreadId.make("thread-not-a-bot-chat"),
+                }),
+              ),
+            ).toBe(true);
+            // Unarchive travels as its own event and clears the link.
+            yield* Queue.offer(events, {
+              _tag: "ThreadUnarchived",
+              threadId: ThreadId.make("chat-t3-archived"),
+            } as unknown as PersonalEngine.PersonalThreadEvent);
+            const cleared = yield* settle(
+              linkState("chat-t3-archived").pipe(
+                Effect.map((row) => row?.archivedAt === null),
+                Effect.orElseSucceed(() => false),
+              ),
+            );
+            expect(cleared).toBe(true);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
   it.effect("the sweep unarchives an archived chat whose newer turn is running", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
