@@ -1,13 +1,11 @@
-import type { AssetResource, ProjectReadFileResult } from "@t3tools/contracts";
-import { ProjectReadFileError } from "@t3tools/contracts";
+import type { AssetResource } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import {
   assetUrlStateFromResult,
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
+import { decodeFilePreviewText } from "@t3tools/shared/filePreview";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/reactivity";
-import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,58 +18,115 @@ import {
 } from "react-native";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
+import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import {
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
-  fileTextRead,
   type FilePreviewSource,
-  type FileReadOutcome,
+  type FileTextRead,
 } from "./filePreviewModel";
 import { SheetShell } from "./SheetShell";
 
 const TEXT_READ_TIMEOUT_MS = 15_000;
 
-const isProjectReadFileError = Schema.is(ProjectReadFileError);
-
-const EMPTY_FILE_READ_ATOM = Atom.make(
-  AsyncResult.initial<ProjectReadFileResult, never>(false),
-).pipe(Atom.withLabel("native-file-read:empty"));
+type TextFetchState =
+  | {
+      readonly url: string;
+      readonly status: "ready";
+      readonly text: string;
+      readonly truncated: boolean;
+    }
+  | { readonly url: string; readonly status: "binary" }
+  | { readonly url: string; readonly status: "error" }
+  | { readonly url: string; readonly status: "timed-out" };
 
 /**
- * The chat's file sheet. Text reads through the project file RPC, the same read
- * the web Files tab uses. Images keep the asset URL, which the server only
- * issues for previewable types. A personal chat resolves both under the
- * Personal project's folder and a project chat under its worktree.
+ * Downloads a text file from its signed URL and decodes it with the same 1 MiB
+ * cap and binary check the web viewer uses. The URL expires on its own, so a
+ * retry mints a fresh one.
+ */
+function useFileText(url: string | null): FileTextRead {
+  const [state, setState] = useState<TextFetchState | null>(null);
+  useEffect(() => {
+    if (url === null) return;
+    let active = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TEXT_READ_TIMEOUT_MS);
+    fetch(url, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return new Uint8Array(await response.arrayBuffer());
+      })
+      .then((bytes) => {
+        if (!active) return;
+        try {
+          const decoded = decodeFilePreviewText(bytes);
+          setState({ url, status: "ready", text: decoded.text, truncated: decoded.truncated });
+        } catch {
+          setState({ url, status: "binary" });
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setState({ url, status: controller.signal.aborted ? "timed-out" : "error" });
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [url]);
+
+  if (url === null || state === null || state.url !== url) return { _tag: "Pending" };
+  switch (state.status) {
+    case "ready":
+      return { _tag: "Loaded", text: state.text, truncated: state.truncated };
+    case "binary":
+      return { _tag: "Binary" };
+    case "error":
+      return { _tag: "Failed" };
+    case "timed-out":
+      return { _tag: "TimedOut" };
+  }
+}
+
+/**
+ * The chat's file sheet. A bot's message links the file, and the server grants
+ * that one read because the message links it. Both routes mint a per-message
+ * asset URL; text then downloads and decodes it, images show it inline.
  */
 export function FilePreviewSheet({
   native,
   chat,
   visible,
-  cwd,
-  path,
+  threadId,
+  request,
   onClose,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
   readonly visible: boolean;
-  readonly cwd: string | null;
-  readonly path: string | null;
+  readonly threadId: string;
+  readonly request: FileOpenRequest | null;
   readonly onClose: () => void;
 }) {
-  const route = path === null ? "unsupported" : filePreviewRoute(path);
+  const route = request === null ? "unsupported" : filePreviewRoute(request.path);
   const resource = useMemo<AssetResource | null>(
     () =>
-      visible && path !== null && cwd !== null && route === "image"
+      visible && request !== null && route !== "unsupported"
         ? {
-            _tag: "draft-workspace-file",
-            cwd,
-            path,
+            _tag: "message-file",
+            threadId: ThreadId.make(threadId),
+            messageId: request.messageId,
+            path: request.path,
+            disposition: route === "text" ? "download" : "inline",
           }
         : null,
-    [cwd, path, route, visible],
+    [request, route, threadId, visible],
   );
   const urlAtom = useMemo(
     () =>
@@ -86,75 +141,25 @@ export function FilePreviewSheet({
   const asset = assetUrlStateFromResult(useAtomValue(urlAtom), native.httpBaseUrl);
   const refreshAsset = useAtomRefresh(urlAtom);
 
-  const readAtom = useMemo(
-    () =>
-      visible && path !== null && cwd !== null && route === "text"
-        ? chat.projects.readFile({
-            environmentId: native.environmentId,
-            input: { cwd, relativePath: path, allowMissing: true },
-          })
-        : EMPTY_FILE_READ_ATOM,
-    [chat.projects, cwd, native.environmentId, path, route, visible],
-  );
-  const readResult = useAtomValue(readAtom);
-  const refreshRead = useAtomRefresh(readAtom);
-  const outcome: FileReadOutcome = useMemo(() => {
-    if (route !== "text") return { _tag: "Pending" };
-    if (AsyncResult.isSuccess(readResult)) return { _tag: "Loaded", result: readResult.value };
-    if (AsyncResult.isFailure(readResult)) {
-      const cause = Cause.squash(readResult.cause);
-      return {
-        _tag: "Failed",
-        failure: isProjectReadFileError(cause) ? (cause.failure ?? null) : null,
-      };
-    }
-    return { _tag: "Pending" };
-  }, [readResult, route]);
+  const textUrl = route === "text" && asset._tag === "Success" ? asset.url : null;
+  const read = useFileText(textUrl);
 
-  const [attempt, setAttempt] = useState(0);
-  const readKey = `${attempt}:${cwd ?? ""}:${path ?? ""}`;
-  const [timedOutKey, setTimedOutKey] = useState<string | null>(null);
+  // Retry mints a new signed URL; its token differs, so the text effect runs again.
+  const retry = () => refreshAsset();
 
-  // A read that has not settled in 15 s stops waiting. Retry starts a fresh key.
-  const settled = outcome._tag !== "Pending";
-  useEffect(() => {
-    if (!visible || route !== "text" || settled) return;
-    const timeout = setTimeout(() => setTimedOutKey(readKey), TEXT_READ_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [readKey, route, settled, visible]);
-
-  const read = timedOutKey === readKey ? ({ _tag: "TimedOut" } as const) : fileTextRead(outcome);
-
-  // A missing file is remembered by the query. Retry asks both sources again, so
-  // a file created after the first look opens here.
-  const retry = () => {
-    refreshAsset();
-    refreshRead();
-    setAttempt((value) => value + 1);
-  };
-  // Closing ends this look at the file, so a reopen gets its own 15 s.
-  const close = () => {
-    setTimedOutKey(null);
-    onClose();
-  };
-
-  const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
   const source: FilePreviewSource =
     route === "text"
-      ? { _tag: "Text", read }
+      ? { _tag: "Text", asset, read }
       : route === "image"
         ? { _tag: "Image", asset }
         : { _tag: "Unsupported" };
-  const preview = filePreviewState({ folder: cwd, path, source });
+  const preview = filePreviewState({ path: request?.path ?? null, source });
+
+  const path = request?.path ?? null;
+  const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
 
   const content = (() => {
     switch (preview._tag) {
-      case "NoFolder":
-        return (
-          <Text style={styles.notice} accessibilityRole="alert">
-            This chat has no folder to open files from.
-          </Text>
-        );
       case "Loading":
         return (
           <View style={styles.center}>
@@ -210,7 +215,7 @@ export function FilePreviewSheet({
   })();
 
   return (
-    <SheetShell visible={visible} title={name} onClose={close}>
+    <SheetShell visible={visible} title={name} onClose={onClose}>
       <View style={styles.body}>
         <Text style={styles.path} numberOfLines={2}>
           {path ?? ""}

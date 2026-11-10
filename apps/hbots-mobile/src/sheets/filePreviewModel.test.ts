@@ -1,17 +1,13 @@
 import type { AssetUrlState } from "@t3tools/client-runtime/state/assets";
-import type { ProjectReadFileResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
-  fileTextRead,
-  type FileReadOutcome,
+  type FilePreviewSource,
   type FileTextRead,
 } from "./filePreviewModel.ts";
-
-const FOLDER = "/home/harout/.personal-bots/dev/personal-workspace";
 
 const success = (url: string): AssetUrlState => ({
   _tag: "Success",
@@ -19,258 +15,123 @@ const success = (url: string): AssetUrlState => ({
   expiresAt: 4_000_000_000_000,
 });
 
-const readResult = (overrides: Partial<ProjectReadFileResult>): ProjectReadFileResult => ({
-  relativePath: "NOTES.md",
-  contents: "",
-  byteLength: 0,
-  truncated: false,
-  ...overrides,
+const textSource = (asset: AssetUrlState, read: FileTextRead): FilePreviewSource => ({
+  _tag: "Text",
+  asset,
+  read,
 });
 
-const loaded = (contents: string): FileReadOutcome => ({
-  _tag: "Loaded",
-  result: readResult({ contents, byteLength: contents.length }),
-});
+const imageSource = (asset: AssetUrlState): FilePreviewSource => ({ _tag: "Image", asset });
 
-const failed = (failure: "protected_file" | "binary_file" | "path_not_file"): FileReadOutcome => ({
-  _tag: "Failed",
-  failure,
-});
-
-const pendingRead: FileTextRead = { _tag: "Pending" };
+const state = (path: string | null, source: FilePreviewSource) =>
+  filePreviewState({ path, source });
 
 describe("filePreviewRoute", () => {
-  it("reads markdown, text, JSON and source through the file RPC", () => {
-    expect({
-      markdown: filePreviewRoute("NOTES.md"),
-      text: filePreviewRoute("a.txt"),
-      json: filePreviewRoute("data.json"),
-      source: filePreviewRoute("src/sheets/FilePreviewSheet.tsx"),
-    }).toEqual({
-      markdown: "text",
-      text: "text",
-      json: "text",
-      source: "text",
-    });
+  it("sends text, markdown and source files to the text route", () => {
+    expect(filePreviewRoute("NOTES.md")).toBe("text");
+    expect(filePreviewRoute("/home/harout/run/result.json")).toBe("text");
+    expect(filePreviewRoute("apps/hbots-mobile/src/parity.ts")).toBe("text");
   });
 
-  it("loads an image from its asset URL", () => {
-    expect(filePreviewRoute("shots/pic.png")).toBe("image");
+  it("sends raster images to the image route", () => {
+    expect(filePreviewRoute("shot.png")).toBe("image");
+    expect(filePreviewRoute("photo.JPEG")).toBe("image");
   });
 
-  it("names a kind the phone cannot show", () => {
-    expect(filePreviewRoute("release-notes.pdf")).toBe("unsupported");
-  });
-});
-
-describe("fileTextRead", () => {
-  it("turns the read into text", () => {
-    expect(fileTextRead(loaded("# Notes\nOne line."))).toEqual({
-      _tag: "Loaded",
-      text: "# Notes\nOne line.",
-      truncated: false,
-    });
-  });
-
-  it("keeps a truncated read labelled", () => {
-    expect(
-      fileTextRead({ _tag: "Loaded", result: readResult({ contents: "a", truncated: true }) }),
-    ).toEqual({ _tag: "Loaded", text: "a", truncated: true });
-  });
-
-  it("refuses a protected file", () => {
-    expect(fileTextRead(failed("protected_file"))).toEqual({ _tag: "Denied" });
-  });
-
-  it("reports an absent file", () => {
-    expect(
-      fileTextRead({
-        _tag: "Loaded",
-        result: readResult({ contents: "", byteLength: 0, exists: false }),
-      }),
-    ).toEqual({ _tag: "NotFound" });
-  });
-
-  it("marks binary bytes unsupported", () => {
-    expect(fileTextRead(failed("binary_file"))).toEqual({ _tag: "Binary" });
-  });
-
-  it("keeps every other failure generic", () => {
-    expect(fileTextRead(failed("path_not_file"))).toEqual({ _tag: "Failed" });
-  });
-
-  it("waits while the read is pending", () => {
-    expect(fileTextRead({ _tag: "Pending" })).toEqual({ _tag: "Pending" });
+  it("leaves anything else unsupported", () => {
+    expect(filePreviewRoute("archive.zip")).toBe("unsupported");
+    expect(filePreviewRoute("binary")).toBe("unsupported");
   });
 });
 
 describe("filePreviewState", () => {
-  it("asks for a folder when the chat has none", () => {
-    expect(
-      filePreviewState({
-        folder: null,
-        path: "NOTES.md",
-        source: { _tag: "Text", read: pendingRead },
-      }),
-    ).toEqual({ _tag: "NoFolder" });
+  it("is loading until a file is picked", () => {
+    expect(state(null, textSource(success("https://x/a.md"), { _tag: "Pending" }))).toEqual({
+      _tag: "Loading",
+    });
   });
 
-  it("loads while no file is picked", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: null,
-        source: { _tag: "Unsupported" },
-      }),
-    ).toEqual({ _tag: "Loading" });
+  it("waits for the signed URL before reading", () => {
+    expect(state("NOTES.md", textSource({ _tag: "Loading" }, { _tag: "Pending" }))).toEqual({
+      _tag: "Loading",
+    });
   });
 
-  it("loads while the file is being read", () => {
+  it("shows text once the URL is minted and the bytes decode", () => {
     expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "NOTES.md",
-        source: { _tag: "Text", read: pendingRead },
-      }),
-    ).toEqual({ _tag: "Loading" });
+      state(
+        "NOTES.md",
+        textSource(success("https://x/a.md"), { _tag: "Loaded", text: "hi", truncated: false }),
+      ),
+    ).toEqual({ _tag: "Text", text: "hi" });
   });
 
-  it("shows the text it read", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "NOTES.md",
-        source: {
-          _tag: "Text",
-          read: { _tag: "Loaded", text: "# Notes\nOne line.", truncated: false },
-        },
-      }),
-    ).toEqual({ _tag: "Text", text: "# Notes\nOne line." });
+  it("shows the image once the URL is minted", () => {
+    expect(state("shot.png", imageSource(success("https://x/a.png")))).toEqual({
+      _tag: "Image",
+      url: "https://x/a.png",
+    });
   });
 
-  it("refuses a protected text file", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: ".env",
-        source: { _tag: "Text", read: { _tag: "Denied" } },
-      }),
-    ).toEqual({ _tag: "Denied" });
+  it("shows the protected state for a credential file", () => {
+    const asset: AssetUrlState = { _tag: "Failure", protectedFile: true };
+    expect(state("NOTES.md", textSource(asset, { _tag: "Pending" }))).toEqual({ _tag: "Denied" });
+    expect(state("shot.png", imageSource(asset))).toEqual({ _tag: "Denied" });
   });
 
-  it("says a missing text file is gone", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "docs/removed.md",
-        source: { _tag: "Text", read: { _tag: "NotFound" } },
-      }),
-    ).toEqual({ _tag: "Error", reason: "not-found" });
+  it("says not found for a path the server cannot see", () => {
+    const asset: AssetUrlState = { _tag: "Failure", notFound: true };
+    expect(state("NOTES.md", textSource(asset, { _tag: "Pending" }))).toEqual({
+      _tag: "Error",
+      reason: "not-found",
+    });
   });
 
-  it("names binary content the phone cannot show", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "data.json",
-        source: { _tag: "Text", read: { _tag: "Binary" } },
-      }),
-    ).toEqual({ _tag: "Unsupported" });
+  it("says the connection is denied when the session lacks the scope", () => {
+    const asset: AssetUrlState = { _tag: "Failure", deniedAccess: true };
+    expect(state("NOTES.md", textSource(asset, { _tag: "Pending" }))).toEqual({
+      _tag: "Error",
+      reason: "denied-access",
+    });
   });
 
-  it("stops on a text read that ran out of time", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "logs/2026-11-09.log",
-        source: { _tag: "Text", read: { _tag: "TimedOut" } },
-      }),
-    ).toEqual({ _tag: "Error", reason: "timed-out" });
+  it("calls any other mint failure an open failure", () => {
+    expect(state("NOTES.md", textSource({ _tag: "Failure" }, { _tag: "Pending" }))).toEqual({
+      _tag: "Error",
+      reason: "open-failed",
+    });
   });
 
-  it("stops on a failed text read", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "notes.md",
-        source: { _tag: "Text", read: { _tag: "Failed" } },
-      }),
-    ).toEqual({ _tag: "Error", reason: "read-failed" });
+  it("marks non-UTF-8 or binary bytes as not showable", () => {
+    expect(state("NOTES.md", textSource(success("https://x/a.md"), { _tag: "Binary" }))).toEqual({
+      _tag: "Unsupported",
+    });
   });
 
-  it("loads while an image URL is being minted", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "shots/pic.png",
-        source: { _tag: "Image", asset: { _tag: "Loading" } },
-      }),
-    ).toEqual({ _tag: "Loading" });
+  it("separates a failed download from a timed-out one", () => {
+    expect(state("NOTES.md", textSource(success("https://x/a.md"), { _tag: "Failed" }))).toEqual({
+      _tag: "Error",
+      reason: "read-failed",
+    });
+    expect(state("NOTES.md", textSource(success("https://x/a.md"), { _tag: "TimedOut" }))).toEqual({
+      _tag: "Error",
+      reason: "timed-out",
+    });
   });
 
-  it("shows an image once its URL is ready", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "shots/pic.png",
-        source: { _tag: "Image", asset: success("https://phone.test/api/assets/pic") },
-      }),
-    ).toEqual({ _tag: "Image", url: "https://phone.test/api/assets/pic" });
-  });
-
-  it("refuses a protected image", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "shots/secret.png",
-        source: { _tag: "Image", asset: { _tag: "Failure", protectedFile: true } },
-      }),
-    ).toEqual({ _tag: "Denied" });
-  });
-
-  it("says a missing image is gone", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "shots/removed.png",
-        source: { _tag: "Image", asset: { _tag: "Failure", notFound: true } },
-      }),
-    ).toEqual({ _tag: "Error", reason: "not-found" });
-  });
-
-  it("stops on any other image failure", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "shots/pic.png",
-        source: { _tag: "Image", asset: { _tag: "Failure" } },
-      }),
-    ).toEqual({ _tag: "Error", reason: "open-failed" });
-  });
-
-  it("names a kind with no preview at all", () => {
-    expect(
-      filePreviewState({
-        folder: FOLDER,
-        path: "release-notes.pdf",
-        source: { _tag: "Unsupported" },
-      }),
-    ).toEqual({ _tag: "Unsupported" });
+  it("leaves an unsupported type unsupported", () => {
+    expect(state("archive.zip", { _tag: "Unsupported" })).toEqual({ _tag: "Unsupported" });
   });
 });
 
 describe("filePreviewErrorText", () => {
-  it("gives each reason its own line", () => {
-    expect({
-      notFound: filePreviewErrorText("not-found"),
-      openFailed: filePreviewErrorText("open-failed"),
-      readFailed: filePreviewErrorText("read-failed"),
-      timedOut: filePreviewErrorText("timed-out"),
-    }).toEqual({
-      notFound: "That file isn't there any more.",
-      openFailed: "Couldn't open that file.",
-      readFailed: "Couldn't read that file.",
-      timedOut: "That file took too long to read.",
-    });
+  it("gives not-found and denied-access their own sentences", () => {
+    const notFound = filePreviewErrorText("not-found");
+    const denied = filePreviewErrorText("denied-access");
+    expect(notFound).toBe("That file isn't there any more.");
+    expect(denied).toBe("This connection isn't allowed to open that file.");
+    expect(notFound).not.toBe(denied);
+    expect(notFound).not.toBe("Couldn't read that file.");
+    expect(denied).not.toBe("Couldn't read that file.");
   });
 });

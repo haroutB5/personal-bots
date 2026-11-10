@@ -4,6 +4,8 @@ import {
   AssetProtectedFileError,
   type AssetResource,
   AssetWorkspaceAssetNotFoundError,
+  AuthOrchestrationReadScope,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   ThreadId,
   WS_METHODS,
@@ -60,6 +62,17 @@ describe("asset URL failure reasons", () => {
       _tag: "Failure",
       notFound: true,
     });
+  });
+
+  it("marks a scope refusal so the preview can say the connection is denied", () => {
+    expect(
+      failureFor(
+        new EnvironmentAuthorizationError({
+          message: "The authenticated token is missing required scope: orchestration:read.",
+          requiredScope: AuthOrchestrationReadScope,
+        }),
+      ),
+    ).toEqual({ _tag: "Failure", deniedAccess: true });
   });
 
   it("leaves any other failure unexplained", () => {

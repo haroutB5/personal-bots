@@ -1,5 +1,5 @@
 import type { ChatAttachment, PersonalReplyQuote } from "@t3tools/contracts";
-import { readPersonalReplyQuote } from "@t3tools/contracts";
+import { MessageId, readPersonalReplyQuote } from "@t3tools/contracts";
 import {
   formatDayDivider,
   type ConversationItem,
@@ -58,6 +58,7 @@ import { tokens } from "../shell/tokens";
 import type { CardContext } from "./cards/types";
 import { isChatCard, renderChatCard } from "./cards/registry";
 import type { ChatEnvironment } from "./chatEnvironment";
+import type { FileOpenRequest } from "./fileOpenRequest";
 import {
   claimsReplySwipe,
   opensMessageMenu,
@@ -412,26 +413,30 @@ function FileChips({
 
 function MarkdownBody({
   text,
+  messageId,
   onOpenFile,
   onOpenLink,
   tone,
 }: {
   readonly text: string;
-  readonly onOpenFile?: ((path: string) => void) | undefined;
+  readonly messageId?: string | null;
+  readonly onOpenFile?: ((request: FileOpenRequest) => void) | undefined;
   readonly onOpenLink?: ((href: string) => void) | undefined;
   readonly tone: "assistant" | "user";
 }) {
+  // The chip supplies only its path; the grant always names this message.
+  const openFile = useMemo(
+    () =>
+      onOpenFile === undefined || messageId == null
+        ? undefined
+        : (path: string) => onOpenFile({ path, messageId: MessageId.make(messageId) }),
+    [messageId, onOpenFile],
+  );
   const blocks = useMemo(() => keyedList(markdownBlocks(text), blockKey), [text]);
   return (
     <View style={styles.markdown}>
       {blocks.map(({ key, item: block }) => (
-        <Block
-          key={key}
-          block={block}
-          onOpenFile={onOpenFile}
-          onOpenLink={onOpenLink}
-          tone={tone}
-        />
+        <Block key={key} block={block} onOpenFile={openFile} onOpenLink={onOpenLink} tone={tone} />
       ))}
     </View>
   );
@@ -907,7 +912,7 @@ export function MessageList({
     readonly text: string;
     readonly sentAt: Date | null;
   }) => void;
-  readonly onOpenFile: ((path: string) => void) | undefined;
+  readonly onOpenFile: ((request: FileOpenRequest) => void) | undefined;
   readonly onOpenLink: ((href: string) => void) | undefined;
   /** Sends an option from a reply's choices block; absent where nothing can be sent. */
   readonly onChoose?: ((text: string) => Promise<boolean>) | undefined;
@@ -1276,6 +1281,7 @@ export function MessageList({
               >
                 <MarkdownBody
                   text={body}
+                  messageId={String(message.id)}
                   tone="assistant"
                   onOpenFile={onOpenFile}
                   onOpenLink={onOpenLink}

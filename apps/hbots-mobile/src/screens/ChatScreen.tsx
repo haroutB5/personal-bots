@@ -1,4 +1,4 @@
-import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh } from "@effect/atom-react";
 import {
   CommandId,
   MessageId,
@@ -54,9 +54,8 @@ import { sharedPreferencesFromProfile } from "@hbots/personal-client/settings/pr
 import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 
-import { resolveChatCwd } from "@hbots/personal-client/feed/chatCwd";
-
 import type { ChatEnvironment } from "../chat/chatEnvironment";
+import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
 import { Composer } from "../chat/Composer";
@@ -142,7 +141,7 @@ export function ChatScreen({
   const [renameThreadId, setRenameThreadId] = useState<string | null>(null);
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   const [messageMenu, setMessageMenu] = useState<MessageMenuTarget | null>(null);
-  const [filePath, setFilePath] = useState<string | null>(null);
+  const [fileRequest, setFileRequest] = useState<FileOpenRequest | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [searchRows, setSearchRows] = useState<
@@ -208,16 +207,6 @@ export function ChatScreen({
     [botId, links, list.data?.bots, shells, threadId],
   );
   const thread = view.thread;
-  const projectId = thread?.projectId ?? null;
-  const projectRoot = useAtomValue(chat.projectRootAtom(environmentId, projectId));
-  const projects = useMemo(
-    () =>
-      projectId === null || projectRoot === null
-        ? []
-        : [{ id: projectId, workspaceRoot: projectRoot }],
-    [projectId, projectRoot],
-  );
-  const chatCwd = resolveChatCwd(thread, projects);
   const shell = record?.shell ?? null;
   const archived = shell?.archivedAt != null;
   const link = links.find((candidate) => candidate.threadId === threadId) ?? null;
@@ -811,7 +800,7 @@ export function ChatScreen({
               latestMessageStatus={latestMessageStatus}
               onReply={(quote) => setReplyTo(quote)}
               onMessageMenu={setMessageMenu}
-              onOpenFile={(path) => setFilePath(path)}
+              onOpenFile={(request) => setFileRequest(request)}
               onOpenLink={(url) => {
                 void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
               }}
@@ -1020,10 +1009,10 @@ export function ChatScreen({
       <FilePreviewSheet
         native={native}
         chat={chat}
-        visible={filePath !== null}
-        cwd={chatCwd}
-        path={filePath}
-        onClose={() => setFilePath(null)}
+        visible={fileRequest !== null}
+        threadId={threadId}
+        request={fileRequest}
+        onClose={() => setFileRequest(null)}
       />
     </View>
   );

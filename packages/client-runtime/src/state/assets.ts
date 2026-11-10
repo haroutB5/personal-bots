@@ -79,6 +79,8 @@ export type AssetUrlState =
       readonly protectedFile?: true;
       /** The server looked and the path is not a file. */
       readonly notFound?: true;
+      /** The session's scopes do not cover this resource. */
+      readonly deniedAccess?: true;
     }
   | {
       readonly _tag: "Success";
@@ -124,6 +126,7 @@ export function assetUrlStateFromResult(
     const tag = typeof cause === "object" && cause !== null && "_tag" in cause ? cause._tag : null;
     if (tag === "AssetProtectedFileError") return { _tag: "Failure", protectedFile: true };
     if (tag === "AssetWorkspaceAssetNotFoundError") return { _tag: "Failure", notFound: true };
+    if (tag === "EnvironmentAuthorizationError") return { _tag: "Failure", deniedAccess: true };
     return { _tag: "Failure" };
   }
   if (httpBaseUrl === null || result._tag !== "Success") return { _tag: "Loading" };
