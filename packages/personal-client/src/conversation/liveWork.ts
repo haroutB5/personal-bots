@@ -67,12 +67,15 @@ export type RunWork =
       readonly startedAt: string;
       readonly current: WorkStep | null;
       readonly steps: ReadonlyArray<WorkStep>;
+      readonly waitingOnBackground: boolean;
     }
   | {
       readonly phase: "settled";
       readonly runId: RunId;
       readonly durationMs: number;
       readonly steps: ReadonlyArray<WorkStep>;
+      /** Steps the server collapsed on the wire, absent from `steps`. */
+      readonly deferredCount: number;
       readonly summary: RunWorkSummary;
     };
 
@@ -85,6 +88,17 @@ function isTerminalRun(status: OrchestrationV2Run["status"]): boolean {
     status === "interrupted" ||
     status === "cancelled" ||
     status === "rolled_back"
+  );
+}
+
+/** A queued or preparing run has not begun, so its row waits for the real start. */
+function runHasStarted(run: OrchestrationV2Run): boolean {
+  if (run.status === "queued" || run.status === "preparing") return false;
+  return (
+    run.startedAt !== null ||
+    run.status === "running" ||
+    run.status === "waiting" ||
+    isTerminalRun(run.status)
   );
 }
 
@@ -112,6 +126,57 @@ function basename(path: string): string {
   return slash === -1 ? trimmed : trimmed.slice(slash + 1);
 }
 
+/**
+ * A bot usually starts commands with `cd <dir> &&`. The directory is not what
+ * the reader wants, so the label begins at the command itself.
+ */
+export function commandStepLabel(input: string): string {
+  let label = commandDisplayText(input).trim();
+  for (;;) {
+    const match = /^cd\s+(?:"[^"]*"|'[^']*'|[^;&\n]+?)\s*(?:&&|;)\s*/u.exec(label);
+    if (match === null) return label;
+    const next = label.slice(match[0].length).trim();
+    if (next === "") return label;
+    label = next;
+  }
+}
+
+/** `mcp__t3-code__update_work_record` reads as "update work record". */
+export function humanizeToolName(name: string): string {
+  const trimmed = name.trim();
+  const withoutServer = trimmed.startsWith("mcp__")
+    ? trimmed.split("__").slice(2).join("__")
+    : trimmed;
+  return (withoutServer || trimmed).replace(/_+/gu, " ").trim();
+}
+
+const GENERIC_STEP_LABELS: Partial<Record<OrchestrationV2TurnItem["type"], string>> = {
+  subagent: "Subagent",
+  web_search: "Web search",
+  file_search: "File search",
+};
+
+/**
+ * Rows with their own card. They are not work, so they never count as steps.
+ */
+const NON_STEP_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
+  "notification",
+  "user_message",
+  "assistant_message",
+  "proposed_plan",
+  "todo_list",
+  "approval_request",
+  "run_interrupt_request",
+  "run_interrupt_result",
+  "system_notice",
+  "handoff",
+]);
+
+function typeLabel(type: string): string {
+  const words = type.replace(/_+/gu, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function stepForItem(item: OrchestrationV2TurnItem): WorkStep | null {
   switch (item.type) {
     case "reasoning": {
@@ -121,13 +186,13 @@ function stepForItem(item: OrchestrationV2TurnItem): WorkStep | null {
         : { kind: "thinking", id: item.id, line, status: stepStatus(item.status) };
     }
     case "command_execution": {
-      const label = commandDisplayText(item.input).trim();
+      const label = commandStepLabel(item.input);
       return label === ""
         ? null
         : { kind: "command", id: item.id, label, status: stepStatus(item.status) };
     }
     case "dynamic_tool": {
-      const label = (item.toolName ?? item.title ?? "Tool").trim();
+      const label = humanizeToolName(item.toolName ?? item.title ?? "Tool") || "Tool";
       return { kind: "tool", id: item.id, label, status: stepStatus(item.status) };
     }
     case "file_change":
@@ -137,9 +202,15 @@ function stepForItem(item: OrchestrationV2TurnItem): WorkStep | null {
         label: basename(item.fileName),
         status: stepStatus(item.status),
       };
-    default:
-      // Approvals, notifications and plan rows have their own cards.
-      return null;
+    default: {
+      if (NON_STEP_ITEM_TYPES.has(item.type)) return null;
+      return {
+        kind: "tool",
+        id: item.id,
+        label: GENERIC_STEP_LABELS[item.type] ?? typeLabel(item.type),
+        status: stepStatus(item.status),
+      };
+    }
   }
 }
 
@@ -194,22 +265,47 @@ function durationMs(
   return Math.max(0, DateTime.toEpochMillis(end) - start);
 }
 
+interface RunSteps {
+  readonly steps: ReadonlyArray<WorkStep>;
+  readonly itemTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+  readonly deferredCount: number;
+}
+
+function runSteps(
+  rows: ReadonlyArray<OrchestrationV2ThreadProjection["visibleTurnItems"][number]>,
+  runStatus: OrchestrationV2Run["status"],
+): RunSteps {
+  const steps: WorkStep[] = [];
+  const itemTypes: OrchestrationV2TurnItem["type"][] = [];
+  let deferredCount = 0;
+  for (const row of rows) {
+    const item = row.item;
+    const step = stepForItem(item);
+    const deferred = item.deferredWork?.itemCount;
+    if (step === null) {
+      if (deferred !== undefined) deferredCount += deferred;
+      continue;
+    }
+    steps.push(settleStep(step, runStatus));
+    itemTypes.push(item.type);
+    if (deferred !== undefined) deferredCount += deferred - 1;
+  }
+  return { steps, itemTypes, deferredCount };
+}
+
 /**
- * Live thinking and steps for the thread's latest run. Reads turn items
+ * Live thinking and steps for the thread's latest started run. A queued run
+ * does not replace the previous run's row until it begins. Reads turn items
  * directly so the v1 chat adapter and its tool-step setting stay untouched.
  */
 export function runWork(projection: OrchestrationV2ThreadProjection): RunWork {
-  const run = projection.runs.at(-1);
+  const run = projection.runs.findLast(runHasStarted);
   if (run === undefined) return IDLE_RUN_WORK;
 
   const rows = projection.visibleTurnItems
     .filter((row) => row.item.runId === run.id)
     .toSorted((left, right) => left.position - right.position);
-  const derived = rows.flatMap((row) => {
-    const step = stepForItem(row.item);
-    return step === null ? [] : [{ step, itemType: row.item.type }];
-  });
-  const steps = derived.map(({ step }) => settleStep(step, run.status));
+  const { steps, itemTypes, deferredCount } = runSteps(rows, run.status);
 
   if (!isTerminalRun(run.status)) {
     const current = steps.findLast((step) => step.status === "running") ?? steps.at(-1) ?? null;
@@ -219,18 +315,20 @@ export function runWork(projection: OrchestrationV2ThreadProjection): RunWork {
       startedAt: DateTime.formatIso(orchestrationV2RunWorkStartedAt(run)),
       current,
       steps,
+      waitingOnBackground: run.status === "waiting",
     };
   }
 
-  const entries = steps.map((step, index) => summaryEntry(step, derived[index]!.itemType));
+  const entries = steps.map((step, index) => summaryEntry(step, itemTypes[index]!));
   const summary = summarizeToolGroup(entries);
   return {
     phase: "settled",
     runId: run.id,
     durationMs: durationMs(run, rows.at(-1)?.item),
     steps,
+    deferredCount,
     summary: {
-      count: steps.length,
+      count: steps.length + deferredCount,
       kind: toolGroupSummaryKind(entries),
       hasFailure: summary.hasFailure || run.status === "failed",
     },

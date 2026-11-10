@@ -12,7 +12,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { runWork } from "./liveWork.ts";
+import { runWork, workStepLabel } from "./liveWork.ts";
 
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
@@ -22,7 +22,11 @@ const startedAt = at("2026-06-20T00:00:10.000Z");
 const completedAt = at("2026-06-20T00:02:10.000Z");
 const itemAt = at("2026-06-20T00:00:20.000Z");
 
-function run(status: OrchestrationV2Run["status"], ordinal = 1): OrchestrationV2Run {
+function run(
+  status: OrchestrationV2Run["status"],
+  ordinal = 1,
+  startedAtValue: OrchestrationV2Run["startedAt"] = startedAt,
+): OrchestrationV2Run {
   return {
     id: RunId.make(`run-${ordinal}`),
     threadId,
@@ -35,8 +39,11 @@ function run(status: OrchestrationV2Run["status"], ordinal = 1): OrchestrationV2
     activeAttemptId: null,
     status,
     requestedAt,
-    startedAt,
-    completedAt: status === "running" || status === "starting" ? null : completedAt,
+    startedAt: startedAtValue,
+    completedAt:
+      status === "running" || status === "starting" || status === "queued" || status === "preparing"
+        ? null
+        : completedAt,
     checkpointId: null,
     contextHandoffId: null,
   };
@@ -77,6 +84,19 @@ function command(id: string, input: string, status: OrchestrationV2TurnItem["sta
     type: "command_execution" as const,
     input,
   } satisfies OrchestrationV2TurnItem;
+}
+
+function item(
+  id: string,
+  ordinal: number,
+  fields: Record<string, unknown>,
+): OrchestrationV2TurnItem {
+  return {
+    ...itemBase,
+    id: TurnItemId.make(id),
+    ordinal,
+    ...fields,
+  } as OrchestrationV2TurnItem;
 }
 
 function projection(
@@ -271,5 +291,130 @@ describe("runWork", () => {
     expect(work.steps.map((step) => (step.kind === "command" ? step.label : step.id))).toEqual([
       "pnpm new",
     ]);
+  });
+
+  it("counts wire-collapsed deferred work in the settled summary", () => {
+    const anchor = {
+      ...reasoning("think-1", "First thought.", "completed"),
+      deferredWork: { cursor: "work-page" as never, itemCount: 221, lastOrdinal: 1_000_221 },
+    };
+    const work = runWork(projection([run("completed")], [anchor]));
+
+    expect(work.phase).toBe("settled");
+    if (work.phase !== "settled") return;
+    expect(work.steps).toHaveLength(1);
+    expect(work.deferredCount).toBe(220);
+    expect(work.summary.count).toBe(221);
+  });
+
+  it("drops a leading cd prefix from a command label", () => {
+    const work = runWork(
+      projection(
+        [run("running")],
+        [
+          command("cmd-1", "cd /repo && pnpm test", "completed"),
+          command("cmd-2", "cd '/repo with space'; git status --short", "running"),
+        ],
+      ),
+    );
+
+    expect(work.phase).toBe("working");
+    if (work.phase !== "working") return;
+    expect(work.current).toMatchObject({ kind: "command", label: "git status --short" });
+    expect(work.steps.map((step) => workStepLabel(step))).toEqual([
+      "pnpm test",
+      "git status --short",
+    ]);
+  });
+
+  it("keeps a bare cd command unchanged", () => {
+    const work = runWork(projection([run("running")], [command("cmd-1", "cd /repo", "running")]));
+
+    expect(work.phase).toBe("working");
+    if (work.phase !== "working") return;
+    expect(work.current).toMatchObject({ label: "cd /repo" });
+  });
+
+  it("humanises mcp tool names", () => {
+    const work = runWork(
+      projection(
+        [run("running")],
+        [
+          item("tool-1", 3, {
+            type: "dynamic_tool",
+            toolName: "mcp__t3-code__update_work_record",
+            title: null,
+            input: {},
+            status: "running",
+          }),
+        ],
+      ),
+    );
+
+    expect(work.phase).toBe("working");
+    if (work.phase !== "working") return;
+    expect(work.current).toMatchObject({ kind: "tool", label: "update work record" });
+  });
+
+  it("counts subagents and searches as steps with readable labels", () => {
+    const work = runWork(
+      projection(
+        [run("running")],
+        [
+          item("sub-1", 3, { type: "subagent", status: "running" }),
+          item("web-1", 4, { type: "web_search", status: "completed" }),
+          item("search-1", 5, { type: "file_search", status: "completed" }),
+          item("error-1", 6, { type: "error", status: "completed" }),
+        ],
+      ),
+    );
+
+    expect(work.phase).toBe("working");
+    if (work.phase !== "working") return;
+    expect(work.steps.map((step) => workStepLabel(step))).toEqual([
+      "Subagent",
+      "Web search",
+      "File search",
+      "Error",
+    ]);
+  });
+
+  it("keeps the previous summary while the next run is still queued", () => {
+    const work = runWork(
+      projection(
+        [run("completed", 1), run("queued", 2, null)],
+        [command("cmd-1", "pnpm test", "completed")],
+      ),
+    );
+
+    expect(work.phase).toBe("settled");
+    if (work.phase !== "settled") return;
+    expect(work.runId).toBe("run-1");
+    expect(work.summary.count).toBe(1);
+  });
+
+  it("follows the queued run once it starts", () => {
+    const work = runWork(
+      projection(
+        [run("completed", 1), run("running", 2)],
+        [
+          command("cmd-1", "pnpm test", "completed"),
+          { ...command("cmd-2", "pnpm build", "running"), runId: RunId.make("run-2") },
+        ],
+      ),
+    );
+
+    expect(work.phase).toBe("working");
+    if (work.phase !== "working") return;
+    expect(work.runId).toBe("run-2");
+  });
+
+  it("keeps the spinner and says it waits on background work", () => {
+    const work = runWork(projection([run("waiting")], [command("cmd-1", "sleep 600", "waiting")]));
+
+    expect(work.phase).toBe("working");
+    if (work.phase !== "working") return;
+    expect(work.waitingOnBackground).toBe(true);
+    expect(work.current).toMatchObject({ status: "running" });
   });
 });
