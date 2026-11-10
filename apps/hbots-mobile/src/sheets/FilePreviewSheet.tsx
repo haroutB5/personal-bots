@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/assets";
 import { decodeFilePreviewText } from "@t3tools/shared/filePreview";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { fetch as expoFetch } from "expo/fetch";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -22,6 +23,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import { PreviewTooLargeError, declaredBodyLength, readBoundedBody } from "./boundedPreview";
 import {
   FILE_PREVIEW_TOO_LARGE_TEXT,
   filePreviewErrorText,
@@ -40,16 +42,6 @@ const LAZY_TEXT_CHARS = 20_000;
 const IMAGE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const IMAGE_SIZE_TIMEOUT_MS = 15_000;
 
-/** A body larger than the preview cap is never copied into the app's memory. */
-class PreviewTooLargeError extends Error {}
-
-function declaredLength(response: Response): number | null {
-  const header = response.headers.get("content-length");
-  if (header === null) return null;
-  const length = Number(header);
-  return Number.isSafeInteger(length) && length >= 0 ? length : null;
-}
-
 type TextFetchState =
   | {
       readonly url: string;
@@ -62,9 +54,9 @@ type TextFetchState =
   | { readonly url: string; readonly status: "error" }
   | { readonly url: string; readonly status: "timed-out" };
 
-/** Downloads at most 1 MiB by range, then decodes with the web viewer's cap.
- * A full response must declare a small body, so a large file never reaches the
- * app. The signed URL expires on its own, so a retry mints a fresh one. */
+/** Downloads at most 1 MiB by range. A server that ignores the range is
+ * bounded by the bytes it sends: the reader aborts as soon as a chunk would
+ * pass the cap, and closing the sheet aborts too. A retry mints a fresh URL. */
 function useFileText(url: string | null): FileTextRead {
   const [state, setState] = useState<TextFetchState | null>(null);
   useEffect(() => {
@@ -72,21 +64,18 @@ function useFileText(url: string | null): FileTextRead {
     let active = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TEXT_READ_TIMEOUT_MS);
-    fetch(url, {
+    expoFetch(url, {
       signal: controller.signal,
-      cache: "no-store",
-      headers: { Range: `bytes=0-${TEXT_READ_BYTES - 1}` },
+      headers: {
+        Range: `bytes=0-${TEXT_READ_BYTES - 1}`,
+        "Cache-Control": "no-cache",
+      },
     })
       .then(async (response) => {
         // An empty file cannot satisfy the range; it is simply empty.
         if (response.status === 416) return new Uint8Array();
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const length = declaredLength(response);
-        if (length !== null && length > TEXT_READ_BYTES) throw new PreviewTooLargeError();
-        // A 200 answer means the range was ignored, so the body is the whole
-        // file. With no declared length it cannot be bounded before the copy.
-        if (response.status === 200 && length === null) throw new PreviewTooLargeError();
-        return new Uint8Array(await response.arrayBuffer());
+        return readBoundedBody(response, TEXT_READ_BYTES, controller);
       })
       .then((bytes) => {
         if (!active) return;
@@ -99,6 +88,7 @@ function useFileText(url: string | null): FileTextRead {
       })
       .catch((error: unknown) => {
         if (!active) return;
+        if (error instanceof PreviewTooLargeError) controller.abort();
         setState({
           url,
           status:
@@ -152,7 +142,7 @@ function useImageSize(url: string | null): ImageSizeRead {
     fetch(url, { method: "HEAD", signal: controller.signal, cache: "no-store" })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const length = declaredLength(response);
+        const length = declaredBodyLength(response.headers.get("content-length"));
         return length !== null && length > IMAGE_PREVIEW_MAX_BYTES ? "too-large" : "ready";
       })
       .then((status) => {
