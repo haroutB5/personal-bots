@@ -15,6 +15,7 @@ The phone chat gained its remaining fixes from the 1.67.2 review round. Banked C
 - **Steers reach OpenCode tasks.** `providerWakesOnBackground` in `taskBackgroundPolicy.ts` says which providers wake on background work (`claudeAgent` and `opencode` true, `codex` false), and `taskSettling.ts` uses it. An OpenCode turn that ends while its own background work runs keeps the task `running`, so a steer lands in the live work instead of waiting for release. The wait phrase matcher now rejects negatives ("no tests are waiting") and only counts a stated wait.
 - **Release gates and runner.** `lib/gateScope.mjs` is one changed-path allowlist for the evidence collector and the runner seal. Only `server-tests` and `e2e` may be skipped, and only when every changed path is under `apps/hbots-mobile/`, under `docs/`, or a markdown file outside the code trees; three mobile and doc paths the server reads always run the full gate. `gate-evidence.mjs` aborts at the next gate boundary when HEAD or the tracked tree moves, and writes no evidence. `gate-common.mjs` carries the tree check. `lib/idle.mjs` names a heavy-lock label as a blocker only while its pid lives. `lib/pins.mjs` and `lib/seal.mjs` cover the new skip fields. The dev-team-tools tests moved inside the heavy-job lock, and `measure-server-shards.mjs` records the shard weights.
 - **Release notices.** `PersonalReleaseNoticeService` no longer asks for a QA recheck after live, matching Harout's 27 Oct rule.
+- **Parity snapshot.** The reset credits dialog takes its copy from helpers now, so the parity generator names it by its primitive. `apps/hbots-mobile/src/parity.ts` and its ratchet test follow the new id and the snapshot is regenerated. The matrix stays at 353 done and 27 planned.
 
 ## Verification
 
@@ -36,3 +37,17 @@ Binary only. The previous release is `940b7da26df2` (1.67.2). No migration runs,
 - Harout owns the real-phone check for the arm64 APK.
 - `--compact-db` stays unused by this release.
 - The pre-release checks are the test. No QA recheck after live (Harout, 27 Oct).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=8d0aa037226d8ee39d5fe4224b8abdec41f0acc9 release=8d0aa037226d json-sha256=f87ff194b96c3960adbed83586fa5eb72d3d076a77a6a2b020e1534e084c0c3b result=PASS -->
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+<!-- gate-evidence:end -->
