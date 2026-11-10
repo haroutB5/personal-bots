@@ -39,6 +39,7 @@ import {
   retryOutboxEntry,
 } from "@hbots/personal-client/composer/outbox";
 import { hidesBotPreviews } from "@hbots/personal-client/conversation/previewPrivacy";
+import { IDLE_RUN_WORK, runWork } from "@hbots/personal-client/conversation/liveWork";
 import {
   chatSettingsArchiveInput,
   chatSettingsSheet,
@@ -263,6 +264,10 @@ export function ChatScreen({
     [cards.items, thread],
   );
   const contextUsage = useMemo(() => chatContextUsage(view.projection), [view.projection]);
+  const work = useMemo(
+    () => (view.projection === null ? IDLE_RUN_WORK : runWork(view.projection)),
+    [view.projection],
+  );
   const providerWait = providerWaitState(thread?.session ?? null) !== null;
   const cachedBot = useMemo(
     () =>
@@ -805,8 +810,7 @@ export function ChatScreen({
               queued={queued}
               botName={header.botName}
               currentUserId="You"
-              activities={thread.activities}
-              latestTurn={thread.latestTurn}
+              work={work}
               busy={running || archived}
               latestMessageStatus={latestMessageStatus}
               onReply={(quote) => setReplyTo(quote)}

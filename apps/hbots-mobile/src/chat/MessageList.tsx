@@ -17,8 +17,7 @@ import { groupSystemLabel } from "@hbots/personal-client/conversation/groupModel
 import type { LatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import type { OutboxRow } from "@hbots/personal-client/composer/outbox";
-import type { OrchestrationLatestTurn } from "@hbots/personal-client/bots/threadShell";
-import type { OrchestrationThreadActivity } from "@hbots/personal-client/conversation/wireTypes";
+import type { RunWork } from "@hbots/personal-client/conversation/liveWork";
 import {
   IconFile,
   IconFileCode,
@@ -68,6 +67,7 @@ import {
 import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./messageTouch";
 import { AttachmentImage } from "./AttachmentImage";
 import { ChoiceButtons } from "./ChoiceButtons";
+import { LiveWorkRow } from "./LiveWorkRow";
 import {
 
   /* eslint-disable react/refs -- the list owns imperative scroll and swipe handles */
@@ -87,6 +87,7 @@ export interface MessageListHandle {
 
 type Row =
   | { readonly kind: "item"; readonly key: string; readonly item: ConversationItem }
+  | { readonly kind: "work"; readonly key: string; readonly work: RunWork }
   | { readonly kind: "pending"; readonly key: string; readonly message: PendingOutgoingMessage }
   | { readonly kind: "queued"; readonly key: string; readonly row: OutboxRow };
 
@@ -870,8 +871,7 @@ export function MessageList({
   queued,
   botName,
   currentUserId,
-  activities: _activities,
-  latestTurn: _latestTurn,
+  work,
   busy,
   latestMessageStatus,
   onReply,
@@ -896,8 +896,7 @@ export function MessageList({
   readonly queued: ReadonlyArray<OutboxRow>;
   readonly botName: string;
   readonly currentUserId: string;
-  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
-  readonly latestTurn: OrchestrationLatestTurn | null;
+  readonly work: RunWork;
   readonly busy: boolean;
   readonly latestMessageStatus: LatestMessageReadStatus | null;
   readonly onReply: (quote: PersonalReplyQuote) => void;
@@ -932,6 +931,9 @@ export function MessageList({
   const rows = useMemo<ReadonlyArray<Row>>(
     () => [
       ...items.map((item): Row => ({ kind: "item", key: item.id, item })),
+      ...(work.phase === "idle"
+        ? []
+        : [{ kind: "work" as const, key: `work:${work.runId}`, work }]),
       ...pending.map((message): Row => ({
         kind: "pending",
         key: `pending:${message.id}`,
@@ -939,7 +941,7 @@ export function MessageList({
       })),
       ...queued.map((row): Row => ({ kind: "queued", key: `queued:${row.entry.id}`, row })),
     ],
-    [items, pending, queued],
+    [items, pending, queued, work],
   );
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
   const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
@@ -1009,6 +1011,9 @@ export function MessageList({
         )
       }
       renderItem={({ item: row }) => {
+        if (row.kind === "work") {
+          return <LiveWorkRow work={row.work} />;
+        }
         if (row.kind === "pending") {
           return (
             <View style={styles.messageRowEnd}>
