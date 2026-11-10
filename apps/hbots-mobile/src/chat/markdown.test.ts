@@ -2,6 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { linkTarget, markdownBlocks, markdownNeedsWidth } from "./markdown";
 
+/** The spans of a one-paragraph source, for exact span assertions. */
+function paragraphSpans(source: string) {
+  const block = markdownBlocks(source)[0];
+  if (block?.kind !== "paragraph") throw new Error(`not a paragraph: ${source}`);
+  return block.spans;
+}
+
 describe("markdownBlocks", () => {
   it("keeps paragraphs, headings and lists", () => {
     const blocks = markdownBlocks("# Title\n\nHello **world**\n\n- one\n- two");
@@ -185,6 +192,70 @@ describe("markdown features the chat renders", () => {
         },
       ],
     });
+  });
+
+  it("keeps a snake_case identifier literal in plain text", () => {
+    expect(paragraphSpans("The result status was waiting_for_idle and nothing moved.")).toEqual([
+      { kind: "text", text: "The result status was waiting_for_idle and nothing moved." },
+    ]);
+  });
+
+  it("keeps snake_case identifiers literal inside bold", () => {
+    expect(paragraphSpans("**ready_for_review and merge_blocked_state**")).toEqual([
+      { kind: "bold", text: "ready_for_review and merge_blocked_state" },
+    ]);
+  });
+
+  it("keeps a real bot reply's bold identifier list literal", () => {
+    // From a live assistant message (read-only fixture): the bold run must not
+    // split at the underscores.
+    expect(paragraphSpans("**FCM_PROJECT_ID, FCM_CLIENT_EMAIL, FCM_PRIVATE_KEY**")).toEqual([
+      { kind: "bold", text: "FCM_PROJECT_ID, FCM_CLIENT_EMAIL, FCM_PRIVATE_KEY" },
+    ]);
+  });
+
+  it("keeps snake_case identifiers literal inside a table cell", () => {
+    const block = markdownBlocks("| key |\n| --- |\n| **daily_net_commands 725** |")[0];
+    expect(block?.kind === "table" ? block.table.rows[0]?.[0]?.spans : []).toEqual([
+      { kind: "bold", text: "daily_net_commands 725" },
+    ]);
+  });
+
+  it("keeps snake_case literal in a code span", () => {
+    expect(paragraphSpans("The version is `client_app_version 1.66.113` today.")).toEqual([
+      { kind: "text", text: "The version is " },
+      { kind: "code", text: "client_app_version 1.66.113" },
+      { kind: "text", text: " today." },
+    ]);
+  });
+
+  it("keeps a link target with an intraword underscore intact", () => {
+    expect(paragraphSpans("See [the file](https://example.com/foo_bar) now.")).toEqual([
+      { kind: "text", text: "See " },
+      { kind: "link", text: "the file", href: "https://example.com/foo_bar" },
+      { kind: "text", text: " now." },
+    ]);
+  });
+
+  it("still renders real underscore italics", () => {
+    expect(paragraphSpans("_italic_")).toEqual([{ kind: "italic", text: "italic" }]);
+    expect(paragraphSpans("__strong__")).toEqual([{ kind: "bold", text: "strong" }]);
+    expect(paragraphSpans("this is _very_ good")).toEqual([
+      { kind: "text", text: "this is " },
+      { kind: "italic", text: "very" },
+      { kind: "text", text: " good" },
+    ]);
+  });
+
+  it("keeps intraword underscores literal inside a real italic run", () => {
+    expect(paragraphSpans("_ready_for_review_")).toEqual([
+      { kind: "italic", text: "ready_for_review" },
+    ]);
+  });
+
+  it("still renders real star italics and keeps spaced stars literal", () => {
+    expect(paragraphSpans("*italic*")).toEqual([{ kind: "italic", text: "italic" }]);
+    expect(paragraphSpans("**2 * 3 * 4**")).toEqual([{ kind: "bold", text: "2 * 3 * 4" }]);
   });
 
   it("leaves a plain bold run and a plain code span unchanged", () => {

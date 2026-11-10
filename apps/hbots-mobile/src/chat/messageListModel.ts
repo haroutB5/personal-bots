@@ -72,3 +72,20 @@ export function scrollIndexForItem(
 export function claimsReplySwipe(dx: number, dy: number, beganInScroller: boolean): boolean {
   return !beganInScroller && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.4;
 }
+
+/** Movement beyond this many pixels is a drag, not a long press. */
+export const LONG_PRESS_SLOP = 10;
+
+/**
+ * A still finger opens the message menu, except when the touch began on a
+ * link or a choice button: those own the press, as they did when the body was
+ * a Pressable.
+ */
+export function opensMessageMenu(
+  startedOnInteractive: boolean,
+  dx: number,
+  dy: number,
+  slop: number = LONG_PRESS_SLOP,
+): boolean {
+  return !startedOnInteractive && Math.abs(dx) <= slop && Math.abs(dy) <= slop;
+}

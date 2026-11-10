@@ -3,6 +3,7 @@ import { IconCheck } from "@tabler/icons-react-native";
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { useMarkInteractiveTouch } from "./messageTouch";
 import { tokens } from "../shell/tokens";
 
 /**
@@ -22,6 +23,7 @@ export function ChoiceButtons({
 }) {
   const [sent, setSent] = useState<string | null>(null);
   const sendingRef = useRef(false);
+  const markInteractive = useMarkInteractiveTouch();
   const used = state.kind === "used";
   const picked = used ? state.picked : sent;
   const locked = used || sent !== null || state.disabled || onChoose === undefined;
@@ -53,6 +55,7 @@ export function ChoiceButtons({
             accessibilityRole="button"
             accessibilityState={{ disabled, selected: isPicked }}
             disabled={disabled}
+            onPressIn={markInteractive}
             onPress={() => choose(option)}
             style={({ pressed }) => [
               styles.button,
