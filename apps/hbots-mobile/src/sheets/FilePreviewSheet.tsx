@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/assets";
 import { decodeFilePreviewText } from "@t3tools/shared/filePreview";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { fetch as expoFetch } from "expo/fetch";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -22,11 +23,14 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import { PreviewTooLargeError, readBoundedBody } from "./boundedPreview";
 import {
   FILE_PREVIEW_TOO_LARGE_TEXT,
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
+  imageSizeVerdict,
+  textPreviewRows,
   type FilePreviewSource,
   type FileTextRead,
   type ImageSizeRead,
@@ -40,16 +44,6 @@ const LAZY_TEXT_CHARS = 20_000;
 const IMAGE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const IMAGE_SIZE_TIMEOUT_MS = 15_000;
 
-/** A body larger than the preview cap is never copied into the app's memory. */
-class PreviewTooLargeError extends Error {}
-
-function declaredLength(response: Response): number | null {
-  const header = response.headers.get("content-length");
-  if (header === null) return null;
-  const length = Number(header);
-  return Number.isSafeInteger(length) && length >= 0 ? length : null;
-}
-
 type TextFetchState =
   | {
       readonly url: string;
@@ -62,9 +56,9 @@ type TextFetchState =
   | { readonly url: string; readonly status: "error" }
   | { readonly url: string; readonly status: "timed-out" };
 
-/** Downloads at most 1 MiB by range, then decodes with the web viewer's cap.
- * A full response must declare a small body, so a large file never reaches the
- * app. The signed URL expires on its own, so a retry mints a fresh one. */
+/** Downloads at most 1 MiB by range. A server that ignores the range is
+ * bounded by the bytes it sends: the reader aborts as soon as a chunk would
+ * pass the cap, and closing the sheet aborts too. A retry mints a fresh URL. */
 function useFileText(url: string | null): FileTextRead {
   const [state, setState] = useState<TextFetchState | null>(null);
   useEffect(() => {
@@ -72,21 +66,18 @@ function useFileText(url: string | null): FileTextRead {
     let active = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TEXT_READ_TIMEOUT_MS);
-    fetch(url, {
+    expoFetch(url, {
       signal: controller.signal,
-      cache: "no-store",
-      headers: { Range: `bytes=0-${TEXT_READ_BYTES - 1}` },
+      headers: {
+        Range: `bytes=0-${TEXT_READ_BYTES - 1}`,
+        "Cache-Control": "no-cache",
+      },
     })
       .then(async (response) => {
         // An empty file cannot satisfy the range; it is simply empty.
         if (response.status === 416) return new Uint8Array();
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const length = declaredLength(response);
-        if (length !== null && length > TEXT_READ_BYTES) throw new PreviewTooLargeError();
-        // A 200 answer means the range was ignored, so the body is the whole
-        // file. With no declared length it cannot be bounded before the copy.
-        if (response.status === 200 && length === null) throw new PreviewTooLargeError();
-        return new Uint8Array(await response.arrayBuffer());
+        return readBoundedBody(response, TEXT_READ_BYTES, controller);
       })
       .then((bytes) => {
         if (!active) return;
@@ -99,6 +90,7 @@ function useFileText(url: string | null): FileTextRead {
       })
       .catch((error: unknown) => {
         if (!active) return;
+        if (error instanceof PreviewTooLargeError) controller.abort();
         setState({
           url,
           status:
@@ -139,8 +131,8 @@ type ImageSizeState =
 
 /**
  * Checks the image's declared size before the image view loads it. A body over
- * the cap never reaches the decoder, which is what an unbounded image would
- * crash. A failed check is an error, not a silent full download.
+ * the cap never reaches the decoder, and an unknown size counts as a failure:
+ * a full download is what an unbounded image would crash.
  */
 function useImageSize(url: string | null): ImageSizeRead {
   const [state, setState] = useState<ImageSizeState | null>(null);
@@ -152,8 +144,12 @@ function useImageSize(url: string | null): ImageSizeRead {
     fetch(url, { method: "HEAD", signal: controller.signal, cache: "no-store" })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const length = declaredLength(response);
-        return length !== null && length > IMAGE_PREVIEW_MAX_BYTES ? "too-large" : "ready";
+        const verdict = imageSizeVerdict(
+          response.headers.get("content-length"),
+          IMAGE_PREVIEW_MAX_BYTES,
+        );
+        if (verdict === "unknown") throw new Error("No declared size");
+        return verdict;
       })
       .then((status) => {
         if (active) setState({ url, status });
@@ -317,12 +313,15 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled file preview state: ${JSON.stringify(value)}`);
 }
 
-/** A short file keeps the sheet's height. A large one draws its lines lazily. */
+/** A short file keeps the sheet's height. A large one, or one with a very long
+ * line, draws wrapped rows lazily so no Text node lays out a huge line. */
 function TextPreview({ text, truncated }: { readonly text: string; readonly truncated: boolean }) {
+  const rows = useMemo(() => textPreviewRows(text), [text]);
+  const wraps = useMemo(() => rows.length !== text.split("\n").length, [rows, text]);
   const notice = truncated ? (
     <Text style={styles.truncated}>Showing the first 1 MB of this file.</Text>
   ) : null;
-  if (text.length <= LAZY_TEXT_CHARS) {
+  if (text.length <= LAZY_TEXT_CHARS && !wraps) {
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         <Text style={styles.code} selectable>
@@ -332,13 +331,12 @@ function TextPreview({ text, truncated }: { readonly text: string; readonly trun
       </ScrollView>
     );
   }
-  const lines = text.split("\n");
   return (
     <FlatList
       style={[styles.scroll, styles.lazyScroll]}
       contentContainerStyle={styles.scrollContent}
-      data={lines}
-      keyExtractor={(_line, index) => String(index)}
+      data={rows}
+      keyExtractor={(_row, index) => String(index)}
       renderItem={({ item }) => (
         <Text style={styles.code} selectable>
           {item.length === 0 ? " " : item}

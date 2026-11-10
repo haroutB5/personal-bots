@@ -3,9 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   FILE_PREVIEW_TOO_LARGE_TEXT,
+  TEXT_PREVIEW_MAX_ROW_CHARS,
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
+  imageSizeVerdict,
+  textPreviewRows,
   type FilePreviewSource,
   type FileTextRead,
   type ImageSizeRead,
@@ -165,6 +168,51 @@ describe("filePreviewState", () => {
     expect(
       state("config", { _tag: "Unsupported", asset: { _tag: "Failure", notFound: true } }),
     ).toEqual({ _tag: "Error", reason: "not-found" });
+  });
+});
+
+describe("textPreviewRows", () => {
+  it("keeps ordinary lines as they are", () => {
+    expect(textPreviewRows("one\ntwo\n")).toEqual(["one", "two", ""]);
+  });
+
+  it("splits a line longer than the row cap", () => {
+    const line = "x".repeat(TEXT_PREVIEW_MAX_ROW_CHARS * 2 + 1);
+    const rows = textPreviewRows(line);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.length <= TEXT_PREVIEW_MAX_ROW_CHARS)).toBe(true);
+    expect(rows.join("")).toBe(line);
+  });
+
+  it("splits the one-megabyte line that used to hang the sheet", () => {
+    const line = "a".repeat(1024 * 1024);
+    const rows = textPreviewRows(line);
+    expect(rows.length).toBeGreaterThan(500);
+    expect(rows.every((row) => row.length <= TEXT_PREVIEW_MAX_ROW_CHARS)).toBe(true);
+    expect(rows.join("")).toBe(line);
+  });
+
+  it("leaves an empty file as one empty row", () => {
+    expect(textPreviewRows("")).toEqual([""]);
+  });
+});
+
+describe("imageSizeVerdict", () => {
+  it("passes a declared size at or under the cap", () => {
+    expect(imageSizeVerdict("20971520", 20 * 1024 * 1024)).toBe("ready");
+    expect(imageSizeVerdict("0", 20 * 1024 * 1024)).toBe("ready");
+  });
+
+  it("refuses a declared size over the cap", () => {
+    expect(imageSizeVerdict("20971521", 20 * 1024 * 1024)).toBe("too-large");
+  });
+
+  it("treats a missing or unusable length as unknown, not a pass", () => {
+    expect(imageSizeVerdict(null, 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("", 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("-1", 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("12.5", 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("huge", 20 * 1024 * 1024)).toBe("unknown");
   });
 });
 
