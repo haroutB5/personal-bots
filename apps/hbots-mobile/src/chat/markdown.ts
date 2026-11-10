@@ -70,6 +70,38 @@ const NUMBER = /^( *)(\d+)[.)]\s+(.*)$/u;
 const QUOTE = /^>\s?(.*)$/u;
 const LINK = /^\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)$/u;
 const MAX_LIST_DEPTH = 3;
+/** Stands in for an underscore CommonMark keeps literal; offsets stay equal. */
+const LITERAL_UNDERSCORE = "\uE000";
+
+function isWordChar(char: string | undefined): boolean {
+  return char !== undefined && /[\p{L}\p{N}]/u.test(char);
+}
+
+/**
+ * CommonMark keeps an underscore literal when a letter or digit sits on both
+ * sides of the run, so `snake_case` never opens or closes emphasis. Swap those
+ * underscores for a marker before parsing and restore them inside the spans.
+ */
+function shieldIntrawordUnderscores(text: string): string {
+  if (!text.includes("_")) return text;
+  let result = "";
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== "_") {
+      result += text[index];
+      continue;
+    }
+    let end = index;
+    while (text[end + 1] === "_") end += 1;
+    const literal = isWordChar(text[index - 1]) && isWordChar(text[end + 1]);
+    result += (literal ? LITERAL_UNDERSCORE : "_").repeat(end - index + 1);
+    index = end;
+  }
+  return result;
+}
+
+function unshieldUnderscores(text: string): string {
+  return text.includes(LITERAL_UNDERSCORE) ? text.replaceAll(LITERAL_UNDERSCORE, "_") : text;
+}
 /** Stops a pathological run of nested emphasis from recursing without end. */
 const MAX_INLINE_DEPTH = 4;
 
@@ -185,18 +217,21 @@ function fileLink(path: string, label: string): { readonly kind: "file" } & File
 }
 
 function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
+  const source = shieldIntrawordUnderscores(text);
   const spans: InlineSpan[] = [];
   const pattern =
-    /(\*\*(?:\*(?!\*)|[^*])+\*\*|__(?:_(?!_)|[^_])+__|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+(?:\s+"[^"]*")?\))/gu;
+    /(\*\*(?:\*(?!\*)|[^*])+\*\*|__(?:_(?!_)|[^_])+__|\*(?![\s*])[^*\n]*[^\s*]\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+(?:\s+"[^"]*")?\))/gu;
   let last = 0;
-  for (const match of text.matchAll(pattern)) {
+  for (const match of source.matchAll(pattern)) {
     const index = match.index ?? 0;
-    if (index > last) spans.push({ kind: "text", text: text.slice(last, index) });
+    if (index > last) {
+      spans.push({ kind: "text", text: unshieldUnderscores(source.slice(last, index)) });
+    }
     const token = match[0];
     const link = LINK.exec(token);
     if (link !== null) {
-      const label = link[1] ?? "";
-      const href = link[2] ?? "";
+      const label = unshieldUnderscores(link[1] ?? "");
+      const href = unshieldUnderscores(link[2] ?? "");
       const target = linkTarget(href);
       spans.push(
         target.kind === "file" ? fileLink(target.path, label) : { kind: "link", text: label, href },
@@ -204,14 +239,16 @@ function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
     } else if (token.startsWith("**") || token.startsWith("__")) {
       spans.push(emphasis("bold", token.slice(2, -2), depth));
     } else if (token.startsWith("`")) {
-      const code = token.slice(1, -1);
+      const code = unshieldUnderscores(token.slice(1, -1));
       spans.push(pathLike(code) ? fileLink(code.trim(), code) : { kind: "code", text: code });
     } else {
       spans.push(emphasis("italic", token.slice(1, -1), depth));
     }
     last = index + token.length;
   }
-  if (last < text.length) spans.push({ kind: "text", text: text.slice(last) });
+  if (last < source.length) {
+    spans.push({ kind: "text", text: unshieldUnderscores(source.slice(last)) });
+  }
   return spans.length === 0 ? [{ kind: "text", text }] : spans;
 }
 
@@ -221,10 +258,11 @@ function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
  * draws with the inherited weight. Plain runs stay a single `text` string.
  */
 function emphasis(kind: "bold" | "italic", inner: string, depth: number): InlineSpan {
-  if (depth >= MAX_INLINE_DEPTH) return { kind, text: inner };
+  const literal = unshieldUnderscores(inner);
+  if (depth >= MAX_INLINE_DEPTH) return { kind, text: literal };
   const spans = inline(inner, depth + 1);
   const plain = spans.length === 1 && spans[0]?.kind === "text";
-  return plain ? { kind, text: inner } : { kind, text: inner, spans };
+  return plain ? { kind, text: literal } : { kind, text: literal, spans };
 }
 
 /** Whether a span list holds a file link, at any depth of bold or italic. */
