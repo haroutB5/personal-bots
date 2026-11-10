@@ -118,6 +118,52 @@ test('evidence real commands, notes ancestry, failures and tampering',()=>{
  assert.equal(node('check-gate-evidence.mjs',[]).status,2);
  } finally {fs.rmSync(root,{recursive:true,force:true})}
 });
+test('a skipped gate needs an allowlisted live-to-release diff',()=>{
+ const scratch=path.join(here,'../../../../.tmp');fs.mkdirSync(scratch,{recursive:true});
+ const root=fs.mkdtempSync(path.join(scratch,'tools-skip-test-'));
+ try {
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases');
+  fs.mkdirSync(path.join(repo,'apps/server/src'),{recursive:true});
+  fs.mkdirSync(path.join(repo,'apps/hbots-mobile'),{recursive:true});
+  fs.mkdirSync(path.join(repo,'scripts/personal/linux/hbots-release/lib'),{recursive:true});
+  fs.copyFileSync(path.join(here,'../hbots-release/lib/gateScope.mjs'),path.join(repo,'scripts/personal/linux/hbots-release/lib/gateScope.mjs'));
+  fs.mkdirSync(releases,{recursive:true});
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  const commit=(message)=>{git('add','-A');git('commit','-qm',message);return git('rev-parse','HEAD')};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'apps/server/src/index.ts'),'export const value=1;\n');const base=commit('baseline');
+  fs.writeFileSync(path.join(repo,'apps/hbots-mobile/app.json'),'{"version":"1"}\n');const mobile=commit('mobile only');
+  fs.writeFileSync(path.join(releases,'current.txt'),`${base}\n`);
+  const stage=(sha)=>{const release=sha.slice(0,12),dir=path.join(releases,release);fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);return {release,dir}};
+  const mobileStage=stage(mobile);
+  const fixture=path.join(root,'command.mjs');
+  fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));`);
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}`]}));
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=(release)=>['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
+  const gateEnv=jobEnv(lockBase());
+  let r=node('gate-evidence.mjs',[...args(mobileStage.release),'--gates-json',defFile,'--skip-notes'],{env:gateEnv});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const mobileFile=path.join(mobileStage.dir,'gate-evidence.json'),mobileEvidence=fs.readFileSync(mobileFile,'utf8');
+  const mobileJson=JSON.parse(mobileEvidence);
+  assert.deepEqual(mobileJson.gates.filter(g=>g.skipped===true).map(g=>g.id).sort(),['e2e','server-tests']);
+  assert.equal(node('check-gate-evidence.mjs',args(mobileStage.release)).status,0);
+  fs.writeFileSync(path.join(repo,'apps/server/src/index.ts'),'export const value=2;\n');const server=commit('server change');
+  const serverStage=stage(server);
+  r=node('gate-evidence.mjs',[...args(serverStage.release),'--gates-json',defFile,'--skip-notes'],{env:gateEnv});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const serverJson=JSON.parse(fs.readFileSync(path.join(serverStage.dir,'gate-evidence.json'),'utf8'));
+  assert.equal(serverJson.gates.some(g=>g.skipped===true),false);
+  assert.ok(serverJson.gates.find(g=>g.id==='server-tests').commands.length>0);
+  const forged=JSON.parse(mobileEvidence);
+  forged.release=serverStage.release;forged.sha=server;forged.headAtStart=server;forged.headAtEnd=server;
+  forged.stagedRelease={...forged.stagedRelease,sha:serverStage.release};
+  fs.writeFileSync(path.join(serverStage.dir,'gate-evidence.json'),JSON.stringify(forged));
+  r=node('check-gate-evidence.mjs',args(serverStage.release));
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stderr,/must run/);
+ } finally {fs.rmSync(root,{recursive:true,force:true})}
+});
 test('server-tests and e2e gates start together',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-parallel-'));
  try{

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
-import {options,git,hash,gatePass,validate} from './gate-common.mjs';
+import {options,git,hash,gatePass,validate,gateScopeOf} from './gate-common.mjs';
 let v;
 try {v=options()} catch(e){console.error(e.message);process.exit(2)}
 const here=path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +30,9 @@ try {
   const staged=Object.fromEntries(fs.readFileSync(path.join(v.dir,'VERSION'),'utf8').trim().split(/\r?\n/).map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1)]}));
   if(!sha.startsWith(v.release)||staged.version!==v.version||!sha.startsWith(staged.sha)||staged.dirty!=='false')throw new Error('Stage a clean matching commit/version first');
   const binHash=hash(path.join(v.dir,'dist/bin.mjs'));
+  const scope=gateScopeOf(v,sha);
+  const skipIds=new Set(scope.action==='skip'?['server-tests','e2e']:[]);
+  console.log(`gate scope: ${scope.action==='skip'?'SKIP server-tests and e2e':'RUN the full gate'} (${scope.reason})`);
   // The phone harness must be supplied until its PowerShell server control is ported.
   // No evidence can pass by silently omitting this gate.
   if(!v['gates-json'])throw new Error('--gates-json FILE required: supply Linux gate commands including phone e2e; the legacy default harness requires PowerShell');
@@ -85,20 +88,23 @@ try {
     } finally{fs.closeSync(fd)}
   };
   const selected=defs.filter(d=>wanted.includes(d.id));
-  const serverTests=selected.find(d=>d.id==='server-tests');
-  const e2eGate=selected.find(d=>d.id==='e2e');
+  const skipped=new Map(selected.filter(d=>skipIds.has(d.id)).map(d=>[d.id,{id:d.id,kind:d.kind,title:d.title??d.id,cwd:d.cwd??'.',skipped:true,reason:scope.reason,baseSha:scope.baseSha,changedPaths:scope.changedPaths,seconds:0,commands:[]}]));
+  for(const g of skipped.values()) console.log(`${g.id}: SKIPPED (${g.reason})`);
+  const toRun=selected.filter(d=>!skipIds.has(d.id));
+  const serverTests=toRun.find(d=>d.id==='server-tests');
+  const e2eGate=toRun.find(d=>d.id==='e2e');
   // Two shards plus the browser peaked at the 5 GiB soft cap and starved e2e, so only a single-lane server-tests shares the window.
   const together=serverTests!==undefined&&e2eGate!==undefined&&(serverTests.concurrent?.length??1)===1;
   if(together) await Promise.all([runGate(serverTests),runGate(e2eGate)]);
-  for(const d of selected) if(!(together&&(d===serverTests||d===e2eGate))) await runGate(d);
-  gates.push(...selected.map(d=>results.get(d.id)).filter(Boolean));
+  for(const d of toRun) if(!(together&&(d===serverTests||d===e2eGate))) await runGate(d);
+  gates.push(...selected.map(d=>results.get(d.id)??skipped.get(d.id)).filter(Boolean));
   const endDirty=dirty();
-  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gates};
+  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{action:scope.action,reason:scope.reason,baseSha:scope.baseSha,changedPaths:scope.changedPaths},gates};
   e.ok=validate(e,{...v,commit:undefined}).length===0;
   fs.writeFileSync(v.file,JSON.stringify(e,null,2)+'\n');
   if(!v['skip-notes']){
     const notesFile=path.join(v.repo,'docs/releases',v.notes);fs.mkdirSync(path.dirname(notesFile),{recursive:true});
-    const section=`<!-- gate-evidence:begin sha=${sha} release=${v.release} json-sha256=${hash(v.file)} result=${e.ok?'PASS':'FAIL'} -->\n${gates.map(g=>`- ${g.id}: ${gatePass(g)?'PASS':'FAIL'}, exit ${g.exit}`).join('\n')}\n<!-- gate-evidence:end -->`;
+    const section=`<!-- gate-evidence:begin sha=${sha} release=${v.release} json-sha256=${hash(v.file)} result=${e.ok?'PASS':'FAIL'} -->\n${gates.map(g=>`- ${g.id}: ${g.skipped===true?'SKIPPED':gatePass(g)?'PASS':'FAIL'}${g.skipped===true?'':`, exit ${g.exit}`}`).join('\n')}\n<!-- gate-evidence:end -->`;
     const old=fs.existsSync(notesFile)?fs.readFileSync(notesFile,'utf8'):`# HANDOFF ${v.version}\n`;
     fs.writeFileSync(notesFile,old.includes('<!-- gate-evidence:begin')?old.replace(/<!-- gate-evidence:begin[^]*?<!-- gate-evidence:end -->/,section):old.trimEnd()+'\n\n## Gate evidence\n\n'+section+'\n');
   }

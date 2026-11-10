@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
 export const required = {'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'};
 export const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -20,8 +21,53 @@ export function git(repo,...args) {
   if(r.status!==0) throw new Error(`git ${args[0]} failed`);
   return r.stdout.trim();
 }
-export function gatePass(g) {
-  if(!g || g.exit!==0 || !Array.isArray(g.commands) || !g.commands.length || g.commands.some(c=>c.exit!==0)) return false;
+// The classifier and the seal live in the repo under test, so the collector, the
+// checker and the runner all read one allowlist. A repo without it runs the gate.
+export function gateScopeModule(repo) {
+  try {
+    const req=createRequire(path.join(repo,'package.json'));
+    const m=req(path.join(repo,'scripts/personal/linux/hbots-release/lib/gateScope.mjs'));
+    return typeof m?.classifyGateScope==='function'?m:null;
+  } catch { return null }
+}
+export function liveReleaseSha(releasesDir) {
+  try { return fs.readFileSync(path.join(releasesDir,'current.txt'),'utf8').trim() } catch { return '' }
+}
+export function resolveCommit(repo,rev) {
+  try { return git(repo,'rev-parse','--verify',`${rev}^{commit}`) } catch { return null }
+}
+export function diffPaths(repo,base,head) {
+  return git(repo,'diff','--no-renames','--name-only',base,head).split('\n').filter(Boolean);
+}
+export function gateScopeOf(v,headSha) {
+  const scope=gateScopeModule(v.repo);
+  if(!scope) return {action:'run',reason:'gate scope classifier missing; running the full gate',baseSha:null,changedPaths:[]};
+  const live=liveReleaseSha(path.dirname(v.dir));
+  const baseSha=resolveCommit(v.repo,live);
+  if(!baseSha) return {action:'run',reason:`live release ${live||'(missing)'} is not a commit in the repo; running the full gate`,baseSha:null,changedPaths:[]};
+  try {
+    return {...scope.classifyGateScope(diffPaths(v.repo,baseSha,headSha)),baseSha};
+  } catch {
+    return {action:'run',reason:'cannot diff the release against the live one; running the full gate',baseSha,changedPaths:[]};
+  }
+}
+// Recompute the live-to-release diff; never trust the evidence's own skip claim.
+export function skippedGateProblems(e,v) {
+  const skipped=(e.gates??[]).filter(g=>g?.skipped===true);
+  if(!skipped.length) return [];
+  const scope=gateScopeModule(v.repo);
+  if(!scope) return ['cannot verify skipped gates: the repository has no gate scope classifier'];
+  const live=liveReleaseSha(path.dirname(v.dir));
+  const baseSha=resolveCommit(v.repo,live), releaseSha=resolveCommit(v.repo,e.release);
+  if(!baseSha||!releaseSha) return [`cannot verify skipped gates: live ${live||'(missing)'} and release ${e.release} are not both commits in ${v.repo}`];
+  try {
+    return scope.verifySkippedGates({evidence:e,liveSha:baseSha,releaseSha,changedPaths:diffPaths(v.repo,baseSha,releaseSha)});
+  } catch(err) { return [`cannot verify skipped gates: ${err.message}`] }
+}
+export function gatePass(g,{skipAllowed=false}={}) {
+  if(!g) return false;
+  if(g.skipped===true) return skipAllowed===true && typeof g.reason==='string' && g.reason.trim().length>0 && typeof g.baseSha==='string' && Array.isArray(g.changedPaths) && g.changedPaths.length>0;
+  if(g.exit!==0 || !Array.isArray(g.commands) || !g.commands.length || g.commands.some(c=>c.exit!==0)) return false;
   if(g.kind==='vitest') return Number.isInteger(g.counts?.passed) && g.counts.passed>0 && g.counts.failed===0;
   if(g.kind==='e2e') return Array.isArray(g.journeys) && g.journeys.length>=5 && new Set(g.journeys.map(j=>j.id)).size===g.journeys.length && g.journeys.every(j=>typeof j.id==='string' && j.id && j.ok===true) && g.counts?.failed===0 && g.counts.passed===g.journeys.length && g.counts.journeys===g.journeys.length;
   if(g.kind==='ps') return g.counts?.checks>0 && g.counts.failedChecks===0;
@@ -38,9 +84,12 @@ export function validate(e,v) {
   const staged=Object.fromEntries(fs.readFileSync(path.join(v.dir,'VERSION'),'utf8').trim().split(/\r?\n/).map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1)]}));
   check(staged.dirty==='false' && staged.version===v.version && staged.sha===e.stagedRelease?.sha,'Staged VERSION changed or dirty');
   const gates=Array.isArray(e.gates)?e.gates:[];
+  const skipProblems=skippedGateProblems(e,v);
+  errors.push(...skipProblems);
+  const skipAllowed=skipProblems.length===0;
   check(new Set(gates.map(g=>g.id)).size===gates.length,'Duplicate gate ids');
   for(const [id,kind] of Object.entries(required)) check(gates.some(g=>g.id===id && g.kind===kind),`Missing required gate ${id}`);
-  for(const g of gates) check(gatePass(g),`Gate failed: ${g.id}`);
+  for(const g of gates) check(gatePass(g,{skipAllowed}),`Gate failed: ${g.id}`);
   check(e.ok===true,'Evidence says FAIL');
   if(v.commit){
     try {
