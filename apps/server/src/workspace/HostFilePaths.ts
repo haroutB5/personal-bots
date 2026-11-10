@@ -1,20 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - the home folder and path map come from the process, like the migration that reads the same map.
-/**
- * Where a path written in a bot chat really lives on this host, and which host
- * files may never be shown.
- *
- * Bots write file paths in the shapes they know: relative to the workspace,
- * relative to the home folder (`.personal-bots/qa/x/RESULT.md`), `~/...`,
- * absolute Linux paths, and the Windows paths of the old machine
- * (`C:/Users/Ht/...`, `C:/Claude/AI/...`). `hostPathCandidates` lists every
- * place such a path can mean, best guess first; the reader opens the first one
- * that exists. Pure on purpose: no file is touched here.
- *
- * `isProtectedHostPath` is the deny list every read and every signed download
- * of a host file passes through. It looks at the path only, so it is applied to
- * the requested path and again to the resolved real path (a symlink cannot
- * smuggle a secret out under a harmless name).
- */
+/** Where a chat path lives on this host and which host files may never be shown.
+ * `hostPathCandidates` lists every place it can mean, best guess first.
+ * `isProtectedHostPath` checks the requested path and the real path, so a
+ * symlink cannot smuggle a secret out under a harmless name. */
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -106,6 +94,11 @@ const PROTECTED_BASENAME_PATTERNS: ReadonlyArray<RegExp> = [
   /token/i,
   /^\.?pgpass$/i,
   /^\.my\.cnf$/i,
+  /\.keyring$/i,
+  /^\.(?:bash|zsh|ash|dash|ksh|fish|mysql|psql|python|node_repl|irb|sqlite|php|ruby|scala)_history$/i,
+  /^\.(?:lesshst|viminfo)$/i,
+  /^\.claude\.json(?:\.backup)?$/i,
+  /^fish_history$/i,
   /^cookies(-journal)?$/i,
   /^login data(-journal)?$/i,
   /^local state$/i,
@@ -119,10 +112,14 @@ const TEMPLATE_ENV = /^\.env\.(example|sample|template|dist|defaults?)$/i;
 // A folder anywhere in the path that holds credentials or machine state.
 const PROTECTED_SEGMENTS = new Set([
   ".ssh",
+  ".ssh2",
   ".gnupg",
   ".aws",
   ".kube",
   ".password-store",
+  ".claude",
+  ".codex",
+  ".gemini",
   "secrets",
   "browser-profiles",
 ]);
@@ -139,18 +136,25 @@ const PROTECTED_PREFIXES = [
   "/etc/sudoers.d",
 ];
 
-// The Bots data root keeps its database, its sealed secret store and its
-// settings beside the media folders; only the media folders are for showing.
-// `browser-artifacts` is where the preview tool writes the screenshots it tells
-// bots to embed, so it must be readable through a signed asset URL like
-// `attachments`; everything else under `userdata` stays private.
+// The Bots data root keeps its database and settings beside the media folders.
+// Only media folders are for showing; `browser-artifacts` holds the screenshots
+// bots embed. Everything else under `userdata` stays private.
 const SHOWABLE_BOTS_DATA_DIRS = new Set(["attachments", "browser-artifacts"]);
 function isProtectedBotsData(segments: ReadonlyArray<string>): boolean {
   const index = segments.lastIndexOf("userdata");
   return index >= 0 && !SHOWABLE_BOTS_DATA_DIRS.has(segments[index + 1] ?? "");
 }
 
-const PROTECTED_CONFIG_DIRS = new Set(["gh", "glab-cli", "op", "gcloud", "azure", "rclone"]);
+const PROTECTED_CONFIG_DIRS = new Set([
+  "gh",
+  "glab-cli",
+  "op",
+  "gcloud",
+  "azure",
+  "rclone",
+  "bitwarden",
+  "1password",
+]);
 const BROWSER_PROFILE_DIRS = new Set(["bravesoftware", "google-chrome", "chromium", "mozilla"]);
 function isProtectedConfigFolder(segments: ReadonlyArray<string>): boolean {
   // gh keeps its token in ~/.config/gh/hosts.yml; the CLI logins live in these.

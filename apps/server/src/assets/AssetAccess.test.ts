@@ -1944,6 +1944,37 @@ describe("message-file grant", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("refuses a keyring or a shell history the message links", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-secret-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(path.join(home, ".local", "share", "keyrings"), { recursive: true });
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(
+        path.join(home, ".local", "share", "keyrings", "login.keyring"),
+        "k",
+      );
+      yield* fs.writeFileString(path.join(home, ".bash_history"), "history");
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Keyring: [login](~/.local/share/keyrings/login.keyring), history: [bash](~/.bash_history).",
+        }),
+      ]);
+
+      for (const requested of ["~/.local/share/keyrings/login.keyring", "~/.bash_history"]) {
+        const error = yield* issueAs(messageFile({ path: requested }), { cwd, home }).pipe(
+          Effect.flip,
+        );
+        expect(error._tag, requested).toBe("AssetProtectedFileError");
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("refuses a traversal variant of a linked path", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
