@@ -22,15 +22,30 @@ import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import {
+  FILE_PREVIEW_TOO_LARGE_TEXT,
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
   type FilePreviewSource,
   type FileTextRead,
+  type ImageSizeRead,
 } from "./filePreviewModel";
 import { SheetShell } from "./SheetShell";
 
 const TEXT_READ_TIMEOUT_MS = 15_000;
+const TEXT_READ_BYTES = 1024 * 1024;
+const IMAGE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
+const IMAGE_SIZE_TIMEOUT_MS = 15_000;
+
+/** A body larger than the preview cap is never copied into the app's memory. */
+class PreviewTooLargeError extends Error {}
+
+function declaredLength(response: Response): number | null {
+  const header = response.headers.get("content-length");
+  if (header === null) return null;
+  const length = Number(header);
+  return Number.isSafeInteger(length) && length >= 0 ? length : null;
+}
 
 type TextFetchState =
   | {
@@ -40,14 +55,13 @@ type TextFetchState =
       readonly truncated: boolean;
     }
   | { readonly url: string; readonly status: "binary" }
+  | { readonly url: string; readonly status: "too-large" }
   | { readonly url: string; readonly status: "error" }
   | { readonly url: string; readonly status: "timed-out" };
 
-/**
- * Downloads a text file from its signed URL and decodes it with the same 1 MiB
- * cap and binary check the web viewer uses. The URL expires on its own, so a
- * retry mints a fresh one.
- */
+/** Downloads at most 1 MiB by range, then decodes with the web viewer's cap.
+ * A full response must declare a small body, so a large file never reaches the
+ * app. The signed URL expires on its own, so a retry mints a fresh one. */
 function useFileText(url: string | null): FileTextRead {
   const [state, setState] = useState<TextFetchState | null>(null);
   useEffect(() => {
@@ -55,9 +69,20 @@ function useFileText(url: string | null): FileTextRead {
     let active = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TEXT_READ_TIMEOUT_MS);
-    fetch(url, { signal: controller.signal, cache: "no-store" })
+    fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { Range: `bytes=0-${TEXT_READ_BYTES - 1}` },
+    })
       .then(async (response) => {
+        // An empty file cannot satisfy the range; it is simply empty.
+        if (response.status === 416) return new Uint8Array();
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const length = declaredLength(response);
+        if (length !== null && length > TEXT_READ_BYTES) throw new PreviewTooLargeError();
+        // A 200 answer means the range was ignored, so the body is the whole
+        // file. With no declared length it cannot be bounded before the copy.
+        if (response.status === 200 && length === null) throw new PreviewTooLargeError();
         return new Uint8Array(await response.arrayBuffer());
       })
       .then((bytes) => {
@@ -69,9 +94,17 @@ function useFileText(url: string | null): FileTextRead {
           setState({ url, status: "binary" });
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!active) return;
-        setState({ url, status: controller.signal.aborted ? "timed-out" : "error" });
+        setState({
+          url,
+          status:
+            error instanceof PreviewTooLargeError
+              ? "too-large"
+              : controller.signal.aborted
+                ? "timed-out"
+                : "error",
+        });
       })
       .finally(() => clearTimeout(timeout));
     return () => {
@@ -87,10 +120,60 @@ function useFileText(url: string | null): FileTextRead {
       return { _tag: "Loaded", text: state.text, truncated: state.truncated };
     case "binary":
       return { _tag: "Binary" };
+    case "too-large":
+      return { _tag: "TooLarge" };
     case "error":
       return { _tag: "Failed" };
     case "timed-out":
       return { _tag: "TimedOut" };
+  }
+}
+
+type ImageSizeState =
+  | { readonly url: string; readonly status: "ready" }
+  | { readonly url: string; readonly status: "too-large" }
+  | { readonly url: string; readonly status: "failed" };
+
+/**
+ * Checks the image's declared size before the image view loads it. A body over
+ * the cap never reaches the decoder, which is what an unbounded image would
+ * crash. A failed check is an error, not a silent full download.
+ */
+function useImageSize(url: string | null): ImageSizeRead {
+  const [state, setState] = useState<ImageSizeState | null>(null);
+  useEffect(() => {
+    if (url === null) return;
+    let active = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), IMAGE_SIZE_TIMEOUT_MS);
+    fetch(url, { method: "HEAD", signal: controller.signal, cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const length = declaredLength(response);
+        return length !== null && length > IMAGE_PREVIEW_MAX_BYTES ? "too-large" : "ready";
+      })
+      .then((status) => {
+        if (active) setState({ url, status });
+      })
+      .catch(() => {
+        if (active) setState({ url, status: "failed" });
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [url]);
+
+  if (url === null || state === null || state.url !== url) return { _tag: "Pending" };
+  switch (state.status) {
+    case "ready":
+      return { _tag: "Ready" };
+    case "too-large":
+      return { _tag: "TooLarge" };
+    case "failed":
+      return { _tag: "Failed" };
   }
 }
 
@@ -143,6 +226,8 @@ export function FilePreviewSheet({
 
   const textUrl = route === "text" && asset._tag === "Success" ? asset.url : null;
   const read = useFileText(textUrl);
+  const imageUrl = route === "image" && asset._tag === "Success" ? asset.url : null;
+  const imageSize = useImageSize(imageUrl);
 
   // Retry mints a new signed URL; its token differs, so the text effect runs again.
   const retry = () => refreshAsset();
@@ -151,7 +236,7 @@ export function FilePreviewSheet({
     route === "text"
       ? { _tag: "Text", asset, read }
       : route === "image"
-        ? { _tag: "Image", asset }
+        ? { _tag: "Image", asset, size: imageSize }
         : { _tag: "Unsupported", asset };
   const preview = filePreviewState({ path: request?.path ?? null, source });
 
@@ -185,6 +270,12 @@ export function FilePreviewSheet({
             resizeMode="contain"
             accessibilityLabel={name}
           />
+        );
+      case "TooLarge":
+        return (
+          <Text style={styles.notice} accessibilityRole="alert">
+            {FILE_PREVIEW_TOO_LARGE_TEXT}
+          </Text>
         );
       case "Unsupported":
         return (

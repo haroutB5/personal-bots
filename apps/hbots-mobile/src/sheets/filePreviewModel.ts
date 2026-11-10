@@ -8,6 +8,7 @@ export type FilePreviewState =
   | { readonly _tag: "Loading" }
   | { readonly _tag: "Text"; readonly text: string }
   | { readonly _tag: "Image"; readonly url: string }
+  | { readonly _tag: "TooLarge" }
   | { readonly _tag: "Unsupported" }
   | { readonly _tag: "Denied" }
   | { readonly _tag: "Error"; readonly reason: FilePreviewErrorReason };
@@ -31,14 +32,29 @@ export type FileTextRead =
   | { readonly _tag: "Pending" }
   | { readonly _tag: "Loaded"; readonly text: string; readonly truncated: boolean }
   | { readonly _tag: "Binary" }
+  | { readonly _tag: "TooLarge" }
   | { readonly _tag: "Failed" }
   | { readonly _tag: "TimedOut" };
+
+/** The image size check, made before the image view starts loading bytes. */
+export type ImageSizeRead =
+  | { readonly _tag: "Pending" }
+  | { readonly _tag: "Ready" }
+  | { readonly _tag: "TooLarge" }
+  | { readonly _tag: "Failed" };
 
 /** The one source a preview draws from, chosen from the path's route. */
 export type FilePreviewSource =
   | { readonly _tag: "Text"; readonly asset: AssetUrlState; readonly read: FileTextRead }
-  | { readonly _tag: "Image"; readonly asset: AssetUrlState }
+  | {
+      readonly _tag: "Image";
+      readonly asset: AssetUrlState;
+      readonly size: ImageSizeRead;
+    }
   | { readonly _tag: "Unsupported"; readonly asset: AssetUrlState };
+
+/** The sentence both routes show when the file is beyond the phone's preview cap. */
+export const FILE_PREVIEW_TOO_LARGE_TEXT = "This file is too large to preview on the phone.";
 
 export interface FilePreviewInput {
   readonly path: string | null;
@@ -79,7 +95,20 @@ export function filePreviewState(input: FilePreviewInput): FilePreviewState {
       const failure = assetFailureState(input.source.asset);
       if (failure !== null) return failure;
       if (input.source.asset._tag !== "Success") return { _tag: "Loading" };
-      return { _tag: "Image", url: input.source.asset.url };
+      switch (input.source.size._tag) {
+        case "Pending":
+          return { _tag: "Loading" };
+        case "Ready":
+          return { _tag: "Image", url: input.source.asset.url };
+        case "TooLarge":
+          return { _tag: "TooLarge" };
+        case "Failed":
+          return { _tag: "Error", reason: "read-failed" };
+        default: {
+          const unreachable: never = input.source.size;
+          return unreachable;
+        }
+      }
     }
     case "Text": {
       const failure = assetFailureState(input.source.asset);
@@ -91,6 +120,8 @@ export function filePreviewState(input: FilePreviewInput): FilePreviewState {
           return { _tag: "Text", text: input.source.read.text };
         case "Binary":
           return { _tag: "Unsupported" };
+        case "TooLarge":
+          return { _tag: "TooLarge" };
         case "Failed":
           return { _tag: "Error", reason: "read-failed" };
         case "TimedOut":

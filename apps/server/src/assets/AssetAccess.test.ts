@@ -1781,6 +1781,36 @@ describe("message-file grant", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("serves a byte range of a file linked in an assistant message", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-message-file-range-" });
+      const cwd = path.join(home, "work");
+      yield* fs.makeDirectory(cwd);
+      yield* fs.writeFileString(path.join(cwd, "plan.md"), "the plan");
+      useMessages([
+        conversationMessage({
+          id: "message-1",
+          threadId: "thread-1",
+          role: "assistant",
+          text: "Here is [the plan](plan.md) for review.",
+        }),
+      ]);
+
+      const issued = yield* issueAs(messageFile({ path: "plan.md" }), { cwd, home });
+      const token = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      const asset = yield* resolveAsset(token, "plan.md");
+      if (asset?.kind !== "file") throw new Error("Expected a resolved message file");
+
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset, "bytes=0-4"));
+      expect(response.status).toBe(206);
+      expect(response.headers.get("content-length")).toBe("5");
+      expect(response.headers.get("content-range")).toBe("bytes 0-4/8");
+      expect(yield* Effect.promise(() => response.text())).toBe("the p");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves a tilde path and an image linked in an assistant message", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

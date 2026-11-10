@@ -2,11 +2,13 @@ import type { AssetUrlState } from "@t3tools/client-runtime/state/assets";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  FILE_PREVIEW_TOO_LARGE_TEXT,
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
   type FilePreviewSource,
   type FileTextRead,
+  type ImageSizeRead,
 } from "./filePreviewModel.ts";
 
 const success = (url: string): AssetUrlState => ({
@@ -21,7 +23,10 @@ const textSource = (asset: AssetUrlState, read: FileTextRead): FilePreviewSource
   read,
 });
 
-const imageSource = (asset: AssetUrlState): FilePreviewSource => ({ _tag: "Image", asset });
+const imageSource = (
+  asset: AssetUrlState,
+  size: ImageSizeRead = { _tag: "Ready" },
+): FilePreviewSource => ({ _tag: "Image", asset, size });
 
 const state = (path: string | null, source: FilePreviewSource) =>
   filePreviewState({ path, source });
@@ -66,10 +71,30 @@ describe("filePreviewState", () => {
     ).toEqual({ _tag: "Text", text: "hi" });
   });
 
-  it("shows the image once the URL is minted", () => {
+  it("shows the image once the URL is minted and its size is safe", () => {
     expect(state("shot.png", imageSource(success("https://x/a.png")))).toEqual({
       _tag: "Image",
       url: "https://x/a.png",
+    });
+    expect(state("shot.png", imageSource(success("https://x/a.png"), { _tag: "Pending" }))).toEqual(
+      { _tag: "Loading" },
+    );
+  });
+
+  it("refuses a text body or an image past the phone's preview cap", () => {
+    expect(state("NOTES.md", textSource(success("https://x/a.md"), { _tag: "TooLarge" }))).toEqual({
+      _tag: "TooLarge",
+    });
+    expect(
+      state("shot.png", imageSource(success("https://x/a.png"), { _tag: "TooLarge" })),
+    ).toEqual({ _tag: "TooLarge" });
+    expect(FILE_PREVIEW_TOO_LARGE_TEXT).toBe("This file is too large to preview on the phone.");
+  });
+
+  it("reports a failed image size check as a read failure", () => {
+    expect(state("shot.png", imageSource(success("https://x/a.png"), { _tag: "Failed" }))).toEqual({
+      _tag: "Error",
+      reason: "read-failed",
     });
   });
 
