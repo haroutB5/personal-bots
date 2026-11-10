@@ -33,6 +33,8 @@ export interface CodexResetCreditsSummary {
   readonly credits?: ReadonlyArray<{
     readonly status: string;
     readonly expiresAt?: number | null;
+    /** `codexRateLimits` is the general reset; anything else leaves the kind unnamed. */
+    readonly resetType?: string | null;
   }> | null;
 }
 
@@ -101,15 +103,19 @@ function codexResetCreditsToContract(
   summary: CodexResetCreditsSummary | null | undefined,
 ): ServerProviderResetCredits | undefined {
   if (!summary) return undefined;
-  const expiries = (summary.credits ?? [])
-    .filter((credit) => credit.status === "available")
+  const available = (summary.credits ?? []).filter((credit) => credit.status === "available");
+  const expiries = available
     .map((credit) => credit.expiresAt)
     .filter((value): value is number => typeof value === "number");
   const nextExpiresAt =
     expiries.length > 0 ? isoFromEpochSeconds(Math.min(...expiries)) : undefined;
+  const availableCount = Math.max(0, summary.availableCount);
+  const everyGeneral =
+    available.length > 0 && available.every((credit) => credit.resetType === "codexRateLimits");
   return {
-    availableCount: Math.max(0, summary.availableCount),
+    availableCount,
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
+    ...(everyGeneral ? { nextKind: "full", kinds: [{ kind: "full", availableCount }] } : {}),
   };
 }
 

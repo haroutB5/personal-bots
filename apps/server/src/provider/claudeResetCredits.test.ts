@@ -62,7 +62,95 @@ describe("claudeResetCreditsToContract", () => {
       availableCount: 2,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
+      nextKind: "full",
+      kinds: [{ kind: "full", availableCount: 2 }],
     });
+  });
+
+  it("names a Fable grant by gives_back_weekly even when type says full", () => {
+    const fable = {
+      resets_left: 1,
+      ends_at: "2026-10-01T00:00:00Z",
+      clears: ["five_hour", "seven_day_overage_included"],
+      type: "full",
+      gives_back_weekly: true,
+    };
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract(
+        {
+          eligible: true,
+          next_grant_id: "grant_a",
+          grants: [grant({ ...fable }), grant({ ...fable, id: "grant_b" })],
+        },
+        NOW,
+      ),
+    ).toEqual({
+      availableCount: 2,
+      nextCreditId: "grant_a",
+      nextExpiresAt: "2026-10-01T00:00:00.000Z",
+      nextKind: "fable",
+      kinds: [{ kind: "fable", availableCount: 2 }],
+    });
+  });
+
+  it("names a general grant beside a Fable one, next kind first", () => {
+    const fable = {
+      resets_left: 1,
+      ends_at: "2026-10-01T00:00:00Z",
+      clears: ["five_hour", "seven_day_overage_included"],
+      type: "full",
+      gives_back_weekly: true,
+    };
+    const general = {
+      id: "grant_b",
+      resets_left: 1,
+      ends_at: "2026-10-01T00:00:00Z",
+      clears: ["five_hour"],
+      type: "full",
+      gives_back_weekly: false,
+    };
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract(
+        {
+          eligible: true,
+          next_grant_id: "grant_b",
+          grants: [grant({ ...fable }), grant({ ...general })],
+        },
+        NOW,
+      ),
+    ).toEqual({
+      availableCount: 2,
+      nextCreditId: "grant_b",
+      nextExpiresAt: "2026-10-01T00:00:00.000Z",
+      nextKind: "full",
+      kinds: [
+        { kind: "full", availableCount: 1 },
+        { kind: "fable", availableCount: 1 },
+      ],
+    });
+  });
+
+  it("infers the kind from clears when the grant carries no type", () => {
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract(
+        {
+          eligible: true,
+          next_grant_id: "grant_a",
+          grants: [grant({ clears: ["five_hour"] })],
+        },
+        NOW,
+      ),
+    ).toMatchObject({ nextKind: "session" });
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract(
+        {
+          eligible: true,
+          next_grant_id: "grant_a",
+          grants: [grant({ clears: ["seven_day_overage_included"] })],
+        },
+        NOW,
+      ),
+    ).toMatchObject({ nextKind: "weekly" });
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
@@ -111,7 +199,12 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(credits).toEqual({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+        nextKind: "full",
+        kinds: [{ kind: "full", availableCount: 1 }],
+      });
     }),
   );
 

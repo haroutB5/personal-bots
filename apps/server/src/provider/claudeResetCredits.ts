@@ -1,7 +1,9 @@
 import type {
   ProviderConsumeResetCreditOutcome,
+  ResetCreditKind,
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
+import { ForwardCompatibleOptional } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -31,6 +33,11 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  // Undocumented fields Claude's own CLI reads to name a grant's kind. An
+  // unexpected shape drops the field, never the whole credit.
+  type: ForwardCompatibleOptional(Schema.String),
+  gives_back_weekly: ForwardCompatibleOptional(Schema.Boolean),
+  clears: ForwardCompatibleOptional(Schema.Array(Schema.String)),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
@@ -95,6 +102,26 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
+/**
+ * The kind Claude's own CLI names for a grant. `gives_back_weekly` wins: a
+ * Fable grant reported here carries `type: "full"`, so reading `type` alone
+ * would mislabel it as a general reset.
+ */
+function claudeGrantKind(grant: {
+  readonly type?: string | undefined;
+  readonly gives_back_weekly?: boolean | undefined;
+  readonly clears?: ReadonlyArray<string> | undefined;
+}): ResetCreditKind {
+  if (grant.gives_back_weekly === true) return "fable";
+  if (grant.type === "session" || grant.type === "weekly" || grant.type === "full") {
+    return grant.type;
+  }
+  const clears = grant.clears ?? [];
+  const session = clears.includes("five_hour");
+  const other = clears.some((clear) => clear !== "five_hour");
+  return session && !other ? "session" : other && !session ? "weekly" : "full";
+}
+
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
@@ -111,12 +138,29 @@ export function claudeResetCreditsToContract(
     );
   const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
   const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
+  const nextKind = next ? claudeGrantKind(next) : undefined;
+  const counts = new Map<ResetCreditKind, number>();
+  for (const grant of live) {
+    const count = grant.resets_left;
+    if (count === 0) continue;
+    const kind = claudeGrantKind(grant);
+    counts.set(kind, (counts.get(kind) ?? 0) + count);
+  }
+  const kinds = [...counts].map(([kind, availableCount]) => ({ kind, availableCount }));
+  const orderedKinds =
+    nextKind === undefined
+      ? kinds
+      : [
+          ...kinds.filter((entry) => entry.kind === nextKind),
+          ...kinds.filter((entry) => entry.kind !== nextKind),
+        ];
   return {
     availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
     ...(Option.isSome(nextExpiresAt)
       ? { nextExpiresAt: DateTime.formatIso(nextExpiresAt.value) }
       : {}),
-    ...(next ? { nextCreditId: next.id } : {}),
+    ...(next ? { nextCreditId: next.id, nextKind } : {}),
+    ...(next && orderedKinds.length > 0 ? { kinds: orderedKinds } : {}),
   };
 }
 

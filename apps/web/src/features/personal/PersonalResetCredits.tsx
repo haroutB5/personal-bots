@@ -14,6 +14,8 @@ import { Button } from "~/components/ui/button";
 import { useResetCredit } from "~/components/usage/UsageLimits";
 
 import {
+  resetCreditConfirm,
+  resetCreditRedeemLabel,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
   type UsageCardResetCredits,
@@ -52,6 +54,8 @@ export default function PersonalResetCredits({
   const cancelRef = useRef<HTMLButtonElement>(null);
   if (credits.availableCount === 0 && status === null) return null;
   const expiresIn = resetCreditsExpiresIn(credits, now);
+  const confirm = resetCreditConfirm(credits, title);
+  const redeemLabel = resetCreditRedeemLabel(credits);
 
   const onConfirm = async () => {
     if (inFlightRef.current) return;
@@ -70,7 +74,7 @@ export default function PersonalResetCredits({
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col">
             <span className="text-[15px] leading-5 text-[var(--personal-text)] tabular-nums">
-              {resetCreditsHeadline(credits.availableCount)}
+              {resetCreditsHeadline(credits)}
             </span>
             {expiresIn !== null ? (
               <span className="text-[13px] leading-[18px] text-[var(--personal-text-secondary)] tabular-nums">
@@ -84,11 +88,11 @@ export default function PersonalResetCredits({
             variant="outline"
             disabled={busy}
             aria-busy={busy}
-            aria-label={`Redeem a banked ${title} reset`}
+            aria-label={confirm.title.replace(/\?$/, "")}
             className="h-11 shrink-0 px-4 text-[15px] sm:h-11"
             onClick={() => setConfirming(true)}
           >
-            {busy ? "Redeeming…" : "Redeem"}
+            {busy ? "Redeeming…" : redeemLabel}
           </Button>
         </div>
       ) : null}
@@ -105,10 +109,10 @@ export default function PersonalResetCredits({
         >
           <AlertDialogHeader className="text-left">
             <AlertDialogTitle className="text-[18px] leading-snug text-[var(--personal-text)]">
-              {`Redeem a banked ${title} reset?`}
+              {confirm.title}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-[15px] leading-snug text-[var(--personal-text-secondary)]">
-              {`This uses one of your banked resets and clears the current ${title} limit windows now. It cannot be undone.`}
+              {confirm.body}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {/* Redeeming cannot be undone, so Cancel is the filled, focused default.

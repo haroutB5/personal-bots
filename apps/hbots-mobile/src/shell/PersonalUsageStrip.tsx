@@ -7,6 +7,8 @@ import { isLowProviderBalance } from "@t3tools/contracts";
 import {
   deepSeekSpendText,
   formatBalanceAmount,
+  resetCreditConfirm,
+  resetCreditRedeemLabel,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
   selectOpenCodeSpendLine,
@@ -237,6 +239,8 @@ function RedeemBlock({
   if (resetCredits === null) return null;
   if (resetCredits.credits.availableCount === 0 && status === null) return null;
   const expiresIn = resetCreditsExpiresIn(resetCredits.credits, now);
+  const confirm = resetCreditConfirm(resetCredits.credits, card.title);
+  const redeemLabel = resetCreditRedeemLabel(resetCredits.credits);
 
   const redeem = async () => {
     if (inFlight.current) return;
@@ -263,9 +267,7 @@ function RedeemBlock({
       {resetCredits.credits.availableCount > 0 ? (
         <View style={styles.redeemRow}>
           <View style={styles.redeemCopy}>
-            <Text style={styles.redeemHeadline}>
-              {resetCreditsHeadline(resetCredits.credits.availableCount)}
-            </Text>
+            <Text style={styles.redeemHeadline}>{resetCreditsHeadline(resetCredits.credits)}</Text>
             {expiresIn !== null ? (
               <Text style={styles.redeemExpiry} numberOfLines={1}>
                 Next expires in {expiresIn}
@@ -276,11 +278,11 @@ function RedeemBlock({
             onPress={() => setConfirming(true)}
             disabled={busy}
             accessibilityRole="button"
-            accessibilityLabel={`Redeem a banked ${card.title} reset`}
+            accessibilityLabel={confirm.title.replace(/\?$/, "")}
             accessibilityState={{ disabled: busy, busy }}
             style={[styles.outlineButton, busy ? styles.disabled : null]}
           >
-            <Text style={styles.outlineButtonText}>{busy ? "Redeeming…" : "Redeem"}</Text>
+            <Text style={styles.outlineButtonText}>{busy ? "Redeeming…" : redeemLabel}</Text>
           </Pressable>
         </View>
       ) : null}
@@ -297,10 +299,8 @@ function RedeemBlock({
       >
         <View style={styles.confirmScrim}>
           <View style={styles.confirmCard}>
-            <Text style={styles.confirmTitle}>{`Redeem a banked ${card.title} reset?`}</Text>
-            <Text style={styles.confirmBody}>
-              {`This uses one of your banked resets and clears the current ${card.title} limit windows now. It cannot be undone.`}
-            </Text>
+            <Text style={styles.confirmTitle}>{confirm.title}</Text>
+            <Text style={styles.confirmBody}>{confirm.body}</Text>
             <View style={styles.confirmActions}>
               <Pressable
                 onPress={() => setConfirming(false)}

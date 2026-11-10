@@ -1,6 +1,7 @@
 import type {
   PersonalBotTokenUsageResult,
   ProviderConsumeResetCreditInput,
+  ResetCreditKind,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
@@ -176,9 +177,81 @@ export function selectOpenCodeSpendLine(
     : `Our 7-day estimate: ${amount}`;
 }
 
-/** "1 reset banked", "2 resets banked". */
-export function resetCreditsHeadline(count: number): string {
-  return `${count} ${count === 1 ? "reset" : "resets"} banked`;
+/** How each kind of banked reset is named, in the row and in the Redeem button. */
+const RESET_KIND_NOUNS: Record<ResetCreditKind, { readonly noun: string; readonly short: string }> =
+  {
+    fable: { noun: "Fable reset", short: "Fable" },
+    full: { noun: "general reset", short: "general" },
+    session: { noun: "5-hour reset", short: "5-hour" },
+    weekly: { noun: "weekly reset", short: "weekly" },
+  };
+
+function resetKindNoun(kind: ResetCreditKind, count: number): string {
+  const noun = RESET_KIND_NOUNS[kind].noun;
+  return count === 1 ? noun : `${noun}s`;
+}
+
+/**
+ * "2 Fable resets banked", "1 Fable reset, 1 general reset banked", or the
+ * unnamed "2 resets banked" when the source does not say what the credits
+ * do (an old server snapshot). The next credit's kind is named first.
+ */
+export function resetCreditsHeadline(credits: ServerProviderResetCredits): string {
+  const groups = credits.kinds ?? [];
+  const named =
+    groups.length > 0 &&
+    groups.reduce((sum, group) => sum + group.availableCount, 0) === credits.availableCount;
+  if (!named) {
+    return `${credits.availableCount} ${credits.availableCount === 1 ? "reset" : "resets"} banked`;
+  }
+  const ordered =
+    credits.nextKind === undefined
+      ? groups
+      : [
+          ...groups.filter((group) => group.kind === credits.nextKind),
+          ...groups.filter((group) => group.kind !== credits.nextKind),
+        ];
+  return `${ordered
+    .map((group) => `${group.availableCount} ${resetKindNoun(group.kind, group.availableCount)}`)
+    .join(", ")} banked`;
+}
+
+/** "Redeem Fable", "Redeem general", or today's "Redeem" without a named kind. */
+export function resetCreditRedeemLabel(credits: ServerProviderResetCredits): string {
+  return credits.nextKind === undefined
+    ? "Redeem"
+    : `Redeem ${RESET_KIND_NOUNS[credits.nextKind].short}`;
+}
+
+/**
+ * The confirm dialog for the credit Redeem will spend: its title, and a body
+ * matching what that kind clears. Without a named kind the text is unchanged
+ * from before the kinds existed.
+ */
+export function resetCreditConfirm(
+  credits: ServerProviderResetCredits,
+  title: string,
+): { readonly title: string; readonly body: string } {
+  const kind = credits.nextKind;
+  if (kind === undefined) {
+    return {
+      title: `Redeem a banked ${title} reset?`,
+      body: `This uses one of your banked resets and clears the current ${title} limit windows now. It cannot be undone.`,
+    };
+  }
+  const bodies: Record<ResetCreditKind, string> = {
+    fable:
+      "This uses one banked Fable reset. It clears your 5-hour window and returns what Fable used to your weekly limit. It cannot be undone.",
+    full: `This uses one banked general reset and clears all your current ${title} limit windows now. It cannot be undone.`,
+    session:
+      "This uses one banked 5-hour reset and clears your current 5-hour window now. It cannot be undone.",
+    weekly:
+      "This uses one banked weekly reset and clears your weekly limit now. It cannot be undone.",
+  };
+  return {
+    title: `Redeem a banked ${title} ${RESET_KIND_NOUNS[kind].noun}?`,
+    body: bodies[kind],
+  };
 }
 
 /** "26d 15h" until the next banked credit expires, or null when none is reported. */

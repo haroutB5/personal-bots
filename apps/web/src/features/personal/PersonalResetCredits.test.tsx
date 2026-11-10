@@ -80,6 +80,17 @@ function credits(availableCount: number, nextExpiresAt?: string): UsageCardReset
   } as UsageCardResetCredits;
 }
 
+function kindedCredits(kind: "fable" | "full", availableCount: number): UsageCardResetCredits {
+  return {
+    credits: {
+      availableCount,
+      nextKind: kind,
+      kinds: [{ kind, availableCount }],
+    },
+    input: { instanceId: "claudeAgent" as ProviderInstanceId },
+  } as UsageCardResetCredits;
+}
+
 let renderer: ReactTestRenderer | undefined;
 let onRedeemed: ReturnType<typeof vi.fn<() => void>>;
 
@@ -125,6 +136,10 @@ async function openConfirm() {
   await act(async () => redeemButton().props.onClick());
 }
 
+async function openConfirmLabel(label: string) {
+  await act(async () => buttonLabelled(label).props.onClick());
+}
+
 beforeEach(() => {
   state.consume = vi.fn();
   onRedeemed = vi.fn<() => void>();
@@ -145,6 +160,31 @@ describe("PersonalResetCredits", () => {
     await mount(credits(2));
     expect(text()).toContain("2 resets banked");
     expect(text()).not.toContain("Next expires");
+  });
+
+  it("names a Fable reset in the row, the button and the confirm", async () => {
+    await mount(kindedCredits("fable", 2));
+    expect(text()).toContain("2 Fable resets banked");
+    const button = buttonLabelled("Redeem a banked Claude Fable reset");
+    expect(button.props.children).toBe("Redeem Fable");
+    await openConfirmLabel("Redeem a banked Claude Fable reset");
+    expect(text()).toContain("Redeem a banked Claude Fable reset?");
+    expect(text()).toContain(
+      "It clears your 5-hour window and returns what Fable used to your weekly limit.",
+    );
+    const cancel = renderer!.root.find((node) => node.props["data-close"] === true);
+    await act(async () => cancel.props.onClick());
+    expect(state.consume).not.toHaveBeenCalled();
+  });
+
+  it("names a general reset in the row, the button and the confirm", async () => {
+    await mount(kindedCredits("full", 1));
+    expect(text()).toContain("1 general reset banked");
+    const button = buttonLabelled("Redeem a banked Claude general reset");
+    expect(button.props.children).toBe("Redeem general");
+    await openConfirmLabel("Redeem a banked Claude general reset");
+    expect(text()).toContain("Redeem a banked Claude general reset?");
+    expect(text()).toContain("This uses one banked general reset and clears all your current");
   });
 
   it("shows the banked count, the next expiry and a Redeem button", async () => {

@@ -126,6 +126,43 @@ describe("codexRateLimitsToLimits", () => {
       );
     },
   );
+
+  it("names Codex reset credits as general resets", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: {},
+        resetCredits: {
+          availableCount: 2,
+          credits: [
+            { status: "available", expiresAt: 1_784_000_000, resetType: "codexRateLimits" },
+            { status: "available", expiresAt: 1_784_500_000, resetType: "codexRateLimits" },
+          ],
+        },
+      }).resetCredits,
+    ).toEqual({
+      availableCount: 2,
+      nextExpiresAt: "2026-07-14T03:33:20.000Z",
+      nextKind: "full",
+      kinds: [{ kind: "full", availableCount: 2 }],
+    });
+  });
+
+  it("leaves the kind unnamed when a Codex credit does not say what it resets", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: {},
+        resetCredits: {
+          availableCount: 1,
+          credits: [{ status: "available", expiresAt: 1_784_000_000, resetType: "unknown" }],
+        },
+      }).resetCredits,
+    ).toEqual({
+      availableCount: 1,
+      nextExpiresAt: "2026-07-14T03:33:20.000Z",
+    });
+  });
 });
 
 describe("codexRateLimitsToUpdate", () => {

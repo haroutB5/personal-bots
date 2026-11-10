@@ -12,6 +12,8 @@ import {
   formatResetCountdown,
   formatResetTime,
   refreshFailureText,
+  resetCreditConfirm,
+  resetCreditRedeemLabel,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
   selectDeepSeekBalanceLine,
@@ -101,9 +103,67 @@ describe("formatResetCountdown", () => {
 });
 
 describe("banked reset credits copy", () => {
-  it("names the count with the right plural", () => {
-    expect(resetCreditsHeadline(1)).toBe("1 reset banked");
-    expect(resetCreditsHeadline(2)).toBe("2 resets banked");
+  it("names a Fable reset and its Redeem button", () => {
+    const credits = {
+      availableCount: 2,
+      nextKind: "fable" as const,
+      kinds: [{ kind: "fable" as const, availableCount: 2 }],
+    };
+    expect(resetCreditsHeadline(credits)).toBe("2 Fable resets banked");
+    expect(resetCreditRedeemLabel(credits)).toBe("Redeem Fable");
+    expect(resetCreditConfirm(credits, "Claude")).toEqual({
+      title: "Redeem a banked Claude Fable reset?",
+      body: "This uses one banked Fable reset. It clears your 5-hour window and returns what Fable used to your weekly limit. It cannot be undone.",
+    });
+  });
+
+  it("names a single general reset and its Redeem button", () => {
+    const credits = {
+      availableCount: 1,
+      nextKind: "full" as const,
+      kinds: [{ kind: "full" as const, availableCount: 1 }],
+    };
+    expect(resetCreditsHeadline(credits)).toBe("1 general reset banked");
+    expect(resetCreditRedeemLabel(credits)).toBe("Redeem general");
+    expect(resetCreditConfirm(credits, "Codex")).toEqual({
+      title: "Redeem a banked Codex general reset?",
+      body: "This uses one banked general reset and clears all your current Codex limit windows now. It cannot be undone.",
+    });
+  });
+
+  it("names mixed kinds, next kind first, and the button says which one it spends", () => {
+    const nextFable = {
+      availableCount: 2,
+      nextKind: "fable" as const,
+      kinds: [
+        { kind: "fable" as const, availableCount: 1 },
+        { kind: "full" as const, availableCount: 1 },
+      ],
+    };
+    expect(resetCreditsHeadline(nextFable)).toBe("1 Fable reset, 1 general reset banked");
+    expect(resetCreditRedeemLabel(nextFable)).toBe("Redeem Fable");
+
+    const nextGeneral = {
+      availableCount: 2,
+      nextKind: "full" as const,
+      kinds: [
+        { kind: "full" as const, availableCount: 1 },
+        { kind: "fable" as const, availableCount: 1 },
+      ],
+    };
+    expect(resetCreditsHeadline(nextGeneral)).toBe("1 general reset, 1 Fable reset banked");
+    expect(resetCreditRedeemLabel(nextGeneral)).toBe("Redeem general");
+  });
+
+  it("keeps today's copy when the snapshot carries neither kind field", () => {
+    const old = { availableCount: 2 };
+    expect(resetCreditsHeadline(old)).toBe("2 resets banked");
+    expect(resetCreditRedeemLabel(old)).toBe("Redeem");
+    expect(resetCreditConfirm(old, "Claude")).toEqual({
+      title: "Redeem a banked Claude reset?",
+      body: "This uses one of your banked resets and clears the current Claude limit windows now. It cannot be undone.",
+    });
+    expect(resetCreditsHeadline({ availableCount: 1 })).toBe("1 reset banked");
   });
 
   it("formats the time until the next credit expires, or null", () => {

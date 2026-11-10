@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   TrimmedNonEmptyString,
@@ -20,11 +21,23 @@ export const ServerProviderUsageWindow = Schema.Struct({
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
+/** What a banked reset clears: Claude's grant kinds, and Codex's one general kind. */
+export const ResetCreditKind = Schema.Literals(["fable", "full", "weekly", "session"]);
+export type ResetCreditKind = typeof ResetCreditKind.Type;
+
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  /** Kind of the credit Redeem consumes. Absent when the source does not say. */
+  nextKind: ForwardCompatibleOptional(ResetCreditKind),
+  /** Live credits per kind, next kind first. Counts sum to availableCount. */
+  kinds: Schema.optional(
+    ForwardCompatibleArray(
+      Schema.Struct({ kind: ResetCreditKind, availableCount: NonNegativeInt }),
+    ),
+  ),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 

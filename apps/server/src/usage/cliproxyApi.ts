@@ -348,6 +348,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
             ? {
                 resetCredits: {
                   availableCount: available.length,
+                  // The cliproxy list keeps only codex_rate_limits credits.
+                  nextKind: "full" as const,
+                  kinds: [{ kind: "full" as const, availableCount: available.length }],
                   ...(next
                     ? {
                         nextCreditId: next.id,
