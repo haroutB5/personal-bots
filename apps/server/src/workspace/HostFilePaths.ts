@@ -89,15 +89,17 @@ const PROTECTED_BASENAME_PATTERNS: ReadonlyArray<RegExp> = [
   /^\.pypirc$/i,
   /^\.git-credentials$/i,
   /^id_(rsa|dsa|ecdsa|ed25519)(\..+)?$/i,
-  /\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i,
+  /\.(pem|key|p12|pfx|jks|keystore|kdbx|kwl|gpg|asc)$/i,
   /\.(sqlite|sqlite3|db)(-wal|-shm|-journal)?$/i,
   /token/i,
   /^\.?pgpass$/i,
   /^\.my\.cnf$/i,
-  /\.keyring$/i,
-  /^\.(?:bash|zsh|ash|dash|ksh|fish|mysql|psql|python|node_repl|irb|sqlite|php|ruby|scala)_history$/i,
+  /\.keyring(?:\.(?:bak|old|backup|save|\d+))?$/i,
+  /^\.(?:bash|zsh|ash|dash|ksh|fish|sh|mysql|psql|python|node_repl|irb|sqlite|php|ruby|scala)_history(?:\.(?:bak|old|backup|save|\d+))?$/i,
+  /^\.(?:history|zhistory)$/i,
   /^\.(?:lesshst|viminfo)$/i,
-  /^\.claude\.json(?:\.backup)?$/i,
+  /^\.claude\.json(?:\.(?:backup|bak|old|save))?$/i,
+  /^recently-used\.xbel$/i,
   /^fish_history$/i,
   /^cookies(-journal)?$/i,
   /^login data(-journal)?$/i,
@@ -153,9 +155,36 @@ const PROTECTED_CONFIG_DIRS = new Set([
   "azure",
   "rclone",
   "bitwarden",
+  "bitwarden cli",
   "1password",
+  "claude",
+  "codex",
 ]);
 const BROWSER_PROFILE_DIRS = new Set(["bravesoftware", "google-chrome", "chromium", "mozilla"]);
+// Flatpak and snap roots keep the same credential stores under their own names.
+const PROTECTED_APP_SEGMENTS = new Set([
+  "com.bitwarden.desktop",
+  "com.1password.1password",
+  "kwalletd",
+]);
+// Machine state the CLIs keep outside ~/.config and ~/.claude.
+const PROTECTED_STATE_DIRS: ReadonlyArray<ReadonlyArray<string>> = [
+  [".cache", "claude"],
+  [".local", "state", "claude"],
+  [".local", "share", "claude"],
+  [".local", "share", "zsh"],
+];
+function hasSegmentSequence(
+  segments: ReadonlyArray<string>,
+  sequence: ReadonlyArray<string>,
+): boolean {
+  const first = sequence[0] ?? "";
+  for (let index = 0; index + sequence.length <= segments.length; index += 1) {
+    if (segments[index] !== first) continue;
+    if (sequence.every((segment, offset) => segments[index + offset] === segment)) return true;
+  }
+  return false;
+}
 function isProtectedConfigFolder(segments: ReadonlyArray<string>): boolean {
   // gh keeps its token in ~/.config/gh/hosts.yml; the CLI logins live in these.
   for (let index = 0; index + 1 < segments.length; index += 1) {
@@ -165,7 +194,8 @@ function isProtectedConfigFolder(segments: ReadonlyArray<string>): boolean {
     }
     if (segments[index] === ".docker" && child === "config.json") return true;
   }
-  return false;
+  if (segments.some((segment) => PROTECTED_APP_SEGMENTS.has(segment.toLowerCase()))) return true;
+  return PROTECTED_STATE_DIRS.some((sequence) => hasSegmentSequence(segments, sequence));
 }
 
 /** True when a path names a file that must not be read, shown or downloaded. */
