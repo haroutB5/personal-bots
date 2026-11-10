@@ -23,12 +23,13 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
-import { PreviewTooLargeError, declaredBodyLength, readBoundedBody } from "./boundedPreview";
+import { PreviewTooLargeError, readBoundedBody } from "./boundedPreview";
 import {
   FILE_PREVIEW_TOO_LARGE_TEXT,
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
+  imageSizeVerdict,
   textPreviewRows,
   type FilePreviewSource,
   type FileTextRead,
@@ -130,8 +131,8 @@ type ImageSizeState =
 
 /**
  * Checks the image's declared size before the image view loads it. A body over
- * the cap never reaches the decoder, which is what an unbounded image would
- * crash. A failed check is an error, not a silent full download.
+ * the cap never reaches the decoder, and an unknown size counts as a failure:
+ * a full download is what an unbounded image would crash.
  */
 function useImageSize(url: string | null): ImageSizeRead {
   const [state, setState] = useState<ImageSizeState | null>(null);
@@ -143,8 +144,12 @@ function useImageSize(url: string | null): ImageSizeRead {
     fetch(url, { method: "HEAD", signal: controller.signal, cache: "no-store" })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const length = declaredBodyLength(response.headers.get("content-length"));
-        return length !== null && length > IMAGE_PREVIEW_MAX_BYTES ? "too-large" : "ready";
+        const verdict = imageSizeVerdict(
+          response.headers.get("content-length"),
+          IMAGE_PREVIEW_MAX_BYTES,
+        );
+        if (verdict === "unknown") throw new Error("No declared size");
+        return verdict;
       })
       .then((status) => {
         if (active) setState({ url, status });

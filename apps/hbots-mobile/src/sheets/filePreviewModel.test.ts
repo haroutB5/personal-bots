@@ -7,6 +7,7 @@ import {
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
+  imageSizeVerdict,
   textPreviewRows,
   type FilePreviewSource,
   type FileTextRead,
@@ -193,6 +194,25 @@ describe("textPreviewRows", () => {
 
   it("leaves an empty file as one empty row", () => {
     expect(textPreviewRows("")).toEqual([""]);
+  });
+});
+
+describe("imageSizeVerdict", () => {
+  it("passes a declared size at or under the cap", () => {
+    expect(imageSizeVerdict("20971520", 20 * 1024 * 1024)).toBe("ready");
+    expect(imageSizeVerdict("0", 20 * 1024 * 1024)).toBe("ready");
+  });
+
+  it("refuses a declared size over the cap", () => {
+    expect(imageSizeVerdict("20971521", 20 * 1024 * 1024)).toBe("too-large");
+  });
+
+  it("treats a missing or unusable length as unknown, not a pass", () => {
+    expect(imageSizeVerdict(null, 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("", 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("-1", 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("12.5", 20 * 1024 * 1024)).toBe("unknown");
+    expect(imageSizeVerdict("huge", 20 * 1024 * 1024)).toBe("unknown");
   });
 });
 
