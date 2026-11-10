@@ -36,6 +36,18 @@ export function liveReleaseSha(releasesDir) {
 export function resolveCommit(repo,rev) {
   try { return git(repo,'rev-parse','--verify',`${rev}^{commit}`) } catch { return null }
 }
+// The evidence is only valid for the exact commit and clean tree the gates started on.
+// A gate that moves HEAD or edits a tracked file invalidates everything after it.
+export function treeState(repo) {
+  return {sha:git(repo,'rev-parse','HEAD'),dirty:git(repo,'status','--porcelain','--untracked-files=no')};
+}
+export function treeChange(repo,expected) {
+  const now=treeState(repo);
+  const changes=[];
+  if(now.sha!==expected.sha) changes.push(`HEAD ${expected.sha.slice(0,12)} -> ${now.sha.slice(0,12)}`);
+  if(now.dirty) changes.push(`tracked files changed: ${now.dirty.split('\n').slice(0,5).join('; ')}${now.dirty.split('\n').length>5?' ...':''}`);
+  return changes.length?changes.join('; '):null;
+}
 export function diffPaths(repo,base,head) {
   return git(repo,'diff','--no-renames','--name-only',base,head).split('\n').filter(Boolean);
 }

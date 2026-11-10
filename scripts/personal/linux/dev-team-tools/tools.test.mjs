@@ -314,6 +314,45 @@ test('a gate cwd with its own vp wins over the repo root copy',()=>{
   assert.match(fs.readFileSync(pc.log,'utf8'),/local-vp/);
  } finally {fs.rmSync(root,{recursive:true,force:true})}
 });
+test('gate evidence aborts at the gate boundary when HEAD or the tree moves',()=>{
+ const fixture=(mutation)=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-moved-'));
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),ran=path.join(root,'ran');
+  fs.mkdirSync(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','fixture');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  const command=path.join(root,'command.mjs');
+  fs.writeFileSync(command,`import fs from 'node:fs';
+const kind=process.argv[2];
+if(kind==='mutate'){${mutation}}
+if(kind==='marker')fs.writeFileSync(process.env.RAN,'ran');
+console.log('Tests 3 passed (3)');`);
+  const defs=[{id:'server-tests',kind:'vitest',cwd:'.',commands:[`node '${command}' mutate`]},{id:'server-tsc',kind:'tsc',cwd:'.',commands:[`node '${command}' marker`]}];
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile,'--skip-notes'];
+  return {root,repo,dir,args,ran,sha};
+ };
+ for(const {mutation,pattern} of [
+  {mutation:`fs.appendFileSync('source','moved\\n');(await import('node:child_process')).execFileSync('git',['commit','-qam','gate moved HEAD']);`,pattern:/HEAD [a-f0-9]{12} -> [a-f0-9]{12}/},
+  {mutation:`fs.appendFileSync('source','dirty\\n');`,pattern:/tracked files changed: .*source/},
+ ]){
+  const f=fixture(mutation);
+  try{
+   const r=node('gate-evidence.mjs',f.args,{env:jobEnv(lockBase(),{RAN:f.ran})});
+   assert.equal(r.status,2,r.stdout+r.stderr);
+   assert.match(r.stderr,/the git tree or HEAD changed after server-tests/);
+   assert.match(r.stderr,pattern);
+   assert.match(r.stderr,/aborted before the next gate/);
+   assert.equal(fs.existsSync(f.ran),false,'the next gate never started');
+   assert.equal(fs.existsSync(path.join(f.dir,'gate-evidence.json')),false,'no evidence written for a moved tree');
+  }finally{fs.rmSync(f.root,{recursive:true,force:true})}
+ }
+});
+
 test('staging wrapper uses build and copied externals without activation',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-stage-wrapper-test-'));
  try {fs.mkdirSync(path.join(root,'scripts/personal/node'),{recursive:true});fs.writeFileSync(path.join(root,'scripts/personal/node/hbots.mjs'),"console.log(JSON.stringify(process.argv.slice(2)));process.exitCode=17");const r=run('bash',[path.join(here,'build.sh'),root],{env:jobEnv(lockBase())});assert.equal(r.status,17,r.stderr);assert.deepEqual(JSON.parse(r.stdout),['build','--copy-externals'])}finally{fs.rmSync(root,{recursive:true,force:true})}

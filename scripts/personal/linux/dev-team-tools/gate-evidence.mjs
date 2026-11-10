@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
-import {options,git,hash,gatePass,validate,gateScopeOf} from './gate-common.mjs';
+import {options,git,hash,gatePass,validate,gateScopeOf,treeState,treeChange} from './gate-common.mjs';
 let v;
 try {v=options()} catch(e){console.error(e.message);process.exit(2)}
 const here=path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +27,14 @@ const commandsOf=(d)=>lanesOf(d).flat();
 try {
   const sha=git(v.repo,'rev-parse','HEAD'), dirty=()=>git(v.repo,'status','--porcelain','--untracked-files=no');
   const startDirty=dirty();
+  const startState=treeState(v.repo);
+  // A gate that commits, checks out or edits a tracked file makes every later result
+  // worthless, so stop at the boundary instead of running the rest and failing at the end.
+  const checkStable=(when)=>{
+    const change=treeChange(v.repo,startState);
+    if(!change)return;
+    throw new Error(`the git tree or HEAD changed ${when} (${change}); aborted before the next gate. Restore ${sha.slice(0,12)} with a clean tree and rerun.`);
+  };
   const staged=Object.fromEntries(fs.readFileSync(path.join(v.dir,'VERSION'),'utf8').trim().split(/\r?\n/).map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1)]}));
   if(!sha.startsWith(v.release)||staged.version!==v.version||!sha.startsWith(staged.sha)||staged.dirty!=='false')throw new Error('Stage a clean matching commit/version first');
   const binHash=hash(path.join(v.dir,'dist/bin.mjs'));
@@ -95,8 +103,12 @@ try {
   const e2eGate=toRun.find(d=>d.id==='e2e');
   // Two shards plus the browser peaked at the 5 GiB soft cap and starved e2e, so only a single-lane server-tests shares the window.
   const together=serverTests!==undefined&&e2eGate!==undefined&&(serverTests.concurrent?.length??1)===1;
-  if(together) await Promise.all([runGate(serverTests),runGate(e2eGate)]);
-  for(const d of toRun) if(!(together&&(d===serverTests||d===e2eGate))) await runGate(d);
+  if(together){
+    checkStable('before server-tests and e2e');
+    await Promise.all([runGate(serverTests),runGate(e2eGate)]);
+    checkStable('after server-tests and e2e');
+  }
+  for(const d of toRun) if(!(together&&(d===serverTests||d===e2eGate))){checkStable(`before ${d.id}`);await runGate(d);checkStable(`after ${d.id}`)}
   gates.push(...selected.map(d=>results.get(d.id)??skipped.get(d.id)).filter(Boolean));
   const endDirty=dirty();
   const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{action:scope.action,reason:scope.reason,baseSha:scope.baseSha,changedPaths:scope.changedPaths},gates};
