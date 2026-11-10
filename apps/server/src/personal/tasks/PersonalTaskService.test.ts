@@ -3304,6 +3304,57 @@ it.effect("a steer reaches a task that is waiting on background work, and its tu
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+// 10 Nov 2026, Shipper task 942396ea: the OpenCode turn ended on "Waiting on
+// the gate now; I'll pick up ... when it reports" at 22:47:22 and the task
+// closed "completed" while its gate still ran, because the wait only knew the
+// claudeAgent provider. OpenCode V2 wakes the chat itself when background work
+// ends (the adapter's onWake), so its tasks wait the same way; the two steers
+// then sat 71 minutes behind the wake run the task did not own.
+// Root cause: dev-team/qa/steer-undelivered/ROOT-CAUSE.md.
+it.effect(
+  "an OpenCode turn that says it is waiting keeps the task running, and its wake turn reports",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("bg-opencode-wake");
+      const thread = threadOf(root);
+      const first = yield* beginClaudeTurn(harness, thread, "opencode");
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        first,
+        "Waiting on the gate now; I'll pick up with the APK build when it reports.",
+        "opencode",
+      );
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // The provider starts the wake turn by itself when the gate reports.
+      const wake = yield* beginClaudeTurn(harness, thread, "opencode");
+      const steered = yield* service.steer({
+        taskId: root.taskId,
+        fromName: "Poteto",
+        message: "Do not start a new gate.",
+      });
+      expect(steered.outcome).toBe("steered");
+      expect(turnStarts(harness).at(-1)!.message.text).toBe(
+        "Update from Poteto: Do not start a new gate.",
+      );
+
+      yield* endClaudeTurn(harness, thread, wake, "Release armed.", "opencode");
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({
+        summary: PersonalTaskService.composeTaskReplies([
+          "Waiting on the gate now; I'll pick up with the APK build when it reports.",
+          "Release armed.",
+        ]),
+      });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
 // 25 Oct 2026: three Frontend tasks delegated by the CTO ended "completed" with
 // a mid-work result. The wait on tracked background work starts fine (the log
 // shows it), and so does the follow-up turn. What ended them was a turn whose

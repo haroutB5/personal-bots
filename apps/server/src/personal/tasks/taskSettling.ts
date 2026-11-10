@@ -9,11 +9,11 @@ import type { PersonalEngineError } from "../engine/errors.ts";
 import { toPersonalSessionView } from "../engine/PersonalEngineV2Live.ts";
 import { LEASE_MINUTES, attemptMessageId, minutesFrom, type Changed } from "./taskShared.ts";
 import {
-  BACKGROUND_WAIT_PROVIDER,
   backgroundAttemptKey,
   heldReplyTexts,
   isWaitingOnBackground,
   newBackgroundWait,
+  providerWakesOnBackground,
   saysItIsWaiting,
   stepBackgroundWait,
   type BackgroundWait,
@@ -229,10 +229,10 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   });
 
   /**
-   * Whether a Claude turn that just ended cleanly is the task's last. Claude
-   * Code lets a turn end while commands it started in the background run on,
-   * then runs a new turn by itself when they finish; the bot's report is in
-   * that turn. So the attempt stays active while such work is live, remembers
+   * Whether a turn that just ended cleanly is the task's last. A provider that
+   * wakes the chat on its own lets a turn end while commands it started in the
+   * background run on, then runs a new turn by itself when they finish; the
+   * bot's report is in that turn. So the attempt stays active while such work is live, remembers
    * the reply of every turn that ended with work left (`last` is the turn that
    * just ended), and finishes on the turn that ends after it. The same holds
    * when the turn's own reply says it is still waiting on something the app
@@ -263,8 +263,8 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
       });
       return "";
     }
-    const claude = session.providerName === BACKGROUND_WAIT_PROVIDER;
-    const pending = claude
+    const wakes = providerWakesOnBackground(session.providerName);
+    const pending = wakes
       ? (yield* engine.liveTaskIds(attempt.providerThreadId)).filter(
           (taskId) => !backgroundFor(attempt).baseline.has(taskId),
         )
@@ -274,7 +274,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     // normal "I'll pick it up when either one reports back." kept Poteto's
     // attempt open for the 8 h cap while finished results waited (1 Nov).
     const openChildren =
-      claude &&
+      wakes &&
       (yield* repository.listHandoffsByParent(attempt.taskId)).some(
         (handoff) => handoff.status === "pending" || handoff.status === "returned",
       );
@@ -284,7 +284,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
       sessionUpdatedAt: session.updatedAt,
       nowMs,
       last: last === undefined ? undefined : { messageId: last.id, text: last.text },
-      statedWait: claude && last !== undefined && saysItIsWaiting(last.text),
+      statedWait: wakes && last !== undefined && saysItIsWaiting(last.text),
       openChildren,
     });
     backgroundByThread.set(attempt.providerThreadId, step.state);

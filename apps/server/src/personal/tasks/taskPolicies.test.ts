@@ -2,13 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import {
-  BACKGROUND_WAIT_PROVIDER,
   PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS,
   PERSONAL_TASK_WAIT_HARD_CAP_MS,
   PERSONAL_TASK_WAIT_NOTICE_MS,
   heldReplyTexts,
   isWaitingOnBackground,
   newBackgroundWait,
+  providerWakesOnBackground,
   saysItIsWaiting,
   stepBackgroundWait,
   type BackgroundWait,
@@ -540,8 +540,12 @@ describe("background policy", () => {
     ...overrides,
   });
 
-  it("only Claude waits", () => {
-    expect(BACKGROUND_WAIT_PROVIDER).toBe("claudeAgent");
+  it("Claude and OpenCode wait on background work; Codex does not", () => {
+    expect(providerWakesOnBackground("claudeAgent")).toBe(true);
+    expect(providerWakesOnBackground("opencode")).toBe(true);
+    expect(providerWakesOnBackground("codex")).toBe(false);
+    expect(providerWakesOnBackground(null)).toBe(false);
+    expect(providerWakesOnBackground(undefined)).toBe(false);
   });
 
   it("a task that never left work running ends as it always has", () => {

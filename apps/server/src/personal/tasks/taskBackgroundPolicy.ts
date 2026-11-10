@@ -1,10 +1,11 @@
 /**
- * Whether a Claude task is really finished when its turn ends. Claude Code
- * lets a turn end while commands it started in the background run on, then
- * runs a new turn by itself when they finish, and the bot's report is in that
- * turn. This is the state machine for that wait, as pure functions: the task
- * service keeps one {@link BackgroundWait} per provider thread with an active
- * attempt and feeds it what the session and the liveness registry say.
+ * Whether a task is really finished when its turn ends. A provider that wakes
+ * the chat on its own (see {@link providerWakesOnBackground}) lets a turn end
+ * while commands it started in the background run on, then runs a new turn by
+ * itself when they finish, and the bot's report is in that turn. This is the
+ * state machine for that wait, as pure functions: the task service keeps one
+ * {@link BackgroundWait} per provider thread with an active attempt and feeds
+ * it what the session and the liveness registry say.
  */
 
 /**
@@ -93,8 +94,21 @@ export const saysItIsWaiting = (text: string | undefined): boolean => {
   );
 };
 
-/** Only Claude sessions run a new turn of their own when background work ends. */
-export const BACKGROUND_WAIT_PROVIDER = "claudeAgent";
+/**
+ * Providers whose session starts a new turn by itself when background work
+ * ends. Claude Code does it, and so does the OpenCode V2 adapter (its
+ * `onWake` offers a continuation, which becomes a "Background task completed."
+ * turn). Codex does not: its turn ending is the task's last word. A provider
+ * added to this table gets the wait, the held replies and the follow-up turn;
+ * one left out keeps the old immediate-finish behaviour.
+ */
+const WAKES_ON_BACKGROUND: Readonly<Record<string, boolean>> = {
+  claudeAgent: true,
+  opencode: true,
+};
+
+export const providerWakesOnBackground = (providerName: string | null | undefined): boolean =>
+  providerName != null && WAKES_ON_BACKGROUND[providerName] === true;
 
 /** What an active attempt knows about the background work in its chat. */
 export interface BackgroundWait {
@@ -149,13 +163,13 @@ export interface BackgroundReply {
 }
 
 export interface BackgroundStepInput {
-  /** Background tasks live in the chat that this attempt did not start with (Claude only; else empty). */
+  /** Background tasks live in the chat that this attempt did not start with (only read for a provider that wakes on background; else empty). */
   readonly pending: ReadonlyArray<string>;
   /** `updatedAt` of the session whose turn just ended. */
   readonly sessionUpdatedAt: string;
   readonly nowMs: number;
   readonly last: BackgroundReply | undefined;
-  /** The newest reply says the bot is still waiting (Claude only; see {@link saysItIsWaiting}). */
+  /** The newest reply says the bot is still waiting (only read for a provider that wakes on background; see {@link saysItIsWaiting}). */
   readonly statedWait: boolean;
   /**
    * The attempt's task has delegated children whose results the app delivers
@@ -163,7 +177,7 @@ export interface BackgroundStepInput {
    * continuation comes from the app, so the bot's words must not hold the
    * attempt open (a lead's normal "I'll pick it up when either one reports
    * back." held it for the 8 h cap while finished results waited; Poteto,
-   * 1 Nov). Claude only, like {@link statedWait}.
+   * 1 Nov). Only read for a provider that wakes on background, like {@link statedWait}.
    */
   readonly openChildren: boolean;
 }
@@ -199,7 +213,7 @@ export type BackgroundStep = {
  * runs until the bot finishes, fails, or the orchestrator stops or steers it.
  * With background work still live the turn's reply is held and the attempt
  * waits; a reply that says the bot is still waiting is held the same way,
- * because Claude Code starts no follow-up turn for work it does not own.
+ * because the provider starts no follow-up turn for work it does not own.
  * After {@link PERSONAL_TASK_WAIT_NOTICE_MS} the step asks for one notice to
  * the delegating lead. Only a wait that reaches
  * {@link PERSONAL_TASK_WAIT_HARD_CAP_MS} (a runaway command) closes the task,
