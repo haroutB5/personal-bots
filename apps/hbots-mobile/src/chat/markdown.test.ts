@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { messageFileLinkPaths } from "@t3tools/shared/messageFileLinks";
 
 import { linkTarget, markdownBlocks, markdownNeedsWidth } from "./markdown";
 
@@ -502,6 +503,71 @@ describe("file links", () => {
         { kind: "text", text: "." },
       ],
     });
+  });
+});
+
+/** Every path the phone draws as a tappable file, in block order. */
+function renderedFilePaths(source: string): ReadonlySet<string> {
+  const paths = new Set<string>();
+  const visitSpans = (spans: ReadonlyArray<import("./markdown").InlineSpan>) => {
+    for (const span of spans) {
+      if (span.kind === "file") paths.add(span.path);
+      else if (span.kind === "bold" || span.kind === "italic") visitSpans(span.spans ?? []);
+    }
+  };
+  for (const block of markdownBlocks(source)) {
+    if (block.kind === "table") {
+      for (const cell of [...block.table.header, ...block.table.rows.flat()])
+        visitSpans(cell.spans);
+      continue;
+    }
+    if (block.kind === "code") continue;
+    visitSpans(block.spans);
+    if ("files" in block) for (const file of block.files ?? []) paths.add(file.path);
+  }
+  return paths;
+}
+
+describe("messageFileLinkPaths", () => {
+  const fixtures = [
+    "The report is [here](/home/harout/qa/REPORT.md) now.",
+    "[plan](docs/plan.md) and [notes](~/notes/a.md)",
+    "[log](file:///home/harout/logs/a.log)",
+    "[shot](file:///C:/work/shot.png)",
+    "[win](C:\\work\\a.ts) and `C:/work/b.md`",
+    "See `/home/harout/run/result.json` and ` ~/notes/b.md `.",
+    "**Evidence: `/home/harout/run/result.json`**",
+    "*See [the plan](docs/plan.md) now*",
+    "| File |\n| --- |\n| [plan](docs/plan.md) |",
+    "- [a](docs/a.md)\n- [b](docs/b.png)",
+    "[a.md](docs/a.md), [b.png](docs/b.png)",
+    "some_var [x](qa/a_b.md) other_var",
+    "some_var and `qa/a_b.md` other_var",
+    "```\n[hidden](docs/a.md)\n```\n[shown](docs/b.md)",
+    "```ts\n[hidden](docs/a.md)\n```",
+    "before\n```\n[hidden](docs/a.md)",
+    "[bad](file:///tmp/100%.md) and [good](docs/ok.md)",
+    "Plain /home/harout/x.md and [web](https://example.com/a/b) and [call](tel:5551234).",
+    "Run `vp test` and `/`.",
+  ];
+
+  it("returns exactly the paths the chat renderer draws as files", () => {
+    for (const source of fixtures) {
+      expect([...messageFileLinkPaths(source)].sort(), source).toEqual(
+        [...renderedFilePaths(source)].sort(),
+      );
+    }
+  });
+
+  it("keeps the renderer's shape for file URLs, code spans, Windows and tilde paths", () => {
+    expect([...messageFileLinkPaths("[log](file:///home/harout/logs/a.log)")]).toEqual([
+      "/home/harout/logs/a.log",
+    ]);
+    expect([...messageFileLinkPaths("[win](C:\\work\\a.ts)")]).toEqual(["C:\\work\\a.ts"]);
+    expect([...messageFileLinkPaths("See `/home/harout/run/result.json`.")]).toEqual([
+      "/home/harout/run/result.json",
+    ]);
+    expect([...messageFileLinkPaths("[notes](~/notes/a.md)")]).toEqual(["~/notes/a.md"]);
   });
 });
 

@@ -1,16 +1,15 @@
-import type { AssetResource, ProjectReadFileResult } from "@t3tools/contracts";
-import { ProjectReadFileError } from "@t3tools/contracts";
+import type { AssetResource } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import {
   assetUrlStateFromResult,
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
+import { decodeFilePreviewText } from "@t3tools/shared/filePreview";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/reactivity";
-import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Image,
   Pressable,
   ScrollView,
@@ -20,58 +19,200 @@ import {
 } from "react-native";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
+import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import {
+  FILE_PREVIEW_TOO_LARGE_TEXT,
   filePreviewErrorText,
   filePreviewRoute,
   filePreviewState,
-  fileTextRead,
   type FilePreviewSource,
-  type FileReadOutcome,
+  type FileTextRead,
+  type ImageSizeRead,
 } from "./filePreviewModel";
 import { SheetShell } from "./SheetShell";
 
 const TEXT_READ_TIMEOUT_MS = 15_000;
+const TEXT_READ_BYTES = 1024 * 1024;
+/** Above this many characters the sheet draws lines lazily. */
+const LAZY_TEXT_CHARS = 20_000;
+const IMAGE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
+const IMAGE_SIZE_TIMEOUT_MS = 15_000;
 
-const isProjectReadFileError = Schema.is(ProjectReadFileError);
+/** A body larger than the preview cap is never copied into the app's memory. */
+class PreviewTooLargeError extends Error {}
 
-const EMPTY_FILE_READ_ATOM = Atom.make(
-  AsyncResult.initial<ProjectReadFileResult, never>(false),
-).pipe(Atom.withLabel("native-file-read:empty"));
+function declaredLength(response: Response): number | null {
+  const header = response.headers.get("content-length");
+  if (header === null) return null;
+  const length = Number(header);
+  return Number.isSafeInteger(length) && length >= 0 ? length : null;
+}
+
+type TextFetchState =
+  | {
+      readonly url: string;
+      readonly status: "ready";
+      readonly text: string;
+      readonly truncated: boolean;
+    }
+  | { readonly url: string; readonly status: "binary" }
+  | { readonly url: string; readonly status: "too-large" }
+  | { readonly url: string; readonly status: "error" }
+  | { readonly url: string; readonly status: "timed-out" };
+
+/** Downloads at most 1 MiB by range, then decodes with the web viewer's cap.
+ * A full response must declare a small body, so a large file never reaches the
+ * app. The signed URL expires on its own, so a retry mints a fresh one. */
+function useFileText(url: string | null): FileTextRead {
+  const [state, setState] = useState<TextFetchState | null>(null);
+  useEffect(() => {
+    if (url === null) return;
+    let active = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TEXT_READ_TIMEOUT_MS);
+    fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { Range: `bytes=0-${TEXT_READ_BYTES - 1}` },
+    })
+      .then(async (response) => {
+        // An empty file cannot satisfy the range; it is simply empty.
+        if (response.status === 416) return new Uint8Array();
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const length = declaredLength(response);
+        if (length !== null && length > TEXT_READ_BYTES) throw new PreviewTooLargeError();
+        // A 200 answer means the range was ignored, so the body is the whole
+        // file. With no declared length it cannot be bounded before the copy.
+        if (response.status === 200 && length === null) throw new PreviewTooLargeError();
+        return new Uint8Array(await response.arrayBuffer());
+      })
+      .then((bytes) => {
+        if (!active) return;
+        try {
+          const decoded = decodeFilePreviewText(bytes);
+          setState({ url, status: "ready", text: decoded.text, truncated: decoded.truncated });
+        } catch {
+          setState({ url, status: "binary" });
+        }
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setState({
+          url,
+          status:
+            error instanceof PreviewTooLargeError
+              ? "too-large"
+              : controller.signal.aborted
+                ? "timed-out"
+                : "error",
+        });
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [url]);
+
+  if (url === null || state === null || state.url !== url) return { _tag: "Pending" };
+  switch (state.status) {
+    case "ready":
+      return { _tag: "Loaded", text: state.text, truncated: state.truncated };
+    case "binary":
+      return { _tag: "Binary" };
+    case "too-large":
+      return { _tag: "TooLarge" };
+    case "error":
+      return { _tag: "Failed" };
+    case "timed-out":
+      return { _tag: "TimedOut" };
+  }
+}
+
+type ImageSizeState =
+  | { readonly url: string; readonly status: "ready" }
+  | { readonly url: string; readonly status: "too-large" }
+  | { readonly url: string; readonly status: "failed" };
 
 /**
- * The chat's file sheet. Text reads through the project file RPC, the same read
- * the web Files tab uses. Images keep the asset URL, which the server only
- * issues for previewable types. A personal chat resolves both under the
- * Personal project's folder and a project chat under its worktree.
+ * Checks the image's declared size before the image view loads it. A body over
+ * the cap never reaches the decoder, which is what an unbounded image would
+ * crash. A failed check is an error, not a silent full download.
+ */
+function useImageSize(url: string | null): ImageSizeRead {
+  const [state, setState] = useState<ImageSizeState | null>(null);
+  useEffect(() => {
+    if (url === null) return;
+    let active = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), IMAGE_SIZE_TIMEOUT_MS);
+    fetch(url, { method: "HEAD", signal: controller.signal, cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const length = declaredLength(response);
+        return length !== null && length > IMAGE_PREVIEW_MAX_BYTES ? "too-large" : "ready";
+      })
+      .then((status) => {
+        if (active) setState({ url, status });
+      })
+      .catch(() => {
+        if (active) setState({ url, status: "failed" });
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [url]);
+
+  if (url === null || state === null || state.url !== url) return { _tag: "Pending" };
+  switch (state.status) {
+    case "ready":
+      return { _tag: "Ready" };
+    case "too-large":
+      return { _tag: "TooLarge" };
+    case "failed":
+      return { _tag: "Failed" };
+  }
+}
+
+/**
+ * The chat's file sheet. A bot's message links the file, and the server grants
+ * that one read because the message links it. Both routes mint a per-message
+ * asset URL; text then downloads and decodes it, images show it inline.
  */
 export function FilePreviewSheet({
   native,
   chat,
   visible,
-  cwd,
-  path,
+  threadId,
+  request,
   onClose,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
   readonly visible: boolean;
-  readonly cwd: string | null;
-  readonly path: string | null;
+  readonly threadId: string;
+  readonly request: FileOpenRequest | null;
   readonly onClose: () => void;
 }) {
-  const route = path === null ? "unsupported" : filePreviewRoute(path);
+  const route = request === null ? "unsupported" : filePreviewRoute(request.path);
   const resource = useMemo<AssetResource | null>(
     () =>
-      visible && path !== null && cwd !== null && route === "image"
+      visible && request !== null
         ? {
-            _tag: "draft-workspace-file",
-            cwd,
-            path,
+            _tag: "message-file",
+            threadId: ThreadId.make(threadId),
+            messageId: request.messageId,
+            path: request.path,
+            disposition: route === "image" ? "inline" : "download",
           }
         : null,
-    [cwd, path, route, visible],
+    [request, route, threadId, visible],
   );
   const urlAtom = useMemo(
     () =>
@@ -86,75 +227,27 @@ export function FilePreviewSheet({
   const asset = assetUrlStateFromResult(useAtomValue(urlAtom), native.httpBaseUrl);
   const refreshAsset = useAtomRefresh(urlAtom);
 
-  const readAtom = useMemo(
-    () =>
-      visible && path !== null && cwd !== null && route === "text"
-        ? chat.projects.readFile({
-            environmentId: native.environmentId,
-            input: { cwd, relativePath: path, allowMissing: true },
-          })
-        : EMPTY_FILE_READ_ATOM,
-    [chat.projects, cwd, native.environmentId, path, route, visible],
-  );
-  const readResult = useAtomValue(readAtom);
-  const refreshRead = useAtomRefresh(readAtom);
-  const outcome: FileReadOutcome = useMemo(() => {
-    if (route !== "text") return { _tag: "Pending" };
-    if (AsyncResult.isSuccess(readResult)) return { _tag: "Loaded", result: readResult.value };
-    if (AsyncResult.isFailure(readResult)) {
-      const cause = Cause.squash(readResult.cause);
-      return {
-        _tag: "Failed",
-        failure: isProjectReadFileError(cause) ? (cause.failure ?? null) : null,
-      };
-    }
-    return { _tag: "Pending" };
-  }, [readResult, route]);
+  const textUrl = route === "text" && asset._tag === "Success" ? asset.url : null;
+  const read = useFileText(textUrl);
+  const imageUrl = route === "image" && asset._tag === "Success" ? asset.url : null;
+  const imageSize = useImageSize(imageUrl);
 
-  const [attempt, setAttempt] = useState(0);
-  const readKey = `${attempt}:${cwd ?? ""}:${path ?? ""}`;
-  const [timedOutKey, setTimedOutKey] = useState<string | null>(null);
+  // Retry mints a new signed URL; its token differs, so the text effect runs again.
+  const retry = () => refreshAsset();
 
-  // A read that has not settled in 15 s stops waiting. Retry starts a fresh key.
-  const settled = outcome._tag !== "Pending";
-  useEffect(() => {
-    if (!visible || route !== "text" || settled) return;
-    const timeout = setTimeout(() => setTimedOutKey(readKey), TEXT_READ_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [readKey, route, settled, visible]);
-
-  const read = timedOutKey === readKey ? ({ _tag: "TimedOut" } as const) : fileTextRead(outcome);
-
-  // A missing file is remembered by the query. Retry asks both sources again, so
-  // a file created after the first look opens here.
-  const retry = () => {
-    refreshAsset();
-    refreshRead();
-    setAttempt((value) => value + 1);
-  };
-  // Closing ends this look at the file, so a reopen gets its own 15 s.
-  const close = () => {
-    setTimedOutKey(null);
-    onClose();
-  };
-
-  const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
   const source: FilePreviewSource =
     route === "text"
-      ? { _tag: "Text", read }
+      ? { _tag: "Text", asset, read }
       : route === "image"
-        ? { _tag: "Image", asset }
-        : { _tag: "Unsupported" };
-  const preview = filePreviewState({ folder: cwd, path, source });
+        ? { _tag: "Image", asset, size: imageSize }
+        : { _tag: "Unsupported", asset };
+  const preview = filePreviewState({ path: request?.path ?? null, source });
+
+  const path = request?.path ?? null;
+  const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
 
   const content = (() => {
     switch (preview._tag) {
-      case "NoFolder":
-        return (
-          <Text style={styles.notice} accessibilityRole="alert">
-            This chat has no folder to open files from.
-          </Text>
-        );
       case "Loading":
         return (
           <View style={styles.center}>
@@ -163,14 +256,7 @@ export function FilePreviewSheet({
         );
       case "Text":
         return (
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-            <Text style={styles.code} selectable>
-              {preview.text}
-            </Text>
-            {read._tag === "Loaded" && read.truncated ? (
-              <Text style={styles.truncated}>Showing the first 1 MB of this file.</Text>
-            ) : null}
-          </ScrollView>
+          <TextPreview text={preview.text} truncated={read._tag === "Loaded" && read.truncated} />
         );
       case "Image":
         return (
@@ -180,6 +266,12 @@ export function FilePreviewSheet({
             resizeMode="contain"
             accessibilityLabel={name}
           />
+        );
+      case "TooLarge":
+        return (
+          <Text style={styles.notice} accessibilityRole="alert">
+            {FILE_PREVIEW_TOO_LARGE_TEXT}
+          </Text>
         );
       case "Unsupported":
         return (
@@ -210,7 +302,7 @@ export function FilePreviewSheet({
   })();
 
   return (
-    <SheetShell visible={visible} title={name} onClose={close}>
+    <SheetShell visible={visible} title={name} onClose={onClose}>
       <View style={styles.body}>
         <Text style={styles.path} numberOfLines={2}>
           {path ?? ""}
@@ -223,6 +315,41 @@ export function FilePreviewSheet({
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled file preview state: ${JSON.stringify(value)}`);
+}
+
+/** A short file keeps the sheet's height. A large one draws its lines lazily. */
+function TextPreview({ text, truncated }: { readonly text: string; readonly truncated: boolean }) {
+  const notice = truncated ? (
+    <Text style={styles.truncated}>Showing the first 1 MB of this file.</Text>
+  ) : null;
+  if (text.length <= LAZY_TEXT_CHARS) {
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <Text style={styles.code} selectable>
+          {text}
+        </Text>
+        {notice}
+      </ScrollView>
+    );
+  }
+  const lines = text.split("\n");
+  return (
+    <FlatList
+      style={[styles.scroll, styles.lazyScroll]}
+      contentContainerStyle={styles.scrollContent}
+      data={lines}
+      keyExtractor={(_line, index) => String(index)}
+      renderItem={({ item }) => (
+        <Text style={styles.code} selectable>
+          {item.length === 0 ? " " : item}
+        </Text>
+      )}
+      initialNumToRender={40}
+      maxToRenderPerBatch={40}
+      windowSize={9}
+      ListFooterComponent={notice}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
@@ -247,6 +374,7 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.bg,
   },
   scrollContent: { padding: 12 },
+  lazyScroll: { height: 520 },
   code: { color: tokens.text, fontSize: 13, lineHeight: 19, fontFamily: "monospace" },
   truncated: {
     color: tokens.textTertiary,

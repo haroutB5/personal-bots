@@ -261,6 +261,9 @@ const requiredScopesForRpcCall = (
   }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = decodeAssetCreateUrlInput(payload);
+    // The grant is the thread's message, checked by AssetAccess; the session
+    // needs only the thread read it already holds.
+    if (resource._tag === "message-file") return [AuthOrchestrationReadScope];
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||

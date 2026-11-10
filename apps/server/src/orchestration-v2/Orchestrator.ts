@@ -412,6 +412,10 @@ export interface OrchestratorV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
+  readonly getMessage: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+  }) => Effect.Effect<OrchestrationV2ConversationMessage | null, OrchestratorV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
@@ -14450,6 +14454,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
           ),
         );
+    }),
+    getMessage: Effect.fn("OrchestratorV2.getMessage")(function (input) {
+      return projectionStore.getMessagesById(input.threadId, [input.messageId]).pipe(
+        Effect.map((messages) => messages.get(input.messageId) ?? null),
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+        ),
+      );
     }),
     getThreadRecords: Effect.fn("OrchestratorV2.getThreadRecords")(
       function (threadId, fields, filter) {
