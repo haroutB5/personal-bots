@@ -146,6 +146,7 @@ export type PersonalThreadEvent =
     }
   | { readonly _tag: "TurnStopRequested"; readonly threadId: ThreadId }
   | { readonly _tag: "ThreadArchived"; readonly threadId: ThreadId }
+  | { readonly _tag: "ThreadUnarchived"; readonly threadId: ThreadId }
   | { readonly _tag: "ThreadDeleted"; readonly threadId: ThreadId };
 
 /**
