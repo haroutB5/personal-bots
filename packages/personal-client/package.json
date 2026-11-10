@@ -185,6 +185,10 @@
       "types": "./src/conversation/delegationModel.ts",
       "import": "./src/conversation/delegationModel.ts"
     },
+    "./conversation/liveWork": {
+      "types": "./src/conversation/liveWork.ts",
+      "import": "./src/conversation/liveWork.ts"
+    },
     "./conversation/chatNotices": {
       "types": "./src/conversation/chatNotices.ts",
       "import": "./src/conversation/chatNotices.ts"

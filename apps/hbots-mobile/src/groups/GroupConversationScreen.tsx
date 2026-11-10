@@ -35,6 +35,7 @@ import {
   roundForGroup,
 } from "@hbots/personal-client/conversation/groupModel";
 import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
+import { IDLE_RUN_WORK, runWork } from "@hbots/personal-client/conversation/liveWork";
 
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { MessageList } from "../chat/MessageList";
@@ -151,6 +152,11 @@ export function GroupConversationScreen({
     nowMs: now,
     onOpenChat,
   });
+
+  const work = useMemo(
+    () => (view.projection === null ? IDLE_RUN_WORK : runWork(view.projection)),
+    [view.projection],
+  );
 
   const loadEarlierCommand = native.client.useAtomCommand(chat.thread.loadEarlierHistory, {
     reportFailure: false,
@@ -395,8 +401,7 @@ export function GroupConversationScreen({
             queued={[]}
             botName={group.name}
             currentUserId="You"
-            activities={thread.activities}
-            latestTurn={thread.latestTurn}
+            work={work}
             busy={live}
             latestMessageStatus={null}
             onReply={(_quote: PersonalReplyQuote) => undefined}
