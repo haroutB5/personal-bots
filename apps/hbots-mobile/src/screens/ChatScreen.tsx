@@ -295,6 +295,28 @@ export function ChatScreen({
       link === null && shell !== null ? [...links, syntheticLink(botId, threadId, shell)] : links,
     [botId, link, links, shell, threadId],
   );
+  const contextFraction =
+    contextUsage === null || contextUsage.maxTokens === null
+      ? null
+      : Math.min(1, Math.max(0, contextUsage.usedTokens / contextUsage.maxTokens));
+  // The ⋯ menu lists the open chat's own actions; a held tab still opens the settings sheet.
+  const menuSettings = useMemo(
+    () =>
+      chatSettingsSheet({
+        threadId: menuOpen ? threadId : null,
+        currentThreadId: threadId,
+        links: sheetLinks,
+        shells,
+        hidePreviews,
+        openChatBusy: running,
+        openChatLoaded: thread !== null,
+        turnsUnavailable: false,
+        wrapupSending: false,
+        nowMs: now,
+      }),
+    [hidePreviews, menuOpen, now, running, sheetLinks, shells, thread, threadId],
+  );
+  const menuChatRows = useMemo(() => menuSettings?.groups.flat() ?? [], [menuSettings]);
   const settings = useMemo(
     () =>
       chatSettingsSheet({
@@ -498,8 +520,9 @@ export function ChatScreen({
     setActionError(failureText(result, "Couldn't start the wrapup. Try again."));
   };
 
-  const onSettingsRow = (id: ChatSettingsRowId) => {
-    const target = settings?.target ?? null;
+  const onSettingsRow = (id: ChatSettingsRowId) => runSettingsRow(id, settings?.target ?? null);
+
+  const runSettingsRow = (id: ChatSettingsRowId, target: ChatSettingsTarget | null) => {
     if (target === null) {
       closeSettings();
       return;
@@ -619,7 +642,7 @@ export function ChatScreen({
               <BotAvatar
                 shape={record?.bot?.avatarShape ?? cachedBot?.avatarShape ?? "blob"}
                 color={record?.bot?.avatarColor ?? cachedBot?.avatarColor ?? tokens.primary}
-                size={48}
+                size={32}
                 label={header.botName}
               />
               <View style={styles.headerText}>
@@ -630,39 +653,17 @@ export function ChatScreen({
                   {header.muted ? (
                     <IconBellOff size={15} color={tokens.textSecondary} strokeWidth={2} />
                   ) : null}
+                </View>
+                {/* With one chat there is no tab strip, so its title sits here instead. */}
+                {chips.length < 2 && header.chatTitle !== null ? (
                   <Text
-                    style={styles.titleChip}
+                    style={styles.subtitle}
                     numberOfLines={1}
                     maxFontSizeMultiplier={1.3}
                     accessibilityLabel={`Chat: ${header.chatTitle}`}
                   >
                     {header.chatTitle}
                   </Text>
-                </View>
-                {thread !== null ? (
-                  <View style={styles.subtitleRow}>
-                    <View style={[styles.stateDot, stateDotStyle(header.state)]} />
-                    {header.state === "idle" && header.modelLabel !== null ? null : (
-                      <Text style={styles.subtitle} numberOfLines={1}>
-                        {header.stateLabel}
-                      </Text>
-                    )}
-                    {header.modelLabel !== null ? (
-                      <Text style={styles.modelLabel} numberOfLines={1}>
-                        {header.state === "idle" ? header.modelLabel : ` · ${header.modelLabel}`}
-                      </Text>
-                    ) : null}
-                    {header.contextBadge !== null ? (
-                      <Text
-                        style={styles.contextBadge}
-                        numberOfLines={1}
-                        maxFontSizeMultiplier={1.2}
-                        accessibilityLabel={`Context ${header.contextBadge} tokens`}
-                      >
-                        {header.contextBadge}
-                      </Text>
-                    ) : null}
-                  </View>
                 ) : null}
               </View>
             </Pressable>
@@ -690,6 +691,40 @@ export function ChatScreen({
           </Pressable>
         </View>
       )}
+
+      {!searchOpen && thread !== null ? (
+        <Pressable
+          onPress={() => setContextOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={[
+            header.stateLabel,
+            header.modelLabel,
+            header.contextBadge === null ? null : `Context ${header.contextBadge} tokens`,
+          ]
+            .filter((part): part is string => part !== null)
+            .join(", ")}
+          accessibilityHint="Shows what is in the context"
+          style={styles.statusLine}
+        >
+          <View style={[styles.stateDot, stateDotStyle(header.state)]} />
+          <Text style={styles.statusText} numberOfLines={2} maxFontSizeMultiplier={1.3}>
+            <Text style={styles.statusState}>{header.stateLabel}</Text>
+            {header.modelLabel === null ? null : ` · ${header.modelLabel}`}
+          </Text>
+          {header.contextBadge === null ? null : (
+            <View style={styles.contextMeter}>
+              {contextFraction === null ? null : (
+                <View style={styles.contextTrack}>
+                  <View style={[styles.contextFill, { width: `${contextFraction * 100}%` }]} />
+                </View>
+              )}
+              <Text style={styles.contextText} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+                {header.contextBadge}
+              </Text>
+            </View>
+          )}
+        </Pressable>
+      ) : null}
 
       {!searchOpen && chips.length >= 2 ? (
         <ScrollView
@@ -881,19 +916,23 @@ export function ChatScreen({
 
       <ChatMenuSheet
         visible={menuOpen}
+        title={header.chatTitle ?? "Chat options"}
         bot={record?.bot ?? null}
         running={running}
         providerWait={providerWait}
         nowMs={now}
+        chatRows={menuChatRows}
+        contextLabel={header.contextBadge}
         onClose={() => setMenuOpen(false)}
         onStop={() => void stop()}
         onSwitchModel={() => {
           setMenuOpen(false);
           onOpenBot(botId);
         }}
-        onChatSettings={() => {
+        onChatRow={(id) => {
+          const target = menuSettings?.target ?? null;
           setMenuOpen(false);
-          setSettingsThreadId(threadId);
+          runSettingsRow(id, target);
         }}
         onSearch={() => {
           setMenuOpen(false);
@@ -902,10 +941,6 @@ export function ChatScreen({
         onCall={() => {
           setMenuOpen(false);
           setActionError("Voice calls arrive with the voice update.");
-        }}
-        onNewChat={() => {
-          setMenuOpen(false);
-          setNewChatOpen(true);
         }}
         onAllChats={() => {
           setMenuOpen(false);
@@ -1129,32 +1164,33 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     flexShrink: 1,
   },
-  titleChip: {
+  statusLine: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  statusText: { flex: 1, color: tokens.textSecondary, fontSize: 13, lineHeight: 18 },
+  statusState: { color: tokens.text, fontWeight: "500" },
+  contextMeter: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  contextTrack: {
+    width: 44,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: tokens.track,
+    overflow: "hidden",
+  },
+  contextFill: { height: 5, borderRadius: 999, backgroundColor: tokens.primary },
+  contextText: {
     color: tokens.textSecondary,
     fontSize: 12,
     lineHeight: 17,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: tokens.borderStrong,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 1,
-    maxWidth: "48%",
-    flexShrink: 1,
+    fontVariant: ["tabular-nums"],
   },
-  contextBadge: {
-    color: tokens.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: tokens.borderStrong,
-    borderRadius: 999,
-    paddingHorizontal: 5,
-    flexShrink: 0,
-  },
-  subtitleRow: { flexDirection: "row", alignItems: "center", gap: 5, minWidth: 0 },
   stateDot: { width: 7, height: 7, borderRadius: 999 },
   subtitle: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
-  modelLabel: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
   iconButton: { width: 42, height: 44, alignItems: "center", justifyContent: "center" },
   chipScroll: { height: 48, flexGrow: 0 },
   chips: { paddingHorizontal: 12, gap: 6, alignItems: "center" },
