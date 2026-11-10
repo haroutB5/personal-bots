@@ -239,6 +239,7 @@ describe("markdown features the chat renders", () => {
 
   it("still renders real underscore italics", () => {
     expect(paragraphSpans("_italic_")).toEqual([{ kind: "italic", text: "italic" }]);
+    expect(paragraphSpans("__strong__")).toEqual([{ kind: "bold", text: "strong" }]);
     expect(paragraphSpans("this is _very_ good")).toEqual([
       { kind: "text", text: "this is " },
       { kind: "italic", text: "very" },
