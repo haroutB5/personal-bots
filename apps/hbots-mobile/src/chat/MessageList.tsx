@@ -58,7 +58,12 @@ import { tokens } from "../shell/tokens";
 import type { CardContext } from "./cards/types";
 import { isChatCard, renderChatCard } from "./cards/registry";
 import type { ChatEnvironment } from "./chatEnvironment";
-import { claimsReplySwipe, scrollIndexForItem } from "./messageListModel";
+import {
+  claimsReplySwipe,
+  scrollIndexForItem,
+  TABLE_CELL_MIN_WIDTH,
+  tableColumnWidths,
+} from "./messageListModel";
 import { AttachmentImage } from "./AttachmentImage";
 import { ChoiceButtons } from "./ChoiceButtons";
 import {
@@ -427,11 +432,6 @@ function replyBody(
   };
 }
 
-const TABLE_CELL_WIDTH = 7;
-const TABLE_CELL_MIN_WIDTH = 72;
-const TABLE_CELL_MAX_WIDTH = 200;
-const TABLE_CELL_PADDING = 20;
-
 interface HorizontalScrollTouch {
   readonly began: () => void;
   readonly ended: () => void;
@@ -443,24 +443,6 @@ interface HorizontalScrollTouch {
  * gesture, not where the touch started.
  */
 const HorizontalScrollTouchContext = createContext<HorizontalScrollTouch | null>(null);
-
-function tableColumnWidths(table: MarkdownTable): ReadonlyArray<number> {
-  return table.header.map((_, column) => {
-    let longest = 0;
-    for (const cell of [table.header[column], ...table.rows.map((row) => row[column])]) {
-      const length =
-        cell?.spans.reduce(
-          (total, span) => total + (span.kind === "file" ? span.label.length : span.text.length),
-          0,
-        ) ?? 0;
-      longest = Math.max(longest, length);
-    }
-    return Math.min(
-      TABLE_CELL_MAX_WIDTH,
-      Math.max(TABLE_CELL_MIN_WIDTH, longest * TABLE_CELL_WIDTH + TABLE_CELL_PADDING),
-    );
-  });
-}
 
 function TableGrid({
   table,

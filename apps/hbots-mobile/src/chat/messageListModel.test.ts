@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claimsReplySwipe, scrollIndexForItem } from "./messageListModel";
+import type { MarkdownTable } from "./markdown";
+import {
+  claimsReplySwipe,
+  scrollIndexForItem,
+  TABLE_CELL_MAX_WIDTH,
+  tableColumnWidths,
+} from "./messageListModel";
 
 describe("scrollIndexForItem", () => {
   const rows = [{ key: "older" }, { key: "middle" }, { key: "newest" }];
@@ -35,5 +41,30 @@ describe("claimsReplySwipe", () => {
 
   it("ignores a drag that is more diagonal than horizontal", () => {
     expect(claimsReplySwipe(10, 9, false)).toBe(false);
+  });
+});
+
+function tableOf(
+  header: ReadonlyArray<string>,
+  rows: ReadonlyArray<ReadonlyArray<string>>,
+): MarkdownTable {
+  const cell = (text: string) => ({ text, spans: [{ kind: "text" as const, text }] });
+  return {
+    header: header.map(cell),
+    aligns: header.map(() => "left" as const),
+    rows: rows.map((row) => row.map(cell)),
+  };
+}
+
+describe("tableColumnWidths", () => {
+  it("keeps a bold header word whole instead of breaking it mid-word", () => {
+    const [width] = tableColumnWidths(tableOf(["Command"], [["ls"]]));
+    // The 13 px bold header glyph advances about 9 px, plus 20 px cell padding.
+    expect(width).toBeGreaterThanOrEqual(7 * 9 + 20);
+  });
+
+  it("holds the maximum width for a word longer than the cap", () => {
+    const [width] = tableColumnWidths(tableOf(["Command"], [["x".repeat(120)]]));
+    expect(width).toBe(TABLE_CELL_MAX_WIDTH);
   });
 });
