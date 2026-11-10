@@ -9,6 +9,7 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Image,
   Pressable,
   ScrollView,
@@ -34,6 +35,8 @@ import { SheetShell } from "./SheetShell";
 
 const TEXT_READ_TIMEOUT_MS = 15_000;
 const TEXT_READ_BYTES = 1024 * 1024;
+/** Above this many characters the sheet draws lines lazily. */
+const LAZY_TEXT_CHARS = 20_000;
 const IMAGE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const IMAGE_SIZE_TIMEOUT_MS = 15_000;
 
@@ -253,14 +256,7 @@ export function FilePreviewSheet({
         );
       case "Text":
         return (
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-            <Text style={styles.code} selectable>
-              {preview.text}
-            </Text>
-            {read._tag === "Loaded" && read.truncated ? (
-              <Text style={styles.truncated}>Showing the first 1 MB of this file.</Text>
-            ) : null}
-          </ScrollView>
+          <TextPreview text={preview.text} truncated={read._tag === "Loaded" && read.truncated} />
         );
       case "Image":
         return (
@@ -321,6 +317,41 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled file preview state: ${JSON.stringify(value)}`);
 }
 
+/** A short file keeps the sheet's height. A large one draws its lines lazily. */
+function TextPreview({ text, truncated }: { readonly text: string; readonly truncated: boolean }) {
+  const notice = truncated ? (
+    <Text style={styles.truncated}>Showing the first 1 MB of this file.</Text>
+  ) : null;
+  if (text.length <= LAZY_TEXT_CHARS) {
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <Text style={styles.code} selectable>
+          {text}
+        </Text>
+        {notice}
+      </ScrollView>
+    );
+  }
+  const lines = text.split("\n");
+  return (
+    <FlatList
+      style={[styles.scroll, styles.lazyScroll]}
+      contentContainerStyle={styles.scrollContent}
+      data={lines}
+      keyExtractor={(_line, index) => String(index)}
+      renderItem={({ item }) => (
+        <Text style={styles.code} selectable>
+          {item.length === 0 ? " " : item}
+        </Text>
+      )}
+      initialNumToRender={40}
+      maxToRenderPerBatch={40}
+      windowSize={9}
+      ListFooterComponent={notice}
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   body: { padding: 12, gap: 10, maxHeight: 620 },
   path: { color: tokens.textTertiary, fontSize: 12, lineHeight: 17 },
@@ -343,6 +374,7 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.bg,
   },
   scrollContent: { padding: 12 },
+  lazyScroll: { height: 520 },
   code: { color: tokens.text, fontSize: 13, lineHeight: 19, fontFamily: "monospace" },
   truncated: {
     color: tokens.textTertiary,
