@@ -155,6 +155,7 @@ export default mergeConfig(
       // Parallel sqlite/git/worktree/orchestration tests introduce load-sensitive flakes.
       fileParallelism: false,
       sequence: { sequencer: WeightedShardSequencer },
+      globalSetup: ["../../packages/shared/src/testing/xdgGlobalSetup.ts"],
       setupFiles: [
         "./src/testUtils/gitConfig.setup.ts",
         "./src/testUtils/managedServiceEnv.setup.ts",

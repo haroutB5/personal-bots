@@ -39,7 +39,8 @@ if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
 // ambient value points the suite at the developer's own accounts. Each worker gets an empty
 // data home instead. Tests that need a layout write their own and pass it explicitly.
 if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
-  const dataHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-test-xdg-data-"));
+  const root = process.env.T3CODE_TEST_XDG_ROOT ?? NodeOS.tmpdir();
+  const dataHome = NodeFS.mkdtempSync(NodePath.join(root, "t3-test-xdg-data-"));
   process.env.XDG_DATA_HOME = dataHome;
   // A worker can end without firing process exit, which leaked one dir per test
   // file until /tmp filled. afterAll runs per file; exit stays as the fallback.
