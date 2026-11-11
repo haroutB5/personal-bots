@@ -48,7 +48,11 @@ export async function resyncPushSubscription(input: {
   readonly permission: NotificationPermission | "unsupported";
   readonly userAgent: string;
   readonly getRegistration: () => Promise<{
-    readonly pushManager: Pick<PushManager, "getSubscription">;
+    readonly pushManager: {
+      readonly getSubscription: () => Promise<{
+        readonly toJSON: () => PushSubscriptionJSON;
+      } | null>;
+    };
   } | null>;
   readonly send: (subscribe: PushSubscribeInput) => Promise<string | null>;
 }): Promise<ResyncOutcome> {
