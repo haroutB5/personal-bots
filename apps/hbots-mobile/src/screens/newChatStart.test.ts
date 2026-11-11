@@ -1,3 +1,5 @@
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { Cause } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -72,5 +74,28 @@ describe("stepNewChat", () => {
   it("ignores a late result after the chat started", () => {
     const states = play([link(true), started, failed(NOT_CONNECTED)]);
     expect(states.at(-1)?.kind).toBe("started");
+  });
+
+  it("N1: a start interrupted while the link is down waits and goes again, and never shows the interrupt text", () => {
+    const interruptMessage = (squashAtomCommandFailure({ cause: Cause.interrupt() }) as Error)
+      .message;
+    const states = play([link(true), failed(interruptMessage), link(false), link(true), started]);
+    expect(states.map((state) => state.kind)).toEqual([
+      "starting",
+      "waiting",
+      "waiting",
+      "starting",
+      "started",
+    ]);
+  });
+
+  it("N1: repeated interrupts end in the offline copy, never the interrupt text", () => {
+    const interruptMessage = (squashAtomCommandFailure({ cause: Cause.interrupt() }) as Error)
+      .message;
+    const events: NewChatEvent[] = [];
+    for (let i = 0; i < MAX_START_FAILURES; i += 1)
+      events.push(link(true), failed(interruptMessage));
+    const last = play(events).at(-1);
+    expect(JSON.stringify(last)).not.toContain(interruptMessage);
   });
 });
