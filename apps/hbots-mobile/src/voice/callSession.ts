@@ -30,7 +30,7 @@ const CALL_WATCH_MS = 1_000;
 
 export type MicAnswer = "granted" | "denied" | "blocked";
 
-export type MicRefusal = "denied" | "blocked";
+export type MicRefusal = "denied" | "blocked" | "allowed";
 
 export type OutsideNotice = "asking" | "off" | null;
 
@@ -413,15 +413,15 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
       controller?.retryFinish();
       const native = deps.native;
       if (native !== null && view.call === null && native.takeRecovery()) set({ recovered: true });
-      const call = view.call;
       if (
         native !== null &&
-        call !== null &&
-        view.micRefusal !== null &&
+        view.call !== null &&
+        (view.micRefusal === "denied" || view.micRefusal === "blocked") &&
         view.snapshot.state.status === "error" &&
         native.micPermission() === "granted"
       ) {
-        void start(call);
+        view = { ...view, micRefusal: "allowed" };
+        emit();
       }
     },
     wipe() {

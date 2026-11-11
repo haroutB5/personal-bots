@@ -91,6 +91,16 @@ function baseErrorCopyFor(
         onPrimary: actions.onClose,
       };
     case "mic_blocked":
+      if (refusal === "allowed") {
+        return {
+          title: "Microphone allowed",
+          body: "Tap Call to start the call.",
+          primary: "Call",
+          onPrimary: actions.onRetry,
+          secondary: "Close",
+          onSecondary: actions.onClose,
+        };
+      }
       return refusal === "blocked"
         ? {
             title: "Microphone blocked",
