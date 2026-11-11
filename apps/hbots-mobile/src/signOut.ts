@@ -43,3 +43,16 @@ export function describeSignOut(outcome: RemoteSignOut): string {
       return outcome satisfies never;
   }
 }
+
+const SIGN_OUT_BODY =
+  "This removes the sign-in, cached chats and notifications from this phone. Your bots keep running.";
+
+/** The sign-out confirmation text. Unsent messages are deleted with the pairing, so the count is said. */
+export function signOutConfirmBody(unsentMessages: number): string {
+  if (unsentMessages <= 0) return SIGN_OUT_BODY;
+  const what =
+    unsentMessages === 1
+      ? "1 message that has not been sent yet will be discarded."
+      : `${unsentMessages} messages that have not been sent yet will be discarded.`;
+  return `${SIGN_OUT_BODY} ${what}`;
+}

@@ -29,6 +29,7 @@ import { PushBridge } from "./notifications/PushBridge";
 import { pushController } from "./notifications/pushRuntime";
 import { AppAtomRegistryProvider } from "./personal/atomRegistry";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
+import { getOutboxSnapshot } from "@hbots/personal-client/composer/outbox";
 import { wipeLocalData } from "./platform/nativePorts";
 import { renewSession } from "./renew";
 import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
@@ -36,7 +37,7 @@ import { loadServer, saveServer } from "./serverMemory";
 import { clearSession, loadSession, saveSession, type StoredSession } from "./session";
 import { authMethodOf } from "./sessionAuth";
 import { createSessionLifetime } from "./sessionLifetime";
-import { describeSignOut, revokeRemoteSession } from "./signOut";
+import { describeSignOut, revokeRemoteSession, signOutConfirmBody } from "./signOut";
 import { UnpairedShareNotice } from "./share/UnpairedShareNotice";
 import { unpairedShareMessage } from "./share/unpairedShare";
 import { useUnpairedShare } from "./share/useUnpairedShare";
@@ -441,7 +442,7 @@ function App() {
     (session: StoredSession) => {
       Alert.alert(
         "Sign out this phone?",
-        "This removes the sign-in, cached chats and notifications from this phone. Your bots keep running.",
+        signOutConfirmBody(getOutboxSnapshot().entries.length),
         [
           { text: "Cancel", style: "cancel" },
           { text: "Sign out", style: "destructive", onPress: () => void signOut(session) },
