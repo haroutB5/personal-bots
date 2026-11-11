@@ -108,7 +108,8 @@ it("FCM answers map to what happens to the token", () => {
     ),
   ).toEqual({ _tag: "TokenGone" });
   expect(FcmSender.classifyFcmResponse(400, '{"error":{"status":"INVALID_ARGUMENT"}}')).toEqual({
-    _tag: "TokenGone",
+    _tag: "Failed",
+    reason: "INVALID_ARGUMENT",
   });
   expect(FcmSender.classifyFcmResponse(503, '{"error":{"status":"UNAVAILABLE"}}')).toEqual({
     _tag: "Failed",

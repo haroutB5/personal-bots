@@ -38,11 +38,15 @@ export type FcmTokenStore = ReturnType<typeof makeFcmTokenStore>;
 
 export const makeFcmTokenStore = (sql: SqlClient.SqlClient) => {
   const subjectOfSession = (sessionId: string) =>
-    sql<{ readonly subject: string }>`
-      SELECT subject AS "subject" FROM auth_sessions
-      WHERE session_id = ${sessionId} AND revoked_at IS NULL
-      LIMIT 1
-    `.pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]?.subject)));
+    Effect.gen(function* () {
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const rows = yield* sql<{ readonly subject: string }>`
+        SELECT subject AS "subject" FROM auth_sessions
+        WHERE session_id = ${sessionId} AND revoked_at IS NULL AND expires_at > ${nowIso}
+        LIMIT 1
+      `;
+      return Option.fromNullishOr(rows[0]?.subject);
+    });
 
   const register = (input: {
     readonly token: string;
@@ -96,10 +100,16 @@ export const makeFcmTokenStore = (sql: SqlClient.SqlClient) => {
     FROM personal_fcm_tokens ORDER BY created_at ASC
   `;
 
-  const purgeRevoked = sql`
-    DELETE FROM personal_fcm_tokens
-    WHERE auth_session_id IN (SELECT session_id FROM auth_sessions WHERE revoked_at IS NOT NULL)
-  `.pipe(Effect.asVoid);
+  const purgeRevoked = Effect.gen(function* () {
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      DELETE FROM personal_fcm_tokens
+      WHERE auth_session_id IN (
+        SELECT session_id FROM auth_sessions
+        WHERE revoked_at IS NOT NULL OR expires_at <= ${nowIso}
+      )
+    `;
+  });
 
   const recordNotification = (input: PhoneNotificationInput, subjects: ReadonlyArray<string>) =>
     Effect.gen(function* () {
@@ -138,6 +148,7 @@ export const makeFcmTokenStore = (sql: SqlClient.SqlClient) => {
       DateTime.subtract(now, { days: PHONE_NOTIFICATION_RETENTION_DAYS }),
     );
     yield* sql`DELETE FROM personal_phone_notifications WHERE created_at < ${before}`;
+    yield* sql`DELETE FROM personal_phone_commands WHERE created_at < ${before}`;
   });
 
   return {

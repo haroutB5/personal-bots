@@ -232,13 +232,23 @@ export const make = Effect.gen(function* () {
         RETURNING command_id AS "commandId"
       `;
       if (claimed.length === 0) {
-        const first = yield* sql<{ readonly body: string | null; readonly action: string }>`
-          SELECT body AS "body", action AS "action" FROM personal_phone_commands
+        const first = yield* sql<{
+          readonly body: string | null;
+          readonly action: string;
+          readonly notificationId: string;
+        }>`
+          SELECT body AS "body", action AS "action", notification_id AS "notificationId"
+          FROM personal_phone_commands
           WHERE command_id = ${input.commandId} AND subject = ${input.subject}
           LIMIT 1
         `;
         const stored = first[0];
-        if (stored === undefined || stored.action !== input.action || stored.body === null) {
+        if (
+          stored === undefined ||
+          stored.action !== input.action ||
+          stored.notificationId !== input.notificationId ||
+          stored.body === null
+        ) {
           return { _tag: "InProgress" } as const satisfies ActionOutcome;
         }
         return decodeOutcome(stored.body);

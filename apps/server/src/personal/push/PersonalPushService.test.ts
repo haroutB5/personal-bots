@@ -2384,7 +2384,7 @@ it.effect("a question sends a data-only, high priority push with ids and no text
   }).pipe(Effect.provide(phoneLayer(calls)));
 });
 
-it.effect("UNREGISTERED and INVALID_ARGUMENT delete the token, other failures keep it", () => {
+it.effect("UNREGISTERED deletes the token, INVALID_ARGUMENT and other failures keep it", () => {
   const calls = newFcmCalls();
   return Effect.gen(function* () {
     const push = yield* setupChat;
@@ -2408,7 +2408,27 @@ it.effect("UNREGISTERED and INVALID_ARGUMENT delete the token, other failures ke
     calls.sendReply = { status: 400, body: '{"error":{"status":"INVALID_ARGUMENT"}}' };
     yield* ask("req-c");
     yield* push.drain;
+    expect((yield* fcmTokenRows).length).toBe(1);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("a session past its expiry cannot register and its token is not sent to", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    const sql = yield* SqlClient.SqlClient;
+    yield* storeServiceAccount();
+    yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+    yield* sql`UPDATE auth_sessions SET expires_at = '2026-09-18T08:00:00.000Z'`;
+
+    yield* ask("req-1");
+    yield* push.drain;
+    expect(calls.posts).toEqual([]);
     expect(yield* fcmTokenRows).toEqual([]);
+    const registered = yield* push
+      .registerFcm({ token: "tok-2", appVersion: "1", sessionId: "session-a" })
+      .pipe(Effect.flip);
+    expect(registered.message).toBe("This sign-in cannot register for phone push.");
   }).pipe(Effect.provide(phoneLayer(calls)));
 });
 

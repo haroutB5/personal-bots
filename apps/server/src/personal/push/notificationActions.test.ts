@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { PhonePushKind } from "@t3tools/contracts";
 
@@ -541,4 +542,38 @@ it("a stored outcome decodes to what was stored, and the status follows the outc
     409,
     ...INLINE_REFUSALS.map(() => 422),
   ]);
+});
+
+it.effect("a command id reused on another notification does not replay the first result", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    const actions = yield* setup;
+    yield* seedNotification("chat-needs:req-2", "question");
+    expect(
+      yield* actions.answer({ ...pick("chat-needs:req-1"), commandId: "cmd-1", choice: "Window" }),
+    ).toEqual({ _tag: "Done" });
+    expect(
+      yield* actions.answer({ ...pick("chat-needs:req-2"), commandId: "cmd-1", choice: "Window" }),
+    ).toEqual({ _tag: "InProgress" });
+    expect(harness.dispatched).toHaveLength(1);
+  }).pipe(Effect.provide(layerFor(harness)));
+});
+
+it.effect("command rows older than the retention window are pruned, newer ones stay", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    yield* setup;
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO personal_phone_commands (
+        command_id, subject, action, notification_id, status, body, created_at
+      )
+      VALUES
+        ('cmd-old', 'owner', 'answer', 'chat-needs:req-1', NULL, NULL, '2026-09-10T08:00:00.000Z'),
+        ('cmd-new', 'owner', 'answer', 'chat-needs:req-1', NULL, NULL, '2026-09-17T09:00:00.000Z')
+    `;
+    yield* makeFcmTokenStore(sql).pruneNotifications;
+    expect((yield* commandRows).map((row) => row.commandId)).toEqual(["cmd-new"]);
+  }).pipe(Effect.provide(layerFor(harness)));
 });

@@ -165,7 +165,7 @@ export function classifyFcmResponse(status: number, body: string): FcmSendOutcom
   const error = Option.getOrUndefined(decodeFcmErrorBody(body))?.error;
   const errorCode = error?.details?.find((detail) => detail.errorCode !== undefined)?.errorCode;
   const code = errorCode ?? error?.status;
-  if (code === "UNREGISTERED" || code === "INVALID_ARGUMENT" || code === "NOT_FOUND") {
+  if (code === "UNREGISTERED" || code === "NOT_FOUND") {
     return { _tag: "TokenGone" };
   }
   return { _tag: "Failed", reason: code ?? `http-${String(status)}` };
