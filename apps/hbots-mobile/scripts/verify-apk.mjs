@@ -153,10 +153,10 @@ const voiceServiceTag =
 const voiceServiceOk =
   voiceService?.kind === "service" &&
   voiceService.exported === "false" &&
-  voiceServiceTag.includes('android:foregroundServiceType="microphone"');
+  /android:foregroundServiceType="(?:microphone|0x80)"/u.test(voiceServiceTag);
 failed ||= !voiceServiceOk;
 console.log(
-  `${voiceServiceOk ? "ok  " : "FAIL"} VoiceCallService exported=${voiceService?.exported ?? "missing"} type=microphone (expected false)`,
+  `${voiceServiceOk ? "ok  " : "FAIL"} VoiceCallService exported=${voiceService?.exported ?? "missing"} (expected false, microphone type 0x80)`,
 );
 
 console.log(`dataExtractionRules=${String(attribute("dataExtractionRules"))}`);
