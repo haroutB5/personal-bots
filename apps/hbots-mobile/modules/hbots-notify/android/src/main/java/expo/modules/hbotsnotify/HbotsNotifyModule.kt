@@ -77,9 +77,17 @@ class HbotsNotifyModule : Module() {
 
     Function("channelStates") { NotifyChannels.states(app()) }
 
+    /** The bots that are running now. Native throttles to one change per 15 s and expires after 45 s. */
+    Function("setWorking") { bots: List<Map<String, Any?>> ->
+      WorkingController.update(app(), WorkingPlanner.parse(bots))
+    }
+
+    Function("clearWorking") { WorkingController.clear(app()) }
+
     /** Sign-out and revoke: nothing of the old session stays on screen or on disk. */
     Function("wipe") {
       val context = app()
+      WorkingController.reset(context)
       NotificationSender.cancelAll(context)
       NotifyChannels.deleteAll(context)
       PolicyStore.clear(context)

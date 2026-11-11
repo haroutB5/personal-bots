@@ -31,7 +31,7 @@ object NotificationSender {
 
   fun androidId(notificationId: String): Int = notificationId.hashCode()
 
-  private fun canPost(context: Context): Boolean {
+  internal fun canPost(context: Context): Boolean {
     if (Build.VERSION.SDK_INT >= 33 &&
       context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     ) return false
