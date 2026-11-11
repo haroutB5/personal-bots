@@ -8,6 +8,7 @@
  * executable wins, otherwise the installed Brave is discovered. There is no
  * Chrome fallback (see browserExecutable.ts).
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -273,6 +274,25 @@ const screencastOptions = (profile: ScreencastProfile) =>
 
 const TIMED_OUT = Symbol("timed-out");
 
+type PageMode = "owned" | "shared-bot";
+
+// Chromium throttles an undrawn background tab to one frame per second; a running capture counts as a draw.
+const FRAME_PUMP = {
+  format: "jpeg",
+  quality: 1,
+  maxWidth: 16,
+  maxHeight: 16,
+  everyNthFrame: 30,
+} as const;
+
+const startFramePump = async (page: Playwright.Page): Promise<void> => {
+  const session = await page.context().newCDPSession(page);
+  session.on("Page.screencastFrame", (event) => {
+    void session.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => {});
+  });
+  await session.send("Page.startScreencast", FRAME_PUMP);
+};
+
 const pushRing = <A>(ring: A[], value: A) => {
   ring.push(value);
   if (ring.length > RING_LIMIT) ring.splice(0, ring.length - RING_LIMIT);
@@ -296,7 +316,11 @@ const playwrightClickOptions = (options: PointerClickOptions | undefined) => ({
     : {}),
 });
 
-function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): BrowserPage {
+function wrapPlaywrightPage(
+  page: Playwright.Page,
+  counter: AdblockCounter,
+  mode: PageMode,
+): BrowserPage {
   const consoleRing: ConsoleRecord[] = [];
   const networkRing: NetworkRecord[] = [];
   page.on("request", () => counter.request());
@@ -357,6 +381,10 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
             automaticPresenceSimulation: true,
           },
         });
+        if (mode === "shared-bot") {
+          await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+          await startFramePump(page);
+        }
         return session;
       });
     return control;
@@ -861,6 +889,10 @@ export const makePlaywrightDriver = (
       await browser.close().catch(() => undefined);
       throw sharedAttachError("port-file-stale");
     }
+    const browserSession = await browser.newBrowserCDPSession().catch(async () => {
+      await browser.close().catch(() => undefined);
+      throw sharedAttachError("port-file-stale");
+    });
     const holdDialogsOpen = () => undefined;
     context.on("dialog", holdDialogsOpen);
     const counter = makeAdblockCounter(undefined, false);
@@ -868,7 +900,7 @@ export const makePlaywrightDriver = (
     const wrap = (page: Playwright.Page) => {
       let wrapped = wrappers.get(page);
       if (wrapped === undefined) {
-        wrapped = wrapPlaywrightPage(page, counter);
+        wrapped = wrapPlaywrightPage(page, counter, "shared-bot");
         wrappers.set(page, wrapped);
       }
       return wrapped;
@@ -876,12 +908,26 @@ export const makePlaywrightDriver = (
     const mine = new Set<Playwright.Page>();
     const adopt = (page: Playwright.Page) => {
       mine.add(page);
+      wrap(page);
       page.on("popup", adopt);
     };
     return {
       pages: () => [...mine].filter((page) => !page.isClosed()).map(wrap),
       newPage: async () => {
-        const created = await context.newPage();
+        const marker = `#hbots-${NodeCrypto.randomUUID()}`;
+        const arrived = context.waitForEvent("page", {
+          predicate: (candidate) => candidate.url().endsWith(marker),
+          timeout: ATTACH_TIMEOUT_MS,
+        });
+        arrived.catch(() => undefined);
+        const { targetId } = await browserSession.send("Target.createTarget", {
+          url: `about:blank${marker}`,
+          background: true,
+        });
+        const created = await arrived.catch(async (cause: unknown) => {
+          await browserSession.send("Target.closeTarget", { targetId }).catch(() => undefined);
+          throw cause;
+        });
         adopt(created);
         const page = wrap(created);
         await page.evaluate("undefined");
@@ -896,6 +942,7 @@ export const makePlaywrightDriver = (
             .filter((page) => !page.isClosed())
             .map((page) => page.close().catch(() => undefined)),
         );
+        await browserSession.detach().catch(() => undefined);
         await browser.close();
       },
     };
@@ -939,7 +986,7 @@ export const makePlaywrightDriver = (
     const wrap = (page: Playwright.Page) => {
       let wrapped = wrappers.get(page);
       if (wrapped === undefined) {
-        wrapped = wrapPlaywrightPage(page, counter);
+        wrapped = wrapPlaywrightPage(page, counter, "owned");
         wrappers.set(page, wrapped);
       }
       return wrapped;
