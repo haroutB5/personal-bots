@@ -25,6 +25,10 @@ import {
   PersonalPushPayload,
   PersonalPushSubscriptionId,
   type BotAvatarShape,
+  type PersonalPushFcmRegisterInput,
+  type PersonalPushFcmRegisterResult,
+  type PhonePushKind,
+  PHONE_PUSH_DATA_VERSION,
   type PersonalBot,
   type PersonalPushDevice,
   type PersonalPushInAppNotification,
@@ -61,6 +65,8 @@ import {
   chatNeedsInputTitle,
   firstQuestionText,
 } from "./chatNeedsInput.ts";
+import * as FcmSender from "./fcmSender.ts";
+import { makeFcmTokenStore } from "./fcmTokens.ts";
 import { taskNotifyVerdict, type TaskNotifyState } from "./notifyDecision.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -183,6 +189,17 @@ export function pushEventForTask(task: PersonalTask): PersonalPushEventKind | nu
       return null;
   }
 }
+
+/** What a phone push opens: the kind, and the chat (and request) it is about. */
+export interface PhoneTarget {
+  readonly kind: PhonePushKind;
+  readonly botId: string;
+  readonly threadId: string;
+  readonly requestId: string | null;
+}
+
+const phoneKindForTask = (kind: PersonalPushEventKind): PhonePushKind =>
+  kind === "task_failed" ? "failure" : kind === "chat_reply" ? "chat-reply" : "task";
 
 /**
  * Who a notification is from: the bot's name, and its avatar when the bot is
@@ -549,6 +566,18 @@ export class PersonalPushService extends Context.Service<
     readonly test: (input: {
       readonly endpoint?: string | undefined;
     }) => Effect.Effect<number, PersonalPushError>;
+    /**
+     * Stores a phone push token for the calling session. The token is kept
+     * even when the server has no Firebase key; `delivery` says whether a
+     * push can be sent to it.
+     */
+    readonly registerFcm: (
+      input: PersonalPushFcmRegisterInput & { readonly sessionId: string },
+    ) => Effect.Effect<PersonalPushFcmRegisterResult, PersonalPushError>;
+    readonly unregisterFcm: (input: {
+      readonly token: string;
+      readonly sessionId: string;
+    }) => Effect.Effect<void, PersonalPushError>;
     readonly setPreferences: (
       preferences: PersonalPushPreferences,
     ) => Effect.Effect<PersonalPushPreferences, PersonalPushError>;
@@ -653,6 +682,8 @@ export const make = Effect.gen(function* () {
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
   const engine = yield* Effect.serviceOption(PersonalEngine.PersonalEngine);
   const groups = yield* Effect.serviceOption(PersonalGroupService.PersonalGroupService);
+  const fcm = yield* FcmSender.FcmSender;
+  const phoneTokens = makeFcmTokenStore(sql);
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalPushError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -859,6 +890,7 @@ export const make = Effect.gen(function* () {
       DELETE FROM personal_notification_outbox
       WHERE status <> 'pending' AND updated_at < ${prunedBefore}
     `;
+    yield* phoneTokens.pruneNotifications;
     const due = yield* sql<OutboxDueRow>`
       SELECT o.event_id AS "eventId", o.subscription_id AS "subscriptionId",
              o.payload_json AS "payloadJson", o.attempts AS "attempts",
@@ -955,17 +987,56 @@ export const make = Effect.gen(function* () {
 
   const test: PersonalPushService["Service"]["test"] = (input) =>
     Effect.gen(function* () {
+      const eventId = `test:${NodeCrypto.randomUUID()}`;
       const queued = yield* enqueue(
-        `test:${NodeCrypto.randomUUID()}`,
+        eventId,
         { title: "Bots", body: "Test notification", url: "/bots/settings/notifications" },
         input.endpoint,
       );
-      if (queued === 0) {
-        return yield* fail("No device is subscribed to notifications yet.");
+      if (queued > 0) yield* kick;
+      const phone =
+        input.endpoint === undefined
+          ? yield* sendPhoneData(
+              `phone-${eventId}`,
+              { kind: "test", botId: "", threadId: "", requestId: null },
+              "Test notification",
+              "test",
+            )
+          : { sent: 0, configured: true };
+      const total = queued + phone.sent;
+      if (total === 0) {
+        const phoneWaiting = !phone.configured && (yield* phoneTokens.list).length > 0;
+        return yield* fail(
+          phoneWaiting
+            ? "Phone push is not set up on the server."
+            : "No device is subscribed to notifications yet.",
+        );
       }
-      yield* kick;
-      return queued;
+      return total;
     }).pipe(storageFailure("test"));
+
+  const registerFcm: PersonalPushService["Service"]["registerFcm"] = (input) =>
+    Effect.gen(function* () {
+      const subject = yield* phoneTokens.subjectOfSession(input.sessionId);
+      if (Option.isNone(subject)) {
+        return yield* fail("This sign-in cannot register for phone push.");
+      }
+      yield* phoneTokens.register({
+        token: input.token,
+        appVersion: input.appVersion,
+        sessionId: input.sessionId,
+        subject: subject.value,
+      });
+      const config = yield* fcm.config;
+      return { delivery: config.kind === "ready" ? "ready" : "disabled" } as const;
+    }).pipe(storageFailure("phone registration"));
+
+  const unregisterFcm: PersonalPushService["Service"]["unregisterFcm"] = (input) =>
+    Effect.gen(function* () {
+      const subject = yield* phoneTokens.subjectOfSession(input.sessionId);
+      if (Option.isNone(subject)) return;
+      yield* phoneTokens.removeForSubject(input.token, subject.value);
+    }).pipe(storageFailure("phone unregistration"));
 
   const setPreferences: PersonalPushService["Service"]["setPreferences"] = (preferences) =>
     botRepository
@@ -1098,6 +1169,79 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  /**
+   * Sends the data-only phone push for one notification. The push carries
+   * ids; the phone asks the server for the text. A row per receiving subject
+   * is written first, because the phone fetches content the moment the push
+   * lands, and a replayed notification finds its rows and sends nothing.
+   * Sign-out is enforced twice: revoke removes its tokens, and this purges
+   * revoked sessions' tokens again before it reads them.
+   */
+  const sendPhoneData = (
+    eventId: string,
+    target: PhoneTarget,
+    body: string | null,
+    scope: "fan-out" | "test",
+  ) =>
+    Effect.gen(function* () {
+      const config = yield* fcm.config;
+      if (config.kind === "disabled") return { sent: 0, configured: false };
+      yield* phoneTokens.purgeRevoked;
+      const tokens = yield* phoneTokens.list;
+      if (tokens.length === 0) return { sent: 0, configured: true };
+      const fresh = yield* phoneTokens.recordNotification(
+        {
+          notificationId: eventId,
+          kind: target.kind,
+          botId: target.botId,
+          threadId: target.threadId,
+          requestId: target.requestId,
+          body,
+        },
+        [...new Set(tokens.map((row) => row.subject))],
+      );
+      const targets = tokens.filter((row) => fresh.has(row.subject));
+      if (targets.length === 0) return { sent: 0, configured: true };
+      const results = yield* fcm.send(
+        targets.map((row) => row.token),
+        {
+          kind: target.kind,
+          notificationId: eventId,
+          botId: target.botId,
+          threadId: target.threadId,
+          v: PHONE_PUSH_DATA_VERSION,
+        },
+      );
+      let sent = 0;
+      for (const { token, outcome } of results) {
+        if (outcome._tag === "Sent") {
+          sent += 1;
+          yield* phoneTokens.markSent(token);
+        } else if (outcome._tag === "TokenGone") {
+          yield* phoneTokens.removeToken(token);
+        } else {
+          yield* phoneTokens.markError(token, outcome.reason);
+        }
+      }
+      yield* Effect.logInfo("personal notification path", {
+        eventId,
+        path: scope === "test" ? "phone-test" : "phone",
+        tokens: targets.length,
+        sent,
+      });
+      return { sent, configured: true };
+    });
+
+  const viaPhone = (eventId: string, target: PhoneTarget, body: string | null) =>
+    sendPhoneData(eventId, target, body, "fan-out").pipe(
+      Effect.asVoid,
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not send a phone push", { eventId }),
+      ),
+    );
+
   const deliver = (
     eventId: string,
     requested: PersonalPushPayload,
@@ -1108,6 +1252,8 @@ export const make = Effect.gen(function* () {
       readonly bot?: Option.Option<PersonalBot> | undefined;
       /** Quiet hours (see claudeCodeReview/quietHours.ts): no in-app, and web push held until then. */
       readonly deferPushUntilMs?: number | undefined;
+      /** The phone push for this notification, when it has a bot and a chat to open. */
+      readonly phone?: PhoneTarget | undefined;
     } = {},
   ) =>
     Effect.gen(function* () {
@@ -1166,9 +1312,13 @@ export const make = Effect.gen(function* () {
       const viaPush = (path: "push" | "push-after-in-app" | "push-after-viewing") =>
         Effect.gen(function* () {
           const queued = yield* enqueue(eventId, payload);
-          if (queued === 0) return;
-          yield* Effect.logInfo("personal notification path", { eventId, path });
-          yield* kick;
+          if (queued > 0) {
+            yield* Effect.logInfo("personal notification path", { eventId, path });
+            yield* kick;
+          }
+          if (options.phone !== undefined) {
+            yield* viaPhone(eventId, options.phone, hideText ? null : requested.body);
+          }
         });
       if (targets.length === 0) return yield* viaPush(confirming ? "push-after-viewing" : "push");
       // A replayed event (same id) never shows a second banner.
@@ -1361,6 +1511,12 @@ export const make = Effect.gen(function* () {
             threadId: input.threadId,
             quietPath: chatPath(chat.botId, input.threadId),
           },
+          phone: {
+            kind: input.kind,
+            botId: chat.botId,
+            threadId: input.threadId,
+            requestId: input.requestId,
+          },
         },
       );
     }).pipe(
@@ -1424,6 +1580,12 @@ export const make = Effect.gen(function* () {
                 threadId: task.threadId,
                 quietPath: chatPath(task.botId, task.threadId),
               },
+              phone: {
+                kind: request.kind,
+                botId: task.botId,
+                threadId: task.threadId,
+                requestId: request.requestId,
+              },
             },
           );
           return;
@@ -1448,6 +1610,15 @@ export const make = Effect.gen(function* () {
           task.threadId === null
             ? undefined
             : { threadId: task.threadId, quietPath: chatPath(task.botId, task.threadId) },
+        phone:
+          task.threadId === null || quiet._tag === "DeferUntil"
+            ? undefined
+            : {
+                kind: phoneKindForTask(kind),
+                botId: task.botId,
+                threadId: task.threadId,
+                requestId: null,
+              },
       });
     }).pipe(
       Effect.catchCause((cause) =>
@@ -1528,6 +1699,12 @@ export const make = Effect.gen(function* () {
             threadId: input.threadId,
             quietPath: chatPath(link.value.botId, input.threadId),
           },
+          phone: {
+            kind: "chat-reply",
+            botId: link.value.botId,
+            threadId: input.threadId,
+            requestId: null,
+          },
         },
       );
     }).pipe(
@@ -1580,6 +1757,12 @@ export const make = Effect.gen(function* () {
           viewing: {
             threadId: input.threadId,
             quietPath: chatPath(link.value.botId, input.threadId),
+          },
+          phone: {
+            kind: "failure",
+            botId: link.value.botId,
+            threadId: input.threadId,
+            requestId: null,
           },
         },
       );
@@ -1839,6 +2022,8 @@ export const make = Effect.gen(function* () {
     subscribe,
     unsubscribe,
     test,
+    registerFcm,
+    unregisterFcm,
     setPreferences,
     notifyTask,
     notifyChatReply,

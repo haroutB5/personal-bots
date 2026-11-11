@@ -33,6 +33,8 @@ describe("A2 rpc contract", () => {
     expect(WS_METHODS.personalBotsThreadShells).toBe("personalBots.threadShells");
     expect(WS_METHODS.personalPushInApp).toBe("personalPush.inApp");
     expect(WS_METHODS.personalPushAckInApp).toBe("personalPush.ackInApp");
+    expect(WS_METHODS.personalPushRegisterFcm).toBe("personalPush.registerFcm");
+    expect(WS_METHODS.personalPushUnregisterFcm).toBe("personalPush.unregisterFcm");
   });
 
   it("decodes the thread-shells input the phone sends", () => {

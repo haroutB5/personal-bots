@@ -213,6 +213,9 @@ import {
 import {
   PersonalPushError,
   PersonalPushEndpointInput,
+  PersonalPushFcmRegisterInput,
+  PersonalPushFcmRegisterResult,
+  PersonalPushFcmUnregisterInput,
   PersonalPushPreferences,
   PersonalPushPublicKeyResult,
   PersonalPushSettings,
@@ -1010,6 +1013,16 @@ const WsPersonalPushAckInAppRpc = Rpc.make(WS_METHODS.personalPushAckInApp, {
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
 });
+const WsPersonalPushRegisterFcmRpc = Rpc.make(WS_METHODS.personalPushRegisterFcm, {
+  payload: PersonalPushFcmRegisterInput,
+  success: PersonalPushFcmRegisterResult,
+  error: PersonalPushRpcError,
+});
+const WsPersonalPushUnregisterFcmRpc = Rpc.make(WS_METHODS.personalPushUnregisterFcm, {
+  payload: PersonalPushFcmUnregisterInput,
+  success: Schema.Struct({}),
+  error: PersonalPushRpcError,
+});
 const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
 // The phone's provider settings suite reads the catalogue and the settings the
 // desktop panel writes, then runs one test turn. Owner-facing, like the rest of
@@ -1187,4 +1200,6 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalPushReportForegroundRpc,
   WsPersonalPushInAppRpc,
   WsPersonalPushAckInAppRpc,
+  WsPersonalPushRegisterFcmRpc,
+  WsPersonalPushUnregisterFcmRpc,
 );

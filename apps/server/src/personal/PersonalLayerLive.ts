@@ -26,6 +26,7 @@ import * as PersonalMemoryService from "./memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "./memory/PersonalMemoryTidyService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import * as PersonalProviderUpdates from "./providerUpdates/PersonalProviderUpdates.ts";
+import * as FcmSender from "./push/fcmSender.ts";
 import * as PersonalPushService from "./push/PersonalPushService.ts";
 import * as PersonalReleaseNotices from "./releaseNotices/PersonalReleaseNoticeService.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -146,6 +147,12 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(
     PersonalPushService.layer.pipe(
       Layer.provide(PersonalPushService.transportLive),
+      Layer.provide(
+        FcmSender.layer.pipe(
+          Layer.provide(FcmSender.fcmHttpLive),
+          Layer.provide(ServerSecretStore.layer),
+        ),
+      ),
       Layer.provide(ServerSecretStore.layer),
     ),
   ),

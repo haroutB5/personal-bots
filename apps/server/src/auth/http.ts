@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -40,6 +41,7 @@ import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/trac
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
+import { purgeRevokedFcmTokens } from "../personal/push/fcmTokens.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -251,6 +253,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const sql = yield* SqlClient.SqlClient;
 
     return handlers
       .handle(
@@ -317,6 +320,7 @@ export const layer = HttpApiBuilder.group(
               return yield* failEnvironmentOperationForbidden("session_not_revocable");
             }
             const revoked = yield* serverAuth.revokeSession(session.sessionId);
+            yield* purgeRevokedFcmTokens(sql);
             return { revoked };
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -525,6 +529,7 @@ export const layer = HttpApiBuilder.group(
               session.sessionId,
               args.payload.sessionId,
             );
+            yield* purgeRevokedFcmTokens(sql);
             return { revoked };
           },
           Effect.catchTags({
@@ -543,6 +548,7 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
             const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
+            yield* purgeRevokedFcmTokens(sql);
             return { revokedCount };
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>

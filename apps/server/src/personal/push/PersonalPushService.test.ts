@@ -23,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { personalSecretStoreKey } from "../secrets/PersonalSecretService.ts";
 import { UPDATES_BOT_ID } from "../claudeCodeReview/reviewPrompts.ts";
 import type { PersonalThreadEvent, PersonalSessionView } from "../engine/PersonalEngine.ts";
 import { personalStatusOf } from "../engine/PersonalThreadShellV2.ts";
@@ -34,6 +35,7 @@ import {
 import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
 import { seedV2Thread } from "../test/v2ProjectionSeed.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
+import * as FcmSender from "./fcmSender.ts";
 import * as PersonalPushService from "./PersonalPushService.ts";
 import { base64UrlEncode, type WebPushRequest } from "./webPushCrypto.ts";
 
@@ -67,9 +69,14 @@ const stubTasks = (ownedThreadIds: ReadonlySet<string>) =>
     ownsThreadTurn: (threadId: string) => Effect.succeed(ownedThreadIds.has(threadId)),
   } as unknown as PersonalTaskService.PersonalTaskService["Service"]);
 
+const noNetworkFcm = Layer.succeed(FcmSender.FcmHttp, {
+  post: () => Effect.die("a push test must not reach Google"),
+});
+
 const makeLayer = (
   harness: Harness,
   tasks?: Layer.Layer<PersonalTaskService.PersonalTaskService>,
+  fcmHttp: Layer.Layer<FcmSender.FcmHttp> = noNetworkFcm,
 ) => {
   const engineLayer = personalEngineTestLayer(makePersonalEngineHarness());
   const base = PersonalPushService.layer.pipe(
@@ -83,6 +90,7 @@ const makeLayer = (
       }),
     ),
     tasks === undefined ? (layer) => layer : Layer.provideMerge(tasks),
+    Layer.provideMerge(FcmSender.layer.pipe(Layer.provide(fcmHttp))),
     Layer.provideMerge(memorySecrets()),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(engineLayer),
@@ -2169,3 +2177,315 @@ it("names the low-balance notice and lands the tap on Settings", () => {
     tag: "deepseek-balance-deepseek",
   });
 });
+
+/* ── phone push (FCM) ──────────────────────────────────────────────────── */
+
+const serviceAccountBytes = (() => {
+  const { privateKey } = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return new TextEncoder().encode(
+    JSON.stringify({
+      type: "service_account",
+      project_id: "bots-test-project",
+      private_key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      client_email: "push@bots-test-project.iam.gserviceaccount.com",
+      token_uri: "https://oauth2.googleapis.com/token",
+    }),
+  );
+})();
+
+const FCM_SECRET = personalSecretStoreKey(FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME);
+
+interface FcmCalls {
+  readonly posts: Array<FcmSender.FcmHttpRequest>;
+  sendReply: { readonly status: number; readonly body: string };
+}
+
+const newFcmCalls = (): FcmCalls => ({ posts: [], sendReply: { status: 200, body: "{}" } });
+
+const fakeFcmHttp = (calls: FcmCalls) =>
+  Layer.succeed(FcmSender.FcmHttp, {
+    post: (request: FcmSender.FcmHttpRequest) =>
+      Effect.sync(() => {
+        calls.posts.push(request);
+        return request.url.includes("oauth2.googleapis.com")
+          ? { status: 200, body: JSON.stringify({ access_token: "ya29.fake", expires_in: 3600 }) }
+          : calls.sendReply;
+      }),
+  });
+
+const sendPosts = (calls: FcmCalls) =>
+  calls.posts.filter((post) => post.url.includes("fcm.googleapis.com"));
+
+const storeServiceAccount = (bytes: Uint8Array = serviceAccountBytes) =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    yield* store.set(FCM_SECRET, bytes);
+  });
+
+const seedSession = (sessionId: string, subject: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
+      VALUES (${sessionId}, ${subject}, '[]', 'bearer-session-token',
+              '2026-09-18T00:00:00.000Z', '2099-01-01T00:00:00.000Z')
+    `;
+  });
+
+const fcmTokenRows = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ readonly token: string; readonly subject: string }>`
+    SELECT token AS "token", subject AS "subject" FROM personal_fcm_tokens ORDER BY token ASC
+  `;
+});
+
+const phoneLayer = (calls: FcmCalls) =>
+  makeLayer({ sent: [], status: 201 }, undefined, fakeFcmHttp(calls));
+
+const ask = (requestId: string) =>
+  feed(questionAsked(CHAT, requestId, "Which table should I book?"));
+
+const setupChat = Effect.gen(function* () {
+  yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+  yield* seedBot;
+  yield* linkThread(CHAT);
+  yield* chatRow(CHAT, "Weekend in Lisbon");
+  yield* seedSession("session-a", "owner");
+  return yield* PersonalPushService.PersonalPushService;
+});
+
+it.effect("with no key, registering stores the token, says disabled and sends nothing", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    const result = yield* push.registerFcm({
+      token: "tok-1",
+      appVersion: "1.67.5",
+      sessionId: "session-a",
+    });
+    expect(result).toEqual({ delivery: "disabled" });
+    expect(yield* fcmTokenRows).toEqual([{ token: "tok-1", subject: "owner" }]);
+
+    yield* ask("req-1");
+    yield* push.drain;
+    expect(calls.posts).toEqual([]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("a key that is not a service account is disabled too, and never sends", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* storeServiceAccount(new TextEncoder().encode('{"type":"service_account"}'));
+    const result = yield* push.registerFcm({
+      token: "tok-1",
+      appVersion: "1.67.5",
+      sessionId: "session-a",
+    });
+    expect(result).toEqual({ delivery: "disabled" });
+    yield* ask("req-1");
+    yield* push.drain;
+    expect(calls.posts).toEqual([]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("with no key, the test push says phone push is not set up on the server", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* push.registerFcm({ token: "tok-1", appVersion: "1.67.5", sessionId: "session-a" });
+    const failure = yield* push.test({}).pipe(Effect.flip);
+    expect(failure.message).toBe("Phone push is not set up on the server.");
+    expect(calls.posts).toEqual([]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("a question sends a data-only, high priority push with ids and no text", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* storeServiceAccount();
+    const result = yield* push.registerFcm({
+      token: "tok-1",
+      appVersion: "1.67.5",
+      sessionId: "session-a",
+    });
+    expect(result).toEqual({ delivery: "ready" });
+
+    yield* ask("req-1");
+    yield* push.drain;
+
+    const posts = sendPosts(calls);
+    expect(posts.length).toBe(1);
+    expect(posts[0]!.url).toBe(
+      "https://fcm.googleapis.com/v1/projects/bots-test-project/messages:send",
+    );
+    expect(posts[0]!.headers.authorization).toBe("Bearer ya29.fake");
+    expect(JSON.parse(posts[0]!.body)).toEqual({
+      message: {
+        token: "tok-1",
+        data: {
+          kind: "question",
+          notificationId: "chat-needs:req-1",
+          botId: BOT,
+          threadId: CHAT,
+          v: "1",
+        },
+        android: { priority: "HIGH" },
+      },
+    });
+    expect(posts[0]!.body).not.toContain("Which table");
+
+    // A replayed request is the same notification: no second push.
+    yield* ask("req-1");
+    yield* push.drain;
+    expect(sendPosts(calls).length).toBe(1);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("UNREGISTERED and INVALID_ARGUMENT delete the token, other failures keep it", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* storeServiceAccount();
+    yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+
+    calls.sendReply = { status: 503, body: '{"error":{"status":"UNAVAILABLE"}}' };
+    yield* ask("req-a");
+    yield* push.drain;
+    expect((yield* fcmTokenRows).length).toBe(1);
+
+    calls.sendReply = {
+      status: 404,
+      body: '{"error":{"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}',
+    };
+    yield* ask("req-b");
+    yield* push.drain;
+    expect(yield* fcmTokenRows).toEqual([]);
+
+    yield* push.registerFcm({ token: "tok-2", appVersion: "1", sessionId: "session-a" });
+    calls.sendReply = { status: 400, body: '{"error":{"status":"INVALID_ARGUMENT"}}' };
+    yield* ask("req-c");
+    yield* push.drain;
+    expect(yield* fcmTokenRows).toEqual([]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("a revoked session's token is never sent to, even before its row is deleted", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    const sql = yield* SqlClient.SqlClient;
+    yield* storeServiceAccount();
+    yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+    yield* sql`UPDATE auth_sessions SET revoked_at = '2026-09-18T08:00:00.000Z'`;
+
+    yield* ask("req-1");
+    yield* push.drain;
+    expect(calls.posts).toEqual([]);
+    expect(yield* fcmTokenRows).toEqual([]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect(
+  "a token cannot be registered by a signed-out session, nor removed by another subject",
+  () => {
+    const calls = newFcmCalls();
+    return Effect.gen(function* () {
+      const push = yield* setupChat;
+      yield* seedSession("session-b", "other");
+      yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+
+      const unknown = yield* push
+        .registerFcm({ token: "tok-2", appVersion: "1", sessionId: "no-such-session" })
+        .pipe(Effect.flip);
+      expect(unknown.message).toBe("This sign-in cannot register for phone push.");
+
+      yield* push.unregisterFcm({ token: "tok-1", sessionId: "session-b" });
+      expect((yield* fcmTokenRows).length).toBe(1);
+      yield* push.unregisterFcm({ token: "tok-1", sessionId: "session-a" });
+      expect(yield* fcmTokenRows).toEqual([]);
+    }).pipe(Effect.provide(phoneLayer(calls)));
+  },
+);
+
+it.effect("a chat being read gets no phone push until the page fails to confirm it", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* storeServiceAccount();
+    yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+    yield* visiblePage("conn-1");
+    yield* push.reportViewing({ connectionId: "conn-1", threadId: CHAT });
+
+    yield* ask("req-open");
+    yield* settle;
+    expect(calls.posts).toEqual([]);
+
+    yield* push.reportViewing({ connectionId: "conn-1", threadId: null });
+    yield* ask("req-away");
+    yield* settle;
+    expect(sendPosts(calls).length).toBe(1);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("a muted bot sends no phone push", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* storeServiceAccount();
+    yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+    yield* muteBotUntil(PERSONAL_BOT_MUTED_INDEFINITELY_ISO);
+    yield* ask("req-muted");
+    yield* push.drain;
+    expect(calls.posts).toEqual([]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect(
+  "each registered phone gets the push, and the fan-out writes its notification row",
+  () => {
+    const calls = newFcmCalls();
+    return Effect.gen(function* () {
+      const push = yield* setupChat;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedSession("session-b", "other");
+      yield* storeServiceAccount();
+      yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+      yield* push.registerFcm({ token: "tok-2", appVersion: "1", sessionId: "session-b" });
+
+      yield* ask("req-1");
+      yield* push.drain;
+
+      expect(
+        sendPosts(calls)
+          .map((post) => JSON.parse(post.body).message.token)
+          .toSorted(),
+      ).toEqual(["tok-1", "tok-2"]);
+      const rows = yield* sql<{
+        readonly notificationId: string;
+        readonly subject: string;
+        readonly kind: string;
+        readonly requestId: string | null;
+      }>`
+      SELECT notification_id AS "notificationId", subject AS "subject", kind AS "kind",
+             request_id AS "requestId"
+      FROM personal_phone_notifications ORDER BY subject ASC
+    `;
+      expect(rows).toEqual([
+        {
+          notificationId: "chat-needs:req-1",
+          subject: "other",
+          kind: "question",
+          requestId: "req-1",
+        },
+        {
+          notificationId: "chat-needs:req-1",
+          subject: "owner",
+          kind: "question",
+          requestId: "req-1",
+        },
+      ]);
+    }).pipe(Effect.provide(phoneLayer(calls)));
+  },
+);

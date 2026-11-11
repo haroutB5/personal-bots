@@ -327,6 +327,8 @@ export const WS_METHODS = {
   personalPushReportForeground: "personalPush.reportForeground",
   personalPushInApp: "personalPush.inApp",
   personalPushAckInApp: "personalPush.ackInApp",
+  personalPushRegisterFcm: "personalPush.registerFcm",
+  personalPushUnregisterFcm: "personalPush.unregisterFcm",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",

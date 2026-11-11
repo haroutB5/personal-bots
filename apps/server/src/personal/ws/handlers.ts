@@ -991,6 +991,20 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
           personalPush.test(input).pipe(Effect.map((queued) => ({ queued }))),
           { "rpc.aggregate": "server" },
         ),
+      [WS_METHODS.personalPushRegisterFcm]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalPushRegisterFcm,
+          personalPush.registerFcm({ ...input, sessionId: currentSessionId }),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalPushUnregisterFcm]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalPushUnregisterFcm,
+          personalPush
+            .unregisterFcm({ token: input.token, sessionId: currentSessionId })
+            .pipe(Effect.as({})),
+          { "rpc.aggregate": "server" },
+        ),
       [WS_METHODS.personalPushSetPreferences]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalPushSetPreferences,
