@@ -7,12 +7,15 @@ function shell(
   id: string,
   status: "running" | "idle" | "starting",
   title = "Chat",
+  pending: { approvals?: boolean; userInput?: boolean } = {},
 ): EnvironmentThreadShell {
   return {
     id,
     title,
     latestTurn: null,
     session: { status },
+    hasPendingApprovals: pending.approvals ?? false,
+    hasPendingUserInput: pending.userInput ?? false,
   } as unknown as EnvironmentThreadShell;
 }
 
@@ -40,7 +43,9 @@ describe("workingThreads", () => {
         links: [{ botId: "b1", threadId: "t1" }],
         shells: [shell("t1", "running", "Fix the build")],
       }),
-    ).toEqual([{ threadId: "t1", botId: "b1", botName: "Juno", title: "Fix the build" }]);
+    ).toEqual([
+      { threadId: "t1", botId: "b1", botName: "Juno", title: "Fix the build", state: "working" },
+    ]);
   });
 
   it("counts a chat that is still starting", () => {
@@ -82,5 +87,26 @@ describe("workingThreads", () => {
         shells: [shell("t1", "running")],
       }),
     ).toEqual([]);
+  });
+
+  it("marks a running chat that waits for an answer as waiting, not working", () => {
+    const found = workingThreads({
+      bots,
+      links: [
+        { botId: "b1", threadId: "ask" },
+        { botId: "b1", threadId: "approve" },
+        { botId: "b2", threadId: "busy" },
+      ],
+      shells: [
+        shell("ask", "running", "Ask", { userInput: true }),
+        shell("approve", "running", "Approve", { approvals: true }),
+        shell("busy", "running", "Busy"),
+      ],
+    });
+    expect(found.map((thread) => `${thread.threadId}:${thread.state}`)).toEqual([
+      "busy:working",
+      "approve:waiting",
+      "ask:waiting",
+    ]);
   });
 });

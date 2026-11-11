@@ -2,7 +2,8 @@ package expo.modules.hbotsnotify
 
 /** The one place native talks to the server. A fake stands in for it in tests. */
 fun interface HttpGateway {
-  fun execute(method: String, path: String, jsonBody: String?): HttpResult
+  /** [timeoutMs] bounds the whole call: connect, send and read. */
+  fun execute(method: String, path: String, jsonBody: String?, timeoutMs: Long): HttpResult
 }
 
 object ActionRunner {
@@ -11,6 +12,7 @@ object ActionRunner {
   const val MAX_IN_PROGRESS_ATTEMPTS = 5
   /** Wall clock for one action. A broadcast that runs much longer than this risks being killed. */
   const val BUDGET_MS = 30_000L
+  const val CALL_TIMEOUT_MS = 10_000L
   private val BACKOFF_MS = longArrayOf(1_000, 2_000)
   private val IN_PROGRESS_BACKOFF_MS = longArrayOf(1_000, 2_000, 3_000, 4_000)
 
@@ -42,7 +44,7 @@ object ActionRunner {
     var transient = 0
     var busy = 0
     while (true) {
-      val outcome = ActionOutcomes.classify(http.execute("POST", path, body))
+      val outcome = ActionOutcomes.classify(http.execute("POST", path, body, CALL_TIMEOUT_MS))
       val outOfTime = now() - startedAt >= BUDGET_MS
       when (outcome) {
         ActionOutcome.Transient -> {
@@ -82,6 +84,8 @@ sealed interface FetchOutcome {
 }
 
 object ContentFetcher {
+  const val TIMEOUT_MS = 8_000L
+
   fun contentPath(notificationId: String) = "/api/personal/notifications/${PathSegment.encode(notificationId)}/content"
 
   /**
@@ -89,7 +93,7 @@ object ContentFetcher {
    * is `Unavailable`, and the caller shows the content-free version instead.
    */
   fun fetch(http: HttpGateway, payload: PushPayload): FetchOutcome {
-    val result = http.execute("GET", contentPath(payload.notificationId), null)
+    val result = http.execute("GET", contentPath(payload.notificationId), null, TIMEOUT_MS)
     if (result.status != 200) return FetchOutcome.Unavailable
     val content = NotificationContentParser.parse(result.body.orEmpty()) ?: return FetchOutcome.Unavailable
     // Real text is shown under the payload's bot name and opens the payload's chat, so all of it must agree.

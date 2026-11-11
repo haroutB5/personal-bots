@@ -81,16 +81,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
   private fun send(context: Context, plan: NotificationPlan, type: ActionType, value: String, choice: String?, commandId: String): Boolean {
     PendingStore.putCommand(plan.notificationId, PendingCommand(type, commandId, value, System.currentTimeMillis()))
-    NotificationSender.postNotice(context, plan, "Sending…", autoCancel = false, opensApp = false)
-    val path = if (type == ActionType.REPLY) ActionRunner.replyPath(plan.notificationId) else ActionRunner.answerPath(plan.notificationId)
-    val body = if (type == ActionType.REPLY) ActionRunner.replyBody(commandId, value) else ActionRunner.answerBody(commandId, value)
-    val outcome = ActionRunner.run(ApiGateway(context), path, body, onWaiting = {
-      NotificationSender.postNotice(context, plan, ActionPresentations.STILL_SENDING, autoCancel = false, opensApp = false)
+    val request = ActionRequest(type, plan.notificationId, plan.deepLink, value, choice, commandId)
+    val settled = ActionDelivery.deliver(ApiGateway(context), request, post = { notice ->
+      if (notice !is ActionNotice.Settled) NotificationSender.postNotice(context, plan, notice.text, autoCancel = false, opensApp = false)
     })
-    render(context, plan, ActionPresentations.of(outcome, type, choice))
+    render(context, plan.copy(deepLink = settled.chatLink), settled.presentation)
     // Only a transient failure keeps the command; every other answer is final for this id.
-    if (outcome != ActionOutcome.Transient) PendingStore.clearCommand(plan.notificationId)
-    return outcome in ENDED_FOR_GOOD
+    if (settled.outcome != ActionOutcome.Transient) PendingStore.clearCommand(plan.notificationId)
+    return settled.outcome in ENDED_FOR_GOOD
   }
 
   internal fun render(context: Context, plan: NotificationPlan, presentation: Presentation) {

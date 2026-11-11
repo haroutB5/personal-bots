@@ -25,8 +25,10 @@ internal fun question(options: List<String>?): QuestionContent = QuestionContent
 /** Records each call and answers from a script. */
 internal class FakeHttp(private val answers: List<HttpResult>) : HttpGateway {
   val calls = ArrayList<Triple<String, String, String?>>()
-  override fun execute(method: String, path: String, jsonBody: String?): HttpResult {
+  val timeouts = ArrayList<Long>()
+  override fun execute(method: String, path: String, jsonBody: String?, timeoutMs: Long): HttpResult {
     calls += Triple(method, path, jsonBody)
+    timeouts += timeoutMs
     return answers[minOf(calls.size - 1, answers.size - 1)]
   }
 }

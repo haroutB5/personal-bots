@@ -29,7 +29,7 @@ class ApiGateway(private val context: Context) : HttpGateway {
     Session(base, token, json.optString("authMethod") == "dpop")
   }.getOrNull()
 
-  override fun execute(method: String, path: String, jsonBody: String?): HttpResult {
+  override fun execute(method: String, path: String, jsonBody: String?, timeoutMs: Long): HttpResult {
     val session = session() ?: return HttpResult(401, null)
     val url = session.base + path
     val builder = Request.Builder().url(url).header("Accept", "application/json")
@@ -41,7 +41,7 @@ class ApiGateway(private val context: Context) : HttpGateway {
       builder.header("Authorization", "Bearer ${session.token}")
     }
     if (method == "POST") builder.post((jsonBody ?: "{}").toRequestBody(JSON)) else builder.get()
-    val client = if (method == "GET") fetchClient else postClient
+    val client = base.newBuilder().callTimeout(timeoutMs, TimeUnit.MILLISECONDS).build()
     return try {
       client.newCall(builder.build()).execute().use { response ->
         HttpResult(response.code, readCapped(response))
@@ -77,7 +77,5 @@ class ApiGateway(private val context: Context) : HttpGateway {
         .build()
     }
     /** The brief's budget for a content fetch is 8 s; after it the content-free version shows. */
-    private val fetchClient by lazy { base.newBuilder().callTimeout(8, TimeUnit.SECONDS).build() }
-    private val postClient by lazy { base.newBuilder().callTimeout(10, TimeUnit.SECONDS).build() }
   }
 }

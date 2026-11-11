@@ -9,14 +9,50 @@ import {
 } from "./workingFeed";
 import type { WorkingThread } from "./workingThreads";
 
-const thread = (threadId: string, botId: string, botName: string): WorkingThread => ({
+const thread = (
+  threadId: string,
+  botId: string,
+  botName: string,
+  state: WorkingThread["state"] = "working",
+): WorkingThread => ({
   threadId,
   botId,
   botName,
   title: "A chat title that must never reach the notification",
+  state,
 });
 
 describe("buildWorkingFeed", () => {
+  it("does not count a bot that only waits for an answer as working", () => {
+    const feed = buildWorkingFeed(
+      [thread("t1", "b1", "Juno", "waiting"), thread("t2", "b2", "Atlas")],
+      new Map([["t1", "user_input_request"]]),
+    );
+    expect(feed.map((bot) => bot.botId)).toEqual(["b2"]);
+  });
+
+  it("takes a bot's note from its working chat, not from its waiting one", () => {
+    const feed = buildWorkingFeed(
+      [thread("t1", "b1", "Juno", "waiting"), thread("t2", "b1", "Juno")],
+      new Map([
+        ["t1", "Waiting note"],
+        ["t2", "Reading files"],
+      ]),
+    );
+    expect(feed).toEqual([{ botId: "b1", name: "Juno", note: "Reading files" }]);
+  });
+
+  it("never shows a raw server token as the step", () => {
+    const notes = (token: string) =>
+      buildWorkingFeed([thread("t1", "b1", "Juno")], new Map([["t1", token]]))[0]?.note;
+    expect(notes("user_input_request")).toBeUndefined();
+    expect(notes("approval_request")).toBeUndefined();
+    expect(notes("some_future_item_type")).toBeUndefined();
+    expect(notes("command_execution")).toBe("Running a command");
+    expect(notes("web_search")).toBe("Searching the web");
+    expect(notes("Reading files")).toBe("Reading files");
+  });
+
   it("gives one entry per bot even with several running chats", () => {
     const feed = buildWorkingFeed(
       [thread("t1", "b1", "Juno"), thread("t2", "b1", "Juno"), thread("t3", "b2", "Atlas")],
