@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -9,8 +9,9 @@ import { tokens } from "../shell/tokens";
 import { resolveNewChatTarget } from "../tile/ctoTarget";
 import {
   NEW_CHAT_INITIAL,
-  NEW_CHAT_OFFLINE_MESSAGE,
   NEW_CHAT_RETRY_MS,
+  NEW_CHAT_START_TIMEOUT_MS,
+  newChatMessage,
   stepNewChat,
 } from "./newChatStart";
 
@@ -36,6 +37,7 @@ export function BotNewChatScreen({
   const connection = native.useConnectionState();
   const connected = connection.phase === "connected";
   const [step, dispatch] = useReducer(stepNewChat, NEW_CHAT_INITIAL);
+  const [threadId] = useState(() => native.client.ports.ids.randomUUID());
   const target = list.data === null ? null : resolveNewChatTarget(botId, list.data.bots);
   const targetBotId = target?.kind === "bot" ? target.botId : null;
 
@@ -54,7 +56,9 @@ export function BotNewChatScreen({
   }, [step, connected, targetBotId]);
 
   // `start` is a new function every render, so the effect reads it through a ref and fires once per
-  // entry into "starting" (the key changes with each retry), never on a re-render.
+  // entry into "starting" (the key changes with each retry), never on a re-render. Every attempt asks
+  // for the same chat id, so a reply that was lost on the way back never makes a second chat. An
+  // attempt that gets no reply in time counts as a dropped link and its late answer is ignored.
   const startRef = useRef(start);
   useEffect(() => {
     startRef.current = start;
@@ -63,13 +67,17 @@ export function BotNewChatScreen({
   useEffect(() => {
     if (startKey === null || targetBotId === null) return;
     let live = true;
-    void startRef.current(targetBotId).then((result) => {
+    void startRef.current(targetBotId, { threadId }).then((result) => {
       if (live) dispatch({ type: "result", result });
     });
+    const timer = setTimeout(() => {
+      if (live) dispatch({ type: "timeout" });
+    }, NEW_CHAT_START_TIMEOUT_MS);
     return () => {
       live = false;
+      clearTimeout(timer);
     };
-  }, [startKey, targetBotId]);
+  }, [startKey, targetBotId, threadId]);
 
   const announced = useRef(false);
   useEffect(() => {
@@ -78,14 +86,8 @@ export function BotNewChatScreen({
     onStarted(targetBotId, step.threadId);
   }, [step, targetBotId, onStarted]);
 
-  const error =
-    step.kind === "failed"
-      ? step.message
-      : step.kind === "offline"
-        ? NEW_CHAT_OFFLINE_MESSAGE
-        : null;
   const notice =
-    error ??
+    newChatMessage(step) ??
     (target?.kind === "no-cto"
       ? "You don't have a CTO bot yet. Make the lead of the Dev team your CTO, then try again."
       : target?.kind === "missing"
@@ -112,7 +114,7 @@ export function BotNewChatScreen({
             <Text style={styles.notice} accessibilityRole="alert" maxFontSizeMultiplier={1.6}>
               {notice}
             </Text>
-            {step.kind === "offline" ? (
+            {step.kind === "offline" || step.kind === "failed" ? (
               <Pressable
                 onPress={() => dispatch({ type: "retry" })}
                 accessibilityRole="button"

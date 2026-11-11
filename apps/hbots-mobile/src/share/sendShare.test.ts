@@ -122,7 +122,7 @@ describe("sendShare", () => {
   });
 
   it("returns to confirm when the chat cannot be started", async () => {
-    const failing = vi.fn(async () => ({ kind: "failed" as const, message: "offline" }));
+    const failing = vi.fn(async () => ({ kind: "unreachable" as const }));
     const next = await sendShare({
       state: confirm(textIntent),
       bots: [bot],

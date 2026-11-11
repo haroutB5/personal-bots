@@ -5,6 +5,8 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 const TRANSPORT_ERROR_PATTERNS = [
   /\bSocketCloseError\b/i,
   /\bSocketOpenError\b/i,
+  /\bSocketReadError\b/i,
+  /\bSocketWriteError\b/i,
   /\bSocket is not connected\b/i,
   /Unable to connect to the T3 server WebSocket\./i,
   // The RPC session appends the network hint for relay connections. Any other
