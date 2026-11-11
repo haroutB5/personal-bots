@@ -14,6 +14,7 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/co
 
 import type { StartChatResult } from "../chat/useStartChat";
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { NEW_CHAT_START_TIMEOUT_MS } from "../screens/newChatStart";
 import {
   SHARE_MAX_BYTES,
   buildShareMessage,
@@ -102,18 +103,32 @@ export async function queueShare(input: {
   return { ok: true };
 }
 
+function startWithTimeout(start: () => Promise<StartChatResult>): Promise<StartChatResult> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ kind: "interrupted" }), NEW_CHAT_START_TIMEOUT_MS);
+    void start().then((result) => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+  });
+}
+
 /**
- * The picker's send step: a confirm state in, the next state out. Any failure
- * returns to confirm with content and note intact, and nothing is queued
- * unless every check passed. The caller discards the copied files on success.
+ * The picker's send step: a confirm state in, the next state out. Any failure returns to confirm
+ * with content intact, and nothing is queued unless every check passed. Every Send asks for the
+ * same `threadId`, so a lost reply never makes a second chat. A start silent past the timeout fails.
  */
 export async function sendShare(input: {
   readonly state: PickerState;
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly native: NativePersonal;
-  readonly start: (botId: string) => Promise<StartChatResult>;
+  readonly threadId: string;
+  readonly start: (
+    botId: string,
+    options: { readonly threadId: string },
+  ) => Promise<StartChatResult>;
 }): Promise<PickerState> {
-  const { state, bots, native, start } = input;
+  const { state, bots, native, start, threadId } = input;
   if (state.step !== "confirm") return state;
   const bot = bots.find((candidate) => candidate.botId === state.botId);
   if (bot === undefined) return sendFailed(state, "That bot isn't available any more.");
@@ -121,7 +136,7 @@ export async function sendShare(input: {
   if (message.files.some((file) => file.bytes > SHARE_MAX_BYTES)) {
     return sendFailed(state, "That file is over 25 MB. Share a smaller one.");
   }
-  const started = await start(bot.botId as string);
+  const started = await startWithTimeout(() => start(bot.botId as string, { threadId }));
   if (started.kind !== "started") return sendFailed(state, "Couldn't send. Try again.");
   const queued = await queueShare({ native, bot, threadId: started.threadId, message });
   if (!queued.ok) return sendFailed(state, queued.error);

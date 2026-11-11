@@ -155,6 +155,19 @@ export function backToPick(state: PickerState): PickerState {
   return state.step === "confirm" ? { step: "pick", intent: state.intent, query: "" } : state;
 }
 
+/**
+ * The chat id one intake uses for one bot. It is minted the first time that bot is picked and returned
+ * unchanged on every later Send, so a start whose reply was lost never makes a second chat. Another bot
+ * gets its own id.
+ */
+export function shareChatId(ids: Map<string, string>, botId: string, mint: () => string): string {
+  const known = ids.get(botId);
+  if (known !== undefined) return known;
+  const fresh = mint();
+  ids.set(botId, fresh);
+  return fresh;
+}
+
 /** Only a confirmed pick sends, and never twice: sending has no way to send again. */
 export function beginSend(state: PickerState): PickerState {
   return state.step === "confirm" ? { step: "sending" } : state;
