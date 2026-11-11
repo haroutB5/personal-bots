@@ -36,7 +36,11 @@ export function UnpairedShareNotice({
 
 const styles = StyleSheet.create({
   scrim: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: tokens.scrim,
     justifyContent: "center",
     padding: 24,
