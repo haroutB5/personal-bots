@@ -1,0 +1,5 @@
+<resources>
+  <style name="Theme.HbotsShare" parent="@android:style/Theme.Translucent.NoTitleBar">
+    <item name="android:windowAnimationStyle">@null</item>
+  </style>
+</resources>
