@@ -1854,6 +1854,9 @@ describe("PersonalBrowser", () => {
       launch: async () => {
         throw new Error("no chrome");
       },
+      attach: async () => {
+        throw new Error("no chrome");
+      },
     };
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
