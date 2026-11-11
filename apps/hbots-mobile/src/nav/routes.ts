@@ -22,6 +22,7 @@ export type Route =
   | { readonly kind: "bot"; readonly botId: string }
   | { readonly kind: "botNew" }
   | { readonly kind: "botNewChat"; readonly botId: string }
+  | { readonly kind: "share"; readonly shareId: string }
   | { readonly kind: "botEdit"; readonly botId: string }
   | { readonly kind: "group"; readonly groupId: string }
   | { readonly kind: "groupNew" }
@@ -163,6 +164,8 @@ export function parseDeepLink(raw: string): NavState | null {
     case "group":
       if (first === undefined) return null;
       return { stack: [BOTS, { kind: "group", groupId: first }] };
+    case "share":
+      return first === undefined ? null : { stack: [BOTS, { kind: "share", shareId: first }] };
     case "groupNew":
       return { stack: [BOTS, { kind: "groupNew" }] };
     case "team":

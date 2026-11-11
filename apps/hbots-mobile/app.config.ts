@@ -74,6 +74,7 @@ const config: ExpoConfig = {
     "./plugins/withAndroidReleaseSigning.cjs",
     "./plugins/withSharedHttpClient.cjs",
     "./plugins/withCtoShortcut.cjs",
+    "./plugins/withShareTarget.cjs",
   ],
 };
 
