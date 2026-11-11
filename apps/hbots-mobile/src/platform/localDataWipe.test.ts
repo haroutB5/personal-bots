@@ -7,6 +7,7 @@ const fs = vi.hoisted(() => ({
   files: new Map<string, string>(),
   keyDeletes: 0,
   notifyWipes: 0,
+  secure: new Map<string, string>(),
 }));
 
 vi.mock("./secureStorage", () => ({
@@ -39,7 +40,15 @@ vi.mock("react-native", () => ({
   InteractionManager: { runAfterInteractions: () => ({ cancel: () => undefined }) },
 }));
 vi.mock("expo-crypto", () => ({ randomUUID: () => "id" }));
-vi.mock("expo-secure-store", () => ({}));
+vi.mock("expo-secure-store", () => ({
+  getItem: (key: string) => fs.secure.get(key) ?? null,
+  setItem: (key: string, value: string) => {
+    fs.secure.set(key, value);
+  },
+  deleteItemAsync: async (key: string) => {
+    fs.secure.delete(key);
+  },
+}));
 vi.mock("expo-file-system", () => {
   const uriOf = (parent: { uri: string } | string, name?: string) =>
     name === undefined
@@ -58,14 +67,33 @@ vi.mock("expo-file-system", () => {
     }
     delete() {
       fs.dirs.delete(this.uri);
+      for (const key of [...fs.dirs]) {
+        if (key.startsWith(`${this.uri}/`)) fs.dirs.delete(key);
+      }
       for (const key of fs.files.keys()) {
         if (key.startsWith(`${this.uri}/`)) fs.files.delete(key);
       }
     }
+    get name() {
+      return this.uri.slice(this.uri.lastIndexOf("/") + 1);
+    }
+    /** Direct children only, as the real API does: a folder for a name with files below it. */
     list() {
-      return [...fs.files.keys()]
-        .filter((key) => key.startsWith(`${this.uri}/`))
-        .map((key) => new File(key));
+      const prefix = `${this.uri}/`;
+      const children = new Map<string, "file" | "directory">();
+      for (const key of [...fs.files.keys(), ...fs.dirs]) {
+        if (!key.startsWith(prefix)) continue;
+        const rest = key.slice(prefix.length);
+        const slash = rest.indexOf("/");
+        if (slash === -1) {
+          children.set(rest, fs.dirs.has(key) ? "directory" : "file");
+        } else {
+          children.set(rest.slice(0, slash), "directory");
+        }
+      }
+      return [...children].map(([name, kind]) =>
+        kind === "directory" ? new Directory(this.uri, name) : new File(this.uri, name),
+      );
     }
   }
   class File {
@@ -104,7 +132,13 @@ import {
   readCachedThread,
   writeCachedThread,
 } from "../personal/nativeCache";
-import { createFileBlobStore, wipeLocalData } from "./nativePorts";
+import {
+  configureOutbox,
+  enqueueOutboxEntry,
+  getOutboxSnapshot,
+  OUTBOX_STORAGE_KEY,
+} from "@hbots/personal-client/composer/outbox";
+import { createFileBlobStore, createSecureKeyValueStore, secureStoreKey, wipeLocalData } from "./nativePorts";
 
 const snapshot = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot))(
   serverBody,
@@ -125,6 +159,9 @@ beforeEach(() => {
   fs.files.set(payload.uri, "abc");
   fs.keyDeletes = 0;
   fs.notifyWipes = 0;
+  fs.secure.clear();
+  fs.dirs.add("file:///cache-dir");
+  fs.dirs.add("file:///documents");
   createNativeEnvironmentCache();
 });
 
@@ -135,7 +172,7 @@ describe("wipe on sign-out and revoke", () => {
     expect(filesUnder(CACHE)).toHaveLength(1);
     expect(filesUnder(BLOBS)).toHaveLength(1);
 
-    wipeLocalData();
+    await wipeLocalData();
 
     expect(filesUnder(CACHE)).toEqual([]);
     expect(filesUnder(BLOBS)).toEqual([]);
@@ -143,14 +180,14 @@ describe("wipe on sign-out and revoke", () => {
     expect(fs.dirs.has(BLOBS)).toBe(false);
   });
 
-  it("deletes the encryption key", () => {
-    wipeLocalData();
+  it("deletes the encryption key", async () => {
+    await wipeLocalData();
 
     expect(fs.keyDeletes).toBe(1);
   });
 
-  it("clears shown notifications, channels and the push policy", () => {
-    wipeLocalData();
+  it("clears shown notifications, channels and the push policy", async () => {
+    await wipeLocalData();
 
     expect(fs.notifyWipes).toBe(1);
   });
@@ -162,19 +199,19 @@ describe("wipe on sign-out and revoke", () => {
     expect(opened?.uri).toBe(`${OPEN}/entry_photo`);
     expect(filesUnder(OPEN)).toHaveLength(1);
 
-    wipeLocalData();
+    await wipeLocalData();
 
     expect(filesUnder(OPEN)).toEqual([]);
     expect(fs.dirs.has(OPEN)).toBe(false);
   });
 
-  it("is safe when nothing was ever stored", () => {
-    expect(() => wipeLocalData()).not.toThrow();
+  it("is safe when nothing was ever stored", async () => {
+    await expect(wipeLocalData()).resolves.toBeUndefined();
   });
 
   it("keeps a save that was already running from writing after the wipe", async () => {
     const blobs = createFileBlobStore();
-    wipeLocalData();
+    await wipeLocalData();
 
     writeCachedThread("environment-phone", snapshot);
     await expect(blobs.put("entry/photo", payload)).rejects.toThrow();
@@ -187,11 +224,72 @@ describe("wipe on sign-out and revoke", () => {
 
   it("reads nothing after the wipe, and caches again for the next session", async () => {
     writeCachedThread("environment-phone", snapshot);
-    wipeLocalData();
+    await wipeLocalData();
     expect((await readCachedThread("environment-phone", THREAD_ID))._tag).toBe("None");
 
     createNativeEnvironmentCache();
     writeCachedThread("environment-phone", snapshot);
     expect(filesUnder(CACHE)).toHaveLength(1);
+  });
+
+  it("clears the whole app cache folder, including HTTP, image and share intake files", async () => {
+    const stray = [
+      "file:///cache-dir/http-cache/journal",
+      "file:///cache-dir/http-cache/abc.1",
+      "file:///cache-dir/image_cache/v2/10/pic.cnt",
+      "file:///cache-dir/share-intake/share-1/text.txt",
+      "file:///cache-dir/something-a-library-adds-later/blob",
+      "file:///cache-dir/loose-file.tmp",
+    ];
+    for (const path of stray) fs.files.set(path, "secret words");
+    fs.files.set("file:///cache-dir/updates/bundle.js", "bundle");
+
+    await wipeLocalData();
+
+    expect(filesUnder("file:///cache-dir").filter((path) => !path.includes("/updates/"))).toEqual(
+      [],
+    );
+    // The update bundle is not session data.
+    expect(fs.files.has("file:///cache-dir/updates/bundle.js")).toBe(true);
+  });
+
+  it("leaves nothing under the cache root, blobs, thread cache, intake and the queue", async () => {
+    writeCachedThread("environment-phone", snapshot);
+    await createFileBlobStore().put("entry/photo", payload);
+    fs.files.set("file:///cache-dir/share-intake/share-2/note.txt", "shared text");
+    configureOutbox({
+      store: createSecureKeyValueStore(),
+      ids: { randomUUID: () => "id" },
+    });
+    enqueueOutboxEntry({
+      id: "m1",
+      kind: "turn",
+      environmentId: "environment-phone",
+      threadId: "t1",
+      groupId: null,
+      text: "private words",
+      sendText: "private words",
+      createdAt: "2026-10-08T12:00:00.000Z",
+      replyTo: null,
+      turn: {} as never,
+      attachments: [],
+    });
+    expect(fs.secure.has(secureStoreKey(OUTBOX_STORAGE_KEY))).toBe(true);
+
+    await wipeLocalData();
+
+    expect(filesUnder("file:///cache-dir")).toEqual([]);
+    expect(filesUnder("file:///documents")).toEqual([]);
+    expect(fs.secure.has(secureStoreKey(OUTBOX_STORAGE_KEY))).toBe(false);
+    expect(getOutboxSnapshot().entries).toEqual([]);
+    expect(fs.keyDeletes).toBe(1);
+  });
+
+  it("does not leave queued messages for the next pairing, even without a configured queue", async () => {
+    fs.secure.set(secureStoreKey(OUTBOX_STORAGE_KEY), '[{"id":"x"}]');
+
+    await wipeLocalData();
+
+    expect(fs.secure.has(secureStoreKey(OUTBOX_STORAGE_KEY))).toBe(false);
   });
 });

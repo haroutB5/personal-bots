@@ -56,9 +56,13 @@ const CLIENT_PROPERTY = `
    * React Native's fetch builds its own OkHttp client, so the network reset
    * evicted a different pool and a reconnect kept reusing a dead socket. One
    * shared client puts the reset on the same connections fetch uses.
+   * It has no disk cache, so authenticated responses never reach the disk.
    */
   private val sharedHttpClient: OkHttpClient by lazy {
     OkHttpClientProvider.createClientBuilder(this)
+      // React Native installs a disk cache in the app cache folder by default.
+      // Chat replies are authenticated and private: they stay out of it.
+      .cache(null)
       .dns(RememberingDns())
       .connectTimeout(3, TimeUnit.SECONDS)
       .build()

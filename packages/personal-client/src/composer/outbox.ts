@@ -392,6 +392,28 @@ export function resetOutboxForTesting(override?: OutboxStorage | null): void {
 }
 
 /**
+ * Drops every queued message and its storage keys. Sign-out and revoke call
+ * this so nothing written under one pairing can send under the next one.
+ * Returns how many messages were discarded.
+ */
+export function discardOutbox(): number {
+  const count = current().entries.length;
+  const target = storage();
+  unwrittenRemovals.clear();
+  stopRemovalRetry();
+  for (const key of [OUTBOX_STORAGE_KEY, OUTBOX_REMOVED_STORAGE_KEY]) {
+    try {
+      if (target?.removeItem) target.removeItem(key);
+      else target?.setItem(key, "[]");
+    } catch {
+      // The in-memory queue is empty either way; the next launch re-reads the key.
+    }
+  }
+  publish({ entries: [], sending: NO_SENDING });
+  return count;
+}
+
+/**
  * Puts a message on the queue. Returns the entry, or null when this device
  * could not keep it (storage full or blocked): the caller then keeps the draft.
  */

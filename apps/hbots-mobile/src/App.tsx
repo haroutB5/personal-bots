@@ -160,7 +160,7 @@ function App() {
         native.client.ports.kv.removeItem(CHATS_SNAPSHOT_KEY);
       }
       disposeNative();
-      wipeLocalData();
+      await wipeLocalData();
       void pushController.teardown({ remote: false });
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
@@ -283,7 +283,7 @@ function App() {
         return;
       }
       if (session === null) {
-        wipeLocalData();
+        await wipeLocalData();
         const server = await loadServer();
         if (!live) {
           return;
@@ -410,7 +410,7 @@ function App() {
       setScreen({ kind: "connecting", step: "Signing out" });
       await forgotten;
       disposeNative();
-      wipeLocalData();
+      await wipeLocalData();
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
       if (native !== null) {

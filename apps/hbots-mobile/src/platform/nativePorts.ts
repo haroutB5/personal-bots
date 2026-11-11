@@ -6,6 +6,11 @@ import { Alert, AppState, InteractionManager } from "react-native";
 import { wipeNativeNotifications } from "../notifications/nativeNotify";
 import { wipeThreadCache } from "../personal/nativeCache";
 import { decryptFile, deleteCacheKey, encryptFile } from "./secureStorage";
+import {
+  discardOutbox,
+  OUTBOX_REMOVED_STORAGE_KEY,
+  OUTBOX_STORAGE_KEY,
+} from "@hbots/personal-client/composer/outbox";
 import type { BlobStore } from "@hbots/personal-client/ports/blobStore";
 import type { Clock } from "@hbots/personal-client/ports/clock";
 import type { Confirm, ConfirmRequest } from "@hbots/personal-client/ports/confirm";
@@ -83,11 +88,60 @@ export function wipeBlobDirectory(): void {
   }
 }
 
-/** Everything this phone kept for a signed-in session: cached chats, queued attachments and the key. */
-export function wipeLocalData(): void {
+/**
+ * Entries of the app cache folder that are not session data. expo-updates
+ * keeps its downloaded bundle there; everything else is ours or a library's
+ * (the HTTP cache, the image cache, share intake, upload copies).
+ */
+const KEPT_CACHE_ENTRIES: ReadonlySet<string> = new Set(["updates"]);
+
+/**
+ * Deletes everything in the app cache folder, not a list of names: a library
+ * that starts caching tomorrow must not outlive a sign-out. Includes the share
+ * intake folder, which holds the text and files someone shared into the app.
+ */
+export function wipeCacheRoot(): void {
+  const root = new Directory(Paths.cache);
+  if (!root.exists) return;
+  for (const entry of root.list()) {
+    if (KEPT_CACHE_ENTRIES.has(entry.name)) continue;
+    try {
+      entry.delete();
+    } catch (cause) {
+      console.warn("Could not remove a cache entry on sign-out.", cause);
+    }
+  }
+}
+
+/**
+ * Forgets every queued message. The in-memory queue goes first so a send that
+ * is about to start finds nothing, then the stored copies are deleted and the
+ * deletes are awaited: a sign-out that returns has really removed them.
+ */
+async function wipeOutbox(): Promise<void> {
+  discardOutbox();
+  await Promise.all(
+    [OUTBOX_STORAGE_KEY, OUTBOX_REMOVED_STORAGE_KEY].map((key) =>
+      SecureStore.deleteItemAsync(secureStoreKey(key)),
+    ),
+  );
+}
+
+/**
+ * Everything this phone kept for a signed-in session: cached chats, queued
+ * messages and attachments, the app cache folder (HTTP, image, share intake)
+ * and the key. Resolves once the asynchronous deletes finished.
+ */
+export async function wipeLocalData(): Promise<void> {
+  // Everything synchronous happens before the first await, so a caller that
+  // does not wait still gets the folders, the key and the queue in memory gone.
+  const stored = wipeOutbox().catch((cause: unknown) => {
+    console.warn("Could not remove the queued messages on sign-out.", cause);
+  });
   for (const wipe of [
     wipeThreadCache,
     wipeBlobDirectory,
+    wipeCacheRoot,
     deleteCacheKey,
     wipeNativeNotifications,
   ]) {
@@ -97,6 +151,7 @@ export function wipeLocalData(): void {
       console.warn("Could not remove local data on sign-out.", cause);
     }
   }
+  await stored;
 }
 
 export function createFileBlobStore(): BlobStore<NativeBlob> {
