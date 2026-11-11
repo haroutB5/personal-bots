@@ -95,11 +95,6 @@ export function routeLine(route: CallView["route"]): string | null {
   return null;
 }
 
-/**
- * The call has ended and nothing is left to do but leave: it ran and ended, or
- * the owner hung up before it connected. A failure with an error card is not
- * over, the card is what the owner reads.
- */
 export function callIsOver(state: VoiceCallState): boolean {
   return state.status === "ended" || (state.endReason !== null && state.errorCode === null);
 }

@@ -32,12 +32,6 @@ export type MicAnswer = "granted" | "denied" | "blocked";
 
 export type MicRefusal = "denied" | "blocked";
 
-/**
- * What the owner is told about the call outside the app. `asking` is the line
- * shown while Android's notification prompt is up. `off` stays for the whole
- * call when notifications are refused, because the call would otherwise run
- * with a live microphone and no sign anywhere but this screen.
- */
 export type OutsideNotice = "asking" | "off" | null;
 
 export interface NotificationAsk {

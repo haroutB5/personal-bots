@@ -18,7 +18,7 @@ function writeAsked(): void {
   try {
     SecureStore.setItem(ASKED_KEY, "1");
   } catch {
-    // Without the store the next call asks again, which Android answers for free once refused twice.
+    return;
   }
 }
 
