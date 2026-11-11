@@ -24,7 +24,10 @@ import { PersonalBrowser } from "./PersonalBrowser.ts";
 
 export const SERVER_BROWSER_CLIENT_ID = "server-browser";
 
-/** Recording is desktop-only; it is deliberately not advertised. */
+/**
+ * Recording, upload and page dialogs are not served here and are deliberately
+ * not advertised, so the broker refuses them as unsupported at once.
+ */
 export const SERVER_BROWSER_OPERATIONS: ReadonlyArray<PreviewAutomationOperation> = [
   "status",
   "open",
@@ -39,6 +42,7 @@ export const SERVER_BROWSER_OPERATIONS: ReadonlyArray<PreviewAutomationOperation
   "resize",
   "setColorScheme",
   "hover",
+  "select",
   "drag",
   "history",
   "closeTab",

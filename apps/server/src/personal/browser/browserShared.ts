@@ -122,6 +122,19 @@ export const driverTimeoutFor = (requestTimeoutMs: number, inputTimeoutMs?: numb
     Math.min(inputTimeoutMs ?? requestTimeoutMs, requestTimeoutMs) - DRIVER_TIMEOUT_MARGIN_MS,
   );
 
+/**
+ * What to add to a driver timeout so the bot does not misread its own number:
+ * the shared browser stops waiting a little before the time the bot asked for
+ * (it must answer before the broker's deadline). Null when nothing was shortened.
+ */
+export const timeoutBudgetNote = (requestTimeoutMs: number, inputTimeoutMs?: number) => {
+  const asked = Math.min(inputTimeoutMs ?? requestTimeoutMs, requestTimeoutMs);
+  const waited = driverTimeoutFor(requestTimeoutMs, inputTimeoutMs);
+  return waited < asked
+    ? ` You asked for ${asked}ms; the shared browser waited ${waited}ms, ${asked - waited}ms less, so it can answer before the request deadline.`
+    : null;
+};
+
 export const describeDialog = (dialog: PageDialog) => {
   const text = dialog.message.replace(/\s+/g, " ").trim().slice(0, 300);
   switch (dialog.type) {

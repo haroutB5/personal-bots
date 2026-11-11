@@ -26,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../../mcp/PreviewAutomationBroker.ts";
+import { performSelect } from "./pageOperations.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 import * as ServerBrowserHost from "./ServerBrowserHost.ts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -253,10 +254,12 @@ it.effect("stops reconnecting once the layer scope closes", () =>
 );
 
 it("advertises the 1.66.6 operations and still leaves recording to the desktop app", () => {
-  for (const operation of ["click", "hover", "drag", "history", "closeTab"] as const) {
+  for (const operation of ["click", "hover", "drag", "history", "closeTab", "select"] as const) {
     expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).toContain(operation);
   }
-  expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).not.toContain("recordingStart");
+  for (const operation of ["upload", "dialog", "recordingStart", "recordingStop"] as const) {
+    expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).not.toContain(operation);
+  }
   // Every operation the host serves is one the broker knows. The contract set
   // is wider: desktop hosts also answer dialog, upload, select and the V1 close.
   const known = new Set<string>(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
@@ -264,3 +267,94 @@ it("advertises the 1.66.6 operations and still leaves recording to the desktop a
     expect(known).toContain(operation);
   }
 });
+
+it.effect(
+  "serves select, and refuses upload, dialog and recording as unsupported with no retry advice",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connects = { count: 0 };
+        const seen: string[] = [];
+        const context = yield* Layer.build(
+          hostLayer((request) => {
+            seen.push(request.operation);
+            return Effect.succeed(
+              request.operation === "select" ? { selected: ["two"] } : { available: true },
+            );
+          }, connects),
+        );
+        const broker = yield* Effect.service(PreviewAutomationBroker.PreviewAutomationBroker).pipe(
+          Effect.provide(context),
+        );
+        yield* awaitHostReady(broker);
+
+        const selected = yield* broker.invoke<{ selected: string[] }>({
+          scope,
+          operation: "select",
+          input: { selector: "#s", values: ["two"] },
+        });
+        expect(selected).toEqual({ selected: ["two"] });
+
+        for (const operation of ["upload", "dialog", "recordingStart", "recordingStop"] as const) {
+          const error = yield* broker.invoke({ scope, operation, input: {} }).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+          expect(error.message).toContain("not supported on the shared browser");
+          // A permanent refusal: nothing here may send the bot back to retry.
+          expect(error.message).not.toMatch(
+            /retry|reconnect|starting|preview_open|preview_status/i,
+          );
+        }
+        // Refused by the broker itself: the host never saw them, and stayed registered.
+        expect(seen.filter((operation) => operation !== "status")).toEqual(["select"]);
+        expect(connects.count).toBe(1);
+      }),
+    ),
+);
+
+it.effect(
+  "tells the bot in plain words when select meets a non-dropdown or a dropdown that never becomes usable",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connects = { count: 0 };
+        // Playwright's texts for the two cases, in the shape real Chromium returns them.
+        const playwrightTexts: Record<string, string> = {
+          "#div":
+            "locator.selectOption: Error: Element is not a <select> element\nCall log:\n  - waiting for locator('#div')\n",
+          "#disabled":
+            "locator.selectOption: Timeout 13500ms exceeded.\nCall log:\n  - waiting for locator('#disabled')\n  - element is not enabled\n",
+        };
+        const page = {
+          selectOption: (locator: string) =>
+            Promise.reject(new Error(playwrightTexts[locator] ?? "unexpected locator")),
+        };
+        const context = yield* Layer.build(
+          hostLayer(
+            (request) =>
+              request.operation === "select"
+                ? Effect.promise(() => performSelect(page as never, request.input as never, 1000))
+                : Effect.succeed({ available: true }),
+            connects,
+          ),
+        );
+        const broker = yield* Effect.service(PreviewAutomationBroker.PreviewAutomationBroker).pipe(
+          Effect.provide(context),
+        );
+        yield* awaitHostReady(broker);
+
+        // The words must survive the trip host -> broker -> bot. An error type whose
+        // contract class rebuilds its message from fields would drop them.
+        const notDropdown = yield* broker
+          .invoke({ scope, operation: "select", input: { selector: "#div", values: ["a"] } })
+          .pipe(Effect.flip);
+        expect(notDropdown.message).toContain("not a dropdown");
+        expect(notDropdown.message).toContain("preview_act click");
+
+        const neverUsable = yield* broker
+          .invoke({ scope, operation: "select", input: { selector: "#disabled", values: ["a"] } })
+          .pipe(Effect.flip);
+        expect(neverUsable.message).toContain("could not be used in time");
+        expect(neverUsable.message).not.toMatch(/Call log|locator\.selectOption|Timeout \d+ms/);
+      }),
+    ),
+);

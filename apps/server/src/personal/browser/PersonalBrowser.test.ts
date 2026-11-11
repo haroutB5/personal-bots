@@ -161,6 +161,24 @@ class FakePage implements BrowserPage {
     this.typed.push(input.text);
   }
   async scrollLocator() {}
+  /** The <option> values each fake dropdown holds; a value the page lacks fails like Playwright. */
+  readonly dropdowns = new Map<string, string[]>();
+  readonly selections = new Map<string, string[]>();
+  async selectOption(locator: string, values: ReadonlyArray<string>) {
+    this.pointer.push({ op: "selectOption", detail: { locator, values } });
+    const options = this.dropdowns.get(locator) ?? [];
+    if (values.some((value) => !options.includes(value))) {
+      // What Playwright throws after waiting out its timeout for an option that never appears.
+      throw Object.assign(
+        new Error(
+          "locator.selectOption: Timeout 1000ms exceeded.\nCall log:\n  - did not find some options",
+        ),
+        { name: "TimeoutError" },
+      );
+    }
+    this.selections.set(locator, [...values]);
+    return [...values];
+  }
   async waitForLocator() {}
   async waitForText() {}
   async waitForUrlIncludes() {}
@@ -4948,6 +4966,65 @@ describe("PersonalBrowser", () => {
         }).pipe(Effect.provide(makeLayer(fake.driver)));
       },
     );
+
+    it.effect("select changes the option of a dropdown and reports what is now selected", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        page.dropdowns.set("#s", ["one", "two", "three"]);
+
+        const picked = yield* browser.handleAutomationRequest(
+          request("select", { selector: "#s", values: ["two"] }),
+        );
+        expect(picked).toEqual({ selected: ["two"] });
+        expect(page.selections.get("#s")).toEqual(["two"]);
+        expect(lastOf(page, "selectOption")).toEqual({ locator: "#s", values: ["two"] });
+
+        const cleared = yield* browser.handleAutomationRequest(
+          request("select", { locator: "#s", values: [] }),
+        );
+        expect(cleared).toEqual({ selected: [] });
+        expect(page.selections.get("#s")).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("select says which value the dropdown lacks instead of reporting success", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        fake.state.page.dropdowns.set("#s", ["one"]);
+        const missing = yield* refused(
+          browser,
+          request("select", { selector: "#s", values: ["nine"] }),
+        );
+        expect(missing.tag).toBe("PreviewAutomationExecutionError");
+        expect(missing.message).toContain("no option");
+        expect(missing.message).toContain("nine");
+        expect(missing.message).not.toContain("Timeout");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("a wait that stops early says it was shortened and by how much", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        fake.state.page.waitForLocator = async () => {
+          throw Object.assign(new Error("Timeout 10500ms exceeded."), { name: "TimeoutError" });
+        };
+        const timedOut = yield* refused(
+          browser,
+          request("waitFor", { selector: "#never", timeoutMs: 12_000 }, 12_000),
+        );
+        expect(timedOut.tag).toBe("PreviewAutomationTimeoutError");
+        expect(timedOut.message).toContain("12000ms");
+        expect(timedOut.message).toContain("10500ms");
+        expect(timedOut.message).toContain("1500ms");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
 
     it.effect("drag drops from one element to another, or from one point to another", () => {
       const fake = makeFakeDriver();

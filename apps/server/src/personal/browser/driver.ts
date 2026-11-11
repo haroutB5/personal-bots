@@ -147,6 +147,17 @@ export interface BrowserPage {
     readonly timeoutMs: number;
   }): Promise<void>;
   scrollLocator(locator: string, deltaX: number, deltaY: number, timeoutMs: number): Promise<void>;
+  /**
+   * Chooses options of the first <select> `locator` matches, each value matched
+   * against an option's value or its label. No values clears a multiple select.
+   * Resolves to the values of the options now selected; rejects when the element
+   * is not a <select> or an option never shows up within `timeoutMs`.
+   */
+  selectOption(
+    locator: string,
+    values: ReadonlyArray<string>,
+    timeoutMs: number,
+  ): Promise<ReadonlyArray<string>>;
   waitForLocator(locator: string, timeoutMs: number): Promise<void>;
   waitForText(text: string, timeoutMs: number): Promise<void>;
   waitForUrlIncludes(fragment: string, timeoutMs: number): Promise<void>;
@@ -591,6 +602,11 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
           { timeout: timeoutMs },
         );
     },
+    selectOption: (locator, values, timeoutMs) =>
+      page
+        .locator(locator)
+        .first()
+        .selectOption([...values], { timeout: timeoutMs }),
     waitForLocator: (locator, timeoutMs) =>
       page.locator(locator).first().waitFor({ state: "visible", timeout: timeoutMs }),
     waitForText: async (text, timeoutMs) => {
