@@ -52,6 +52,10 @@ class HbotsVoiceModule : Module() {
 
     Function("callState") { VoiceRuntime.state.wire }
 
+    Function("holdMicUntil") { kind: String, inMs: Double -> VoiceRuntime.holdMicUntil(kind, inMs) }
+
+    Function("takeLastEnd") { VoiceRuntime.takeLastEnd() }
+
     AsyncFunction("startCall") { botName: String, source: String, promise: Promise ->
       val effects = VoiceRuntime.dispatch(
         CallEvent.StartRequested(

@@ -35,6 +35,7 @@ class AudioFocusPolicyTest {
       override fun resumeAudio() {}
       override fun writeMarker() {}
       override fun clearMarker() {}
+      override fun writeLastEnd(reason: EndReason) {}
       override fun ended(reason: EndReason) { ended.add(reason) }
     })
     runtime.dispatch(CallEvent.StartRequested("CTO", true, true, true))

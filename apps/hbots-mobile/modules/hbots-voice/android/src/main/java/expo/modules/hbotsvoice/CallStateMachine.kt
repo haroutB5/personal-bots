@@ -8,6 +8,33 @@ enum class EndReason(val wire: String) {
   FOCUS_LOST("focus_lost"),
   PROCESS_RECOVERED("process_recovered"),
   FAILED("failed"),
+  DEADLINE_CONNECT("deadline_connect"),
+  DEADLINE_QUIET("deadline_quiet"),
+  DEADLINE_WAITING_CAP("deadline_waiting_cap"),
+  DEADLINE_RECONNECT("deadline_reconnect"),
+  DEADLINE_LIMIT("deadline_limit"),
+}
+
+/** The mic deadlines JS can push. Each ends a call by its own reason. */
+enum class Deadline(val wire: String) {
+  CONNECT("connect"),
+  QUIET("quiet"),
+  WAITING_CAP("waiting_cap"),
+  RECONNECT("reconnect"),
+  LIMIT("limit"),
+  ;
+
+  fun endReason(): EndReason = when (this) {
+    CONNECT -> EndReason.DEADLINE_CONNECT
+    QUIET -> EndReason.DEADLINE_QUIET
+    WAITING_CAP -> EndReason.DEADLINE_WAITING_CAP
+    RECONNECT -> EndReason.DEADLINE_RECONNECT
+    LIMIT -> EndReason.DEADLINE_LIMIT
+  }
+
+  companion object {
+    fun fromWire(wire: String): Deadline? = values().firstOrNull { it.wire == wire }
+  }
 }
 
 enum class StartRejection(val wire: String, val message: String) {
@@ -47,6 +74,8 @@ sealed interface CallEvent {
   object FocusLostTransient : CallEvent
   object FocusRegained : CallEvent
   data class ProcessStarted(val markerPresent: Boolean) : CallEvent
+  data class LeaseSet(val kind: Deadline, val atElapsedMs: Long) : CallEvent
+  data class DeadlineDue(val kind: Deadline) : CallEvent
 }
 
 sealed interface CallEffect {
@@ -56,6 +85,7 @@ sealed interface CallEffect {
   object ResumeAudio : CallEffect
   object WriteMarker : CallEffect
   object ClearMarker : CallEffect
+  data class WriteLastEnd(val reason: EndReason) : CallEffect
   data class Ended(val reason: EndReason) : CallEffect
   data class Rejected(val reason: StartRejection) : CallEffect
 }
@@ -87,6 +117,22 @@ object CallStateMachine {
     CallEvent.FocusRegained -> when (state) {
       is CallState.Live ->
         if (state.onHold) Transition(state.copy(onHold = false), listOf(CallEffect.ResumeAudio)) else Transition(state)
+      else -> Transition(state)
+    }
+    is CallEvent.LeaseSet -> Transition(state)
+    is CallEvent.DeadlineDue -> when (state) {
+      is CallState.Starting, is CallState.Live -> {
+        val reason = event.kind.endReason()
+        Transition(
+          CallState.Stopping(reason),
+          listOf(
+            CallEffect.StopService,
+            CallEffect.ClearMarker,
+            CallEffect.WriteLastEnd(reason),
+            CallEffect.Ended(reason),
+          ),
+        )
+      }
       else -> Transition(state)
     }
     is CallEvent.ProcessStarted ->
@@ -129,23 +175,46 @@ interface CallEffects {
   fun resumeAudio()
   fun writeMarker()
   fun clearMarker()
+  fun writeLastEnd(reason: EndReason)
   fun ended(reason: EndReason)
 }
 
-class CallRuntime(private val effects: CallEffects) {
+class CallRuntime(
+  private val effects: CallEffects,
+  clock: () -> Long = { System.nanoTime() / 1_000_000 },
+) {
+  private val lease = CallLease(clock)
   private var current: CallState = CallState.Idle
   private val liveWaiters = mutableListOf<(Boolean) -> Unit>()
 
   val state: CallState
     @Synchronized get() = current
 
+  /** True when the lease has run out and the mic must close. Read by the capture loop. */
+  fun leaseDue(): Boolean = synchronized(this) { isRunning(current) && lease.due() != null }
+
+  /** Ends the call if its lease ran out. Called from the 1 s service handler and the capture loop. */
+  fun checkLease() {
+    val due = synchronized(this) { if (isRunning(current)) lease.due() else null } ?: return
+    dispatch(CallEvent.DeadlineDue(due))
+  }
+
+  private fun isRunning(state: CallState) = state is CallState.Starting || state is CallState.Live
+
   fun dispatch(event: CallEvent): List<CallEffect> {
+    if (event is CallEvent.LeaseSet) {
+      synchronized(this) { if (isRunning(current)) lease.set(event.kind, event.atElapsedMs) }
+      return emptyList()
+    }
     val settled = mutableListOf<(Boolean) -> Unit>()
     val outcome: Boolean?
     val toRun: List<CallEffect>
     synchronized(this) {
       val transition = CallStateMachine.reduce(current, event)
+      val before = current
       current = transition.state
+      if (before is CallState.Idle && current is CallState.Starting) lease.begin()
+      if (current is CallState.Idle || current is CallState.Stopping) lease.clear()
       toRun = transition.effects
       outcome = when (current) {
         is CallState.Live -> true
@@ -183,6 +252,7 @@ class CallRuntime(private val effects: CallEffects) {
       CallEffect.ResumeAudio -> effects.resumeAudio()
       CallEffect.WriteMarker -> effects.writeMarker()
       CallEffect.ClearMarker -> effects.clearMarker()
+      is CallEffect.WriteLastEnd -> effects.writeLastEnd(effect.reason)
       is CallEffect.Ended -> effects.ended(effect.reason)
       is CallEffect.Rejected -> Unit
     }

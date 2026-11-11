@@ -2,6 +2,7 @@ package expo.modules.hbotsvoice
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 
 object VoiceRuntime {
@@ -10,7 +11,7 @@ object VoiceRuntime {
   @Volatile private var recovered = false
   @Volatile var listener: ((String, Map<String, Any?>) -> Unit)? = null
 
-  private val runtime = CallRuntime(object : CallEffects {
+  private val runtime = CallRuntime(effects = object : CallEffects {
     override fun startService(botName: String) {
       val context = requireContext()
       val intent = Intent(context, VoiceCallService::class.java).setAction(CallNotification.ACTION_START)
@@ -32,16 +33,22 @@ object VoiceRuntime {
       emit("held", mapOf("held" to false))
     }
 
-    override fun writeMarker() = CallMarker.set(requireContext())
+    override fun writeMarker() {
+      CallMarker.takeLastEnd(requireContext())
+      CallMarker.set(requireContext())
+    }
 
     override fun clearMarker() = CallMarker.clear(requireContext())
+
+    override fun writeLastEnd(reason: EndReason) =
+      CallMarker.setLastEnd(requireContext(), reason.wire, SystemClock.elapsedRealtime(), System.currentTimeMillis())
 
     override fun ended(reason: EndReason) {
       if (reason == EndReason.PROCESS_RECOVERED) recovered = true
       emit("callEnded", mapOf("reason" to reason.wire))
     }
 
-  })
+  }, clock = { SystemClock.elapsedRealtime() })
 
   val state: CallState get() = runtime.state
 
@@ -55,6 +62,17 @@ object VoiceRuntime {
 
   fun awaitLive(callback: (Boolean) -> Unit) = runtime.awaitLive(callback)
 
+  /** JS moves the mic lease. An unknown kind is ignored, so an older native build never misreads a newer app. */
+  fun holdMicUntil(kind: String, inMs: Double) {
+    val deadline = Deadline.fromWire(kind) ?: return
+    val at = SystemClock.elapsedRealtime() + inMs.toLong().coerceAtLeast(0L)
+    dispatch(CallEvent.LeaseSet(deadline, at))
+  }
+
+  fun checkLease() = runtime.checkLease()
+
+  fun takeLastEnd(): Map<String, Any?>? = CallMarker.takeLastEnd(requireContext())
+
   fun emit(name: String, body: Map<String, Any?>) {
     listener?.invoke(name, body)
   }
@@ -67,6 +85,8 @@ object VoiceRuntime {
       emit = { name, body -> emit(name, body) },
       onFocus = { event -> dispatch(event) },
       onCaptureFailure = ::captureFailed,
+      leaseDue = runtime::leaseDue,
+      onLeaseDue = runtime::checkLease,
     )
     engine = created
     return created.open()
@@ -103,7 +123,7 @@ object VoiceRuntime {
     val context = requireContext()
     dispatch(CallEvent.Stop(EndReason.SIGNED_OUT))
     recovered = false
-    CallMarker.clear(context)
+    CallMarker.wipe(context)
     VoiceCallService.deleteChannel(context)
   }
 }

@@ -8,10 +8,14 @@ class VoiceEngine(
   private val emit: (String, Map<String, Any?>) -> Unit,
   private val onFocus: (CallEvent) -> Unit,
   private val onCaptureFailure: (String) -> Unit,
+  leaseDue: () -> Boolean,
+  onLeaseDue: () -> Unit,
 ) {
   private val capture = MicCapture(
     onFrame = { frame -> emit("micFrame", mapOf("pcm" to Base64.encodeToString(frame, Base64.NO_WRAP))) },
     onFailure = onCaptureFailure,
+    leaseDue = leaseDue,
+    onLeaseDue = onLeaseDue,
   )
   private val player = PcmPlayer()
   private val router = AudioRouter(context) { route -> emit("route", mapOf("route" to route.wire)) }

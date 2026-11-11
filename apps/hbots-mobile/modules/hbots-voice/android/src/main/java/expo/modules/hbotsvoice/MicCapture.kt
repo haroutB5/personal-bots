@@ -1,10 +1,25 @@
 package expo.modules.hbotsvoice
 
+import android.os.Handler
+import android.os.Looper
+
+private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+/**
+ * `leaseDue` is read before every chunk. When it turns true the capture thread
+ * stops reading, closes the recorder and posts `onLeaseDue` to `post` (the main
+ * looper by default). The thread never calls `stop()` itself: that joins the
+ * thread it runs on.
+ */
 class MicCapture(
   private val onFrame: (ByteArray) -> Unit,
   private val onFailure: (String) -> Unit,
   private val source: MicSource = AndroidMicSource(),
+  private val leaseDue: () -> Boolean = { false },
+  private val onLeaseDue: () -> Unit = {},
+  private val post: (() -> Unit) -> Unit = { task -> mainHandler.post(task) },
 ) {
+  private val recorderLock = Any()
   private var record: MicRecorder? = null
   private var thread: Thread? = null
   private var processor: CaptureProcessor? = null
@@ -56,8 +71,29 @@ class MicCapture(
     var reported = false
     thread = Thread({
       try {
-        audioRecord.startRecording()
+        val started = synchronized(recorderLock) {
+          if (running) {
+            audioRecord.startRecording()
+            true
+          } else {
+            false
+          }
+        }
+        if (!started) {
+          onStarted(Result.failure(IllegalStateException("The call is over.")))
+          return@Thread
+        }
         while (running) {
+          if (leaseDue()) {
+            synchronized(recorderLock) {
+              try {
+                audioRecord.stop()
+              } catch (error: IllegalStateException) {
+              }
+            }
+            post(onLeaseDue)
+            break
+          }
           val read = audioRecord.read(chunk, 0, chunk.size)
           if (read < 0) {
             if (running) onFailure("read_error_$read")
@@ -82,9 +118,11 @@ class MicCapture(
     running = false
     val audioRecord = record
     record = null
-    try {
-      audioRecord?.stop()
-    } catch (error: IllegalStateException) {
+    synchronized(recorderLock) {
+      try {
+        audioRecord?.stop()
+      } catch (error: IllegalStateException) {
+      }
     }
     thread?.join(500)
     thread = null

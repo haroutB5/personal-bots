@@ -9,11 +9,21 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 
 class VoiceCallService : Service() {
+  private val handler = Handler(Looper.getMainLooper())
+  private val leaseWatch = object : Runnable {
+    override fun run() {
+      VoiceRuntime.checkLease()
+      handler.postDelayed(this, LEASE_CHECK_MS)
+    }
+  }
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -21,6 +31,8 @@ class VoiceCallService : Service() {
       CallNotification.ACTION_START -> {
         promote()
         begin()
+        handler.removeCallbacks(leaseWatch)
+        handler.postDelayed(leaseWatch, LEASE_CHECK_MS)
       }
       CallNotification.ACTION_HANGUP -> VoiceRuntime.dispatch(CallEvent.Stop(EndReason.NOTIFICATION_HANGUP))
       else -> stopSelf()
@@ -51,12 +63,15 @@ class VoiceCallService : Service() {
   }
 
   override fun onDestroy() {
+    handler.removeCallbacks(leaseWatch)
     VoiceRuntime.closeEngine()
     VoiceRuntime.dispatch(CallEvent.ServiceDestroyed)
     super.onDestroy()
   }
 
   companion object {
+    private const val LEASE_CHECK_MS = 1_000L
+
     fun ensureChannel(context: Context) {
       val spec = CallNotification.channel
       val manager = context.getSystemService(NotificationManager::class.java)
