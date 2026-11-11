@@ -1,0 +1,8 @@
+{
+  "name": "hbots-voice",
+  "version": "0.0.1",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

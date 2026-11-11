@@ -90,7 +90,6 @@ describe("app.config", () => {
       "android.permission.SYSTEM_ALERT_WINDOW",
       "android.permission.READ_EXTERNAL_STORAGE",
       "android.permission.WRITE_EXTERNAL_STORAGE",
-      "android.permission.RECORD_AUDIO",
     ]);
   });
 });
