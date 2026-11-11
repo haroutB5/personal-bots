@@ -5525,6 +5525,40 @@ describe("preview automation host composition", () => {
     expect(source).not.toContain("ServerBrowser.layer.pipe");
   });
 
+  describe("an imported profile folder", () => {
+    it.effect("is refused before a launch and its stale singleton lock is left alone", () => {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-browser-marker-"));
+      const profileDir = NodePath.join(baseDir, "personal", "browser-profiles", "default");
+      NodeFS.mkdirSync(profileDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(profileDir, "hbots-import.json"), "{}\n");
+      NodeFS.symlinkSync("somehost-2147483646", NodePath.join(profileDir, "SingletonLock"));
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const error = yield* browser
+          .handleAutomationRequest(request("navigate", { url: "example.com" }))
+          .pipe(Effect.flip);
+        expect(error.message).toBe(
+          `This browser folder was imported from a real browser and must not be launched by hbots: ${profileDir} holds hbots-import.json. Use the shared browser setting, or point hbots at a different folder.`,
+        );
+        expect(fake.state.launches).toBe(0);
+        expect(NodeFS.lstatSync(NodePath.join(profileDir, "SingletonLock")).isSymbolicLink()).toBe(
+          true,
+        );
+      }).pipe(
+        Effect.provide(
+          baseLayer(
+            fake.driver,
+            PersonalBrowserLeaseRepository.layer,
+            PersonalBrowserProtectionRepository.layer,
+            undefined,
+            baseDir,
+          ),
+        ),
+      );
+    });
+  });
+
   it.effect("a preview open from a thread reaches the personal browser and takes its lease", () => {
     const fake = makeFakeDriver();
     const registrations: Array<{ clientId: string; kind: string | undefined }> = [];
