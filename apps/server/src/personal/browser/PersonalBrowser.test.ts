@@ -12,6 +12,7 @@ import {
   PersonalBrowserInputMessage,
   PersonalBrowserViewerMessage,
   PersonalLoginId,
+  EnvironmentId,
   PersonalTaskId,
   ProviderInstanceId,
   ThreadId,
@@ -39,6 +40,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import * as PreviewAutomationBroker from "../../mcp/PreviewAutomationBroker.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as DesktopBrowserChannel from "../../preview/DesktopBrowserChannel.ts";
+import * as PreviewAgentActivity from "../../preview/PreviewAgentActivity.ts";
+import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
+import * as ServerBrowser from "../../preview/ServerBrowser.ts";
+import { mcpThreadScope } from "../testing/mcpThreadScope.ts";
+import * as ServerBrowserHost from "./ServerBrowserHost.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import { secretRedactor } from "../secrets/secretRedaction.ts";
@@ -5356,5 +5365,107 @@ describe("PersonalBrowser", () => {
         expect(form.closed).toBe(true);
       }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
+  });
+});
+
+describe("preview automation host composition", () => {
+  const environmentId = EnvironmentId.make("environment-composition");
+  const scopeFor = (thread: ThreadId) =>
+    mcpThreadScope({
+      environmentId,
+      threadId: thread,
+      providerSessionId: `session-${thread}`,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["preview"] as const),
+      issuedAt: 1,
+    });
+
+  /** The server's preview wiring as server.ts composes it, over a real broker that records every registration. */
+  const composedHosts = (
+    driver: BrowserDriver,
+    registrations: Array<{ readonly clientId: string; readonly kind: string | undefined }>,
+  ) =>
+    Layer.mergeAll(
+      ServerBrowserHost.layer,
+      ServerBrowser.layerWithoutAutomationHost.pipe(
+        Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+      ),
+    ).pipe(
+      Layer.provideMerge(
+        Layer.succeed(PreviewBrowser.PreviewBrowser, {
+          executable: Effect.die("no Chromium in this test"),
+          installed: Effect.die("no Chromium in this test"),
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(environmentId),
+          getDescriptor: Effect.succeed({
+            environmentId,
+            label: "Composition test",
+            platform: { os: "linux" as const, arch: "x64" as const },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          }),
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.effect(
+          PreviewAutomationBroker.PreviewAutomationBroker,
+          Effect.map(PreviewAutomationBroker.make, (broker) =>
+            PreviewAutomationBroker.PreviewAutomationBroker.of({
+              ...broker,
+              connect: (host, options) =>
+                Effect.suspend(() => {
+                  registrations.push({ clientId: host.clientId, kind: host.kind });
+                  return broker.connect(host, options);
+                }),
+            }),
+          ),
+        ),
+      ),
+      Layer.provideMerge(makeLayer(driver)),
+    );
+
+  it.effect("exactly one host registers the server-browser id and stays registered", () => {
+    const fake = makeFakeDriver();
+    const registrations: Array<{ clientId: string; kind: string | undefined }> = [];
+    return Effect.gen(function* () {
+      for (let second = 0; second < 15; second++) {
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+      }
+      expect(registrations).toEqual([{ clientId: "server-browser", kind: "server" }]);
+    }).pipe(Effect.provide(composedHosts(fake.driver, registrations)));
+  });
+
+  it("server.ts composes the upstream browser without its automation host", () => {
+    const source = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../../server.ts"),
+      "utf8",
+    );
+    expect(source).toContain("ServerBrowser.layerWithoutAutomationHost");
+    expect(source).not.toContain("ServerBrowser.layer.pipe");
+  });
+
+  it.effect("a preview open from a thread reaches the personal browser and takes its lease", () => {
+    const fake = makeFakeDriver();
+    const registrations: Array<{ clientId: string; kind: string | undefined }> = [];
+    return Effect.gen(function* () {
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* Effect.yieldNow;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: scopeFor(ThreadId.make("thread-composed")),
+        operation: "open",
+        input: { url: "https://example.com/", reuseExistingTab: false },
+      });
+      expect(opened).toMatchObject({ url: "https://example.com/" });
+      expect(fake.state.page.gotos).toEqual(["https://example.com/"]);
+      expect(yield* lease.view).toMatchObject({
+        ownerType: "agent",
+        ownerId: "thread-composed",
+      });
+    }).pipe(Effect.provide(composedHosts(fake.driver, registrations)));
   });
 });
