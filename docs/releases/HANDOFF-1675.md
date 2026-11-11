@@ -26,6 +26,23 @@ Binary only. The previous release is `9ed0676e0cd5` (1.67.4). No migration runs,
 ## Known and accepted
 
 - M1 (Medium, unproven, from code reading): a steer to a run that is preparing, starting or waiting is refused with a message instead of queued. The lead accepted it as a follow-up.
+- The first gate run at `4f3348b4ad4c` failed `agentContextBudget.test.ts` (mcpToolListJsonBytes 73574 against 73494 measured). The routine tool text shrank by 80 bytes, and the budget file only ratchets down. The value moved in `96538634780c` (test fixture only, no server code). The gate evidence below is the rerun at `96538634780c`.
 - The APK is built from the release commit and published through `latest.json` after the runner reports `live_verified`.
 - Harout owns the real-phone check for the arm64 APK.
 - The pre-release checks are the test. No QA recheck after live (Harout, 27 Oct).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=96538634780c855b3133a9c69376adfdf18949ea release=96538634780c json-sha256=4ecf8b752b3d24795832105aa9a41e298558821d8971843be95bc93fcbb9b6cc result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
