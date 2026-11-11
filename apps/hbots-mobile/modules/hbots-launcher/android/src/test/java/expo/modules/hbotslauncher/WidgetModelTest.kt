@@ -57,4 +57,37 @@ class WidgetModelTest {
     val fields = WidgetRow::class.java.declaredFields.map { it.name }.toSet()
     assertEquals(setOf("botId", "name", "working", "link", "description"), fields)
   }
+
+  @Test fun aLitDotAsksForARedrawJustAfterItGoesStale() {
+    val lit = feed(WidgetBot("a", "Juno", true))
+    assertEquals(now + WidgetModel.WORKING_FRESH_MS + 1_000, WidgetModel.nextRefreshAt(lit, now))
+    // The moment it fires, the dot is gone.
+    val fires = WidgetModel.nextRefreshAt(lit, now)!!
+    assertFalse((WidgetModel.build(lit, fires) as WidgetState.Bots).rows.single().working)
+  }
+
+  @Test fun noLitDotMeansNoAlarm() {
+    assertNull(WidgetModel.nextRefreshAt(null, now))
+    assertNull(WidgetModel.nextRefreshAt(feed(WidgetBot("a", "Juno", false)), now))
+    assertNull(WidgetModel.nextRefreshAt(feed(WidgetBot("a", "Juno", true), at = now - WidgetModel.WORKING_FRESH_MS - 1), now))
+    assertNull(WidgetModel.nextRefreshAt(feed(WidgetBot("a", "Juno", true), at = now + 5_000), now))
+  }
+
+  @Test fun aHeartbeatThatChangesNothingVisibleSkipsTheRedraw() {
+    val before = feed(WidgetBot("a", "Juno", true), at = now)
+    val after = feed(WidgetBot("a", "Juno", true), at = now + 15_000)
+    assertFalse(WidgetModel.needsRedraw(before, after, now + 15_000))
+  }
+
+  @Test fun aHeartbeatAfterTheDotWentGreyBringsItBack() {
+    val stale = feed(WidgetBot("a", "Juno", true), at = now)
+    val later = now + WidgetModel.WORKING_FRESH_MS + 30_000
+    val heartbeat = feed(WidgetBot("a", "Juno", true), at = later)
+    assertTrue(WidgetModel.needsRedraw(stale, heartbeat, later))
+  }
+
+  @Test fun aChangedBotListRedraws() {
+    assertTrue(WidgetModel.needsRedraw(null, feed(), now))
+    assertTrue(WidgetModel.needsRedraw(feed(WidgetBot("a", "Juno", false)), feed(WidgetBot("a", "Juno", true)), now))
+  }
 }

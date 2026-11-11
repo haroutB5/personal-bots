@@ -37,6 +37,25 @@ object WidgetModel {
     return WidgetState.Bots(rows.take(MAX_ROWS), maxOf(0, rows.size - MAX_ROWS))
   }
 
+  /**
+   * When the widget must redraw by itself: the moment a "working" dot stops being trusted. Android
+   * draws a widget once and keeps that picture, so without this a dot stays green until something else
+   * redraws it (device finding, green 75 s and 2.5 min after the run ended). Null when no dot is lit.
+   */
+  fun nextRefreshAt(feed: WidgetFeed?, now: Long): Long? {
+    if (feed == null) return null
+    val age = now - feed.updatedAt
+    if (age !in 0..WORKING_FRESH_MS) return null
+    if (feed.bots.none { it.working }) return null
+    return feed.updatedAt + WORKING_FRESH_MS + REFRESH_MARGIN_MS
+  }
+
+  /** Whether the picture on screen would differ. A heartbeat that changes nothing visible costs no redraw. */
+  fun needsRedraw(before: WidgetFeed?, after: WidgetFeed, now: Long): Boolean =
+    build(before, now) != build(after, now)
+
+  private const val REFRESH_MARGIN_MS = 1_000L
+
   /** Taps go to the bot's own page. The app lock covers the app, so the link lands behind it. */
   fun botLink(botId: String): String = "hbots://bot/${ShortcutPlanner.encode(botId)}"
 
