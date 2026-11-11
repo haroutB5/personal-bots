@@ -375,15 +375,7 @@ export const personalDesktopStreamRouteLayer = HttpRouter.add(
     const sessions = yield* SessionStore.SessionStore;
     return yield* serveUntilSessionRevoked({
       sessionId: session.sessionId,
-      until: sessions
-        .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logError("Failed to watch a stream session for revocation.").pipe(
-              Effect.annotateLogs({ sessionId: session.sessionId, cause }),
-            ),
-          ),
-        ),
+      until: sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
       serve: serveDesktopStream(desktop),
     });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),

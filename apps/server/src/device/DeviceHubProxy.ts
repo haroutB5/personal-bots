@@ -215,15 +215,7 @@ const handler = Effect.gen(function* () {
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
   );
   const sessions = yield* SessionStore.SessionStore;
-  const until = sessions
-    .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
-    .pipe(
-      Effect.catchCause((cause) =>
-        Effect.logError("Failed to watch a device hub session for revocation.").pipe(
-          Effect.annotateLogs({ sessionId: session.sessionId, cause }),
-        ),
-      ),
-    );
+  const until = sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint);
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {

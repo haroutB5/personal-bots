@@ -118,15 +118,7 @@ export const makePersonalPerformanceStreamRouteLayer = (options: PerformanceRout
       );
       const body = yield* endStreamWhenSessionRevoked({
         stream: events,
-        until: sessions
-          .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError("Failed to watch a performance stream session for revocation.").pipe(
-                Effect.annotateLogs({ sessionId: session.sessionId, cause }),
-              ),
-            ),
-          ),
+        until: sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
       });
       return HttpServerResponse.stream(body, {
         headers: {

@@ -9,6 +9,8 @@ import type { AuthSessionId } from "@t3tools/contracts";
 
 export const SESSION_REVOKED_CLOSE_CODE = 4401;
 export const SESSION_REVOKED_CLOSE_REASON = "session_revoked";
+const SESSION_CHECK_FAILED_CLOSE_CODE = 1011;
+const SESSION_CHECK_FAILED_CLOSE_REASON = "session_check_failed";
 const REVOKED_SOCKET_GRACE = "750 millis";
 
 const trackUpgrade = (
@@ -33,10 +35,10 @@ const trackUpgrade = (
  * Every socket route that authenticates a session once at upgrade goes
  * through this, with the session store's invalidation signal as `until`.
  */
-export const serveUntilSessionRevoked = <A, E, R, UR>(input: {
+export const serveUntilSessionRevoked = <A, E, R, UE, UR>(input: {
   readonly sessionId: AuthSessionId;
   readonly serve: Effect.Effect<A, E, R>;
-  readonly until: Effect.Effect<void, never, UR>;
+  readonly until: Effect.Effect<void, UE, UR>;
 }): Effect.Effect<
   A | HttpServerResponse.HttpServerResponse,
   E,
@@ -45,19 +47,31 @@ export const serveUntilSessionRevoked = <A, E, R, UR>(input: {
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const upgraded = yield* Deferred.make<Socket.Socket>();
+    const closeWith = (event: Socket.CloseEvent) =>
+      Deferred.await(upgraded).pipe(
+        Effect.flatMap((socket) =>
+          Effect.scoped(socket.writer.pipe(Effect.flatMap((writer) => writer.write(event)))),
+        ),
+      );
     const closeOnRevoke = input.until.pipe(
-      Effect.andThen(Deferred.await(upgraded)),
-      Effect.flatMap((socket) =>
-        Effect.scoped(
-          socket.writer.pipe(
-            Effect.flatMap((writer) =>
-              writer.write(
-                new Socket.CloseEvent(SESSION_REVOKED_CLOSE_CODE, SESSION_REVOKED_CLOSE_REASON),
+      Effect.matchCauseEffect({
+        onSuccess: () =>
+          closeWith(
+            new Socket.CloseEvent(SESSION_REVOKED_CLOSE_CODE, SESSION_REVOKED_CLOSE_REASON),
+          ),
+        onFailure: (cause) =>
+          Effect.logError("Failed to check a websocket session for revocation.").pipe(
+            Effect.annotateLogs({ sessionId: input.sessionId, cause }),
+            Effect.andThen(
+              closeWith(
+                new Socket.CloseEvent(
+                  SESSION_CHECK_FAILED_CLOSE_CODE,
+                  SESSION_CHECK_FAILED_CLOSE_REASON,
+                ),
               ),
             ),
           ),
-        ),
-      ),
+      }),
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to close the socket of a revoked session.").pipe(
           Effect.annotateLogs({ sessionId: input.sessionId, cause }),
@@ -82,8 +96,20 @@ export const serveUntilSessionRevoked = <A, E, R, UR>(input: {
  * it opened stops flowing, and finishing the body releases whatever the stream
  * holds open, such as an upstream connection.
  */
-export const endStreamWhenSessionRevoked = <A, E, R, UR>(input: {
+export const endStreamWhenSessionRevoked = <A, E, R, UE, UR>(input: {
   readonly stream: Stream.Stream<A, E, R>;
-  readonly until: Effect.Effect<void, never, UR>;
-}): Effect.Effect<Stream.Stream<A, E, R | UR>, never> =>
-  Effect.sync(() => input.stream.pipe(Stream.interruptWhen(input.until)));
+  readonly until: Effect.Effect<void, UE, UR>;
+}): Effect.Effect<Stream.Stream<A, E | UE, R | UR>, never> =>
+  Effect.sync(() =>
+    input.stream.pipe(
+      Stream.interruptWhen(
+        input.until.pipe(
+          Effect.tapCause((cause) =>
+            Effect.logError("Failed to check a stream session for revocation.").pipe(
+              Effect.annotateLogs({ cause }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
