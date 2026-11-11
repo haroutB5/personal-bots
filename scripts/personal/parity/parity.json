@@ -19,8 +19,8 @@
       "rpc": 130
     },
     "byStatus": {
-      "done": 353,
-      "planned": 27,
+      "done": 373,
+      "planned": 7,
       "n/a": 53,
       "unassigned": 0
     },
@@ -959,7 +959,7 @@
         "direct": ["avatarMotion.ts", "voice/callState.ts", "voice/voiceCallApi.ts"]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open VoiceCallScreen on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -1352,7 +1352,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Voice\" from its screen on Android. Same fields, buttons and confirm wording as voice/VoiceSettingsSection.tsx:475. Back closes only the sheet."
     },
     {
@@ -1373,7 +1373,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Hang up when quiet\" from its screen on Android. Same fields, buttons and confirm wording as voice/VoiceSettingsSection.tsx:384. Back closes only the sheet."
     },
     {
@@ -1394,7 +1394,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Languages I speak\" from its screen on Android. Same fields, buttons and confirm wording as voice/VoiceSettingsSection.tsx:418. Back closes only the sheet."
     },
     {
@@ -4062,7 +4062,7 @@
         "direct": ["voice/callState.ts", "voice/voiceCallApi.ts"]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows CallCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -4076,7 +4076,7 @@
         "direct": ["voice/callState.ts"]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows CallWorkCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -4090,7 +4090,7 @@
         "direct": []
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows LiveVoiceCallCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -4413,7 +4413,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Voice calls (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4438,7 +4438,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Voice calls / VoiceSettingsSection\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -11754,7 +11754,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsStart (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11810,7 +11810,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsList (query) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11866,7 +11866,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsTranscript (query) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11923,7 +11923,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSample (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11980,7 +11980,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSnapshot (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12037,7 +12037,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSend (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12094,7 +12094,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsFinish (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12151,7 +12151,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsCheckKey (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12208,7 +12208,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsLookupMemory (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12265,7 +12265,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsRenewPass (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12322,7 +12322,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSearchWeb (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
