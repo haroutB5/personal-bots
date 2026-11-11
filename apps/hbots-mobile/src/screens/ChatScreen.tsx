@@ -73,6 +73,9 @@ import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
 import { MessageList } from "../chat/MessageList";
 import type { MessageListHandle } from "../chat/MessageList";
 import { useChatCards } from "../chat/useChatCards";
+import { PermissionCard } from "../notifications/PermissionCard";
+import { permissionCardStore } from "../notifications/permissionCardRuntime";
+import { pendingQuestionRequests } from "@hbots/personal-client/conversation/questionCards";
 import { useNow } from "../chat/useNow";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
@@ -281,6 +284,12 @@ export function ChatScreen({
     [cards.items, thread],
   );
   const contextUsage = useMemo(() => chatContextUsage(view.projection), [view.projection]);
+  const questionOpen = useMemo(
+    () => view.projection !== null && pendingQuestionRequests(view.projection).length > 0,
+    [view.projection],
+  );
+  // Leaving a chat after sending is what arms the notification ask (SPEC 5e).
+  useEffect(() => () => permissionCardStore.leftChat(), []);
   const work = useMemo(
     () => (view.projection === null ? IDLE_RUN_WORK : runWork(view.projection)),
     [view.projection],
@@ -921,6 +930,7 @@ export function ChatScreen({
                     <Text style={styles.computerDockText}>Computer</Text>
                   </Pressable>
                 ) : null}
+                <PermissionCard botName={header.botName} questionOpen={questionOpen} />
                 <View
                   style={{ paddingBottom: Math.max(insets.bottom, 8) }}
                   onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
@@ -945,7 +955,7 @@ export function ChatScreen({
                       });
                       setActionError(failureText(result, "Couldn't stop this turn."));
                     }}
-                    onSent={() => undefined}
+                    onSent={() => permissionCardStore.messageSent()}
                     control={composerControl}
                   />
                 </View>

@@ -21,6 +21,7 @@ import { conversationChatTitle } from "@hbots/personal-client/feed/chatNames";
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { useBotShells } from "../personal/useBotShells";
+import { useHighRefresh } from "../display/useHighRefresh";
 import { tokens } from "../shell/tokens";
 import { ChatActionsSheet, type ChatActionRow } from "../sheets/ChatActionsSheet";
 import { NewChatSheet } from "../sheets/NewChatSheet";
@@ -51,6 +52,7 @@ export function ChatsListScreen({
   readonly onOpenChat: (threadId: string) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const highRefresh = useHighRefresh();
   const list = native.bots.usePersonalBotsList(native.environmentId);
   const [now] = useState(() => Date.now());
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
@@ -271,6 +273,7 @@ export function ChatsListScreen({
           data={rows}
           keyExtractor={(row) => row.link.threadId}
           contentContainerStyle={styles.list}
+          {...highRefresh}
           ListEmptyComponent={
             <Text style={styles.emptyText}>No chats here. Start one with the plus.</Text>
           }

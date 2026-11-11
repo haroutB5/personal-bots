@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <!-- Android 16 Live Update for the working notification. A normal permission: no prompt. -->
+  <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS"/>
   <application>
     <receiver android:name="expo.modules.hbotsnotify.NotificationActionReceiver" android:exported="false"/>
     <!-- Test hook for a build with no Firebase: a shell broadcast feeds the same handler a push would.

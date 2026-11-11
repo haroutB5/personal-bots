@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { startUntilConnected } from "../chat/startRetry";
 import { useStartChat } from "../chat/useStartChat";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { ScreenHeader } from "../shell/ScreenHeader";
 import { tokens } from "../shell/tokens";
 import { resolveNewChatTarget } from "../tile/ctoTarget";
+import {
+  NEW_CHAT_INITIAL,
+  NEW_CHAT_RETRY_MS,
+  NEW_CHAT_START_TIMEOUT_MS,
+  newChatMessage,
+  stepNewChat,
+} from "./newChatStart";
 
 /**
  * Opened by `hbots://bot/<id>?new=1` (the Quick Settings tile and the launcher
@@ -28,52 +34,60 @@ export function BotNewChatScreen({
   const insets = useSafeAreaInsets();
   const list = native.bots.usePersonalBotsList(native.environmentId);
   const start = useStartChat(native);
-  const [error, setError] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const begun = useRef(false);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  // One id for this opening, reused by every retry: the chat is created once.
-  const threadId = useRef<string | null>(null);
+  const connection = native.useConnectionState();
+  const connected = connection.phase === "connected";
+  const [step, dispatch] = useReducer(stepNewChat, NEW_CHAT_INITIAL);
+  const [threadId] = useState(() => native.client.ports.ids.randomUUID());
   const target = list.data === null ? null : resolveNewChatTarget(botId, list.data.bots);
   const targetBotId = target?.kind === "bot" ? target.botId : null;
 
-  const ids = native.client.ports.ids;
-  const begin = (botIdToStart: string) => {
-    threadId.current ??= ids.randomUUID();
-    const id = threadId.current;
-    void startUntilConnected(() => start(botIdToStart, undefined, id), {
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      onConnecting: () => setConnecting(true),
-      abandoned: () => !mounted.current,
-    }).then((result) => {
-      if (!mounted.current) return;
-      setConnecting(false);
-      if (result.kind === "started") onStarted(botIdToStart, result.threadId);
-      else setError(result.message);
-    });
-  };
-
+  // Tell the machine what the screen can see. It starts only on a connected link and a known bot, and
+  // asks again when a start was dropped under; a failed start waits a moment so a link that still
+  // claims to be up does not spin.
   useEffect(() => {
-    // The chat starts once per opening of this screen, whatever re-renders.
-    if (targetBotId === null || begun.current) return;
-    begun.current = true;
-    begin(targetBotId);
-  }, [targetBotId, begin]);
+    if (step.kind !== "waiting" && step.kind !== "offline") return undefined;
+    const event = { type: "inputs", connected, hasTarget: targetBotId !== null } as const;
+    if (step.kind === "offline" || step.failures === 0) {
+      dispatch(event);
+      return undefined;
+    }
+    const timer = setTimeout(() => dispatch(event), NEW_CHAT_RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [step, connected, targetBotId]);
 
-  const tryAgain = () => {
-    if (targetBotId === null) return;
-    setError(null);
-    begin(targetBotId);
-  };
+  // `start` is a new function every render, so the effect reads it through a ref and fires once per
+  // entry into "starting" (the key changes with each retry), never on a re-render. Every attempt asks
+  // for the same chat id, so a reply that was lost on the way back never makes a second chat. An
+  // attempt that gets no reply in time counts as a dropped link and its late answer is ignored.
+  const startRef = useRef(start);
+  useEffect(() => {
+    startRef.current = start;
+  });
+  const startKey = step.kind === "starting" ? step.failures : null;
+  useEffect(() => {
+    if (startKey === null || targetBotId === null) return;
+    let live = true;
+    void startRef.current(targetBotId, { threadId }).then((result) => {
+      if (live) dispatch({ type: "result", result });
+    });
+    const timer = setTimeout(() => {
+      if (live) dispatch({ type: "timeout" });
+    }, NEW_CHAT_START_TIMEOUT_MS);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [startKey, targetBotId, threadId]);
+
+  const announced = useRef(false);
+  useEffect(() => {
+    if (step.kind !== "started" || targetBotId === null || announced.current) return;
+    announced.current = true;
+    onStarted(targetBotId, step.threadId);
+  }, [step, targetBotId, onStarted]);
 
   const notice =
-    error ??
+    newChatMessage(step) ??
     (target?.kind === "no-cto"
       ? "You don't have a CTO bot yet. Make the lead of the Dev team your CTO, then try again."
       : target?.kind === "missing"
@@ -88,26 +102,25 @@ export function BotNewChatScreen({
       <View style={styles.body}>
         {notice === null ? (
           <>
-            <ActivityIndicator
-              color={tokens.textSecondary}
-              accessibilityLabel={connecting ? "Connecting to your laptop" : "Starting a chat"}
-            />
-            {connecting ? (
-              <Text style={styles.notice} accessibilityLiveRegion="polite" maxFontSizeMultiplier={1.6}>
-                Connecting to your laptop...
+            <ActivityIndicator color={tokens.textSecondary} accessibilityLabel="Starting a chat" />
+            {connected ? null : (
+              <Text style={styles.waiting} maxFontSizeMultiplier={1.6}>
+                Waiting for the connection…
               </Text>
-            ) : null}
+            )}
           </>
         ) : (
           <>
             <Text style={styles.notice} accessibilityRole="alert" maxFontSizeMultiplier={1.6}>
               {notice}
             </Text>
-            {error !== null ? (
-              <Pressable onPress={tryAgain} accessibilityRole="button" style={styles.retry}>
-                <Text style={styles.retryText} maxFontSizeMultiplier={1.6}>
-                  Try again
-                </Text>
+            {step.kind === "offline" || step.kind === "failed" ? (
+              <Pressable
+                onPress={() => dispatch({ type: "retry" })}
+                accessibilityRole="button"
+                style={styles.retry}
+              >
+                <Text style={styles.retryLabel}>Try again</Text>
               </Pressable>
             ) : null}
           </>
@@ -120,15 +133,16 @@ export function BotNewChatScreen({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.bg },
   body: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
-  notice: { color: tokens.textSecondary, fontSize: 14, lineHeight: 20, textAlign: "center" },
+  waiting: { color: tokens.textSecondary, fontSize: 13, marginTop: 12, textAlign: "center" },
   retry: {
-    minHeight: 48,
+    minHeight: 44,
     marginTop: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    backgroundColor: tokens.primary,
-    alignItems: "center",
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
     justifyContent: "center",
   },
-  retryText: { color: tokens.primaryText, fontSize: 16, fontWeight: "700" },
+  retryLabel: { color: tokens.text, fontSize: 15, fontWeight: "500" },
+  notice: { color: tokens.textSecondary, fontSize: 14, lineHeight: 20, textAlign: "center" },
 });

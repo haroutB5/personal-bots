@@ -26,5 +26,13 @@ class HbotsShareModule : Module() {
       val context = app()
       if (context != null) ShareStore.discardAllExcept(context, keep)
     }
+
+    /**
+     * Wraps the composer's TextInput: a hardware Enter sends (Shift Enter is a line break) and a
+     * keyboard image lands in the share intake dir, to be read like a shared image.
+     */
+    View(HbotsComposerHostView::class) {
+      Events("onEnterSend", "onContent")
+    }
   }
 }

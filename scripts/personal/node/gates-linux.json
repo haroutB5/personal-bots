@@ -68,7 +68,11 @@
       "cd android && ./gradlew :hbots-notify:testDebugUnitTest --no-daemon --console=plain",
       "cd android && ./gradlew :hbots-secure:testDebugUnitTest --no-daemon --console=plain",
       "cd android && ./gradlew :hbots-updater:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-voice:testDebugUnitTest --no-daemon --console=plain"
+      "cd android && ./gradlew :hbots-voice:testDebugUnitTest --no-daemon --console=plain",
+      "cd android && ./gradlew :hbots-launcher:testDebugUnitTest --no-daemon --console=plain",
+      "cd android && ./gradlew :hbots-liveview:testDebugUnitTest --no-daemon --console=plain",
+      "cd android && ./gradlew :hbots-share:testDebugUnitTest --no-daemon --console=plain",
+      "cd android && ./gradlew :hbots-display:testDebugUnitTest --no-daemon --console=plain"
     ]
   },
   {

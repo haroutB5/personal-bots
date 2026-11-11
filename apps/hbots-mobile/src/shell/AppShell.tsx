@@ -9,7 +9,7 @@ import {
   type NativeStackScreenProps,
 } from "@react-navigation/native-stack";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { BackHandler, Linking, StyleSheet, Text, View } from "react-native";
+import { BackHandler, Linking, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AndroidRelease } from "../compat";
@@ -17,6 +17,9 @@ import { chatComputerTarget } from "../chat/chatComputer";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { useLinkGate } from "../security/useLinkGate";
+import { storeLinkDraft } from "../chat/linkDraft";
+import { clearChatNotifications } from "../notifications/clearChatNotifications";
+import { nativeNotify } from "../notifications/nativeNotify";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
 import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
@@ -35,6 +38,7 @@ import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
 import { FilesScreen } from "../files/FilesScreen";
 import { ChatScreen } from "../screens/ChatScreen";
+import { StopList } from "../screens/StopList";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
 import { ComputerScreen } from "../computer/ComputerScreen";
 import { DevicesScreen } from "../settings/DevicesScreen";
@@ -120,15 +124,6 @@ const navigationTheme: Theme = {
 };
 
 type TabsProps = NativeStackScreenProps<RootStackParamList, "Tabs">;
-
-function Placeholder({ title, body }: { readonly title: string; readonly body: string }) {
-  return (
-    <View style={styles.placeholder}>
-      <Text style={styles.placeholderTitle}>{title}</Text>
-      <Text style={styles.placeholderBody}>{body}</Text>
-    </View>
-  );
-}
 
 function HeaderScreen({
   title,
@@ -241,6 +236,14 @@ const VOICE_CALL_NAVIGATION: VoiceCallNavigation = {
   },
 };
 
+/** Renders nothing: it clears the opened chat's notifications from the shade. */
+function ChatRead({ threadId }: { readonly threadId: string }) {
+  useEffect(() => {
+    clearChatNotifications(threadId, nativeNotify);
+  }, [threadId]);
+  return null;
+}
+
 function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
   const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
@@ -250,16 +253,30 @@ function Shell({ props }: { readonly props: AppShellProps }) {
   }, [props.native]);
   useNativeOutboxFlusher(props.native, chat);
 
-  const openLink = useCallback((raw: string) => {
-    const state = parseDeepLink(raw);
-    if (state === null) return;
-    if (!navigationRef.isReady()) {
-      pendingLink.current = raw;
-      return;
-    }
-    const routes = state.stack.map(toNavigationRoute);
-    navigationRef.reset({ index: routes.length - 1, routes });
-  }, []);
+  const openLink = useCallback(
+    (raw: string) => {
+      const state = parseDeepLink(raw);
+      if (state === null) return;
+      if (!navigationRef.isReady()) {
+        pendingLink.current = raw;
+        return;
+      }
+      // A notification reply too long to send there arrives as a draft: put it where the composer reads from.
+      for (const route of state.stack) {
+        if (route.kind === "chat" && route.draft !== undefined) {
+          storeLinkDraft(
+            props.native.client.ports.kv,
+            props.native.environmentId,
+            route.threadId,
+            route.draft,
+          );
+        }
+      }
+      const routes = state.stack.map(toNavigationRoute);
+      navigationRef.reset({ index: routes.length - 1, routes });
+    },
+    [props.native],
+  );
 
   // Every link from outside goes through the app lock gate: while locked it is held, not acted on.
   const receiveLink = useLinkGate(openLink);
@@ -305,18 +322,21 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           </Stack.Screen>
           <Stack.Screen name="Chat">
             {({ navigation, route }) => (
-              <ChatScreen
-                native={props.native}
-                chat={chat}
-                botId={route.params.botId}
-                threadId={route.params.threadId}
-                onBack={() => navigation.goBack()}
-                onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
-                onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
-                onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
-                onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
-                onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
-              />
+              <>
+                <ChatRead threadId={route.params.threadId} />
+                <ChatScreen
+                  native={props.native}
+                  chat={chat}
+                  botId={route.params.botId}
+                  threadId={route.params.threadId}
+                  onBack={() => navigation.goBack()}
+                  onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                  onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+                  onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+                  onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
+                  onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
+                />
+              </>
             )}
           </Stack.Screen>
           <Stack.Screen name="Chats">
@@ -557,7 +577,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           <Stack.Screen name="Stop">
             {({ navigation }) => (
               <HeaderScreen title="Stop" onBack={() => navigation.goBack()}>
-                <Placeholder title="Bots working" body="Nothing is working right now." />
+                <StopList native={props.native} chat={chat} />
               </HeaderScreen>
             )}
           </Stack.Screen>

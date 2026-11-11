@@ -42,16 +42,17 @@ import { uploadDraftAttachments, type DraftAttachment } from "./outboxNative";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
+import { ComposerHost } from "./ComposerHost";
+import { keyboardImages, releasedIntakes } from "./composerInput";
+import { draftKey } from "./linkDraft";
+import { blockedMessage } from "../share/pickerModel";
+import { discardShare, readShare } from "../share/shareIntake";
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const DRAFT_DEBOUNCE_MS = 400;
 const MAX_TITLE_SEED = 80;
-
-function draftKey(environmentId: string, threadId: string): string {
-  return `t3code:composer-draft:v1:${environmentId}:${threadId}`;
-}
 
 function titleSeedFor(text: string, attachments: ReadonlyArray<DraftAttachment>): string {
   const seed =
@@ -140,6 +141,26 @@ export function Composer({
     };
   }, [key, native, text]);
 
+  // Keyboard images wait in the share intake dir until the draft lets go of them.
+  const intakeHeld = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    for (const intakeId of releasedIntakes(intakeHeld.current, attachments)) {
+      discardShare(intakeId);
+      for (const [attachmentId, held] of intakeHeld.current) {
+        if (held === intakeId) intakeHeld.current.delete(attachmentId);
+      }
+    }
+  }, [attachments]);
+
+  useEffect(() => {
+    const held = intakeHeld.current;
+    return () => {
+      for (const intakeId of new Set(held.values())) discardShare(intakeId);
+      held.clear();
+    };
+  }, []);
+
   const hasContent = text.trim().length > 0 || attachments.length > 0;
   const showStop = working && !hasContent;
   const canSend = hasContent && !sending && !preparing;
@@ -155,6 +176,30 @@ export function Composer({
       }
       return [...current, ...accepted.filter((attachment) => !tooBig.includes(attachment))];
     });
+  };
+
+  /** An image from the keyboard: the share intake's caps and refusals, then a draft attachment. */
+  const addKeyboardImages = (intakeId: string | null) => {
+    if (intakeId === null) {
+      setError(blockedMessage("empty"));
+      return;
+    }
+    const result = keyboardImages(readShare(intakeId), (index) => {
+      return `${Date.now()}-kb${index}-${Math.random().toString(36).slice(2, 8)}`;
+    });
+    if (!result.ok) {
+      discardShare(intakeId);
+      setError(result.message);
+      return;
+    }
+    if (attachments.length + result.drafts.length > MAX_ATTACHMENTS) {
+      discardShare(intakeId);
+      setError(blockedMessage("too-many-items"));
+      return;
+    }
+    for (const draft of result.drafts) intakeHeld.current.set(draft.id, intakeId);
+    setError(null);
+    setAttachments((current) => [...current, ...result.drafts]);
   };
 
   const pickPhotos = async () => {
@@ -593,16 +638,22 @@ export function Composer({
           <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
         </Pressable>
         <View style={styles.fieldBox}>
-          <TextInput
-            value={text}
-            onChangeText={setText}
-            placeholder={placeholder}
-            placeholderTextColor={tokens.textSecondary}
-            accessibilityLabel={placeholder}
-            multiline
-            maxFontSizeMultiplier={1.6}
-            style={styles.field}
-          />
+          <ComposerHost
+            style={styles.fieldHost}
+            onEnterSend={() => void send()}
+            onContent={addKeyboardImages}
+          >
+            <TextInput
+              value={text}
+              onChangeText={setText}
+              placeholder={placeholder}
+              placeholderTextColor={tokens.textSecondary}
+              accessibilityLabel={placeholder}
+              multiline
+              maxFontSizeMultiplier={1.6}
+              style={[styles.field, styles.fieldInHost]}
+            />
+          </ComposerHost>
           <Pressable
             onPress={() => setAttachOpen(true)}
             disabled={picking || sending || preparing}
@@ -723,6 +774,8 @@ const styles = StyleSheet.create({
     paddingLeft: 14,
     paddingRight: 4,
   },
+  fieldHost: { flex: 1 },
+  fieldInHost: { flex: 0, alignSelf: "stretch" },
   field: { flex: 1, color: tokens.text, fontSize: 16, lineHeight: 22, paddingVertical: 10 },
   fieldIconButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   sendButton: {

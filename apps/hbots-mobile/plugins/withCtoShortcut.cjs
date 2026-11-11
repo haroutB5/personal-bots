@@ -11,6 +11,9 @@ const {
 // CTO bot. It uses the alias link because the bot id is not known at build time;
 // the app resolves the alias to the CTO bot when it opens.
 const SHORTCUT_LINK = "hbots://bot/cto?new=1";
+// Shortcuts go through the launcher module's trampoline: Android adds CLEAR_TASK to a shortcut intent,
+// which on the main (singleTask) activity restarts the running app with no live connection.
+const TRAMPOLINE = "expo.modules.hbotslauncher.ShortcutTrampolineActivity";
 const SHORTCUT_META = "android.app.shortcuts";
 const SHORTCUTS_RESOURCE = "@xml/hbots_shortcuts";
 const SHORT_LABEL = "hbots_shortcut_cto_short";
@@ -29,7 +32,7 @@ function shortcutsXml(packageName) {
       android:action="android.intent.action.VIEW"
       android:data="${SHORTCUT_LINK}"
       android:targetPackage="${packageName}"
-      android:targetClass="${packageName}.MainActivity"/>
+      android:targetClass="${TRAMPOLINE}"/>
   </shortcut>
 </shortcuts>
 `;
@@ -89,3 +92,4 @@ module.exports.shortcutsXml = shortcutsXml;
 module.exports.applyShortcutMeta = applyShortcutMeta;
 module.exports.applyStrings = applyStrings;
 module.exports.SHORTCUT_LINK = SHORTCUT_LINK;
+module.exports.TRAMPOLINE = TRAMPOLINE;

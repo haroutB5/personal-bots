@@ -11,6 +11,7 @@ const fs = vi.hoisted(() => ({
   nativeMissing: false,
   purgeCalls: 0,
   voiceWipes: 0,
+  launcherWipes: 0,
 }));
 
 vi.mock("./secureStorage", () => ({
@@ -52,6 +53,12 @@ vi.mock("../notifications/nativeNotify", () => ({
 vi.mock("../voice/voiceWipe", () => ({
   wipeVoiceCalls: () => {
     fs.voiceWipes += 1;
+  },
+}));
+
+vi.mock("../launcher/nativeLauncher", () => ({
+  wipeNativeLauncher: () => {
+    fs.launcherWipes += 1;
   },
 }));
 
@@ -191,6 +198,7 @@ beforeEach(() => {
   fs.dirs.add("file:///cache-dir");
   fs.dirs.add("file:///documents");
   fs.voiceWipes = 0;
+  fs.launcherWipes = 0;
   createNativeEnvironmentCache();
 });
 
@@ -225,6 +233,12 @@ describe("wipe on sign-out and revoke", () => {
     wipeLocalData();
 
     expect(fs.voiceWipes).toBe(1);
+  });
+
+  it("clears the launcher shortcuts and the widget feed", () => {
+    wipeLocalData();
+
+    expect(fs.launcherWipes).toBe(1);
   });
 
   it("removes the plain copy made for an upload as well", async () => {

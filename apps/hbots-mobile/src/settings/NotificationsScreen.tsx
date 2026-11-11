@@ -5,15 +5,18 @@ import { AppState } from "react-native";
 
 import { useNow } from "../chat/useNow";
 import { nativeNotify, type ChannelState } from "../notifications/nativeNotify";
+import { androidPermission } from "../notifications/pushPermission";
 import { pushRowText } from "../notifications/pushState";
 import { pushController } from "../notifications/pushRuntime";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import {
+  askForNotifications,
   canSendTest,
   channelRows,
   notificationDeviceDetail,
   notificationDevicesLine,
   notificationEventRows,
+  permissionRow,
 } from "./notificationsScreenModel";
 import {
   Notice,
@@ -31,6 +34,14 @@ function readChannelStates(): ReadonlyArray<ChannelState> {
     return nativeNotify?.channelStates() ?? [];
   } catch {
     return [];
+  }
+}
+
+function readEnabled(): boolean {
+  try {
+    return nativeNotify?.notificationsEnabled() ?? true;
+  } catch {
+    return true;
   }
 }
 
@@ -56,6 +67,8 @@ export function NotificationsScreen({
   );
   const push = pushRowText(pushStatus);
   const [channels, setChannels] = useState<ReadonlyArray<ChannelState>>(readChannelStates);
+  const [enabled, setEnabled] = useState(readEnabled);
+  const permission = permissionRow({ enabled, push: pushStatus.kind });
   // Android settings is another screen. Coming back may have changed a channel or the master switch.
   useEffect(() => {
     void pushController.refresh();
@@ -63,6 +76,7 @@ export function NotificationsScreen({
       if (state !== "active") return;
       void pushController.refresh();
       setChannels(readChannelStates());
+      setEnabled(readEnabled());
     });
     return () => subscription.remove();
   }, []);
@@ -80,6 +94,16 @@ export function NotificationsScreen({
         : commandFailureMessage(result, "Could not save that setting.");
     setError(failure);
     setBusy(null);
+  };
+
+  const askAgain = async () => {
+    await askForNotifications({
+      request: () => androidPermission.request(),
+      openSettings: () => nativeNotify?.openNotificationSettings(),
+    });
+    setEnabled(readEnabled());
+    setChannels(readChannelStates());
+    void pushController.refresh({ force: true });
   };
 
   const test = async () => {
@@ -100,6 +124,16 @@ export function NotificationsScreen({
   return (
     <SettingsPage title="Notifications" onBack={onBack}>
       <Section label="This device">
+        {permission === null ? null : (
+          <>
+            <Row title={permission.title} hint={permission.body} last />
+            <PrimaryButton label={permission.actionLabel} onPress={() => void askAgain()} />
+            <TextButton
+              label={permission.settingsLabel}
+              onPress={() => nativeNotify?.openNotificationSettings()}
+            />
+          </>
+        )}
         <Row title={push.title} hint={push.body} last />
         {push.action === null || push.actionLabel === null ? null : (
           <PrimaryButton

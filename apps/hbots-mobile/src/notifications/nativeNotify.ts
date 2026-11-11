@@ -14,6 +14,13 @@ export interface PolicyBot {
   readonly hidePreviews: boolean;
 }
 
+/** One bot that is working, as the "bots working" notification shows it. */
+export interface WorkingBot {
+  readonly botId: string;
+  readonly name: string;
+  readonly note?: string;
+}
+
 /** The native side of phone notifications (`modules/hbots-notify`). */
 export interface HbotsNotifyModule {
   isFcmConfigured(): boolean;
@@ -25,6 +32,10 @@ export interface HbotsNotifyModule {
   openChannelSettings(channelId: string): void;
   channelStates(): ChannelState[];
   wipe(): void;
+  setWorking(bots: readonly WorkingBot[]): void;
+  clearWorking(): void;
+  /** The chat was opened: take its notifications out of the shade. */
+  cancelForChat(threadId: string): void;
   addListener(
     event: "tokenRefresh",
     listener: (event: { token: string }) => void,

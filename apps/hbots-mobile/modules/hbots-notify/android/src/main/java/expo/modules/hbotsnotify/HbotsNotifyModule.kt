@@ -54,7 +54,10 @@ class HbotsNotifyModule : Module() {
     /** The lock flag and the bot list the push service needs while JS is not running. */
     Function("syncPolicy") { appLockOn: Boolean, bots: List<Map<String, Any?>> ->
       val policy = PolicyCodec.fromJs(appLockOn, bots)
+      // Notices already in the shade were drawn under the old policy; take out the ones the new one forbids.
+      val leftBehind = ShadeCleanup.scopeAfter(PolicyStore.read(app()), policy)
       PolicyStore.write(app(), policy)
+      ShadeCleanup.cancelScope(app(), leftBehind)
       NotifyChannels.syncBots(app(), policy.bots)
       if (BuildConfig.FCM_CONFIGURED) NotifyChannels.ensureBots(app(), policy.bots)
     }
@@ -75,11 +78,22 @@ class HbotsNotifyModule : Module() {
       )
     }
 
+    /** The chat was opened: its notifications are read, so they leave the shade. */
+    Function("cancelForChat") { threadId: String -> ShadeCleanup.cancelChat(app(), threadId) }
+
     Function("channelStates") { NotifyChannels.states(app()) }
+
+    /** The bots that are running now. Native throttles to one change per 15 s and expires after 45 s. */
+    Function("setWorking") { bots: List<Map<String, Any?>> ->
+      WorkingController.update(app(), WorkingPlanner.parse(bots))
+    }
+
+    Function("clearWorking") { WorkingController.clear(app()) }
 
     /** Sign-out and revoke: nothing of the old session stays on screen or on disk. */
     Function("wipe") {
       val context = app()
+      WorkingController.reset(context)
       NotificationSender.cancelAll(context)
       NotifyChannels.deleteAll(context)
       PolicyStore.clear(context)

@@ -1,0 +1,19 @@
+{
+  "comment": "The shape JS sends to HbotsNotify.syncPolicy. policySync.test.ts feeds records and lock to buildNativePolicy and expects native. PolicySeamTest feeds native to PolicyCodec.fromJs and expects policy. Rename a key on one side and one of the two fails.",
+  "lock": { "kind": "on", "timeout": "immediate" },
+  "records": [
+    { "botId": "b1", "name": "  Juno ", "hidePreviews": true },
+    { "botId": "b2", "name": null }
+  ],
+  "native": {
+    "appLockOn": true,
+    "bots": [
+      { "botId": "b1", "name": "Juno", "hidePreviews": true },
+      { "botId": "b2", "name": "hbots", "hidePreviews": false }
+    ]
+  },
+  "policy": {
+    "b1": { "name": "Juno", "hidePreviews": true },
+    "b2": { "name": "hbots", "hidePreviews": false }
+  }
+}

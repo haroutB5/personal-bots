@@ -1,6 +1,7 @@
 import type { PersonalPushPreferences } from "@t3tools/contracts";
 
 import type { ChannelState } from "../notifications/nativeNotify";
+import type { PermissionAnswer } from "../notifications/pushController";
 import type { PushStatus } from "../notifications/pushState";
 import { NOTIFICATION_EVENTS } from "./settingsScreenModel";
 
@@ -60,4 +61,46 @@ export function channelRows(channels: ReadonlyArray<ChannelState>): ReadonlyArra
 /** Test pushes are only worth sending once the phone is registered. */
 export function canSendTest(status: PushStatus): boolean {
   return status.kind === "on";
+}
+
+export interface PermissionRow {
+  readonly title: string;
+  readonly body: string;
+  readonly actionLabel: string;
+  readonly settingsLabel: string;
+}
+
+/**
+ * Android's own switch for hbots notifications, whatever the build can register. A build without
+ * Firebase still posts the working notice and the reply buttons, so a denied permission has to show
+ * here with a way back. A build that can register shows the same thing in its push row, so this
+ * stays out of its way.
+ */
+export function permissionRow(input: {
+  readonly enabled: boolean;
+  readonly push: PushStatus["kind"];
+}): PermissionRow | null {
+  if (input.enabled || input.push === "blocked") return null;
+  return {
+    title: "Notifications are off",
+    body: "Android is blocking notifications from hbots. Turn them on to see when bots are working and to answer from the notification.",
+    actionLabel: "Turn on",
+    settingsLabel: "Open Android settings",
+  };
+}
+
+export interface PermissionAskPort {
+  request(): Promise<PermissionAnswer>;
+  openSettings(): void;
+}
+
+/**
+ * One button for both cases. Android shows its prompt again only while it still allows it; when it says
+ * it will not (or the phone has no prompt, before Android 13) the only way on is the app's notification
+ * settings, so open those.
+ */
+export async function askForNotifications(port: PermissionAskPort): Promise<PermissionAnswer> {
+  const answer = await port.request();
+  if (answer === "blocked" || answer === "not-needed") port.openSettings();
+  return answer;
 }

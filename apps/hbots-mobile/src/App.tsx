@@ -26,6 +26,8 @@ import { OnboardingScreen } from "./onboarding/OnboardingScreen";
 import { failureFor, reducePairing } from "./onboarding/model";
 import { inspectServer, pair } from "./pairing";
 import { PushBridge } from "./notifications/PushBridge";
+import { LauncherBridge } from "./launcher/LauncherBridge";
+import { WorkingBridge } from "./working/WorkingBridge";
 import { pushController } from "./notifications/pushRuntime";
 import { AppAtomRegistryProvider } from "./personal/atomRegistry";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
@@ -470,6 +472,8 @@ function App() {
         {screen.kind === "ready" ? (
           <>
             <PushBridge native={screen.native} appVersion={installedVersion} />
+            <WorkingBridge native={screen.native} />
+            <LauncherBridge native={screen.native} />
             <VoiceCallProvider native={screen.native}>
               <AppLockGate onSignOut={() => confirmSignOut(screen.session)}>
                 <AppShell

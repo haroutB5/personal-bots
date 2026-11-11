@@ -3,6 +3,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import { Alert, AppState, InteractionManager } from "react-native";
 
+import { wipeNativeLauncher } from "../launcher/nativeLauncher";
 import { wipeNativeNotifications } from "../notifications/nativeNotify";
 import {
   CACHE_DIRECTORY as THREAD_CACHE_DIRECTORY,
@@ -177,6 +178,7 @@ export async function wipeLocalData(): Promise<void> {
     deleteCacheKey,
     wipeNativeNotifications,
     wipeVoiceCalls,
+    wipeNativeLauncher,
   ]) {
     try {
       wipe();

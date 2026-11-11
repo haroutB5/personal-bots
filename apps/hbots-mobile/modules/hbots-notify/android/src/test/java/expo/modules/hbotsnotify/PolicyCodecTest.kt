@@ -20,14 +20,14 @@ class PolicyCodecTest {
   }
 
   @Test fun jsInputWithoutAHideFlagHidesPreviews() {
-    val policy = PolicyCodec.fromJs(false, listOf(mapOf("id" to "a", "name" to "Juno")))
+    val policy = PolicyCodec.fromJs(false, listOf(mapOf("botId" to "a", "name" to "Juno")))
     assertTrue(policy.bots.getValue("a").hidePreviews)
   }
 
   @Test fun jsInputSkipsBadRowsAndTrimsNames() {
     val policy = PolicyCodec.fromJs(
       false,
-      listOf(mapOf("id" to "", "name" to "x"), mapOf("name" to "no id"), mapOf("id" to "a", "name" to "  Juno  ", "hidePreviews" to false)),
+      listOf(mapOf("botId" to "", "name" to "x"), mapOf("name" to "no id"), mapOf("botId" to "a", "name" to "  Juno  ", "hidePreviews" to false)),
     )
     assertEquals(setOf("a"), policy.bots.keys)
     assertEquals("Juno", policy.bots.getValue("a").name)
@@ -35,6 +35,11 @@ class PolicyCodecTest {
   }
 
   @Test fun aBlankNameFallsBackToTheAppName() {
-    assertEquals("hbots", PolicyCodec.fromJs(false, listOf(mapOf("id" to "a", "name" to " ", "hidePreviews" to false))).bots.getValue("a").name)
+    assertEquals("hbots", PolicyCodec.fromJs(false, listOf(mapOf("botId" to "a", "name" to " ", "hidePreviews" to false))).bots.getValue("a").name)
+  }
+
+  @Test fun jsInputUsesTheBotIdKeyJsSends() {
+    val policy = PolicyCodec.fromJs(false, listOf(mapOf("botId" to "a", "name" to "Juno", "hidePreviews" to false)))
+    assertEquals("Juno", policy.bots.getValue("a").name)
   }
 }

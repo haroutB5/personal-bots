@@ -111,6 +111,27 @@ internal object ShareStore {
     return id
   }
 
+  /**
+   * Images a keyboard handed to the composer. Same dir, same copy, same caps and same payload
+   * shape as a share, so JavaScript runs the one intake on both. Returns the id, or null.
+   */
+  fun intakeContent(context: Context, uris: List<Uri>, mimeHint: String): String? {
+    if (uris.isEmpty()) return null
+    sweep(context)
+    val id = UUID.randomUUID().toString()
+    val dir = File(root(context), id)
+    if (!dir.mkdirs()) return null
+    val items = JSONArray()
+    for (uri in uris) {
+      // One past the cap is enough for the app to see "too many".
+      if (items.length() > MAX_ITEMS) break
+      items.put(copy(context, dir, uri, mimeHint, items.length()))
+    }
+    val payload = JSONObject().put("ask", false).put("count", uris.size).put("items", items)
+    File(dir, "payload.json").writeText(payload.toString())
+    return id
+  }
+
   @Suppress("DEPRECATION")
   private fun streams(intent: Intent): List<Uri> {
     val found = ArrayList<Uri>()

@@ -31,3 +31,9 @@ modules/hbots-secure/android/build/
 !modules/hbots-voice/android/
 !modules/hbots-voice/android/**
 modules/hbots-voice/android/build/
+!modules/hbots-launcher/android/
+!modules/hbots-launcher/android/**
+modules/hbots-launcher/android/build/
+!modules/hbots-display/android/
+!modules/hbots-display/android/**
+modules/hbots-display/android/build/

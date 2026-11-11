@@ -29,9 +29,22 @@ object NotificationSender {
   const val EXTRA_CHOICE = "choice"
   private const val NOTICE_MS = 4_000L
 
-  fun androidId(notificationId: String): Int = notificationId.hashCode()
+  /**
+   * A notification is found by its tag, which is the server id itself, so two ids can never share a slot.
+   * (A hash of the id could.) The numeric id is the same for all of them.
+   */
+  const val SLOT = 1
+  const val TAG_PREFIX = "n."
+  fun tagFor(notificationId: String): String = "$TAG_PREFIX$notificationId"
 
-  private fun canPost(context: Context): Boolean {
+  /**
+   * A PendingIntent is told apart by its data, not its extras. A data URI that holds the id and the
+   * button makes each button its own PendingIntent, with no request code to collide.
+   */
+  internal fun buttonKey(notificationId: String, slot: String): String =
+    "hbots-action://notification/${PathSegment.encode(notificationId)}/$slot"
+
+  internal fun canPost(context: Context): Boolean {
     if (Build.VERSION.SDK_INT >= 33 &&
       context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     ) return false
@@ -65,7 +78,7 @@ object NotificationSender {
   }
 
   fun cancel(context: Context, notificationId: String) {
-    NotificationManagerCompat.from(context).cancel(androidId(notificationId))
+    NotificationManagerCompat.from(context).cancel(tagFor(notificationId), SLOT)
   }
 
   fun cancelAll(context: Context) {
@@ -74,7 +87,7 @@ object NotificationSender {
 
   private fun notify(context: Context, plan: NotificationPlan, notification: Notification) {
     try {
-      NotificationManagerCompat.from(context).notify(androidId(plan.notificationId), notification)
+      NotificationManagerCompat.from(context).notify(tagFor(plan.notificationId), SLOT, notification)
     } catch (_: SecurityException) {
       Log.i(TAG, "notification refused by the system")
     }
@@ -108,12 +121,9 @@ object NotificationSender {
       ?: context.packageManager.getLaunchIntentForPackage(context.packageName)
       ?: Intent()
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-    return PendingIntent.getActivity(
-      context,
-      androidId(plan.notificationId),
-      intent,
-      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-    )
+    // A launch intent has no data, so give it a unique one. A deep link is already specific to its chat.
+    if (intent.data == null) intent.setData(Uri.parse(buttonKey(plan.notificationId, "open")))
+    return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
   }
 
   private fun actionIntent(context: Context, plan: NotificationPlan, action: String, choice: String?): Intent =
@@ -126,11 +136,13 @@ object NotificationSender {
       .also { if (choice != null) it.putExtra(EXTRA_CHOICE, choice) }
 
   private fun actionFor(context: Context, plan: NotificationPlan, action: PlanAction, index: Int): NotificationCompat.Action {
+    if (action.kind == InlineAction.OPEN) return openAction(context, plan, action, index)
     val reply = action.kind == InlineAction.REPLY
     val intent = actionIntent(context, plan, if (reply) ACTION_REPLY else ACTION_ANSWER, action.choice)
+      .setData(Uri.parse(buttonKey(plan.notificationId, "a$index")))
     // A RemoteInput result is written into the intent, so that one must be mutable.
     val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (reply) mutableFlag() else PendingIntent.FLAG_IMMUTABLE
-    val pending = PendingIntent.getBroadcast(context, androidId(plan.notificationId) * 31 + index + 1, intent, flags)
+    val pending = PendingIntent.getBroadcast(context, 0, intent, flags)
     val builder = NotificationCompat.Action.Builder(0, action.label, pending)
       .setShowsUserInterface(false)
       // Android 12 and later ask for the lock screen first, so a locked phone cannot send.
@@ -142,11 +154,25 @@ object NotificationSender {
     return builder.build()
   }
 
+  /**
+   * A button that opens the app at the chat. It is used when Reply and Answer cannot ask for the device
+   * credential (before Android 12). It sends nothing, so it needs no lock screen check.
+   */
+  private fun openAction(context: Context, plan: NotificationPlan, action: PlanAction, index: Int): NotificationCompat.Action {
+    val intent = plan.deepLink?.let { Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(context.packageName) }
+      ?: context.packageManager.getLaunchIntentForPackage(context.packageName)
+      ?: Intent()
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    if (intent.data == null) intent.setData(Uri.parse(buttonKey(plan.notificationId, "o$index")))
+    val pending = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    return NotificationCompat.Action.Builder(0, action.label, pending).setShowsUserInterface(true).build()
+  }
+
   private fun retryAction(context: Context, plan: NotificationPlan): NotificationCompat.Action {
     val pending = PendingIntent.getBroadcast(
       context,
-      androidId(plan.notificationId) * 31 + 99,
-      actionIntent(context, plan, ACTION_RETRY, null),
+      0,
+      actionIntent(context, plan, ACTION_RETRY, null).setData(Uri.parse(buttonKey(plan.notificationId, "retry"))),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
     return NotificationCompat.Action.Builder(0, "Retry", pending)

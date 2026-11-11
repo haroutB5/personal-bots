@@ -42,6 +42,15 @@ class PushPayloadParserTest {
     assertEquals("bad notification id", rejected(data(notificationId = "n".repeat(257))))
   }
 
+  @Test fun dotSegmentAndLeadingPunctuationIdsAreDropped() {
+    for (id in listOf(".", "..", "...", ".x", "-x", ":x")) {
+      assertEquals("id $id", "bad notification id", rejected(data(notificationId = id)))
+      assertEquals("id $id", "bad chat id", rejected(data(threadId = id)))
+    }
+    assertEquals("a.b-c:d_e", accepted(data(notificationId = "a.b-c:d_e")).notificationId)
+    assertEquals("n".repeat(256), accepted(data(notificationId = "n".repeat(256))).notificationId)
+  }
+
   @Test fun aTestPushNeedsNoChat() {
     val parsed = accepted(data(kind = "test", botId = "", threadId = ""))
     assertEquals(PushKind.TEST, parsed.kind)

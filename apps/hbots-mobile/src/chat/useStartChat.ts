@@ -1,41 +1,65 @@
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { ThreadId } from "@t3tools/contracts";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 
+/**
+ * How a start ended, as the screens need it. No variant carries error text: a dropped link is
+ * `interrupted` or `unreachable`, and anything the server or the client refused is `rejected`.
+ */
 export type StartChatResult =
   | { readonly kind: "started"; readonly threadId: string }
-  | { readonly kind: "failed"; readonly message: string };
+  | { readonly kind: "interrupted" }
+  | { readonly kind: "unreachable" }
+  | { readonly kind: "rejected" };
+
+function failedStartResult(error: unknown): StartChatResult {
+  return error instanceof Error && isTransportConnectionErrorMessage(error.message)
+    ? { kind: "unreachable" }
+    : { kind: "rejected" };
+}
+
+export function startChatResult(
+  threadId: string,
+  result: AtomCommandResult<unknown, unknown>,
+): StartChatResult {
+  if (result._tag === "Success") return { kind: "started", threadId };
+  if (isAtomCommandInterrupted(result)) return { kind: "interrupted" };
+  return failedStartResult(squashAtomCommandFailure(result));
+}
 
 /**
- * Creates a new chat with a bot. The caller decides what to open or queue next.
- * Pass `threadId` to retry with the same id, so one chat is created however many attempts it takes.
+ * Creates a new chat with a bot. The caller decides what to open or queue next. The server creates a
+ * chat once per `threadId`, so a caller that asks again after a lost reply passes the same one.
  */
 export function useStartChat(
   native: NativePersonal,
-): (botId: string, title?: string, threadId?: string) => Promise<StartChatResult> {
+): (
+  botId: string,
+  options?: { readonly title?: string; readonly threadId?: string },
+) => Promise<StartChatResult> {
   const create = native.client.useAtomCommand(native.bots.personalBotCreateThread, {
     reportFailure: false,
   });
-  return async (botId, title, existingThreadId) => {
-    const threadId = existingThreadId ?? native.client.ports.ids.randomUUID();
+  return async (botId, options) => {
+    const threadId = options?.threadId ?? native.client.ports.ids.randomUUID();
     try {
       const result = await create({
         environmentId: native.environmentId,
         input: {
           botId: botId as never,
           threadId: ThreadId.make(threadId),
-          ...(title === undefined ? {} : { title }),
+          ...(options?.title === undefined ? {} : { title: options.title }),
         },
       });
-      if (result._tag === "Success") return { kind: "started", threadId };
-      const cause = squashAtomCommandFailure(result);
-      return {
-        kind: "failed",
-        message: cause instanceof Error ? cause.message : "Couldn't start a chat. Try again.",
-      };
-    } catch {
-      return { kind: "failed", message: "Couldn't start a chat. Try again." };
+      return startChatResult(threadId, result);
+    } catch (error) {
+      return failedStartResult(error);
     }
   };
 }

@@ -17,8 +17,12 @@ object PushPayloadParser {
   const val VERSION = "1"
   private const val MAX_ID = 256
 
-  /** Ids go into a channel id and a deep link path unencoded, so only these characters pass. */
-  private val SAFE_ID = Regex("^[A-Za-z0-9_.:-]{1,$MAX_ID}$")
+  /**
+   * Ids go into a channel id and a deep link, and (percent-encoded) into a request path. The first
+   * character is a letter, digit or underscore, so `.` and `..` can never reach a path, where a
+   * client would resolve them as dot segments.
+   */
+  private val SAFE_ID = Regex("^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,${MAX_ID - 1}}$")
 
   fun parse(data: Map<String, String?>): PayloadResult {
     if (data["v"] != VERSION) return PayloadResult.Rejected("unsupported version")

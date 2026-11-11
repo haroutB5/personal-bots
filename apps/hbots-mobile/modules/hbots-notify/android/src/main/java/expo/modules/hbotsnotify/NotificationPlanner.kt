@@ -28,6 +28,9 @@ object NotificationPlanner {
   const val PUBLIC_TEXT = "hbots · 1 new notification"
   const val ACCOUNT_CHANNEL = "account"
 
+  /** From Android 12 an action can demand the device credential. Before it, a button on the lock screen just runs. */
+  const val AUTH_ACTION_SDK = 31
+
   fun botChannelId(botId: String) = "bot.$botId"
 
   fun plan(
@@ -35,6 +38,7 @@ object NotificationPlanner {
     content: NotificationContent?,
     policy: NotifyPolicy,
     errorLine: String? = null,
+    authActions: Boolean = true,
   ): NotificationPlan {
     val bot = policy.bots[payload.botId]
     val hidden = policy.appLockOn ||
@@ -47,14 +51,7 @@ object NotificationPlanner {
     val title = if (policy.appLockOn || !onBotChannel) GENERIC_TITLE else botName
     val text = if (hidden) payload.kind.contentFree else (content?.question?.question ?: content?.text ?: payload.kind.contentFree)
 
-    val actions = ArrayList<PlanAction>()
-    if (InlineAction.REPLY in payload.kind.actions) {
-      actions += PlanAction(InlineAction.REPLY, if (policy.appLockOn || bot == null) "Reply" else "Reply to ${bot.name}")
-    }
-    val options = content?.question?.inlineOptions
-    if (!hidden && InlineAction.OPTIONS in payload.kind.actions && options != null) {
-      options.forEach { actions += PlanAction(InlineAction.OPTIONS, it, it) }
-    }
+    val actions = actionsFor(payload, content, policy, bot, hidden, authActions)
 
     return NotificationPlan(
       notificationId = payload.notificationId,
@@ -70,6 +67,33 @@ object NotificationPlanner {
       contentFree = hidden,
       errorLine = errorLine,
     )
+  }
+
+  /**
+   * What the buttons may do. With the app lock on there are none: the notification only opens the app at
+   * that chat, behind the lock. Without a way to ask for the credential (before Android 12) a button that
+   * sends could run from the lock screen, so Reply and the options become one button that opens the chat.
+   */
+  private fun actionsFor(
+    payload: PushPayload,
+    content: NotificationContent?,
+    policy: NotifyPolicy,
+    bot: BotInfo?,
+    hidden: Boolean,
+    authActions: Boolean,
+  ): List<PlanAction> {
+    if (policy.appLockOn) return emptyList()
+    val actions = ArrayList<PlanAction>()
+    val kind = if (authActions) InlineAction.REPLY else InlineAction.OPEN
+    if (InlineAction.REPLY in payload.kind.actions) {
+      actions += PlanAction(kind, if (bot == null) "Reply" else "Reply to ${bot.name}")
+    }
+    val options = content?.question?.inlineOptions
+    if (!hidden && InlineAction.OPTIONS in payload.kind.actions && options != null) {
+      if (authActions) options.forEach { actions += PlanAction(InlineAction.OPTIONS, it, it) }
+      else actions += PlanAction(InlineAction.OPEN, "Answer")
+    }
+    return actions
   }
 
   /** Ids pass the parser's character check, so the path needs no encoding. */

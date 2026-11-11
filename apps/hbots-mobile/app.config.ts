@@ -77,6 +77,7 @@ const config: ExpoConfig = {
     "./plugins/withSharedHttpClient.cjs",
     "./plugins/withCtoShortcut.cjs",
     "./plugins/withShareTarget.cjs",
+    "./plugins/withPictureInPicture.cjs",
     "./plugins/withFirebase.cjs",
   ],
 };

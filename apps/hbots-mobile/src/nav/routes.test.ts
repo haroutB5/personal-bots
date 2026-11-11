@@ -130,6 +130,21 @@ describe("deep links", () => {
     );
   });
 
+  it("opens a chat with a draft from a reply that was too long to send", () => {
+    expect(parseDeepLink("hbots://chat/b1/t1?draft=a%20b%0Ac")).toEqual(
+      stack(bots, { kind: "chat", botId: "b1", threadId: "t1", draft: "a b\nc" }),
+    );
+    expect(parseDeepLink("hbots://chat/b1/t1?request=r9&draft=x")).toEqual(
+      stack(bots, { kind: "chat", botId: "b1", threadId: "t1", requestId: "r9", draft: "x" }),
+    );
+  });
+
+  it("leaves a blank or oversized draft out of the route", () => {
+    const plain = stack(bots, { kind: "chat", botId: "b1", threadId: "t1" });
+    expect(parseDeepLink("hbots://chat/b1/t1?draft=")).toEqual(plain);
+    expect(parseDeepLink(`hbots://chat/b1/t1?draft=${"a".repeat(16_001)}`)).toEqual(plain);
+  });
+
   it("opens a bot, a task and stop", () => {
     expect(parseDeepLink("hbots://bot/b1")).toEqual(stack(bots, { kind: "bot", botId: "b1" }));
     expect(parseDeepLink("hbots://bot/b1/edit")).toEqual(
