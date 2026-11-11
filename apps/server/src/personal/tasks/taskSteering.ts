@@ -233,16 +233,19 @@ export const makeTaskSteering = (
               !Equal.equals(botSelection, thread.modelSelection)
                 ? thread.modelSelection
                 : botSelection;
-            // Into the running turn. A plain start on a busy chat is queued as a
-            // separate run that nothing owns. The thread's own modes, since a
-            // changed runtime mode restarts the session.
+            // Into the running turn. A run that is starting or waiting refuses a
+            // steer, so its update queues behind the run and stop_task cancels
+            // it by the steer message id.
+            const joinsTurn = yield* engine
+              .canSteer(attempt.providerThreadId)
+              .pipe(Effect.orElseSucceed(() => true));
             yield* engine
               .send({
                 threadId: attempt.providerThreadId,
                 messageId: personalTaskSteerMessageId(steerId),
                 text,
                 attachments: [],
-                mode: "steer",
+                mode: joinsTurn ? "steer" : "queue",
                 ...(modelSelection !== undefined ? { modelSelection } : {}),
               })
               .pipe(Effect.mapError((cause) => fail("Could not deliver the update.", cause)));
@@ -255,7 +258,7 @@ export const makeTaskSteering = (
               deliveredAt: now,
             });
             yield* recordWorkSteer(task, text);
-            return { outcome: "steered" as const, task, text };
+            return { outcome: joinsTurn ? ("steered" as const) : ("queued" as const), task, text };
           }),
         ),
       )

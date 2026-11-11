@@ -171,8 +171,9 @@ export interface PersonalTaskSteerInput {
 
 /**
  * steered: delivered into the task's running turn, which keeps going.
- * queued: the task is not in a turn now; the update opens its next turn (for
- * a queued task, the brief it starts with).
+ * queued: the task is not in a turn now, or its run cannot take a steer yet
+ * (starting, or waiting on background work); the update opens its next turn
+ * (for a queued task, the brief it starts with).
  * reopened: the task had ended; it is queued again in its own chat and the
  * update opens a continuation turn there.
  */

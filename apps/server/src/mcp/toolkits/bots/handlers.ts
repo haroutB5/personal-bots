@@ -47,7 +47,7 @@ import {
 export const STEERED_NOTE =
   "Delivered into the task's running turn; the bot continues with it and keeps its progress. Its result still arrives on its own.";
 export const STEER_QUEUED_NOTE =
-  "The task is not in a turn right now; the update opens its next one, so for a queued task it is part of the brief it starts with.";
+  "The task cannot take the update into a turn right now (it has not started, is between turns or is waiting on background work). The update is queued and opens its next turn, so for a queued task it is part of the brief it starts with. stop_task drops it.";
 export const STEER_REOPENED_NOTE =
   "The task had ended, so it is reopened in its own chat: the bot continues there from where it stopped, with your update. Its new result comes back to the task that delegated it, like the first one; end your turn now.";
 
