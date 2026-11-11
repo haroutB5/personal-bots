@@ -204,7 +204,7 @@ const withoutBlanks = (text: string): string => text.replace(/[ \t\n\r\u00a0]/gu
 function isEmptyWorkItem(item: HistoryRow["item"]): boolean {
   if (item.type === "reasoning") return EMPTY_WORK_TEXT.has(withoutBlanks(item.text ?? ""));
   if (item.type !== "command_execution") return false;
-  const input = item.input ?? "";
+  const input = "input" in item && typeof item.input === "string" ? item.input : "";
   const named = /^[A-Za-z0-9_.-]+:/u.exec(input);
   if (named === null) return EMPTY_WORK_TEXT.has(withoutBlanks(input));
   const tail = withoutBlanks(input.slice(named[0].length));
