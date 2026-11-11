@@ -1884,6 +1884,26 @@ describe("when the microphone opens", () => {
     expect(test.last().state.status).not.toBe("live");
   });
 
+  it("on the phone, a microphone that rejects after the hang up leaves the hung up call without an error", async () => {
+    let rejectMic: (error: Error) => void = () => undefined;
+    const opening = new Promise<void>((_resolve, reject) => {
+      rejectMic = reject;
+    });
+    const test = harness({ micStart: "after_accept", mic: () => opening });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.audio.startMic).toHaveBeenCalledTimes(1);
+
+    test.controller.end("hung_up");
+    rejectMic(new Error("The microphone could not be opened."));
+    await starting;
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(test.last().state.endReason).toBe("hung_up");
+    expect(test.last().state.errorCode).toBeNull();
+    expect(test.last().state.status).not.toBe("error");
+  });
+
   it("on the phone, a refused call never opens the microphone", async () => {
     const test = harness({ micStart: "after_accept", startFails: true });
     await test.controller.start();
