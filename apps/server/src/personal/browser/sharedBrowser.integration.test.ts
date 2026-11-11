@@ -423,4 +423,27 @@ describe.skipIf(BRAVE === undefined)("shared attach against a throwaway headless
     expect(afterReload).toBeGreaterThanOrEqual(30);
     expect(watched.bad).toEqual([]);
   });
+
+  it("closing a bot tab ends its pump and a reopened tab pumps again", async () => {
+    const { base, his, handle, openBotPage, showHisTab, watchHisTab } = await startHarness();
+    const first = await openBotPage();
+    await first.page.goto(`${base}/`, { waitUntil: "load", timeoutMs: 5_000 });
+    await showHisTab();
+    const stopWatching = watchHisTab();
+    await first.page.close();
+    for (let tries = 0; tries < 50 && (await his.targetIds()).includes(first.botTarget); tries++) {
+      await NodeTimersPromises.setTimeout(100);
+    }
+    const remaining = await his.targetIds();
+    expect(remaining).toContain(his.ownerTarget);
+    expect(remaining).not.toContain(first.botTarget);
+    expect(handle.pages()).toHaveLength(0);
+    const second = await handle.newPage();
+    await second.goto(`${base}/`, { waitUntil: "load", timeoutMs: 5_000 });
+    const frames = Number(await second.evaluate(PAINT_FRAMES_IN_ONE_SECOND));
+    const watched = await stopWatching();
+    console.info(`h1r2 reopen ${JSON.stringify({ frames, samples: watched.samples })}`);
+    expect(frames).toBeGreaterThanOrEqual(30);
+    expect(watched.bad).toEqual([]);
+  });
 });
