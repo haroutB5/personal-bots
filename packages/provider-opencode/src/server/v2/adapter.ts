@@ -67,6 +67,7 @@ import {
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
@@ -324,8 +325,6 @@ interface ThreadState {
     | undefined;
   instructions: string | undefined;
 }
-
-export const PROVIDER_SERVER_LOST_REASON = "provider-server-lost";
 
 type TurnTerminal =
   | { readonly status: "completed" | "interrupted"; readonly reason?: string }

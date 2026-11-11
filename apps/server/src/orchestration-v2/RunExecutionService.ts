@@ -52,7 +52,7 @@ import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
-import { PROVIDER_SERVER_LOST_REASON } from "./RestartBackgroundNote.ts";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";

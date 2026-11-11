@@ -12,7 +12,7 @@ import {
   type PersonalTaskAttempt,
   type PersonalTaskMessageMarker,
 } from "@t3tools/contracts";
-import { PROVIDER_SERVER_LOST_REASON } from "../../orchestration-v2/RestartBackgroundNote.ts";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import { rootExposureKey } from "../browser/sensitiveExposureStore.ts";

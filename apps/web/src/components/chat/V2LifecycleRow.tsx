@@ -1,4 +1,5 @@
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
+import { runInterruptResultDetail } from "@t3tools/shared/orchestrationV2Timeline";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ReactNode } from "react";
@@ -79,7 +80,10 @@ export function V2LifecycleRow(props: {
     return (
       <TimelineSystemDivider
         label="Run interrupted"
-        detail={item.message}
+        detail={runInterruptResultDetail(
+          item.message,
+          props.runs.some((run) => run.restartContinuationOfRunId === item.runId),
+        )}
         icon={CircleStopIcon}
         wrapDetail
       />

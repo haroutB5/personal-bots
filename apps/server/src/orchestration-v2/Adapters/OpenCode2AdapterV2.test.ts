@@ -47,9 +47,9 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import {
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
-  PROVIDER_SERVER_LOST_REASON,
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 import {

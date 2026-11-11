@@ -68,7 +68,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
-import { PROVIDER_SERVER_LOST_REASON } from "./RestartBackgroundNote.ts";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";

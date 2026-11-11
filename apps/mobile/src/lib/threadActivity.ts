@@ -66,6 +66,7 @@ import {
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { truncate } from "@t3tools/shared/String";
+import { runInterruptResultDetail } from "@t3tools/shared/orchestrationV2Timeline";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import {
@@ -670,8 +671,9 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
       return item.files.length === 1
         ? (item.files[0]?.path ?? null)
         : `${item.files.length} changed files`;
-    case "run_interrupt_request":
     case "run_interrupt_result":
+      return runInterruptResultDetail(item.message, undefined) || null;
+    case "run_interrupt_request":
     case "system_notice":
       return item.message || null;
     case "error":

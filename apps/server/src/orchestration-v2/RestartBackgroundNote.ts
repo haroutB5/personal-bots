@@ -6,6 +6,7 @@ import type {
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -228,8 +229,6 @@ export function continuationStartRetryDelayMs(
     failedStarts += 1;
   return CONTINUATION_START_RETRY_DELAYS_MS[failedStarts - 1];
 }
-
-export const PROVIDER_SERVER_LOST_REASON = "provider-server-lost";
 
 export function lostToProviderServer(
   source: Pick<OrchestrationV2Run, "id" | "status">,
