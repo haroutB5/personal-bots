@@ -7,6 +7,10 @@ import {
 import * as PersonalBrowserHost from "../browser/ServerBrowserHost.ts";
 import { personalDesktopStreamRouteLayer } from "../desktop/routes.ts";
 import { personalClientDiagRouteLayer } from "../push/clientDiagRoute.ts";
+import {
+  personalNotificationActionRouteLayer,
+  personalNotificationContentRouteLayer,
+} from "../push/notificationActionsRoute.ts";
 import { personalPushSentRouteLayer } from "../push/sentPushesRoute.ts";
 import { personalUpdateStatusRouteLayer } from "../updateStatus/updateStatusRoute.ts";
 import { personalClientCompatRouteLayer } from "../clientCompat/clientCompatRoute.ts";
@@ -33,6 +37,9 @@ export const personalHttpRoutesLayer = Layer.mergeAll(
   personalClientDiagRouteLayer,
   // Signed-in only: pushes sent to this device, for taps iOS drops (see sentPushesRoute.ts).
   personalPushSentRouteLayer,
+  // Bearer or DPoP only: what a phone push says, and its reply and one-tap answer (see notificationActionsRoute.ts).
+  personalNotificationContentRouteLayer,
+  personalNotificationActionRouteLayer,
   // Signed-in only: where a release is, for the Bots page's status line (see updateStatusRoute.ts).
   personalUpdateStatusRouteLayer,
   // Open: the Android version handshake, before a client holds a credential.

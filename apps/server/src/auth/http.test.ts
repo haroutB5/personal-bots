@@ -18,6 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { computeDpopAccessTokenHash, type DpopPublicJwk } from "@t3tools/shared/dpop";
 import * as Etag from "effect/http/Etag";
@@ -60,6 +62,7 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
 const layerRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
   Layer.provide(AuthHttp.layer),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
+  Layer.provide(SqlitePersistence.layerMemory),
   Layer.provideMerge(layerEnvironmentAuth),
   Layer.provide(layerConfig),
   Layer.provideMerge(
@@ -744,6 +747,116 @@ it.effect("requires a key for a phone exchange and keeps the refused link spenda
       (environment) => Effect.promise(() => environment.dispose()),
     );
   }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, TestClock.layer())),
+  ),
+);
+
+it.effect("signing out deletes that session's phone push tokens and no other session's", () =>
+  Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom;
+    const clock = yield* Clock.Clock;
+    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
+      Context.add(Clock.Clock, clock),
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore()),
+    );
+    yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+    const scope = yield* Scope.Scope;
+    const memoMap = Layer.makeMemoMapUnsafe();
+    const database = yield* Layer.buildWithMemoMap(SqlitePersistence.layerMemory, memoMap, scope);
+    const sql = Context.get(database, SqlClient.SqlClient);
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true, memoMap })),
+      (environment) =>
+        Effect.gen(function* () {
+          const call = (request: Request) =>
+            Effect.tryPromise(() => environment.handler(request, requestContext));
+          const readJson = <T>(response: Response) =>
+            Effect.tryPromise(() => response.json() as Promise<T>);
+          const owner = yield* call(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          const ownerCookie =
+            owner.headers
+              .getSetCookie()
+              .find((cookie) => cookie.startsWith("t3_dev_session_"))
+              ?.split(";", 1)[0] ?? "";
+          const exchange = (label: string) =>
+            Effect.gen(function* () {
+              const pairing = yield* call(
+                postJson("/api/auth/pairing-token", { label }, { cookie: ownerCookie }),
+              );
+              const { credential } = yield* readJson<{ credential: string }>(pairing);
+              const response = yield* call(
+                postForm("/oauth/token", {
+                  grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                  subject_token: credential,
+                  subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+                  requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                  client_label: label,
+                }),
+              );
+              expect(response.status).toBe(200);
+              return (yield* readJson<{ access_token: string }>(response)).access_token;
+            });
+          const sessionIdOf = (label: string) =>
+            sql<{ readonly sessionId: string }>`
+              SELECT session_id AS "sessionId" FROM auth_sessions WHERE client_label = ${label}
+            `.pipe(Effect.map((rows) => rows[0]!.sessionId));
+          const tokensLeft = sql<{ readonly token: string }>`
+            SELECT token AS "token" FROM personal_fcm_tokens ORDER BY token ASC
+          `.pipe(Effect.map((rows) => rows.map((row) => row.token)));
+          const give = (label: string, token: string) =>
+            Effect.gen(function* () {
+              const sessionId = yield* sessionIdOf(label);
+              yield* sql`
+                INSERT INTO personal_fcm_tokens
+                  (token, auth_session_id, subject, app_version, created_at, last_seen_at)
+                VALUES (${token}, ${sessionId}, 'owner', '1', '2026-01-01T00:00:00.000Z',
+                        '2026-01-01T00:00:00.000Z')
+              `;
+            });
+
+          const selfToken = yield* exchange("phone-self");
+          yield* exchange("phone-clients");
+          yield* exchange("phone-others");
+          yield* exchange("phone-kept");
+          yield* give("phone-self", "tok-self");
+          yield* give("phone-clients", "tok-clients");
+          yield* give("phone-others", "tok-others");
+          yield* give("phone-kept", "tok-kept");
+
+          const signOut = yield* call(
+            new Request("http://127.0.0.1/api/auth/session/revoke", {
+              method: "POST",
+              headers: { authorization: `Bearer ${selfToken}` },
+            }),
+          );
+          expect(signOut.status).toBe(200);
+          expect(yield* tokensLeft).toEqual(["tok-clients", "tok-kept", "tok-others"]);
+
+          const revokeClient = yield* call(
+            postJson(
+              "/api/auth/clients/revoke",
+              { sessionId: yield* sessionIdOf("phone-clients") },
+              { cookie: ownerCookie },
+            ),
+          );
+          expect(revokeClient.status).toBe(200);
+          expect(yield* tokensLeft).toEqual(["tok-kept", "tok-others"]);
+
+          const revokeOthers = yield* call(
+            new Request("http://127.0.0.1/api/auth/clients/revoke-others", {
+              method: "POST",
+              headers: { cookie: ownerCookie },
+            }),
+          );
+          expect(revokeOthers.status).toBe(200);
+          expect(yield* tokensLeft).toEqual([]);
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(
+    Effect.scoped,
     Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, TestClock.layer())),
   ),
 );

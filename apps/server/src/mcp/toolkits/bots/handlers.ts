@@ -29,6 +29,10 @@ import * as PersonalGroupService from "../../../personal/groups/PersonalGroupSer
 import { isOwnerMessageId } from "../../../personal/leadBots/leadBotConfirm.ts";
 import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLeadBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
+import {
+  isServerOnlySecretName,
+  serverOnlySecretNote,
+} from "../../../personal/secrets/serverOnlySecrets.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import { cleanNotifyMessage } from "../../../personal/push/notifyDecision.ts";
@@ -800,6 +804,15 @@ const make = Effect.gen(function* () {
             ...(input.origins === undefined ? {} : { origins: input.origins }),
           })
           .pipe(Effect.mapError(readable));
+        if (isServerOnlySecretName(input.name)) {
+          return {
+            requestId: result.request.requestId,
+            name: input.name,
+            envVar: "",
+            status: result.status,
+            note: serverOnlySecretNote(input.name),
+          };
+        }
         const envVar = personalSecretEnvVar(input.name);
         const brokered = result.status === "fulfilled" && result.request.mode === "brokered";
         return {

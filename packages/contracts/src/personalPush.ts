@@ -132,6 +132,106 @@ export type PersonalPushInAppNotification = typeof PersonalPushInAppNotification
 export const PersonalPushInAppAckInput = Schema.Struct({ id: Schema.String });
 export type PersonalPushInAppAckInput = typeof PersonalPushInAppAckInput.Type;
 
+/**
+ * Phone push (Android, FCM). The phone registers the token Firebase gave it
+ * and the server answers whether it can send to it: `disabled` means the
+ * server holds no usable Firebase service account (secret
+ * HBOTS_FCM_SERVICE_ACCOUNT), so the token is kept but nothing is sent.
+ */
+export const PersonalPushFcmDelivery = Schema.Literals(["ready", "disabled"]);
+export type PersonalPushFcmDelivery = typeof PersonalPushFcmDelivery.Type;
+
+export const PersonalPushFcmRegisterInput = Schema.Struct({
+  token: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  appVersion: Schema.String.check(Schema.isMaxLength(40)),
+});
+export type PersonalPushFcmRegisterInput = typeof PersonalPushFcmRegisterInput.Type;
+
+export const PersonalPushFcmRegisterResult = Schema.Struct({ delivery: PersonalPushFcmDelivery });
+export type PersonalPushFcmRegisterResult = typeof PersonalPushFcmRegisterResult.Type;
+
+export const PersonalPushFcmUnregisterInput = Schema.Struct({
+  token: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
+export type PersonalPushFcmUnregisterInput = typeof PersonalPushFcmUnregisterInput.Type;
+
+/**
+ * What a phone push is about. The first four are a bot waiting on the owner
+ * (the request kind), the rest are information only.
+ */
+export const PhonePushKind = Schema.Literals([
+  "question",
+  "approval",
+  "sign-in",
+  "secret",
+  "chat-reply",
+  "failure",
+  "task",
+  "test",
+]);
+export type PhonePushKind = typeof PhonePushKind.Type;
+
+/** A string because FCM data values must be strings. */
+export const PHONE_PUSH_DATA_VERSION = "1";
+
+/**
+ * The FCM data message, data-only and high priority. It never carries text:
+ * the phone fetches the content with `notificationId` over authenticated
+ * HTTP (or the notificationContent RPC).
+ */
+export const PhonePushData = Schema.Struct({
+  kind: PhonePushKind,
+  notificationId: Schema.String,
+  botId: Schema.String,
+  threadId: Schema.String,
+  v: Schema.Literal(PHONE_PUSH_DATA_VERSION),
+});
+export type PhonePushData = typeof PhonePushData.Type;
+
+export const PersonalNotificationContentInput = Schema.Struct({
+  notificationId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type PersonalNotificationContentInput = typeof PersonalNotificationContentInput.Type;
+
+/**
+ * The question a notification is waiting on, while it is still pending.
+ * `inlineOptions` is the server's decision that the question may be answered
+ * from the notification: the labels to offer, or null when the app must open.
+ */
+export const PersonalNotificationQuestion = Schema.Struct({
+  requestId: Schema.String,
+  question: Schema.String,
+  inlineOptions: Schema.NullOr(Schema.Array(Schema.String)),
+});
+export type PersonalNotificationQuestion = typeof PersonalNotificationQuestion.Type;
+
+export const PersonalNotificationContent = Schema.Struct({
+  notificationId: Schema.String,
+  kind: PhonePushKind,
+  botId: Schema.String,
+  threadId: Schema.String,
+  text: Schema.NullOr(Schema.String),
+  question: Schema.NullOr(PersonalNotificationQuestion),
+});
+export type PersonalNotificationContent = typeof PersonalNotificationContent.Type;
+
+const NotificationCommandId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
+export const PersonalNotificationReplyInput = Schema.Struct({
+  commandId: NotificationCommandId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(4000)),
+});
+export type PersonalNotificationReplyInput = typeof PersonalNotificationReplyInput.Type;
+
+export const PersonalNotificationAnswerInput = Schema.Struct({
+  commandId: NotificationCommandId,
+  choice: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+});
+export type PersonalNotificationAnswerInput = typeof PersonalNotificationAnswerInput.Type;
+
+export const PersonalNotificationActionResult = Schema.Struct({ ok: Schema.Literal(true) });
+export type PersonalNotificationActionResult = typeof PersonalNotificationActionResult.Type;
+
 /** What a notification carries: never message text, only a title and a deep link. */
 export const PersonalPushPayload = Schema.Struct({
   title: Schema.String,

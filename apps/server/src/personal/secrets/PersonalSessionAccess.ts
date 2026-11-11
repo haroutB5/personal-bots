@@ -19,6 +19,7 @@ import { personalBotSystemInstructions } from "../personalBotInstructions.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import { personalSecretStoreKey } from "./PersonalSecretService.ts";
 import { secretAccessLock } from "./secretAccessLock.ts";
+import { isServerOnlySecretName } from "./serverOnlySecrets.ts";
 
 /** What a provider session on one thread gets for being a personal bot's thread. */
 export interface PersonalSessionGrant {
@@ -120,7 +121,9 @@ export const make = Effect.gen(function* () {
 
   /**
    * The secrets a bot can use: its own and every shared one, read from the
-   * store. Each secret is the bytes of one physical storage slot together with
+   * store. Server-only names (see `serverOnlySecrets.ts`) are dropped first,
+   * whatever slot, owner or mode their row has, so no caller can hand one to a
+   * bot. Each secret is the bytes of one physical storage slot together with
    * one access policy: rows that address the same slot (every shared row of a
    * name, a bot's private rows of a name, or a pre-scoping row that falls back
    * to the shared slot) are read as a group. If they disagree (rows saved before
@@ -132,7 +135,9 @@ export const make = Effect.gen(function* () {
   const readSecrets = (botId: PersonalBotId) =>
     secretAccessLock.withPermit(
       Effect.gen(function* () {
-        const fulfilled = yield* secrets.listByStatus("fulfilled");
+        const fulfilled = (yield* secrets.listByStatus("fulfilled")).filter(
+          (row) => !isServerOnlySecretName(row.name),
+        );
         type Row = (typeof fulfilled)[number];
         const fulfilledMs = (row: Row) =>
           row.fulfilledAt === null ? 0 : DateTime.toEpochMillis(row.fulfilledAt);

@@ -5,9 +5,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { purgeRevokedFcmTokens } from "../personal/push/fcmTokens.ts";
 
 import {
   formatIssuedPairingCredential,
@@ -26,7 +28,9 @@ import {
 
 const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (
+    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+  ) => Effect.Effect<A, E, SqlClient.SqlClient>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -233,6 +237,7 @@ const sessionRevokeCommand = Command.make("revoke", {
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
         const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+        yield* purgeRevokedFcmTokens(yield* SqlClient.SqlClient);
         yield* Console.log(
           revoked
             ? `Revoked session ${flags.sessionId}.\n`
