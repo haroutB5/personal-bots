@@ -1,6 +1,6 @@
 import { IconCheck } from "@tabler/icons-react-native";
 import type { PersonalBot } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -28,6 +28,7 @@ import {
   previewLabel,
   setNote,
   setQuery,
+  shareChatId,
   type PickerIntent,
   type PickerState,
 } from "../share/pickerModel";
@@ -61,6 +62,7 @@ export function BotPicker({
     const raw = readShare(shareId);
     return raw === null ? ({ ok: false, reason: "empty" } as const) : intakeShare(raw);
   });
+  const chatIds = useRef(new Map<string, string>());
   const [picked, setState] = useState<PickerState | null>(null);
   const online = connection.phase === "connected";
   const bots = (list.data?.bots ?? []).filter((bot) => bot.enabled);
@@ -78,7 +80,10 @@ export function BotPicker({
   const send = async () => {
     if (state.step !== "confirm") return;
     setState(beginSend(state));
-    const next = await sendShare({ state, bots, native, start });
+    const threadId = shareChatId(chatIds.current, state.botId, () =>
+      native.client.ports.ids.randomUUID(),
+    );
+    const next = await sendShare({ state, bots, native, start, threadId });
     if (next.step === "sent") discardShare(shareId);
     setState(next);
   };
