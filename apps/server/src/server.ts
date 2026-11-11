@@ -827,8 +827,9 @@ const layerMakeRoutes = Layer.mergeAll(
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
+  // The personal browser answers preview automation under the server-browser id, so this one keeps only its viewer and download routes.
   Layer.provide(
-    ServerBrowser.layer.pipe(
+    ServerBrowser.layerWithoutAutomationHost.pipe(
       Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
     ),
   ),

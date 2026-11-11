@@ -5387,7 +5387,7 @@ describe("preview automation host composition", () => {
   ) =>
     Layer.mergeAll(
       ServerBrowserHost.layer,
-      ServerBrowser.layer.pipe(
+      ServerBrowser.layerWithoutAutomationHost.pipe(
         Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
       ),
     ).pipe(
@@ -5437,6 +5437,15 @@ describe("preview automation host composition", () => {
       }
       expect(registrations).toEqual([{ clientId: "server-browser", kind: "server" }]);
     }).pipe(Effect.provide(composedHosts(fake.driver, registrations)));
+  });
+
+  it("server.ts composes the upstream browser without its automation host", () => {
+    const source = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../../server.ts"),
+      "utf8",
+    );
+    expect(source).toContain("ServerBrowser.layerWithoutAutomationHost");
+    expect(source).not.toContain("ServerBrowser.layer.pipe");
   });
 
   it.effect("a preview open from a thread reaches the personal browser and takes its lease", () => {

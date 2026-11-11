@@ -221,6 +221,11 @@ export interface ServerBrowserViewer {
 
 export type ProfileReporter = (input: PreviewReportProfilesInput) => Effect.Effect<void>;
 
+class RegistersAutomationHost extends Context.Reference<boolean>(
+  "t3/preview/ServerBrowser/RegistersAutomationHost",
+  { defaultValue: () => true },
+) {}
+
 export class ServerBrowser extends Context.Service<
   ServerBrowser,
   {
@@ -2793,6 +2798,7 @@ const make = Effect.gen(function* () {
     Effect.repeat(Schedule.spaced(IDLE_SWEEP_INTERVAL)),
     Effect.forkScoped,
   );
+  const registersAutomationHost = yield* RegistersAutomationHost;
   const environmentId = yield* environment.getEnvironmentId;
   const hostSession = broker
     .connect(
@@ -2825,6 +2831,7 @@ const make = Effect.gen(function* () {
     Effect.andThen(Effect.sleep(HOST_RECONNECT_DELAY)),
     Effect.forever,
     Effect.forkScoped,
+    Effect.when(Effect.succeed(registersAutomationHost)),
   );
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
@@ -2848,3 +2855,7 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ServerBrowser, make);
+
+export const layerWithoutAutomationHost = layer.pipe(
+  Layer.provide(Layer.succeed(RegistersAutomationHost, false)),
+);
