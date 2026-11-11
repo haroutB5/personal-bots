@@ -3174,6 +3174,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* setReasoning(emptyAnchorOrdinal + 4, "  \n ");
       yield* setReasoning(emptyAnchorOrdinal + 5, "{}");
       yield* setReasoning(emptyAnchorOrdinal + 6, "Checking the schema.");
+      yield* setReasoning(emptyAnchorOrdinal + 7, "{ }");
+      yield* setReasoning(emptyAnchorOrdinal + 8, "\u00a0\n");
       const withEmpty = yield* projectionStore.getThreadSnapshotWindow(threadId, {
         rowLimit: sqlPageLimit,
         userTurnLimit: 10,
@@ -3183,10 +3185,30 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         (row) => row.item.deferredWork,
       );
       assert.strictEqual(emptyAnchor?.item.deferredWork?.itemCount, 999);
-      assert.strictEqual(emptyAnchor?.item.deferredWork?.emptyItemCount, 3);
+      assert.strictEqual(emptyAnchor?.item.deferredWork?.emptyItemCount, 5);
+      const setCommand = (ordinal: number, input: string) => sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'command_execution',
+          payload_json = json_set(payload_json, '$.type', 'command_execution', '$.input', ${input})
+        WHERE thread_id = ${threadId} AND ordinal = ${ordinal}`;
+      yield* setCommand(emptyAnchorOrdinal + 9, "Bash: {}");
+      yield* setCommand(emptyAnchorOrdinal + 10, "");
+      yield* setCommand(emptyAnchorOrdinal + 11, "mcp__t3.tool: [ ]");
+      yield* setCommand(emptyAnchorOrdinal + 12, "Bash: ls");
+      yield* setCommand(emptyAnchorOrdinal + 13, "echo hello: {}");
+      const withCommands = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        userTurnLimit: 10,
+        deferWork: true,
+      });
+      assert.strictEqual(
+        withCommands.projection.visibleTurnItems.find((row) => row.item.deferredWork)?.item
+          .deferredWork?.emptyItemCount,
+        8,
+      );
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
         payload_json = json_set(payload_json, '$.type', 'command_execution')
-        WHERE thread_id = ${threadId} AND ordinal BETWEEN ${emptyAnchorOrdinal} AND ${emptyAnchorOrdinal + 6}`;
+        WHERE thread_id = ${threadId} AND ordinal BETWEEN ${emptyAnchorOrdinal} AND ${emptyAnchorOrdinal + 8}`;
       for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
           payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
