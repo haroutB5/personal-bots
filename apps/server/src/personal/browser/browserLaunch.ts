@@ -432,6 +432,8 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
           ) {
             yield* abandonHelp(HELP_ENDED_BY_SWITCH);
           }
+          // His pages may be shown only while he holds control.
+          yield* syncScreencast;
           // Control moving anywhere else hands the page its own viewport back.
           yield* syncHumanViewport;
           yield* notify;

@@ -38,6 +38,7 @@ import {
 } from "./sensitiveExposureStore.ts";
 import { type BrowserContextHandle, type BrowserPage, type ViewportSize } from "./driver.ts";
 import { createMotionController } from "./adaptiveJpeg.ts";
+import { makePageOwners } from "./pageOwners.ts";
 import { BOT_CHECK_PROBE, classifyBotCheck, HostOperationError } from "./pageOperations.ts";
 import {
   type BrowserProtectionState,
@@ -67,6 +68,7 @@ export const DESKTOP_APPROVAL_KEY = "desktop-input";
 export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
     const options = rawOptions;
+    const adoptsExistingPages = options.backend?.kind !== "shared";
     const config = yield* ServerConfig.ServerConfig;
     const previewManager = yield* PreviewManager.PreviewManager;
     const bots = yield* PersonalBotRepository.PersonalBotRepository;
@@ -659,14 +661,24 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       }
     };
 
-    const ownedPages = () => new Set([...runtime.tabs.values()].map((tab) => tab.page));
+    const pageOwners = makePageOwners();
 
-    /** The page the viewport shows: the active agent tab, else any open page. */
+    /**
+     * The page the viewport shows: the active agent tab, else another bot page.
+     * His own pages are shown only while he holds control.
+     */
     const viewportPage = (): BrowserPage | null => {
       const active =
         runtime.activeTabId === null ? undefined : runtime.tabs.get(runtime.activeTabId);
       if (openPage(active?.page)) return active.page;
-      return runtime.context?.pages().find((page) => !page.isClosed()) ?? null;
+      return (
+        runtime.context
+          ?.pages()
+          .find(
+            (page) =>
+              !page.isClosed() && (st.humanInControl || pageOwners.ownerOf(page).kind === "bot"),
+          ) ?? null
+      );
     };
 
     /** The panel draws a page's dialog, so it hears about it opening and closing. */
@@ -852,8 +864,9 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       nowIso,
       openPage,
       options,
+      adoptsExistingPages,
       originOf,
-      ownedPages,
+      pageOwners,
       pendingApprovals,
       pendingApprovalAt,
       oneShotApprovals,

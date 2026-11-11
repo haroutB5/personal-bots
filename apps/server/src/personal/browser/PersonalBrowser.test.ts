@@ -2289,6 +2289,8 @@ describe("PersonalBrowser", () => {
 
             // Back to the bot, still on the form: hidden again.
             yield* browser.returnToAgent("session-1");
+            yield* Effect.yieldNow;
+            yield* Effect.yieldNow;
             yield* drain(viewer);
             fillPage.paint();
             const again = yield* drain(viewer);
@@ -4455,6 +4457,8 @@ describe("PersonalBrowser", () => {
               expect(page.viewports.at(-1)).toEqual(phone(320, 1_400));
 
               yield* browser.returnToAgent("session-1");
+              yield* Effect.yieldNow;
+              yield* Effect.yieldNow;
               // Exactly the agent's own preview_resize, not a cleared override.
               expect(page.viewports.at(-1)).toEqual({ width: 800, height: 600 });
               expect(yield* Queue.size(viewer.outbox)).toBe(0);
@@ -5602,6 +5606,25 @@ describe("preview automation host composition", () => {
             yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
             yield* browser.takeControl("session-1");
             expect(mail.screencasts).toBe(1);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: handing control back stops the stream of his page", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* closedLastTab(browser);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+            expect(mail.screencasts).toBe(1);
+            yield* browser.returnToAgent("session-1");
+            expect(mail.stoppedScreencasts).toBe(1);
           }),
         );
       }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
