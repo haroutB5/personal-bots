@@ -9,6 +9,8 @@ class MicCapture(
   private var thread: Thread? = null
   private var processor: CaptureProcessor? = null
 
+  private var closed = false
+
   @Volatile private var running = false
   @Volatile private var level = 0f
   @Volatile var userMuted: Boolean = false
@@ -30,6 +32,10 @@ class MicCapture(
 
   @Synchronized
   fun start(onStarted: (Result<Unit>) -> Unit) {
+    if (closed) {
+      onStarted(Result.failure(IllegalStateException("The call is over.")))
+      return
+    }
     if (running) {
       onStarted(Result.success(Unit))
       return
@@ -72,6 +78,7 @@ class MicCapture(
 
   @Synchronized
   fun stop() {
+    closed = true
     running = false
     val audioRecord = record
     record = null
