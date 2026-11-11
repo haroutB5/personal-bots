@@ -52,6 +52,7 @@ import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
+import { PROVIDER_SERVER_LOST_REASON } from "./RestartBackgroundNote.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
@@ -738,9 +739,11 @@ export const layer: Layer.Layer<
           `command:effect:checkpoint.capture:${input.run.id}`,
         );
         // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
+        const lostToServer =
+          input.terminal.status === "interrupted" && reason === PROVIDER_SERVER_LOST_REASON;
         const finalization = {
-          effects:
-            input.terminal.status === "completed" ||
+          effects: [
+            ...(input.terminal.status === "completed" ||
             input.terminal.status === "interrupted" ||
             input.terminal.status === "cancelled"
               ? [
@@ -755,7 +758,22 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]
-              : [],
+              : []),
+            // Lost with its server, not stopped: continue it through the same effect a restart uses.
+            ...(lostToServer
+              ? [
+                  {
+                    id: `effect:restart-continuation:${input.run.id}`,
+                    commandId: CommandId.make(`command:provider-server-lost:${input.run.id}`),
+                    threadId: input.run.threadId,
+                    request: {
+                      type: "provider-runtime.continue" as const,
+                      sourceRunId: input.run.id,
+                    },
+                  },
+                ]
+              : []),
+          ],
           events: [
             ...cascadedSubagentEvents,
             ...(input.abandonedProviderTurn === undefined

@@ -22,7 +22,10 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
-import { continuationStartRetryDelayMs } from "./RestartBackgroundNote.ts";
+import {
+  continuationStartRetryDelayMs,
+  PROVIDER_SERVER_LOST_REASON,
+} from "./RestartBackgroundNote.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1074,6 +1077,100 @@ it.effect("does not continue a run the user asked to stop before the restart", (
       turnItems: [{ id: "turn-item:interrupt", runId, type: "run_interrupt_request" }],
     } as unknown as OrchestrationV2ThreadProjection);
     assert.deepEqual(texts, []);
+  }),
+);
+
+const lostToServer = (message: string, extra: Record<string, unknown> = {}) => {
+  const cut = cutMidTurn() as unknown as {
+    runs: Array<Record<string, unknown>>;
+    providerTurns: Array<Record<string, unknown>>;
+  };
+  return {
+    ...cut,
+    runs: [{ ...cut.runs[0]!, status: "interrupted", ...extra }],
+    providerTurns: [{ ...cut.providerTurns[0]!, status: "interrupted" }],
+    turnItems: [{ id: "turn-item:interrupt-result", runId, type: "run_interrupt_result", message }],
+  } as unknown as OrchestrationV2ThreadProjection;
+};
+
+it.effect("continues an interrupted run that lost its provider server", () =>
+  Effect.gen(function* () {
+    const dispatches = yield* continuationDispatches(lostToServer(PROVIDER_SERVER_LOST_REASON));
+    assert.deepEqual(
+      dispatches.map((command) => command.restartContinuationOfRunId),
+      [runId],
+    );
+  }),
+);
+
+it.effect("does not continue an interrupted run the provider or the user stopped", () =>
+  Effect.gen(function* () {
+    for (const message of ["Stopped by user", "Stopped by the provider"]) {
+      assert.deepEqual(yield* continuationTexts(lostToServer(message)), [], message);
+    }
+    const stopped = {
+      ...lostToServer(PROVIDER_SERVER_LOST_REASON),
+      turnItems: [
+        { id: "turn-item:interrupt", runId, type: "run_interrupt_request" },
+        {
+          id: "turn-item:interrupt-result",
+          runId,
+          type: "run_interrupt_result",
+          message: PROVIDER_SERVER_LOST_REASON,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.deepEqual(yield* continuationTexts(stopped), []);
+  }),
+);
+
+it.effect("stops continuing a run lost to its server for the fourth time inside five minutes", () =>
+  Effect.gen(function* () {
+    const chain = (length: number) => {
+      const base = lostToServer(PROVIDER_SERVER_LOST_REASON) as unknown as {
+        runs: Array<Record<string, unknown>>;
+        providerTurns: Array<Record<string, unknown>>;
+        turnItems: Array<Record<string, unknown>>;
+      };
+      const ids = Array.from({ length }, (_, index) => RunId.make(`run:lost-${index + 1}`));
+      const runs = ids.map((id, index) => ({
+        ...base.runs[0]!,
+        id,
+        ordinal: index + 1,
+        activeAttemptId: RunAttemptId.make(`attempt:lost-${index + 1}`),
+        requestedAt: DateTime.add(now, { seconds: index * 20 }),
+        completedAt: DateTime.add(now, { seconds: index * 20 + 10 }),
+        ...(index === 0 ? {} : { restartContinuationOfRunId: ids[index - 1] }),
+      }));
+      const last = ids.at(-1)!;
+      return {
+        projection: {
+          ...base,
+          runs,
+          providerTurns: runs.map((run) => ({
+            ...base.providerTurns[0]!,
+            id: ProviderTurnId.make(`turn:${run.id}`),
+            runAttemptId: run.activeAttemptId,
+          })),
+          turnItems: [
+            {
+              id: "turn-item:interrupt-result",
+              runId: last,
+              type: "run_interrupt_result",
+              message: PROVIDER_SERVER_LOST_REASON,
+            },
+          ],
+        } as unknown as OrchestrationV2ThreadProjection,
+        last,
+      };
+    };
+    for (const length of [1, 2, 3]) {
+      const { projection, last } = chain(length);
+      const dispatches = yield* continuationDispatches(projection, last);
+      assert.lengthOf(dispatches, 1, `loss ${length}`);
+    }
+    const { projection, last } = chain(4);
+    assert.lengthOf(yield* continuationDispatches(projection, last), 0);
   }),
 );
 

@@ -229,10 +229,34 @@ export function continuationStartRetryDelayMs(
   return CONTINUATION_START_RETRY_DELAYS_MS[failedStarts - 1];
 }
 
-export function isRestartContinuationSource(
-  source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
-  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+/** The terminal reason an adapter reports when the provider server a turn ran on was replaced. */
+export const PROVIDER_SERVER_LOST_REASON = "provider-server-lost";
+
+/** The interrupt came from losing the server, not from a Stop, so the turn still owes its work. */
+export function lostToProviderServer(
+  source: Pick<OrchestrationV2Run, "id" | "status">,
+  turnItems: ReadonlyArray<Pick<OrchestrationV2TurnItem, "type" | "runId"> & { message?: string }>,
 ): boolean {
+  return (
+    source.status === "interrupted" &&
+    turnItems.some(
+      (item) =>
+        item.type === "run_interrupt_result" &&
+        item.runId === source.id &&
+        item.message === PROVIDER_SERVER_LOST_REASON,
+    )
+  );
+}
+
+export function isRestartContinuationSource(
+  source: Pick<
+    OrchestrationV2Run,
+    "id" | "status" | "activeAttemptId" | "restartCancelledBackgroundWork"
+  >,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+  turnItems: Parameters<typeof lostToProviderServer>[1],
+): boolean {
+  if (lostToProviderServer(source, turnItems)) return true;
   return isRestartNoteSource(source, providerTurns)
     ? (source.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
     : source.status === "cancelled";

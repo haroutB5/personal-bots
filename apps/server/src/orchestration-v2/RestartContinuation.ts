@@ -23,6 +23,7 @@ import {
   continuationFailedBeforePrompt,
   isAwaitedWork,
   isRestartContinuationSource,
+  lostToProviderServer,
   cancelledBeforeStart,
   isRestartNoteSource,
   neverStarted,
@@ -44,6 +45,7 @@ function restartContinuationBlocked(
   source: OrchestrationV2Run,
   now: DateTime.Utc,
   settled: boolean,
+  lostToServer: boolean,
 ): boolean {
   const { thread } = projection;
   if (
@@ -56,6 +58,7 @@ function restartContinuationBlocked(
   const turn = latestProviderTurnForAttempt(projection.providerTurns, source.activeAttemptId);
   if (
     !settled &&
+    !lostToServer &&
     turn !== undefined &&
     (turn.status === "completed" || turn.status === "failed" || turn.status === "interrupted")
   )
@@ -138,7 +141,7 @@ export function restartContinuationRun(
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
   const settled = run.status === "completed" || run.status === "waiting";
   if (run.status !== "running" && !preparedContinuation && !settled) return;
-  if (restartContinuationBlocked(projection, run, now, settled)) return;
+  if (restartContinuationBlocked(projection, run, now, settled, false)) return;
   const liveTurnRequired = !preparedContinuation && !settled;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(
@@ -201,10 +204,19 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       return;
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
+    if (!source) return;
+    const sourceRecords = yield* threads.getThreadRecords(
+      input.threadId,
+      ["messages", "turnItems"],
+      {
+        messageIds: [source.userMessageId],
+        turnItemRunIds: [source.id],
+        turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+      },
+    );
     if (
-      !source ||
       !(
-        isRestartContinuationSource(source, projection.providerTurns) ||
+        isRestartContinuationSource(source, projection.providerTurns, sourceRecords.turnItems) ||
         continuationFailedBeforePrompt(source, projection.providerTurns)
       ) ||
       restartContinuationBlocked(
@@ -212,6 +224,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         source,
         yield* DateTime.now,
         isRestartNoteSource(source, projection.providerTurns),
+        lostToProviderServer(source, sourceRecords.turnItems),
       )
     )
       return;
@@ -246,15 +259,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       });
       return;
     }
-    const sourceRecords = yield* threads.getThreadRecords(
-      input.threadId,
-      ["messages", "turnItems"],
-      {
-        messageIds: [source.userMessageId],
-        turnItemRunIds: [source.id],
-        turnItemTypes: ["run_interrupt_request"],
-      },
-    );
     if (
       sourceRecords.turnItems.some(
         (item) => item.runId === source.id && item.type === "run_interrupt_request",

@@ -47,6 +47,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import {
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
+  PROVIDER_SERVER_LOST_REASON,
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -2622,6 +2623,61 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  const lostTurn = (alive: boolean) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({}),
+        ],
+        { alive: { current: alive } },
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      return (yield* Fiber.join(events)).at(-1);
+    }).pipe(Effect.scoped);
+
+  it.effect("ends a turn lost to a replaced server with the provider-server-lost reason", () =>
+    Effect.gen(function* () {
+      const terminal = yield* lostTurn(false);
+      assert.deepInclude(terminal, {
+        type: "turn.terminal",
+        status: "interrupted",
+        reason: PROVIDER_SERVER_LOST_REASON,
+      });
+      assert.equal(PROVIDER_SERVER_LOST_REASON, "provider-server-lost");
+    }),
+  );
+
+  it.effect("ends a turn the kept server no longer runs as a plain interrupt", () =>
+    Effect.gen(function* () {
+      const terminal = yield* lostTurn(true);
+      assert.deepInclude(terminal, { type: "turn.terminal", status: "interrupted" });
+      assert.notProperty(terminal, "reason");
+    }),
+  );
+
+  it.effect(
+    "ends a lost turn as a plain interrupt when PERSONAL_OPENCODE_LOSS_CONTINUE is off",
+    () =>
+      Effect.gen(function* () {
+        const terminal = yield* lostTurn(false);
+        assert.deepInclude(terminal, { type: "turn.terminal", status: "interrupted" });
+        assert.notProperty(terminal, "reason");
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { PERSONAL_OPENCODE_LOSS_CONTINUE: "off" } }),
+          ),
+        ),
+      ),
+  );
+
   it.effect("keeps the running server when only the event stream is lost", () =>
     Effect.gen(function* () {
       const connections = { opened: 0, closed: 0 };
@@ -2707,7 +2763,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal(connections.opened, opened + 1);
     }).pipe(
       Effect.provide(
-        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PERSONAL_OPENCODE_RESUBSCRIBE: "off" } })),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { PERSONAL_OPENCODE_RESUBSCRIBE: "off" } }),
+        ),
       ),
       Effect.scoped,
     ),

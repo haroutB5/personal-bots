@@ -51,6 +51,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
+import { PROVIDER_SERVER_LOST_REASON } from "./RestartBackgroundNote.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -2633,6 +2634,54 @@ it.effect.each([
         ["checkpoint.capture"],
       );
     }),
+);
+
+it.effect(
+  "continues a run whose server was lost, once, through the restart continuation effect",
+  () =>
+    Effect.gen(function* () {
+      const { committedEffects } = yield* captureRootRunTermination({
+        key: "provider-server-lost",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        loadRunInterruptReason: () => Effect.succeed(undefined),
+        events: (ids) =>
+          Stream.make({
+            ...rootTerminalEvent(ids, "interrupted"),
+            reason: PROVIDER_SERVER_LOST_REASON,
+          }),
+      });
+      const ids = backgroundScenarioIds("provider-server-lost");
+      assert.deepEqual(
+        committedEffects.map((effect) => [effect.id, effect.request.type]),
+        [
+          [`effect:checkpoint.capture:${ids.runId}`, "checkpoint.capture"],
+          [`effect:restart-continuation:${ids.runId}`, "provider-runtime.continue"],
+        ],
+      );
+      assert.deepEqual(committedEffects[1]?.request, {
+        type: "provider-runtime.continue",
+        sourceRunId: ids.runId,
+      });
+    }),
+);
+
+it.effect("does not continue a lost-server run the user had asked to stop", () =>
+  Effect.gen(function* () {
+    const { committedEffects } = yield* captureRootRunTermination({
+      key: "provider-server-lost-after-stop",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      loadRunInterruptReason: () => Effect.succeed("Stopped by the user"),
+      events: (ids) =>
+        Stream.make({
+          ...rootTerminalEvent(ids, "interrupted"),
+          reason: PROVIDER_SERVER_LOST_REASON,
+        }),
+    });
+    assert.deepEqual(
+      committedEffects.map((effect) => effect.request.type),
+      ["checkpoint.capture"],
+    );
+  }),
 );
 
 it.effect("records a finished run as failed when its ownership check cannot be read", () =>
