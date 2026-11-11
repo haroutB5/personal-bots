@@ -5,6 +5,25 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const fs = vi.hoisted(() => ({
   dirs: new Set<string>(),
   files: new Map<string, string>(),
+  keyDeletes: 0,
+}));
+
+vi.mock("./secureStorage", () => ({
+  writeEncryptedText: (path: string, text: string) => {
+    fs.files.set(path, `v1:${Buffer.from(text).toString("base64")}`);
+  },
+  readDecryptedText: async () => null,
+  encryptFile: async (source: string, destination: string) => {
+    fs.files.set(destination, `v1:${fs.files.get(source) ?? ""}`);
+    return true;
+  },
+  decryptFile: async (source: string, destination: string) => {
+    fs.files.set(destination, (fs.files.get(source) ?? "").slice(3));
+    return true;
+  },
+  deleteCacheKey: () => {
+    fs.keyDeletes += 1;
+  },
 }));
 
 vi.mock("react-native", () => ({
@@ -69,7 +88,7 @@ vi.mock("expo-file-system", () => {
       fs.files.delete(this.uri);
     }
   }
-  return { Directory, File, Paths: { document: "file:///documents" } };
+  return { Directory, File, Paths: { document: "file:///documents", cache: "file:///cache-dir" } };
 });
 
 import serverBody from "../personal/fixtures/boundedThreadSnapshot.json";
@@ -86,6 +105,7 @@ const snapshot = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2Thre
 const THREAD_ID = snapshot.projection.thread.id;
 const CACHE = "file:///documents/hbots-thread-cache";
 const BLOBS = "file:///documents/hbots-blobs";
+const OPEN = "file:///cache-dir/hbots-blobs-open";
 const payload = { uri: "file:///cache/photo.jpg", size: 3, mimeType: "image/jpeg", name: "photo" };
 
 function filesUnder(directory: string): string[] {
@@ -96,6 +116,7 @@ beforeEach(() => {
   fs.dirs.clear();
   fs.files.clear();
   fs.files.set(payload.uri, "abc");
+  fs.keyDeletes = 0;
   createNativeEnvironmentCache();
 });
 
@@ -112,6 +133,25 @@ describe("wipe on sign-out and revoke", () => {
     expect(filesUnder(BLOBS)).toEqual([]);
     expect(fs.dirs.has(CACHE)).toBe(false);
     expect(fs.dirs.has(BLOBS)).toBe(false);
+  });
+
+  it("deletes the encryption key", () => {
+    wipeLocalData();
+
+    expect(fs.keyDeletes).toBe(1);
+  });
+
+  it("removes the plain copy made for an upload as well", async () => {
+    const blobs = createFileBlobStore();
+    await blobs.put("entry/photo", payload);
+    const opened = await blobs.get("entry/photo");
+    expect(opened?.uri).toBe(`${OPEN}/entry_photo`);
+    expect(filesUnder(OPEN)).toHaveLength(1);
+
+    wipeLocalData();
+
+    expect(filesUnder(OPEN)).toEqual([]);
+    expect(fs.dirs.has(OPEN)).toBe(false);
   });
 
   it("is safe when nothing was ever stored", () => {

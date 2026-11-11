@@ -6,6 +6,21 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 const files = vi.hoisted(() => new Map<string, string>());
 
+vi.mock("../platform/secureStorage", () => ({
+  writeEncryptedText: (path: string, text: string) => {
+    files.set(path, `v1:${Buffer.from(text).toString("base64")}`);
+  },
+  readDecryptedText: async (path: string) => {
+    const raw = files.get(path);
+    if (raw === undefined) return null;
+    if (!raw.startsWith("v1:")) {
+      files.delete(path);
+      return null;
+    }
+    return Buffer.from(raw.slice(3), "base64").toString("utf8");
+  },
+}));
+
 vi.mock("expo-file-system", () => {
   class Directory {
     readonly uri: string;
@@ -44,6 +59,9 @@ vi.mock("expo-file-system", () => {
 import serverBody from "./fixtures/boundedThreadSnapshot.json";
 import { readCachedThread, writeCachedThread } from "./nativeCache";
 
+const FILE =
+  "file:///documents/hbots-thread-cache/thread-environment-phone-f37b73c4-f46d-4da7-8d7b-32007f18562b.json";
+
 const snapshot = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot))(
   serverBody,
 );
@@ -63,5 +81,38 @@ describe("thread cache file", () => {
       ["user", "phone flow ping 1794171823895"],
       ["assistant", "Got it."],
     ]);
+  });
+
+  it("stores the snapshot as ciphertext, not JSON", () => {
+    writeCachedThread("environment-phone", snapshot);
+
+    const stored = files.get(FILE) ?? "";
+    expect(stored.length).toBeGreaterThan(0);
+    expect(() => JSON.parse(stored)).toThrow();
+    expect(stored).not.toContain("phone flow ping");
+  });
+
+  it("deletes an old plaintext file and treats it as a miss", async () => {
+    files.set(FILE, JSON.stringify({ projection: { thread: { id: "x" } } }));
+
+    const loaded = await readCachedThread(
+      "environment-phone",
+      ThreadId.make("f37b73c4-f46d-4da7-8d7b-32007f18562b"),
+    );
+
+    expect(Option.isNone(loaded)).toBe(true);
+    expect(files.has(FILE)).toBe(false);
+  });
+
+  it("deletes a file that decrypts to something that is not a snapshot", async () => {
+    files.set(FILE, `v1:${Buffer.from("not json").toString("base64")}`);
+
+    const loaded = await readCachedThread(
+      "environment-phone",
+      ThreadId.make("f37b73c4-f46d-4da7-8d7b-32007f18562b"),
+    );
+
+    expect(Option.isNone(loaded)).toBe(true);
+    expect(files.has(FILE)).toBe(false);
   });
 });

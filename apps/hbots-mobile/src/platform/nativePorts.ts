@@ -4,6 +4,7 @@ import * as SecureStore from "expo-secure-store";
 import { Alert, AppState, InteractionManager } from "react-native";
 
 import { wipeThreadCache } from "../personal/nativeCache";
+import { decryptFile, deleteCacheKey, encryptFile } from "./secureStorage";
 import type { BlobStore } from "@hbots/personal-client/ports/blobStore";
 import type { Clock } from "@hbots/personal-client/ports/clock";
 import type { Confirm, ConfirmRequest } from "@hbots/personal-client/ports/confirm";
@@ -64,6 +65,8 @@ export interface NativeBlob {
 }
 
 const BLOB_DIRECTORY = "hbots-blobs";
+/** Plain copies made for one upload. They live in the cache folder and go as soon as the message leaves the queue. */
+const OPEN_DIRECTORY = "hbots-blobs-open";
 
 /** Set by a wipe: a copy that was already running cannot recreate the folder after it. */
 let blobsSealed = false;
@@ -71,13 +74,17 @@ let blobsSealed = false;
 /** Deletes every stored attachment and the folder itself, until a new session starts. */
 export function wipeBlobDirectory(): void {
   blobsSealed = true;
-  const root = new Directory(Paths.document, BLOB_DIRECTORY);
-  if (root.exists) root.delete();
+  for (const root of [
+    new Directory(Paths.document, BLOB_DIRECTORY),
+    new Directory(Paths.cache, OPEN_DIRECTORY),
+  ]) {
+    if (root.exists) root.delete();
+  }
 }
 
-/** Everything this phone kept for a signed-in session: cached chats and queued attachments. */
+/** Everything this phone kept for a signed-in session: cached chats, queued attachments and the key. */
 export function wipeLocalData(): void {
-  for (const wipe of [wipeThreadCache, wipeBlobDirectory]) {
+  for (const wipe of [wipeThreadCache, wipeBlobDirectory, deleteCacheKey]) {
     try {
       wipe();
     } catch (cause) {
@@ -89,43 +96,57 @@ export function wipeLocalData(): void {
 export function createFileBlobStore(): BlobStore<NativeBlob> {
   blobsSealed = false;
   const root = new Directory(Paths.document, BLOB_DIRECTORY);
-  const ensureRoot = () => {
-    if (!root.exists) {
-      root.create({ intermediates: true });
+  const open = new Directory(Paths.cache, OPEN_DIRECTORY);
+  // Plain copies from a run that ended mid-upload do not outlive that run.
+  if (open.exists) open.delete();
+  const ensure = (directory: Directory) => {
+    if (!directory.exists) {
+      directory.create({ intermediates: true });
     }
-    return root;
+    return directory;
   };
-  const fileFor = (key: string) => new File(ensureRoot(), key.replaceAll("/", "_"));
+  const nameOf = (key: string) => key.replaceAll("/", "_");
+  const fileFor = (key: string) => new File(ensure(root), nameOf(key));
+  const removeMatching = (directory: Directory, prefix: string) => {
+    if (!directory.exists) return;
+    for (const entry of directory.list()) {
+      if (entry instanceof File && entry.name.startsWith(prefix)) {
+        entry.delete();
+      }
+    }
+  };
   return {
     put: async (key, payload) => {
       if (blobsSealed) throw new Error("Local data was removed on sign-out.");
       const target = fileFor(key);
       if (target.exists) target.delete();
-      new File(payload.uri).copy(target);
+      if (!(await encryptFile(payload.uri, target.uri))) {
+        throw new Error("The attachment could not be stored.");
+      }
     },
     get: async (key) => {
       if (blobsSealed) return null;
-      const file = fileFor(key);
-      if (!file.exists) return null;
+      const stored = fileFor(key);
+      if (!stored.exists) return null;
+      const plain = new File(ensure(open), nameOf(key));
+      if (plain.exists) plain.delete();
+      if (!(await decryptFile(stored.uri, plain.uri))) return null;
       return {
-        uri: file.uri,
-        size: file.size ?? 0,
+        uri: plain.uri,
+        size: plain.size ?? 0,
         mimeType: "application/octet-stream",
-        name: key.replaceAll("/", "_"),
+        name: nameOf(key),
       };
     },
     deletePrefix: async (prefix) => {
       if (blobsSealed) return;
-      for (const entry of ensureRoot().list()) {
-        if (entry instanceof File && entry.name.startsWith(prefix.replaceAll("/", "_"))) {
-          entry.delete();
-        }
-      }
+      removeMatching(ensure(root), nameOf(prefix));
+      removeMatching(open, nameOf(prefix));
     },
     keys: async () =>
       blobsSealed
         ? []
-        : ensureRoot()
+        : ensure(root)
             .list()
             .filter((entry): entry is File => entry instanceof File)
             .map((file) => file.name),
