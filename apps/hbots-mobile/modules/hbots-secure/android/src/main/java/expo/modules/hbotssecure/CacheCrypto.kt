@@ -14,23 +14,22 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * Files at rest for the offline cache: `v1 | iv | ciphertext`, AES-256-GCM
- * under a Keystore key that never leaves the device. Anything that does not
- * parse, including a file from before encryption, is deleted by the caller.
- */
-object CacheCrypto {
+/** Where the AES key lives. The phone uses the Keystore; a JVM test passes an in-memory key. */
+interface CacheKeys {
+  fun key(): SecretKey
+
+  fun delete()
+}
+
+/** The Keystore key that never leaves the device. */
+object KeystoreCacheKeys : CacheKeys {
   private const val PROVIDER = "AndroidKeyStore"
   private const val ALIAS = "hbots-cache-v1"
-  private const val TRANSFORM = "AES/GCM/NoPadding"
-  private val MAGIC = byteArrayOf('v'.code.toByte(), '1'.code.toByte())
-  private const val IV_BYTES = 12
-  private const val TAG_BITS = 128
 
   private fun keyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 
   @Synchronized
-  private fun key(): SecretKey {
+  override fun key(): SecretKey {
     val store = keyStore()
     (store.getKey(ALIAS, null) as? SecretKey)?.let { return it }
     val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER)
@@ -49,10 +48,26 @@ object CacheCrypto {
   }
 
   @Synchronized
-  fun deleteKey() {
+  override fun delete() {
     val store = keyStore()
     if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS)
   }
+}
+
+/**
+ * Files at rest for the offline cache: `v1 | iv | ciphertext`, AES-256-GCM
+ * under a key from [CacheKeys]. Anything that does not parse, including a
+ * file from before encryption, is deleted by the caller.
+ */
+class FileCrypto(private val keys: CacheKeys) {
+  private companion object {
+    const val TRANSFORM = "AES/GCM/NoPadding"
+    val MAGIC = byteArrayOf('v'.code.toByte(), '1'.code.toByte())
+    const val IV_BYTES = 12
+    const val TAG_BITS = 128
+  }
+
+  fun deleteKey() = keys.delete()
 
   /** Writes to a sibling file and renames, so a crash never leaves half a file. */
   private fun atomically(target: File, write: (OutputStream) -> Unit) {
@@ -70,9 +85,9 @@ object CacheCrypto {
   }
 
   private fun encryptInto(plain: InputStream, out: OutputStream) {
-    // The Keystore picks a fresh random 12 byte IV for every file; it refuses a caller-supplied one.
+    // The key store picks a fresh random 12 byte IV for every file; it refuses a caller-supplied one.
     val cipher = Cipher.getInstance(TRANSFORM)
-    cipher.init(Cipher.ENCRYPT_MODE, key())
+    cipher.init(Cipher.ENCRYPT_MODE, keys.key())
     check(cipher.iv.size == IV_BYTES) { "unexpected IV size" }
     out.write(MAGIC)
     out.write(cipher.iv)
@@ -87,7 +102,7 @@ object CacheCrypto {
     }
     if (readFully(input, iv) != iv.size) throw java.io.IOException("short iv")
     val cipher = Cipher.getInstance(TRANSFORM)
-    cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, iv))
+    cipher.init(Cipher.DECRYPT_MODE, keys.key(), GCMParameterSpec(TAG_BITS, iv))
     return CipherInputStream(input, cipher)
   }
 
@@ -140,4 +155,19 @@ object CacheCrypto {
       false
     }
   }
+}
+
+/** The app's cache files, encrypted under the Keystore key. */
+object CacheCrypto {
+  private val files = FileCrypto(KeystoreCacheKeys)
+
+  fun deleteKey() = files.deleteKey()
+
+  fun writeText(path: String, text: String) = files.writeText(path, text)
+
+  fun readText(path: String): String? = files.readText(path)
+
+  fun encryptFile(source: InputStream, destination: String) = files.encryptFile(source, destination)
+
+  fun decryptFile(source: String, destination: String): Boolean = files.decryptFile(source, destination)
 }

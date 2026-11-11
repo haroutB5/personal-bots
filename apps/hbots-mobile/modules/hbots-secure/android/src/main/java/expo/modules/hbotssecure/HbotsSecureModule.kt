@@ -9,26 +9,25 @@ import java.io.File
 import java.io.InputStream
 
 /**
- * FLAG_SECURE while a secret or sign-in card is on screen, and while the app
- * is in the background with the app lock on. It also holds the Keystore key
- * that encrypts the offline cache.
+ * FLAG_SECURE while a secret or sign-in card is on screen, and for the whole
+ * life of the activity while the app lock is on (see [shieldFor]). It also
+ * holds the Keystore key that encrypts the offline cache.
  */
 class HbotsSecureModule : Module() {
   private var secure = false
   private var blankInRecents = false
-  private var inBackground = false
 
   private fun apply() {
     val activity = appContext.currentActivity ?: return
-    val shield = secure || (blankInRecents && inBackground)
+    val shield = shieldFor(secureScreen = secure, appLockOn = blankInRecents)
     activity.runOnUiThread {
-      if (shield) {
+      if (shield.flagSecure) {
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
       } else {
         activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
       }
       if (Build.VERSION.SDK_INT >= 33) {
-        activity.setRecentsScreenshotEnabled(!blankInRecents)
+        activity.setRecentsScreenshotEnabled(shield.recentsScreenshotAllowed)
       }
     }
   }
@@ -57,13 +56,8 @@ class HbotsSecureModule : Module() {
       apply()
     }
 
-    OnActivityEntersBackground {
-      inBackground = true
-      apply()
-    }
-
+    // A recreated activity has a fresh window; shield it again as soon as it is in front.
     OnActivityEntersForeground {
-      inBackground = false
       apply()
     }
 
