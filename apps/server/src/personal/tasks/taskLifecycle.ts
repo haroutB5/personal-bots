@@ -449,7 +449,7 @@ export const makeTaskLifecycle = (
                 }
                 // A steer that never reached a turn is dropped with the task, so a
                 // retry does not replay it.
-                yield* repository.markNotesDelivered(target.taskId, now);
+                yield* repository.dropUndeliveredNotes(target.taskId, now);
                 const isTop = target.taskId === task.taskId;
                 yield* writeTask(changed, target, {
                   status: "cancelled",

@@ -1373,6 +1373,40 @@ it("the task-turn marker survives persistence decoding and never reaches the pro
   expect(projectComposerContextForProvider({ text, records: decoded.records })).toBe(text);
 });
 
+it.effect(
+  "cancelling a reopened task drops its undelivered steer instead of reporting it delivered",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("cancel-steer");
+      const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+      const child = yield* delegate("developer", "Animate avatars");
+      yield* endTurn(harness, rootThread, turnId, "Delegated.");
+      const childThread = threadOf(yield* reload(child.taskId));
+      yield* runTurn(harness, childThread, "Done.");
+      yield* runTurn(harness, rootThread, "Child finished.");
+
+      const steered = yield* service.steer({
+        taskId: child.taskId,
+        fromName: "Assistant",
+        message: "One more avatar.",
+      });
+      expect(steered.outcome).toBe("reopened");
+      expect(yield* service.steers({ taskId: child.taskId })).toMatchObject([
+        { text: "Update from Assistant: One more avatar.", deliveredAt: null },
+      ]);
+
+      yield* service.cancel({ taskId: child.taskId });
+      yield* service.drain;
+
+      expect((yield* reload(child.taskId)).status).toBe("cancelled");
+      expect(yield* service.steers({ taskId: child.taskId })).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
 it.effect("cancel cascades by task id, interrupts live turns and keeps completed children", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
