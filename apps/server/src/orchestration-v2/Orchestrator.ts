@@ -5692,10 +5692,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (command.restartContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
+      // The command projection omits interrupt items; only this rare dispatch needs them.
+      const sourceInterrupts =
+        source === undefined
+          ? []
+          : (yield* projectionStore
+              .getThreadRecords(command.threadId, ["turnItems"], {
+                turnItemTypes: ["run_interrupt_result"],
+                turnItemRunIds: [source.id],
+              })
+              .pipe(mapDispatchError(command))).turnItems;
       if (
         !source ||
         !(
-          isRestartContinuationSource(source, projection.providerTurns, projection.turnItems) ||
+          isRestartContinuationSource(source, projection.providerTurns, sourceInterrupts) ||
           continuationFailedBeforePrompt(source, projection.providerTurns)
         ) ||
         projection.thread.archivedAt !== null ||

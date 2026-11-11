@@ -8869,6 +8869,13 @@ it.layer(layerTest)("provider server loss continuation", (it) => {
   const endRun = (threadId: ThreadId, run: OrchestrationV2Run, source: LostSource) =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      // The harness has no provider, so a continuation's start would retry and hold the thread's effect lane.
+      yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["provider-turn.start"],
+        reason: "test provider is absent",
+      });
       const now = yield* DateTime.now;
       const commandId = CommandId.make(`${threadId}:end:${run.id}`);
       const interruptResult = (message: string) => ({
