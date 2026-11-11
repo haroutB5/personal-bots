@@ -68,6 +68,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
+import { PROVIDER_SERVER_LOST_REASON } from "./RestartBackgroundNote.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -8826,3 +8827,175 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+it.layer(layerTest)("provider server loss continuation", (it) => {
+  type LostSource = "lost" | "plain" | "cancelled" | "plain-without-effect";
+
+  const prepareThread = (name: string) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`runtime-layer-server-loss-${name}`);
+      const messageId = (key: string) => MessageId.make(`${threadId}:${key}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Server loss",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:message:work`),
+        threadId,
+        messageId: messageId("work"),
+        text: "Long running work",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      return { threadId, original };
+    });
+
+  const endRun = (threadId: ThreadId, run: OrchestrationV2Run, source: LostSource) =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const commandId = CommandId.make(`${threadId}:end:${run.id}`);
+      const interruptResult = (message: string) => ({
+        id: EventId.make(`${threadId}:${run.id}:interrupt-result`),
+        type: "turn-item.updated" as const,
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`${threadId}:${run.id}:interrupt-result`),
+          type: "run_interrupt_result" as const,
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId!,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: run.ordinal * 100 + 98,
+          status: "interrupted" as const,
+          title: "Interrupted",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          message,
+        },
+      });
+      yield* eventSink.writeWithEffects({
+        commandId,
+        events: [
+          ...(source === "cancelled"
+            ? []
+            : [
+                interruptResult(
+                  source === "lost" ? PROVIDER_SERVER_LOST_REASON : "Stopped by the provider",
+                ),
+              ]),
+          {
+            id: EventId.make(`${threadId}:${run.id}:ended`),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...run,
+              status: source === "cancelled" ? "cancelled" : "interrupted",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+        ],
+        effects:
+          source === "plain-without-effect"
+            ? []
+            : [
+                {
+                  id: `effect:restart-continuation:${run.id}`,
+                  commandId,
+                  threadId,
+                  request: { type: "provider-runtime.continue", sourceRunId: run.id },
+                },
+              ],
+      });
+    });
+
+  const continuationsOf = (threadId: ThreadId, runId: RunId) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { runs } = yield* orchestrator.getThreadProjection(threadId);
+      return runs.filter((run) => run.restartContinuationOfRunId === runId);
+    });
+
+  it.effect.each([
+    { source: "lost", expected: 1 },
+    { source: "plain", expected: 0 },
+    { source: "cancelled", expected: 1 },
+    { source: "plain-without-effect", expected: 0 },
+  ] as const)("a run ended as $source gets $expected continuation runs", ({ source, expected }) =>
+    Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { threadId, original } = yield* prepareThread(source);
+      yield* endRun(threadId, original, source);
+      yield* worker.drain();
+      const continuations = yield* continuationsOf(threadId, original.id);
+      assert.lengthOf(continuations, expected);
+      yield* worker.drain();
+      assert.lengthOf(yield* continuationsOf(threadId, original.id), expected);
+    }),
+  );
+
+  it.effect("stops after the third continuation of a chain of losses", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { threadId, original } = yield* prepareThread("loop-guard");
+      let lost = original;
+      const created: Array<number> = [];
+      for (let loss = 1; loss <= 4; loss += 1) {
+        yield* endRun(threadId, lost, "lost");
+        yield* worker.drain();
+        const next = yield* continuationsOf(threadId, lost.id);
+        created.push(next.length);
+        if (next[0] === undefined) break;
+        lost = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === next[0]!.id,
+        )!;
+      }
+      assert.deepEqual(created, [1, 1, 1, 0]);
+    }),
+  );
+
+  it.effect("does not continue a lost run after the user stopped the thread", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { threadId, original } = yield* prepareThread("stopped");
+      yield* endRun(threadId, original, "lost");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make(`${threadId}:stop`),
+        threadId,
+      });
+      yield* worker.drain();
+      assert.lengthOf(yield* continuationsOf(threadId, original.id), 0);
+    }),
+  );
+});
