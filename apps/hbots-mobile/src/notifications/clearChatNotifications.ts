@@ -1,4 +1,4 @@
-import { nativeNotify, type HbotsNotifyModule } from "./nativeNotify";
+import type { HbotsNotifyModule } from "./nativeNotify";
 
 /**
  * Opening a chat reads what its notifications said, so they leave the shade. Without FCM there is no
@@ -6,7 +6,7 @@ import { nativeNotify, type HbotsNotifyModule } from "./nativeNotify";
  */
 export function clearChatNotifications(
   threadId: string,
-  native: Pick<HbotsNotifyModule, "cancelForChat"> | null = nativeNotify,
+  native: Pick<HbotsNotifyModule, "cancelForChat"> | null,
 ): boolean {
   if (native === null || threadId === "") return false;
   native.cancelForChat(threadId);

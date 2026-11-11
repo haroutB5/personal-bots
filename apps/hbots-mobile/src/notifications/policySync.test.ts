@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
@@ -50,7 +50,7 @@ describe("buildNativePolicy", () => {
 
   it("sends the shape the native policy reader is tested against", () => {
     const fixture = JSON.parse(
-      readFileSync(
+      NodeFS.readFileSync(
         new URL(
           "../../modules/hbots-notify/android/src/test/resources/policy-seam.json",
           import.meta.url,
