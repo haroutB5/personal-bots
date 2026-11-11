@@ -40,6 +40,12 @@ class NotificationActionReceiver : BroadcastReceiver() {
     val payload = payloadOf(intent, notificationId) ?: return false
     val plan = PendingStore.plan(notificationId)
       ?: NotificationPlanner.plan(payload, null, PolicyStore.read(context))
+    // The lock can be turned on after this notification was posted. Its buttons are then stale: open the chat instead.
+    if (PolicyStore.read(context).appLockOn) {
+      val closed = plan.copy(title = NotificationPlanner.GENERIC_TITLE, actions = emptyList())
+      NotificationSender.postNotice(context, closed, "Open hbots to continue.", autoCancel = false, opensApp = false)
+      return false
+    }
     when (intent.action) {
       NotificationSender.ACTION_REPLY -> {
         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(NotificationSender.KEY_REPLY)?.toString()?.trim()

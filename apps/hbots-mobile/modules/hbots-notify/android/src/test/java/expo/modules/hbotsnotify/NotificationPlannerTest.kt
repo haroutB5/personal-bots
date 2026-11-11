@@ -31,9 +31,45 @@ class NotificationPlannerTest {
     assertTrue(plan.contentFree)
     assertEquals("hbots", plan.title)
     assertEquals("New message", plan.text)
-    assertEquals(listOf("Reply"), plan.actions.map { it.label })
     val shown = listOf(plan.title, plan.text, plan.errorLine.orEmpty()) + plan.actions.map { it.label + it.choice.orEmpty() }
     assertFalse(shown.any { it.contains("Dinner") || it.contains("Juno") })
+  }
+
+  @Test fun theAppLockLeavesNoButtonsAndTheTapOpensTheChat() {
+    val reply = NotificationPlanner.plan(payload(), content(), policy(lock = true))
+    assertTrue(reply.actions.isEmpty())
+    assertEquals("hbots://chat/bot-1/t1", reply.deepLink)
+    val c = content(PushKind.QUESTION, null, question(listOf("Two", "Three")))
+    val ask = NotificationPlanner.plan(payload(PushKind.QUESTION), c, policy(lock = true))
+    assertTrue(ask.actions.isEmpty())
+    assertEquals("hbots://chat/bot-1/t1?request=req-1", ask.deepLink)
+    // Without an auth-capable system the lock still wins.
+    assertTrue(NotificationPlanner.plan(payload(), content(), policy(lock = true), authActions = false).actions.isEmpty())
+  }
+
+  @Test fun beforeAndroid12ReplyAndAnswerOnlyOpenTheChat() {
+    val reply = NotificationPlanner.plan(payload(), content(), policy(), authActions = false)
+    assertEquals(listOf(InlineAction.OPEN), reply.actions.map { it.kind })
+    assertEquals(listOf("Reply to Juno"), reply.actions.map { it.label })
+    val c = content(PushKind.QUESTION, null, question(listOf("Two", "Three")))
+    val ask = NotificationPlanner.plan(payload(PushKind.QUESTION), c, policy(), authActions = false)
+    assertEquals(listOf(InlineAction.OPEN), ask.actions.map { it.kind })
+    assertEquals(listOf("Answer"), ask.actions.map { it.label })
+    assertTrue(ask.actions.all { it.choice == null })
+  }
+
+  @Test fun fromAndroid12TheButtonsStayInline() {
+    assertEquals(31, NotificationPlanner.AUTH_ACTION_SDK)
+    val c = content(PushKind.QUESTION, null, question(listOf("Two", "Three")))
+    assertEquals(listOf("Two", "Three"), NotificationPlanner.plan(payload(PushKind.QUESTION), c, policy(), authActions = true).actions.map { it.label })
+  }
+
+  @Test fun twoServerIdsNeverShareASlot() {
+    // "Aa" and "BB" have the same String.hashCode(), so a hash would have made them one notification.
+    assertEquals("Aa".hashCode(), "BB".hashCode())
+    assertTrue(NotificationSender.tagFor("Aa") != NotificationSender.tagFor("BB"))
+    assertTrue(NotificationSender.buttonKey("Aa", "a0") != NotificationSender.buttonKey("BB", "a0"))
+    assertTrue(NotificationSender.buttonKey("n1", "a0") != NotificationSender.buttonKey("n1", "a1"))
   }
 
   @Test fun aFailedFetchStillShowsSomething() {

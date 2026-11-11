@@ -1,6 +1,7 @@
 package expo.modules.hbotsnotify
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 
 /** Everything between "a data message arrived" and "a notification is on screen". */
@@ -25,7 +26,12 @@ object PushIngest {
     val content = if (wantsContent(policy, payload)) {
       (ContentFetcher.fetch(http, payload) as? FetchOutcome.Found)?.content
     } else null
-    val plan = NotificationPlanner.plan(payload, content, policy)
+    val plan = NotificationPlanner.plan(
+      payload,
+      content,
+      policy,
+      authActions = Build.VERSION.SDK_INT >= NotificationPlanner.AUTH_ACTION_SDK,
+    )
     PendingStore.putPlan(plan)
     NotificationSender.post(context, plan)
   }
