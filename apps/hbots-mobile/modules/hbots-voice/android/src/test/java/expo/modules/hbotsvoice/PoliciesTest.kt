@@ -76,30 +76,38 @@ class RoutePolicyTest {
 class CallNotificationTest {
   @Test
   fun theOngoingNotificationHasItsOwnChannelAndAHangUpAction() {
-    val spec = CallNotification.spec("CTO")
-    assertEquals("voice_call", spec.channelId)
-    assertEquals("Call with CTO", spec.title)
+    val spec = CallNotification.spec
+    assertEquals("voice_call_v2", spec.channelId)
     assertEquals("Hang up", spec.hangUpLabel)
     assertTrue(spec.ongoing)
     assertEquals("expo.modules.hbotsvoice.HANGUP", CallNotification.ACTION_HANGUP)
   }
 
   @Test
-  fun theLockScreenVersionNamesNoBotAndNoChat() {
-    val spec = CallNotification.spec("Secret Project Bot")
-    assertEquals("Call in progress", spec.publicText)
-    assertEquals("hbots", spec.publicTitle)
-    assertTrue(!spec.publicTitle.contains("Secret") && !spec.publicText.contains("Secret"))
+  fun theLockScreenReadsCallInProgressAndNamesNoBotAndNoChat() {
+    val spec = CallNotification.spec
+    assertTrue(spec.showsOnLockScreen)
+    assertEquals("Call in progress", spec.title)
+    assertEquals("Tap to return to the call", spec.text)
   }
 
   @Test
-  fun aBlankBotNameStillReadsAsACall() {
-    assertEquals("Call with your bot", CallNotification.spec("  ").title)
+  fun theCallChannelIsDefaultImportanceSilentAndVisibleOnTheLockScreen() {
+    val channel = CallNotification.channel
+    assertEquals(3, channel.importance)
+    assertTrue(channel.silent)
+    assertTrue(channel.showsOnLockScreen)
+    assertEquals(CallNotification.CHANNEL_ID, CallNotification.spec.channelId)
   }
 
   @Test
-  fun theCallChannelIsSilentAndDoesNotCollideWithTheNotifyChannels() {
-    assertTrue(CallNotification.channel.silent)
+  fun theOldLowImportanceChannelIsRetiredAndCannotBeReused() {
+    assertEquals("voice_call", CallNotification.LEGACY_CHANNEL_ID)
+    assertTrue(CallNotification.CHANNEL_ID != CallNotification.LEGACY_CHANNEL_ID)
+  }
+
+  @Test
+  fun theCallChannelDoesNotCollideWithTheNotifyChannels() {
     assertTrue(CallNotification.CHANNEL_ID !in listOf("working", "account") && !CallNotification.CHANNEL_ID.startsWith("bot."))
   }
 }

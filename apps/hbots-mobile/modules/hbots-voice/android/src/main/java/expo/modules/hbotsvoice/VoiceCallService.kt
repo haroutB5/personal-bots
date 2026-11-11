@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 
 class VoiceCallService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
@@ -18,7 +19,7 @@ class VoiceCallService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
       CallNotification.ACTION_START -> {
-        promote(intent.getStringExtra(CallNotification.EXTRA_BOT_NAME).orEmpty())
+        promote()
         begin()
       }
       CallNotification.ACTION_HANGUP -> VoiceRuntime.dispatch(CallEvent.Stop(EndReason.NOTIFICATION_HANGUP))
@@ -40,8 +41,8 @@ class VoiceCallService : Service() {
     }
   }
 
-  private fun promote(botName: String) {
-    val notification = buildNotification(this, botName)
+  private fun promote() {
+    val notification = buildNotification(this)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       startForeground(CallNotification.NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
     } else {
@@ -58,24 +59,28 @@ class VoiceCallService : Service() {
   companion object {
     fun ensureChannel(context: Context) {
       val spec = CallNotification.channel
-      val channel = NotificationChannel(spec.id, spec.name, NotificationManager.IMPORTANCE_LOW).apply {
+      val manager = context.getSystemService(NotificationManager::class.java)
+      manager.deleteNotificationChannel(CallNotification.LEGACY_CHANNEL_ID)
+      val channel = NotificationChannel(spec.id, spec.name, spec.importance).apply {
         description = spec.description
-        lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+        lockscreenVisibility = if (spec.showsOnLockScreen) Notification.VISIBILITY_PUBLIC else Notification.VISIBILITY_PRIVATE
         if (spec.silent) {
           setSound(null, null)
           enableVibration(false)
         }
       }
-      context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+      manager.createNotificationChannel(channel)
     }
 
     fun deleteChannel(context: Context) {
-      context.getSystemService(NotificationManager::class.java).deleteNotificationChannel(CallNotification.CHANNEL_ID)
+      val manager = context.getSystemService(NotificationManager::class.java)
+      manager.deleteNotificationChannel(CallNotification.CHANNEL_ID)
+      manager.deleteNotificationChannel(CallNotification.LEGACY_CHANNEL_ID)
     }
 
-    fun buildNotification(context: Context, botName: String): Notification {
+    fun buildNotification(context: Context): Notification {
       ensureChannel(context)
-      val spec = CallNotification.spec(botName)
+      val spec = CallNotification.spec
       val hangUp = PendingIntent.getService(
         context,
         1,
@@ -85,11 +90,7 @@ class VoiceCallService : Service() {
       val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.let {
         PendingIntent.getActivity(context, 2, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
       }
-      val publicVersion = NotificationCompat.Builder(context, spec.channelId)
-        .setSmallIcon(R.drawable.ic_stat_call)
-        .setContentTitle(spec.publicTitle)
-        .setContentText(spec.publicText)
-        .build()
+      val caller = Person.Builder().setName(spec.title).setImportant(true).build()
       return NotificationCompat.Builder(context, spec.channelId)
         .setSmallIcon(R.drawable.ic_stat_call)
         .setContentTitle(spec.title)
@@ -97,11 +98,10 @@ class VoiceCallService : Service() {
         .setOngoing(spec.ongoing)
         .setOnlyAlertOnce(true)
         .setCategory(NotificationCompat.CATEGORY_CALL)
-        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-        .setPublicVersion(publicVersion)
+        .setVisibility(if (spec.showsOnLockScreen) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_PRIVATE)
         .setUsesChronometer(true)
         .setContentIntent(open)
-        .addAction(0, spec.hangUpLabel, hangUp)
+        .setStyle(NotificationCompat.CallStyle.forOngoingCall(caller, hangUp))
         .build()
     }
   }

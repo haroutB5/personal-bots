@@ -13,9 +13,7 @@ object VoiceRuntime {
   private val runtime = CallRuntime(object : CallEffects {
     override fun startService(botName: String) {
       val context = requireContext()
-      val intent = Intent(context, VoiceCallService::class.java)
-        .setAction(CallNotification.ACTION_START)
-        .putExtra(CallNotification.EXTRA_BOT_NAME, botName)
+      val intent = Intent(context, VoiceCallService::class.java).setAction(CallNotification.ACTION_START)
       ContextCompat.startForegroundService(context, intent)
     }
 
