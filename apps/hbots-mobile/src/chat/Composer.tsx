@@ -3,7 +3,6 @@ import {
   MessageId,
   ThreadId,
   botEffectiveModelSelection,
-  botTakesVoiceCalls,
   personalReplyContext,
   withPersonalFollowUp,
   type ChatAttachment,
@@ -31,7 +30,6 @@ import {
   IconArrowUp,
   IconFile,
   IconPaperclip,
-  IconPhone,
   IconPlus,
   IconSquare,
   IconX,
@@ -614,16 +612,6 @@ export function Composer({
           >
             <IconPaperclip size={19} color={tokens.textSecondary} strokeWidth={1.75} />
           </Pressable>
-          {bot !== null && botTakesVoiceCalls(bot) ? (
-            <Pressable
-              onPress={() => onSendError("Voice calls arrive with the voice update.")}
-              accessibilityRole="button"
-              accessibilityLabel={`Call ${botName}`}
-              style={styles.fieldIconButton}
-            >
-              <IconPhone size={19} color={tokens.textSecondary} strokeWidth={1.75} />
-            </Pressable>
-          ) : null}
         </View>
         {showStop ? (
           <Pressable

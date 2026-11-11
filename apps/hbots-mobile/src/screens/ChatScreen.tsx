@@ -102,8 +102,6 @@ function failureText(result: { readonly _tag: string }, fallback: string): strin
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
 }
 
-const COMPOSER_CALL_STUB = "Voice calls arrive with the voice update.";
-
 export function ChatScreen({
   native,
   chat,
@@ -939,10 +937,7 @@ export function ChatScreen({
                     replyTo={replyTo}
                     onClearReply={() => setReplyTo(null)}
                     onPendingChange={setPending}
-                    onSendError={(message) => {
-                      if (message === COMPOSER_CALL_STUB && startCall !== null) startCall();
-                      else setActionError(message === COMPOSER_CALL_STUB ? null : message);
-                    }}
+                    onSendError={setActionError}
                     onInterrupt={async () => {
                       const result = await interrupt({
                         environmentId,
@@ -984,10 +979,14 @@ export function ChatScreen({
           setMenuOpen(false);
           setSearchOpen(true);
         }}
-        onCall={() => {
-          setMenuOpen(false);
-          setActionError("Voice calls arrive with the voice update.");
-        }}
+        onCall={
+          startCall === null
+            ? null
+            : () => {
+                setMenuOpen(false);
+                startCall();
+              }
+        }
         onAllChats={() => {
           setMenuOpen(false);
           onOpenChats(botId);

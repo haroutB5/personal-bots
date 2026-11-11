@@ -185,7 +185,7 @@ export function ChatMenuSheet({
   readonly onSwitchModel: () => void;
   readonly onChatRow: (id: ChatSettingsRowId) => void;
   readonly onSearch: () => void;
-  readonly onCall: () => void;
+  readonly onCall: (() => void) | null;
   readonly onAllChats: () => void;
   readonly onMute: (mute: PersonalBotNotificationMute) => void;
   readonly onTokenUsage: () => void;
@@ -272,7 +272,7 @@ export function ChatMenuSheet({
           {bot?.name ?? "Bot"}
         </Text>
         <Row icon={IconChartBar} label="Token usage" onPress={onTokenUsage} />
-        {bot?.allowVoiceCalls === true ? (
+        {bot !== null && onCall !== null ? (
           <Row icon={IconPhone} label={`Call ${bot.name}`} onPress={onCall} />
         ) : null}
       </ScrollView>
