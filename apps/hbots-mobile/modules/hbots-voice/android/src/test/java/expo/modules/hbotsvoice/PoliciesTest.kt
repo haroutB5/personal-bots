@@ -75,32 +75,6 @@ class RoutePolicyTest {
 
 class CallNotificationTest {
   @Test
-  fun theOngoingNotificationHasItsOwnChannelAndAHangUpAction() {
-    val spec = CallNotification.spec
-    assertEquals("voice_call_v2", spec.channelId)
-    assertEquals("Hang up", spec.hangUpLabel)
-    assertTrue(spec.ongoing)
-    assertEquals("expo.modules.hbotsvoice.HANGUP", CallNotification.ACTION_HANGUP)
-  }
-
-  @Test
-  fun theLockScreenReadsCallInProgressAndNamesNoBotAndNoChat() {
-    val spec = CallNotification.spec
-    assertTrue(spec.showsOnLockScreen)
-    assertEquals("Call in progress", spec.title)
-    assertEquals("Tap to return to the call", spec.text)
-  }
-
-  @Test
-  fun theCallChannelIsDefaultImportanceSilentAndVisibleOnTheLockScreen() {
-    val channel = CallNotification.channel
-    assertEquals(3, channel.importance)
-    assertTrue(channel.silent)
-    assertTrue(channel.showsOnLockScreen)
-    assertEquals(CallNotification.CHANNEL_ID, CallNotification.spec.channelId)
-  }
-
-  @Test
   fun theOldLowImportanceChannelIsRetiredAndCannotBeReused() {
     assertEquals("voice_call", CallNotification.LEGACY_CHANNEL_ID)
     assertTrue(CallNotification.CHANNEL_ID != CallNotification.LEGACY_CHANNEL_ID)

@@ -5,7 +5,6 @@ data class CallNotificationSpec(
   val notificationId: Int,
   val title: String,
   val text: String,
-  val hangUpLabel: String,
   val ongoing: Boolean,
   val showsOnLockScreen: Boolean,
 )
@@ -41,7 +40,6 @@ object CallNotification {
     notificationId = NOTIFICATION_ID,
     title = "Call in progress",
     text = "Tap to return to the call",
-    hangUpLabel = "Hang up",
     ongoing = true,
     showsOnLockScreen = true,
   )
