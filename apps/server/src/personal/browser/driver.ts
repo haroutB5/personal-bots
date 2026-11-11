@@ -8,6 +8,7 @@
  * executable wins, otherwise the installed Brave is discovered. There is no
  * Chrome fallback (see browserExecutable.ts).
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -273,6 +274,23 @@ const screencastOptions = (profile: ScreencastProfile) =>
 
 const TIMED_OUT = Symbol("timed-out");
 
+/**
+ * Whose page this is. A bot page on the shared browser is one of several tabs in his window, so
+ * it stays "visible" through a focus override and takes screenshots from a screencast frame. An
+ * owned page is the only window of a browser nobody else uses and needs neither.
+ */
+type PageMode = "owned" | "shared-bot";
+
+/** Rendering is quiet for at most this long after a change before a shared screenshot is taken. */
+const SCREENSHOT_SETTLE_CAP_MS = 500;
+/** A shared screenshot that has no frame by now failed, as `page.screenshot` fails at its timeout. */
+const SCREENSHOT_FRAME_CAP_MS = 5_000;
+
+const screenshotTimeout = (ms: number) =>
+  Object.assign(new Error(`page.screenshot: Timeout ${ms}ms exceeded.`), {
+    name: "TimeoutError",
+  });
+
 const pushRing = <A>(ring: A[], value: A) => {
   ring.push(value);
   if (ring.length > RING_LIMIT) ring.splice(0, ring.length - RING_LIMIT);
@@ -296,7 +314,11 @@ const playwrightClickOptions = (options: PointerClickOptions | undefined) => ({
     : {}),
 });
 
-function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): BrowserPage {
+function wrapPlaywrightPage(
+  page: Playwright.Page,
+  counter: AdblockCounter,
+  mode: PageMode,
+): BrowserPage {
   const consoleRing: ConsoleRecord[] = [];
   const networkRing: NetworkRecord[] = [];
   page.on("request", () => counter.request());
@@ -357,6 +379,12 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
             automaticPresenceSimulation: true,
           },
         });
+        // Attaching with noDefaults leaves every page without Playwright's focus emulation, so a
+        // bot tab behind another tab is hidden, draws no frames and times out every click. The
+        // override lives on this page's own session and never reaches his tabs.
+        if (mode === "shared-bot") {
+          await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+        }
         return session;
       });
     return control;
@@ -414,6 +442,60 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
       ),
       ms,
     ).then((result) => result === true);
+
+  // A shared bot page is a background tab, where `page.screenshot` waits for a compositor frame
+  // that arrives only about every other call. One screencast frame on a session of its own does
+  // not, and leaves the viewer's screencast on the control session alone.
+  let grabSession: Promise<Playwright.CDPSession> | null = null;
+  let grabChain: Promise<unknown> = Promise.resolve();
+  const grabFrame = async (): Promise<Uint8Array> => {
+    grabSession ??= page.context().newCDPSession(page);
+    const session = await grabSession.catch((cause: unknown) => {
+      grabSession = null;
+      throw cause;
+    });
+    const viewport = await withTimeout(
+      page.evaluate("({ width: window.innerWidth, height: window.innerHeight })"),
+      SCREENSHOT_FRAME_CAP_MS,
+    );
+    if (viewport === TIMED_OUT) throw screenshotTimeout(SCREENSHOT_FRAME_CAP_MS);
+    const { width, height } = viewport as ViewportSize;
+    await withTimeout(
+      page
+        .evaluate("new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))")
+        .catch(() => undefined),
+      SCREENSHOT_SETTLE_CAP_MS,
+    );
+    let listener: (event: { readonly data: string; readonly sessionId: number }) => void = () => {};
+    const frame = new Promise<string>((resolve) => {
+      listener = (event) => {
+        void session
+          .send("Page.screencastFrameAck", { sessionId: event.sessionId })
+          .catch(() => {});
+        resolve(event.data);
+      };
+    });
+    session.on("Page.screencastFrame", listener);
+    try {
+      await session.send("Page.startScreencast", {
+        format: "png",
+        maxWidth: width,
+        maxHeight: height,
+        everyNthFrame: 1,
+      });
+      const data = await withTimeout(frame, SCREENSHOT_FRAME_CAP_MS);
+      if (data === TIMED_OUT) throw screenshotTimeout(SCREENSHOT_FRAME_CAP_MS);
+      return new Uint8Array(Buffer.from(data, "base64"));
+    } finally {
+      session.off("Page.screencastFrame", listener);
+      await session.send("Page.stopScreencast").catch(() => {});
+    }
+  };
+  const screenshotShared = () => {
+    const run = grabChain.then(grabFrame);
+    grabChain = run.catch(() => undefined);
+    return run;
+  };
 
   // The running screencast, if any, for `setScreencastProfile`. Switching profiles is a stop and a
   // start (Chrome has no way to change the quality of a running one): two quick calls, applied in
@@ -646,7 +728,10 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
       await cdp();
       return page.evaluate(expression);
     },
-    screenshotPng: async () => new Uint8Array(await page.screenshot({ type: "png", scale: "css" })),
+    screenshotPng:
+      mode === "shared-bot"
+        ? screenshotShared
+        : async () => new Uint8Array(await page.screenshot({ type: "png", scale: "css" })),
     accessibilityTree: async () => {
       const tree = await (await cdp()).send("Accessibility.getFullAXTree");
       return {
@@ -861,6 +946,10 @@ export const makePlaywrightDriver = (
       await browser.close().catch(() => undefined);
       throw sharedAttachError("port-file-stale");
     }
+    const browserSession = await browser.newBrowserCDPSession().catch(async () => {
+      await browser.close().catch(() => undefined);
+      throw sharedAttachError("port-file-stale");
+    });
     const holdDialogsOpen = () => undefined;
     context.on("dialog", holdDialogsOpen);
     const counter = makeAdblockCounter(undefined, false);
@@ -868,7 +957,7 @@ export const makePlaywrightDriver = (
     const wrap = (page: Playwright.Page) => {
       let wrapped = wrappers.get(page);
       if (wrapped === undefined) {
-        wrapped = wrapPlaywrightPage(page, counter);
+        wrapped = wrapPlaywrightPage(page, counter, "shared-bot");
         wrappers.set(page, wrapped);
       }
       return wrapped;
@@ -876,12 +965,28 @@ export const makePlaywrightDriver = (
     const mine = new Set<Playwright.Page>();
     const adopt = (page: Playwright.Page) => {
       mine.add(page);
+      wrap(page);
       page.on("popup", adopt);
     };
     return {
       pages: () => [...mine].filter((page) => !page.isClosed()).map(wrap),
       newPage: async () => {
-        const created = await context.newPage();
+        // A background target: Playwright's own `newPage` opens it in front of his tab. The nonce
+        // tells this tab from one he opens in the same moment.
+        const marker = `#hbots-${NodeCrypto.randomUUID()}`;
+        const arrived = context.waitForEvent("page", {
+          predicate: (candidate) => candidate.url().endsWith(marker),
+          timeout: ATTACH_TIMEOUT_MS,
+        });
+        arrived.catch(() => undefined);
+        const { targetId } = await browserSession.send("Target.createTarget", {
+          url: `about:blank${marker}`,
+          background: true,
+        });
+        const created = await arrived.catch(async (cause: unknown) => {
+          await browserSession.send("Target.closeTarget", { targetId }).catch(() => undefined);
+          throw cause;
+        });
         adopt(created);
         const page = wrap(created);
         await page.evaluate("undefined");
@@ -896,6 +1001,7 @@ export const makePlaywrightDriver = (
             .filter((page) => !page.isClosed())
             .map((page) => page.close().catch(() => undefined)),
         );
+        await browserSession.detach().catch(() => undefined);
         await browser.close();
       },
     };
@@ -939,7 +1045,7 @@ export const makePlaywrightDriver = (
     const wrap = (page: Playwright.Page) => {
       let wrapped = wrappers.get(page);
       if (wrapped === undefined) {
-        wrapped = wrapPlaywrightPage(page, counter);
+        wrapped = wrapPlaywrightPage(page, counter, "owned");
         wrappers.set(page, wrapped);
       }
       return wrapped;
