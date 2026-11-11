@@ -89,8 +89,8 @@ export function wipeBlobDirectory(): void {
 }
 
 /**
- * Entries of the app cache folder that are not session data. expo-updates
- * keeps its downloaded bundle there; everything else is ours or a library's
+ * Entries of the app cache folder that are not session data. The update
+ * bundle is kept there; everything else is ours or a library's
  * (the HTTP cache, the image cache, share intake, upload copies).
  */
 const KEPT_CACHE_ENTRIES: ReadonlySet<string> = new Set(["updates"]);

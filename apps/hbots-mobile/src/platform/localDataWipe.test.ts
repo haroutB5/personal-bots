@@ -32,10 +32,12 @@ vi.mock("./secureStorage", () => ({
   purgeLegacyPlaintext: (directories: readonly string[]) => {
     fs.purgeCalls += 1;
     if (fs.nativeMissing) return false;
-    for (const key of [...fs.files.keys()]) {
-      const inside = directories.some((directory) => key.startsWith(`${directory}/`));
-      if (inside && !(fs.files.get(key) ?? "").startsWith("v1:")) fs.files.delete(key);
-    }
+    const doomed = Array.from(fs.files.keys()).filter(
+      (key) =>
+        directories.some((directory) => key.startsWith(`${directory}/`)) &&
+        !(fs.files.get(key) ?? "").startsWith("v1:"),
+    );
+    for (const key of doomed) fs.files.delete(key);
     return true;
   },
 }));
@@ -79,9 +81,8 @@ vi.mock("expo-file-system", () => {
     }
     delete() {
       fs.dirs.delete(this.uri);
-      for (const key of [...fs.dirs]) {
-        if (key.startsWith(`${this.uri}/`)) fs.dirs.delete(key);
-      }
+      const nested = Array.from(fs.dirs).filter((key) => key.startsWith(`${this.uri}/`));
+      for (const key of nested) fs.dirs.delete(key);
       for (const key of fs.files.keys()) {
         if (key.startsWith(`${this.uri}/`)) fs.files.delete(key);
       }

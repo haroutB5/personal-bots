@@ -1,11 +1,17 @@
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { discardShare } from "../share/shareIntake";
 import { shareIdFromLink } from "../share/unpairedShare";
-import { createLinkGate, HELD_LINK_TTL_MS, type LinkGate } from "./linkGate";
+import { createLinkGate, HELD_LINK_TTL_MS } from "./linkGate";
 
 /** True while the app lock hides the app. Outside an AppLockGate nothing is locked. */
 export const LockCoveredContext = createContext(false);
+
+/** A share that will never open its picker must not leave its files in the cache. */
+function discardHeldShare(raw: string): void {
+  const shareId = shareIdFromLink(raw);
+  if (shareId !== null) discardShare(shareId);
+}
 
 /**
  * Wraps `act` in the link gate. The returned function takes every link from outside
@@ -13,21 +19,13 @@ export const LockCoveredContext = createContext(false);
  */
 export function useLinkGate(act: (raw: string) => void): (raw: string) => void {
   const covered = useContext(LockCoveredContext);
-  const actRef = useRef(act);
-  actRef.current = act;
-  const gate = useRef<LinkGate | null>(null);
-  gate.current ??= createLinkGate((raw) => actRef.current(raw), Date.now, HELD_LINK_TTL_MS, (raw) => {
-    // A share that will never open its picker must not leave its files in the cache.
-    const shareId = shareIdFromLink(raw);
-    if (shareId !== null) discardShare(shareId);
-  });
-  const receive = useRef((raw: string) => gate.current?.receive(raw));
+  const [gate] = useState(() => createLinkGate(act, Date.now, HELD_LINK_TTL_MS, discardHeldShare));
   useEffect(() => {
-    gate.current?.setCovered(covered);
-  }, [covered]);
+    gate.setAct(act);
+  }, [gate, act]);
   useEffect(() => {
-    const current = gate.current;
-    return () => current?.dispose();
-  }, []);
-  return receive.current;
+    gate.setCovered(covered);
+  }, [gate, covered]);
+  useEffect(() => () => gate.dispose(), [gate]);
+  return gate.receive;
 }

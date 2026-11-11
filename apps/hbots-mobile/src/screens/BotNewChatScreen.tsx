@@ -30,7 +30,6 @@ export function BotNewChatScreen({
   const start = useStartChat(native);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [round, setRound] = useState(0);
   const begun = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -44,29 +43,33 @@ export function BotNewChatScreen({
   const target = list.data === null ? null : resolveNewChatTarget(botId, list.data.bots);
   const targetBotId = target?.kind === "bot" ? target.botId : null;
 
-  useEffect(() => {
-    // The chat starts once per opening of this screen, whatever re-renders.
-    if (targetBotId === null || begun.current) return;
-    begun.current = true;
-    threadId.current ??= native.client.ports.ids.randomUUID();
+  const ids = native.client.ports.ids;
+  const begin = (botIdToStart: string) => {
+    threadId.current ??= ids.randomUUID();
     const id = threadId.current;
-    void startUntilConnected(() => start(targetBotId, undefined, id), {
+    void startUntilConnected(() => start(botIdToStart, undefined, id), {
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       onConnecting: () => setConnecting(true),
       abandoned: () => !mounted.current,
     }).then((result) => {
       if (!mounted.current) return;
       setConnecting(false);
-      if (result.kind === "started") onStarted(targetBotId, result.threadId);
+      if (result.kind === "started") onStarted(botIdToStart, result.threadId);
       else setError(result.message);
     });
-    // `round` is the Try again button: it reopens the start with the same id.
-  }, [targetBotId, start, onStarted, native, round]);
+  };
+
+  useEffect(() => {
+    // The chat starts once per opening of this screen, whatever re-renders.
+    if (targetBotId === null || begun.current) return;
+    begun.current = true;
+    begin(targetBotId);
+  }, [targetBotId, begin]);
 
   const tryAgain = () => {
-    begun.current = false;
+    if (targetBotId === null) return;
     setError(null);
-    setRound((value) => value + 1);
+    begin(targetBotId);
   };
 
   const notice =

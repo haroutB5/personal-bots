@@ -12,11 +12,8 @@ export const UNREACHABLE_MESSAGE =
   "Couldn't reach your laptop. Check that it is on and connected, then try again.";
 
 /**
- * Runs `attempt` until the connection is up. After the app sat in the background the
- * connection is gone for a moment, and the first attempt fails before anything is
- * sent. Only that failure is retried, and every retry reuses the same thread id (the
- * caller builds `attempt` around one id), so the chat is created exactly once.
- * Any other failure ends the wait at once: the command may have reached the server.
+ * Retries `attempt` while the connection is down. Only the failure that happens
+ * before anything is sent is retried, always with one thread id, so the chat is created once.
  */
 export async function startUntilConnected(
   attempt: () => Promise<StartChatResult>,

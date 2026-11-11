@@ -155,3 +155,18 @@ describe("a held link that is never acted on", () => {
     expect(drop).not.toHaveBeenCalled();
   });
 });
+
+describe("the owner of the gate re-renders", () => {
+  it("acts with the latest handler, not the first", () => {
+    const first = vi.fn();
+    const latest = vi.fn();
+    const gate = createLinkGate(first);
+    gate.setCovered(true);
+    gate.receive("hbots://stop");
+    gate.setAct(latest);
+    gate.setCovered(false);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledExactlyOnceWith("hbots://stop");
+  });
+});
