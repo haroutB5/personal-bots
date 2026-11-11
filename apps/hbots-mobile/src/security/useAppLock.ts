@@ -7,7 +7,10 @@ import { authenticate } from "./deviceAuth";
 import { currentLock, loadLock, subscribeLock } from "./lockSetting";
 
 /** The lock for a signed-in session; see {@link createLockController}. */
-export function useAppLock(): LockView & { readonly unlock: () => void } {
+export function useAppLock(): LockView & {
+  readonly unlock: () => void;
+  readonly coveredNow: () => boolean;
+} {
   const [controller] = useState(() =>
     createLockController({ authenticate, blankRecents: setRecentsBlanked, now: Date.now }),
   );
@@ -40,5 +43,5 @@ export function useAppLock(): LockView & { readonly unlock: () => void } {
     return () => back.remove();
   }, [locked]);
 
-  return { ...view, unlock: controller.unlock };
+  return { ...view, unlock: controller.unlock, coveredNow: controller.coveredNow };
 }

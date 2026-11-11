@@ -64,16 +64,30 @@ export function leftApp(state: LockState, now: number): LockState {
   return state.leftAt === null ? { ...state, leftAt: now } : state;
 }
 
+/** The app has been away at least as long as the setting; Immediately is due at once. */
+export function lockDue(state: LockState, lock: Lock, now: number): boolean {
+  return (
+    state.leftAt !== null && lock.kind === "on" && now - state.leftAt >= timeoutMs(lock.timeout)
+  );
+}
+
 /** Locks when the app was away at least as long as the setting; Immediately locks on any return. */
 export function returned(state: LockState, lock: Lock, now: number): LockState {
   if (state.leftAt === null) return state;
-  const away = now - state.leftAt;
-  const expired = lock.kind === "on" && away >= timeoutMs(lock.timeout);
-  return { locked: state.locked || expired, leftAt: null };
+  return { locked: state.locked || lockDue(state, lock, now), leftAt: null };
 }
 
 export function isCovered(state: LockState | null, lock: Lock): boolean {
   return state === null || (lock.kind === "on" && state.locked);
+}
+
+/**
+ * Whether the app must be treated as locked right now. A resume reaches the app as a link before
+ * the foreground event that closes the lock, so a lock that is due already counts. This is for
+ * deciding what an incoming intent may do; what is drawn still follows {@link isCovered}.
+ */
+export function isCoveredAt(state: LockState | null, lock: Lock, now: number): boolean {
+  return isCovered(state, lock) || (state !== null && lockDue(state, lock, now));
 }
 
 /**
@@ -108,6 +122,8 @@ export interface LockController {
   readonly unlock: () => void;
   readonly subscribe: (listener: () => void) => () => void;
   readonly view: () => LockView;
+  /** True while the lock is closed or due to close; the one answer every incoming intent follows. */
+  readonly coveredNow: () => boolean;
   readonly dispose: () => void;
 }
 
@@ -181,6 +197,7 @@ export function createLockController(env: LockEnv): LockController {
       };
     },
     view: () => view,
+    coveredNow: () => isCoveredAt(state, lock, env.now()),
     dispose: () => {
       env.blankRecents(false);
     },

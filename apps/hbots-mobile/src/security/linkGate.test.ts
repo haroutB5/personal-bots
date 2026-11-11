@@ -194,7 +194,13 @@ describe("a link that arrives while the app lock decides", () => {
       now: () => clock,
     });
     const act = vi.fn();
-    const gate = createLinkGate(act, () => clock);
+    const gate = createLinkGate(
+      act,
+      () => clock,
+      HELD_LINK_TTL_MS,
+      undefined,
+      controller.coveredNow,
+    );
     gate.setCovered(controller.view().covered);
     controller.subscribe(() => gate.setCovered(controller.view().covered));
     controller.start(lock);
