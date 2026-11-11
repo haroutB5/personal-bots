@@ -3,6 +3,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import { Alert, AppState, InteractionManager } from "react-native";
 
+import { wipeNativeLauncher } from "../launcher/nativeLauncher";
 import { wipeNativeNotifications } from "../notifications/nativeNotify";
 import { wipeThreadCache } from "../personal/nativeCache";
 import { decryptFile, deleteCacheKey, encryptFile } from "./secureStorage";
@@ -90,6 +91,7 @@ export function wipeLocalData(): void {
     wipeBlobDirectory,
     deleteCacheKey,
     wipeNativeNotifications,
+    wipeNativeLauncher,
   ]) {
     try {
       wipe();
