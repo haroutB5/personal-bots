@@ -5,6 +5,7 @@ import * as NodeTimersPromises from "node:timers/promises";
 import {
   PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
   PersonalBotId,
+  PersonalSecretRequestId,
   PersonalTaskId,
   ProviderInstanceId,
   ThreadId,
@@ -17,12 +18,14 @@ import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import { personalSecretStoreKey } from "../secrets/PersonalSecretService.ts";
 import { UPDATES_BOT_ID } from "../claudeCodeReview/reviewPrompts.ts";
 import type { PersonalThreadEvent, PersonalSessionView } from "../engine/PersonalEngine.ts";
@@ -91,6 +94,7 @@ const makeLayer = (
     ),
     tasks === undefined ? (layer) => layer : Layer.provideMerge(tasks),
     Layer.provideMerge(FcmSender.layer.pipe(Layer.provide(fcmHttp))),
+    Layer.provideMerge(PersonalSecretRepository.layer),
     Layer.provideMerge(memorySecrets()),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(engineLayer),
@@ -2180,18 +2184,20 @@ it("names the low-balance notice and lands the tap on Settings", () => {
 
 /* ── phone push (FCM) ──────────────────────────────────────────────────── */
 
-const serviceAccountBytes = (() => {
+const accountBytes = (projectId: string) => {
   const { privateKey } = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   return new TextEncoder().encode(
     JSON.stringify({
       type: "service_account",
-      project_id: "bots-test-project",
+      project_id: projectId,
       private_key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-      client_email: "push@bots-test-project.iam.gserviceaccount.com",
+      client_email: `push@${projectId}.iam.gserviceaccount.com`,
       token_uri: "https://oauth2.googleapis.com/token",
     }),
   );
-})();
+};
+
+const serviceAccountBytes = accountBytes("bots-test-project");
 
 const FCM_SECRET = personalSecretStoreKey(FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME);
 
@@ -2211,6 +2217,40 @@ const fakeFcmHttp = (calls: FcmCalls) =>
           ? { status: 200, body: JSON.stringify({ access_token: "ya29.fake", expires_in: 3600 }) }
           : calls.sendReply;
       }),
+  });
+
+const saveFulfilledKey = (input: {
+  readonly botId: string;
+  readonly shared: boolean;
+  readonly fulfilledAt: string;
+  readonly bytes: Uint8Array;
+}) =>
+  Effect.gen(function* () {
+    const store = yield* ServerSecretStore.ServerSecretStore;
+    const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
+    const botId = PersonalBotId.make(input.botId);
+    yield* store.set(
+      personalSecretStoreKey({
+        name: FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME,
+        botId,
+        shared: input.shared,
+      }),
+      input.bytes,
+    );
+    yield* repository.insertRequest({
+      requestId: PersonalSecretRequestId.make(`secret-${input.botId}-${String(input.shared)}`),
+      taskId: null,
+      rootTaskId: null,
+      threadId: ThreadId.make("owner-saved"),
+      botId,
+      name: FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME,
+      label: "Firebase",
+      purpose: "Phone push",
+      status: "fulfilled",
+      shared: input.shared,
+      createdAt: DateTime.makeUnsafe(input.fulfilledAt),
+      fulfilledAt: DateTime.makeUnsafe(input.fulfilledAt),
+    });
   });
 
 const sendPosts = (calls: FcmCalls) =>
@@ -2489,3 +2529,112 @@ it.effect(
     }).pipe(Effect.provide(phoneLayer(calls)));
   },
 );
+
+it.effect("a key saved the default request_secret way, unshared, turns phone push on", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* saveFulfilledKey({
+      botId: "bot-poteto",
+      shared: false,
+      fulfilledAt: "2026-09-18T08:00:00.000Z",
+      bytes: serviceAccountBytes,
+    });
+    const result = yield* push.registerFcm({
+      token: "tok-1",
+      appVersion: "1.67.5",
+      sessionId: "session-a",
+    });
+    expect(result).toEqual({ delivery: "ready" });
+
+    yield* ask("req-1");
+    yield* push.drain;
+    expect(sendPosts(calls).map((post) => post.url)).toEqual([
+      "https://fcm.googleapis.com/v1/projects/bots-test-project/messages:send",
+    ]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect("a malformed key in a private slot leaves phone push disabled", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* saveFulfilledKey({
+      botId: "bot-poteto",
+      shared: false,
+      fulfilledAt: "2026-09-18T08:00:00.000Z",
+      bytes: new TextEncoder().encode("not a key"),
+    });
+    const result = yield* push.registerFcm({
+      token: "tok-1",
+      appVersion: "1.67.5",
+      sessionId: "session-a",
+    });
+    expect(result).toEqual({ delivery: "disabled" });
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});
+
+it.effect(
+  "with a shared and a private key, the shared one is used and the log names the slot",
+  () => {
+    const calls = newFcmCalls();
+    const lines: Array<string> = [];
+    const logger = Logger.make(({ message }) => {
+      lines.push(JSON.stringify(message));
+    });
+    return Effect.gen(function* () {
+      const push = yield* setupChat;
+      yield* saveFulfilledKey({
+        botId: "bot-poteto",
+        shared: false,
+        fulfilledAt: "2026-09-18T08:00:00.000Z",
+        bytes: accountBytes("private-project"),
+      });
+      yield* saveFulfilledKey({
+        botId: "owner-saved",
+        shared: true,
+        fulfilledAt: "2026-09-18T07:00:00.000Z",
+        bytes: accountBytes("shared-project"),
+      });
+      yield* push.registerFcm({ token: "tok-1", appVersion: "1.67.5", sessionId: "session-a" });
+      yield* ask("req-1");
+      yield* push.drain;
+
+      expect(sendPosts(calls).map((post) => post.url)).toEqual([
+        "https://fcm.googleapis.com/v1/projects/shared-project/messages:send",
+      ]);
+      const keyLines = lines.filter((line) => line.includes("phone push key read"));
+      expect(keyLines).toHaveLength(1);
+      expect(keyLines[0]).toContain('"slot":"shared"');
+      expect(lines.join("\n")).not.toContain("BEGIN PRIVATE KEY");
+    }).pipe(
+      Effect.provide(phoneLayer(calls)),
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
+  },
+);
+
+it.effect("with two private keys, the newest save is used", () => {
+  const calls = newFcmCalls();
+  return Effect.gen(function* () {
+    const push = yield* setupChat;
+    yield* saveFulfilledKey({
+      botId: "bot-old",
+      shared: false,
+      fulfilledAt: "2026-09-17T08:00:00.000Z",
+      bytes: accountBytes("older-project"),
+    });
+    yield* saveFulfilledKey({
+      botId: "bot-new",
+      shared: false,
+      fulfilledAt: "2026-09-18T08:00:00.000Z",
+      bytes: accountBytes("newer-project"),
+    });
+    yield* push.registerFcm({ token: "tok-1", appVersion: "1.67.5", sessionId: "session-a" });
+    yield* ask("req-1");
+    yield* push.drain;
+    expect(sendPosts(calls).map((post) => post.url)).toEqual([
+      "https://fcm.googleapis.com/v1/projects/newer-project/messages:send",
+    ]);
+  }).pipe(Effect.provide(phoneLayer(calls)));
+});

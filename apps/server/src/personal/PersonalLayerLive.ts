@@ -36,6 +36,7 @@ import { logPersonalSchedulersAtBoot } from "./schedulersSwitch.ts";
 import * as PersonalLoginRepository from "./secrets/PersonalLoginRepository.ts";
 import * as PersonalLoginRequestService from "./secrets/PersonalLoginRequestService.ts";
 import * as PersonalLoginService from "./secrets/PersonalLoginService.ts";
+import * as PersonalSecretRepository from "./secrets/PersonalSecretRepository.ts";
 import * as PersonalSecretService from "./secrets/PersonalSecretService.ts";
 import * as PersonalTaskChatArchive from "./PersonalTaskChatArchiveService.ts";
 import * as PersonalTaskTitleBackfill from "./taskTitleBackfill.ts";
@@ -155,6 +156,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
         Layer.provide(
           FcmSender.layer.pipe(
             Layer.provide(FcmSender.fcmHttpLive),
+            Layer.provide(PersonalSecretRepository.layer),
             Layer.provide(ServerSecretStore.layer),
           ),
         ),

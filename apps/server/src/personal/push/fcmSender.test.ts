@@ -6,8 +6,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
+
+import { PersonalBotId } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import * as FcmSender from "./fcmSender.ts";
 
 const keyPair = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -24,6 +28,13 @@ const accountJson = (patch: Record<string, unknown> = {}) =>
       ...patch,
     }),
   );
+
+const KEY_NAME = FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME;
+const SHARED_KEY = `personal-secret-${KEY_NAME}`;
+
+const noSecretRows = Layer.succeed(PersonalSecretRepository.PersonalSecretRepository, {
+  listByStatus: () => Effect.succeed([]),
+} as never);
 
 it("a missing key is disabled with its own reason", () => {
   expect(FcmSender.parseFcmConfig(null)).toEqual({
@@ -167,7 +178,90 @@ it.effect("a disabled sender returns no results and makes no HTTP call", () =>
             remove: () => Effect.void,
           }),
         ),
+        Layer.provide(noSecretRows),
       ),
     ),
   ),
+);
+
+it("the key is looked for in the shared slot first, then in each private slot, newest save first", () => {
+  const row = (botId: string, shared: boolean, fulfilledAtMs: number, name = KEY_NAME) => ({
+    name,
+    botId: PersonalBotId.make(botId),
+    shared,
+    fulfilledAtMs,
+  });
+  expect(
+    FcmSender.fcmKeySlots([
+      row("bot-old", false, 1000),
+      row("owner-saved", true, 5000),
+      row("bot-new", false, 3000),
+      row("bot-other-name", false, 9000, "OTHER_KEY"),
+    ]),
+  ).toEqual([
+    { storeKey: "personal-secret-HBOTS_FCM_SERVICE_ACCOUNT", label: "shared" },
+    { storeKey: "personal-secret-bot-new-HBOTS_FCM_SERVICE_ACCOUNT", label: "bot:bot-new" },
+    { storeKey: "personal-secret-bot-old-HBOTS_FCM_SERVICE_ACCOUNT", label: "bot:bot-old" },
+  ]);
+  expect(FcmSender.fcmKeySlots([])).toEqual([
+    { storeKey: "personal-secret-HBOTS_FCM_SERVICE_ACCOUNT", label: "shared" },
+  ]);
+});
+
+it.effect(
+  "a different key saved later is signed with, not the cached access token of the old one",
+  () => {
+    const second = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const secondPem = second.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const slot = new Map<string, Uint8Array>([[SHARED_KEY, accountJson()]]);
+    const posts: Array<FcmSender.FcmHttpRequest> = [];
+    const http = Layer.succeed(FcmSender.FcmHttp, {
+      post: (request: FcmSender.FcmHttpRequest) =>
+        Effect.sync(() => {
+          posts.push(request);
+          return request.url.includes("oauth2")
+            ? { status: 200, body: JSON.stringify({ access_token: "ya29.fake", expires_in: 3600 }) }
+            : { status: 200, body: "{}" };
+        }),
+    });
+    const secrets = Layer.succeed(ServerSecretStore.ServerSecretStore, {
+      get: (name: string) => Effect.succeed(Option.fromNullishOr(slot.get(name))),
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("not used"),
+      remove: () => Effect.void,
+    });
+    const data = { kind: "test", notificationId: "n", botId: "", threadId: "", v: "1" } as const;
+    return Effect.gen(function* () {
+      const sender = yield* FcmSender.FcmSender;
+      yield* sender.send(["tok"], data);
+      expect(posts.filter((post) => post.url.includes("oauth2"))).toHaveLength(1);
+
+      slot.set(SHARED_KEY, accountJson({ private_key: secondPem }));
+      yield* TestClock.adjust(FcmSender.FCM_CONFIG_RELOAD_MS + 1);
+      yield* sender.send(["tok"], data);
+
+      const assertions = posts
+        .filter((post) => post.url.includes("oauth2"))
+        .map((post) => new URLSearchParams(post.body).get("assertion") ?? "");
+      expect(assertions).toHaveLength(2);
+      const [header, claims, signature] = assertions[1]!.split(".");
+      expect(
+        NodeCrypto.verify(
+          "RSA-SHA256",
+          Buffer.from(`${header}.${claims}`),
+          second.publicKey,
+          Buffer.from(signature!, "base64url"),
+        ),
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(
+        FcmSender.layer.pipe(
+          Layer.provide(http),
+          Layer.provide(secrets),
+          Layer.provide(noSecretRows),
+        ),
+      ),
+    );
+  },
 );

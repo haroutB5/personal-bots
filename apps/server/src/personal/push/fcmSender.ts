@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - RS256 signing of the Firebase OAuth assertion uses node:crypto.
 import * as NodeCrypto from "node:crypto";
 
-import type { PhonePushData } from "@t3tools/contracts";
+import type { PersonalBotId, PhonePushData } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -11,6 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import { personalSecretStoreKey } from "../secrets/PersonalSecretService.ts";
 
 export const FCM_SERVICE_ACCOUNT_SECRET_NAME = "HBOTS_FCM_SERVICE_ACCOUNT";
@@ -82,6 +83,45 @@ export function parseFcmConfig(bytes: Uint8Array | null): FcmConfig {
   };
 }
 
+export interface FcmKeySlot {
+  readonly storeKey: string;
+  readonly label: string;
+}
+
+/**
+ * Where the service account may be saved, best first: the shared slot, then
+ * each bot's private slot that holds this name, newest save first. The owner
+ * saves it with `request_secret`, which keeps it private to the asking bot, so
+ * the server reads it by name from whichever slot it landed in.
+ */
+export function fcmKeySlots(
+  rows: ReadonlyArray<{
+    readonly name: string;
+    readonly botId: PersonalBotId;
+    readonly shared: boolean;
+    readonly fulfilledAtMs: number;
+  }>,
+): ReadonlyArray<FcmKeySlot> {
+  const privateRows = rows
+    .filter((row) => row.name === FCM_SERVICE_ACCOUNT_SECRET_NAME && !row.shared)
+    .toSorted((a, b) => b.fulfilledAtMs - a.fulfilledAtMs);
+  return [
+    { storeKey: personalSecretStoreKey(FCM_SERVICE_ACCOUNT_SECRET_NAME), label: "shared" },
+    ...privateRows.map((row) => ({
+      storeKey: personalSecretStoreKey({ name: row.name, botId: row.botId, shared: false }),
+      label: `bot:${row.botId}`,
+    })),
+  ];
+}
+
+const sameConfig = (a: FcmConfig, b: FcmConfig): boolean =>
+  a.kind === "ready" && b.kind === "ready"
+    ? a.projectId === b.projectId &&
+      a.credentials.clientEmail === b.credentials.clientEmail &&
+      a.credentials.tokenUri === b.credentials.tokenUri &&
+      Redacted.value(a.credentials.privateKey) === Redacted.value(b.credentials.privateKey)
+    : a.kind === b.kind;
+
 export const fcmSendUrl = (projectId: string) =>
   `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
 
@@ -150,23 +190,29 @@ export class FcmHttp extends Context.Service<
   }
 >()("t3/personal/push/FcmHttp") {}
 
-export const fcmHttpLive = Layer.succeed(FcmHttp, {
-  post: (request) =>
-    Effect.tryPromise({
-      try: async () => {
-        // @effect-diagnostics-next-line globalFetchInEffect:off - two bounded POSTs to Google endpoints; no redirects.
-        const response = await fetch(request.url, {
-          method: "POST",
-          headers: request.headers,
-          body: request.body,
-          signal: AbortSignal.timeout(15_000),
-          redirect: "error",
-        });
-        return { status: response.status, body: (await response.text()).slice(0, 4096) };
-      },
-      catch: () => new FcmHttpError({ reason: "network" }),
-    }),
-});
+export type FcmFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+/** The HTTP client over any fetch. Tests pass one that points at a local stub. */
+export const fcmHttpWith = (fetchImpl: FcmFetch) =>
+  Layer.succeed(FcmHttp, {
+    post: (request) =>
+      Effect.tryPromise({
+        try: async () => {
+          const response = await fetchImpl(request.url, {
+            method: "POST",
+            headers: request.headers,
+            body: request.body,
+            signal: AbortSignal.timeout(15_000),
+            redirect: "error",
+          });
+          return { status: response.status, body: (await response.text()).slice(0, 4096) };
+        },
+        catch: () => new FcmHttpError({ reason: "network" }),
+      }),
+  });
+
+// @effect-diagnostics-next-line globalFetchInEffect:off - two bounded POSTs to Google endpoints; no redirects.
+export const fcmHttpLive = fcmHttpWith((url, init) => fetch(url, init));
 
 const base64Url = (value: Buffer | string) => Buffer.from(value).toString("base64url");
 
@@ -210,10 +256,11 @@ export class FcmSender extends Context.Service<
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const http = yield* FcmHttp;
-  const secretKey = personalSecretStoreKey(FCM_SERVICE_ACCOUNT_SECRET_NAME);
+  const secretRows = yield* PersonalSecretRepository.PersonalSecretRepository;
 
   let cached: { readonly config: FcmConfig; readonly loadedAtMs: number } | null = null;
   const loggedDisabled = new Set<string>();
+  let loggedSlot: string | null = null;
   let accessToken: {
     readonly value: Redacted.Redacted<string>;
     readonly expiresAtMs: number;
@@ -224,11 +271,34 @@ export const make = Effect.gen(function* () {
   const config: Effect.Effect<FcmConfig> = Effect.gen(function* () {
     const now = yield* nowMs;
     if (cached !== null && now - cached.loadedAtMs < FCM_CONFIG_RELOAD_MS) return cached.config;
-    const stored = yield* secrets
-      .get(secretKey)
-      .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
-    const loaded = parseFcmConfig(Option.isSome(stored) ? stored.value : null);
-    if (cached === null || cached.config.kind !== loaded.kind) accessToken = null;
+    const rows = yield* secretRows.listByStatus("fulfilled").pipe(Effect.orElseSucceed(() => []));
+    const slots = fcmKeySlots(
+      rows.map((row) => ({
+        name: row.name,
+        botId: row.botId,
+        shared: row.shared,
+        fulfilledAtMs: row.fulfilledAt === null ? 0 : DateTime.toEpochMillis(row.fulfilledAt),
+      })),
+    );
+    let stored: { readonly bytes: Uint8Array; readonly slot: FcmKeySlot } | null = null;
+    for (const slot of slots) {
+      const found = yield* secrets
+        .get(slot.storeKey)
+        .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
+      if (Option.isSome(found)) {
+        stored = { bytes: found.value, slot };
+        break;
+      }
+    }
+    if (stored !== null && loggedSlot !== stored.slot.label) {
+      loggedSlot = stored.slot.label;
+      yield* Effect.logInfo("phone push key read", {
+        slot: stored.slot.label,
+        slotsChecked: slots.length,
+      });
+    }
+    const loaded = parseFcmConfig(stored === null ? null : stored.bytes);
+    if (cached === null || !sameConfig(cached.config, loaded)) accessToken = null;
     cached = { config: loaded, loadedAtMs: now };
     if (loaded.kind === "disabled" && !loggedDisabled.has(loaded.reason)) {
       loggedDisabled.add(loaded.reason);
