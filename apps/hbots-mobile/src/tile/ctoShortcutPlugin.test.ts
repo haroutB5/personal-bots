@@ -15,10 +15,11 @@ describe("the CTO launcher shortcut", () => {
     expect(plugin.SHORTCUT_LINK).toBe(newChatLink());
   });
 
-  it("targets the app's main activity with a view intent", () => {
+  it("targets the shortcut trampoline, not the main activity, with a view intent", () => {
     const xml = plugin.shortcutsXml("com.haroutb5.hbots");
     expect(xml).toContain('android:data="hbots://bot/cto?new=1"');
-    expect(xml).toContain('android:targetClass="com.haroutb5.hbots.MainActivity"');
+    expect(xml).toContain('android:targetClass="expo.modules.hbotslauncher.ShortcutTrampolineActivity"');
+    expect(xml).not.toContain("MainActivity");
     expect(xml).toContain('android:targetPackage="com.haroutb5.hbots"');
     expect(xml).toContain("android.intent.action.VIEW");
   });

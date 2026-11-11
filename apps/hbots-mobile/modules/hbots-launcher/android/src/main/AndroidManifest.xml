@@ -1,5 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <application>
+    <!-- No UI. Shortcuts land here and it forwards the link to the running app; see the class comment. -->
+    <activity
+      android:name="expo.modules.hbotslauncher.ShortcutTrampolineActivity"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:noHistory="true"
+      android:launchMode="standard"
+      android:taskAffinity=""
+      android:theme="@android:style/Theme.NoDisplay"/>
     <receiver
       android:name="expo.modules.hbotslauncher.HbotsWidgetProvider"
       android:exported="true"

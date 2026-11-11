@@ -38,7 +38,8 @@ object LauncherShortcuts {
   }
 
   private fun build(context: Context, spec: ShortcutSpec): ShortcutInfoCompat {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(spec.link)).setPackage(context.packageName)
+    // Through the trampoline, never straight at the main screen (see ShortcutTrampolineActivity).
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(spec.link)).setClass(context, ShortcutTrampolineActivity::class.java)
     return ShortcutInfoCompat.Builder(context, spec.id)
       .setShortLabel(spec.shortLabel)
       .setLongLabel(spec.longLabel)
