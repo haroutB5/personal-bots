@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { AppState } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { currentLock, subscribeLock } from "../security/lockSetting";
+import { currentLock, lockIsLoaded, subscribeLock } from "../security/lockSetting";
 import { nativeNotify } from "./nativeNotify";
 import { buildNativePolicy } from "./policySync";
 import { pushController, setPushRegistrar } from "./pushRuntime";
@@ -48,6 +48,9 @@ export function PushBridge({
   useEffect(() => {
     if (nativeNotify === null || bots === undefined) return;
     const push = () => {
+      // The lock reads as Off until the saved setting loads. Sending that would open the policy for a
+      // moment; native stays closed until the real value arrives (subscribeLock fires when it does).
+      if (!lockIsLoaded()) return;
       try {
         const policy = buildNativePolicy(bots, currentLock());
         nativeNotify?.syncPolicy(policy.appLockOn, policy.bots);
