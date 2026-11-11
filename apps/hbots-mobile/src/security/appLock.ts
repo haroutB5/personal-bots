@@ -76,8 +76,15 @@ export function isCovered(state: LockState | null, lock: Lock): boolean {
   return state === null || (lock.kind === "on" && state.locked);
 }
 
+/**
+ * What asking the phone to authenticate came to. "no-screen-lock" means the
+ * phone has no fingerprint, PIN, pattern or password at all, so there is
+ * nothing to authenticate with: the app stays locked and explains why.
+ */
+export type AuthResult = "unlocked" | "cancelled" | "no-screen-lock";
+
 export interface LockEnv {
-  readonly authenticate: () => Promise<boolean>;
+  readonly authenticate: () => Promise<AuthResult>;
   /** Blank the Recents thumbnail and shield the app in the background. */
   readonly blankRecents: (blank: boolean) => void;
   readonly now: () => number;
@@ -88,6 +95,8 @@ export interface LockView {
   readonly covered: boolean;
   /** The lock is closed and waiting for the user. */
   readonly locked: boolean;
+  /** The lock is closed and the phone has no screen lock to open it with. */
+  readonly noScreenLock: boolean;
 }
 
 export type Presence = "foreground" | "background";
@@ -111,14 +120,16 @@ export function createLockController(env: LockEnv): LockController {
   let lock: Lock = LOCK_OFF;
   let state: LockState | null = null;
   let prompting = false;
-  let view: LockView = { covered: true, locked: false };
+  let noScreenLock = false;
+  let view: LockView = { covered: true, locked: false, noScreenLock: false };
   const listeners = new Set<() => void>();
 
   const publish = () => {
     const covered = isCovered(state, lock);
     const locked = lock.kind === "on" && state !== null && state.locked;
-    if (covered !== view.covered || locked !== view.locked) {
-      view = { covered, locked };
+    const missing = locked && noScreenLock;
+    if (covered !== view.covered || locked !== view.locked || missing !== view.noScreenLock) {
+      view = { covered, locked, noScreenLock: missing };
       for (const listener of listeners) listener();
     }
     return locked;
@@ -129,11 +140,11 @@ export function createLockController(env: LockEnv): LockController {
     prompting = true;
     void env
       .authenticate()
-      .then((ok) => {
-        if (ok) {
-          state = UNLOCKED;
-          publish();
-        }
+      .then((result) => {
+        noScreenLock = result === "no-screen-lock";
+        // Only the system's own answer opens the lock. There is no other way in.
+        if (result === "unlocked") state = UNLOCKED;
+        publish();
       })
       .finally(() => {
         prompting = false;

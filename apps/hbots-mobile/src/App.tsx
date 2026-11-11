@@ -471,7 +471,7 @@ function App() {
         {screen.kind === "ready" ? (
           <>
             <PushBridge native={screen.native} appVersion={installedVersion} />
-            <AppLockGate>
+            <AppLockGate onSignOut={() => confirmSignOut(screen.session)}>
               <AppShell
                 native={screen.native}
                 installedVersion={installedVersion}

@@ -13,6 +13,7 @@ import {
   serializeLock,
   timeoutMs,
   UNLOCKED,
+  type AuthResult,
   type Lock,
 } from "./appLock";
 
@@ -104,7 +105,7 @@ describe("lock on resume", () => {
   });
 });
 
-function rig(authenticate: () => Promise<boolean> = async () => true) {
+function rig(authenticate: () => Promise<AuthResult> = async () => "unlocked") {
   let now = T0;
   const blank = vi.fn<(blank: boolean) => void>();
   const prompts = vi.fn(authenticate);
@@ -130,9 +131,9 @@ async function settled() {
 describe("lock controller", () => {
   it("covers the app until the setting is read", () => {
     const { controller } = rig();
-    expect(controller.view()).toEqual({ covered: true, locked: false });
+    expect(controller.view()).toEqual({ covered: true, locked: false, noScreenLock: false });
     controller.start(LOCK_OFF);
-    expect(controller.view()).toEqual({ covered: false, locked: false });
+    expect(controller.view()).toEqual({ covered: false, locked: false, noScreenLock: false });
   });
 
   it("never prompts with the lock off, however long the app was away", () => {
@@ -149,11 +150,11 @@ describe("lock controller", () => {
   it("starts locked and prompts at launch when the lock is on", async () => {
     const { controller, prompts } = rig();
     controller.start({ kind: "on", timeout: "1m" });
-    expect(controller.view()).toEqual({ covered: true, locked: true });
+    expect(controller.view()).toEqual({ covered: true, locked: true, noScreenLock: false });
     expect(prompts).toHaveBeenCalledTimes(1);
 
     await settled();
-    expect(controller.view()).toEqual({ covered: false, locked: false });
+    expect(controller.view()).toEqual({ covered: false, locked: false, noScreenLock: false });
   });
 
   it("locks on resume after 1 minute, not before", async () => {
@@ -203,13 +204,13 @@ describe("lock controller", () => {
   });
 
   it("stays locked when the prompt is cancelled, and Unlock asks again", async () => {
-    let answer = false;
+    let answer: AuthResult = "cancelled";
     const { controller, prompts } = rig(async () => answer);
     controller.start({ kind: "on", timeout: "1m" });
     await settled();
     expect(controller.view().locked).toBe(true);
 
-    answer = true;
+    answer = "unlocked";
     controller.unlock();
     await settled();
     expect(prompts).toHaveBeenCalledTimes(2);
@@ -217,10 +218,10 @@ describe("lock controller", () => {
   });
 
   it("ignores the app pausing behind the system prompt", async () => {
-    let finish: (ok: boolean) => void = () => undefined;
+    let finish: (result: AuthResult) => void = () => undefined;
     const { controller, advance } = rig(
       () =>
-        new Promise<boolean>((resolve) => {
+        new Promise<AuthResult>((resolve) => {
           finish = resolve;
         }),
     );
@@ -228,10 +229,10 @@ describe("lock controller", () => {
     controller.presence("background");
     advance(10);
     controller.presence("foreground");
-    finish(true);
+    finish("unlocked");
     await settled();
 
-    expect(controller.view()).toEqual({ covered: false, locked: false });
+    expect(controller.view()).toEqual({ covered: false, locked: false, noScreenLock: false });
     controller.presence("foreground");
     expect(controller.view().locked).toBe(false);
   });
@@ -257,7 +258,7 @@ describe("lock controller", () => {
     controller.start(LOCK_OFF);
     controller.setLock({ kind: "on", timeout: "1m" });
 
-    expect(controller.view()).toEqual({ covered: false, locked: false });
+    expect(controller.view()).toEqual({ covered: false, locked: false, noScreenLock: false });
     expect(prompts).not.toHaveBeenCalled();
   });
 
@@ -268,6 +269,56 @@ describe("lock controller", () => {
     controller.start(LOCK_OFF);
     controller.presence("background");
     controller.presence("foreground");
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a phone with no screen lock", () => {
+  const ON = { kind: "on", timeout: "1m" } as const satisfies Lock;
+
+  it("stays locked, says why, and never opens by itself", async () => {
+    const { controller, prompts } = rig(async () => "no-screen-lock");
+    controller.start(ON);
+    await settled();
+
+    expect(controller.view()).toEqual({ covered: true, locked: true, noScreenLock: true });
+    // Asking again, or coming back to the app, does not unlock it either.
+    controller.unlock();
+    await settled();
+    controller.presence("background");
+    controller.presence("foreground");
+    await settled();
+    expect(controller.view()).toEqual({ covered: true, locked: true, noScreenLock: true });
+    expect(prompts.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("opens only once the phone has a screen lock and the user passes it", async () => {
+    let answer: AuthResult = "no-screen-lock";
+    const { controller } = rig(async () => answer);
+    controller.start(ON);
+    await settled();
+    expect(controller.view().noScreenLock).toBe(true);
+
+    // The user sets a screen lock in settings and returns to the app.
+    answer = "cancelled";
+    controller.presence("background");
+    controller.presence("foreground");
+    await settled();
+    expect(controller.view()).toEqual({ covered: true, locked: true, noScreenLock: false });
+
+    answer = "unlocked";
+    controller.unlock();
+    await settled();
+    expect(controller.view()).toEqual({ covered: false, locked: false, noScreenLock: false });
+  });
+
+  it("tells subscribers when the message appears", async () => {
+    const { controller } = rig(async () => "no-screen-lock");
+    const listener = vi.fn();
+    controller.start(ON);
+    controller.subscribe(listener);
+    await settled();
 
     expect(listener).toHaveBeenCalledTimes(1);
   });

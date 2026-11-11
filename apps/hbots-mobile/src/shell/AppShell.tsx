@@ -16,6 +16,7 @@ import type { AndroidRelease } from "../compat";
 import { chatComputerTarget } from "../chat/chatComputer";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
+import { useLinkGate } from "../security/useLinkGate";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
 import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
@@ -246,13 +247,15 @@ function Shell({ props }: { readonly props: AppShellProps }) {
     navigationRef.reset({ index: routes.length - 1, routes });
   }, []);
 
+  // Every link from outside goes through the app lock gate: while locked it is held, not acted on.
+  const receiveLink = useLinkGate(openLink);
   useEffect(() => {
     void Linking.getInitialURL().then((url) => {
-      if (url !== null) openLink(url);
+      if (url !== null) receiveLink(url);
     });
-    const subscription = Linking.addEventListener("url", (event) => openLink(event.url));
+    const subscription = Linking.addEventListener("url", (event) => receiveLink(event.url));
     return () => subscription.remove();
-  }, [openLink]);
+  }, [receiveLink]);
 
   return (
     <NavigationContainer

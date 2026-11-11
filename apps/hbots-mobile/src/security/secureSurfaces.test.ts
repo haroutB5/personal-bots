@@ -14,6 +14,6 @@ describe("FLAG_SECURE surfaces", () => {
 
   it("the lock covers the signed-in app", () => {
     const app = source("../App.tsx");
-    expect(app).toMatch(/<AppLockGate>\s*<AppShell/);
+    expect(app).toMatch(/<AppLockGate\b[\s\S]*?>\s*<AppShell/);
   });
 });
