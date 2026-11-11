@@ -7,7 +7,6 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.CipherInputStream
 import javax.crypto.CipherOutputStream
@@ -55,8 +54,6 @@ object CacheCrypto {
     if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS)
   }
 
-  private fun newIv(): ByteArray = ByteArray(IV_BYTES).also { SecureRandom().nextBytes(it) }
-
   /** Writes to a sibling file and renames, so a crash never leaves half a file. */
   private fun atomically(target: File, write: (OutputStream) -> Unit) {
     target.parentFile?.mkdirs()
@@ -73,11 +70,12 @@ object CacheCrypto {
   }
 
   private fun encryptInto(plain: InputStream, out: OutputStream) {
-    val iv = newIv()
+    // The Keystore picks a fresh random 12 byte IV for every file; it refuses a caller-supplied one.
     val cipher = Cipher.getInstance(TRANSFORM)
-    cipher.init(Cipher.ENCRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, iv))
+    cipher.init(Cipher.ENCRYPT_MODE, key())
+    check(cipher.iv.size == IV_BYTES) { "unexpected IV size" }
     out.write(MAGIC)
-    out.write(iv)
+    out.write(cipher.iv)
     CipherOutputStream(out, cipher).use { plain.copyTo(it) }
   }
 
