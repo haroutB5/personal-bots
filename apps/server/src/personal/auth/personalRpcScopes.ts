@@ -175,4 +175,5 @@ export const PERSONAL_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalPushAckInApp]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushRegisterFcm]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalPushUnregisterFcm]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalPushNotificationContent]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<PersonalWsRpcMethod, AuthEnvironmentScope>>;

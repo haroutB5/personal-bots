@@ -27,6 +27,7 @@ import * as PersonalMemoryTidy from "./memory/PersonalMemoryTidyService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import * as PersonalProviderUpdates from "./providerUpdates/PersonalProviderUpdates.ts";
 import * as FcmSender from "./push/fcmSender.ts";
+import * as NotificationActions from "./push/notificationActions.ts";
 import * as PersonalPushService from "./push/PersonalPushService.ts";
 import * as PersonalReleaseNotices from "./releaseNotices/PersonalReleaseNoticeService.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -144,16 +145,21 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   // Team leads create, edit and remove bots on their own team; consumes the
   // bot, task and routine services below and the push service just below.
   Layer.provideMerge(PersonalLeadBots.layer),
+  // The phone's notification content, reply and one-tap answer; reads the bot
+  // repository and the engine below.
   Layer.provideMerge(
-    PersonalPushService.layer.pipe(
-      Layer.provide(PersonalPushService.transportLive),
-      Layer.provide(
-        FcmSender.layer.pipe(
-          Layer.provide(FcmSender.fcmHttpLive),
-          Layer.provide(ServerSecretStore.layer),
+    Layer.mergeAll(
+      NotificationActions.layer,
+      PersonalPushService.layer.pipe(
+        Layer.provide(PersonalPushService.transportLive),
+        Layer.provide(
+          FcmSender.layer.pipe(
+            Layer.provide(FcmSender.fcmHttpLive),
+            Layer.provide(ServerSecretStore.layer),
+          ),
         ),
+        Layer.provide(ServerSecretStore.layer),
       ),
-      Layer.provide(ServerSecretStore.layer),
     ),
   ),
   Layer.provideMerge(PersonalMemoryService.layer),

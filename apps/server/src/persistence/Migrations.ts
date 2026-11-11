@@ -131,6 +131,7 @@ import Migration0140 from "./Migrations/140_PersonalThreadRetry.ts";
 import Migration0141 from "./Migrations/141_PersonalNoticeChunks.ts";
 import Migration0142 from "./Migrations/142_PersonalThreadTitleState.ts";
 import Migration0143 from "./Migrations/143_PersonalFcmTokens.ts";
+import Migration0144 from "./Migrations/144_PersonalPhoneCommands.ts";
 import MigrationUpstream0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import MigrationUpstream0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 import MigrationUpstream0055 from "./Migrations/055_OrchestrationV2.ts";
@@ -341,6 +342,7 @@ const migrationEntries = [
   [141, "PersonalNoticeChunks", Migration0141],
   [142, "PersonalThreadTitleState", Migration0142],
   [143, "PersonalFcmTokens", Migration0143],
+  [144, "PersonalPhoneCommands", Migration0144],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

@@ -2,12 +2,14 @@ import {
   AuthSessionId,
   EnvironmentAuthorizationError,
   PersonalBotsError,
+  PersonalPushError,
   ThreadId,
   WS_METHODS,
   WsPersonalRpcGroup,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
@@ -40,6 +42,7 @@ import * as PersonalBotTokenUsage from "../PersonalBotTokenUsageService.ts";
 import { signPersonalFiles } from "../PersonalFiles.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalProviderUpdates from "../providerUpdates/PersonalProviderUpdates.ts";
+import * as NotificationActions from "../push/notificationActions.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
 import * as PersonalRoutineService from "../routines/PersonalRoutineService.ts";
 import * as PersonalConnectionApprovalService from "../connections/approvalService.ts";
@@ -107,6 +110,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalMemoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
     const personalPush = yield* PersonalPushService.PersonalPushService;
+    const notificationActions = yield* NotificationActions.NotificationActions;
     const personalProviderUpdates = yield* PersonalProviderUpdates.PersonalProviderUpdates;
     const acpRegistry = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1003,6 +1007,22 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
           personalPush
             .unregisterFcm({ token: input.token, sessionId: currentSessionId })
             .pipe(Effect.as({})),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalPushNotificationContent]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalPushNotificationContent,
+          notificationActions
+            .content({ sessionId: currentSessionId, notificationId: input.notificationId })
+            .pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.fail(new PersonalPushError({ message: "Notification not found." })),
+                  onSome: Effect.succeed,
+                }),
+              ),
+            ),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushSetPreferences]: (input) =>

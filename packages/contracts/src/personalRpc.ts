@@ -211,6 +211,8 @@ import {
   PersonalMemoryUpdateInput,
 } from "./personalMemory.ts";
 import {
+  PersonalNotificationContent,
+  PersonalNotificationContentInput,
   PersonalPushError,
   PersonalPushEndpointInput,
   PersonalPushFcmRegisterInput,
@@ -1018,6 +1020,11 @@ const WsPersonalPushRegisterFcmRpc = Rpc.make(WS_METHODS.personalPushRegisterFcm
   success: PersonalPushFcmRegisterResult,
   error: PersonalPushRpcError,
 });
+const WsPersonalPushNotificationContentRpc = Rpc.make(WS_METHODS.personalPushNotificationContent, {
+  payload: PersonalNotificationContentInput,
+  success: PersonalNotificationContent,
+  error: PersonalPushRpcError,
+});
 const WsPersonalPushUnregisterFcmRpc = Rpc.make(WS_METHODS.personalPushUnregisterFcm, {
   payload: PersonalPushFcmUnregisterInput,
   success: Schema.Struct({}),
@@ -1202,4 +1209,5 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalPushAckInAppRpc,
   WsPersonalPushRegisterFcmRpc,
   WsPersonalPushUnregisterFcmRpc,
+  WsPersonalPushNotificationContentRpc,
 );

@@ -328,6 +328,7 @@ export const WS_METHODS = {
   personalPushInApp: "personalPush.inApp",
   personalPushAckInApp: "personalPush.ackInApp",
   personalPushRegisterFcm: "personalPush.registerFcm",
+  personalPushNotificationContent: "personalPush.notificationContent",
   personalPushUnregisterFcm: "personalPush.unregisterFcm",
 
   // Streaming subscriptions

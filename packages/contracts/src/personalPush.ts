@@ -188,6 +188,50 @@ export const PhonePushData = Schema.Struct({
 });
 export type PhonePushData = typeof PhonePushData.Type;
 
+export const PersonalNotificationContentInput = Schema.Struct({
+  notificationId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type PersonalNotificationContentInput = typeof PersonalNotificationContentInput.Type;
+
+/**
+ * The question a notification is waiting on, while it is still pending.
+ * `inlineOptions` is the server's decision that the question may be answered
+ * from the notification: the labels to offer, or null when the app must open.
+ */
+export const PersonalNotificationQuestion = Schema.Struct({
+  requestId: Schema.String,
+  question: Schema.String,
+  inlineOptions: Schema.NullOr(Schema.Array(Schema.String)),
+});
+export type PersonalNotificationQuestion = typeof PersonalNotificationQuestion.Type;
+
+export const PersonalNotificationContent = Schema.Struct({
+  notificationId: Schema.String,
+  kind: PhonePushKind,
+  botId: Schema.String,
+  threadId: Schema.String,
+  text: Schema.NullOr(Schema.String),
+  question: Schema.NullOr(PersonalNotificationQuestion),
+});
+export type PersonalNotificationContent = typeof PersonalNotificationContent.Type;
+
+const NotificationCommandId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
+export const PersonalNotificationReplyInput = Schema.Struct({
+  commandId: NotificationCommandId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(4000)),
+});
+export type PersonalNotificationReplyInput = typeof PersonalNotificationReplyInput.Type;
+
+export const PersonalNotificationAnswerInput = Schema.Struct({
+  commandId: NotificationCommandId,
+  choice: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+});
+export type PersonalNotificationAnswerInput = typeof PersonalNotificationAnswerInput.Type;
+
+export const PersonalNotificationActionResult = Schema.Struct({ ok: Schema.Literal(true) });
+export type PersonalNotificationActionResult = typeof PersonalNotificationActionResult.Type;
+
 /** What a notification carries: never message text, only a title and a deep link. */
 export const PersonalPushPayload = Schema.Struct({
   title: Schema.String,
