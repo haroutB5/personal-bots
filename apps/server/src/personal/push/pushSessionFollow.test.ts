@@ -2,7 +2,7 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { type AuthSessionId, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -120,7 +120,7 @@ const openSocket = Effect.gen(function* () {
   return { first, socketSession, watcher };
 });
 
-const subscribeOnSocket = (socketSession: Ref.Ref<string>, endpoint: string = ENDPOINT) =>
+const subscribeOnSocket = (socketSession: Ref.Ref<AuthSessionId>, endpoint: string = ENDPOINT) =>
   Effect.gen(function* () {
     const push = yield* PersonalPushService.PersonalPushService;
     return yield* push.subscribe({

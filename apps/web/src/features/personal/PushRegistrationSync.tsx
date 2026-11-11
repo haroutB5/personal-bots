@@ -11,7 +11,7 @@ import { usePersonalEnvironmentId } from "./usePersonalBots";
 
 /**
  * Web push follows the sign-in. The server only sends to a browser whose
- * sign-in is still live, so once per page load, when the laptop is connected,
+ * sign-in is still live, so once per connection, when the laptop is connected,
  * this re-sends the subscription the browser already has; the server binds it
  * to the current sign-in. A browser that was signed out and signed back in, or
  * one subscribed before subscriptions were bound, starts receiving again
@@ -27,9 +27,13 @@ export function PushRegistrationSync(): null {
   const doneRef = useRef(false);
   const runningRef = useRef(false);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the server's record of this browser's subscription in step with the current sign-in, once per page load
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the server's record of this browser's subscription in step with the current sign-in, once per connection
   useEffect(() => {
-    if (phase !== "connected" || environmentId === null) return;
+    if (phase !== "connected") {
+      doneRef.current = false;
+      return;
+    }
+    if (environmentId === null) return;
     if (doneRef.current || runningRef.current) return;
     runningRef.current = true;
     void (async () => {

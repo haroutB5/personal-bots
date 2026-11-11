@@ -67,7 +67,11 @@ import {
 } from "./chatNeedsInput.ts";
 import * as FcmSender from "./fcmSender.ts";
 import { makeFcmTokenStore } from "./fcmTokens.ts";
-import { liveSessionIds, purgeDeadPushRecipients } from "./pushRecipients.ts";
+import {
+  followSessionSuccessor,
+  liveSessionIds,
+  purgeDeadPushRecipients,
+} from "./pushRecipients.ts";
 import { taskNotifyVerdict, type TaskNotifyState } from "./notifyDecision.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -583,6 +587,12 @@ export class PersonalPushService extends Context.Service<
       readonly token: string;
       readonly sessionId: string;
     }) => Effect.Effect<void, PersonalPushError>;
+    /**
+     * A socket moved from an expired session to its live successor: moves the
+     * browser and phone rows of `from` to `to`. A failure is logged and never
+     * blocks the move.
+     */
+    readonly followSession: (from: string, to: string) => Effect.Effect<void>;
     readonly setPreferences: (
       preferences: PersonalPushPreferences,
     ) => Effect.Effect<PersonalPushPreferences, PersonalPushError>;
@@ -1062,6 +1072,15 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(subject)) return;
       yield* phoneTokens.removeForSubject(input.token, subject.value);
     }).pipe(storageFailure("phone unregistration"));
+
+  const followSession: PersonalPushService["Service"]["followSession"] = (from, to) =>
+    followSessionSuccessor(sql, from, to).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("push rows could not follow the successor session", { cause }),
+      ),
+    );
 
   const setPreferences: PersonalPushService["Service"]["setPreferences"] = (preferences) =>
     botRepository
@@ -2049,6 +2068,7 @@ export const make = Effect.gen(function* () {
     test,
     registerFcm,
     unregisterFcm,
+    followSession,
     setPreferences,
     notifyTask,
     notifyChatReply,

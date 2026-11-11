@@ -53,7 +53,7 @@ afterEach(async () => {
 });
 
 describe("PushRegistrationSync", () => {
-  it("re-sends the browser's subscription once the laptop is connected, once per page load", async () => {
+  it("re-sends the browser's subscription once the laptop is connected, once per connection", async () => {
     await mount();
     await rerender();
     expect(mocks.subscribe).toHaveBeenCalledTimes(1);

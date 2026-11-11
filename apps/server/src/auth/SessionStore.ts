@@ -423,10 +423,14 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
-    /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
+    /**
+     * Completes when a live socket's session is revoked or expires without a renewal for its DPoP key.
+     * `onSuccessor` runs when the socket moves to a live successor session, before the move completes.
+     */
     readonly awaitInvalidation: (
       sessionId: AuthSessionId,
       proofKeyThumbprint?: string,
+      onSuccessor?: (from: AuthSessionId, to: AuthSessionId) => Effect.Effect<void>,
     ) => Effect.Effect<void, SessionCredentialVerificationError>;
     readonly revoke: (
       sessionId: AuthSessionId,
@@ -1190,6 +1194,7 @@ const make = Effect.gen(function* () {
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
+    onSuccessor?: (from: AuthSessionId, to: AuthSessionId) => Effect.Effect<void>,
   ) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -1270,12 +1275,15 @@ const make = Effect.gen(function* () {
           // The socket keeps its original scopes, so the renewal must still grant all of them.
           if (
             Option.isNone(successor) ||
+            successor.value.revokedAt !== null ||
+            successor.value.expiresAt.epochMilliseconds <= now.epochMilliseconds ||
             successor.value.subject !== original.value.subject ||
             !original.value.scopes.every((scope) => successor.value.scopes.includes(scope))
           ) {
             return;
           }
           chain.push(successorId);
+          if (onSuccessor !== undefined) yield* onSuccessor(current.sessionId, successorId);
           current = successor.value;
         }
       }),

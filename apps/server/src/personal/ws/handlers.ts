@@ -66,6 +66,8 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 
 export interface PersonalWsHandlerDeps {
   readonly currentSessionId: string;
+  /** The socket's session now: it moves to the successor when the session expires. Push binds to it. */
+  readonly pushSessionId: Effect.Effect<AuthSessionId>;
   readonly observeRpcEffect: <A, E, R>(
     method: string,
     effect: Effect.Effect<A, E, R>,
@@ -86,8 +88,14 @@ export interface PersonalWsHandlerDeps {
  */
 export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
   Effect.gen(function* () {
-    const { currentSessionId, observeRpcEffect, observeRpcStream, sessionPrewarmer, viewing } =
-      deps;
+    const {
+      currentSessionId,
+      pushSessionId,
+      observeRpcEffect,
+      observeRpcStream,
+      sessionPrewarmer,
+      viewing,
+    } = deps;
     const sql = yield* SqlClient.SqlClient;
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const personalEngine = yield* PersonalEngine.PersonalEngine;
@@ -981,9 +989,10 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
       [WS_METHODS.personalPushSubscribe]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalPushSubscribe,
-          personalPush
-            .subscribe({ ...input, sessionId: currentSessionId })
-            .pipe(Effect.map((subscriptionId) => ({ subscriptionId }))),
+          pushSessionId.pipe(
+            Effect.flatMap((sessionId) => personalPush.subscribe({ ...input, sessionId })),
+            Effect.map((subscriptionId) => ({ subscriptionId })),
+          ),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushUnsubscribe]: (input) =>
@@ -1001,31 +1010,37 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
       [WS_METHODS.personalPushRegisterFcm]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalPushRegisterFcm,
-          personalPush.registerFcm({ ...input, sessionId: currentSessionId }),
+          pushSessionId.pipe(
+            Effect.flatMap((sessionId) => personalPush.registerFcm({ ...input, sessionId })),
+          ),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushUnregisterFcm]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalPushUnregisterFcm,
-          personalPush
-            .unregisterFcm({ token: input.token, sessionId: currentSessionId })
-            .pipe(Effect.as({})),
+          pushSessionId.pipe(
+            Effect.flatMap((sessionId) =>
+              personalPush.unregisterFcm({ token: input.token, sessionId }),
+            ),
+            Effect.as({}),
+          ),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushNotificationContent]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalPushNotificationContent,
-          notificationActions
-            .content({ sessionId: currentSessionId, notificationId: input.notificationId })
-            .pipe(
-              Effect.flatMap(
-                Option.match({
-                  onNone: () =>
-                    Effect.fail(new PersonalPushError({ message: "Notification not found." })),
-                  onSome: Effect.succeed,
-                }),
-              ),
+          pushSessionId.pipe(
+            Effect.flatMap((sessionId) =>
+              notificationActions.content({ sessionId, notificationId: input.notificationId }),
             ),
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(new PersonalPushError({ message: "Notification not found." })),
+                onSome: Effect.succeed,
+              }),
+            ),
+          ),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushSetPreferences]: (input) =>

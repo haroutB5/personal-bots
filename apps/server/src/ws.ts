@@ -206,6 +206,7 @@ import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/Atta
 import * as PortScanner from "./preview/PortScanner.ts";
 import { makePersonalWsHandlers } from "./personal/ws/handlers.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import { followSocketSession } from "./personal/push/socketSession.ts";
 import { serveUntilSessionRevoked } from "./personal/auth/sessionRevocationClose.ts";
 import { makePersonalWsSessionPrewarmer } from "./personal/ws/services.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -1402,6 +1403,7 @@ export const layerWsRpc = (
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: { readonly secretReferences: boolean },
   viewing: { connectionId: string; reported: boolean },
+  socketSession: Ref.Ref<AuthSessionId>,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -2059,6 +2061,7 @@ export const layerWsRpc = (
 
       const personalHandlerEntries = yield* makePersonalWsHandlers({
         currentSessionId,
+        pushSessionId: Ref.get(socketSession),
         observeRpcEffect: (_method, effect) => effect,
         observeRpcStream: (_method, stream) => stream,
         sessionPrewarmer,
@@ -3592,6 +3595,7 @@ export const layer = Layer.unwrap(
             failEnvironmentInternal("internal_error", error),
           ),
         );
+        const socketSession = yield* Ref.make(session.sessionId);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
@@ -3631,6 +3635,7 @@ export const layer = Layer.unwrap(
               reportProfiles,
               readSettingsClient(url.value),
               viewing,
+              socketSession,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
@@ -3687,7 +3692,11 @@ export const layer = Layer.unwrap(
             serveUntilSessionRevoked({
               sessionId: session.sessionId,
               serve: framedRpcWebSocketHttpEffect,
-              until: sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
+              until: sessions.awaitInvalidation(
+                session.sessionId,
+                session.proofKeyThumbprint,
+                followSocketSession(socketSession, personalPush),
+              ),
             }),
           () =>
             sessions
