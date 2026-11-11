@@ -181,7 +181,10 @@ import { CallCard } from "./voice/CallCard";
 import { CallTranscript } from "./voice/CallTranscript";
 import { personalVoiceCallsList } from "./voice/voiceCallApi";
 import { LiveVoiceCallCard } from "./voice/LiveVoiceCallCard";
-import { botVoiceCallColour, botVoiceCallsEnabled } from "./voice/botVoiceCalls";
+import {
+  botVoiceCallColour,
+  botVoiceCallsEnabled,
+} from "@hbots/personal-client/voice/botVoiceCalls";
 import { useVoiceCall } from "./voice/VoiceCallProvider";
 import { ProgressNoteLine } from "./ProgressNoteLine";
 import { deriveLatestProgressNote } from "./latestProgress";

@@ -21,13 +21,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { CallAudioPort, VoiceCue, VoiceLevelSource } from "./callAudio";
+import type { CallAudioPort, VoiceCue, VoiceLevelSource } from "./callAudioPort.ts";
 import {
   FakeLiveSocket,
   createFakeSocket,
   latestSocket,
   resetFakeSockets,
-} from "./fakeLiveSocket.test-helper";
+} from "./fakeLiveSocket.test-helper.ts";
 import {
   VOICE_NARRATE_MIN_GAP_MS,
   VOICE_REPLY_GRACE_MS,
@@ -35,7 +35,7 @@ import {
   VOICE_END_REASONS,
   VOICE_WORK_UPDATE_PREFIX,
   type VoiceEndReason,
-} from "./callState";
+} from "../conversation/voice/callState.ts";
 import * as DateTime from "effect/DateTime";
 import { PersonalBotId } from "@t3tools/contracts";
 import type {
@@ -44,14 +44,14 @@ import type {
   VoiceCallSearchWebResult,
   VoiceCallSession,
   VoiceCallTranscriptEntry,
-} from "./voiceCallApi";
+} from "../conversation/voice/voiceCallApi.ts";
 import type {
   BotStatusPort,
   VoiceApiResult,
   VoiceCallPort,
   VoiceCallSnapshot,
-} from "./voiceCallController";
-import { createVoiceCallController } from "./voiceCallController";
+} from "./voiceCallController.ts";
+import { createVoiceCallController } from "./voiceCallController.ts";
 
 const SESSION: VoiceCallSession = {
   callId: "call-1",
@@ -1135,7 +1135,7 @@ describe("send_to_bot and the Undo card", () => {
 
   it("ends the call cleanly when the server no longer holds it", async () => {
     const test = harness();
-    const socket = await connected(test);
+    await connected(test);
     test.controller.callLost();
     expect(test.last().state.status).toBe("ended");
     expect(test.last().state.hint).toBe("The laptop restarted, so this call ended.");
@@ -1642,7 +1642,7 @@ describe("search_web", () => {
   });
 
   it("passes the server's note along when there was nothing to find", async () => {
-    const { test, socket } = await withoutSearch({
+    const { socket } = await withoutSearch({
       searchResult: async () => ({
         ok: true,
         value: { results: [], note: "Nothing found for that. Say you could not find it." },
@@ -1818,5 +1818,45 @@ describe("the microphone", () => {
 
     expect(test.last().state.errorCode).toBe("no_key");
     expect(test.audio.closeCalls()).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("the ephemeral pass", () => {
+  it("never reaches a log line, a snapshot or the finish payload across a whole call", async () => {
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => undefined),
+    );
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "t1", "check the build");
+    await vi.advanceTimersByTimeAsync(afterSend());
+    socket.close(1006, "network gone");
+    await vi.advanceTimersByTimeAsync(20_000);
+    test.controller.end("hung_up");
+
+    const logged = spies.flatMap((spy) => spy.mock.calls).map((args) => JSON.stringify(args));
+    expect(logged.join("\n")).not.toContain("pass-abc");
+    expect(JSON.stringify(test.snapshots)).not.toContain("pass-abc");
+    expect(JSON.stringify(test.api.finishes)).not.toContain("pass-abc");
+    for (const spy of spies) spy.mockRestore();
+  });
+
+  it("is never written to browser storage", async () => {
+    const writes: string[] = [];
+    const store = {
+      setItem: (key: string, value: string) => writes.push(`${key}=${value}`),
+      getItem: () => null,
+      removeItem: () => undefined,
+    };
+    vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("sessionStorage", store);
+    try {
+      const test = harness();
+      await connected(test);
+      test.controller.end("hung_up");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(writes.join("\n")).not.toContain("pass-abc");
   });
 });

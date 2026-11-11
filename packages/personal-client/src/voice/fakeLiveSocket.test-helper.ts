@@ -3,7 +3,7 @@
  * It speaks the same JSON frames the real endpoint does (SpikeTask's findings,
  * 15 Oct 2026), so a test proves the wire without a network.
  */
-import type { LiveSocket } from "./liveClient";
+import type { LiveSocket } from "./liveClient.ts";
 
 export class FakeLiveSocket implements LiveSocket {
   static readonly OPEN = 1;

@@ -61,7 +61,10 @@ import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
 import { SwipeTimeRow } from "./MessageSwipeTime";
 import { parseSentAt } from "./messageTime";
-import { readVoiceCallMarker, VOICE_CALL_TAG_LABEL } from "./voice/voiceCallMessage";
+import {
+  readVoiceCallMarker,
+  VOICE_CALL_TAG_LABEL,
+} from "@hbots/personal-client/voice/voiceCallMessage";
 import type { OutboxEntry, OutboxRow } from "./outbox";
 import {
   transcriptRange,

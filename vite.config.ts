@@ -787,6 +787,7 @@ export default defineConfig({
           "apps/server/src/persistence/upstreamMigrationIds.ts",
           "apps/server/src/usage/botUsage.ts",
           "apps/web/src/features/personal/**",
+          "packages/personal-client/src/voice/**",
           "apps/web/src/routes/_personal*.tsx",
           "apps/web/src/hooks/useTheme.ts",
           "packages/contracts/src/personal*.ts",

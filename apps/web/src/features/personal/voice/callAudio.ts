@@ -25,36 +25,17 @@
  */
 import workletUrl from "./pcm16kCapture.js?url";
 
+import type {
+  CallAudioPort,
+  VoiceCue,
+  VoiceLevelSource,
+} from "@hbots/personal-client/voice/callAudioPort";
 import { createCallAudioContext } from "./callAudioContext";
 import { type MicrophoneRequest, micConstraints, stopStreamTracks } from "./callMicrophone";
 
 export { createCallAudioContext };
 
-/** Where the ring's level comes from. */
-export type VoiceLevelSource = "mic" | "voice" | "none";
-
-export type VoiceCue = "connected" | "incoming" | "mute" | "unmute" | "ended" | "error";
-
-/**
- * What the engine needs from audio. Narrow on purpose: a test drives the call
- * with a stub that just records what it was asked to do.
- */
-export interface CallAudioPort {
-  /** Plays one PCM chunk from Gemini. */
-  play(base64: string, rate: number): void;
-  /** Drops everything queued (an interruption). */
-  stopPlayback(): void;
-  /** Starts (or restarts) the microphone; resolves once frames are flowing. */
-  startMic(): Promise<void>;
-  /** Mic on or off without a restart. */
-  setMuted(muted: boolean): void;
-  /** RMS of the active stream, 0 to 1; read from the screen's rAF loop. */
-  readLevel(source: VoiceLevelSource): number;
-  /** One short Web Audio tone (spec 10). */
-  cue(kind: VoiceCue): void;
-  /** Everything down: tracks stopped, sockets of sound closed. */
-  close(): void;
-}
+export type { CallAudioPort, VoiceCue, VoiceLevelSource };
 
 export interface CallAudio extends CallAudioPort {
   /** The context's own rate, for diagnostics and tests. */

@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vite-plus/test";
 
-import { botVoiceCallColour, botVoiceCallsEnabled } from "./botVoiceCalls";
+import { botVoiceCallColour, botVoiceCallsEnabled } from "./botVoiceCalls.ts";
 
 describe("botVoiceCallsEnabled", () => {
   it("is true for a team lead, whatever the old switch says", () => {

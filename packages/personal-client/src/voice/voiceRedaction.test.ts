@@ -10,7 +10,7 @@ import {
   VOICE_SPOKEN_MAX_CHARS,
   containsRedactableSecret,
   redactForVoice,
-} from "./voiceRedaction";
+} from "./voiceRedaction.ts";
 
 describe("redactForVoice", () => {
   it("hides a Gemini key", () => {

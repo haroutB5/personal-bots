@@ -5,7 +5,7 @@ import {
   createFakeSocket,
   latestSocket,
   resetFakeSockets,
-} from "./fakeLiveSocket.test-helper";
+} from "./fakeLiveSocket.test-helper.ts";
 import {
   LIVE_ENDPOINTS,
   type LiveToolCall,
@@ -13,7 +13,7 @@ import {
   connectLive,
   liveSetupMessage,
   liveSocketUrl,
-} from "./liveClient";
+} from "./liveClient.ts";
 
 beforeEach(() => {
   resetFakeSockets();
