@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { LockScreen } from "../screens/LockScreen";
@@ -19,12 +19,13 @@ export function AppLockGate({
   readonly children: ReactNode;
   readonly onSignOut: () => void;
 }) {
-  const { covered, locked, noScreenLock, unlock } = useAppLock();
+  const { covered, locked, noScreenLock, unlock, coveredNow } = useAppLock();
+  const cover = useMemo(() => ({ covered, coveredNow }), [covered, coveredNow]);
   const { display, ...hidden } = underLock(covered);
   const callLine = useCallLockLine();
   const callSession = useCallSession();
   return (
-    <LockCoveredContext.Provider value={covered}>
+    <LockCoveredContext.Provider value={cover}>
       <View style={styles.flex}>
         <View style={[styles.flex, { display }]} {...hidden}>
           {children}

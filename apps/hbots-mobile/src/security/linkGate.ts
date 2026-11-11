@@ -24,6 +24,8 @@ export function createLinkGate(
   ttlMs: number = HELD_LINK_TTL_MS,
   /** A held link that will never be acted on (replaced, expired, abandoned): free what it points at. */
   drop: (raw: string) => void = () => undefined,
+  /** Whether the lock is closed or due to close at this moment; the view can lag a resume. */
+  coveredNow: () => boolean = () => false,
 ): LinkGate {
   // Closed until the lock says otherwise: the setting is read after the first link can arrive.
   let act = initialAct;
@@ -34,7 +36,7 @@ export function createLinkGate(
 
   return {
     receive: (raw) => {
-      if (covered) {
+      if (covered || coveredNow()) {
         // The newest link wins: tapping the tile twice must not queue two chats.
         if (pending !== null) drop(pending.raw);
         pending = { raw, at: now() };

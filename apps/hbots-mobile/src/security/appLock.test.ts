@@ -274,6 +274,45 @@ describe("lock controller", () => {
   });
 });
 
+describe("covered right now", () => {
+  it("is true from the moment a due lock is left, before the return closes it", async () => {
+    const { controller, advance } = rig();
+    controller.start({ kind: "on", timeout: "1m" });
+    await settled();
+    expect(controller.coveredNow()).toBe(false);
+
+    controller.presence("background");
+    advance(59_000);
+    expect(controller.coveredNow()).toBe(false);
+    advance(1_000);
+    expect(controller.coveredNow()).toBe(true);
+    expect(controller.view().covered).toBe(false);
+  });
+
+  it("is true for any time away with Immediately, and never with the lock off", async () => {
+    const immediate = rig();
+    immediate.controller.start({ kind: "on", timeout: "immediate" });
+    await settled();
+    immediate.controller.presence("background");
+    expect(immediate.controller.coveredNow()).toBe(true);
+
+    const off = rig();
+    off.controller.start(LOCK_OFF);
+    off.controller.presence("background");
+    off.advance(60 * 60_000);
+    expect(off.controller.coveredNow()).toBe(false);
+  });
+
+  it("is true before the setting is read and false again after the unlock", async () => {
+    const { controller } = rig();
+    expect(controller.coveredNow()).toBe(true);
+    controller.start({ kind: "on", timeout: "immediate" });
+    expect(controller.coveredNow()).toBe(true);
+    await settled();
+    expect(controller.coveredNow()).toBe(false);
+  });
+});
+
 describe("a phone with no screen lock", () => {
   const ON = { kind: "on", timeout: "1m" } as const satisfies Lock;
 
