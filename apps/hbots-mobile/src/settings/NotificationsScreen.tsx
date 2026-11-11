@@ -1,10 +1,16 @@
 import type { EnvironmentId, PersonalPushPreferences } from "@t3tools/contracts";
 import { commandFailureMessage } from "@hbots/personal-client/bots/commandFeedback";
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { AppState } from "react-native";
 
 import { useNow } from "../chat/useNow";
+import { nativeNotify, type ChannelState } from "../notifications/nativeNotify";
+import { pushRowText } from "../notifications/pushState";
+import { pushController } from "../notifications/pushRuntime";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import {
+  canSendTest,
+  channelRows,
   notificationDeviceDetail,
   notificationDevicesLine,
   notificationEventRows,
@@ -16,8 +22,17 @@ import {
   Section,
   SectionNote,
   SettingsPage,
+  TextButton,
   ToggleRow,
 } from "./SettingsUi";
+
+function readChannelStates(): ReadonlyArray<ChannelState> {
+  try {
+    return nativeNotify?.channelStates() ?? [];
+  } catch {
+    return [];
+  }
+}
 
 export function NotificationsScreen({
   native,
@@ -34,6 +49,23 @@ export function NotificationsScreen({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const now = useNow();
+  const pushStatus = useSyncExternalStore(
+    pushController.subscribe,
+    pushController.getStatus,
+    pushController.getStatus,
+  );
+  const push = pushRowText(pushStatus);
+  const [channels, setChannels] = useState<ReadonlyArray<ChannelState>>(readChannelStates);
+  // Android settings is another screen. Coming back may have changed a channel or the master switch.
+  useEffect(() => {
+    void pushController.refresh();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      void pushController.refresh();
+      setChannels(readChannelStates());
+    });
+    return () => subscription.remove();
+  }, []);
   const preferences = settings.data?.preferences ?? null;
   const devices = settings.data?.devices ?? [];
 
@@ -68,20 +100,28 @@ export function NotificationsScreen({
   return (
     <SettingsPage title="Notifications" onBack={onBack}>
       <Section label="This device">
-        <Row
-          title="Push notifications"
-          hint={
-            settings.data === null
-              ? (settings.error ?? "Checking…")
-              : devices.length > 0
-                ? "Notifications are on for this device."
-                : "No devices receive notifications yet. Turn them on in the web app, then send a test."
-          }
-        />
+        <Row title={push.title} hint={push.body} last />
+        {push.action === null || push.actionLabel === null ? null : (
+          <PrimaryButton
+            label={push.actionLabel}
+            onPress={() =>
+              void (push.action === "retry"
+                ? pushController.refresh({ force: true })
+                : pushController.enable())
+            }
+            busy={pushStatus.kind === "checking"}
+          />
+        )}
+        {push.action === "turn-on" ? (
+          <TextButton
+            label="Open Android settings"
+            onPress={() => nativeNotify?.openNotificationSettings()}
+          />
+        ) : null}
         <PrimaryButton
           label="Send test notification"
           onPress={() => void test()}
-          disabled={settings.data === null}
+          disabled={settings.data === null || !canSendTest(pushStatus)}
         />
         {status === null ? null : <Notice tone="success">{status}</Notice>}
         {error === null ? null : <Notice tone="danger">{error}</Notice>}
@@ -100,6 +140,22 @@ export function NotificationsScreen({
         ))}
       </Section>
       <SectionNote>These apply to every device that has notifications on.</SectionNote>
+
+      {channelRows(channels).length === 0 ? null : (
+        <Section label="Sound and alerts on this phone">
+          {channelRows(channels).map((channel, index, all) => (
+            <Row
+              key={channel.id}
+              title={channel.title}
+              value={channel.detail}
+              onPress={() => nativeNotify?.openChannelSettings(channel.id)}
+              accessibilityLabel={`${channel.title}, ${channel.detail}. Open Android settings`}
+              last={index === all.length - 1}
+            />
+          ))}
+        </Section>
+      )}
+      <SectionNote>Each bot has its own sound and pop-up setting in Android.</SectionNote>
 
       {devices.length === 0 ? null : (
         <Section label="Devices">

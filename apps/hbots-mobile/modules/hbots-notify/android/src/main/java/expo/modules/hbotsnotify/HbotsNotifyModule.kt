@@ -56,6 +56,7 @@ class HbotsNotifyModule : Module() {
       val policy = PolicyCodec.fromJs(appLockOn, bots)
       PolicyStore.write(app(), policy)
       NotifyChannels.syncBots(app(), policy.bots)
+      if (BuildConfig.FCM_CONFIGURED) NotifyChannels.ensureBots(app(), policy.bots)
     }
 
     Function("notificationsEnabled") { NotificationManagerCompat.from(app()).areNotificationsEnabled() }

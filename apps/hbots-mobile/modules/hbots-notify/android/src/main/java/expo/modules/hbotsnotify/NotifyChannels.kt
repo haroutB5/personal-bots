@@ -54,6 +54,15 @@ object NotifyChannels {
     if (plan.channelId.startsWith("bot.")) create(context, bot(plan.botId, plan.channelName), GROUP_BOTS)
   }
 
+  /** Gives every known bot its channel, so the settings list is complete before the first message. */
+  fun ensureBots(context: Context, bots: Map<String, BotInfo>) {
+    ensureBase(context)
+    val existing = manager(context).notificationChannels.map { it.id }.toSet()
+    for ((botId, info) in bots) {
+      if (NotificationPlanner.botChannelId(botId) !in existing) create(context, bot(botId, info.name), GROUP_BOTS)
+    }
+  }
+
   /** Renames the channels that exist and deletes those of bots that are gone. */
   fun syncBots(context: Context, bots: Map<String, BotInfo>) {
     val manager = manager(context)
