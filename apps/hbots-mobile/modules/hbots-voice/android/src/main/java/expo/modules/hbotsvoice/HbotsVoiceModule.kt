@@ -10,6 +10,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 
 class HbotsVoiceModule : Module() {
   private var foreground = false
+  private var samplePlayer: SamplePlayer? = null
 
   private fun app(): Context =
     appContext.reactContext?.applicationContext ?: throw IllegalStateException("no context")
@@ -24,7 +25,11 @@ class HbotsVoiceModule : Module() {
       VoiceRuntime.listener = { name, body -> sendEvent(name, body) }
       VoiceRuntime.recoverIfNeeded()
     }
-    OnDestroy { VoiceRuntime.listener = null }
+    OnDestroy {
+      VoiceRuntime.listener = null
+      samplePlayer?.release()
+      samplePlayer = null
+    }
 
     OnActivityEntersForeground {
       foreground = true
@@ -83,6 +88,14 @@ class HbotsVoiceModule : Module() {
     Function("setMuted") { muted: Boolean -> VoiceRuntime.currentEngine()?.setMuted(muted) }
 
     Function("play") { base64: String, rate: Int -> VoiceRuntime.currentEngine()?.play(base64, rate) }
+
+    Function("playSample") { base64: String, rate: Int ->
+      if (VoiceRuntime.currentEngine() != null) return@Function
+      val player = samplePlayer ?: SamplePlayer().also { samplePlayer = it }
+      player.play(base64, rate)
+    }
+
+    Function("stopSample") { samplePlayer?.stop() }
 
     Function("stopPlayback") { VoiceRuntime.currentEngine()?.stopPlayback() }
 

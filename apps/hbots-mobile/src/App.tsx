@@ -42,6 +42,7 @@ import { unpairedShareMessage } from "./share/unpairedShare";
 import { useUnpairedShare } from "./share/useUnpairedShare";
 import { AppLockGate } from "./security/AppLockGate";
 import { AppShell } from "./shell/AppShell";
+import { VoiceCallProvider } from "./voice/VoiceCallProvider";
 import { COLORS } from "./theme";
 import {
   confirmUpdateInstall,
@@ -470,18 +471,20 @@ function App() {
         {screen.kind === "ready" ? (
           <>
             <PushBridge native={screen.native} appVersion={installedVersion} />
-            <AppLockGate>
-              <AppShell
-                native={screen.native}
-                installedVersion={installedVersion}
-                update={update}
-                latest={latest}
-                onCheckNow={() => void checkForUpdate(screen.session, true)}
-                onInstall={() => void confirmUpdateInstall()}
-                onOpenPermission={() => void openInstallPermission()}
-                onSignOut={() => confirmSignOut(screen.session)}
-              />
-            </AppLockGate>
+            <VoiceCallProvider native={screen.native}>
+              <AppLockGate>
+                <AppShell
+                  native={screen.native}
+                  installedVersion={installedVersion}
+                  update={update}
+                  latest={latest}
+                  onCheckNow={() => void checkForUpdate(screen.session, true)}
+                  onInstall={() => void confirmUpdateInstall()}
+                  onOpenPermission={() => void openInstallPermission()}
+                  onSignOut={() => confirmSignOut(screen.session)}
+                />
+              </AppLockGate>
+            </VoiceCallProvider>
           </>
         ) : screen.kind === "unpaired" ? (
           <View style={styles.flex}>

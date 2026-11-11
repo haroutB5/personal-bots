@@ -28,6 +28,7 @@ import { createPersonalConnectionsClient } from "@hbots/personal-client/connecti
 import { createPersonalSettingsClient } from "@hbots/personal-client/settings/personalSettings";
 import { createProviderSetupClient } from "@hbots/personal-client/settings/providerSetup";
 import { createPersonalComputerClient } from "@hbots/personal-client/computer/personalComputer";
+import { createVoiceCallApi } from "@hbots/personal-client/conversation/voice/voiceCallApi";
 import {
   parseSystemSummary,
   SYSTEM_SUMMARY_TIMEOUT_MS,
@@ -148,6 +149,7 @@ export interface NativePersonal {
   readonly secrets: ReturnType<typeof createPersonalSecretsClient>;
   readonly connections: ReturnType<typeof createPersonalConnectionsClient>;
   readonly computer: ReturnType<typeof createPersonalComputerClient>;
+  readonly voice: ReturnType<typeof createVoiceCallApi>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
   readonly readSystemSummary: () => Promise<SystemSummary | null>;
@@ -291,6 +293,7 @@ export function createNativePersonal(
   const secrets = createPersonalSecretsClient(runtime, client);
   const connections = createPersonalConnectionsClient(runtime, client);
   const computer = createPersonalComputerClient(runtime, client);
+  const voice = createVoiceCallApi(runtime);
   const shell = createEnvironmentShellAtoms(runtime);
 
   let disposed = false;
@@ -516,6 +519,7 @@ export function createNativePersonal(
     secrets,
     connections,
     computer,
+    voice,
     shell,
     useProviders: () => useRefValue(providersRef),
     readSystemSummary: async () => {

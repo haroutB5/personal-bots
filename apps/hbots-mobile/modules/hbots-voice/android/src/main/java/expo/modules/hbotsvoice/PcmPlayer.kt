@@ -5,7 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import java.util.concurrent.LinkedBlockingQueue
 
-class PcmPlayer {
+class PcmPlayer(private val usage: Int = AudioAttributes.USAGE_VOICE_COMMUNICATION) {
   private class Chunk(val samples: ShortArray, val rate: Int)
 
   private val queue = LinkedBlockingQueue<Chunk>()
@@ -71,7 +71,7 @@ class PcmPlayer {
       AudioTrack.Builder()
         .setAudioAttributes(
           AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setUsage(usage)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build(),
         )

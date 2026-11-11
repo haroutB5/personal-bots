@@ -3,11 +3,14 @@ import { StyleSheet, View } from "react-native";
 
 import { LockScreen } from "../screens/LockScreen";
 import { tokens } from "../shell/tokens";
+import { useCallLockLine, useCallSession } from "../voice/VoiceCallProvider";
 import { useAppLock } from "./useAppLock";
 
 /** Keeps the app mounted underneath and hides it from the screen and from screen readers while locked. */
 export function AppLockGate({ children }: { readonly children: ReactNode }) {
   const { covered, locked, unlock } = useAppLock();
+  const callLine = useCallLockLine();
+  const callSession = useCallSession();
   return (
     <View style={styles.flex}>
       <View
@@ -17,7 +20,15 @@ export function AppLockGate({ children }: { readonly children: ReactNode }) {
       >
         {children}
       </View>
-      {locked ? <LockScreen onUnlock={unlock} /> : covered ? <View style={styles.cover} /> : null}
+      {locked ? (
+        <LockScreen
+          onUnlock={unlock}
+          call={callLine}
+          onHangUp={callSession === null ? undefined : () => callSession.end("hung_up")}
+        />
+      ) : covered ? (
+        <View style={styles.cover} />
+      ) : null}
     </View>
   );
 }

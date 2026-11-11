@@ -5,6 +5,7 @@ import { Alert, AppState, InteractionManager } from "react-native";
 
 import { wipeNativeNotifications } from "../notifications/nativeNotify";
 import { wipeThreadCache } from "../personal/nativeCache";
+import { wipeVoiceCalls } from "../voice/voiceWipe";
 import { decryptFile, deleteCacheKey, encryptFile } from "./secureStorage";
 import type { BlobStore } from "@hbots/personal-client/ports/blobStore";
 import type { Clock } from "@hbots/personal-client/ports/clock";
@@ -90,6 +91,7 @@ export function wipeLocalData(): void {
     wipeBlobDirectory,
     deleteCacheKey,
     wipeNativeNotifications,
+    wipeVoiceCalls,
   ]) {
     try {
       wipe();

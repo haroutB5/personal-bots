@@ -14,6 +14,7 @@ import {
   IconChevronLeft,
   IconDeviceLaptop,
   IconDots,
+  IconPhone,
   IconPlus,
   IconSearch,
   IconX,
@@ -59,6 +60,10 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
+import {
+  botVoiceCallColour,
+  botVoiceCallsEnabled,
+} from "@hbots/personal-client/voice/botVoiceCalls";
 import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
@@ -85,6 +90,8 @@ import { MessageMenuSheet, type MessageMenuTarget } from "../sheets/MessageMenuS
 import { NewChatSheet } from "../sheets/NewChatSheet";
 import { RenameChatSheet } from "../sheets/RenameChatSheet";
 import { SnoozeSheet } from "../sheets/SnoozeSheet";
+import { LiveVoiceCallCard } from "../voice/LiveVoiceCallCard";
+import { useCallSession, useCallView } from "../voice/VoiceCallProvider";
 
 const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 250;
@@ -94,6 +101,8 @@ function failureText(result: { readonly _tag: string }, fallback: string): strin
   const cause = squashAtomCommandFailure(result as never);
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
 }
+
+const COMPOSER_CALL_STUB = "Voice calls arrive with the voice update.";
 
 export function ChatScreen({
   native,
@@ -225,6 +234,25 @@ export function ChatScreen({
           }),
     [thread, showToolSteps],
   );
+  const callSession = useCallSession();
+  const callView = useCallView();
+  const callBot = record?.bot ?? null;
+  const callsEnabled = callBot !== null && botVoiceCallsEnabled(callBot);
+  const startCall = callsEnabled
+    ? () => {
+        if (callView.call !== null) {
+          callSession?.setMinimised(false);
+          return;
+        }
+        void callSession?.start({
+          threadId,
+          botId: callBot.botId,
+          botName: callBot.name,
+          avatarShape: callBot.avatarShape ?? "blob",
+          avatarColor: botVoiceCallColour(callBot),
+        });
+      }
+    : null;
   const cards = useChatCards({
     native,
     chat,
@@ -237,6 +265,8 @@ export function ChatScreen({
     providers,
     nowMs: now,
     onOpenChat,
+    voiceCallsEnabled: callsEnabled,
+    onStartCall: startCall,
     onRevealCard: revealCard,
     cardMaxHeight: chatLayout.keyboardOpen ? chatLayout.cardMaxHeight : null,
   });
@@ -673,6 +703,18 @@ export function ChatScreen({
             </View>
           )}
 
+          {startCall === null ? null : (
+            <Pressable
+              onPress={startCall}
+              accessibilityRole="button"
+              accessibilityLabel={
+                callView.call === null ? `Call ${header.botName}` : "Return to the call"
+              }
+              style={styles.iconButton}
+            >
+              <IconPhone size={22} color={tokens.text} strokeWidth={1.75} />
+            </Pressable>
+          )}
           <Pressable
             onPress={() => setNewChatOpen(true)}
             accessibilityRole="button"
@@ -885,6 +927,7 @@ export function ChatScreen({
                   style={{ paddingBottom: Math.max(insets.bottom, 8) }}
                   onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
                 >
+                  <LiveVoiceCallCard threadId={threadId} />
                   <Composer
                     native={native}
                     chat={chat}
@@ -896,7 +939,10 @@ export function ChatScreen({
                     replyTo={replyTo}
                     onClearReply={() => setReplyTo(null)}
                     onPendingChange={setPending}
-                    onSendError={setActionError}
+                    onSendError={(message) => {
+                      if (message === COMPOSER_CALL_STUB && startCall !== null) startCall();
+                      else setActionError(message === COMPOSER_CALL_STUB ? null : message);
+                    }}
                     onInterrupt={async () => {
                       const result = await interrupt({
                         environmentId,

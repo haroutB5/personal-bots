@@ -41,6 +41,7 @@ import { AddProviderScreen } from "../settings/AddProviderScreen";
 import { CatalogProviderScreen } from "../settings/CatalogProviderScreen";
 import { ProviderScreen } from "../settings/ProviderScreen";
 import { SettingsScreen } from "../settings/SettingsScreen";
+import { VoiceCallLayer, type VoiceCallNavigation } from "../voice/VoiceCallLayer";
 import { ThisPhoneScreen } from "../settings/ThisPhoneScreen";
 import { NotificationsScreen } from "../settings/NotificationsScreen";
 import { MemoryScreen } from "../settings/MemoryScreen";
@@ -225,6 +226,18 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Stop" };
   }
 }
+
+const VOICE_CALL_NAVIGATION: VoiceCallNavigation = {
+  openChat: (botId, threadId) => {
+    if (navigationRef.isReady()) navigationRef.navigate("Chat", { botId, threadId });
+  },
+  openSettings: () => {
+    if (navigationRef.isReady()) navigationRef.navigate("Settings");
+  },
+  openBot: (botId) => {
+    if (navigationRef.isReady()) navigationRef.navigate("BotEdit", { botId });
+  },
+};
 
 function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
@@ -544,6 +557,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           )}
         </Stack.Screen>
       </Stack.Navigator>
+      <VoiceCallLayer navigation={VOICE_CALL_NAVIGATION} />
     </NavigationContainer>
   );
 }
