@@ -6,6 +6,8 @@
  * @module voice/callAudioPort
  */
 
+import type { VoiceDeadlineKind } from "../conversation/voice/callState.ts";
+
 /** Where the ring's level comes from. */
 export type VoiceLevelSource = "mic" | "voice" | "none";
 
@@ -22,6 +24,13 @@ export interface CallAudioPort {
   setMuted(muted: boolean): void;
   /** RMS of the active stream, 0 to 1; read from the screen's rAF loop. */
   readLevel(source: VoiceLevelSource): number;
+  /**
+   * Tells the audio side to keep the microphone open for at most `inMs` more
+   * milliseconds, for this reason. The phone's native module enforces it on its
+   * own clock, so a call whose JS timers are frozen in the background still
+   * lets the mic go. The web has no such need and leaves it out.
+   */
+  holdMicUntil?(kind: VoiceDeadlineKind, inMs: number): void;
   /** One short cue tone. */
   cue(kind: VoiceCue): void;
   /** Everything down: tracks stopped, sockets of sound closed. */

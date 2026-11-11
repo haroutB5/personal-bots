@@ -66,15 +66,15 @@ import {
   VOICE_NARRATE_MIN_GAP_MS,
   VOICE_NARRATE_PAUSE_MS,
   VOICE_QUIET_SPOKEN_LINE,
-  VOICE_RECONNECT_GIVE_UP_MS,
   VOICE_RECONNECT_HIDDEN_MS,
   VOICE_REPLY_GRACE_MS,
   VOICE_SEND_QUEUE_MAX,
   VOICE_UNDO_MS,
-  VOICE_WAITING_CAP_MS,
   VOICE_WORK_UPDATE_PREFIX,
   VOICE_CALL_LOST_LINE,
   type VoiceCallState,
+  type VoiceCallPhase,
+  type VoiceDeadlineKind,
   type VoiceEndReason,
   type VoiceWorkCard,
   callHint,
@@ -82,8 +82,8 @@ import {
   isMicrophoneBlocked,
   isVoiceCancelPhrase,
   limitPointsMs,
+  nextVoiceDeadline,
   quietDeadlineMs,
-  quietExpired,
   quietWarningAtMs,
   spokenInstruction,
 } from "../conversation/voice/callState.ts";
@@ -205,6 +205,11 @@ export interface VoiceCallControllerOptions {
   /** The retry ladder for `finish`; a test shortens it. */
   readonly finishRetryMs?: ReadonlyArray<number>;
   readonly now?: () => number;
+  /**
+   * True where the microphone permission was asked before the call began (the
+   * phone), so the screen never tells the owner to allow it while connecting.
+   */
+  readonly micAlreadyGranted?: boolean;
   /** Every state change, already folded with the elapsed time and transcript. */
   readonly onChange: (snapshot: VoiceCallSnapshot) => void;
   /** Fired once a voice-sent message really posted. */
@@ -212,6 +217,12 @@ export interface VoiceCallControllerOptions {
 }
 
 export interface VoiceCallController {
+  /**
+   * The phone's native mic lease ran out: end the call the way the JS rule for
+   * that deadline would have. Used when JS timers slept in the background and
+   * only the native clock noticed.
+   */
+  expire(kind: VoiceDeadlineKind): void;
   /** Opens the call. Resolves once the session exists (not once it is live). */
   start(): Promise<void>;
   /** One 16 kHz mono PCM frame from the microphone. */
@@ -360,7 +371,21 @@ export function createVoiceCallController(
   /** The model has said or finished something: a quota close after it is not at setup. */
   let modelHeard = false;
   let errorDetail: string | null = null;
+  /**
+   * When either side last spoke. It starts when the session answers, not at the
+   * tap: a call that never connected has no silence to measure, and counting it
+   * from the tap is what once ended an unconnected call as "a quiet spell".
+   */
   let lastSpeechAtMs = startedAtMs;
+  /** When the connect wait began (the pass arrived and the socket opened). */
+  let connectArmedAtMs = startedAtMs;
+  /** The newest lease handed to the audio port, so an unchanged one is not resent. */
+  let lastLease: {
+    readonly kind: VoiceDeadlineKind;
+    readonly atMs: number;
+    readonly sentAtMs: number;
+  } | null = null;
+  let lastPumpAtMs = Number.NEGATIVE_INFINITY;
   let quietWarned = false;
   let limitWarned = false;
   let byeSaid = false;
@@ -417,7 +442,67 @@ export function createVoiceCallController(
   const publish = (patch: Partial<VoiceCallState>) => {
     state = { ...state, ...patch };
     options.onChange(snapshot());
+    syncLease();
   };
+
+  /** Since when something has been waiting on the bot, or null when nothing is. */
+  const pendingSinceMs = (): number | null => {
+    const since = [waitingSinceMs, openReply?.sentAtMs ?? null, sendQueue[0]?.atMs ?? null].filter(
+      (value): value is number => value !== null,
+    );
+    return since.length === 0 ? null : Math.min(...since);
+  };
+
+  /**
+   * Which stretch of the call this is. Quiet and waiting exist only in `live`,
+   * so a call that never connected cannot be ended as a quiet one.
+   */
+  const phase = (): VoiceCallPhase => {
+    if (ended) return { kind: "ended" };
+    if (session === null) return { kind: "accepting", sinceMs: startedAtMs };
+    if (reconnectSinceMs !== null) return { kind: "reconnecting", sinceMs: reconnectSinceMs };
+    if (everConnected) {
+      return { kind: "live", lastSpeechAtMs, pendingSinceMs: pendingSinceMs() };
+    }
+    return { kind: "connecting", sinceMs: connectArmedAtMs };
+  };
+
+  const deadlineNow = () =>
+    nextVoiceDeadline(phase(), {
+      startedAtMs,
+      maxCallMinutes: maxCallMinutes(),
+      quietMinutes: quietMinutes(),
+      connectWaitMs: connectTimeoutMs,
+    });
+
+  /**
+   * Hands the audio side the next deadline so it can close the mic on its own
+   * clock when JS timers sleep. Sent when the reason changes, when the time
+   * moves by a second or more, and as a once-a-second refresh that re-anchors
+   * the native clock to this one.
+   */
+  function syncLease(): void {
+    const hold = options.audio.holdMicUntil;
+    if (hold === undefined || ended) return;
+    const deadline = deadlineNow();
+    if (deadline === null) return;
+    const at = now();
+    const last = lastLease;
+    if (
+      last !== null &&
+      last.kind === deadline.kind &&
+      Math.abs(last.atMs - deadline.atMs) < 1_000 &&
+      at - last.sentAtMs < 1_000
+    ) {
+      return;
+    }
+    lastLease = { kind: deadline.kind, atMs: deadline.atMs, sentAtMs: at };
+    try {
+      hold.call(options.audio, deadline.kind, Math.max(0, deadline.atMs - at));
+    } catch {
+      // The lease is a safety net; a port that cannot take it must not end the call.
+    }
+  }
 
   const noteTranscript = (row: VoiceCallTranscriptEntry) => {
     transcript = [...transcript, row];
@@ -1017,19 +1102,49 @@ export function createVoiceCallController(
   /** The hard cap on reaching a live session; past it the call fails. */
   const armConnectTimer = () => {
     if (connectTimer !== null) clearTimeout(connectTimer);
+    connectArmedAtMs = now();
     connectTimer = setTimeout(() => {
       connectTimer = null;
       if (ended || promisedLive()) return;
-      errorDetail = "Google did not answer in time.";
-      publish({
-        status: "error",
-        errorCode: "google_unavailable",
-        pill: "none",
-        hint: null,
-      });
-      end("failed");
+      expire("connect");
     }, connectTimeoutMs);
+    syncLease();
   };
+
+  /**
+   * A mic deadline ran out: the pump's own clock, or the phone's native lease
+   * when JS timers were asleep. One place decides how each kind ends, so the two
+   * sources cannot disagree. The native side is trusted: it only fires when the
+   * mic would otherwise stay open past the time JS asked for.
+   */
+  function expire(kind: VoiceDeadlineKind): void {
+    if (ended) return;
+    switch (kind) {
+      case "connect":
+        if (session === null) {
+          // The server never handed out a pass: the laptop, not Google.
+          errorDetail = "The laptop did not answer in time.";
+          publish({ status: "error", errorCode: "server_unreachable", pill: "none", hint: null });
+        } else {
+          errorDetail = "Google did not answer in time.";
+          publish({ status: "error", errorCode: "google_unavailable", pill: "none", hint: null });
+        }
+        end("failed");
+        return;
+      case "quiet":
+        end("quiet");
+        return;
+      case "waiting_cap":
+        end("waiting_cap");
+        return;
+      case "reconnect":
+        end("dropped");
+        return;
+      case "limit":
+        end("limit");
+        return;
+    }
+  }
 
   /**
    * Google closed the session with a quota error, before the model said a word,
@@ -1108,6 +1223,8 @@ export function createVoiceCallController(
           if (myGeneration !== generation || ended) return;
           const resumed = everConnected;
           everConnected = true;
+          // The quiet clock starts here, when the voice can first be heard.
+          if (!resumed) lastSpeechAtMs = now();
           reconnectSinceMs = null;
           goAwayAtMs = null;
           reconnectAttempts = 0;
@@ -1120,6 +1237,7 @@ export function createVoiceCallController(
           if (myGeneration !== generation) return;
           modelHeard = true;
           lastSpeechAtMs = now();
+          syncLease();
           if (state.pill !== "speaking" && !state.muted) publish({ pill: "speaking" });
           options.audio.play(base64, rate);
         },
@@ -1128,6 +1246,7 @@ export function createVoiceCallController(
           if (text.length === 0) return;
           if (who === "voice") modelHeard = true;
           lastSpeechAtMs = now();
+          syncLease();
           if (openLine === null || openLine.who !== who || openLine.source !== source) {
             // The other speaker, or a different stream, started: the previous
             // line ended with its last chunk.
@@ -1220,6 +1339,7 @@ export function createVoiceCallController(
           // accepts it inside the token's expiry, proved 15 Oct 2026). The spec
           // only shows Reconnecting if it drags on.
           reconnectSinceMs ??= now();
+          syncLease();
           if (reconnectAttempts >= 5) return;
           const delay = reconnectAttempts === 0 ? 0 : 500;
           reconnectAttempts += 1;
@@ -1239,71 +1359,76 @@ export function createVoiceCallController(
     });
   };
 
-  const startTimer = () => {
-    tick = setInterval(() => {
-      if (ended) return;
-      const at = now();
-      const limit = limitPointsMs(maxCallMinutes());
+  /**
+   * Everything that watches the clock. It runs from the one-second interval and
+   * from the microphone frames (see `heartbeat`), so a call whose timers were
+   * frozen by the OS still notices a deadline as soon as audio moves again.
+   */
+  const pump = (at: number) => {
+    if (ended) return;
+    lastPumpAtMs = at;
 
-      if (at - startedAtMs >= limit.endAtMs) {
-        end("limit");
-        return;
-      }
-      if (!limitWarned && at - startedAtMs >= limit.warnAtMs) {
-        limitWarned = true;
-        publish({ nearLimit: true });
-      }
-      // 29:45: the voice says goodbye out loud before the cap ends the call
-      // (spec 5). Once only.
-      if (!byeSaid && at - startedAtMs >= limit.byeAtMs) {
-        byeSaid = true;
-        say(VOICE_GOODBYE_SPOKEN_LINE);
-      }
+    // The mic deadline first: past it, nothing else here matters.
+    const deadline = deadlineNow();
+    if (deadline !== null && at >= deadline.atMs) {
+      expire(deadline.kind);
+      return;
+    }
+    syncLease();
 
-      // A reconnect that is over in under 1.5 s must show nothing at all.
-      if (reconnectSinceMs !== null) {
-        const down = at - reconnectSinceMs;
-        if (down >= VOICE_RECONNECT_GIVE_UP_MS) {
-          end("dropped");
-          return;
-        }
-        if (down >= VOICE_RECONNECT_HIDDEN_MS && state.status !== "reconnecting") {
-          publish({ status: "reconnecting", pill: "reconnecting" });
-        }
-        return;
+    const limit = limitPointsMs(maxCallMinutes());
+    if (!limitWarned && at - startedAtMs >= limit.warnAtMs) {
+      limitWarned = true;
+      publish({ nearLimit: true });
+    }
+    // 29:45: the voice says goodbye out loud before the cap ends the call
+    // (spec 5). Once only.
+    if (!byeSaid && at - startedAtMs >= limit.byeAtMs) {
+      byeSaid = true;
+      say(VOICE_GOODBYE_SPOKEN_LINE);
+    }
+
+    // A reconnect that is over in under 1.5 s must show nothing at all.
+    if (reconnectSinceMs !== null) {
+      const down = at - reconnectSinceMs;
+      if (down >= VOICE_RECONNECT_HIDDEN_MS && state.status !== "reconnecting") {
+        publish({ status: "reconnecting", pill: "reconnecting" });
       }
+      return;
+    }
 
-      // A posted message the voice has not been told about yet. The bot's turn
-      // usually starts within the grace window; if it never does, the voice is
-      // still told the truth about the send.
-      if (openReply !== null) {
-        const working = safeStatus().state === "working";
-        if (working) {
-          openReply.sawWorking = true;
-          waitingSinceMs ??= at;
-        } else if (openReply.sawWorking || at - openReply.sentAtMs >= VOICE_REPLY_GRACE_MS) {
-          deliverReply(openReply.sawWorking);
-        }
+    // The Undo window of a held send is a JS timer too. If it slept, the send
+    // goes out on the first pump after it ran out (a send is never lost, only
+    // late).
+    const head = sendQueue[0];
+    if (head !== undefined && !head.cancelled && at - head.atMs >= VOICE_UNDO_MS) {
+      void closeWindow(head);
+    }
+
+    // A posted message the voice has not been told about yet. The bot's turn
+    // usually starts within the grace window; if it never does, the voice is
+    // still told the truth about the send.
+    if (openReply !== null) {
+      const working = safeStatus().state === "working";
+      if (working) {
+        openReply.sawWorking = true;
+        waitingSinceMs ??= at;
+      } else if (openReply.sawWorking || at - openReply.sentAtMs >= VOICE_REPLY_GRACE_MS) {
+        deliverReply(openReply.sawWorking);
       }
+    }
 
-      // Waiting on the bot has its own cap, whatever the quiet setting says.
-      if (waitingSinceMs !== null) {
-        if (at - waitingSinceMs >= VOICE_WAITING_CAP_MS) {
-          end("waiting_cap");
-          return;
-        }
-      }
+    // What the real bot is doing, said out loud while it does it.
+    narrateWork(at);
 
-      // What the real bot is doing, said out loud while it does it.
-      narrateWork(at);
-
+    if (everConnected) {
       const quietInput = {
         nowMs: at,
         lastSpeechAtMs,
         quietMinutes: quietMinutes(),
         // Waiting on the bot pauses the quiet timer (spec 5): the waiting cap
-        // above is what ends a call nobody is talking on.
-        pendingSend: sendQueue.length > 0 || waitingSinceMs !== null || openReply !== null,
+        // (in `nextVoiceDeadline`) is what ends a call nobody is talking on.
+        pendingSend: pendingSinceMs() !== null,
       };
       if (!quietWarned && at >= quietWarningAtMs(quietInput) && at < quietDeadlineMs(quietInput)) {
         quietWarned = true;
@@ -1311,21 +1436,34 @@ export function createVoiceCallController(
         say(VOICE_QUIET_SPOKEN_LINE);
         publish({ quietWarning: true });
       }
-      if (quietExpired(quietInput)) {
-        end("quiet");
-        return;
-      }
+    }
 
-      const work = workFor();
-      const hint = callHint({ state, waitingMs: at - startedAtMs });
-      if (
-        work?.kind !== state.work?.kind ||
-        work?.detail !== state.work?.detail ||
-        hint !== state.hint
-      ) {
-        publish({ work, hint });
-      }
-    }, 1_000);
+    const work = workFor();
+    const hint = callHint({
+      state,
+      waitingMs: at - startedAtMs,
+      ...(options.micAlreadyGranted === undefined
+        ? {}
+        : { micAlreadyGranted: options.micAlreadyGranted }),
+    });
+    if (
+      work?.kind !== state.work?.kind ||
+      work?.detail !== state.work?.detail ||
+      hint !== state.hint
+    ) {
+      publish({ work, hint });
+    }
+  };
+
+  const startTimer = () => {
+    tick = setInterval(() => pump(now()), 1_000);
+  };
+
+  /** A microphone frame: not a timer, so it keeps coming while the app sleeps. */
+  const heartbeat = () => {
+    if (ended) return;
+    const at = now();
+    if (at - lastPumpAtMs >= 1_000) pump(at);
   };
 
   const start = async (): Promise<void> => {
@@ -1333,6 +1471,8 @@ export function createVoiceCallController(
     // two passes (finding 4).
     if (started) return;
     started = true;
+    // The native side holds a default lease from the tap; this states it.
+    syncLease();
     // The microphone was asked for in the tap handler and is started here, so
     // the prompt and the capture are already under way while the pass is
     // minted. Its own promise never rejects: the outcome is kept aside and read
@@ -1379,7 +1519,15 @@ export function createVoiceCallController(
     armConnectTimer();
     later(() => {
       if (!ended && !everConnected) {
-        publish({ hint: callHint({ state, waitingMs: 400 }) });
+        publish({
+          hint: callHint({
+            state,
+            waitingMs: 400,
+            ...(options.micAlreadyGranted === undefined
+              ? {}
+              : { micAlreadyGranted: options.micAlreadyGranted }),
+          }),
+        });
       }
     }, 400);
     micStarted ??= openMic();
@@ -1410,7 +1558,11 @@ export function createVoiceCallController(
 
   return {
     start,
-    sendAudio: (pcm: ArrayBuffer) => live?.sendAudio(pcm),
+    sendAudio: (pcm: ArrayBuffer) => {
+      live?.sendAudio(pcm);
+      heartbeat();
+    },
+    expire,
     undoPendingSend,
     interruptPlayback: () => options.audio.stopPlayback(),
     botTurnEnded: () => {

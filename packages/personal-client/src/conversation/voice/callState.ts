@@ -146,6 +146,13 @@ export const VOICE_NARRATE_PAUSE_MS = 1_200;
  * `google_unavailable`, whatever the socket is still doing (spec 3.2).
  */
 export const VOICE_CONNECT_TIMEOUT_MS = 20_000;
+/**
+ * How long a tap may wait for the server to hand out a pass before the call is
+ * given up. It is the native default lease (`CONNECT_LEASE_MS` in CallLease.kt):
+ * it must outlast the 20 s connect wait plus the server round trip, and the two
+ * numbers change together.
+ */
+export const VOICE_ACCEPT_WAIT_MS = 45_000;
 
 /** Delay before each `finish` retry, then never again. One call, one card. */
 export const VOICE_FINISH_RETRY_MS: ReadonlyArray<number> = [
@@ -311,11 +318,15 @@ export function pillLabel(pill: VoicePill, botName: string): string {
 export function callHint(input: {
   readonly state: VoiceCallState;
   readonly waitingMs: number;
+  /** True where the permission was asked before the call began (Android). */
+  readonly micAlreadyGranted?: boolean;
 }): string | null {
   const { state } = input;
   if (state.status === "connecting") {
     if (input.waitingMs >= 8_000) return "Still connecting…";
-    if (input.waitingMs >= 400) return "Allow the microphone when your iPhone asks.";
+    if (input.waitingMs >= 400 && input.micAlreadyGranted !== true) {
+      return "Allow the microphone when your iPhone asks.";
+    }
     return null;
   }
   if (state.pill === "muted") {
@@ -450,6 +461,71 @@ export function limitPointsMs(maxCallMinutes: number): {
     byeAtMs: Math.round(total * VOICE_LIMIT_BYE_FRACTION),
     endAtMs: total,
   };
+}
+
+export type VoiceDeadlineKind = "connect" | "quiet" | "waiting_cap" | "reconnect" | "limit";
+
+/**
+ * Where a call is in its life. Quiet and the waiting cap exist only in `live`,
+ * so a call that never connected cannot end as quiet by construction.
+ */
+export type VoiceCallPhase =
+  | { readonly kind: "accepting"; readonly sinceMs: number }
+  | { readonly kind: "connecting"; readonly sinceMs: number }
+  | {
+      readonly kind: "live";
+      readonly lastSpeechAtMs: number;
+      /** When the oldest unanswered send began, or null when nothing is pending. */
+      readonly pendingSinceMs: number | null;
+    }
+  | { readonly kind: "reconnecting"; readonly sinceMs: number }
+  | { readonly kind: "ended" };
+
+export interface VoiceDeadlineRules {
+  readonly startedAtMs: number;
+  readonly maxCallMinutes: number;
+  readonly quietMinutes: number;
+  /** The connect wait; a test shortens it. */
+  readonly connectWaitMs?: number;
+}
+
+export interface VoiceDeadline {
+  readonly kind: VoiceDeadlineKind;
+  readonly atMs: number;
+}
+
+/**
+ * The one deadline that ends the call next, or null once it has ended. Native
+ * holds the mic on this and the controller's pump ends the call on it, so the
+ * rule lives here once. The call limit joins every phase.
+ */
+export function nextVoiceDeadline(
+  phase: VoiceCallPhase,
+  rules: VoiceDeadlineRules,
+): VoiceDeadline | null {
+  if (phase.kind === "ended") return null;
+  const limit: VoiceDeadline = {
+    kind: "limit",
+    atMs: rules.startedAtMs + limitPointsMs(rules.maxCallMinutes).endAtMs,
+  };
+  const own = ((): VoiceDeadline => {
+    switch (phase.kind) {
+      case "accepting":
+        return { kind: "connect", atMs: phase.sinceMs + VOICE_ACCEPT_WAIT_MS };
+      case "connecting":
+        return {
+          kind: "connect",
+          atMs: phase.sinceMs + (rules.connectWaitMs ?? VOICE_CONNECT_TIMEOUT_MS),
+        };
+      case "reconnecting":
+        return { kind: "reconnect", atMs: phase.sinceMs + VOICE_RECONNECT_GIVE_UP_MS };
+      case "live":
+        return phase.pendingSinceMs === null
+          ? { kind: "quiet", atMs: phase.lastSpeechAtMs + rules.quietMinutes * 60_000 }
+          : { kind: "waiting_cap", atMs: phase.pendingSinceMs + VOICE_WAITING_CAP_MS };
+    }
+  })();
+  return own.atMs <= limit.atMs ? own : limit;
 }
 
 /** "2 min left on this call" (the banner pill). */

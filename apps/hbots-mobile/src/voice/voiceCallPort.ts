@@ -1,6 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
 import {
-  voiceCallFailureCode,
+  voiceCallClientFailureCode,
   voiceFailureDetail,
   type AtomCommandResult,
   type VoiceCallSnapshotResult,
@@ -28,7 +28,7 @@ function toResult<T>(result: AtomCommandResult<unknown>): VoiceApiResult<T> {
   if (result._tag === "Success") return { ok: true, value: result.value as T };
   return {
     ok: false,
-    code: voiceCallFailureCode(result),
+    code: voiceCallClientFailureCode(result),
     detail: voiceFailureDetail(result),
   };
 }
