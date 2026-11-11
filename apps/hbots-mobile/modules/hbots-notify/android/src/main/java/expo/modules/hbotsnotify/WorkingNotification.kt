@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -24,16 +25,14 @@ object WorkingNotification {
       return
     }
     NotifyChannels.ensureBase(context)
-    val style = NotificationCompat.InboxStyle().also { inbox ->
-      plan.lines.forEach { inbox.addLine(it) }
-      plan.summary?.let { inbox.setSummaryText(it) }
-    }
+    val presentation = LiveUpdate.presentation(plan, Build.VERSION.SDK_INT, canPostPromoted(context))
     val notification = NotificationCompat.Builder(context, NotifyChannels.WORKING)
       .setSmallIcon(R.drawable.ic_stat_hbots)
       .setColor(0xFFC9C9C5.toInt())
       .setContentTitle(plan.title)
       .setContentText(plan.lines.firstOrNull().orEmpty())
-      .setStyle(style)
+      .setStyle(style(presentation.body))
+      .setRequestPromotedOngoing(presentation.promote)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
       .setSilent(true)
@@ -57,6 +56,17 @@ object WorkingNotification {
 
   fun cancel(context: Context) {
     NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+  }
+
+  private fun canPostPromoted(context: Context): Boolean =
+    Build.VERSION.SDK_INT >= LiveUpdate.MIN_SDK && NotificationManagerCompat.from(context).canPostPromotedNotifications()
+
+  private fun style(body: WorkingBody): NotificationCompat.Style = when (body) {
+    is WorkingBody.Inbox -> NotificationCompat.InboxStyle().also { inbox ->
+      body.lines.forEach { inbox.addLine(it) }
+      body.summary?.let { inbox.setSummaryText(it) }
+    }
+    is WorkingBody.BigText -> NotificationCompat.BigTextStyle().bigText(body.text)
   }
 
   private fun publicVersion(context: Context, plan: WorkingPlan) =
