@@ -21,6 +21,7 @@ import {
   desktopEvents,
   desktopQueue,
   formatFileRow,
+  liveKeyboardStep,
   liveViewMode,
   pageAddressLabel,
   takeControlView,
@@ -651,5 +652,88 @@ describe("takeControlView", () => {
         urlError: null,
       }),
     ).toEqual({ kind: "waiting", message: "Starting Brave on the laptop." });
+  });
+});
+
+describe("liveKeyboardStep", () => {
+  const closed = { open: false, pinned: false };
+  const open = { open: true, pinned: false };
+  const pinned = { open: true, pinned: true };
+
+  it.each([
+    [
+      "an editable report on a closed keyboard focuses it",
+      closed,
+      { kind: "focusReport", editable: true },
+      { command: "focus", pinned: false },
+    ],
+    [
+      "an editable report on an open keyboard does nothing",
+      open,
+      { kind: "focusReport", editable: true },
+      { command: null, pinned: false },
+    ],
+    [
+      "an editable report keeps a pinned keyboard pinned",
+      { open: false, pinned: true },
+      { kind: "focusReport", editable: true },
+      { command: "focus", pinned: true },
+    ],
+    [
+      "a non-editable report closes an unpinned keyboard",
+      open,
+      { kind: "focusReport", editable: false },
+      { command: "blur", pinned: false },
+    ],
+    [
+      "a non-editable report leaves a pinned keyboard up",
+      pinned,
+      { kind: "focusReport", editable: false },
+      { command: null, pinned: true },
+    ],
+    [
+      "the button on a closed keyboard focuses and pins it",
+      closed,
+      { kind: "toggle" },
+      { command: "focus", pinned: true },
+    ],
+    [
+      "the button on an open keyboard blurs and unpins it",
+      pinned,
+      { kind: "toggle" },
+      { command: "blur", pinned: false },
+    ],
+    [
+      "the button on an open unpinned keyboard blurs it",
+      open,
+      { kind: "toggle" },
+      { command: "blur", pinned: false },
+    ],
+    [
+      "a plain tap with no focus report does nothing",
+      closed,
+      { kind: "tap" },
+      { command: null, pinned: false },
+    ],
+    [
+      "a plain tap leaves a pinned keyboard alone",
+      pinned,
+      { kind: "tap" },
+      { command: null, pinned: true },
+    ],
+    [
+      "losing control blurs and unpins",
+      pinned,
+      { kind: "released" },
+      { command: "blur", pinned: false },
+    ],
+    [
+      "losing control with the keyboard closed still unpins",
+      { open: false, pinned: true },
+      { kind: "released" },
+      { command: "blur", pinned: false },
+    ],
+  ] as const)("%s", (_name, state, event, expected) => {
+    expect(liveKeyboardStep(state, event)).toEqual(expected);
   });
 });
