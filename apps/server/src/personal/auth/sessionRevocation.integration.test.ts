@@ -415,11 +415,7 @@ it.live(
 
       expect(revokedSocket.readyState).toBe(3);
       const silent = nextMessage(revokedSocket, 300);
-      try {
-        revokedSocket.send(JSON.stringify({ _tag: "Ping" }));
-      } catch {
-        // A closed socket refuses the write, which is the point.
-      }
+      yield* Effect.ignore(Effect.try(() => revokedSocket.send(JSON.stringify({ _tag: "Ping" }))));
       expect(yield* silent).toBeNull();
 
       expect(keptSocket.readyState).toBe(1);

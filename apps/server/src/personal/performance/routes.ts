@@ -114,8 +114,6 @@ export const makePersonalPerformanceStreamRouteLayer = (options: PerformanceRout
       const encoder = new TextEncoder();
       const events = Stream.fromQueue(queue).pipe(
         Stream.map((event) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`)),
-        // Either side ending (a client disconnect, a revoked session, the server
-        // shutting down) gives the viewer slot back, exactly once.
         Stream.ensuring(Effect.sync(() => subscription.unsubscribe())),
       );
       const body = yield* endStreamWhenSessionRevoked({
