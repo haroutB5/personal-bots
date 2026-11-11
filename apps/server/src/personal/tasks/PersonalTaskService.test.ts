@@ -128,6 +128,8 @@ type EngineCall =
  */
 interface Harness {
   readonly interruptReasons: Map<string, string>;
+  /** Lost turn to the run that continues it, as the projection links them. */
+  readonly continuations: Map<string, TurnId>;
   readonly calls: Array<EngineCall>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly messages: Map<string, Array<HarnessMessage>>;
@@ -145,6 +147,7 @@ interface Harness {
 
 const makeHarness = (): Harness => ({
   interruptReasons: new Map(),
+  continuations: new Map(),
   calls: [],
   sessions: new Map(),
   messages: new Map(),
@@ -427,6 +430,18 @@ const makeEngine = (harness: Harness) =>
         ),
       latestRunInterruptReason: (threadId) =>
         Effect.sync(() => harness.interruptReasons.get(threadId) ?? null),
+      continuationTurn: (input) =>
+        Effect.sync(() => {
+          let latest: TurnId | null = null;
+          for (
+            let next = harness.continuations.get(input.turnId);
+            next !== undefined;
+            next = harness.continuations.get(next)
+          ) {
+            latest = next;
+          }
+          return latest;
+        }),
       latestContextTokens: (threadId) =>
         sql<{ readonly used: number | null }>`
           SELECT json_extract(payload_json, '$.usedTokens') AS "used"
@@ -3872,6 +3887,126 @@ describe("a task whose provider server was lost", () => {
       expect((yield* reload(root.taskId)).status).toBe("interrupted");
       expect(startsOn(harness, thread)).toHaveLength(1);
     }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  describe("when the task worker lags behind the projection", () => {
+    const delegatedChild = (harness: Harness, key: string) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const root = yield* createRoot(`lag-${key}`);
+        const rootThread = threadOf(root);
+        const rootTurn = yield* beginTurn(harness, rootThread);
+        const child = yield* service.delegate({
+          parentTaskId: root.taskId,
+          targetBotId: botId("developer"),
+          brief: brief(`lag ${key}`),
+        });
+        yield* service.drain;
+        yield* endTurn(harness, rootThread, rootTurn, "Delegated.");
+        const running = yield* reload(child.taskId);
+        expect(running.status).toBe("running");
+        return { rootThread, child: running, childThread: threadOf(running) };
+      });
+
+    const leadDeliveries = (harness: Harness, rootThread: ThreadId, key: string) =>
+      startsOn(harness, rootThread).filter((call) => call.message.text.includes(`lag ${key}`))
+        .length;
+
+    const loseAndContinueBeforeDrain = (harness: Harness, childThread: ThreadId) =>
+      Effect.gen(function* () {
+        const lostTurn = yield* beginTurn(harness, childThread);
+        harness.interruptReasons.set(childThread, LOST);
+        const now = DateTime.formatIso(yield* DateTime.now);
+        harness.messages.set(childThread, [
+          ...(harness.messages.get(childThread) ?? []),
+          {
+            messageId: MessageId.make(`msg-${lostTurn}`),
+            threadId: childThread,
+            turnId: lostTurn,
+            role: "assistant",
+            text: "Partial lost.",
+            isStreaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]);
+        const interrupted = makeSession({
+          threadId: childThread,
+          status: "interrupted",
+          activeTurnId: null,
+          updatedAt: now,
+        });
+        harness.sessions.set(childThread, interrupted);
+        yield* ingestAll(harness, interrupted);
+        harness.interruptReasons.delete(childThread);
+        const continuationTurn = TurnId.make(`turn-${childThread}-continuation`);
+        harness.continuations.set(lostTurn, continuationTurn);
+        const running = makeSession({
+          threadId: childThread,
+          status: "running",
+          activeTurnId: continuationTurn,
+          updatedAt: now,
+        });
+        harness.sessions.set(childThread, running);
+        yield* ingestAll(harness, running);
+        return { lostTurn, continuationTurn };
+      });
+
+    it.effect("reports the continuation's result when the continuation already runs", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const { rootThread, child, childThread } = yield* delegatedChild(harness, "result");
+        const leadBefore = startsOn(harness, rootThread).length;
+        const { continuationTurn } = yield* loseAndContinueBeforeDrain(harness, childThread);
+        yield* service.drain;
+        expect((yield* reload(child.taskId)).status).toBe("running");
+        yield* endTurn(harness, childThread, continuationTurn, "Final child.");
+        const ended = yield* reload(child.taskId);
+        expect(ended.status).toBe("completed");
+        expect(ended.result).toEqual({ summary: "Final child." });
+        expect(startsOn(harness, rootThread).length - leadBefore).toBe(1);
+        expect(leadDeliveries(harness, rootThread, "result")).toBe(1);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    });
+
+    it.effect("reports the continuation's result when it ended before the worker looked", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const { rootThread, child, childThread } = yield* delegatedChild(harness, "ended");
+        const leadBefore = startsOn(harness, rootThread).length;
+        const { continuationTurn } = yield* loseAndContinueBeforeDrain(harness, childThread);
+        const now = DateTime.formatIso(yield* DateTime.now);
+        harness.messages.set(childThread, [
+          ...(harness.messages.get(childThread) ?? []),
+          {
+            messageId: MessageId.make(`msg-${continuationTurn}`),
+            threadId: childThread,
+            turnId: continuationTurn,
+            role: "assistant",
+            text: "Final child.",
+            isStreaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]);
+        const ready = makeSession({
+          threadId: childThread,
+          status: "ready",
+          activeTurnId: null,
+          updatedAt: now,
+        });
+        harness.sessions.set(childThread, ready);
+        yield* ingestAll(harness, ready);
+        yield* service.drain;
+        const ended = yield* reload(child.taskId);
+        expect(ended.status).toBe("completed");
+        expect(ended.result).toEqual({ summary: "Final child." });
+        expect(startsOn(harness, rootThread).length - leadBefore).toBe(1);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    });
   });
 
   it.effect("does not hold a task that the user stopped", () => {

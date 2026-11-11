@@ -46,6 +46,7 @@ import type { TaskDispatch } from "./taskDispatch.ts";
 export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   const {
     activeAttemptForThread,
+    adoptContinuation,
     backgroundByThread,
     botRepository,
     engine,
@@ -373,10 +374,11 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     threadId: ThreadId,
     eventProviderRetry?: PersonalSessionView["providerRetry"],
   ) {
-    const attempt = yield* activeAttemptForThread(threadId);
-    if (attempt === null) {
+    const current = yield* activeAttemptForThread(threadId);
+    if (current === null) {
       return;
     }
+    const attempt = yield* adoptContinuation(current);
     const shell = yield* engine.getThread(threadId);
     const raw = Option.isSome(shell) ? shell.value.session : null;
     if (raw === null || raw === undefined) {

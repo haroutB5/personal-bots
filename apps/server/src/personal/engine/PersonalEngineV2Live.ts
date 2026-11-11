@@ -34,6 +34,7 @@ import * as Stream from "effect/Stream";
 import { ProjectService } from "../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
+import { MAX_CONTINUATION_CHAIN } from "../../orchestration-v2/RestartContinuation.ts";
 import { PersonalProviderSessions } from "./PersonalProviderSessions.ts";
 import {
   PersonalEngine,
@@ -873,6 +874,32 @@ const make = Effect.gen(function* () {
       Effect.mapError(engineError("latestRunInterruptReason")),
     );
 
+  const continuationTurn = (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }): Effect.Effect<TurnId | null, PersonalEngineError> =>
+    sql<{ readonly runId: string; readonly depth: number }>`
+      WITH RECURSIVE chain(run_id, ordinal, depth) AS (
+        SELECT ${input.turnId}, 0, 0
+        UNION ALL
+        SELECT next.run_id, next.ordinal, chain.depth + 1
+        FROM chain
+        JOIN orchestration_v2_projection_runs next
+          ON next.thread_id = ${input.threadId}
+          AND json_extract(next.payload_json, '$.restartContinuationOfRunId') = chain.run_id
+        WHERE chain.depth < ${MAX_CONTINUATION_CHAIN}
+      )
+      SELECT run_id AS "runId", depth AS "depth"
+      FROM chain
+      ORDER BY depth DESC, ordinal DESC
+      LIMIT 1
+    `.pipe(
+      Effect.map((rows) =>
+        rows[0] !== undefined && rows[0].depth > 0 ? TurnId.make(rows[0].runId) : null,
+      ),
+      Effect.mapError(engineError("continuationTurn")),
+    );
+
   const compactedSince = (input: {
     readonly threadId: ThreadId;
     readonly since: string;
@@ -1126,6 +1153,7 @@ const make = Effect.gen(function* () {
     listMessages,
     latestContextTokens,
     latestRunInterruptReason,
+    continuationTurn,
     compactedSince,
     threadUsedWeb,
     toolStepsSince,

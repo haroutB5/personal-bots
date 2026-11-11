@@ -16,6 +16,7 @@ import {
   ThreadId,
   type PersonalBotId,
   type PersonalTask,
+  type PersonalTaskAttempt,
 } from "@t3tools/contracts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
@@ -317,6 +318,23 @@ export const makeTaskCore = () =>
     const latestRunInterruptReason = (threadId: ThreadId) =>
       engine.latestRunInterruptReason(threadId).pipe(Effect.orElseSucceed(() => null));
 
+    const continuationTurnOf = (attempt: PersonalTaskAttempt) =>
+      attempt.turnId === null
+        ? Effect.succeed(null)
+        : engine
+            .continuationTurn({ threadId: attempt.providerThreadId, turnId: attempt.turnId })
+            .pipe(Effect.orElseSucceed(() => null));
+
+    const adoptContinuation = Effect.fn("PersonalTaskService.adoptContinuation")(function* (
+      attempt: PersonalTaskAttempt,
+    ) {
+      const continuation = yield* continuationTurnOf(attempt);
+      if (continuation === null) return attempt;
+      const adopted = { ...attempt, turnId: continuation };
+      yield* repository.writeAttempt(adopted);
+      return adopted;
+    });
+
     /**
      * Best effort, never fails the caller: a task that ended adds its status,
      * clipped result and the evidence it names to its record. Nothing is kept
@@ -582,6 +600,8 @@ export const makeTaskCore = () =>
 
     return {
       activeAttemptForThread,
+      adoptContinuation,
+      continuationTurnOf,
       activeThreadIds,
       backgroundByThread,
       botRepository,

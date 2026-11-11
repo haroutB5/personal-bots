@@ -529,6 +529,52 @@ describe("PersonalEngineV2 reads", () => {
     );
   });
 
+  it.effect("continuationTurn follows runs that continue a turn up to the loop-guard depth", () => {
+    const shells = new Map<string, OrchestrationV2ThreadShell>();
+    return withEngine(shells, (engine) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const thread = ThreadId.make("thread-1");
+        const insertRun = (
+          id: string,
+          ordinal: number,
+          continues?: string,
+          threadId = "thread-1",
+        ) =>
+          sql`
+            INSERT INTO orchestration_v2_projection_runs
+              (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+                completed_at, payload_json)
+            VALUES (${id}, ${threadId}, ${ordinal}, 'opencode', 'provider-thread-1', 'interrupted',
+              '2026-11-06T10:00:00.000Z', '2026-11-06T10:01:00.000Z',
+              ${continues === undefined ? "{}" : JSON.stringify({ restartContinuationOfRunId: continues })})
+          `;
+        const continuationOf = (runId: string) =>
+          engine.continuationTurn({ threadId: thread, turnId: TurnId.make(runId) });
+
+        yield* insertRun("run-1", 1);
+        expect(yield* continuationOf("run-1")).toBeNull();
+
+        yield* insertRun("run-2", 2, "run-1");
+        expect(yield* continuationOf("run-1")).toBe("run-2");
+        expect(yield* continuationOf("run-2")).toBeNull();
+
+        yield* insertRun("run-3", 3, "run-2");
+        expect(yield* continuationOf("run-1")).toBe("run-3");
+        expect(yield* continuationOf("run-2")).toBe("run-3");
+
+        yield* insertRun("run-4", 4, "run-3");
+        yield* insertRun("run-5", 5, "run-4");
+        expect(yield* continuationOf("run-1")).toBe("run-4");
+        expect(yield* continuationOf("run-4")).toBe("run-5");
+
+        yield* insertRun("run-x", 1, undefined, "thread-2");
+        yield* insertRun("run-y", 2, "run-x", "thread-2");
+        expect(yield* continuationOf("run-x")).toBeNull();
+      }),
+    );
+  });
+
   it.effect("shellSnapshot maps every v2 shell, archived included", () => {
     const shells = new Map<string, OrchestrationV2ThreadShell>([
       ["thread-1", shellFor("thread-1", { latestRunId: "run-1" })],
