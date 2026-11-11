@@ -53,6 +53,7 @@ import type { BotAvatarShape } from "@t3tools/contracts";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { BotAvatar } from "../shell/BotAvatar";
+import { useHighRefresh } from "../display/useHighRefresh";
 import { tokens } from "../shell/tokens";
 import type { CardContext } from "./cards/types";
 import { isChatCard, renderChatCard } from "./cards/registry";
@@ -933,6 +934,7 @@ export function MessageList({
   } | null;
 }) {
   const listRef = useRef<FlatList<Row>>(null);
+  const highRefresh = useHighRefresh();
   const rows = useMemo<ReadonlyArray<Row>>(
     () => [
       ...items.map((item): Row => ({ kind: "item", key: item.id, item })),
@@ -1001,6 +1003,7 @@ export function MessageList({
       windowSize={9}
       removeClippedSubviews
       onScrollToIndexFailed={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
+      {...highRefresh}
       ListFooterComponent={
         onLoadEarlier === null ? null : (
           <Pressable

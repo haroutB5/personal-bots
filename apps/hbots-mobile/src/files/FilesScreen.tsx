@@ -46,6 +46,7 @@ import { useSecureScreen } from "../platform/secureScreen";
 import { PersonalFilePreviewSheet } from "../sheets/PersonalFilePreviewSheet";
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { BotAvatar } from "../shell/BotAvatar";
+import { useHighRefresh } from "../display/useHighRefresh";
 import { tokens } from "../shell/tokens";
 import { chosenFiles, filesScreenState, shownFileIds } from "../files/filesScreenModel";
 
@@ -110,6 +111,7 @@ function Check({ checked }: { readonly checked: boolean }) {
 
 export function FilesScreen({ native }: { readonly native: NativePersonal }) {
   useSecureScreen(true);
+  const highRefresh = useHighRefresh();
   const environmentId = native.environmentId;
   const filesList = native.bots.usePersonalFiles(environmentId);
   const botsList = native.bots.usePersonalBotsList(environmentId);
@@ -343,7 +345,11 @@ export function FilesScreen({ native }: { readonly native: NativePersonal }) {
               autoCorrect={false}
             />
           </View>
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollBody}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollBody}
+            {...highRefresh}
+          >
             {groups.length === 0 ? (
               <Text style={styles.stateText} maxFontSizeMultiplier={1.6}>
                 No files match "{query.trim()}".
