@@ -13,6 +13,8 @@ export interface LinkGate {
   readonly setCovered: (covered: boolean) => void;
   /** The link waiting for the unlock, if any. */
   readonly held: () => string | null;
+  /** The app is going away: whatever is still held will never be acted on. */
+  readonly dispose: () => void;
 }
 
 /** A held link older than this is dropped: nobody expects it after a long wait. */
@@ -22,6 +24,8 @@ export function createLinkGate(
   act: (raw: string) => void,
   now: () => number = Date.now,
   ttlMs: number = HELD_LINK_TTL_MS,
+  /** A held link that will never be acted on (replaced, expired, abandoned): free what it points at. */
+  drop: (raw: string) => void = () => undefined,
 ): LinkGate {
   // Closed until the lock says otherwise: the setting is read after the first link can arrive.
   let covered = true;
@@ -33,6 +37,7 @@ export function createLinkGate(
     receive: (raw) => {
       if (covered) {
         // The newest link wins: tapping the tile twice must not queue two chats.
+        if (pending !== null) drop(pending.raw);
         pending = { raw, at: now() };
         return;
       }
@@ -42,9 +47,14 @@ export function createLinkGate(
       covered = next;
       if (covered) return;
       const raw = fresh();
+      if (pending !== null && raw === null) drop(pending.raw);
       pending = null;
       if (raw !== null) act(raw);
     },
     held: fresh,
+    dispose: () => {
+      if (pending !== null) drop(pending.raw);
+      pending = null;
+    },
   };
 }

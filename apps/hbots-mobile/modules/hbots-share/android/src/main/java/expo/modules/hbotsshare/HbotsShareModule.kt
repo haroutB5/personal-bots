@@ -20,5 +20,11 @@ class HbotsShareModule : Module() {
       val context = app()
       if (context != null) ShareStore.discard(context, id)
     }
+
+    /** App start: drops every intake an earlier run left, keeping the one this launch opens. */
+    Function("discardAllExcept") { keep: String? ->
+      val context = app()
+      if (context != null) ShareStore.discardAllExcept(context, keep)
+    }
   }
 }

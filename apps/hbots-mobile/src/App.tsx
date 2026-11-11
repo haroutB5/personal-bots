@@ -40,6 +40,7 @@ import { createSessionLifetime } from "./sessionLifetime";
 import { describeSignOut, revokeRemoteSession, signOutConfirmBody } from "./signOut";
 import { UnpairedShareNotice } from "./share/UnpairedShareNotice";
 import { unpairedShareMessage } from "./share/unpairedShare";
+import { useShareSweepAtStart } from "./share/useShareSweep";
 import { useUnpairedShare } from "./share/useUnpairedShare";
 import { AppLockGate } from "./security/AppLockGate";
 import { AppShell } from "./shell/AppShell";
@@ -126,6 +127,7 @@ function App() {
     installedVersion,
     update?.rejected ?? null,
   );
+  useShareSweepAtStart();
   const unpairedShare = useUnpairedShare(screen.kind);
   const unpairedShareText = unpairedShareMessage(unpairedShare.share);
   const pairingNotice =

@@ -19,6 +19,11 @@ export function shareIdFromLink(raw: string): string | null {
   return last?.kind === "share" ? last.shareId : null;
 }
 
+/** The share a launch link opens: the one intake that must survive the start-up sweep. */
+export function shareToKeepAtStart(launchUrl: string | null): string | null {
+  return launchUrl === null ? null : shareIdFromLink(launchUrl);
+}
+
 /** The screens on which no shell is mounted and no session exists. */
 export function isSignedOutScreen(kind: string): boolean {
   return kind === "unpaired" || kind === "signedOut";

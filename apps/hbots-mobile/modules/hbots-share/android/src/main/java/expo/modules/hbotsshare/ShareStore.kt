@@ -35,6 +35,19 @@ internal object ShareStore {
     dirFor(context, id)?.deleteRecursively()
   }
 
+  private const val FRESH_MS = 60L * 1000
+
+  /**
+   * App start: removes every intake except `keep` (the share this launch opens).
+   * Intakes younger than a minute stay, a copy may still be running.
+   */
+  fun discardAllExcept(context: Context, keep: String?) {
+    val cutoff = System.currentTimeMillis() - FRESH_MS
+    root(context).listFiles()?.forEach {
+      if (it.name != keep && it.lastModified() < cutoff) it.deleteRecursively()
+    }
+  }
+
   /** Removes intakes nobody opened. */
   fun sweep(context: Context) {
     val cutoff = System.currentTimeMillis() - STALE_MS
@@ -53,6 +66,16 @@ internal object ShareStore {
     val id = UUID.randomUUID().toString()
     val dir = File(root(context), id)
     if (!dir.mkdirs()) return null
+    return try {
+      fill(context, intent, dir, id)
+    } catch (failure: Exception) {
+      // A copy that failed half way leaves no files behind.
+      dir.deleteRecursively()
+      throw failure
+    }
+  }
+
+  private fun fill(context: Context, intent: Intent, dir: File, id: String): String? {
     val items = JSONArray()
     var count = 0
     var ask = false

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  keepsSharedFiles,
   SHARE_MAX_BYTES,
   SHARE_MAX_ITEMS,
   SHARE_MAX_TEXT_CHARS,
@@ -283,5 +284,22 @@ describe("the message", () => {
     expect(previewLabel(intent)).toBe("2 photos and 1 file and text to send");
     expect(hasAttachments(intent)).toBe(true);
     expect(previewLabel({ kind: "ask", text: "hello" })).toBe("Selected text: hello");
+  });
+});
+
+describe("when the shared files are still needed", () => {
+  const ok = intakeShare({ ask: false, count: 1, items: [{ kind: "text", text: "hello" }] });
+
+  it("keeps them while the user picks, confirms, sends", () => {
+    const pick = openPicker(ok, { paired: true, online: true });
+    expect(keepsSharedFiles(pick)).toBe(true);
+  });
+
+  it.each([
+    ["a refusal", openPicker({ ok: false, reason: "too-large" }, { paired: true, online: true })],
+    ["an unpaired phone", openPicker(ok, { paired: false, online: true })],
+  ])("does not keep them after %s", (_name, state) => {
+    expect(state.step).toBe("blocked");
+    expect(keepsSharedFiles(state)).toBe(false);
   });
 });

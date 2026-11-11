@@ -5,6 +5,7 @@ import {
   isSignedOutScreen,
   receiveLinkWhileSignedOut,
   shareIdFromLink,
+  shareToKeepAtStart,
   unpairedShareMessage,
 } from "./unpairedShare";
 
@@ -44,4 +45,17 @@ describe("unpaired share", () => {
       expect(isSignedOutScreen(kind)).toBe(false);
     }
   });
+});
+
+describe("the start-up sweep of share intake", () => {
+  it("keeps the share the launch link opens", () => {
+    expect(shareToKeepAtStart("hbots://share/abc12345")).toBe("abc12345");
+  });
+
+  it.each([null, "hbots://bot/cto?new=1", "hbots://stop", "https://example.com"])(
+    "keeps nothing for %s",
+    (url) => {
+      expect(shareToKeepAtStart(url)).toBeNull();
+    },
+  );
 });

@@ -22,6 +22,7 @@ import {
   emptySearchText,
   filterBots,
   intakeShare,
+  keepsSharedFiles,
   openPicker,
   pickBot,
   previewLabel,
@@ -66,6 +67,11 @@ export function BotPicker({
   const state = picked ?? openPicker(intake, { paired: true, online });
 
   useEffect(() => () => discardShare(shareId), [shareId]);
+  // A refusal never reads the files, so they go now, not when the picker closes.
+  const filesNeeded = keepsSharedFiles(state);
+  useEffect(() => {
+    if (!filesNeeded) discardShare(shareId);
+  }, [filesNeeded, shareId]);
 
   const intent = "intent" in state ? state.intent : null;
 

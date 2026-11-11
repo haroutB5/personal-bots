@@ -124,6 +124,15 @@ export function openPicker(
   return { step: "pick", intent: intake.intent, query: "" };
 }
 
+/**
+ * Whether the copied files are still needed. A refusal (too big, unsupported,
+ * not paired, offline) never reads them, so they are deleted at once rather than
+ * left in the cache until the picker closes.
+ */
+export function keepsSharedFiles(state: PickerState): boolean {
+  return state.step !== "blocked";
+}
+
 export function setQuery(state: PickerState, query: string): PickerState {
   return state.step === "pick" ? { ...state, query } : state;
 }

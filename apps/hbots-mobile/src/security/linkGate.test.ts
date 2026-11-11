@@ -105,3 +105,53 @@ describe("link gate", () => {
     expect(act).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("a held link that is never acted on", () => {
+  const SHARE = "hbots://share/abc12345";
+
+  it("is dropped when a newer link replaces it", () => {
+    const drop = vi.fn();
+    const gate = createLinkGate(vi.fn(), Date.now, HELD_LINK_TTL_MS, drop);
+    gate.setCovered(true);
+    gate.receive(SHARE);
+    gate.receive("hbots://bot/cto?new=1");
+
+    expect(drop).toHaveBeenCalledExactlyOnceWith(SHARE);
+  });
+
+  it("is dropped when it expired before the unlock", () => {
+    let clock = 0;
+    const drop = vi.fn();
+    const act = vi.fn();
+    const gate = createLinkGate(act, () => clock, HELD_LINK_TTL_MS, drop);
+    gate.setCovered(true);
+    gate.receive(SHARE);
+    clock = HELD_LINK_TTL_MS + 1;
+    gate.setCovered(false);
+
+    expect(act).not.toHaveBeenCalled();
+    expect(drop).toHaveBeenCalledExactlyOnceWith(SHARE);
+  });
+
+  it("is dropped when the app goes away while it waits", () => {
+    const drop = vi.fn();
+    const gate = createLinkGate(vi.fn(), Date.now, HELD_LINK_TTL_MS, drop);
+    gate.setCovered(true);
+    gate.receive(SHARE);
+    gate.dispose();
+
+    expect(drop).toHaveBeenCalledExactlyOnceWith(SHARE);
+    expect(gate.held()).toBeNull();
+  });
+
+  it("is not dropped when it was acted on", () => {
+    const drop = vi.fn();
+    const gate = createLinkGate(vi.fn(), Date.now, HELD_LINK_TTL_MS, drop);
+    gate.setCovered(true);
+    gate.receive(SHARE);
+    gate.setCovered(false);
+    gate.dispose();
+
+    expect(drop).not.toHaveBeenCalled();
+  });
+});
