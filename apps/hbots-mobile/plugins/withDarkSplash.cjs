@@ -5,13 +5,9 @@ const {
   withAndroidStyles,
 } = require("expo/config-plugins");
 
-// The app is dark only. The Expo template ships a white splash: a placeholder
-// bitmap as the launch window background, and a white splashscreen_background
-// colour. Android 12 and later draw their own splash from
-// windowSplashScreenBackground, or from the window background when that is not
-// set, and the bitmap made it white. This plugin makes both the launch theme
-// and the window before React mounts (AppTheme, set by expo-system-ui from
-// backgroundColor) the app's dark background, on every supported version.
+// The app is dark only. The Expo template's white placeholder bitmap and white
+// splash colour show on Android 12+ too, so the launch theme and the splash colour
+// both take the app's backgroundColor.
 const SPLASH_COLOR = "splashscreen_background";
 const SPLASH_THEME = "Theme.App.SplashScreen";
 const SPLASH_THEME_PARENT = "AppTheme";
