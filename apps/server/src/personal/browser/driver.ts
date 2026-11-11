@@ -274,16 +274,9 @@ const screencastOptions = (profile: ScreencastProfile) =>
 
 const TIMED_OUT = Symbol("timed-out");
 
-/**
- * Whose page this is. A bot page on the shared browser is one of several tabs in his window, so
- * it stays "visible" through a focus override and takes screenshots from a screencast frame. An
- * owned page is the only window of a browser nobody else uses and needs neither.
- */
 type PageMode = "owned" | "shared-bot";
 
-/** Rendering is quiet for at most this long after a change before a shared screenshot is taken. */
 const SCREENSHOT_SETTLE_CAP_MS = 500;
-/** A shared screenshot that has no frame by now failed, as `page.screenshot` fails at its timeout. */
 const SCREENSHOT_FRAME_CAP_MS = 5_000;
 
 const screenshotTimeout = (ms: number) =>
@@ -379,9 +372,6 @@ function wrapPlaywrightPage(
             automaticPresenceSimulation: true,
           },
         });
-        // Attaching with noDefaults leaves every page without Playwright's focus emulation, so a
-        // bot tab behind another tab is hidden, draws no frames and times out every click. The
-        // override lives on this page's own session and never reaches his tabs.
         if (mode === "shared-bot") {
           await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
         }
@@ -443,9 +433,6 @@ function wrapPlaywrightPage(
       ms,
     ).then((result) => result === true);
 
-  // A shared bot page is a background tab, where `page.screenshot` waits for a compositor frame
-  // that arrives only about every other call. One screencast frame on a session of its own does
-  // not, and leaves the viewer's screencast on the control session alone.
   let grabSession: Promise<Playwright.CDPSession> | null = null;
   let grabChain: Promise<unknown> = Promise.resolve();
   const grabFrame = async (): Promise<Uint8Array> => {
@@ -971,8 +958,6 @@ export const makePlaywrightDriver = (
     return {
       pages: () => [...mine].filter((page) => !page.isClosed()).map(wrap),
       newPage: async () => {
-        // A background target: Playwright's own `newPage` opens it in front of his tab. The nonce
-        // tells this tab from one he opens in the same moment.
         const marker = `#hbots-${NodeCrypto.randomUUID()}`;
         const arrived = context.waitForEvent("page", {
           predicate: (candidate) => candidate.url().endsWith(marker),
