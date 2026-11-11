@@ -525,13 +525,29 @@ describe("the microphone and the server's answer", () => {
 });
 
 describe("coming back from the system settings", () => {
-  it("clears the microphone card and starts the call once the owner allowed it", async () => {
+  it("starts no call when the owner allowed the microphone and offers the call button", async () => {
     const { session, native, askMic } = setup({ granted: false });
     askMic.mockResolvedValue("blocked" as never);
     await session.start(REQUEST);
     expect(session.getView().micRefusal).toBe("blocked");
     native.micPermission.mockReturnValue("granted");
     session.appForegrounded();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.startCall).not.toHaveBeenCalled();
+    expect(session.getView().micRefusal).toBe("allowed");
+    expect(session.getView().snapshot.state.errorCode).toBe("mic_blocked");
+  });
+
+  it("starts the call only when the owner taps the call button", async () => {
+    const { session, native, askMic } = setup({ granted: false });
+    askMic.mockResolvedValue("blocked" as never);
+    await session.start(REQUEST);
+    native.micPermission.mockReturnValue("granted");
+    session.appForegrounded();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.startCall).not.toHaveBeenCalled();
+    session.end();
+    void session.start(REQUEST);
     await vi.advanceTimersByTimeAsync(0);
     expect(native.startCall).toHaveBeenCalledOnce();
     expect(session.getView().micRefusal).toBeNull();

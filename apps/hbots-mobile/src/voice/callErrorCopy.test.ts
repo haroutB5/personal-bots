@@ -36,6 +36,15 @@ describe("errorCopyFor", () => {
     expect(calls).toEqual(["retry"]);
   });
 
+  it("offers the call button once the microphone has been allowed in Settings", () => {
+    const { calls, made } = actions();
+    const copy = errorCopyFor("mic_blocked", "allowed", made);
+    expect(copy?.primary).toBe("Call");
+    copy?.onPrimary();
+    copy?.onSecondary?.();
+    expect(calls).toEqual(["retry", "close"]);
+  });
+
   it("gives every code a way out", () => {
     const codes = [
       "no_key",
