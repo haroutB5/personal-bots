@@ -16,6 +16,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { PROVIDER_SERVER_LOST_REASON as ADAPTER_SERVER_LOST_REASON } from "@t3tools/provider-opencode/testing";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -1092,6 +1093,10 @@ const lostToServer = (message: string, extra: Record<string, unknown> = {}) => {
     turnItems: [{ id: "turn-item:interrupt-result", runId, type: "run_interrupt_result", message }],
   } as unknown as OrchestrationV2ThreadProjection;
 };
+
+it.effect("shares the lost-server reason with the OpenCode adapter", () =>
+  Effect.sync(() => assert.strictEqual(PROVIDER_SERVER_LOST_REASON, ADAPTER_SERVER_LOST_REASON)),
+);
 
 it.effect("continues an interrupted run that lost its provider server", () =>
   Effect.gen(function* () {

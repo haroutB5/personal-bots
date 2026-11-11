@@ -127,7 +127,6 @@ type EngineCall =
  * projection. Context-window rows still come from the activities table.
  */
 interface Harness {
-  /** The interrupt result message of a chat's newest run, as the projection reports it. */
   readonly interruptReasons: Map<string, string>;
   readonly calls: Array<EngineCall>;
   readonly sessions: Map<string, OrchestrationSession>;

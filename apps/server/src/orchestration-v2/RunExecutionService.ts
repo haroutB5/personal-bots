@@ -759,7 +759,6 @@ export const layer: Layer.Layer<
                   },
                 ]
               : []),
-            // Lost with its server, not stopped: continue it through the same effect a restart uses.
             ...(lostToServer
               ? [
                   {

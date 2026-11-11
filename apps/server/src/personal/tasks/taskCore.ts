@@ -313,7 +313,6 @@ export const makeTaskCore = () =>
     const latestContextTokens = (threadId: ThreadId) =>
       engine.latestContextTokens(threadId).pipe(Effect.orElseSucceed(() => null));
 
-    /** Why the chat's newest run was interrupted, or null when it was not or the read failed. */
     const latestRunInterruptReason = (threadId: ThreadId) =>
       engine.latestRunInterruptReason(threadId).pipe(Effect.orElseSucceed(() => null));
 

@@ -229,10 +229,8 @@ export function continuationStartRetryDelayMs(
   return CONTINUATION_START_RETRY_DELAYS_MS[failedStarts - 1];
 }
 
-/** The terminal reason an adapter reports when the provider server a turn ran on was replaced. */
 export const PROVIDER_SERVER_LOST_REASON = "provider-server-lost";
 
-/** The interrupt came from losing the server, not from a Stop, so the turn still owes its work. */
 export function lostToProviderServer(
   source: Pick<OrchestrationV2Run, "id" | "status">,
   turnItems: ReadonlyArray<Pick<OrchestrationV2TurnItem, "type" | "runId"> & { message?: string }>,

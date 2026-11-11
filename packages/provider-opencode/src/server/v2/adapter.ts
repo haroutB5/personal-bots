@@ -325,7 +325,6 @@ interface ThreadState {
   instructions: string | undefined;
 }
 
-/** Turn ended because the OpenCode server it ran on was replaced. The orchestrator continues these. */
 export const PROVIDER_SERVER_LOST_REASON = "provider-server-lost";
 
 type TurnTerminal =
@@ -2761,7 +2760,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         }),
       );
 
-    // A silent stream does not mean a dead server; keep the process that still holds the turns.
     const resubscribe = Effect.gen(function* () {
       const stream = yield* connection.events;
       yield* lock.withPermit(reconcile(false)).pipe(Effect.timeout(RECONCILE_TIMEOUT));

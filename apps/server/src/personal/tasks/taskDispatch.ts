@@ -308,7 +308,6 @@ export const makeTaskDispatch = (
     if (yield* continuesExistingChat(task)) return null;
     const interruptReason = yield* latestRunInterruptReason(attempt.providerThreadId);
     if (interruptReason === PROVIDER_SERVER_LOST_REASON) {
-      // The server went away under a healthy session; its conversation is intact and resumes.
       yield* Effect.logInfo("personal task reopened and resumed: its provider server was lost", {
         taskId: task.taskId,
         threadId: attempt.providerThreadId,
