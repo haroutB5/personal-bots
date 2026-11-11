@@ -69,6 +69,7 @@ type HistoryRow = Pick<
     readonly attemptId?: string | null | undefined;
     readonly attemptStatus?: string | null | undefined;
     readonly persistentOutput?: boolean;
+    readonly text?: string;
     readonly deferredWork?: OrchestrationV2TurnItem["deferredWork"];
   };
 };
