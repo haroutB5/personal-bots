@@ -27,14 +27,15 @@ const fake = vi.hoisted(() => {
   };
   context.pages.mockReturnValue([page]);
   context.newPage.mockResolvedValue(page);
-  const launch = vi.fn(
-    async (_profile: string, _options: Record<string, unknown>) => context,
-  );
+  const launch = vi.fn(async (_profile: string, _options: Record<string, unknown>) => context);
   return { listeners, send, context, page, launch };
 });
 
 vi.mock("playwright-core", () => ({ chromium: { launchPersistentContext: fake.launch } }));
-vi.mock("node:fs/promises", () => ({ mkdir: vi.fn() }));
+vi.mock("node:fs/promises", () => ({
+  mkdir: vi.fn(),
+  access: async () => Promise.reject(new Error("ENOENT")),
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();

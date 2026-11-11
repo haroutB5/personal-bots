@@ -12,6 +12,7 @@ import {
   type ScreencastMeta,
   type ViewportOverride,
 } from "./driver.ts";
+import { ImportedProfileRefused, refuseImportedProfile } from "./importedProfile.ts";
 import { HostOperationError } from "./pageOperations.ts";
 import {
   offerFrameToFlows,
@@ -299,6 +300,25 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
         runtime.detail = null;
         runtime.lockedByPid = null;
         yield* notify;
+        // Before anything in the folder is touched, not just before the launch.
+        const refusedProfile = yield* Effect.promise(() =>
+          refuseImportedProfile(profileDir).then(
+            () => null,
+            (cause: unknown) =>
+              cause instanceof ImportedProfileRefused ? cause : Promise.reject(cause),
+          ),
+        );
+        if (refusedProfile !== null) {
+          runtime.phase = "crashed";
+          runtime.detail = refusedProfile.message;
+          yield* Effect.logWarning("Personal browser launch refused.", {
+            detail: refusedProfile.message,
+          });
+          yield* notify;
+          return yield* Effect.fail(
+            new HostOperationError("PreviewAutomationExecutionError", refusedProfile.message),
+          );
+        }
         // A killed Chrome (a crash, or the server's own teardown) leaves the
         // POSIX singleton files behind; clear them only when the process they
         // name has exited, so a real second instance is still reported.

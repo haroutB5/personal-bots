@@ -21,6 +21,7 @@ import {
 } from "./adblock.ts";
 import { resolveBrowserExecutable } from "./browserExecutable.ts";
 import { keepBrowserPriorityNormal } from "./browserPriority.ts";
+import { refuseImportedProfile } from "./importedProfile.ts";
 import { jpegSize } from "./jpegSize.ts";
 
 export interface ViewportSize {
@@ -829,6 +830,7 @@ export const makePlaywrightDriver = (
   driverOptions: PlaywrightDriverOptions = {},
 ): BrowserDriver => ({
   launch: async (options) => {
+    await refuseImportedProfile(options.userDataDir);
     const { chromium } = await import("playwright-core");
     const resolveExecutable =
       driverOptions.resolveExecutable ??
