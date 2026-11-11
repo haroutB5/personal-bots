@@ -402,7 +402,7 @@ it.live(
       const closing = closed(revokedSocket);
       const revokedAtMs = Date.now();
       yield* repository.revoke({ sessionId: revoked.sessionId, revokedAt: yield* DateTime.now });
-      const close = yield* closing;
+      const close = yield* closing.pipe(Effect.timeout(Duration.seconds(6)));
       const closeAfterMs = Date.now() - revokedAtMs;
       console.log(`row-only revoke closed the socket after ${String(closeAfterMs)} ms`);
 

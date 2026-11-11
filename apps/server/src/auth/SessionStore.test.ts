@@ -200,7 +200,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
         );
         expect(yield* Deferred.isDone(invalidated)).toBe(false);
         yield* TestClock.adjust(Duration.millis(1));
-        yield* Deferred.await(invalidated);
+        yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow);
+        expect(yield* Deferred.isDone(invalidated)).toBe(true);
         expect(yield* Deferred.isDone(otherInvalidated)).toBe(false);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
