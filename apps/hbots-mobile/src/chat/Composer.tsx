@@ -46,6 +46,7 @@ import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
 import { ComposerHost } from "./ComposerHost";
 import { keyboardImages, releasedIntakes } from "./composerInput";
+import { draftKey } from "./linkDraft";
 import { blockedMessage } from "../share/pickerModel";
 import { discardShare, readShare } from "../share/shareIntake";
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
@@ -54,10 +55,6 @@ const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const DRAFT_DEBOUNCE_MS = 400;
 const MAX_TITLE_SEED = 80;
-
-function draftKey(environmentId: string, threadId: string): string {
-  return `t3code:composer-draft:v1:${environmentId}:${threadId}`;
-}
 
 function titleSeedFor(text: string, attachments: ReadonlyArray<DraftAttachment>): string {
   const seed =

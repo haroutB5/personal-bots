@@ -16,6 +16,7 @@ import type { AndroidRelease } from "../compat";
 import { chatComputerTarget } from "../chat/chatComputer";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
+import { storeLinkDraft } from "../chat/linkDraft";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
 import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
@@ -234,9 +235,15 @@ function Shell({ props }: { readonly props: AppShellProps }) {
       pendingLink.current = raw;
       return;
     }
+    // A notification reply too long to send there arrives as a draft: put it where the composer reads from.
+    for (const route of state.stack) {
+      if (route.kind === "chat" && route.draft !== undefined) {
+        storeLinkDraft(props.native.client.ports.kv, props.native.environmentId, route.threadId, route.draft);
+      }
+    }
     const routes = state.stack.map(toNavigationRoute);
     navigationRef.reset({ index: routes.length - 1, routes });
-  }, []);
+  }, [props.native]);
 
   useEffect(() => {
     void Linking.getInitialURL().then((url) => {

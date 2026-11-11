@@ -4,6 +4,8 @@
  * is one testable function.
  */
 
+import { cleanLinkDraft } from "../chat/linkDraft";
+
 export type TabName = "bots" | "tasks" | "computer" | "files";
 
 export type Origin = "bots" | "team" | "notification" | "share" | "deeplink" | "tab-root";
@@ -18,6 +20,8 @@ export type Route =
       readonly botId: string;
       readonly threadId: string;
       readonly requestId?: string;
+      /** Text for the composer, from a notification reply too long to send there. */
+      readonly draft?: string;
     }
   | { readonly kind: "bot"; readonly botId: string }
   | { readonly kind: "botNew" }
@@ -105,12 +109,17 @@ export function conversation(
   threadId: string,
   origin: Origin,
   requestId?: string,
+  draft?: string,
 ): NavState {
   const stack = chatStack(origin).map((route): Route => {
     if (route.kind !== "chat") return route;
-    return requestId === undefined
-      ? { kind: "chat", botId, threadId }
-      : { kind: "chat", botId, threadId, requestId };
+    return {
+      kind: "chat",
+      botId,
+      threadId,
+      ...(requestId === undefined ? {} : { requestId }),
+      ...(draft === undefined ? {} : { draft }),
+    };
   });
   return { stack };
 }
@@ -152,6 +161,7 @@ export function parseDeepLink(raw: string): NavState | null {
         second,
         "deeplink",
         url.searchParams.get("request") ?? undefined,
+        cleanLinkDraft(url.searchParams.get("draft")),
       );
     case "bot":
       if (first === undefined) return null;

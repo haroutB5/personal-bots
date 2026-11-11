@@ -53,6 +53,12 @@ class NotificationActionReceiver : BroadcastReceiver() {
           NotificationSender.post(context, plan, quiet = true)
           return false
         }
+        if (ReplyLimit.tooLong(text)) {
+          val link = ReplyLimit.draftLink(plan.deepLink, text)
+          val words = if (link != null) ReplyLimit.TOO_LONG_WITH_DRAFT else ReplyLimit.TOO_LONG_NO_DRAFT
+          NotificationSender.postNotice(context, plan.copy(deepLink = link ?: plan.deepLink), words, autoCancel = false, opensApp = false)
+          return false
+        }
         return send(context, plan, ActionType.REPLY, text, null, UUID.randomUUID().toString())
       }
       NotificationSender.ACTION_ANSWER -> {
