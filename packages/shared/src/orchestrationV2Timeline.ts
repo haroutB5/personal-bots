@@ -115,3 +115,13 @@ export function createOrchestrationV2TurnItemVisibility(input: {
     );
   };
 }
+
+export const PROVIDER_SERVER_LOST_REASON = "provider-server-lost";
+
+export function runInterruptResultDetail(message: string, continued: boolean | undefined): string {
+  if (message !== PROVIDER_SERVER_LOST_REASON) return message;
+  if (continued === undefined) return "The provider restarted.";
+  return continued
+    ? "The provider restarted. Continuing."
+    : "The provider restarted and the run could not continue.";
+}

@@ -6,6 +6,7 @@ import type {
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -229,10 +230,30 @@ export function continuationStartRetryDelayMs(
   return CONTINUATION_START_RETRY_DELAYS_MS[failedStarts - 1];
 }
 
-export function isRestartContinuationSource(
-  source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
-  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+export function lostToProviderServer(
+  source: Pick<OrchestrationV2Run, "id" | "status">,
+  turnItems: ReadonlyArray<Pick<OrchestrationV2TurnItem, "type" | "runId"> & { message?: string }>,
 ): boolean {
+  return (
+    source.status === "interrupted" &&
+    turnItems.some(
+      (item) =>
+        item.type === "run_interrupt_result" &&
+        item.runId === source.id &&
+        item.message === PROVIDER_SERVER_LOST_REASON,
+    )
+  );
+}
+
+export function isRestartContinuationSource(
+  source: Pick<
+    OrchestrationV2Run,
+    "id" | "status" | "activeAttemptId" | "restartCancelledBackgroundWork"
+  >,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+  turnItems: Parameters<typeof lostToProviderServer>[1],
+): boolean {
+  if (lostToProviderServer(source, turnItems)) return true;
   return isRestartNoteSource(source, providerTurns)
     ? (source.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
     : source.status === "cancelled";

@@ -195,6 +195,8 @@ export const replayServer = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly alive?: { current: boolean };
+    readonly connections?: { opened: number; closed: number };
   },
 ) =>
   Effect.gen(function* () {
@@ -216,23 +218,41 @@ export const replayServer = (
       url: BASE_URL,
       version: transcript.version,
       external: options?.external ?? false,
+      alive:
+        options?.alive === undefined
+          ? Effect.succeed(true)
+          : Effect.sync(() => options.alive?.current ?? true),
     };
     const borrowers = options?.borrowers;
+    const connections = options?.connections;
+    const lend = <A, E, R>(use: (lent: typeof connection) => Effect.Effect<A, E, R>) =>
+      connections === undefined
+        ? use(connection)
+        : Effect.acquireUseRelease(
+            Effect.sync(() => {
+              connections.opened += 1;
+            }),
+            () => use(connection),
+            () =>
+              Effect.sync(() => {
+                connections.closed += 1;
+              }),
+          );
     return OpenCode2Server.OpenCode2Server.of({
       withConnection: (use) =>
         borrowers === undefined
-          ? use(connection)
+          ? lend(use)
           : Effect.acquireUseRelease(
               Effect.sync(() => {
                 borrowers.current += 1;
               }),
-              () => use(connection),
+              () => lend(use),
               () =>
                 Effect.sync(() => {
                   borrowers.current -= 1;
                 }),
             ),
-      withBotConnection: (_input, use) => use(connection),
+      withBotConnection: (_input, use) => lend(use),
     });
   });
 
@@ -243,6 +263,8 @@ const makeReplayAdapter = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly alive?: { current: boolean };
+    readonly connections?: { opened: number; closed: number };
   },
 ) =>
   Effect.gen(function* () {
@@ -295,6 +317,8 @@ export const openCode2ReplayRuntime = (
     readonly external?: boolean;
     readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };
+    readonly alive?: { current: boolean };
+    readonly connections?: { opened: number; closed: number };
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;

@@ -19,6 +19,7 @@ import {
   type BackgroundWait,
 } from "./taskBackgroundPolicy.ts";
 import {
+  PERSONAL_TASKS_SERVER_LOSS_WAIT_MS,
   providerRetryOfAttempt,
   providerWaitMessage,
   providerWaitPause,
@@ -35,6 +36,7 @@ import {
   waitNoticeText,
   withNote,
 } from "./taskResultPolicy.ts";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { PERSONAL_TASK_NOTICE_NOTE_PREFIX } from "./PersonalTaskRepository.ts";
 import { isMissingProviderConversationText } from "./missingProviderConversation.ts";
 import { isWaitingForUser, sessionIsAlive, sessionIsBusy } from "./taskSessionPolicy.ts";
@@ -44,6 +46,7 @@ import type { TaskDispatch } from "./taskDispatch.ts";
 export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   const {
     activeAttemptForThread,
+    adoptContinuation,
     backgroundByThread,
     botRepository,
     engine,
@@ -54,6 +57,8 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     refreshActiveThreads,
     renewalWaitSince,
     repository,
+    serverLossWaitSince,
+    latestRunInterruptReason,
     resumingThreadIds,
     writeTask,
   } = core;
@@ -369,10 +374,11 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     threadId: ThreadId,
     eventProviderRetry?: PersonalSessionView["providerRetry"],
   ) {
-    const attempt = yield* activeAttemptForThread(threadId);
-    if (attempt === null) {
+    const current = yield* activeAttemptForThread(threadId);
+    if (current === null) {
       return;
     }
+    const attempt = yield* adoptContinuation(current);
     const shell = yield* engine.getThread(threadId);
     const raw = Option.isSome(shell) ? shell.value.session : null;
     if (raw === null || raw === undefined) {
@@ -393,6 +399,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     const renewalKey = `${attempt.taskId}:${attempt.attempt}`;
     // Any state after the lost-conversation error (the renewal starting) ends the wait.
     if (session.status !== "error") renewalWaitSince.delete(renewalKey);
+    if (session.status !== "interrupted") serverLossWaitSince.delete(renewalKey);
     // Newest assistant reply: by the observed turn id when it has one, else
     // the newest reply written after the anchor. Two bounded lookups replace
     // loading every message of the thread on each event and 30s sweep.
@@ -463,6 +470,16 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
           });
           return;
         }
+        if (session.status === "interrupted") {
+          const reason = yield* latestRunInterruptReason(threadId);
+          if (reason === PROVIDER_SERVER_LOST_REASON) {
+            const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+            const since = serverLossWaitSince.get(renewalKey) ?? nowMs;
+            serverLossWaitSince.set(renewalKey, since);
+            if (nowMs - since < PERSONAL_TASKS_SERVER_LOSS_WAIT_MS) return;
+          }
+        }
+        serverLossWaitSince.delete(renewalKey);
         yield* finishAttempt(attempt, { kind: "interrupted", message: session.lastError });
         return;
       case "error": {
@@ -565,13 +582,15 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     if (session.status === "running") {
       let attempt = yield* activeAttemptForThread(threadId);
       // A turn after one that left background work running (Claude Code's
-      // own follow-up, or a steer) is the attempt's turn from then on, so its
-      // reply is the one the task reports.
+      // own follow-up, or a steer) or that a dead server cut off (the continuation
+      // run) is the attempt's turn from then on, so its reply is the one the task reports.
       if (
         attempt !== null &&
         session.activeTurnId !== null &&
         attempt.turnId !== session.activeTurnId &&
-        (attempt.turnId === null || waitingOnBackground(attempt))
+        (attempt.turnId === null ||
+          waitingOnBackground(attempt) ||
+          serverLossWaitSince.has(`${attempt.taskId}:${attempt.attempt}`))
       ) {
         attempt = { ...attempt, turnId: session.activeTurnId };
         yield* repository.writeAttempt(attempt);

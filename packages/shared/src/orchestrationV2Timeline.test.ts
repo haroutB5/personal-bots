@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
+  PROVIDER_SERVER_LOST_REASON,
+  runInterruptResultDetail,
 } from "./orchestrationV2Timeline.ts";
 
 const runId = RunId.make("run:timeline-visibility");
@@ -312,5 +314,33 @@ describe("indexed timeline visibility", () => {
         }),
       ),
     ).toEqual(items);
+  });
+});
+
+describe("runInterruptResultDetail", () => {
+  it("keeps the machine reason out of the text the user reads", () => {
+    for (const continued of [true, false, undefined]) {
+      expect(runInterruptResultDetail(PROVIDER_SERVER_LOST_REASON, continued)).not.toContain(
+        PROVIDER_SERVER_LOST_REASON,
+      );
+    }
+  });
+
+  it("says whether the lost run continues", () => {
+    expect(runInterruptResultDetail(PROVIDER_SERVER_LOST_REASON, true)).toBe(
+      "The provider restarted. Continuing.",
+    );
+    expect(runInterruptResultDetail(PROVIDER_SERVER_LOST_REASON, false)).toBe(
+      "The provider restarted and the run could not continue.",
+    );
+    expect(runInterruptResultDetail(PROVIDER_SERVER_LOST_REASON, undefined)).toBe(
+      "The provider restarted.",
+    );
+  });
+
+  it("passes every other interrupt message through", () => {
+    expect(runInterruptResultDetail("Stopped by the provider", true)).toBe(
+      "Stopped by the provider",
+    );
   });
 });

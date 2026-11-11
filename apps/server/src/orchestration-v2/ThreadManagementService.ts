@@ -1149,6 +1149,15 @@ const make = Effect.gen(function* () {
       });
     }
     if (explicitRun !== undefined && isTerminalRunStatus(explicitRun.status)) {
+      if (yield* orchestrator.restartContinuationPending(explicitRun)) {
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: input.commandId,
+          threadId: input.threadId,
+          stopDelegatedTasks: false,
+          ...(input.reason === undefined ? {} : { reason: input.reason }),
+        });
+      }
       return {
         type: "already_terminal",
         run: explicitRun as OrchestrationV2Run & {

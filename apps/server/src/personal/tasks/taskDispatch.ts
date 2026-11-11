@@ -5,7 +5,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
-  CommandId,
   ThreadId,
   type PersonalBotId,
   type PersonalHandoff,
@@ -13,6 +12,7 @@ import {
   type PersonalTaskAttempt,
   type PersonalTaskMessageMarker,
 } from "@t3tools/contracts";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import { rootExposureKey } from "../browser/sensitiveExposureStore.ts";
@@ -74,6 +74,7 @@ export const makeTaskDispatch = (
     helpParkedAttempts,
     idleWaitThreadIds,
     latestContextTokens,
+    latestRunInterruptReason,
     leaseOwner,
     modelFallback,
     publish,
@@ -305,6 +306,15 @@ export const makeTaskDispatch = (
     // its session on a reopen: the point of handing work into the chat is that the
     // bot remembers it, and a work record would not carry the earlier talk.
     if (yield* continuesExistingChat(task)) return null;
+    const interruptReason = yield* latestRunInterruptReason(attempt.providerThreadId);
+    if (interruptReason === PROVIDER_SERVER_LOST_REASON) {
+      yield* Effect.logInfo("personal task reopened and resumed: its provider server was lost", {
+        taskId: task.taskId,
+        threadId: attempt.providerThreadId,
+        reopenCause: interruptReason,
+      });
+      return null;
+    }
     const record = yield* readWorkRecord(task.taskId).pipe(Effect.orElseSucceed(() => null));
     if (record === null || !workRecordHasContent(record)) return null;
     const used = yield* latestContextTokens(attempt.providerThreadId);
@@ -326,6 +336,7 @@ export const makeTaskDispatch = (
       taskId: task.taskId,
       threadId: attempt.providerThreadId,
       contextTokens: used,
+      lastInterruptReason: interruptReason,
       seedTokens: estimateTokens(text),
     });
     return text;

@@ -25,6 +25,8 @@ export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly url: string;
   readonly version: string;
   readonly external: boolean;
+  /** Whether the process behind this connection is still running. External servers report true. */
+  readonly alive: Effect.Effect<boolean>;
 }
 
 export interface OpenCode2BotEnvironment {
@@ -142,10 +144,11 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     url: string,
     password: Redacted.Redacted,
     external: boolean,
+    alive: Effect.Effect<boolean> = Effect.succeed(true),
   ) {
     const api = yield* opencode.connect({ baseUrl: url, password });
     const version = yield* verifyServer(api.client);
-    return { ...api, url, version, external } satisfies OpenCode2Connection;
+    return { ...api, url, version, external, alive } satisfies OpenCode2Connection;
   });
   let latest: OpenCode2Connection | undefined;
   const remember = (connection: OpenCode2Connection) =>
@@ -217,14 +220,14 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
         connectTo(url, botPassword, false).pipe(Effect.map((connection) => connection.version)),
     }).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
     return yield* botOwner.withServer((server) =>
-      connectTo(server.url, botPassword, false).pipe(Effect.flatMap(use)),
+      connectTo(server.url, botPassword, false, server.isRunning).pipe(Effect.flatMap(use)),
     );
   });
   return OpenCode2Server.of({
     withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
       return owner.withServer((server) =>
         latest?.url === server.url
-          ? use(latest)
+          ? use({ ...latest, alive: server.isRunning })
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
       );
     }),

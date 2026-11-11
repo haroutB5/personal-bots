@@ -16,6 +16,7 @@ import {
   ThreadId,
   type PersonalBotId,
   type PersonalTask,
+  type PersonalTaskAttempt,
 } from "@t3tools/contracts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
@@ -68,6 +69,7 @@ export const makeTaskCore = () =>
     const activeThreadIds = new Set<string>();
     // When an attempt's turn first ended on a lost conversation (see PERSONAL_TASKS_RENEWAL_WAIT_MS).
     const renewalWaitSince = new Map<string, number>();
+    const serverLossWaitSince = new Map<string, number>();
     // Threads whose waiting task queues once their provider session is gone.
     const resumingThreadIds = new Set<string>();
     // Threads with a queued task held back because a turn (usually the user's
@@ -312,6 +314,26 @@ export const makeTaskCore = () =>
     /** The latest context size the thread's provider reported, in tokens. */
     const latestContextTokens = (threadId: ThreadId) =>
       engine.latestContextTokens(threadId).pipe(Effect.orElseSucceed(() => null));
+
+    const latestRunInterruptReason = (threadId: ThreadId) =>
+      engine.latestRunInterruptReason(threadId).pipe(Effect.orElseSucceed(() => null));
+
+    const continuationTurnOf = (attempt: PersonalTaskAttempt) =>
+      attempt.turnId === null
+        ? Effect.succeed(null)
+        : engine
+            .continuationTurn({ threadId: attempt.providerThreadId, turnId: attempt.turnId })
+            .pipe(Effect.orElseSucceed(() => null));
+
+    const adoptContinuation = Effect.fn("PersonalTaskService.adoptContinuation")(function* (
+      attempt: PersonalTaskAttempt,
+    ) {
+      const continuation = yield* continuationTurnOf(attempt);
+      if (continuation === null) return attempt;
+      const adopted = { ...attempt, turnId: continuation };
+      yield* repository.writeAttempt(adopted);
+      return adopted;
+    });
 
     /**
      * Best effort, never fails the caller: a task that ended adds its status,
@@ -578,6 +600,8 @@ export const makeTaskCore = () =>
 
     return {
       activeAttemptForThread,
+      adoptContinuation,
+      continuationTurnOf,
       activeThreadIds,
       backgroundByThread,
       botRepository,
@@ -595,6 +619,7 @@ export const makeTaskCore = () =>
       helpParkedAttempts,
       idleWaitThreadIds,
       latestContextTokens,
+      latestRunInterruptReason,
       leaseOwner,
       lock,
       modelFallback,
@@ -605,6 +630,7 @@ export const makeTaskCore = () =>
       refreshActiveThreads,
       releaseThread,
       renewalWaitSince,
+      serverLossWaitSince,
       repository,
       requireLiveBot,
       requireLiveBotInTransaction,

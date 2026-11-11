@@ -38,12 +38,14 @@ import {
   type RuntimeRequestId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -65,6 +67,7 @@ import {
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { PROVIDER_SERVER_LOST_REASON } from "@t3tools/shared/orchestrationV2Timeline";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
@@ -324,7 +327,7 @@ interface ThreadState {
 }
 
 type TurnTerminal =
-  | { readonly status: "completed" | "interrupted" }
+  | { readonly status: "completed" | "interrupted"; readonly reason?: string }
   | { readonly status: "failed"; readonly failure: ReturnType<typeof makeProviderFailure> };
 
 type Rule = Permission.Rule;
@@ -537,12 +540,33 @@ const claudeUsageLimit = (message: string | undefined) =>
 const INTERRUPT_TIMEOUT = "10 seconds";
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
+const RESUBSCRIBE_ATTEMPTS = 3;
 const RECONNECT_DELAY = "2 seconds";
 const RECONCILE_TIMEOUT = "15 seconds";
 const RECONNECT_WAIT = "30 seconds";
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
+const OFF_VALUES = new Set(["off", "0", "false", "no", "disabled"]);
+
+/** Kill switch `PERSONAL_OPENCODE_RESUBSCRIBE=off`: a lost event stream always replaces the server, as before. */
+const OPENCODE_RESUBSCRIBE_ENV = "PERSONAL_OPENCODE_RESUBSCRIBE";
+/** Kill switch `PERSONAL_OPENCODE_LOSS_CONTINUE=off`: turns lost to a replaced server end as plain interrupts, as before. */
+const OPENCODE_LOSS_CONTINUE_ENV = "PERSONAL_OPENCODE_LOSS_CONTINUE";
+
+const switchEnabled = (name: string) =>
+  Config.String(name).pipe(
+    Config.option,
+    Config.map(
+      (value) =>
+        !OFF_VALUES.has(
+          Option.getOrElse(value, () => "")
+            .trim()
+            .toLowerCase(),
+        ),
+    ),
+    Effect.orElseSucceed(() => true),
+  );
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -1694,7 +1718,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
                 ? {}
                 : { retry: turn.retry.retry, retryStartedAt: turn.retry.startedAt }),
             }
-          : { ...base, status: terminal.status, failure: null },
+          : {
+              ...base,
+              status: terminal.status,
+              failure: null,
+              ...(terminal.reason === undefined ? {} : { reason: terminal.reason }),
+            },
       );
       // Cold servers list models lazily; refresh unknown windows off-stream for the next turn.
       if (window === undefined) {
@@ -2599,7 +2628,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     });
 
     // Restarts retain the previous session.outcome; without an idle item, the lost execution was interrupted.
-    const reconcile = Effect.gen(function* () {
+    const reconcile = Effect.fn("OpenCode2Adapter.reconcile")(function* (replaced: boolean) {
+      const lossReason =
+        replaced && (yield* switchEnabled(OPENCODE_LOSS_CONTINUE_ENV))
+          ? PROVIDER_SERVER_LOST_REASON
+          : undefined;
       // Read deepest sessions first; subagent turns end before their waiting parents.
       const running = [...threads]
         .filter(([, state]) => state.active !== undefined)
@@ -2642,7 +2675,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
                     class: "provider_error",
                   }),
                 }
-              : { status: "interrupted" },
+              : lossReason === undefined || turn.interrupted
+                ? { status: "interrupted" }
+                : { status: "interrupted", reason: lossReason },
         );
       }
       for (const state of background) {
@@ -2687,7 +2722,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       }
     });
 
-    const reconnect = Effect.gen(function* () {
+    const replaceOnce = Effect.fn("OpenCode2Adapter.replaceServer")(function* (
+      reason: "process-exited" | "resubscribe-failed" | "resubscribe-disabled",
+    ) {
       // Release the borrow on every failure, including reconnect interruption, so spawned servers can idle-stop.
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
@@ -2697,17 +2734,54 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         return { next, stream: yield* next.events };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
+      yield* Effect.logWarning("Replacing the OpenCode server.").pipe(
+        Effect.annotateLogs({
+          reason,
+          previousServerRunning: yield* connection.alive,
+        }),
+      );
       connection = next;
       client = next.client;
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
-      yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
+      yield* lock.withPermit(reconcile(true)).pipe(Effect.timeout(RECONCILE_TIMEOUT));
+      return stream;
+    });
+    const replaceServer = (
+      reason: "process-exited" | "resubscribe-failed" | "resubscribe-disabled",
+    ) =>
+      replaceOnce(reason).pipe(
+        Effect.retry({
+          times: RECONNECT_ATTEMPTS - 1,
+          schedule: Schedule.spaced(RECONNECT_DELAY),
+        }),
+      );
+
+    const resubscribe = Effect.gen(function* () {
+      const stream = yield* connection.events;
+      yield* lock.withPermit(reconcile(false)).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
-      Effect.retry({ times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }),
+      Effect.retry({
+        times: RESUBSCRIBE_ATTEMPTS - 1,
+        schedule: Schedule.spaced(RECONNECT_DELAY),
+      }),
     );
+
+    const reconnect = Effect.gen(function* () {
+      const enabled = yield* switchEnabled(OPENCODE_RESUBSCRIBE_ENV);
+      const alive = yield* connection.alive;
+      if (!enabled) return yield* replaceServer("resubscribe-disabled");
+      if (!alive) return yield* replaceServer("process-exited");
+      const kept = yield* resubscribe.pipe(Effect.option);
+      if (Option.isSome(kept)) {
+        yield* Effect.logInfo("Resubscribed to the OpenCode event stream on the same server.");
+        return kept.value;
+      }
+      return yield* replaceServer("resubscribe-failed");
+    });
 
     let currentScope = initial.scope;
     yield* Effect.addFinalizer(() => Scope.close(currentScope, Exit.void));
