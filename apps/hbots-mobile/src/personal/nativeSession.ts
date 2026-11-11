@@ -10,18 +10,20 @@ import { make as makeManagedRuntime } from "effect/ManagedRuntime";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { RpcClientError } from "effect/rpc";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 
+import { SESSION_REVOKED_CLOSE_CODE } from "../failure";
 import { openSocketUrl } from "../pairing";
 import type { StoredSession } from "../session";
 
 export interface NativeSession {
   readonly session: RpcSession;
-  readonly closed: Effect.Effect<never, ConnectionTransientError>;
+  readonly closed: Effect.Effect<never, ConnectionTransientError | RpcClientError.RpcClientError>;
   readonly dispose: () => Promise<void>;
 }
 
@@ -48,8 +50,24 @@ export async function connectNativeSession(
     ).pipe(Effect.asVoid),
   });
   const scope = await Effect.runPromise(Scope.make());
+  const observed: { close: { readonly code: number; readonly reason: string } | null } = {
+    close: null,
+  };
+  const observedConstructor = Layer.effect(
+    Socket.WebSocketConstructor,
+    Effect.gen(function* () {
+      const make = yield* Socket.WebSocketConstructor;
+      return (url, options) => {
+        const socket = make(url, options);
+        socket.addEventListener("close", (event) => {
+          observed.close = { code: event.code ?? 1006, reason: event.reason ?? "" };
+        });
+        return socket;
+      };
+    }),
+  ).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
   const socketLayer = Socket.layerWebSocket(socketUrl, { openTimeout: "15 seconds" }).pipe(
-    Layer.provide(Socket.layerWebSocketConstructorGlobal),
+    Layer.provide(observedConstructor),
   );
   const protocolLayer = Layer.effect(
     RpcClient.Protocol,
@@ -133,7 +151,18 @@ export async function connectNativeSession(
 
   return {
     session,
-    closed: Deferred.await(disconnected),
+    closed: Deferred.await(disconnected).pipe(
+      Effect.mapError((transient): ConnectionTransientError | RpcClientError.RpcClientError =>
+        observed.close?.code === SESSION_REVOKED_CLOSE_CODE
+          ? new RpcClientError.RpcClientError({
+              reason: new Socket.SocketCloseError({
+                code: observed.close.code,
+                closeReason: observed.close.reason,
+              }),
+            })
+          : transient,
+      ),
+    ),
     dispose: async () => {
       if (configFiber !== null) await Effect.runPromise(Fiber.interrupt(configFiber));
       await runtime.dispose();

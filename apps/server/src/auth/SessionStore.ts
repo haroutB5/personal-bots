@@ -1205,8 +1205,8 @@ const make = Effect.gen(function* () {
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
         // Revoking any session the socket has used closes it. Events only wake this loop
-        // and the rows decide: revocations are written before they are published, and
-        // clientRemoved also reports an expired session losing its last socket.
+        // early and the rows decide: the CLI revokes in another process by writing the
+        // row alone, so the loop also rereads every SESSION_RECHECK_INTERVAL.
         const chain = [sessionId];
         const nextRemoval = Effect.gen(function* () {
           while (true) {
@@ -1225,7 +1225,12 @@ const make = Effect.gen(function* () {
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
+            yield* Effect.raceFirst(
+              nextRemoval,
+              Effect.sleep(
+                Duration.millis(Math.min(remaining, Duration.toMillis(SESSION_RECHECK_INTERVAL))),
+              ),
+            );
             continue;
           }
           const successorId =
