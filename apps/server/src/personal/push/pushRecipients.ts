@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
@@ -18,18 +19,51 @@ export const liveSessionIds = (sql: SqlClient.SqlClient, nowIso: string): Statem
   sql`(SELECT session_id FROM auth_sessions WHERE revoked_at IS NULL AND expires_at > ${nowIso})`;
 
 /**
+ * How long a row whose session just expired survives the purge. A socket that
+ * moves to a successor session rebinds its rows inside this window, so the
+ * rebind never races the sweep. Sends keep the strict `liveSessionIds` test,
+ * so an expired row is never sent to.
+ */
+export const EXPIRED_RECIPIENT_GRACE = Duration.seconds(60);
+
+/**
+ * Moves the browser subscriptions and phone tokens of `from` to `to`, only
+ * when `to` is live. Idempotent: a second run finds nothing on `from`, and a
+ * dead `to` moves nothing.
+ */
+export const followSessionSuccessor = (
+  sql: SqlClient.SqlClient,
+  from: string,
+  to: string,
+): Effect.Effect<void, SqlError.SqlError> =>
+  Effect.gen(function* () {
+    const live = liveSessionIds(sql, DateTime.formatIso(yield* DateTime.now));
+    yield* sql`
+      UPDATE personal_push_subscriptions SET auth_session_id = ${to}
+      WHERE auth_session_id = ${from} AND ${to} IN ${live}
+    `;
+    yield* sql`
+      UPDATE personal_fcm_tokens SET auth_session_id = ${to}
+      WHERE auth_session_id = ${from} AND ${to} IN ${live}
+    `;
+  });
+
+/**
  * Deletes every browser subscription and phone token whose session is not
- * live (revoked, expired, unknown or, for a browser from before the column
- * existed, none), and the browser notifications still waiting for those subscriptions.
- * Idempotent. The sender runs it before it sends; revoke paths run it so
+ * live (revoked, unknown or, for a browser from before the column existed,
+ * none) or expired for longer than `EXPIRED_RECIPIENT_GRACE`, and the browser
+ * notifications still waiting for those subscriptions. Idempotent. The sender runs it before it sends; revoke paths run it so
  * sign-out stops pushes at once.
  */
 export const purgeDeadPushRecipients = (
   sql: SqlClient.SqlClient,
 ): Effect.Effect<void, SqlError.SqlError> =>
   Effect.gen(function* () {
-    const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const live = liveSessionIds(sql, nowIso);
+    const now = yield* DateTime.now;
+    const live = liveSessionIds(
+      sql,
+      DateTime.formatIso(DateTime.subtractDuration(now, EXPIRED_RECIPIENT_GRACE)),
+    );
     yield* sql`
       DELETE FROM personal_notification_outbox
       WHERE status = 'pending' AND subscription_id IN (

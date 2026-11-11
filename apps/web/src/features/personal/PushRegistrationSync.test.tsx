@@ -53,7 +53,7 @@ afterEach(async () => {
 });
 
 describe("PushRegistrationSync", () => {
-  it("re-sends the browser's subscription once the laptop is connected, once per page load", async () => {
+  it("re-sends the browser's subscription once the laptop is connected, once per connection", async () => {
     await mount();
     await rerender();
     expect(mocks.subscribe).toHaveBeenCalledTimes(1);
@@ -64,6 +64,21 @@ describe("PushRegistrationSync", () => {
         keys: { p256dh: "BPublicKey", auth: "AuthSecret" },
       },
     });
+  });
+
+  it("re-sends once per connection", async () => {
+    await mount();
+    expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+    await rerender();
+    expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+    mocks.phase = "reconnecting";
+    await rerender();
+    expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+    mocks.phase = "connected";
+    await rerender();
+    expect(mocks.subscribe).toHaveBeenCalledTimes(2);
+    await rerender();
+    expect(mocks.subscribe).toHaveBeenCalledTimes(2);
   });
 
   it("waits for the connection, then sends", async () => {

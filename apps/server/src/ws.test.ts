@@ -37,6 +37,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
@@ -1002,6 +1003,7 @@ it.effect.each([
             () => Effect.void,
             { secretReferences: true },
             { connectionId: "test-viewing", reported: false },
+            yield* Ref.make(AuthSessionId.make("config-test")),
           ).pipe(Layer.provide(configRpcServices)),
         ),
       );
@@ -1245,6 +1247,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           () => Effect.void,
           { secretReferences: true },
           { connectionId: "test-viewing", reported: false },
+          yield* Ref.make(AuthSessionId.make("config-test")),
         ).pipe(Layer.provide(configRpcServices)),
       ),
     );
@@ -1417,6 +1420,7 @@ it.effect.each([true, false] as const)(
             () => Effect.void,
             { secretReferences: true },
             { connectionId: "test-viewing", reported: false },
+            yield* Ref.make(AuthSessionId.make("usage-refresh-test")),
           ).pipe(Layer.provide(services)),
         ),
       );
@@ -1496,6 +1500,7 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
           () => Effect.void,
           { secretReferences: true },
           { connectionId: "test-viewing", reported: false },
+          yield* Ref.make(AuthSessionId.make("publish-test")),
         ).pipe(
           Layer.provide(services),
           Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
@@ -1603,6 +1608,7 @@ it.effect("answers a command receipt read through the WS handler", () =>
           () => Effect.void,
           { secretReferences: true },
           { connectionId: "test-viewing", reported: false },
+          yield* Ref.make(AuthSessionId.make("receipt-test")),
         ).pipe(
           Layer.provide(services),
           Layer.merge(RpcAuthorization.layer([AuthOrchestrationReadScope])),
