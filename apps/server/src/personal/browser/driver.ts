@@ -276,13 +276,22 @@ const TIMED_OUT = Symbol("timed-out");
 
 type PageMode = "owned" | "shared-bot";
 
-const SCREENSHOT_SETTLE_CAP_MS = 500;
-const SCREENSHOT_FRAME_CAP_MS = 5_000;
+// Chromium throttles an undrawn background tab to one frame per second; a running capture counts as a draw.
+const FRAME_PUMP = {
+  format: "jpeg",
+  quality: 1,
+  maxWidth: 16,
+  maxHeight: 16,
+  everyNthFrame: 30,
+} as const;
 
-const screenshotTimeout = (ms: number) =>
-  Object.assign(new Error(`page.screenshot: Timeout ${ms}ms exceeded.`), {
-    name: "TimeoutError",
+const startFramePump = async (page: Playwright.Page): Promise<void> => {
+  const session = await page.context().newCDPSession(page);
+  session.on("Page.screencastFrame", (event) => {
+    void session.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => {});
   });
+  await session.send("Page.startScreencast", FRAME_PUMP);
+};
 
 const pushRing = <A>(ring: A[], value: A) => {
   ring.push(value);
@@ -374,6 +383,7 @@ function wrapPlaywrightPage(
         });
         if (mode === "shared-bot") {
           await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+          await startFramePump(page);
         }
         return session;
       });
@@ -432,57 +442,6 @@ function wrapPlaywrightPage(
       ),
       ms,
     ).then((result) => result === true);
-
-  let grabSession: Promise<Playwright.CDPSession> | null = null;
-  let grabChain: Promise<unknown> = Promise.resolve();
-  const grabFrame = async (): Promise<Uint8Array> => {
-    grabSession ??= page.context().newCDPSession(page);
-    const session = await grabSession.catch((cause: unknown) => {
-      grabSession = null;
-      throw cause;
-    });
-    const viewport = await withTimeout(
-      page.evaluate("({ width: window.innerWidth, height: window.innerHeight })"),
-      SCREENSHOT_FRAME_CAP_MS,
-    );
-    if (viewport === TIMED_OUT) throw screenshotTimeout(SCREENSHOT_FRAME_CAP_MS);
-    const { width, height } = viewport as ViewportSize;
-    await withTimeout(
-      page
-        .evaluate("new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))")
-        .catch(() => undefined),
-      SCREENSHOT_SETTLE_CAP_MS,
-    );
-    let listener: (event: { readonly data: string; readonly sessionId: number }) => void = () => {};
-    const frame = new Promise<string>((resolve) => {
-      listener = (event) => {
-        void session
-          .send("Page.screencastFrameAck", { sessionId: event.sessionId })
-          .catch(() => {});
-        resolve(event.data);
-      };
-    });
-    session.on("Page.screencastFrame", listener);
-    try {
-      await session.send("Page.startScreencast", {
-        format: "png",
-        maxWidth: width,
-        maxHeight: height,
-        everyNthFrame: 1,
-      });
-      const data = await withTimeout(frame, SCREENSHOT_FRAME_CAP_MS);
-      if (data === TIMED_OUT) throw screenshotTimeout(SCREENSHOT_FRAME_CAP_MS);
-      return new Uint8Array(Buffer.from(data, "base64"));
-    } finally {
-      session.off("Page.screencastFrame", listener);
-      await session.send("Page.stopScreencast").catch(() => {});
-    }
-  };
-  const screenshotShared = () => {
-    const run = grabChain.then(grabFrame);
-    grabChain = run.catch(() => undefined);
-    return run;
-  };
 
   // The running screencast, if any, for `setScreencastProfile`. Switching profiles is a stop and a
   // start (Chrome has no way to change the quality of a running one): two quick calls, applied in
@@ -715,10 +674,7 @@ function wrapPlaywrightPage(
       await cdp();
       return page.evaluate(expression);
     },
-    screenshotPng:
-      mode === "shared-bot"
-        ? screenshotShared
-        : async () => new Uint8Array(await page.screenshot({ type: "png", scale: "css" })),
+    screenshotPng: async () => new Uint8Array(await page.screenshot({ type: "png", scale: "css" })),
     accessibilityTree: async () => {
       const tree = await (await cdp()).send("Accessibility.getFullAXTree");
       return {
