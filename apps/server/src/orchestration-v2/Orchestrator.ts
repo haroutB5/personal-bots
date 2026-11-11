@@ -5692,7 +5692,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (command.restartContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
-      // The command projection omits interrupt items; only this rare dispatch needs them.
       const sourceInterrupts =
         source === undefined
           ? []
