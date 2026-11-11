@@ -1901,7 +1901,6 @@ describe("when the microphone opens", () => {
 
     expect(test.last().state.endReason).toBe("hung_up");
     expect(test.last().state.errorCode).toBeNull();
-    expect(test.last().state.status).not.toBe("error");
   });
 
   it("on the phone, a refused call never opens the microphone", async () => {

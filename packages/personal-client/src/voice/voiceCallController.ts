@@ -1385,6 +1385,11 @@ export function createVoiceCallController(
     micStarted ??= openMic();
     await micStarted;
     if (disposed) return;
+    // Once the call has an end reason, a late microphone rejection must not replace it.
+    if (ended) {
+      closeAudio();
+      return;
+    }
     if (mic.settled && mic.error !== null) {
       errorDetail = mic.error instanceof Error ? mic.error.message : "Microphone unavailable.";
       // A refused permission is its own card; a device that is missing or busy
@@ -1396,12 +1401,6 @@ export function createVoiceCallController(
         hint: null,
       });
       end("failed");
-      return;
-    }
-    // The call can end while the microphone prompt is up: then the audio is
-    // already closed and no timer may start.
-    if (ended || disposed) {
-      closeAudio();
       return;
     }
     startTimer();
