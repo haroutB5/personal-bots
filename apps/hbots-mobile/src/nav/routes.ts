@@ -21,6 +21,7 @@ export type Route =
     }
   | { readonly kind: "bot"; readonly botId: string }
   | { readonly kind: "botNew" }
+  | { readonly kind: "botNewChat"; readonly botId: string }
   | { readonly kind: "botEdit"; readonly botId: string }
   | { readonly kind: "group"; readonly groupId: string }
   | { readonly kind: "groupNew" }
@@ -113,6 +114,14 @@ export function conversation(
   return { stack };
 }
 
+function safeDecode(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
+
 export function parseDeepLink(raw: string): NavState | null {
   let url: URL;
   try {
@@ -145,6 +154,9 @@ export function parseDeepLink(raw: string): NavState | null {
       );
     case "bot":
       if (first === undefined) return null;
+      if (second === undefined && url.searchParams.get("new") === "1") {
+        return { stack: [BOTS, { kind: "botNewChat", botId: safeDecode(first) }] };
+      }
       return second === "edit"
         ? { stack: [BOTS, { kind: "bot", botId: first }, { kind: "botEdit", botId: first }] }
         : { stack: [BOTS, { kind: "bot", botId: first }] };

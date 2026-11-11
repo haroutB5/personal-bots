@@ -73,6 +73,7 @@ const config: ExpoConfig = {
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidReleaseSigning.cjs",
     "./plugins/withSharedHttpClient.cjs",
+    "./plugins/withCtoShortcut.cjs",
   ],
 };
 
