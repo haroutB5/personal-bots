@@ -25,6 +25,7 @@ const fake = vi.hoisted(() => {
     goto: vi.fn(),
     close: vi.fn(async () => undefined),
     isClosed: () => false,
+    screenshot: vi.fn(async (_options?: unknown) => Buffer.from([0x89, 0x50, 0x4e, 0x47])),
   };
   context.pages.mockReturnValue([page]);
   context.newPage.mockResolvedValue(page);
@@ -223,6 +224,18 @@ describe("shared browser driver", () => {
     );
   });
 
+  it("owned pages never start a screencast or a focus override on their own", async () => {
+    const context = await launch();
+    const page = await context.newPage();
+    await page.goto("http://localhost/signin", { waitUntil: "commit", timeoutMs: 1000 });
+    await page.screenshotPng();
+    const methods = fake.send.mock.calls.map(([method]) => method);
+    expect(methods).not.toContain("Page.startScreencast");
+    expect(methods).not.toContain("Emulation.setFocusEmulationEnabled");
+    expect(fake.context.newCDPSession).toHaveBeenCalledTimes(1);
+    expect(fake.page.screenshot).toHaveBeenCalledWith({ type: "png", scale: "css" });
+  });
+
   it("owned pages never send the focus override", async () => {
     const context = await launch();
     const page = await context.newPage();
@@ -249,6 +262,48 @@ describe("shared bot tabs", () => {
     expect(fake.send.mock.invocationCallOrder[overrideIndex]).toBeLessThan(
       fake.page.goto.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("shared bot pages start a tiny frame pump on its own session before the first navigation", async () => {
+    const handle = await attach();
+    const page = await handle.newPage();
+    await page.goto("http://localhost/signin", { waitUntil: "commit", timeoutMs: 1000 });
+    expect(fake.context.newCDPSession).toHaveBeenCalledTimes(2);
+    const pumpCalls = fake.send.mock.calls.filter(([method]) => method === "Page.startScreencast");
+    expect(pumpCalls).toEqual([
+      [
+        "Page.startScreencast",
+        { format: "jpeg", quality: 1, maxWidth: 16, maxHeight: 16, everyNthFrame: 30 },
+      ],
+    ]);
+    const pumpIndex = fake.send.mock.calls.findIndex(
+      ([method]) => method === "Page.startScreencast",
+    );
+    expect(fake.send.mock.invocationCallOrder[pumpIndex]).toBeLessThan(
+      fake.page.goto.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("the frame pump acknowledges every frame so it never stalls", async () => {
+    const handle = await attach();
+    const page = await handle.newPage();
+    await page.goto("http://localhost/signin", { waitUntil: "commit", timeoutMs: 1000 });
+    fake.listeners.get("Page.screencastFrame")!({ sessionId: 41, data: "" });
+    await Promise.resolve();
+    expect(fake.send).toHaveBeenCalledWith("Page.screencastFrameAck", { sessionId: 41 });
+  });
+
+  it("a shared bot screenshot goes through page.screenshot, not a screencast grab", async () => {
+    const handle = await attach();
+    const page = await handle.newPage();
+    const png = await page.screenshotPng();
+    expect(fake.page.screenshot).toHaveBeenCalledWith({ type: "png", scale: "css" });
+    expect(png).toBeInstanceOf(Uint8Array);
+    const pngGrabs = fake.send.mock.calls.filter(
+      ([method, params]) =>
+        method === "Page.startScreencast" && (params as { format?: string }).format === "png",
+    );
+    expect(pngGrabs).toEqual([]);
   });
 
   it("opens the bot tab in the background at a nonce address and wraps that page", async () => {

@@ -162,8 +162,61 @@ describe.skipIf(BRAVE === undefined)("shared attach against a throwaway headless
       await NodeTimersPromises.setTimeout(400);
     };
     const hisState = () => his.read("document.visibilityState + '/' + document.hasFocus()");
-    return { brave, his, base, handle, openBotPage, showHisTab, hisState };
+    const watchHisTab = () => {
+      const bad: string[] = [];
+      let samples = 0;
+      let running = true;
+      const loop = (async () => {
+        while (running) {
+          const state = String(await hisState());
+          samples++;
+          if (state !== "visible/true") bad.push(state);
+          await NodeTimersPromises.setTimeout(25);
+        }
+      })();
+      return async () => {
+        running = false;
+        await loop;
+        return { bad, samples };
+      };
+    };
+    const centrePixel = (png: Uint8Array) =>
+      his.read(`new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const context = canvas.getContext('2d');
+          context.drawImage(image, 0, 0);
+          resolve([...context.getImageData(image.width >> 1, image.height >> 1, 1, 1).data].slice(0, 3).join(','));
+        };
+        image.src = 'data:image/png;base64,${Buffer.from(png).toString("base64")}';
+      })`);
+    return {
+      brave,
+      his,
+      base,
+      handle,
+      openBotPage,
+      showHisTab,
+      hisState,
+      watchHisTab,
+      centrePixel,
+    };
   };
+
+  const PAINT_FRAMES_IN_ONE_SECOND = `new Promise((resolve) => {
+    let frames = 0;
+    const end = performance.now() + 1000;
+    const tick = () => {
+      document.body.style.background = 'hsl(' + ((frames * 7) % 360) + ' 80% 50%)';
+      frames++;
+      if (performance.now() < end) requestAnimationFrame(tick);
+      else resolve(frames);
+    };
+    requestAnimationFrame(tick);
+  })`;
 
   const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -273,26 +326,101 @@ describe.skipIf(BRAVE === undefined)("shared attach against a throwaway headless
   });
 
   it("a screenshot shows what the page drew last", async () => {
-    const { base, his, openBotPage, showHisTab } = await startHarness();
+    const { base, openBotPage, showHisTab, centrePixel } = await startHarness();
     const { page } = await openBotPage();
     await page.goto(`${base}/`, { waitUntil: "load", timeoutMs: 5_000 });
     await showHisTab();
-    const centrePixel = (png: Uint8Array) =>
-      his.read(`new Promise((resolve) => {
-        const image = new Image();
-        image.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = image.width;
-          canvas.height = image.height;
-          const context = canvas.getContext('2d');
-          context.drawImage(image, 0, 0);
-          resolve([...context.getImageData(image.width >> 1, image.height >> 1, 1, 1).data].slice(0, 3).join(','));
-        };
-        image.src = 'data:image/png;base64,${Buffer.from(png).toString("base64")}';
-      })`);
     for (const colour of ["204,0,0", "0,153,0", "0,0,204"]) {
       await page.evaluate(`document.documentElement.style.background = 'rgb(${colour})'`);
       expect(await centrePixel(await page.screenshotPng())).toBe(colour);
     }
+  });
+
+  it("a painting bot tab behind his tab keeps full frame rate", async () => {
+    const { base, openBotPage, showHisTab, watchHisTab } = await startHarness();
+    const { page } = await openBotPage();
+    await page.goto(`${base}/`, { waitUntil: "load", timeoutMs: 5_000 });
+    await showHisTab();
+    const stopWatching = watchHisTab();
+    const frames = Number(await page.evaluate(PAINT_FRAMES_IN_ONE_SECOND));
+    const watched = await stopWatching();
+    console.info(`h1r2 paint ${JSON.stringify({ frames, samples: watched.samples })}`);
+    expect(frames).toBeGreaterThanOrEqual(30);
+    expect(watched.bad).toEqual([]);
+  });
+
+  it("steady-state clicks behind his tab finish inside 1000 ms", async () => {
+    const { base, openBotPage, showHisTab, watchHisTab } = await startHarness();
+    const { page } = await openBotPage();
+    await page.goto(`${base}/`, { waitUntil: "load", timeoutMs: 5_000 });
+    await showHisTab();
+    const stopWatching = watchHisTab();
+    const clickMs: number[] = [];
+    for (let round = 0; round < 5; round++) {
+      await NodeTimersPromises.setTimeout(1_500);
+      const started = Date.now();
+      await page.clickLocator("#b", 1_000);
+      clickMs.push(Date.now() - started);
+    }
+    const watched = await stopWatching();
+    console.info(`h1r2 clicks ${JSON.stringify({ clickMs, samples: watched.samples })}`);
+    expect(watched.bad).toEqual([]);
+  });
+
+  it("an idle screenshot shows the new colour fast", async () => {
+    const { base, openBotPage, showHisTab, watchHisTab, centrePixel } = await startHarness();
+    const { page } = await openBotPage();
+    await page.goto(`${base}/`, { waitUntil: "load", timeoutMs: 5_000 });
+    await showHisTab();
+    const stopWatching = watchHisTab();
+    await page.evaluate(PAINT_FRAMES_IN_ONE_SECOND);
+    const colours = ["204,0,0", "0,153,0", "0,0,204", "204,204,0", "0,204,204", "102,0,102"];
+    const shotMs: number[] = [];
+    const stale: string[] = [];
+    for (const colour of colours) {
+      await NodeTimersPromises.setTimeout(1_500);
+      await page.evaluate(
+        `document.body.style.background = document.documentElement.style.background = 'rgb(${colour})'`,
+      );
+      const started = Date.now();
+      const png = await page.screenshotPng();
+      shotMs.push(Date.now() - started);
+      const seen = await centrePixel(png);
+      if (seen !== colour) stale.push(`${seen} instead of ${colour}`);
+    }
+    const watched = await stopWatching();
+    console.info(`h1r2 shots ${JSON.stringify({ shotMs, stale, samples: watched.samples })}`);
+    expect(stale).toEqual([]);
+    expect(Math.max(...shotMs)).toBeLessThan(400);
+    expect(watched.bad).toEqual([]);
+  });
+
+  it("the pump survives the viewer and a cross-site navigation", async () => {
+    const { base, openBotPage, showHisTab, watchHisTab } = await startHarness();
+    const { page } = await openBotPage();
+    await page.goto(`${base}/`, { waitUntil: "load", timeoutMs: 5_000 });
+    await showHisTab();
+    const stopWatching = watchHisTab();
+    const stopViewer = await page.startScreencast(() => {});
+    await page.setScreencastProfile!("moving");
+    await page.setScreencastProfile!("sharp");
+    await stopViewer();
+    const afterViewer = Number(await page.evaluate(PAINT_FRAMES_IN_ONE_SECOND));
+    await page.goto(`${base.replace("127.0.0.1", "localhost")}/`, {
+      waitUntil: "load",
+      timeoutMs: 5_000,
+    });
+    const afterNavigation = Number(await page.evaluate(PAINT_FRAMES_IN_ONE_SECOND));
+    await page.reload();
+    await NodeTimersPromises.setTimeout(500);
+    const afterReload = Number(await page.evaluate(PAINT_FRAMES_IN_ONE_SECOND));
+    const watched = await stopWatching();
+    console.info(
+      `h1r2 survive ${JSON.stringify({ afterViewer, afterNavigation, afterReload, samples: watched.samples })}`,
+    );
+    expect(afterViewer).toBeGreaterThanOrEqual(30);
+    expect(afterNavigation).toBeGreaterThanOrEqual(30);
+    expect(afterReload).toBeGreaterThanOrEqual(30);
+    expect(watched.bad).toEqual([]);
   });
 });
