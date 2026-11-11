@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from "expo";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Platform } from "react-native";
 
 import { createRefreshLease, type DisplayNative } from "./refreshLease";
@@ -20,9 +20,7 @@ let nextOwner = 0;
  * display with one refresh rate.
  */
 export function useHighRefresh() {
-  const owner = useRef<string | null>(null);
-  if (owner.current === null) owner.current = `list-${nextOwner++}`;
-  const id = owner.current;
+  const [id] = useState(() => `list-${nextOwner++}`);
 
   useEffect(() => () => lease.release(id), [id]);
 

@@ -33,7 +33,8 @@ function fakeClock() {
     scheduler,
     pending: () => pending.size,
     fire: () => {
-      for (const [id, timer] of [...pending]) {
+      const due = Array.from(pending.entries());
+      for (const [id, timer] of due) {
         pending.delete(id);
         timer.run();
       }
