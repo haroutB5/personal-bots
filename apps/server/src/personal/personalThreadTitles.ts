@@ -21,8 +21,10 @@ export const personalTaskMessageId = (taskId: string, attempt: number) =>
  * (`steer_task`). It carries the task prefix, so it never counts as the owner
  * speaking; `steerId` has no dashes, so it never parses as an attempt's id.
  */
+export const PERSONAL_TASK_STEER_MESSAGE_ID_PREFIX = `${PERSONAL_TASK_MESSAGE_ID_PREFIX}steer-`;
+
 export const personalTaskSteerMessageId = (steerId: string) =>
-  MessageId.make(`${PERSONAL_TASK_MESSAGE_ID_PREFIX}steer-${steerId}`);
+  MessageId.make(`${PERSONAL_TASK_STEER_MESSAGE_ID_PREFIX}${steerId}`);
 
 export const isPersonalTaskMessageId = (messageId: string) =>
   messageId.startsWith(PERSONAL_TASK_MESSAGE_ID_PREFIX);

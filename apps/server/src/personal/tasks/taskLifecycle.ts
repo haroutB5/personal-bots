@@ -5,7 +5,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
-  CommandId,
   MessageId,
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PersonalTaskId,
@@ -21,6 +20,7 @@ import {
   type Changed,
   type WorkItem,
 } from "./taskShared.ts";
+import { PERSONAL_TASK_STEER_MESSAGE_ID_PREFIX } from "../personalThreadTitles.ts";
 import { isTerminal } from "./taskSessionPolicy.ts";
 import { loopGuardMatches, personalTasksLoopGuardEnabled } from "./taskLoopGuard.ts";
 import type { TaskCore } from "./taskCore.ts";
@@ -447,6 +447,9 @@ export const makeTaskLifecycle = (
                   });
                   interrupted.push(attempt);
                 }
+                // A steer that never reached a turn is dropped with the task, so a
+                // retry does not replay it.
+                yield* repository.markNotesDelivered(target.taskId, now);
                 const isTop = target.taskId === task.taskId;
                 yield* writeTask(changed, target, {
                   status: "cancelled",
@@ -481,6 +484,21 @@ export const makeTaskLifecycle = (
           const interruptedAt = yield* DateTime.now;
           for (const attempt of interrupted) {
             releaseThread(attempt.providerThreadId, DateTime.toEpochMillis(interruptedAt));
+            // A steer the orchestrator queued as its own run would start once the
+            // interrupted turn ends, so cancel it first.
+            yield* engine
+              .cancelQueuedMessages({
+                threadId: attempt.providerThreadId,
+                messageIdPrefix: PERSONAL_TASK_STEER_MESSAGE_ID_PREFIX,
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("personal task cancel could not drop its queued steers", {
+                    taskId: attempt.taskId,
+                    cause: Cause.pretty(cause),
+                  }),
+                ),
+              );
             // Interrupt by the attempt's own thread (and turn when known),
             // never by process name.
             yield* engine.interrupt(attempt.providerThreadId, attempt.turnId ?? undefined).pipe(

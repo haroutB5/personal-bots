@@ -4,12 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
-import {
-  CommandId,
-  PersonalTaskId,
-  type PersonalBotId,
-  type PersonalTask,
-} from "@t3tools/contracts";
+import { PersonalTaskId, type PersonalBotId, type PersonalTask } from "@t3tools/contracts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import { personalTaskSteerMessageId } from "../personalThreadTitles.ts";
 import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
@@ -238,16 +233,16 @@ export const makeTaskSteering = (
               !Equal.equals(botSelection, thread.modelSelection)
                 ? thread.modelSelection
                 : botSelection;
-            // The normal turn path: a turn start on a thread whose turn is
-            // running steers that turn instead of starting another. The thread's
-            // own modes, since a changed runtime mode restarts the session.
+            // Into the running turn. A plain start on a busy chat is queued as a
+            // separate run that nothing owns. The thread's own modes, since a
+            // changed runtime mode restarts the session.
             yield* engine
               .send({
                 threadId: attempt.providerThreadId,
                 messageId: personalTaskSteerMessageId(steerId),
                 text,
                 attachments: [],
-                mode: "start",
+                mode: "steer",
                 ...(modelSelection !== undefined ? { modelSelection } : {}),
               })
               .pipe(Effect.mapError((cause) => fail("Could not deliver the update.", cause)));

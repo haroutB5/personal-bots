@@ -666,6 +666,40 @@ describe("PersonalEngineV2 verbs", () => {
     );
   });
 
+  it.effect(
+    "cancelQueuedMessages cancels only the queued runs whose message has the prefix",
+    () => {
+      const harness = makeHarness();
+      return withEngine(harness, (engine) =>
+        Effect.gen(function* () {
+          yield* seedThread(harness);
+          yield* seedRun(harness, "thread-1", "run-active", "running");
+          yield* seedRun(harness, "thread-1", "run-steer", "queued");
+          yield* seedRun(harness, "thread-1", "run-other", "queued");
+          yield* seedRun(harness, "thread-1", "run-steer-started", "completed");
+          const runs = harness.threads.get("thread-1")!.runs;
+          const withMessage = (runId: string, messageId: string) => {
+            const index = runs.findIndex((run) => run.id === runId);
+            runs[index] = { ...runs[index]!, userMessageId: MessageId.make(messageId) };
+          };
+          withMessage("run-active", "personal-task-thread-1-1");
+          withMessage("run-steer", "personal-task-steer-abc");
+          withMessage("run-other", "message-from-the-owner");
+          withMessage("run-steer-started", "personal-task-steer-def");
+
+          yield* engine.cancelQueuedMessages({
+            threadId: ThreadId.make("thread-1"),
+            messageIdPrefix: "personal-task-steer-",
+          });
+
+          expect(harness.dispatched).toMatchObject([
+            { type: "queued-run.cancel", threadId: "thread-1", runId: "run-steer" },
+          ]);
+        }),
+      );
+    },
+  );
+
   it.effect("updateMeta writes title, branch and model as v2 commands", () => {
     const harness = makeHarness();
     return withEngine(harness, (engine) =>

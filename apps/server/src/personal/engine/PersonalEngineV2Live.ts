@@ -463,6 +463,25 @@ const make = Effect.gen(function* () {
       });
     }).pipe(Effect.mapError(engineError("interrupt")));
 
+  const cancelQueuedMessages = (input: {
+    readonly threadId: ThreadId;
+    readonly messageIdPrefix: string;
+  }): Effect.Effect<void, PersonalEngineError> =>
+    Effect.gen(function* () {
+      const { runs } = yield* threads.getThreadRecords(input.threadId, ["runs"]);
+      for (const run of runs) {
+        if (run.status !== "queued" || !run.userMessageId.startsWith(input.messageIdPrefix)) {
+          continue;
+        }
+        yield* threads.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`personal-engine:queued-run.cancel:${run.id}`),
+          threadId: input.threadId,
+          runId: run.id,
+        });
+      }
+    }).pipe(Effect.mapError(engineError("cancelQueuedMessages")));
+
   const setProviderRetry = (
     input: PersonalSetProviderRetryInput,
   ): Effect.Effect<void, PersonalEngineError> =>
@@ -1085,6 +1104,7 @@ const make = Effect.gen(function* () {
     continueTurn,
     setProviderRetry,
     interrupt,
+    cancelQueuedMessages,
     stop,
     archive,
     deleteThread,

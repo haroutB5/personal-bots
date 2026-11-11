@@ -307,6 +307,15 @@ export interface PersonalEngineShape {
     threadId: ThreadId,
     turnId?: TurnId,
   ) => Effect.Effect<void, PersonalEngineError>;
+  /**
+   * Cancels the chat's queued runs whose user message id starts with
+   * `messageIdPrefix`, so a stopped task's queued steer never starts a run.
+   * A run that is not queued is left alone.
+   */
+  readonly cancelQueuedMessages: (input: {
+    readonly threadId: ThreadId;
+    readonly messageIdPrefix: string;
+  }) => Effect.Effect<void, PersonalEngineError>;
   readonly stop: (input: PersonalStopInput) => Effect.Effect<void, PersonalEngineError>;
   readonly archive: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;
   readonly deleteThread: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;

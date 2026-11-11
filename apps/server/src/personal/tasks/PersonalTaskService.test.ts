@@ -99,6 +99,11 @@ type EngineCall =
       readonly modelSelection?: PersonalEngine.PersonalSendInput["modelSelection"];
     }
   | { readonly type: "interrupt"; readonly threadId: ThreadId; readonly turnId?: TurnId }
+  | {
+      readonly type: "cancelQueuedMessages";
+      readonly threadId: ThreadId;
+      readonly messageIdPrefix: string;
+    }
   | { readonly type: "stop"; readonly threadId: ThreadId; readonly terminateProcesses: boolean }
   | { readonly type: "archive"; readonly threadId: ThreadId }
   | { readonly type: "deleteThread"; readonly threadId: ThreadId }
@@ -139,6 +144,15 @@ interface Harness {
   readonly statuses: Map<string, PersonalThreadStatus>;
   /** Native background work alive per chat, as PersonalEngine.liveTaskIds reports it. */
   readonly background: Map<string, Set<string>>;
+  /**
+   * Sends the orchestrator queued as separate runs, which start once the active
+   * run ends: a start or queue send to a busy chat, and a steer when
+   * `steerQueues` is set (the orchestrator's fallback when it cannot steer).
+   */
+  readonly queued: Array<{ readonly threadId: ThreadId; readonly messageId: MessageId }>;
+  /** Texts delivered into a running turn by a steer send. */
+  readonly steered: Array<{ readonly threadId: ThreadId; readonly text: string }>;
+  steerQueues: boolean;
   sequence: number;
 }
 
@@ -151,6 +165,9 @@ const makeHarness = (): Harness => ({
   projects: new Map(),
   statuses: new Map(),
   background: new Map(),
+  queued: [],
+  steered: [],
+  steerQueues: false,
   sequence: 0,
 });
 
@@ -328,6 +345,12 @@ const makeEngine = (harness: Harness) =>
           mode: input.mode,
           ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         });
+        const busy = harness.sessions.get(input.threadId)?.activeTurnId != null;
+        if (busy && (input.mode !== "steer" || harness.steerQueues)) {
+          harness.queued.push({ threadId: input.threadId, messageId: input.messageId });
+        } else if (busy) {
+          harness.steered.push({ threadId: input.threadId, text: input.text });
+        }
         if (input.titleSeed !== undefined && rowsFor(input.threadId).length === 0) {
           harness.titles.set(input.threadId, input.titleSeed);
         }
@@ -352,6 +375,22 @@ const makeEngine = (harness: Harness) =>
             threadId,
             ...(turnId === undefined ? {} : { turnId }),
           });
+        }),
+      cancelQueuedMessages: (input) =>
+        Effect.sync(() => {
+          harness.calls.push({
+            type: "cancelQueuedMessages",
+            threadId: input.threadId,
+            messageIdPrefix: input.messageIdPrefix,
+          });
+          harness.queued.splice(
+            0,
+            harness.queued.length,
+            ...harness.queued.filter(
+              (run) =>
+                run.threadId !== input.threadId || !run.messageId.startsWith(input.messageIdPrefix),
+            ),
+          );
         }),
       stop: (input) =>
         Effect.sync(() => {
@@ -2285,6 +2324,75 @@ it.effect.each(["claudeAgent", "codex", "opencode-v2"])(
       expect(done.status).toBe("completed");
       expect(done.result).toEqual({ summary: "Login page checked." });
       expect(turnStarts(harness).length).toBe(startsBefore + 1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect.each([false, true])(
+  "stop_task after a steer leaves no queued run to start (orchestrator falls back to queueing: %s)",
+  (steerQueues) => {
+    const harness = makeHarness();
+    harness.steerQueues = steerQueues;
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("steer-then-stop");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      yield* service.steer({
+        taskId: root.taskId,
+        fromName: "CTO",
+        message: "Only the login page.",
+      });
+      expect(harness.queued.length).toBe(steerQueues ? 1 : 0);
+
+      yield* service.cancel({ taskId: root.taskId });
+      expect(harness.queued.filter((run) => run.threadId === thread)).toEqual([]);
+      expect(
+        (yield* service.steers({ taskId: root.taskId })).every((note) => note.deliveredAt),
+      ).toBe(true);
+
+      // The stopped turn ends; nothing may start in the settle window after it.
+      const startsAfterCancel = turnStarts(harness).length;
+      yield* endTurn(harness, thread, turnId, "Stopped.", { status: "interrupted" });
+      yield* TestClock.adjust("5 minutes");
+      yield* service.sweep;
+      yield* service.drain;
+      expect(turnStarts(harness).length).toBe(startsAfterCancel);
+      expect(harness.queued.filter((run) => run.threadId === thread)).toEqual([]);
+      expect((yield* reload(root.taskId)).status).toBe("cancelled");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect(
+  "a steer reaches the running turn, not a separate run, and the task finishes once",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("steer-reaches-turn");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      yield* service.steer({
+        taskId: root.taskId,
+        fromName: "CTO",
+        message: "Only the login page.",
+      });
+
+      expect(turnStarts(harness).at(-1)!.mode).toBe("steer");
+      expect(harness.steered).toEqual([
+        { threadId: thread, text: "Update from CTO: Only the login page." },
+      ]);
+      expect(harness.queued).toEqual([]);
+
+      yield* endTurn(harness, thread, turnId, "Login page checked.");
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({ summary: "Login page checked." });
+      expect(harness.queued).toEqual([]);
+      expect(callsOf(harness, "cancelQueuedMessages")).toEqual([]);
     }).pipe(Effect.provide(makeLayer(harness)));
   },
 );

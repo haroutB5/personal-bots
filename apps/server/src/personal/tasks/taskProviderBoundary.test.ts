@@ -291,6 +291,7 @@ const makeEngine = (harness: Harness) =>
         }),
       continueTurn: () => Effect.void,
       setProviderRetry: () => Effect.void,
+      cancelQueuedMessages: () => Effect.void,
       interrupt: (threadId, turnId) =>
         Effect.sync(() => {
           harness.calls.push({
