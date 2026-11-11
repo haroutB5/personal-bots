@@ -698,10 +698,17 @@ export async function performSelect(
       );
     }
     if (/not a <select> element/i.test(message)) {
+      // An execution error on purpose: its message reaches the bot as written. The
+      // "not editable" error class rebuilds its message from fields and drops these words.
       throw new HostOperationError(
-        "PreviewAutomationTargetNotEditableError",
+        "PreviewAutomationExecutionError",
         "That element is not a dropdown (<select>). Use preview_act click for custom menus.",
-        selectorDetail(input),
+      );
+    }
+    if (/Timeout \d+ms exceeded/i.test(message)) {
+      throw new HostOperationError(
+        "PreviewAutomationExecutionError",
+        "The dropdown could not be used in time. It may be disabled, hidden or missing. Take a snapshot to check.",
       );
     }
     throw cause;
