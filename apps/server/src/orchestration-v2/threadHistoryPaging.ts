@@ -192,6 +192,17 @@ const DEFERRED_WORK_ITEM_TYPES = [
   "dynamic_tool",
 ] as const;
 
+/**
+ * Reasoning with nothing to show: blank, or the `{}` / `[]` placeholder a
+ * provider emits. Clients drop these from the step list, so the deferred work
+ * count must not include them. The SQL window path repeats this rule.
+ */
+function isEmptyReasoningItem(item: HistoryRow["item"]): boolean {
+  if (item.type !== "reasoning") return false;
+  const text = (item.text ?? "").trim();
+  return text === "" || text === "{}" || text === "[]";
+}
+
 function isDeferrableWorkItem(item: HistoryRow["item"]): boolean {
   return (
     item.status === "completed" &&
@@ -249,6 +260,7 @@ export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArra
           }),
           itemCount: group.length,
           lastOrdinal: last.item.ordinal ?? last.position,
+          emptyItemCount: group.slice(1).filter((row) => isEmptyReasoningItem(row.item)).length,
         },
       },
     });

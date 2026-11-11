@@ -489,6 +489,32 @@ describe("runWork", () => {
       expect(work.summary.count).toBe(499);
     });
 
+    it("drops the empty reasoning the server reports among 499 items", () => {
+      const anchor = {
+        ...command("cmd-anchor", "ls", "completed"),
+        deferredWork: { ...deferredWork(499), emptyItemCount: 120 },
+      };
+      const work = runWork(projection([run("completed")], [anchor]));
+
+      expect(work.phase).toBe("settled");
+      if (work.phase !== "settled") return;
+      expect(work.steps).toHaveLength(1);
+      expect(work.deferredCount).toBe(378);
+      expect(work.summary.count).toBe(379);
+    });
+
+    it("counts every omitted row when an older server leaves the field out", () => {
+      const anchor = {
+        ...command("cmd-anchor", "ls", "completed"),
+        deferredWork: deferredWork(499),
+      };
+      const work = runWork(projection([run("completed")], [anchor]));
+
+      expect(work.phase).toBe("settled");
+      if (work.phase !== "settled") return;
+      expect(work.deferredCount).toBe(498);
+    });
+
     it("does not count an empty anchor as a step or as an omitted row", () => {
       const anchor = {
         ...reasoning("think-anchor", "", "completed"),

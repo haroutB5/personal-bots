@@ -179,6 +179,36 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
 }
 
 describe("threadHistoryPaging", () => {
+  it("reports how many omitted rows are empty reasoning", () => {
+    const reasoning = (index: number, text: string) => {
+      const row = makeRow(index);
+      return {
+        ...row,
+        item: { ...row.item, type: "reasoning", text, runId: RUN, runStatus: "completed" },
+      } as unknown as OrchestrationV2ProjectedTurnItem;
+    };
+    const work = Array.from({ length: 499 }, (_, index) => {
+      const row = makeRow(index);
+      return { ...row, item: { ...row.item, runId: RUN, runStatus: "completed" } };
+    });
+    // The anchor (index 0) is empty too, but is not an omitted row.
+    const rows = work.map((row, index) =>
+      index === 0 || (index >= 10 && index < 13)
+        ? reasoning(index, "")
+        : index === 20
+          ? reasoning(index, "  ")
+          : index === 21
+            ? reasoning(index, "[]")
+            : index === 22
+              ? reasoning(index, "Checking the schema.")
+              : row,
+    );
+    const deferred = deferWorkHistoryRows(rows)[0]!.item.deferredWork!;
+    expect(deferred.itemCount).toBe(499);
+    expect(deferred.emptyItemCount).toBe(5);
+    expect(deferWorkHistoryRows(work as never)[0]!.item.deferredWork!.emptyItemCount).toBe(0);
+  });
+
   it("defers completed work above 150 items and keeps conversation and persistent rows", () => {
     const work = Array.from({ length: 151 }, (_, index) => {
       const row = makeRow(index);

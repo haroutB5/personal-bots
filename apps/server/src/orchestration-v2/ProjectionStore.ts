@@ -3032,6 +3032,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT item_rowid, ordinal, turn_item_id, run_id, type, attempt_id,
                     MAX(CASE WHEN type = 'user_message' THEN ordinal ELSE 0 END)
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
+                    -- Same rule as isEmptyReasoningItem in threadHistoryPaging.ts.
+                    CASE WHEN type = 'reasoning'
+                      AND trim(COALESCE(json_extract(payload_json, '$.text'), ''), ' ' || char(9, 10, 13)) IN ('', '{}', '[]')
+                      THEN 1 ELSE 0 END AS is_empty_reasoning,
                     CASE WHEN status = 'completed' AND (run_status = 'completed' OR attempt_status = 'superseded')
                       AND type IN ('command_execution', 'reasoning', 'file_change', 'file_search', 'web_search', 'dynamic_tool')
                       AND NOT (${inlineWorkOutput})
@@ -3046,6 +3050,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     MAX(ordinal) AS last_ordinal, COUNT(*) AS item_count
                   FROM work_segments WHERE can_defer = 1
                   GROUP BY run_id, segment, attempt_id HAVING COUNT(*) > ${THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT}
+                ), deferred_empty AS (
+                  -- Empty reasoning among the omitted rows (the anchor is not one).
+                  SELECT item.run_id, item.segment, item.attempt_id,
+                    SUM(item.is_empty_reasoning) AS empty_count
+                  FROM work_segments item JOIN deferred_work deferred
+                    ON deferred.run_id = item.run_id AND deferred.segment = item.segment
+                    AND deferred.attempt_id IS item.attempt_id
+                  WHERE item.can_defer = 1 AND item.ordinal > deferred.first_ordinal
+                  GROUP BY item.run_id, item.segment, item.attempt_id
                 ), window_items AS NOT MATERIALIZED (
                   SELECT item_rowid, ordinal, turn_item_id, run_id, type
                   FROM eligible WHERE ${window.deferWork ? 1 : 0} = 0
@@ -3130,6 +3143,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly work_last_id?: string | null;
           readonly work_last_ordinal?: number | null;
           readonly work_item_count?: number | null;
+          readonly work_empty_count?: number | null;
         };
         const boundedTurnItemRows: ReadonlyArray<WindowPayloadRow> =
           (fields !== undefined && !fields.includes("turnItems")) ||
@@ -3161,12 +3175,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 -- skips sorting again once the payloads are attached. Carry the
                 -- rowid through selection to avoid a second string-key index lookup.
                 SELECT item.payload_json, tail.turn_item_id AS work_last_id,
-                  deferred.last_ordinal AS work_last_ordinal, deferred.item_count AS work_item_count
+                  deferred.last_ordinal AS work_last_ordinal, deferred.item_count AS work_item_count,
+                  COALESCE(empty.empty_count, 0) AS work_empty_count
                 FROM retained
                 CROSS JOIN orchestration_v2_projection_turn_items AS item
                   ON item.rowid = retained.item_rowid
                 LEFT JOIN deferred_work deferred ON deferred.run_id = item.run_id
                   AND deferred.first_ordinal = item.ordinal
+                LEFT JOIN deferred_empty empty ON empty.run_id = deferred.run_id
+                  AND empty.segment = deferred.segment
+                  AND empty.attempt_id IS deferred.attempt_id
                 LEFT JOIN orchestration_v2_projection_turn_items tail
                   ON tail.turn_item_id = (
                     SELECT turn_item_id FROM orchestration_v2_projection_turn_items
@@ -3198,6 +3216,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   }),
                   itemCount: row.work_item_count,
                   lastOrdinal: row.work_last_ordinal,
+                  emptyItemCount: row.work_empty_count ?? 0,
                 },
               };
         });

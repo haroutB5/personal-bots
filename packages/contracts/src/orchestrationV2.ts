@@ -1509,6 +1509,12 @@ const OrchestrationV2TurnItemBaseFields = {
       cursor: TrimmedNonEmptyString,
       itemCount: PositiveInt,
       lastOrdinal: NonNegativeInt,
+      /**
+       * How many of the omitted rows (every row of the group except the anchor)
+       * are empty reasoning. Additive: an old server leaves it out, and a
+       * client then counts every omitted row. `itemCount` keeps its meaning.
+       */
+      emptyItemCount: Schema.optionalKey(NonNegativeInt),
     }),
   ),
   toolNonExecutionKind: Schema.optional(Schema.String),

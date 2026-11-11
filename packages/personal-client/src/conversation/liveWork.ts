@@ -291,12 +291,13 @@ function runSteps(
   for (const row of rows) {
     const item = row.item;
     const step = stepForItem(item);
-    // The wire count includes the anchor item itself, so the rows the server
-    // left out number one fewer, whether or not the anchor is a real step.
-    // Empty items among the omitted rows are not on the wire; the server
-    // would have to report them for the count to be exact.
-    const deferred = item.deferredWork?.itemCount;
-    if (deferred !== undefined) deferredCount += deferred - 1;
+    // The wire count includes the anchor, so omitted rows number one fewer.
+    // Subtract the empty reasoning the server reports; an older server
+    // omits the field and every omitted row counts.
+    const deferred = item.deferredWork;
+    if (deferred !== undefined) {
+      deferredCount += Math.max(0, deferred.itemCount - 1 - (deferred.emptyItemCount ?? 0));
+    }
     if (step === null) continue;
     steps.push(settleStep(step, runStatus));
     itemTypes.push(item.type);
