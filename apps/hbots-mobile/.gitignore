@@ -28,3 +28,6 @@ modules/hbots-tile/android/build/
 !modules/hbots-secure/android/
 !modules/hbots-secure/android/**
 modules/hbots-secure/android/build/
+!modules/hbots-launcher/android/
+!modules/hbots-launcher/android/**
+modules/hbots-launcher/android/build/

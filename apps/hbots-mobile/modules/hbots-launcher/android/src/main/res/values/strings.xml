@@ -1,0 +1,4 @@
+<resources>
+  <string name="hbots_widget_label">hbots bots</string>
+  <string name="hbots_widget_description">Your pinned bots and which ones are working</string>
+</resources>
