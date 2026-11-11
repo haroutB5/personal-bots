@@ -733,6 +733,24 @@ describe("liveKeyboardStep", () => {
       { kind: "released" },
       { command: "blur", pinned: false },
     ],
+    [
+      "the system hiding the keyboard blurs the still-focused field",
+      open,
+      { kind: "keyboardHidden" },
+      { command: "blur", pinned: false },
+    ],
+    [
+      "the system hiding a pinned keyboard blurs and unpins it",
+      pinned,
+      { kind: "keyboardHidden" },
+      { command: "blur", pinned: false },
+    ],
+    [
+      "a hide report with the field already blurred does nothing",
+      closed,
+      { kind: "keyboardHidden" },
+      { command: null, pinned: false },
+    ],
   ] as const)("%s", (_name, state, event, expected) => {
     expect(liveKeyboardStep(state, event)).toEqual(expected);
   });

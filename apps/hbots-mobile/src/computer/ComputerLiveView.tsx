@@ -3,6 +3,7 @@ import { fitFrame } from "@hbots/personal-client/computer/computerModel";
 import { IconArrowLeft, IconKeyboard } from "@tabler/icons-react-native";
 import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import {
+  Keyboard,
   PanResponder,
   PixelRatio,
   Pressable,
@@ -188,6 +189,15 @@ export function ComputerLiveView({
     // eslint-disable-next-line react/set-state-in-effect -- losing control unmounts the field without an onBlur
     setKeyboardOpen(false);
   }, [interactive]);
+
+  useEffect(() => {
+    // Back and the keyboard's own arrow hide the keyboard without blurring the field.
+    const subscription = Keyboard.addListener("keyboardDidHide", () => {
+      stepKeyboard({ kind: "keyboardHidden" });
+    });
+    return () => subscription.remove();
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- stepKeyboard reads only refs
+  }, []);
 
   const focusChanged = (event: NativeSyntheticEvent<FocusChangedEvent>) => {
     const next = event.nativeEvent;

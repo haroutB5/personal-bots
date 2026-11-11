@@ -29,6 +29,20 @@ describe("ComputerLiveView keyboard wiring", () => {
     expect(SOURCE).toContain("active={keyboardOpen}");
   });
 
+  it("tells liveKeyboardStep when back or the keyboard's own arrow hides the keyboard", () => {
+    expect(SOURCE).toContain('Keyboard.addListener("keyboardDidHide"');
+    expect(SOURCE).toContain('kind: "keyboardHidden"');
+  });
+
+  it("lets the address bar keep what is typed: it follows the page, not each keystroke", () => {
+    const screen = NodeFS.readFileSync(
+      NodePath.join(NodeURL.fileURLToPath(new URL(".", import.meta.url)), "ComputerScreen.tsx"),
+      "utf8",
+    );
+    expect(screen).toMatch(/setAddress\(toolbar\.address\);\s*\}, \[toolbar\.address\]\);/);
+    expect(screen).not.toMatch(/\[toolbar\.address, address\]/);
+  });
+
   it("routes the dock button and the server's focus report through liveKeyboardStep", () => {
     expect(SOURCE).toContain('kind: "toggle"');
     expect(SOURCE).toContain('kind: "focusReport"');

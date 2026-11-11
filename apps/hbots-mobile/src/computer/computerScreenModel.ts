@@ -298,7 +298,9 @@ export type LiveKeyboardEvent =
   | { readonly kind: "focusReport"; readonly editable: boolean }
   | { readonly kind: "toggle" }
   | { readonly kind: "tap" }
-  | { readonly kind: "released" };
+  | { readonly kind: "released" }
+  /** Back, or the keyboard's own arrow, hid the keyboard. The field still holds focus. */
+  | { readonly kind: "keyboardHidden" };
 
 export interface LiveKeyboardState {
   readonly open: boolean;
@@ -327,5 +329,10 @@ export function liveKeyboardStep(
       return { command: null, pinned: state.pinned };
     case "released":
       return { command: "blur", pinned: false };
+    case "keyboardHidden":
+      // Blurring makes `open` false again, so the next field tap can reopen the keyboard.
+      return state.open
+        ? { command: "blur", pinned: false }
+        : { command: null, pinned: state.pinned };
   }
 }
