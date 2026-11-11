@@ -28,5 +28,22 @@ Binary only. The previous release is `8d0aa037226d` (1.67.3). No migration runs,
 
 - The APK is built from the release commit and published through `latest.json` after the runner reports `live_verified`.
 - The new host file deny-list entries ran in server tests only, not on a live server by the Verifier.
+- The first gate run at `7072a4093b6f` failed one server test. `WorkspaceFileSystem.test.ts` read `~/.claude/CLAUDE.md`, which the deny list now refuses by design. The fixture moved to `~/notes/todo.md` in `9ed0676e0c` (test only, no server change). The gate evidence below is the rerun at `9ed0676e0cd5`.
 - Harout owns the real-phone check for the arm64 APK.
 - The pre-release checks are the test. No QA recheck after live (Harout, 27 Oct).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=9ed0676e0cd54a9e12bd141ec23efe7d90963402 release=9ed0676e0cd5 json-sha256=b37fd6466ac211457190b776d728633df97c6527090d2081023ec573fa544c61 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
