@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildNativePolicy, MAX_POLICY_BOTS } from "./policySync";
@@ -44,5 +46,18 @@ describe("buildNativePolicy", () => {
   it("caps the list the native side will accept", () => {
     const bots = Array.from({ length: MAX_POLICY_BOTS + 20 }, (_, i) => ({ botId: `b${i}` }));
     expect(buildNativePolicy(bots, LOCK_OFF).bots).toHaveLength(MAX_POLICY_BOTS);
+  });
+
+  it("sends the shape the native policy reader is tested against", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../modules/hbots-notify/android/src/test/resources/policy-seam.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    expect(buildNativePolicy(fixture.records, fixture.lock)).toEqual(fixture.native);
   });
 });

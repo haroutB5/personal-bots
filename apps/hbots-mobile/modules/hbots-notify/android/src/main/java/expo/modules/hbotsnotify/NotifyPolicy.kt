@@ -42,8 +42,8 @@ object PolicyCodec {
   fun fromJs(appLockOn: Boolean, bots: List<Map<String, Any?>>): NotifyPolicy {
     val known = LinkedHashMap<String, BotInfo>()
     for (entry in bots.take(MAX_BOTS)) {
-      // JS sends `botId`; `id` is what the stored policy uses, so both are read.
-      val id = (entry["botId"] ?: entry["id"]) as? String ?: continue
+      // The key is JS's `botId`. PolicySeamTest and policySync.test.ts pin it to one fixture.
+      val id = entry["botId"] as? String ?: continue
       if (id.isBlank()) continue
       val name = (entry["name"] as? String)?.trim().orEmpty().take(MAX_NAME)
       // A bot with no usable name hides previews: the safe reading of a half-synced record.
