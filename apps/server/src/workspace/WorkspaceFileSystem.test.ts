@@ -258,15 +258,15 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         const home = yield* makeTempDir;
-        yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
-        yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
+        yield* writeTextFile(home, "notes/todo.md", "# Notes\n");
+        yield* writeTextFile(cwd, "~/notes/todo.md", "Workspace decoy\n");
 
         const result = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "~/.claude/CLAUDE.md" })
+          .readFile({ cwd, relativePath: "~/notes/todo.md" })
           .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
 
         expect(result).toEqual({
-          relativePath: "~/.claude/CLAUDE.md",
+          relativePath: "~/notes/todo.md",
           contents: "# Notes\n",
           byteLength: 8,
           truncated: false,
