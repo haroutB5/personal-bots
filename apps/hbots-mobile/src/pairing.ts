@@ -60,13 +60,10 @@ export async function inspectServer(target: PairingTarget): Promise<ServerIdenti
   return identityOf(await fetchDescriptor(target.httpBaseUrl), target.httpBaseUrl);
 }
 
-export async function openSocketUrl(
+export async function mintWebSocketTicket(
   session: StoredSession,
-  clientAppVersion: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const descriptor = await fetchDescriptor(session.httpBaseUrl, signal);
-  assertSameEnvironment(session.environmentId, descriptor.environmentId);
   const ticketUrl = new URL("/api/auth/websocket-ticket", session.httpBaseUrl);
   const ticket = await requestJson(
     "ticket",
@@ -78,9 +75,19 @@ export async function openSocketUrl(
     },
     5000,
   );
-  const decodedTicket = decodeTicket(ticket);
+  return Redacted.value(decodeTicket(ticket).ticket);
+}
+
+export async function openSocketUrl(
+  session: StoredSession,
+  clientAppVersion: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const descriptor = await fetchDescriptor(session.httpBaseUrl, signal);
+  assertSameEnvironment(session.environmentId, descriptor.environmentId);
+  const ticket = await mintWebSocketTicket(session, signal);
   const socketUrl = new URL("/ws", session.wsBaseUrl);
-  socketUrl.searchParams.set("wsTicket", Redacted.value(decodedTicket.ticket));
+  socketUrl.searchParams.set("wsTicket", ticket);
   socketUrl.searchParams.set("clientSurface", "mobile");
   socketUrl.searchParams.set("clientDeviceType", "phone");
   socketUrl.searchParams.set("clientOs", "android");

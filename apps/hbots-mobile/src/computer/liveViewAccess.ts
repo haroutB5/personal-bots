@@ -1,6 +1,4 @@
-import { requestJson } from "../http";
-import { decodeTicket } from "../pairing";
-import * as Redacted from "effect/Redacted";
+import { mintWebSocketTicket } from "../pairing";
 
 import type { StoredSession } from "../session";
 
@@ -21,24 +19,6 @@ export function streamSocketUrl(session: StoredSession, path: string, ticket: st
   return base.toString();
 }
 
-/** A five-minute ticket, bound to the session, for a live-view socket. */
-export async function mintStreamTicket(
-  session: StoredSession,
-  signal?: AbortSignal,
-): Promise<string> {
-  const ticket = await requestJson(
-    "ticket",
-    new URL("/api/auth/websocket-ticket", session.httpBaseUrl),
-    {
-      method: "POST",
-      headers: { authorization: `Bearer ${session.accessToken}` },
-      ...(signal === undefined ? {} : { signal }),
-    },
-    5000,
-  );
-  return Redacted.value(decodeTicket(ticket).ticket);
-}
-
 export interface LiveViewURLs {
   readonly browser: string;
   readonly desktop: string;
@@ -48,7 +28,7 @@ export async function liveViewURLs(
   session: StoredSession,
   signal?: AbortSignal,
 ): Promise<LiveViewURLs> {
-  const ticket = await mintStreamTicket(session, signal);
+  const ticket = await mintWebSocketTicket(session, signal);
   return {
     browser: streamSocketUrl(session, BROWSER_STREAM_PATH, ticket),
     desktop: streamSocketUrl(session, DESKTOP_STREAM_PATH, ticket),
