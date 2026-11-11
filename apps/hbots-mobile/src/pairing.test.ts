@@ -3,13 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AuthPhoneClientScopes } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 
+import { createDpopProof } from "./dpop";
 import { classifyFailure, DpopRequiredError } from "./failure";
 import { failureFor } from "./onboarding/model";
 import { decodeTicket, openSocketUrl, pair } from "./pairing";
 import type { StoredSession } from "./session";
 
 vi.mock("./dpop", () => ({
-  createDpopProof: async () => ({ proof: "test-proof", thumbprint: "test-thumbprint" }),
+  createDpopProof: vi.fn(async () => ({ proof: "test-proof", thumbprint: "test-thumbprint" })),
   loadOrCreateDpopKey: async () => ({
     privateJwk: {},
     publicJwk: {},
@@ -168,6 +169,45 @@ describe("openSocketUrl", () => {
       String(target).endsWith("/api/auth/websocket-ticket"),
     );
     expect(ticketCalls).toHaveLength(2);
+  });
+
+  it("signs the ticket request for a DPoP-bound session with its token and a proof", async () => {
+    vi.mocked(createDpopProof).mockClear();
+    const fetchSpy = routeFetch({
+      "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
+      "/api/auth/websocket-ticket": () => json(200, TICKET),
+    });
+
+    await openSocketUrl({ ...STORED, authMethod: "dpop" }, "1.66.113");
+
+    const ticketCall = fetchSpy.mock.calls.find(([target]) =>
+      String(target).endsWith("/api/auth/websocket-ticket"),
+    );
+    const init = ticketCall?.[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ authorization: "DPoP tok-1", dpop: "test-proof" });
+    expect(createDpopProof).toHaveBeenCalledTimes(1);
+    expect(createDpopProof).toHaveBeenCalledWith({
+      method: "POST",
+      url: "https://relay.example.test/api/auth/websocket-ticket",
+      accessToken: "tok-1",
+    });
+  });
+
+  it("keeps a bearer session on the plain bearer header with no proof", async () => {
+    vi.mocked(createDpopProof).mockClear();
+    const fetchSpy = routeFetch({
+      "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
+      "/api/auth/websocket-ticket": () => json(200, TICKET),
+    });
+
+    await openSocketUrl(STORED, "1.66.113");
+
+    const ticketCall = fetchSpy.mock.calls.find(([target]) =>
+      String(target).endsWith("/api/auth/websocket-ticket"),
+    );
+    expect((ticketCall?.[1] as RequestInit).headers).toEqual({ authorization: "Bearer tok-1" });
+    expect(createDpopProof).not.toHaveBeenCalled();
   });
 
   it("signs out when the address now belongs to a different server", async () => {
