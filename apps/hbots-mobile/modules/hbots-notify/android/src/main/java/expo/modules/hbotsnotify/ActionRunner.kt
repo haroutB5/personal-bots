@@ -7,7 +7,12 @@ fun interface HttpGateway {
 
 object ActionRunner {
   const val MAX_ATTEMPTS = 3
+  /** The server answers InProgress at once, so more tries are cheap. They stop at the budget below. */
+  const val MAX_IN_PROGRESS_ATTEMPTS = 5
+  /** Wall clock for one action. A broadcast that runs much longer than this risks being killed. */
+  const val BUDGET_MS = 30_000L
   private val BACKOFF_MS = longArrayOf(1_000, 2_000)
+  private val IN_PROGRESS_BACKOFF_MS = longArrayOf(1_000, 2_000, 3_000, 4_000)
 
   fun replyPath(notificationId: String) = "/api/personal/notifications/${PathSegment.encode(notificationId)}/reply"
   fun answerPath(notificationId: String) = "/api/personal/notifications/${PathSegment.encode(notificationId)}/answer"
@@ -21,21 +26,39 @@ object ActionRunner {
   /**
    * Sends one command. A transient failure repeats with the same command id, which the
    * server stores per (command id, user), so a repeat can never act twice.
-   * Any other outcome ends the loop, and a 422 does not consume the id on the server.
+   * InProgress means the server still holds that id: wait, tell the caller, ask again with the
+   * same id, and end as Unconfirmed when it never settles. Any other outcome ends the loop,
+   * and a 422 does not consume the id on the server.
    */
   fun run(
     http: HttpGateway,
     path: String,
     body: String,
     sleep: (Long) -> Unit = Thread::sleep,
+    now: () -> Long = System::currentTimeMillis,
+    onWaiting: () -> Unit = {},
   ): ActionOutcome {
-    var outcome: ActionOutcome = ActionOutcome.Transient
-    for (attempt in 0 until MAX_ATTEMPTS) {
-      outcome = ActionOutcomes.classify(http.execute("POST", path, body))
-      if (outcome != ActionOutcome.Transient) return outcome
-      if (attempt < MAX_ATTEMPTS - 1) sleep(BACKOFF_MS[attempt])
+    val startedAt = now()
+    var transient = 0
+    var busy = 0
+    while (true) {
+      val outcome = ActionOutcomes.classify(http.execute("POST", path, body))
+      val outOfTime = now() - startedAt >= BUDGET_MS
+      when (outcome) {
+        ActionOutcome.Transient -> {
+          transient++
+          if (transient >= MAX_ATTEMPTS || outOfTime) return ActionOutcome.Transient
+          sleep(BACKOFF_MS[transient - 1])
+        }
+        ActionOutcome.InProgress -> {
+          busy++
+          if (busy >= MAX_IN_PROGRESS_ATTEMPTS || outOfTime) return ActionOutcome.Unconfirmed
+          onWaiting()
+          sleep(IN_PROGRESS_BACKOFF_MS[busy - 1])
+        }
+        else -> return outcome
+      }
     }
-    return outcome
   }
 }
 

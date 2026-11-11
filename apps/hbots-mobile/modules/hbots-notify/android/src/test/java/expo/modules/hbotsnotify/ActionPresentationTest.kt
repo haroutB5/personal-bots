@@ -20,10 +20,18 @@ class ActionPresentationTest {
     assertEquals("Sent", p.text)
   }
 
-  @Test fun a409DismissesTheQuestion() {
+  @Test fun aStale409DismissesTheQuestionWithoutSayingWhere() {
     assertEquals(After.NOTICE_THEN_CANCEL, of(ActionOutcome.Stale).after)
-    assertEquals("Already answered on your laptop", of(ActionOutcome.Stale).text)
+    assertEquals("Already answered", of(ActionOutcome.Stale).text)
     assertEquals(After.NOTICE_THEN_CANCEL, of(ActionOutcome.Stale, ActionType.REPLY).after)
+    assertFalse(of(ActionOutcome.Stale).text.contains("laptop"))
+  }
+
+  @Test fun anUnsettledCommandKeepsTheNotificationAndPointsAtTheChat() {
+    assertEquals(After.NOTICE_OPEN_CHAT, of(ActionOutcome.InProgress).after)
+    assertEquals("Still sending", of(ActionOutcome.InProgress).text)
+    assertEquals(After.NOTICE_OPEN_CHAT, of(ActionOutcome.Unconfirmed).after)
+    assertEquals("Could not confirm. Open the chat.", of(ActionOutcome.Unconfirmed).text)
   }
 
   @Test fun a422KeepsTheQuestionAndShowsAnError() {
@@ -46,7 +54,7 @@ class ActionPresentationTest {
   }
 
   @Test fun noPresentationEchoesAChoiceExceptASentAnswer() {
-    for (outcome in listOf(ActionOutcome.Stale, ActionOutcome.Refused, ActionOutcome.NotFound, ActionOutcome.SignedOut, ActionOutcome.Forbidden, ActionOutcome.Transient)) {
+    for (outcome in listOf(ActionOutcome.Stale, ActionOutcome.InProgress, ActionOutcome.Unconfirmed, ActionOutcome.Refused, ActionOutcome.NotFound, ActionOutcome.SignedOut, ActionOutcome.Forbidden, ActionOutcome.Transient)) {
       assertFalse(of(outcome, ActionType.ANSWER, "SECRET-LABEL").text.contains("SECRET-LABEL"))
     }
   }

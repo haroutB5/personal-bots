@@ -45,7 +45,6 @@ class ActionRunnerTest {
       401 to ActionOutcome.SignedOut,
       403 to ActionOutcome.Forbidden,
       404 to ActionOutcome.NotFound,
-      409 to ActionOutcome.Stale,
       422 to ActionOutcome.Refused,
       400 to ActionOutcome.Refused,
     )) {
@@ -73,5 +72,56 @@ class ActionRunnerTest {
   @Test fun textWithQuotesAndNewlinesStaysValidJson() {
     val tricky = "He said \"hi\"\nand left \\ ok"
     assertEquals(tricky, JSONObject(ActionRunner.replyBody("c", tricky)).getString("text"))
+  }
+
+  private val stale = HttpResult(409, "{\"ok\":false,\"error\":\"Stale\"}")
+  private val busy = HttpResult(409, "{\"ok\":false,\"error\":\"InProgress\"}")
+
+  @Test fun a409IsStaleOnlyWhenTheBodySaysStale() {
+    assertEquals(ActionOutcome.Stale, ActionOutcomes.classify(stale))
+    assertEquals(ActionOutcome.InProgress, ActionOutcomes.classify(busy))
+    assertEquals(ActionOutcome.InProgress, ActionOutcomes.classify(HttpResult(409, null)))
+    assertEquals(ActionOutcome.InProgress, ActionOutcomes.classify(HttpResult(409, "<html>")))
+  }
+
+  @Test fun staleEndsAtOnce() {
+    val (outcome, http) = run(stale)
+    assertEquals(ActionOutcome.Stale, outcome)
+    assertEquals(1, http.calls.size)
+  }
+
+  @Test fun inProgressIsAskedAgainWithTheSameCommandIdAndEndsSent() {
+    val sleeps = ArrayList<Long>()
+    var waiting = 0
+    val http = FakeHttp(listOf(busy, busy, ok))
+    val outcome = ActionRunner.run(http, path, body, sleep = { sleeps += it }, onWaiting = { waiting++ })
+    assertEquals(ActionOutcome.Sent, outcome)
+    assertEquals(3, http.calls.size)
+    assertEquals(setOf("cmd-1"), http.calls.map { JSONObject(it.third!!).getString("commandId") }.toSet())
+    assertEquals(listOf(1000L, 2000L), sleeps)
+    assertEquals(2, waiting)
+  }
+
+  @Test fun inProgressThatNeverSettlesEndsUnconfirmed() {
+    val sleeps = ArrayList<Long>()
+    val http = FakeHttp(listOf(busy))
+    val outcome = ActionRunner.run(http, path, body, sleep = { sleeps += it })
+    assertEquals(ActionOutcome.Unconfirmed, outcome)
+    assertEquals(ActionRunner.MAX_IN_PROGRESS_ATTEMPTS, http.calls.size)
+    assertEquals(listOf(1000L, 2000L, 3000L, 4000L), sleeps)
+  }
+
+  @Test fun theBudgetStopsTheRetries() {
+    var clock = 0L
+    val http = FakeHttp(listOf(busy))
+    val outcome = ActionRunner.run(http, path, body, sleep = { clock += 20_000 }, now = { clock })
+    assertEquals(ActionOutcome.Unconfirmed, outcome)
+    assertEquals(2, http.calls.size)
+  }
+
+  @Test fun aTimeoutThenInProgressStillEndsWithTheSameId() {
+    val http = FakeHttp(listOf(down, busy, ok))
+    assertEquals(ActionOutcome.Sent, ActionRunner.run(http, path, body, sleep = {}))
+    assertEquals(setOf("cmd-1"), http.calls.map { JSONObject(it.third!!).getString("commandId") }.toSet())
   }
 }

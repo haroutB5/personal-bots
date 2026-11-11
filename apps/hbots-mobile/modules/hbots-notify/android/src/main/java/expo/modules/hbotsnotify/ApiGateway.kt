@@ -53,7 +53,8 @@ class ApiGateway(private val context: Context) : HttpGateway {
   }
 
   private fun readCapped(response: okhttp3.Response): String? {
-    if (response.code !in 200..299) return null
+    // The body of an error is read for one reason: a 409 says whether it is Stale or InProgress.
+    if (response.code !in 200..299 && response.code != 409) return null
     val body = response.body ?: return null
     val source = body.source()
     source.request(MAX_BODY_BYTES + 1)
