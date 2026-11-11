@@ -8,6 +8,7 @@ export const CARD_KINDS = [
   "connection-approval",
   "lead-bot-change",
   "memory-change",
+  "call",
 ] as const;
 
 export type CardKind = (typeof CARD_KINDS)[number];

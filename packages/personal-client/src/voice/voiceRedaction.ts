@@ -12,7 +12,7 @@
  * raw chat text reaches the socket from here (send_to_bot carries what the
  * owner just said, and lookup_memory is already redacted server-side).
  *
- * @module features/personal/voice/voiceRedaction
+ * @module voice/voiceRedaction
  */
 
 /** At most this many characters of a chat reply the voice is handed. */

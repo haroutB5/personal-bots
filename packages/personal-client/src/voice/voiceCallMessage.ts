@@ -7,7 +7,7 @@
  * spoken. The marker carries only the call id and where it came from; the
  * payload is never rendered.
  *
- * @module features/personal/voice/voiceCallMessage
+ * @module voice/voiceCallMessage
  */
 import {
   type OrchestrationMessageContext,

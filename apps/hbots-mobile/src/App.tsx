@@ -44,6 +44,7 @@ import { useShareSweepAtStart } from "./share/useShareSweep";
 import { useUnpairedShare } from "./share/useUnpairedShare";
 import { AppLockGate } from "./security/AppLockGate";
 import { AppShell } from "./shell/AppShell";
+import { VoiceCallProvider } from "./voice/VoiceCallProvider";
 import { COLORS } from "./theme";
 import {
   confirmUpdateInstall,
@@ -442,14 +443,10 @@ function App() {
 
   const confirmSignOut = useCallback(
     (session: StoredSession) => {
-      Alert.alert(
-        "Sign out this phone?",
-        signOutConfirmBody(getOutboxSnapshot().entries.length),
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Sign out", style: "destructive", onPress: () => void signOut(session) },
-        ],
-      );
+      Alert.alert("Sign out this phone?", signOutConfirmBody(getOutboxSnapshot().entries.length), [
+        { text: "Cancel", style: "cancel" },
+        { text: "Sign out", style: "destructive", onPress: () => void signOut(session) },
+      ]);
     },
     [signOut],
   );
@@ -473,18 +470,20 @@ function App() {
         {screen.kind === "ready" ? (
           <>
             <PushBridge native={screen.native} appVersion={installedVersion} />
-            <AppLockGate onSignOut={() => confirmSignOut(screen.session)}>
-              <AppShell
-                native={screen.native}
-                installedVersion={installedVersion}
-                update={update}
-                latest={latest}
-                onCheckNow={() => void checkForUpdate(screen.session, true)}
-                onInstall={() => void confirmUpdateInstall()}
-                onOpenPermission={() => void openInstallPermission()}
-                onSignOut={() => confirmSignOut(screen.session)}
-              />
-            </AppLockGate>
+            <VoiceCallProvider native={screen.native}>
+              <AppLockGate onSignOut={() => confirmSignOut(screen.session)}>
+                <AppShell
+                  native={screen.native}
+                  installedVersion={installedVersion}
+                  update={update}
+                  latest={latest}
+                  onCheckNow={() => void checkForUpdate(screen.session, true)}
+                  onInstall={() => void confirmUpdateInstall()}
+                  onOpenPermission={() => void openInstallPermission()}
+                  onSignOut={() => confirmSignOut(screen.session)}
+                />
+              </AppLockGate>
+            </VoiceCallProvider>
           </>
         ) : screen.kind === "unpaired" ? (
           <View style={styles.flex}>

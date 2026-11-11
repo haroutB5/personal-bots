@@ -6,14 +6,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 
-import type { VoiceCallSnapshotResult } from "./voiceCallApi";
-import type { BotStatusPort } from "./voiceCallController";
+import type { VoiceCallSnapshotResult } from "../conversation/voice/voiceCallApi.ts";
+import type { BotStatusPort } from "./voiceCallController.ts";
 import {
   UNKNOWN_BOT_STATUS,
   botStatusFromSnapshot,
   createVoiceCallStatusWatch,
   observeCallTurn,
-} from "./voiceCallStatus";
+} from "./voiceCallStatus.ts";
 
 const status = (patch: Partial<BotStatusPort> = {}): BotStatusPort => ({
   state: "idle",

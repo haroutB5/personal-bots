@@ -36,12 +36,14 @@ import {
 } from "@hbots/personal-client/conversation/secretRequestCards";
 import type { SecretAccessChoice } from "@hbots/personal-client/settings/secretAccess";
 import { mergeTaskLists } from "@hbots/personal-client/conversation/taskPresentation";
+import { placeCallCards } from "@hbots/personal-client/conversation/conversationModel";
 import { useMemo, useState } from "react";
 
 import type { ChatEnvironment } from "./chatEnvironment";
 import type { CardContext } from "./cards/types";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { appendSecretOutcome } from "./secretOutcomeModel";
+import { useVoiceCallCards } from "../voice/useVoiceCallCards";
 import { readSecretOutcomeHistory, writeSecretOutcomeHistory } from "./secretOutcomeStore";
 
 interface SeenUserInputs {
@@ -67,6 +69,8 @@ export function useChatCards(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly nowMs: number;
   readonly onOpenChat: (botId: string, threadId: string) => void;
+  readonly voiceCallsEnabled: boolean;
+  readonly onStartCall: (() => void) | null;
   readonly onRevealCard?: (itemId: string) => void;
   readonly cardMaxHeight?: number | null;
 }): {
@@ -301,18 +305,29 @@ export function useChatCards(input: {
   }, [input.bots]);
   const waitingLabels = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
 
+  const callCards = useVoiceCallCards({
+    native,
+    threadId,
+    enabled: input.voiceCallsEnabled,
+    nowMs: input.nowMs,
+  });
+
   const items = useMemo(() => {
     const withDelegations = placeDelegationCards(input.items, children);
-    return placeChatCards(withDelegations, {
-      questions: questionCards,
-      secrets: secretCards,
-      logins: loginRequests,
-      connectionApprovals: approvalCards,
-      leadBotChanges,
-      memoryChanges,
-    });
+    return placeCallCards(
+      placeChatCards(withDelegations, {
+        questions: questionCards,
+        secrets: secretCards,
+        logins: loginRequests,
+        connectionApprovals: approvalCards,
+        leadBotChanges,
+        memoryChanges,
+      }),
+      callCards,
+    );
   }, [
     approvalCards,
+    callCards,
     children,
     input.items,
     leadBotChanges,
@@ -339,6 +354,7 @@ export function useChatCards(input: {
       providers: input.providers,
       waitingLabelFor: (id) => (id === null ? null : (waitingLabels.get(id) ?? null)),
       onOpenChat: input.onOpenChat,
+      onStartCall: input.onStartCall,
       revealCard: input.onRevealCard,
       cardMaxHeight: input.cardMaxHeight ?? null,
       secrets: {
@@ -361,6 +377,7 @@ export function useChatCards(input: {
       input.chat,
       input.nowMs,
       input.onOpenChat,
+      input.onStartCall,
       input.onRevealCard,
       input.providers,
       native,

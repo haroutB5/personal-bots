@@ -7,6 +7,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { ProvidersSettingsCard } from "./ProvidersSettingsCard";
+import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import { Notice, Row, Section, SectionNote, SettingsPage, ToggleRow } from "./SettingsUi";
 import {
   autoArchiveEnabled,
@@ -235,6 +236,10 @@ export function SettingsScreen(props: SettingsScreenProps) {
           {archiveError === null ? null : <Notice tone="danger">{archiveError}</Notice>}
           {profileError === null ? null : <Notice tone="danger">{profileError}</Notice>}
         </Section>
+      ) : null}
+
+      {matches("Voice calls Gemini key voice languages hang up quiet") ? (
+        <VoiceSettingsSection native={props.native} />
       ) : null}
 
       {matches("Privacy Connections Passwords API keys Memory") ? (

@@ -323,6 +323,7 @@ describe("Android parity ratchet", () => {
       "A16",
       "A17",
       "A18",
+      "X4",
     ]);
   });
 

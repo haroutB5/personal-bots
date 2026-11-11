@@ -151,6 +151,8 @@ export function GroupConversationScreen({
     providers,
     nowMs: now,
     onOpenChat,
+    voiceCallsEnabled: false,
+    onStartCall: null,
   });
 
   // The group thread holds only mirrored messages. A bot's turn runs on its

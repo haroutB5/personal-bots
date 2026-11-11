@@ -4,7 +4,11 @@ import * as SecureStore from "expo-secure-store";
 import { Alert, AppState, InteractionManager } from "react-native";
 
 import { wipeNativeNotifications } from "../notifications/nativeNotify";
-import { CACHE_DIRECTORY as THREAD_CACHE_DIRECTORY, wipeThreadCache } from "../personal/nativeCache";
+import {
+  CACHE_DIRECTORY as THREAD_CACHE_DIRECTORY,
+  wipeThreadCache,
+} from "../personal/nativeCache";
+import { wipeVoiceCalls } from "../voice/voiceWipe";
 import { decryptFile, deleteCacheKey, encryptFile, purgeLegacyPlaintext } from "./secureStorage";
 import {
   discardOutbox,
@@ -172,6 +176,7 @@ export async function wipeLocalData(): Promise<void> {
     wipeCacheRoot,
     deleteCacheKey,
     wipeNativeNotifications,
+    wipeVoiceCalls,
   ]) {
     try {
       wipe();

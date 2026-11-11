@@ -24,6 +24,8 @@ export interface CardContext {
   /** What a task parked on another bot is waiting on, by that bot's thread. */
   readonly waitingLabelFor: (threadId: string | null) => string | null;
   readonly onOpenChat: (botId: string, threadId: string) => void;
+  /** Starts a call in this chat, or null when this bot cannot take calls. */
+  readonly onStartCall: (() => void) | null;
   /** Brings a feed row into view, used when a card's form takes keyboard focus. */
   readonly revealCard?: (itemId: string) => void;
   /**

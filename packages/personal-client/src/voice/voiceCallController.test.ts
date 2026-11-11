@@ -21,13 +21,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { CallAudioPort, VoiceCue, VoiceLevelSource } from "./callAudio";
+import type { CallAudioPort, VoiceCue, VoiceLevelSource } from "./callAudioPort.ts";
 import {
   FakeLiveSocket,
   createFakeSocket,
   latestSocket,
   resetFakeSockets,
-} from "./fakeLiveSocket.test-helper";
+} from "./fakeLiveSocket.test-helper.ts";
 import {
   VOICE_NARRATE_MIN_GAP_MS,
   VOICE_REPLY_GRACE_MS,
@@ -35,7 +35,7 @@ import {
   VOICE_END_REASONS,
   VOICE_WORK_UPDATE_PREFIX,
   type VoiceEndReason,
-} from "./callState";
+} from "../conversation/voice/callState.ts";
 import * as DateTime from "effect/DateTime";
 import { PersonalBotId } from "@t3tools/contracts";
 import type {
@@ -44,14 +44,14 @@ import type {
   VoiceCallSearchWebResult,
   VoiceCallSession,
   VoiceCallTranscriptEntry,
-} from "./voiceCallApi";
+} from "../conversation/voice/voiceCallApi.ts";
 import type {
   BotStatusPort,
   VoiceApiResult,
   VoiceCallPort,
   VoiceCallSnapshot,
-} from "./voiceCallController";
-import { createVoiceCallController } from "./voiceCallController";
+} from "./voiceCallController.ts";
+import { createVoiceCallController } from "./voiceCallController.ts";
 
 const SESSION: VoiceCallSession = {
   callId: "call-1",
@@ -81,12 +81,16 @@ const SESSION: VoiceCallSession = {
 
 interface HarnessOverrides {
   readonly startFails?: boolean;
+  readonly startGate?: Promise<void>;
+  readonly micStart?: "with_tap" | "after_accept";
   /** What `send` answers; the default accepts with "m-1", "m-2", ... */
   readonly sendResult?: (attempt: number) => VoiceApiResult<{ readonly messageId: string }>;
   /** One answer per `finish` call: false makes it fail. Beyond the list: success. */
   readonly finishResults?: ReadonlyArray<boolean>;
   readonly connectTimeoutMs?: number;
   readonly finishRetryMs?: ReadonlyArray<number>;
+  /** A clock the test moves by hand, to stand in for timers the OS froze. */
+  readonly now?: () => number;
   /** Replaces the microphone: the default resolves at once. */
   readonly mic?: () => Promise<void>;
   /** What the server is asked when the voice wants the bot's state. */
@@ -112,6 +116,7 @@ interface Harness {
     readonly cues: VoiceCue[];
     readonly levels: VoiceLevelSource[];
     readonly closeCalls: () => number;
+    readonly holds: { kind: string; inMs: number }[];
   };
   readonly controller: ReturnType<typeof createVoiceCallController>;
   readonly snapshots: VoiceCallSnapshot[];
@@ -125,6 +130,7 @@ function harness(overrides: HarnessOverrides = {}): Harness {
   const finishes: VoiceCallFinishInput[] = [];
   const cues: VoiceCue[] = [];
   const levels: VoiceLevelSource[] = [];
+  const holds: { kind: string; inMs: number }[] = [];
   let closeCalls = 0;
   const status = {
     current: {
@@ -157,6 +163,7 @@ function harness(overrides: HarnessOverrides = {}): Harness {
     },
     async start() {
       counters.startCalls += 1;
+      await overrides.startGate;
       return overrides.startFails === true
         ? ({ ok: false, code: "no_key", detail: "no key" } as const)
         : ({
@@ -223,6 +230,10 @@ function harness(overrides: HarnessOverrides = {}): Harness {
     cues,
     levels,
     closeCalls: () => closeCalls,
+    holds,
+    holdMicUntil: (kind: string, inMs: number) => {
+      holds.push({ kind, inMs });
+    },
     play: vi.fn(),
     stopPlayback: vi.fn(),
     startMic: vi.fn(overrides.mic ?? (async () => undefined)),
@@ -241,6 +252,7 @@ function harness(overrides: HarnessOverrides = {}): Harness {
     readonly cues: VoiceCue[];
     readonly levels: VoiceLevelSource[];
     readonly closeCalls: () => number;
+    readonly holds: { kind: string; inMs: number }[];
   };
 
   const controller = createVoiceCallController({
@@ -250,10 +262,12 @@ function harness(overrides: HarnessOverrides = {}): Harness {
     audio,
     botStatus: () => status.current,
     createSocket: createFakeSocket,
+    ...(overrides.micStart === undefined ? {} : { micStart: overrides.micStart }),
     ...(overrides.connectTimeoutMs === undefined
       ? {}
       : { connectTimeoutMs: overrides.connectTimeoutMs }),
     ...(overrides.finishRetryMs === undefined ? {} : { finishRetryMs: overrides.finishRetryMs }),
+    ...(overrides.now === undefined ? {} : { now: overrides.now }),
     ...(overrides.refreshBotStatus === undefined
       ? {}
       : { refreshBotStatus: overrides.refreshBotStatus }),
@@ -1135,7 +1149,7 @@ describe("send_to_bot and the Undo card", () => {
 
   it("ends the call cleanly when the server no longer holds it", async () => {
     const test = harness();
-    const socket = await connected(test);
+    await connected(test);
     test.controller.callLost();
     expect(test.last().state.status).toBe("ended");
     expect(test.last().state.hint).toBe("The laptop restarted, so this call ended.");
@@ -1642,7 +1656,7 @@ describe("search_web", () => {
   });
 
   it("passes the server's note along when there was nothing to find", async () => {
-    const { test, socket } = await withoutSearch({
+    const { socket } = await withoutSearch({
       searchResult: async () => ({
         ok: true,
         value: { results: [], note: "Nothing found for that. Say you could not find it." },
@@ -1818,5 +1832,288 @@ describe("the microphone", () => {
 
     expect(test.last().state.errorCode).toBe("no_key");
     expect(test.audio.closeCalls()).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("when the microphone opens", () => {
+  const refusal = () =>
+    Object.assign(new Error("The request is not allowed by the user agent."), {
+      name: "NotAllowedError",
+    });
+
+  function gate() {
+    let open: () => void = () => undefined;
+    const closed = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { closed, open };
+  }
+
+  it("on the phone, opens no microphone until the server has accepted the call", async () => {
+    const accept = gate();
+    const test = harness({ micStart: "after_accept", startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(test.api.startCalls).toBe(1);
+    expect(test.audio.startMic).toHaveBeenCalledTimes(0);
+
+    accept.open();
+    await starting;
+    expect(test.audio.startMic).toHaveBeenCalledTimes(1);
+    expect(test.last().state.status).toBe("connecting");
+  });
+
+  it("on the phone, a hang up before the server answers never opens the microphone", async () => {
+    const accept = gate();
+    const test = harness({ micStart: "after_accept", startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    test.controller.end("hung_up");
+    accept.open();
+    await starting;
+
+    expect(test.audio.startMic).toHaveBeenCalledTimes(0);
+  });
+
+  it("on the phone, a late refusal after the hang up does not turn the hung up call into an error", async () => {
+    const accept = gate();
+    const test = harness({ micStart: "after_accept", startFails: true, startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    test.controller.end("hung_up");
+    accept.open();
+    await starting;
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(test.last().state.endReason).toBe("hung_up");
+    expect(test.last().state.errorCode).toBeNull();
+    expect(test.last().state.status).not.toBe("connecting");
+    expect(test.last().state.status).not.toBe("live");
+  });
+
+  it("on the phone, a microphone that rejects after the hang up leaves the hung up call without an error", async () => {
+    let rejectMic: (error: Error) => void = () => undefined;
+    const opening = new Promise<void>((_resolve, reject) => {
+      rejectMic = reject;
+    });
+    const test = harness({ micStart: "after_accept", mic: () => opening });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.audio.startMic).toHaveBeenCalledTimes(1);
+
+    test.controller.end("hung_up");
+    rejectMic(new Error("The microphone could not be opened."));
+    await starting;
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(test.last().state.endReason).toBe("hung_up");
+    expect(test.last().state.errorCode).toBeNull();
+  });
+
+  it("on the phone, a refused call never opens the microphone", async () => {
+    const test = harness({ micStart: "after_accept", startFails: true });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("no_key");
+    expect(test.audio.startMic).toHaveBeenCalledTimes(0);
+  });
+
+  it("on the phone, a microphone that fails after the accept is a mic card and ends the call", async () => {
+    const test = harness({ micStart: "after_accept", mic: () => Promise.reject(refusal()) });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("mic_blocked");
+    expect(test.last().state.status).toBe("error");
+  });
+
+  it("on the web, still opens the microphone with the tap so the browser prompt is not lost", async () => {
+    const accept = gate();
+    const test = harness({ startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(test.audio.startMic).toHaveBeenCalledTimes(1);
+    expect(test.api.startCalls).toBe(1);
+
+    accept.open();
+    await starting;
+  });
+});
+
+describe("the ephemeral pass", () => {
+  it("never reaches a log line, a snapshot or the finish payload across a whole call", async () => {
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => undefined),
+    );
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "t1", "check the build");
+    await vi.advanceTimersByTimeAsync(afterSend());
+    socket.close(1006, "network gone");
+    await vi.advanceTimersByTimeAsync(20_000);
+    test.controller.end("hung_up");
+
+    const logged = spies.flatMap((spy) => spy.mock.calls).map((args) => JSON.stringify(args));
+    expect(logged.join("\n")).not.toContain("pass-abc");
+    expect(JSON.stringify(test.snapshots)).not.toContain("pass-abc");
+    expect(JSON.stringify(test.api.finishes)).not.toContain("pass-abc");
+    for (const spy of spies) spy.mockRestore();
+  });
+
+  it("is never written to browser storage", async () => {
+    const writes: string[] = [];
+    const store = {
+      setItem: (key: string, value: string) => writes.push(`${key}=${value}`),
+      getItem: () => null,
+      removeItem: () => undefined,
+    };
+    vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("sessionStorage", store);
+    try {
+      const test = harness();
+      await connected(test);
+      test.controller.end("hung_up");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(writes.join("\n")).not.toContain("pass-abc");
+  });
+});
+
+describe("the mic deadlines when timers sleep (F1)", () => {
+  it("a call that never connects while the app sleeps ends as failed, never as quiet", async () => {
+    const clock = { t: 1_000_000 };
+    const test = harness({ now: () => clock.t });
+    await test.controller.start();
+    latestSocket().open();
+    // The app is backgrounded: every JS timer is frozen for 3 minutes 23 seconds.
+    clock.t += 203_000;
+    // The OS lets the timers run again; the interval fires first.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(test.last().state.endReason).toBe("failed");
+    expect(test.last().state.errorCode).toBe("google_unavailable");
+    expect(test.last().state.status).toBe("error");
+  });
+
+  it("the quiet clock starts when the session answers, not at the tap", async () => {
+    const test = harness();
+    await test.controller.start();
+    await vi.advanceTimersByTimeAsync(15_000);
+    const socket = latestSocket();
+    socket.open();
+    socket.setupComplete();
+    await vi.advanceTimersByTimeAsync(110_000);
+    expect(test.last().state.status).toBe("live");
+    expect(test.api.finishes).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(test.last().state.endReason).toBe("quiet");
+  });
+
+  it("a native connect deadline while accepting ends as server_unreachable", async () => {
+    let release: () => void = () => undefined;
+    const startGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const test = harness({ startGate });
+    const started = test.controller.start();
+    test.controller.expire("connect");
+    expect(test.last().state.status).toBe("error");
+    expect(test.last().state.errorCode).toBe("server_unreachable");
+    expect(test.last().state.endReason).toBe("failed");
+    release();
+    await started;
+    expect(test.last().state.errorCode).toBe("server_unreachable");
+  });
+
+  it.each([
+    {
+      kind: "connect",
+      phase: "connecting",
+      endReason: "failed",
+      errorCode: "google_unavailable",
+      status: "error",
+    },
+    { kind: "quiet", phase: "live", endReason: "quiet", errorCode: null, status: "ended" },
+    {
+      kind: "waiting_cap",
+      phase: "live",
+      endReason: "waiting_cap",
+      errorCode: null,
+      status: "ended",
+    },
+    {
+      kind: "reconnect",
+      phase: "reconnecting",
+      endReason: "dropped",
+      errorCode: null,
+      status: "ended",
+    },
+    { kind: "limit", phase: "live", endReason: "limit", errorCode: null, status: "ended" },
+  ] as const)(
+    "a native $kind deadline ends the call the way the pump would",
+    async ({ kind, phase, endReason, errorCode, status }) => {
+      const test = harness();
+      if (phase === "connecting") {
+        await test.controller.start();
+        latestSocket().open();
+      } else {
+        const socket = await connected(test);
+        if (phase === "reconnecting") {
+          socket.close(1006, "connection lost");
+          await vi.advanceTimersByTimeAsync(2_000);
+        }
+      }
+      test.controller.expire(kind);
+      expect(test.last().state.endReason).toBe(endReason);
+      expect(test.last().state.errorCode).toBe(errorCode);
+      expect(test.last().state.status).toBe(status);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(test.api.finishes).toHaveLength(1);
+      expect(test.api.finishes[0]!.endReason).toBe(endReason);
+    },
+  );
+
+  it("pushes the mic lease on each phase change", async () => {
+    const test = harness();
+    await test.controller.start();
+    latestSocket().open();
+    expect(test.audio.holds.at(-1)).toEqual({ kind: "connect", inMs: 20_000 });
+    latestSocket().setupComplete();
+    expect(test.audio.holds.at(-1)).toEqual({ kind: "quiet", inMs: 120_000 });
+    latestSocket().close(1006, "connection lost");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(test.audio.holds.at(-1)).toEqual({ kind: "reconnect", inMs: 14_000 });
+  });
+
+  it("mic frames run the pump, so a sleeping tick still ends a quiet call", async () => {
+    const test = harness();
+    await connected(test);
+    // The interval is frozen and never comes back; only frames keep arriving.
+    vi.clearAllTimers();
+    vi.setSystemTime(Date.now() + 121_000);
+    test.controller.sendAudio(new ArrayBuffer(640));
+    expect(test.last().state.endReason).toBe("quiet");
+  });
+
+  it("a pending send is bounded by the waiting cap in the lease it pushes", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(test.audio.holds.at(-1)).toEqual({ kind: "waiting_cap", inMs: 300_000 - 1_000 });
+  });
+
+  it("the pump posts a send whose undo window has passed while timers slept", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    vi.clearAllTimers();
+    vi.setSystemTime(Date.now() + VOICE_UNDO_MS + 1_000);
+    test.controller.sendAudio(new ArrayBuffer(640));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.sent).toEqual([{ text: "Deploy it" }]);
   });
 });

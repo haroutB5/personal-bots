@@ -6,7 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { PERSONAL_VOICE_CALL_CONTEXT_KIND } from "@t3tools/contracts";
 
-import { readVoiceCallMarker, VOICE_CALL_TAG_LABEL } from "./voiceCallMessage";
+import { readVoiceCallMarker, VOICE_CALL_TAG_LABEL } from "./voiceCallMessage.ts";
 
 const marker = (payload: unknown) =>
   ({

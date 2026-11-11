@@ -223,7 +223,7 @@ export interface AtomCommandResult<T> {
  * so a code the contract adds is only ever named in one place, and so an older
  * client still recognises it if the server gets ahead.
  */
-export type VoiceCallAnyErrorCode = VoiceCallErrorCode;
+export type VoiceCallAnyErrorCode = VoiceCallErrorCode | "server_unreachable";
 
 const VOICE_CALL_ERROR_CODES: ReadonlySet<string> = new Set([
   "no_key",
@@ -242,7 +242,7 @@ const VOICE_CALL_ERROR_CODES: ReadonlySet<string> = new Set([
   "not_found",
 ]);
 
-export function isVoiceCallErrorCode(value: unknown): value is VoiceCallAnyErrorCode {
+export function isVoiceCallErrorCode(value: unknown): value is VoiceCallErrorCode {
   return typeof value === "string" && VOICE_CALL_ERROR_CODES.has(value);
 }
 
@@ -252,9 +252,23 @@ export function isVoiceCallErrorCode(value: unknown): value is VoiceCallAnyError
  * has no code at all, which reads as `google_unavailable` because that is the
  * one the call screen can offer a fix for ("try again").
  */
-export function voiceCallFailureCode(failure: unknown): VoiceCallAnyErrorCode {
+export function voiceCallFailureCode(failure: unknown): VoiceCallErrorCode {
+  return typedVoiceCallCode(failure) ?? "google_unavailable";
+}
+
+/**
+ * The same walk for a phone. A failure with no typed code on a phone is the
+ * laptop not answering (the tunnel, the laptop asleep, Wi-Fi), not Google, so it
+ * reads `server_unreachable`. The typed code still wins when the server sent one.
+ * The web keeps `voiceCallFailureCode`, which its screens and tests depend on.
+ */
+export function voiceCallClientFailureCode(failure: unknown): VoiceCallAnyErrorCode {
+  return typedVoiceCallCode(failure) ?? "server_unreachable";
+}
+
+function typedVoiceCallCode(failure: unknown): VoiceCallErrorCode | null {
   const seen = new Set<unknown>();
-  const walk = (value: unknown, depth: number): VoiceCallAnyErrorCode | null => {
+  const walk = (value: unknown, depth: number): VoiceCallErrorCode | null => {
     if (depth > 6 || value === null || typeof value !== "object" || seen.has(value)) return null;
     seen.add(value);
     // The RPC client hands the screen an AsyncResult failure whose Cause holds
@@ -277,7 +291,7 @@ export function voiceCallFailureCode(failure: unknown): VoiceCallAnyErrorCode {
     }
     return null;
   };
-  return walk(failure, 0) ?? "google_unavailable";
+  return walk(failure, 0);
 }
 
 /** A short line for the failure, never the raw object. */

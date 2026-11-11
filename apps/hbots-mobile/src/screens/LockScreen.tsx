@@ -9,6 +9,7 @@ import {
 } from "react-native";
 
 import { tokens } from "../shell/tokens";
+import type { LockCallLine } from "../voice/callLock";
 
 const MARK = require("../../assets/icon/foreground.png");
 
@@ -26,10 +27,14 @@ export function LockScreen({
   onUnlock,
   noScreenLock,
   onSignOut,
+  call = null,
+  onHangUp,
 }: {
   readonly onUnlock: () => void;
   readonly noScreenLock: boolean;
   readonly onSignOut: () => void;
+  readonly call?: LockCallLine | null;
+  readonly onHangUp?: () => void;
 }) {
   const { height } = useWindowDimensions();
   return (
@@ -44,6 +49,28 @@ export function LockScreen({
             ? "This phone has no screen lock, so hbots cannot check it is you. Set a screen lock in your phone's settings, or sign out to remove hbots from this phone."
             : "Unlock to continue"}
         </Text>
+        {call === null ? null : (
+          <View style={styles.call} accessibilityRole="summary">
+            <Text style={styles.callTitle} maxFontSizeMultiplier={1.4}>
+              {call.title}
+            </Text>
+            <Text style={styles.line} maxFontSizeMultiplier={1.4}>
+              {call.body}
+            </Text>
+            {onHangUp === undefined ? null : (
+              <Pressable
+                onPress={onHangUp}
+                accessibilityRole="button"
+                accessibilityLabel="Hang up"
+                style={styles.hangUp}
+              >
+                <Text style={styles.hangUpText} maxFontSizeMultiplier={1.6}>
+                  Hang up
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        )}
       </View>
       <View style={styles.actions}>
         {noScreenLock ? (
@@ -111,6 +138,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   secondaryText: { color: tokens.text, fontSize: 16, fontWeight: "700" },
+  call: { alignItems: "center", gap: 8, marginTop: 24 },
+  callTitle: { color: tokens.text, fontSize: 17, fontWeight: "700" },
+  hangUp: {
+    minHeight: 48,
+    minWidth: 160,
+    borderRadius: 12,
+    backgroundColor: tokens.dangerBg,
+    borderColor: tokens.danger,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
+  },
+  hangUpText: { color: tokens.danger, fontSize: 16, fontWeight: "700" },
   button: {
     minHeight: 52,
     borderRadius: 12,

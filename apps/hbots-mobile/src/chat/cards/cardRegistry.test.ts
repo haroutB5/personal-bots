@@ -15,6 +15,7 @@ describe("isChatCard", () => {
       "connection-approval",
       "lead-bot-change",
       "memory-change",
+      "call",
     ]);
     for (const kind of CARD_KINDS) expect(isChatCard(item(kind))).toBe(true);
   });
@@ -24,6 +25,5 @@ describe("isChatCard", () => {
     expect(isChatCard(item("message"))).toBe(false);
     expect(isChatCard(item("work"))).toBe(false);
     expect(isChatCard(item("plan"))).toBe(false);
-    expect(isChatCard(item("call"))).toBe(false);
   });
 });

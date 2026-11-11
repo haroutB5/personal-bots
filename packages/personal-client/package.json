@@ -524,6 +524,34 @@
     "./conversation/chatThread": {
       "types": "./src/conversation/chatThread.ts",
       "import": "./src/conversation/chatThread.ts"
+    },
+    "./voice/liveClient": {
+      "types": "./src/voice/liveClient.ts",
+      "import": "./src/voice/liveClient.ts"
+    },
+    "./voice/voiceCallController": {
+      "types": "./src/voice/voiceCallController.ts",
+      "import": "./src/voice/voiceCallController.ts"
+    },
+    "./voice/voiceCallStatus": {
+      "types": "./src/voice/voiceCallStatus.ts",
+      "import": "./src/voice/voiceCallStatus.ts"
+    },
+    "./voice/voiceRedaction": {
+      "types": "./src/voice/voiceRedaction.ts",
+      "import": "./src/voice/voiceRedaction.ts"
+    },
+    "./voice/voiceCallMessage": {
+      "types": "./src/voice/voiceCallMessage.ts",
+      "import": "./src/voice/voiceCallMessage.ts"
+    },
+    "./voice/botVoiceCalls": {
+      "types": "./src/voice/botVoiceCalls.ts",
+      "import": "./src/voice/botVoiceCalls.ts"
+    },
+    "./voice/callAudioPort": {
+      "types": "./src/voice/callAudioPort.ts",
+      "import": "./src/voice/callAudioPort.ts"
     }
   },
   "scripts": {

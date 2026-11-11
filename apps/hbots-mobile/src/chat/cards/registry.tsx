@@ -9,6 +9,8 @@ import { LoginRequestCard } from "./LoginRequestCard";
 import { MemoryChangeCard } from "./MemoryChangeCard";
 import { QuestionCard } from "./QuestionCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { CallCardView } from "../../voice/CallCardView";
+import { CallTranscript } from "../../voice/CallTranscript";
 import type { CardContext } from "./types";
 
 type Renderers = {
@@ -33,6 +35,21 @@ const CARD_REGISTRY: Renderers = {
   ),
   "lead-bot-change": (item, context) => <LeadBotChangeCard card={item.card} context={context} />,
   "memory-change": (item, context) => <MemoryChangeCard item={item.card} context={context} />,
+  call: (item, context) => (
+    <CallCardView
+      card={item.card}
+      onCallBack={context.onStartCall ?? undefined}
+      onReturn={() => undefined}
+      transcript={
+        <CallTranscript
+          native={context.native}
+          callId={item.card.callId}
+          startedAtMs={item.card.startedAtMs}
+          voiceName={item.card.voiceName}
+        />
+      }
+    />
+  ),
 };
 
 export { CARD_KINDS, isChatCard };
@@ -54,5 +71,7 @@ export function renderChatCard(item: ChatCardItem, context: CardContext): ReactE
       return CARD_REGISTRY["lead-bot-change"](item, context);
     case "memory-change":
       return CARD_REGISTRY["memory-change"](item, context);
+    case "call":
+      return CARD_REGISTRY.call(item, context);
   }
 }

@@ -91,6 +91,8 @@ const REQUIRED_PERMISSIONS = [
   "android.permission.REQUEST_INSTALL_PACKAGES",
   "android.permission.POST_NOTIFICATIONS",
   "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION",
+  "android.permission.RECORD_AUDIO",
+  "android.permission.FOREGROUND_SERVICE_MICROPHONE",
 ];
 for (const permission of REQUIRED_PERMISSIONS) {
   const present = manifest.includes(permission);
@@ -141,6 +143,20 @@ const receiverOk = receiver?.kind === "receiver" && receiver.exported === "false
 failed ||= !receiverOk;
 console.log(
   `${receiverOk ? "ok  " : "FAIL"} UpdateInstallReceiver exported=${receiver?.exported ?? "missing"} (expected false)`,
+);
+
+const voiceService = components.find(
+  (component) => component.name === "expo.modules.hbotsvoice.VoiceCallService",
+);
+const voiceServiceTag =
+  manifest.match(/<service\b[^>]*expo\.modules\.hbotsvoice\.VoiceCallService[^>]*>/u)?.[0] ?? "";
+const voiceServiceOk =
+  voiceService?.kind === "service" &&
+  voiceService.exported === "false" &&
+  /android:foregroundServiceType="(?:microphone|0x80)"/u.test(voiceServiceTag);
+failed ||= !voiceServiceOk;
+console.log(
+  `${voiceServiceOk ? "ok  " : "FAIL"} VoiceCallService exported=${voiceService?.exported ?? "missing"} (expected false, microphone type 0x80)`,
 );
 
 console.log(`dataExtractionRules=${String(attribute("dataExtractionRules"))}`);

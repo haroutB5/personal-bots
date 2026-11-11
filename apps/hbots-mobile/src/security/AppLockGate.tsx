@@ -3,6 +3,7 @@ import { StyleSheet, View } from "react-native";
 
 import { LockScreen } from "../screens/LockScreen";
 import { tokens } from "../shell/tokens";
+import { useCallLockLine, useCallSession } from "../voice/VoiceCallProvider";
 import { underLock } from "./coverStyle";
 import { LockCoveredContext } from "./useLinkGate";
 import { useAppLock } from "./useAppLock";
@@ -20,6 +21,8 @@ export function AppLockGate({
 }) {
   const { covered, locked, noScreenLock, unlock } = useAppLock();
   const { display, ...hidden } = underLock(covered);
+  const callLine = useCallLockLine();
+  const callSession = useCallSession();
   return (
     <LockCoveredContext.Provider value={covered}>
       <View style={styles.flex}>
@@ -27,7 +30,13 @@ export function AppLockGate({
           {children}
         </View>
         {locked ? (
-          <LockScreen onUnlock={unlock} noScreenLock={noScreenLock} onSignOut={onSignOut} />
+          <LockScreen
+            onUnlock={unlock}
+            noScreenLock={noScreenLock}
+            onSignOut={onSignOut}
+            call={callLine}
+            onHangUp={callSession === null ? undefined : () => callSession.end("hung_up")}
+          />
         ) : covered ? (
           <View style={styles.cover} />
         ) : null}
