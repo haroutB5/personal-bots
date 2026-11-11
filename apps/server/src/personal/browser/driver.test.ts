@@ -23,15 +23,63 @@ const fake = vi.hoisted(() => {
     context: () => context,
     evaluate: vi.fn(async () => 2),
     goto: vi.fn(),
+    close: vi.fn(async () => undefined),
     isClosed: () => false,
   };
   context.pages.mockReturnValue([page]);
   context.newPage.mockResolvedValue(page);
   const launch = vi.fn(async (_profile: string, _options: Record<string, unknown>) => context);
-  return { listeners, send, context, page, launch };
+  const browserSend = vi.fn(async (method: string, params?: { readonly url?: string }) => {
+    if (method === "Target.createTarget") {
+      shared.createdUrl = params?.url ?? "";
+      return { targetId: "bot-target" };
+    }
+    return {};
+  });
+  const browserSession = { send: browserSend, detach: vi.fn(async () => undefined) };
+  const shared = { createdUrl: "", pageEventArrives: true };
+  const browser = {
+    contexts: () => [context],
+    newBrowserCDPSession: vi.fn(async () => browserSession),
+    once: vi.fn(),
+    close: vi.fn(async () => undefined),
+  };
+  const sharedPage = { ...page, url: () => shared.createdUrl, close: vi.fn(async () => undefined) };
+  const waitForEvent = vi.fn(
+    async (_event: string, options: { readonly predicate: (page: unknown) => boolean }) => {
+      for (let tries = 0; tries < 20; tries++) {
+        if (!shared.pageEventArrives) break;
+        if (options.predicate(sharedPage)) return sharedPage;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      throw new Error("Timeout 10000ms exceeded while waiting for event page");
+    },
+  );
+  Object.assign(context, { waitForEvent });
+  const connectOverCDP = vi.fn(
+    async (_endpoint: string, _options: Record<string, unknown>) => browser,
+  );
+  return {
+    listeners,
+    send,
+    context,
+    page,
+    launch,
+    browser,
+    browserSend,
+    browserSession,
+    shared,
+    sharedPage,
+    connectOverCDP,
+  };
 });
 
-vi.mock("playwright-core", () => ({ chromium: { launchPersistentContext: fake.launch } }));
+vi.mock("playwright-core", () => ({
+  chromium: { launchPersistentContext: fake.launch, connectOverCDP: fake.connectOverCDP },
+}));
+vi.mock("./sharedBrowser.ts", () => ({
+  resolveSharedEndpoint: async () => ({ wsEndpoint: "ws://127.0.0.1:1/devtools/browser/test" }),
+}));
 vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn(),
   access: async () => Promise.reject(new Error("ENOENT")),
@@ -40,6 +88,8 @@ vi.mock("node:fs/promises", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   fake.listeners.clear();
+  fake.shared.createdUrl = "";
+  fake.shared.pageEventArrives = true;
 });
 
 const BRAVE = "C:\\Apps\\Brave\\brave.exe";
@@ -170,6 +220,75 @@ describe("shared browser driver", () => {
     );
     expect(fake.send.mock.invocationCallOrder[authIndex]).toBeLessThan(
       fake.page.goto.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("owned pages never send the focus override", async () => {
+    const context = await launch();
+    const page = await context.newPage();
+    await page.goto("http://localhost/signin", { waitUntil: "commit", timeoutMs: 1000 });
+    const methods = fake.send.mock.calls.map(([method]) => method);
+    expect(methods).toContain("WebAuthn.enable");
+    expect(methods).not.toContain("Emulation.setFocusEmulationEnabled");
+  });
+});
+
+const attach = () => makePlaywrightDriver().attach({ userDataDir: "shared-profile" });
+
+describe("shared bot tabs", () => {
+  it("shared bot pages turn on the focus override before the first navigation", async () => {
+    const handle = await attach();
+    const page = await handle.newPage();
+    await page.goto("http://localhost/signin", { waitUntil: "commit", timeoutMs: 1000 });
+    expect(fake.send).toHaveBeenCalledWith("Emulation.setFocusEmulationEnabled", {
+      enabled: true,
+    });
+    const overrideIndex = fake.send.mock.calls.findIndex(
+      ([method]) => method === "Emulation.setFocusEmulationEnabled",
+    );
+    expect(fake.send.mock.invocationCallOrder[overrideIndex]).toBeLessThan(
+      fake.page.goto.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("opens the bot tab in the background at a nonce address and wraps that page", async () => {
+    const handle = await attach();
+    await handle.newPage();
+    expect(fake.connectOverCDP).toHaveBeenCalledWith(
+      "ws://127.0.0.1:1/devtools/browser/test",
+      expect.objectContaining({ noDefaults: true }),
+    );
+    const created = fake.browserSend.mock.calls.filter(
+      ([method]) => method === "Target.createTarget",
+    );
+    expect(created).toHaveLength(1);
+    expect(created[0]![1]).toEqual({
+      url: expect.stringMatching(/^about:blank#hbots-[0-9a-f-]{8,}$/),
+      background: true,
+    });
+    expect(fake.context.newPage).not.toHaveBeenCalled();
+    expect(handle.pages()).toHaveLength(1);
+  });
+
+  it("closes the new target and throws when its page never shows up", async () => {
+    fake.shared.pageEventArrives = false;
+    const handle = await attach();
+    await expect(handle.newPage()).rejects.toThrow(/Timeout/);
+    expect(fake.browserSend).toHaveBeenCalledWith("Target.closeTarget", {
+      targetId: "bot-target",
+    });
+    expect(handle.pages()).toHaveLength(0);
+  });
+
+  it("detach closes the bot pages, then the browser session, then the connection", async () => {
+    const handle = await attach();
+    await handle.newPage();
+    await handle.detach();
+    expect(fake.sharedPage.close.mock.invocationCallOrder[0]).toBeLessThan(
+      fake.browserSession.detach.mock.invocationCallOrder[0]!,
+    );
+    expect(fake.browserSession.detach.mock.invocationCallOrder[0]).toBeLessThan(
+      fake.browser.close.mock.invocationCallOrder[0]!,
     );
   });
 });
