@@ -12,6 +12,8 @@ import type {
   PreviewAutomationHoverInput,
   PreviewAutomationPressInput,
   PreviewAutomationScrollInput,
+  PreviewAutomationSelectInput,
+  PreviewAutomationSelectResult,
   PreviewAutomationSnapshot,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
@@ -667,6 +669,43 @@ export function performType(
     clear: input.clear ?? false,
     timeoutMs,
   });
+}
+
+/**
+ * Chooses options of a dropdown and reports what is selected afterwards. Each
+ * value matches an option's value or its label; no values clears the choice.
+ */
+export async function performSelect(
+  page: BrowserPage,
+  input: PreviewAutomationSelectInput,
+  timeoutMs: number,
+): Promise<PreviewAutomationSelectResult> {
+  const locator = locatorOf(input);
+  if (locator === null) {
+    throw new HostOperationError(
+      "PreviewAutomationExecutionError",
+      "Provide a locator or selector for the dropdown.",
+    );
+  }
+  try {
+    return { selected: [...(await page.selectOption(locator, input.values, timeoutMs))] };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (/did not find some options/i.test(message)) {
+      throw new HostOperationError(
+        "PreviewAutomationExecutionError",
+        `The dropdown has no option matching ${input.values.map((value) => JSON.stringify(value)).join(", ")}. Take a snapshot to see its options.`,
+      );
+    }
+    if (/not a <select> element/i.test(message)) {
+      throw new HostOperationError(
+        "PreviewAutomationTargetNotEditableError",
+        "That element is not a dropdown (<select>). Use preview_act click for custom menus.",
+        selectorDetail(input),
+      );
+    }
+    throw cause;
+  }
 }
 
 export function performPress(page: BrowserPage, input: PreviewAutomationPressInput): Promise<void> {

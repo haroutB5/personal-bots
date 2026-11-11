@@ -443,9 +443,9 @@ it.effect("says an operation is unsupported, not reconnecting, when a host is co
         .invoke<void>({ scope, operation: "resize", input: { mode: "fill" } })
         .pipe(Effect.flip);
       expect(unsupported).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
-      expect(unsupported.message).toContain("does not support resize");
-      expect(unsupported.message).toContain("Retrying will not help");
-      expect(unsupported.message).not.toContain("reconnecting");
+      expect(unsupported.message).toContain("not supported on the shared browser");
+      expect(unsupported.message).toContain("resize");
+      expect(unsupported.message).not.toMatch(/retry|reconnect|starting|preview_open/i);
     }),
   ),
 );

@@ -14,6 +14,7 @@ import {
   type PreviewAutomationRequest,
   type PreviewAutomationResizeInput,
   type PreviewAutomationScrollInput,
+  type PreviewAutomationSelectInput,
   type PreviewAutomationSetColorSchemeInput,
   type PreviewAutomationTypeInput,
   type PreviewAutomationWaitForInput,
@@ -42,6 +43,7 @@ import {
   performHover,
   performPress,
   performScroll,
+  performSelect,
   performType,
   performWaitFor,
 } from "./pageOperations.ts";
@@ -53,6 +55,7 @@ import {
   UNSTICK_PROBE_MS,
   dialogOpenError,
   driverTimeoutFor,
+  timeoutBudgetNote,
   firstLine,
   hostOf,
   withoutTypedSecrets,
@@ -367,6 +370,19 @@ export const makeBrowserOperations = (
           );
           return { tab, result: { tabId: tab.tabId } };
         }
+        case "select": {
+          const input = request.input as PreviewAutomationSelectInput;
+          // Picking an option is a locator action on a tab that holds a credential.
+          if (tab.loginProtected) {
+            return yield* rejectUrl(
+              "Dropdown selection is disabled after a saved login is filled. Submit the form, then open a new tab to continue.",
+            );
+          }
+          const selected = yield* attempt(input, () =>
+            performSelect(tab.page, input, driverTimeoutFor(request.timeoutMs, input.timeoutMs)),
+          );
+          return { tab, result: selected };
+        }
         case "hover": {
           const input = request.input as PreviewAutomationHoverInput;
           if (tab.loginProtected && (input.locator !== undefined || input.selector !== undefined)) {
@@ -567,6 +583,10 @@ export const makeBrowserOperations = (
         return tab?.title ? `Checked ${tab.title.slice(0, 60)}` : "Checked the page";
       case "click":
         return typeof target === "string" ? `Clicked ${target.slice(0, 60)}` : "Clicked the page";
+      case "select":
+        return typeof target === "string"
+          ? `Chose an option in ${target.slice(0, 60)}`
+          : "Chose an option";
       case "history":
         return input.action === "reload"
           ? "Reloaded the page"
@@ -617,6 +637,21 @@ export const makeBrowserOperations = (
       Effect.andThen(notify),
     );
 
+  /** A driver timeout that waited less than the bot asked for says so, with both numbers. */
+  const explainShortenedWait = <E>(request: PreviewAutomationRequest, error: E): E => {
+    if (!(error instanceof HostOperationError) || error.tag !== "PreviewAutomationTimeoutError") {
+      return error;
+    }
+    const inputTimeoutMs = (request.input as { readonly timeoutMs?: unknown } | null)?.timeoutMs;
+    const note = timeoutBudgetNote(
+      request.timeoutMs,
+      typeof inputTimeoutMs === "number" ? inputTimeoutMs : undefined,
+    );
+    return note === null
+      ? error
+      : (new HostOperationError(error.tag, `${error.message}${note}`, error.detail) as E);
+  };
+
   const handleAutomationRequest: PersonalBrowser["Service"]["handleAutomationRequest"] = (
     incoming,
   ) => {
@@ -641,10 +676,11 @@ export const makeBrowserOperations = (
       // navigation away from a page with unsaved work) parks the page, and
       // the driver call would wait out its whole timeout. Report it at once.
       const target = tabForRequest(request);
-      const watched =
+      const watched = (
         target !== undefined && target.page.pendingDialog() === null
           ? Effect.raceFirst(runOperation(request), dialogOpens(target.page))
-          : runOperation(request);
+          : runOperation(request)
+      ).pipe(Effect.mapError((error) => explainShortenedWait(request, error)));
       let timedOut = false;
       const bounded = watched.pipe(
         Effect.timeoutOption(Math.max(0, request.timeoutMs - HOST_REPLY_MARGIN_MS)),

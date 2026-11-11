@@ -791,6 +791,39 @@ const PreviewAutomationOptionalRemoteDiagnosticFields = {
   hostMessage: Schema.optional(Schema.String),
 };
 
+const UNSUPPORTED_OPERATIONS: Readonly<
+  Partial<Record<PreviewAutomationOperation, { readonly name: string; readonly instead: string }>>
+> = {
+  select: {
+    name: "Choosing a dropdown option (preview_act select)",
+    instead:
+      "Set the value with preview_evaluate and dispatch a change event, or ask the user to choose it in the browser.",
+  },
+  upload: {
+    name: "File upload (preview_act upload)",
+    instead: "Ask the user to attach the file in the browser.",
+  },
+  dialog: {
+    name: "Answering a page dialog (preview_dialog)",
+    instead: "Ask the user to answer the dialog in the browser.",
+  },
+  recordingStart: {
+    name: "Recording (preview_recording_start)",
+    instead: "Use preview_snapshot to capture the page instead.",
+  },
+  recordingStop: {
+    name: "Recording (preview_recording_stop)",
+    instead: "Use preview_snapshot to capture the page instead.",
+  },
+};
+
+const unsupportedOperationName = (operation: PreviewAutomationOperation) =>
+  UNSUPPORTED_OPERATIONS[operation]?.name ?? `The ${operation} operation`;
+
+const unsupportedOperationAlternative = (operation: PreviewAutomationOperation) =>
+  UNSUPPORTED_OPERATIONS[operation]?.instead ??
+  "Use another preview tool, or ask the user to do it in the browser.";
+
 export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<PreviewAutomationNoAvailableHostError>()(
   "PreviewAutomationNoAvailableHostError",
   {
@@ -807,8 +840,8 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
 ) {
   override get message(): string {
     if (this.connectedHostLacksOperation === true) {
-      // Permanent, not a reconnect: telling the caller to retry sends it into a loop.
-      return `The browser is connected but does not support ${this.operation}. Retrying will not help. For a dropdown, set the value with preview_evaluate and dispatch a change event. For a file upload or a page dialog, ask the user to do it in the browser.`;
+      // Permanent, not a reconnect: advice to retry sends the caller into a loop.
+      return `${unsupportedOperationName(this.operation)} is not supported on the shared browser, and waiting will not change that. ${unsupportedOperationAlternative(this.operation)}`;
     }
     return `No preview automation host is available for ${this.operation} in environment ${this.environmentId}. The server-owned browser may be starting or reconnecting. Retry preview_status, then call preview_open if no tab is available. If it remains unavailable, report the browser connection failure.`;
   }

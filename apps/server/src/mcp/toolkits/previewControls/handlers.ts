@@ -35,6 +35,17 @@ export const layer = McpToolAccess.toLayer(PreviewControlsToolkit, {
         yield* broker.invoke({ scope, operation: "close", input: {}, tabId: input.tabId });
         return {};
       }
+      // The personal shared browser's tabs are manager rows with no runtime,
+      // so ask the host to close the page first. If no host has the tab, only
+      // the row goes. Any other host failure keeps the row: the tab is open.
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      yield* broker.invoke({ scope, operation: "closeTab", input: {}, tabId: input.tabId }).pipe(
+        Effect.catchTags({
+          PreviewAutomationNoAvailableHostError: () => Effect.void,
+          PreviewAutomationUnsupportedClientError: () => Effect.void,
+          PreviewAutomationTabNotFoundError: () => Effect.void,
+        }),
+      );
       yield* manager
         .close({ threadId: scope.thread.threadId, tabId: input.tabId })
         .pipe(Effect.mapError(unavailable));

@@ -159,6 +159,7 @@ export const PersonalBrowserActivityKind = Schema.Literals([
   "resize",
   "setColorScheme",
   "hover",
+  "select",
   "drag",
   "history",
   "closeTab",
