@@ -12,6 +12,8 @@ import android.util.Log
 /**
  * Quick Settings tile that opens a new chat with the CTO bot. A locked phone
  * unlocks first, then the app opens; the tile never sends anything itself.
+ * From Android 14 the system does the unlock inside the PendingIntent start,
+ * so the tile makes one call; see unlockFirst for why it must not ask twice.
  */
 class CtoTileService : TileService() {
   override fun onStartListening() {
@@ -25,16 +27,15 @@ class CtoTileService : TileService() {
       .setPackage(packageName)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     val open = { launch(intent) }
-    if (isLocked) unlockAndRun(open) else open()
+    if (unlockFirst(isLocked, Build.VERSION.SDK_INT)) unlockAndRun(open) else open()
   }
 
   /**
-   * From Android 14 the tile hands the system a PendingIntent. After
-   * unlockAndRun the shade is gone and the app has no window, so the creator
-   * must allow the PendingIntent to start an activity from the background
-   * (setPendingIntentCreatorBackgroundActivityStartMode). Before this opt-in the
-   * Verifier saw "The activity is starting" and no activity start from the lock
-   * screen, 3 of 3. The cause is inferred, the fix needs a device re-check.
+   * From Android 14 the tile hands SystemUI a PendingIntent and SystemUI
+   * dismisses the keyguard before it sends it. SystemUI sends with its own
+   * background-start privilege; the creator opt-in below keeps the start allowed
+   * on versions where the creator's mode is also checked. The app is not shown
+   * over the lock screen: the activity does not set showWhenLocked.
    */
   private fun launch(intent: Intent) {
     try {
