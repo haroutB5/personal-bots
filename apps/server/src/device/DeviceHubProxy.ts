@@ -137,7 +137,7 @@ const pumpFrames =
 const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
-  until: Effect.Effect<void>,
+  until: Effect.Effect<void, unknown>,
   extraHeaders: Readonly<Record<string, string>> = {},
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
