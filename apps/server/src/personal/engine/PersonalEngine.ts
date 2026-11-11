@@ -368,6 +368,13 @@ export interface PersonalEngineShape {
   readonly latestContextTokens: (
     threadId: ThreadId,
   ) => Effect.Effect<number | null, PersonalEngineError>;
+  /**
+   * The message of the interrupt result on the chat's newest run, or null when that run
+   * has none. A run lost to its provider server carries `provider-server-lost`.
+   */
+  readonly latestRunInterruptReason: (
+    threadId: ThreadId,
+  ) => Effect.Effect<string | null, PersonalEngineError>;
   /** Whether the provider compacted this chat after `since`. */
   readonly compactedSince: (input: {
     readonly threadId: ThreadId;

@@ -851,6 +851,28 @@ const make = Effect.gen(function* () {
       Effect.mapError(engineError("latestContextTokens")),
     );
 
+  const latestRunInterruptReason = (
+    threadId: ThreadId,
+  ): Effect.Effect<string | null, PersonalEngineError> =>
+    sql<{ readonly reason: string | null }>`
+      SELECT json_extract(item.payload_json, '$.message') AS "reason"
+      FROM orchestration_v2_projection_turn_items item
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'run_interrupt_result'
+        AND item.run_id = (
+          SELECT run.run_id FROM orchestration_v2_projection_runs run
+          WHERE run.thread_id = ${threadId}
+          ORDER BY run.ordinal DESC
+          LIMIT 1
+        )
+      ORDER BY item.ordinal DESC
+      LIMIT 1
+    `.pipe(
+      Effect.map((rows) => (typeof rows[0]?.reason === "string" ? rows[0].reason : null)),
+      Effect.orElseSucceed(() => null),
+      Effect.mapError(engineError("latestRunInterruptReason")),
+    );
+
   const compactedSince = (input: {
     readonly threadId: ThreadId;
     readonly since: string;
@@ -1103,6 +1125,7 @@ const make = Effect.gen(function* () {
     messagesByIds,
     listMessages,
     latestContextTokens,
+    latestRunInterruptReason,
     compactedSince,
     threadUsedWeb,
     toolStepsSince,

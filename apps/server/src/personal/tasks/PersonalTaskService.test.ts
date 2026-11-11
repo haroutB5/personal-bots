@@ -127,6 +127,8 @@ type EngineCall =
  * projection. Context-window rows still come from the activities table.
  */
 interface Harness {
+  /** The interrupt result message of a chat's newest run, as the projection reports it. */
+  readonly interruptReasons: Map<string, string>;
   readonly calls: Array<EngineCall>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly messages: Map<string, Array<HarnessMessage>>;
@@ -143,6 +145,7 @@ interface Harness {
 }
 
 const makeHarness = (): Harness => ({
+  interruptReasons: new Map(),
   calls: [],
   sessions: new Map(),
   messages: new Map(),
@@ -423,6 +426,8 @@ const makeEngine = (harness: Harness) =>
         Effect.sync(() =>
           rowsFor(input.threadId).slice(-Math.max(0, input.limit)).map(toMessageView),
         ),
+      latestRunInterruptReason: (threadId) =>
+        Effect.sync(() => harness.interruptReasons.get(threadId) ?? null),
       latestContextTokens: (threadId) =>
         sql<{ readonly used: number | null }>`
           SELECT json_extract(payload_json, '$.usedTokens') AS "used"
@@ -4297,6 +4302,35 @@ describe("work record (1.60.41)", () => {
         expect(text).toContain("https://example.com/pr/9");
         expect(text).toContain("Update from CTO: Do the second half.");
         expect(markerOf(continuation).fresh).toBe(true);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "a task whose provider server was lost keeps its session on reopen instead of starting fresh",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const reopenAfter = (key: string, reason: string | null) =>
+          Effect.gen(function* () {
+            const { root, thread } = yield* finishedRoot(harness, key, "Half done.");
+            yield* service.updateWorkRecord({ taskId: root.taskId, patch: { nextStep: "go on" } });
+            yield* reportContextTokens(thread, 150_000);
+            if (reason !== null) harness.interruptReasons.set(thread, reason);
+            yield* service.steer({ taskId: root.taskId, fromName: "CTO", message: "Go on." });
+            yield* service.drain;
+            return startsOn(harness, thread).at(-1)!;
+          });
+        const lost = yield* reopenAfter("wr-lost", "provider-server-lost");
+        expect(lost.message.text).not.toContain("Work record");
+        expect(markerOf(lost).fresh).toBeUndefined();
+        const stopped = yield* reopenAfter("wr-stopped", "Stopped by user");
+        expect(stopped.message.text).toContain("Work record");
+        expect(markerOf(stopped).fresh).toBe(true);
+        const plain = yield* reopenAfter("wr-plain", null);
+        expect(plain.message.text).toContain("Work record");
       }).pipe(Effect.provide(makeLayer(harness)));
     },
   );

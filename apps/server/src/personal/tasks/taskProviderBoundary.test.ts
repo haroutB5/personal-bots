@@ -369,6 +369,7 @@ const makeEngine = (harness: Harness) =>
         Effect.sync(() =>
           rowsFor(input.threadId).slice(-Math.max(0, input.limit)).map(toMessageView),
         ),
+      latestRunInterruptReason: () => Effect.succeed(null),
       latestContextTokens: (threadId) =>
         sql<{ readonly used: number | null }>`
           SELECT json_extract(payload_json, '$.usedTokens') AS "used"

@@ -313,6 +313,10 @@ export const makeTaskCore = () =>
     const latestContextTokens = (threadId: ThreadId) =>
       engine.latestContextTokens(threadId).pipe(Effect.orElseSucceed(() => null));
 
+    /** Why the chat's newest run was interrupted, or null when it was not or the read failed. */
+    const latestRunInterruptReason = (threadId: ThreadId) =>
+      engine.latestRunInterruptReason(threadId).pipe(Effect.orElseSucceed(() => null));
+
     /**
      * Best effort, never fails the caller: a task that ended adds its status,
      * clipped result and the evidence it names to its record. Nothing is kept
@@ -595,6 +599,7 @@ export const makeTaskCore = () =>
       helpParkedAttempts,
       idleWaitThreadIds,
       latestContextTokens,
+      latestRunInterruptReason,
       leaseOwner,
       lock,
       modelFallback,

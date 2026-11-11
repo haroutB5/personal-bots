@@ -483,6 +483,52 @@ describe("PersonalEngineV2 reads", () => {
     );
   });
 
+  it.effect("latestRunInterruptReason reads the interrupt result of the newest run only", () => {
+    const shells = new Map<string, OrchestrationV2ThreadShell>();
+    return withEngine(shells, (engine) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const thread = ThreadId.make("thread-1");
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs
+            (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+              completed_at, payload_json)
+          VALUES
+            ('run-1', 'thread-1', 1, 'opencode', 'provider-thread-1', 'interrupted',
+              '2026-11-06T10:00:00.000Z', '2026-11-06T10:01:00.000Z', '{}'),
+            ('run-2', 'thread-1', 2, 'opencode', 'provider-thread-1', 'completed',
+              '2026-11-06T11:00:00.000Z', '2026-11-06T11:01:00.000Z', '{}')
+        `;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items
+            (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+              parent_item_id, ordinal, type, status, updated_at, payload_json)
+          VALUES
+            ('item-1', 'thread-1', 'run-1', NULL, NULL, NULL, NULL, 1, 'run_interrupt_result',
+              'completed', '2026-11-06T10:01:00.000Z', '{"message":"provider-server-lost"}')
+        `;
+        expect(yield* engine.latestRunInterruptReason(thread)).toBeNull();
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs
+            (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+              completed_at, payload_json)
+          VALUES ('run-3', 'thread-1', 3, 'opencode', 'provider-thread-1', 'interrupted',
+            '2026-11-06T12:00:00.000Z', '2026-11-06T12:01:00.000Z', '{}')
+        `;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items
+            (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+              parent_item_id, ordinal, type, status, updated_at, payload_json)
+          VALUES
+            ('item-3', 'thread-1', 'run-3', NULL, NULL, NULL, NULL, 2, 'run_interrupt_result',
+              'completed', '2026-11-06T12:01:00.000Z', '{"message":"provider-server-lost"}')
+        `;
+        expect(yield* engine.latestRunInterruptReason(thread)).toBe("provider-server-lost");
+        expect(yield* engine.latestRunInterruptReason(ThreadId.make("thread-2"))).toBeNull();
+      }),
+    );
+  });
+
   it.effect("shellSnapshot maps every v2 shell, archived included", () => {
     const shells = new Map<string, OrchestrationV2ThreadShell>([
       ["thread-1", shellFor("thread-1", { latestRunId: "run-1" })],
