@@ -1,3 +1,4 @@
+import type { VoiceDeadlineKind } from "@hbots/personal-client/conversation/voice/callState";
 import type {
   CallAudioPort,
   VoiceCue,
@@ -82,6 +83,10 @@ export function createNativeCallAudio(native: HbotsVoiceModule): NativeCallAudio
     cue(kind: VoiceCue) {
       if (closed) return;
       native.cue(kind);
+    },
+    holdMicUntil(kind: VoiceDeadlineKind, inMs: number) {
+      if (closed) return;
+      native.holdMicUntil(kind, inMs);
     },
     close() {
       if (closed) return;

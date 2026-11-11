@@ -1,4 +1,5 @@
 import {
+  callEverConnected,
   callMetaLine,
   formatCallDuration,
   pendingSendTitle,
@@ -99,14 +100,33 @@ export function callIsOver(state: VoiceCallState): boolean {
   return state.status === "ended" || (state.endReason !== null && state.errorCode === null);
 }
 
-export function outsideLine(outside: CallView["outside"]): string | null {
+/**
+ * `over` is true once the call has ended: "Hang up here" is then advice for a
+ * call that is no longer there, so the "off" note says nothing.
+ */
+export function outsideLine(outside: CallView["outside"], over = false): string | null {
   if (outside === "asking") {
     return "Android will ask to show this call in your notifications. That lets you hang up from anywhere.";
   }
-  if (outside === "off") {
+  if (outside === "off" && !over) {
     return "This call will not show outside the app. Hang up here.";
   }
   return null;
+}
+
+/**
+ * The line above the call's card. A failed start reads "Can't start the call",
+ * except when the card below it says the microphone is now allowed: that card
+ * is an invitation to try again, and "can't start" would contradict it.
+ */
+export function callHeaderLine(view: CallView): string {
+  const state = view.snapshot.state;
+  if (state.errorCode === "mic_blocked" && view.micRefusal === "allowed") return "Voice call";
+  return callMetaLine({
+    status: state.status,
+    elapsedMs: view.snapshot.elapsedMs,
+    everConnected: callEverConnected(state.status),
+  });
 }
 
 export const CALL_TIP = "Your call keeps going if you lock the phone.";

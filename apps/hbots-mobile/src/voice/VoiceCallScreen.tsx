@@ -1,6 +1,4 @@
 import {
-  callEverConnected,
-  callMetaLine,
   endReasonLine,
   limitBannerText,
   pillLabel,
@@ -32,7 +30,7 @@ import { CallStage } from "./CallStage";
 import { CallWorkCard } from "./CallWorkCard";
 import type { CallErrorCopy } from "./callErrorCopy";
 import type { CallView } from "./callSession";
-import { CALL_TIP, callIsOver, outsideLine, routeLine } from "./callViewModel";
+import { CALL_TIP, callHeaderLine, callIsOver, outsideLine, routeLine } from "./callViewModel";
 import { phoneWording } from "./phoneWording";
 
 let tipShown = false;
@@ -88,7 +86,7 @@ export function VoiceCallScreen({
   const inCall = state.status === "live" || state.status === "reconnecting";
   const caption = state.caption;
   const route = routeLine(view.route);
-  const outsideNote = outsideLine(view.outside);
+  const outsideNote = outsideLine(view.outside, callIsOver(state));
 
   const hint =
     state.status === "ended"
@@ -174,11 +172,7 @@ export function VoiceCallScreen({
           {botName}
         </Text>
         <Text style={styles.meta} maxFontSizeMultiplier={1.4}>
-          {callMetaLine({
-            status: state.status,
-            elapsedMs: view.snapshot.elapsedMs,
-            everConnected: callEverConnected(state.status),
-          })}
+          {callHeaderLine(view)}
         </Text>
 
         <View style={styles.pillRow}>

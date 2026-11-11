@@ -16,7 +16,12 @@ import {
   type CallSessionDeps,
   type NotificationAsk,
 } from "./callSession";
-import type { HbotsVoiceModule, NativeCallState, NativeVoiceEvents } from "./hbotsVoice";
+import type {
+  HbotsVoiceModule,
+  NativeCallState,
+  NativeLastEnd,
+  NativeVoiceEvents,
+} from "./hbotsVoice";
 import type { NativeCallAudio } from "./nativeCallAudio";
 
 const REQUEST = {
@@ -35,7 +40,7 @@ function fakeNative(options: { granted?: boolean; startError?: unknown } = {}) {
     micPermission: vi.fn(() => (options.granted === false ? "denied" : "granted")),
     openAppSettings: vi.fn(),
     takeRecovery: vi.fn(() => false),
-    takeLastEnd: vi.fn((): { reason: string } | null => null),
+    takeLastEnd: vi.fn((): NativeLastEnd | null => null),
     holdMicUntil: vi.fn(),
     callState: vi.fn((): NativeCallState => "idle"),
     startCall: vi.fn(async () => {
@@ -425,7 +430,11 @@ describe("a deadline from the native lease", () => {
 
   it("is not shown as a recovered call after the app comes back, once expire handled it", async () => {
     const { session, native, emit } = setup();
-    let stored: { reason: string } | null = { reason: "deadline_connect" };
+    let stored: NativeLastEnd | null = {
+      reason: "deadline_connect",
+      atElapsedMs: 0,
+      wallMs: 0,
+    };
     native.takeLastEnd.mockImplementation(() => {
       const kept = stored;
       stored = null;
@@ -440,7 +449,11 @@ describe("a deadline from the native lease", () => {
 
   it("shows the recovered notice after a relaunch when JS never heard the end", () => {
     const { session, native } = setup();
-    native.takeLastEnd.mockReturnValue({ reason: "deadline_connect" });
+    native.takeLastEnd.mockReturnValue({
+      reason: "deadline_connect",
+      atElapsedMs: 0,
+      wallMs: 0,
+    });
     session.appForegrounded();
     expect(session.getView().recovered).toBe(true);
   });

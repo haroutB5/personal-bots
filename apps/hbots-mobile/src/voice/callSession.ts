@@ -1,6 +1,7 @@
 import {
   INITIAL_VOICE_CALL_STATE,
   type VoiceCallState,
+  type VoiceDeadlineKind,
   type VoiceEndReason,
 } from "@hbots/personal-client/conversation/voice/callState";
 import type {
@@ -122,7 +123,30 @@ export interface CallSession {
   dispose(): void;
 }
 
-type NativeEnding = Exclude<NativeEndReason, "hung_up">;
+type NativeDeadline = Extract<NativeEndReason, `deadline_${string}`>;
+type NativeEnding = Exclude<NativeEndReason, "hung_up" | NativeDeadline>;
+
+/** Which JS deadline each native lease reason stands for. */
+const DEADLINE_KIND: Record<NativeDeadline, VoiceDeadlineKind> = {
+  deadline_connect: "connect",
+  deadline_quiet: "quiet",
+  deadline_waiting_cap: "waiting_cap",
+  deadline_reconnect: "reconnect",
+  deadline_limit: "limit",
+};
+
+/** How a deadline ends a call when there is no controller left to ask. */
+const DEADLINE_END: Record<VoiceDeadlineKind, VoiceEndReason> = {
+  connect: "failed",
+  quiet: "quiet",
+  waiting_cap: "waiting_cap",
+  reconnect: "dropped",
+  limit: "limit",
+};
+
+function deadlineOf(reason: NativeEndReason): VoiceDeadlineKind | null {
+  return reason in DEADLINE_KIND ? DEADLINE_KIND[reason as NativeDeadline] : null;
+}
 
 const NATIVE_END: Record<NativeEnding, { reason: VoiceEndReason; notice: string | null }> = {
   notification_hangup: { reason: "hung_up", notice: null },
@@ -269,7 +293,19 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
     subscriptions.push(
       native.addListener("callEnded", ({ reason }) => {
         if (reason === "hung_up" || view.call === null) return;
-        const mapped = nativeEndFor(reason);
+        const deadline = deadlineOf(reason);
+        if (deadline !== null) {
+          // JS hears this end now, so the note kept for a relaunch is spent.
+          native.takeLastEnd();
+          if (controller === null) {
+            finishCall(DEADLINE_END[deadline]);
+            return;
+          }
+          controller.expire(deadline);
+          publish(controller.snapshot());
+          return;
+        }
+        const mapped = nativeEndFor(reason as NativeEnding);
         if (controller === null) {
           finishCall(mapped.reason);
           return;
@@ -364,6 +400,9 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
       api: deps.api,
       audio,
       micStart: "after_accept",
+      // Android asks before the call starts, so the screen never tells the
+      // owner to allow the microphone while it connects.
+      micAlreadyGranted: true,
       botStatus: readBotStatus,
       refreshBotStatus: refreshSnapshot,
       onChange: publish,
@@ -412,7 +451,12 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
     appForegrounded() {
       controller?.retryFinish();
       const native = deps.native;
-      if (native !== null && view.call === null && native.takeRecovery()) set({ recovered: true });
+      if (native !== null && view.call === null) {
+        // Both are read, so neither is left behind for the next launch.
+        const recovered = native.takeRecovery();
+        const lastEnd = native.takeLastEnd();
+        if (recovered || lastEnd !== null) set({ recovered: true });
+      }
       if (
         native !== null &&
         view.call !== null &&

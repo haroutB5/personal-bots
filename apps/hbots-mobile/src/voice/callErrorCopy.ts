@@ -118,6 +118,15 @@ function baseErrorCopyFor(
             secondary: "Close",
             onSecondary: actions.onClose,
           };
+    case "server_unreachable":
+      // The phone's own words for a laptop that did not answer; the server
+      // never sends this code (it is made on the phone).
+      return {
+        title: "Can't reach your laptop",
+        body: "Check that it is on and online, then try again.",
+        primary: "Try again",
+        onPrimary: actions.onRetry,
+      };
     case "google_unavailable":
       return {
         title: "Can't reach Google right now",
