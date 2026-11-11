@@ -81,6 +81,8 @@ const SESSION: VoiceCallSession = {
 
 interface HarnessOverrides {
   readonly startFails?: boolean;
+  readonly startGate?: Promise<void>;
+  readonly micStart?: "with_tap" | "after_accept";
   /** What `send` answers; the default accepts with "m-1", "m-2", ... */
   readonly sendResult?: (attempt: number) => VoiceApiResult<{ readonly messageId: string }>;
   /** One answer per `finish` call: false makes it fail. Beyond the list: success. */
@@ -157,6 +159,7 @@ function harness(overrides: HarnessOverrides = {}): Harness {
     },
     async start() {
       counters.startCalls += 1;
+      await overrides.startGate;
       return overrides.startFails === true
         ? ({ ok: false, code: "no_key", detail: "no key" } as const)
         : ({
@@ -250,6 +253,7 @@ function harness(overrides: HarnessOverrides = {}): Harness {
     audio,
     botStatus: () => status.current,
     createSocket: createFakeSocket,
+    ...(overrides.micStart === undefined ? {} : { micStart: overrides.micStart }),
     ...(overrides.connectTimeoutMs === undefined
       ? {}
       : { connectTimeoutMs: overrides.connectTimeoutMs }),
@@ -1818,6 +1822,95 @@ describe("the microphone", () => {
 
     expect(test.last().state.errorCode).toBe("no_key");
     expect(test.audio.closeCalls()).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("when the microphone opens", () => {
+  const refusal = () =>
+    Object.assign(new Error("The request is not allowed by the user agent."), {
+      name: "NotAllowedError",
+    });
+
+  function gate() {
+    let open: () => void = () => undefined;
+    const closed = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { closed, open };
+  }
+
+  it("on the phone, opens no microphone until the server has accepted the call", async () => {
+    const accept = gate();
+    const test = harness({ micStart: "after_accept", startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(test.api.startCalls).toBe(1);
+    expect(test.audio.startMic).toHaveBeenCalledTimes(0);
+
+    accept.open();
+    await starting;
+    expect(test.audio.startMic).toHaveBeenCalledTimes(1);
+    expect(test.last().state.status).toBe("connecting");
+  });
+
+  it("on the phone, a hang up before the server answers never opens the microphone", async () => {
+    const accept = gate();
+    const test = harness({ micStart: "after_accept", startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    test.controller.end("hung_up");
+    accept.open();
+    await starting;
+
+    expect(test.audio.startMic).toHaveBeenCalledTimes(0);
+  });
+
+  it("on the phone, a late refusal after the hang up does not turn the hung up call into an error", async () => {
+    const accept = gate();
+    const test = harness({ micStart: "after_accept", startFails: true, startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    test.controller.end("hung_up");
+    accept.open();
+    await starting;
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(test.last().state.endReason).toBe("hung_up");
+    expect(test.last().state.errorCode).toBeNull();
+    expect(test.last().state.status).not.toBe("connecting");
+    expect(test.last().state.status).not.toBe("live");
+  });
+
+  it("on the phone, a refused call never opens the microphone", async () => {
+    const test = harness({ micStart: "after_accept", startFails: true });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("no_key");
+    expect(test.audio.startMic).toHaveBeenCalledTimes(0);
+  });
+
+  it("on the phone, a microphone that fails after the accept is a mic card and ends the call", async () => {
+    const test = harness({ micStart: "after_accept", mic: () => Promise.reject(refusal()) });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("mic_blocked");
+    expect(test.last().state.status).toBe("error");
+  });
+
+  it("on the web, still opens the microphone with the tap so the browser prompt is not lost", async () => {
+    const accept = gate();
+    const test = harness({ startGate: accept.closed });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(test.audio.startMic).toHaveBeenCalledTimes(1);
+    expect(test.api.startCalls).toBe(1);
+
+    accept.open();
+    await starting;
   });
 });
 

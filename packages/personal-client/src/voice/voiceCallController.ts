@@ -197,6 +197,7 @@ export interface VoiceCallControllerOptions {
    */
   readonly refreshBotStatus?: () => Promise<void>;
   readonly createSocket?: CreateLiveSocket;
+  readonly micStart?: "with_tap" | "after_accept";
   /** How long to wait for setupComplete before the endpoint is abandoned. */
   readonly setupTimeoutMs?: number;
   /** Hard cap on reaching a live session; past it the call fails. */
@@ -1337,18 +1338,21 @@ export function createVoiceCallController(
     // minted. Its own promise never rejects: the outcome is kept aside and read
     // once the call knows what the server said.
     const mic: { settled: boolean; error: unknown } = { settled: false, error: null };
-    const micStarted = options.audio.startMic().then(
-      () => {
-        mic.settled = true;
-        mic.error = null;
-      },
-      (error: unknown) => {
-        mic.settled = true;
-        mic.error = error;
-      },
-    );
+    const openMic = () =>
+      options.audio.startMic().then(
+        () => {
+          mic.settled = true;
+          mic.error = null;
+        },
+        (error: unknown) => {
+          mic.settled = true;
+          mic.error = error;
+        },
+      );
+    let micStarted: Promise<void> | null =
+      (options.micStart ?? "with_tap") === "with_tap" ? openMic() : null;
     const result = await options.api.start(options.threadId);
-    if (disposed) return;
+    if (disposed || ended) return;
     if (!result.ok) {
       // A browser that has already refused the microphone is the first thing
       // the owner must fix, and nothing else can work until he has: name it
@@ -1367,7 +1371,6 @@ export function createVoiceCallController(
       closeAudio();
       return;
     }
-    if (ended) return;
     session = result.value;
     googleSearchOn = session.googleSearch !== false;
     publish({ status: "connecting", pill: "none", hint: null });
@@ -1379,6 +1382,7 @@ export function createVoiceCallController(
         publish({ hint: callHint({ state, waitingMs: 400 }) });
       }
     }, 400);
+    micStarted ??= openMic();
     await micStarted;
     if (disposed) return;
     if (mic.settled && mic.error !== null) {
