@@ -628,12 +628,22 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       ] as const;
     });
     if (!route) {
+      // A connected host that lacks the operation is a permanent refusal; an
+      // absent host is a reconnect. The caller must be able to tell them apart.
+      const connectedHostLacksOperation = Array.from(
+        (yield* SynchronizedRef.get(state)).clients.values(),
+      ).some(
+        (host) =>
+          host.environmentId === input.scope.environmentId &&
+          !supportsOperation(host, input.operation),
+      );
       return yield* new PreviewAutomationNoAvailableHostError({
         operation: input.operation,
         environmentId: input.scope.environmentId,
         threadId: input.scope.thread.threadId,
         providerSessionId: input.scope.thread.providerSessionId,
         providerInstanceId: input.scope.thread.providerInstanceId,
+        ...(connectedHostLacksOperation ? { connectedHostLacksOperation } : {}),
       });
     }
     const { connection, requestId, requestContext, requestSequence } = route;

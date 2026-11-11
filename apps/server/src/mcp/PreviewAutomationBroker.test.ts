@@ -423,6 +423,33 @@ it.effect("does not create host state from focus updates without a live stream",
   }),
 );
 
+it.effect("says an operation is unsupported, not reconnecting, when a host is connected", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const absent = yield* broker
+        .invoke<void>({ scope, operation: "resize", input: { mode: "fill" } })
+        .pipe(Effect.flip);
+      expect(absent).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+      expect(absent.message).toContain("may be starting or reconnecting");
+
+      const requests = requestsFrom(
+        yield* broker.connect(makeHost({ supportedOperations: ["status"] })),
+      );
+      yield* Stream.runDrain(requests).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const unsupported = yield* broker
+        .invoke<void>({ scope, operation: "resize", input: { mode: "fill" } })
+        .pipe(Effect.flip);
+      expect(unsupported).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+      expect(unsupported.message).toContain("does not support resize");
+      expect(unsupported.message).toContain("Retrying will not help");
+      expect(unsupported.message).not.toContain("reconnecting");
+    }),
+  ),
+);
+
 it.effect("removes host availability when the authoritative request stream disconnects", () =>
   Effect.scoped(
     Effect.gen(function* () {

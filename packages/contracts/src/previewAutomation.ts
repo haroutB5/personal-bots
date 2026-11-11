@@ -800,10 +800,16 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
     requestId: Schema.optional(TrimmedNonEmptyString),
     tabId: Schema.optional(PreviewTabId),
     timeoutMs: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+    /** A host is connected for this environment, but it does not serve this operation. */
+    connectedHostLacksOperation: Schema.optional(Schema.Boolean),
     ...PreviewAutomationOptionalRemoteDiagnosticFields,
   },
 ) {
   override get message(): string {
+    if (this.connectedHostLacksOperation === true) {
+      // Permanent, not a reconnect: telling the caller to retry sends it into a loop.
+      return `The browser is connected but does not support ${this.operation}. Retrying will not help. For a dropdown, set the value with preview_evaluate and dispatch a change event. For a file upload or a page dialog, ask the user to do it in the browser.`;
+    }
     return `No preview automation host is available for ${this.operation} in environment ${this.environmentId}. The server-owned browser may be starting or reconnecting. Retry preview_status, then call preview_open if no tab is available. If it remains unavailable, report the browser connection failure.`;
   }
 }
