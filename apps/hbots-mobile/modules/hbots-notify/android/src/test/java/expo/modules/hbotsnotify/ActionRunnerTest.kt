@@ -13,7 +13,7 @@ class ActionRunnerTest {
 
   private fun run(vararg answers: HttpResult, sleeps: MutableList<Long> = ArrayList()): Pair<ActionOutcome, FakeHttp> {
     val http = FakeHttp(answers.toList())
-    return ActionRunner.run(http, path, body) { sleeps += it } to http
+    return ActionRunner.run(http, path, body, sleep = { sleeps += it }) to http
   }
 
   @Test fun sendsOnceOnSuccess() {
