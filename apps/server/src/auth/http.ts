@@ -41,7 +41,7 @@ import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/trac
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
-import { purgeRevokedFcmTokens } from "../personal/push/fcmTokens.ts";
+import { purgeRevokedPushRecipients } from "../personal/push/pushRecipients.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -320,7 +320,7 @@ export const layer = HttpApiBuilder.group(
               return yield* failEnvironmentOperationForbidden("session_not_revocable");
             }
             const revoked = yield* serverAuth.revokeSession(session.sessionId);
-            yield* purgeRevokedFcmTokens(sql);
+            yield* purgeRevokedPushRecipients(sql);
             return { revoked };
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -529,7 +529,7 @@ export const layer = HttpApiBuilder.group(
               session.sessionId,
               args.payload.sessionId,
             );
-            yield* purgeRevokedFcmTokens(sql);
+            yield* purgeRevokedPushRecipients(sql);
             return { revoked };
           },
           Effect.catchTags({
@@ -548,7 +548,7 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
             const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
-            yield* purgeRevokedFcmTokens(sql);
+            yield* purgeRevokedPushRecipients(sql);
             return { revokedCount };
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>

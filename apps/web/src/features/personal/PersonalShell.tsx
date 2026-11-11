@@ -18,6 +18,7 @@ import {
 } from "./desktopColumns";
 import { InAppNotifications } from "./InAppNotifications";
 import { OutboxFlusher } from "./OutboxFlusher";
+import { PushRegistrationSync } from "./PushRegistrationSync";
 import { useKeptBotsList, useKeptBotsListScroll } from "./keptBotsList";
 import { whenIdle } from "./perfFlags";
 import { installPerfRum } from "./perfRum";
@@ -81,6 +82,7 @@ export function PersonalShell(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   // The Chat rows the phone shares: move this browser's old values over once.
   useImportPersonalSharedPreferences(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- warms the route chunks of this router while the shell is mounted
   useEffect(() => warmPersonalRoutes(router), [router]);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidth = usePersonalNumberPreference("sidebarWidth");
@@ -101,6 +103,7 @@ export function PersonalShell(): JSX.Element {
   const mainRef = useRef<HTMLElement | null>(null);
   const keptList = useKeptBotsList(renderedPath, isWide);
   useKeptBotsListScroll(mainRef, keptList);
+  // oxlint-disable-next-line t3code/no-manual-memo -- one ChatsScreen element for the kept list, so Activity never remounts it
   const keptListElement = useMemo(() => <ChatsScreen />, []);
   // Hiding the list in Activity disconnects every row's effects, which cost
   // the opening tap as much as the unmount it replaces. The tap only takes it
@@ -109,6 +112,7 @@ export function PersonalShell(): JSX.Element {
   // after the chat has painted and mounted. Showing it again is immediate.
   const [keptListAsleep, setKeptListAsleep] = useState(false);
   if (keptList.shown && keptListAsleep) setKeptListAsleep(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- puts the hidden kept list to sleep once the main thread is idle, cancelled on unmount
   useEffect(() => {
     if (!keptList.kept || keptList.shown) return;
     return whenIdle(() => setKeptListAsleep(true), 1_000);
@@ -139,6 +143,7 @@ export function PersonalShell(): JSX.Element {
           {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
           <InAppNotifications />
           <OutboxFlusher />
+          <PushRegistrationSync />
           <ChunkLoadBoundary>
             <Suspense fallback={null}>
               <VoiceCallMount />
@@ -218,6 +223,7 @@ export function PersonalShell(): JSX.Element {
         </main>
         <InAppNotifications />
         <OutboxFlusher />
+        <PushRegistrationSync />
         <ChunkLoadBoundary>
           <Suspense fallback={null}>
             <VoiceCallMount />

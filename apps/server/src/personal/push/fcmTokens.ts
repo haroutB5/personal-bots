@@ -1,10 +1,11 @@
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { PhonePushKind } from "@t3tools/contracts";
+
+import { liveSessionIds } from "./pushRecipients.ts";
 
 export const PHONE_NOTIFICATION_RETENTION_DAYS = 7;
 
@@ -42,7 +43,7 @@ export const makeFcmTokenStore = (sql: SqlClient.SqlClient) => {
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const rows = yield* sql<{ readonly subject: string }>`
         SELECT subject AS "subject" FROM auth_sessions
-        WHERE session_id = ${sessionId} AND revoked_at IS NULL AND expires_at > ${nowIso}
+        WHERE session_id = ${sessionId} AND session_id IN ${liveSessionIds(sql, nowIso)}
         LIMIT 1
       `;
       return Option.fromNullishOr(rows[0]?.subject);
@@ -95,19 +96,13 @@ export const makeFcmTokenStore = (sql: SqlClient.SqlClient) => {
       `;
     });
 
-  const list = sql<FcmTokenRow>`
-    SELECT token AS "token", auth_session_id AS "authSessionId", subject AS "subject"
-    FROM personal_fcm_tokens ORDER BY created_at ASC
-  `;
-
-  const purgeRevoked = Effect.gen(function* () {
+  const list = Effect.gen(function* () {
     const nowIso = DateTime.formatIso(yield* DateTime.now);
-    yield* sql`
-      DELETE FROM personal_fcm_tokens
-      WHERE auth_session_id IN (
-        SELECT session_id FROM auth_sessions
-        WHERE revoked_at IS NOT NULL OR expires_at <= ${nowIso}
-      )
+    return yield* sql<FcmTokenRow>`
+      SELECT token AS "token", auth_session_id AS "authSessionId", subject AS "subject"
+      FROM personal_fcm_tokens
+      WHERE auth_session_id IN ${liveSessionIds(sql, nowIso)}
+      ORDER BY created_at ASC
     `;
   });
 
@@ -159,23 +154,8 @@ export const makeFcmTokenStore = (sql: SqlClient.SqlClient) => {
     markError,
     markSent,
     list,
-    purgeRevoked,
     recordNotification,
     findNotification,
     pruneNotifications,
   };
 };
-
-/**
- * Deletes every phone token whose sign-in session is revoked. Run after any
- * revoke so sign-out stops pushes at once; a failure is logged and never
- * blocks the revoke itself, because the sender purges again before it sends.
- */
-export const purgeRevokedFcmTokens = (sql: SqlClient.SqlClient): Effect.Effect<void> =>
-  makeFcmTokenStore(sql).purgeRevoked.pipe(
-    Effect.catchCause((cause) =>
-      Cause.hasInterruptsOnly(cause)
-        ? Effect.interrupt
-        : Effect.logWarning("phone push tokens could not be purged after a revoke"),
-    ),
-  );
