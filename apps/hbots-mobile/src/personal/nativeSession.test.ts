@@ -57,7 +57,8 @@ const stored: StoredSession = {
 };
 
 const closeWith = async (code: number, reason: string) => {
-  const native = await connectNativeSession(stored, "1.67.6");
+  const native = await connectNativeSession(stored, "1.67.6", () => undefined);
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
   const socket = FakeWebSocket.instances[0];
   if (socket === undefined) throw new Error("no socket was opened");
   // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- @effect/vitest is not a dependency of this package, and closed is the Effect the app awaits.
