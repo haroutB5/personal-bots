@@ -1,5 +1,5 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -14,6 +14,7 @@ import { Link } from "@tanstack/react-router";
 import { Ellipsis } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 
 import type { AvatarMotion } from "./avatarMotion";
@@ -72,7 +73,7 @@ const MOVE_TOLERANCE_PX = 10;
 const TILE_CLASS = cn(
   "flex w-full flex-col items-center gap-1.5 rounded-[var(--personal-radius-card)] py-1",
   "personal-row-hover text-center outline-none select-none [-webkit-touch-callout:none]",
-  "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
 );
 
 /**
@@ -240,13 +241,14 @@ export function PinnedTile({
   // ...and the finger lifting must not read as a press outside the menu.
   const menuGuard = usePressOpenedMenuGuard();
 
-  const cancelPress = useCallback(() => {
+  const cancelPress = useStableCallback(() => {
     if (pressTimer.current !== 0) {
       window.clearTimeout(pressTimer.current);
       pressTimer.current = 0;
     }
     pressOrigin.current = null;
-  }, []);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The long-press timer is a window timer; clear it when the tile unmounts so it cannot open a menu on a gone tile.
   useEffect(() => cancelPress, [cancelPress]);
 
   const pressProps =
@@ -426,7 +428,7 @@ export function PinnedTile({
                   "focus-visible:not-sr-only focus-visible:absolute focus-visible:top-0 focus-visible:right-1 focus-visible:z-10",
                   "focus-visible:flex focus-visible:size-7 focus-visible:items-center focus-visible:justify-center focus-visible:rounded-full",
                   "focus-visible:bg-[var(--personal-surface)] focus-visible:text-[var(--personal-text)] focus-visible:shadow-[var(--personal-shadow-card)]",
-                  "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
                 )}
               />
             }

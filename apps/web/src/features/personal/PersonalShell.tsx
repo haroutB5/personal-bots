@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from "react";
-import { Activity, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { Outlet, useLocation, useParams, useRouter, useRouterState } from "@tanstack/react-router";
 
@@ -81,6 +81,7 @@ export function PersonalShell(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   // The Chat rows the phone shares: move this browser's old values over once.
   useImportPersonalSharedPreferences(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Warms route chunks once the main thread is quiet; the returned cancel stops it on unmount or a new router.
   useEffect(() => warmPersonalRoutes(router), [router]);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidth = usePersonalNumberPreference("sidebarWidth");
@@ -101,7 +102,7 @@ export function PersonalShell(): JSX.Element {
   const mainRef = useRef<HTMLElement | null>(null);
   const keptList = useKeptBotsList(renderedPath, isWide);
   useKeptBotsListScroll(mainRef, keptList);
-  const keptListElement = useMemo(() => <ChatsScreen />, []);
+  const keptListElement = <ChatsScreen />;
   // Hiding the list in Activity disconnects every row's effects, which cost
   // the opening tap as much as the unmount it replaces. The tap only takes it
   // out of the page (display: none on a display: contents wrapper, so layout
@@ -109,6 +110,7 @@ export function PersonalShell(): JSX.Element {
   // after the chat has painted and mounted. Showing it again is immediate.
   const [keptListAsleep, setKeptListAsleep] = useState(false);
   if (keptList.shown && keptListAsleep) setKeptListAsleep(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Puts the hidden list to sleep from an idle callback after the chat has painted; the returned cancel stops it when the list shows again or on unmount.
   useEffect(() => {
     if (!keptList.kept || keptList.shown) return;
     return whenIdle(() => setKeptListAsleep(true), 1_000);
