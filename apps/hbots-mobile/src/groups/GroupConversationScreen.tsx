@@ -35,7 +35,7 @@ import {
   roundForGroup,
 } from "@hbots/personal-client/conversation/groupModel";
 import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
-import { IDLE_RUN_WORK, runWork } from "@hbots/personal-client/conversation/liveWork";
+import { groupRunWork } from "@hbots/personal-client/conversation/liveWork";
 
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { MessageList } from "../chat/MessageList";
@@ -153,9 +153,13 @@ export function GroupConversationScreen({
     onOpenChat,
   });
 
+  // The group thread holds only mirrored messages. A bot's turn runs on its
+  // own member thread, which the round names while the turn is live.
+  const memberThreadId = live ? (round?.activeThreadId ?? null) : null;
+  const memberView = useThreadDetailView(chat, useThreadRef(environmentId, memberThreadId));
   const work = useMemo(
-    () => (view.projection === null ? IDLE_RUN_WORK : runWork(view.projection)),
-    [view.projection],
+    () => groupRunWork({ roundLive: live, memberProjection: memberView.projection }),
+    [live, memberView.projection],
   );
 
   const loadEarlierCommand = native.client.useAtomCommand(chat.thread.loadEarlierHistory, {

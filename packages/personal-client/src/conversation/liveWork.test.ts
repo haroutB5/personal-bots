@@ -12,7 +12,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { runWork, workStepLabel } from "./liveWork.ts";
+import { groupRunWork, runWork, workStepLabel } from "./liveWork.ts";
 
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
@@ -416,5 +416,132 @@ describe("runWork", () => {
     if (work.phase !== "working") return;
     expect(work.waitingOnBackground).toBe(true);
     expect(work.current).toMatchObject({ status: "running" });
+  });
+  describe("empty live lines", () => {
+    it.each(["{}", "[]", "", "   ", "{ }", " [ ] "])(
+      "treats a running command with input %j as not started yet",
+      (input) => {
+        const work = runWork(projection([run("running")], [command("cmd-1", input, "running")]));
+
+        expect(work.phase).toBe("working");
+        if (work.phase !== "working") return;
+        expect(work.current).toBeNull();
+        expect(work.steps).toHaveLength(0);
+      },
+    );
+
+    it("falls back to the previous step while the new command has no input", () => {
+      const work = runWork(
+        projection(
+          [run("running")],
+          [command("cmd-1", "pnpm test", "completed"), command("cmd-2", "{}", "running")],
+        ),
+      );
+
+      expect(work.phase).toBe("working");
+      if (work.phase !== "working") return;
+      expect(work.current).toMatchObject({ kind: "command", label: "pnpm test" });
+      expect(work.steps).toHaveLength(1);
+    });
+
+    it("shows the real input once it arrives", () => {
+      const work = runWork(
+        projection([run("running")], [command("cmd-1", "git status", "running")]),
+      );
+
+      expect(work.phase).toBe("working");
+      if (work.phase !== "working") return;
+      expect(work.current).toMatchObject({ label: "git status" });
+    });
+
+    it("does not count an empty command in a settled run", () => {
+      const work = runWork(
+        projection(
+          [run("completed")],
+          [command("cmd-1", "ls", "completed"), command("cmd-2", "[]", "completed")],
+        ),
+      );
+
+      expect(work.phase).toBe("settled");
+      if (work.phase !== "settled") return;
+      expect(work.summary.count).toBe(1);
+    });
+  });
+
+  describe("wire-collapsed count", () => {
+    const deferredWork = (itemCount: number) => ({
+      cursor: "work-page" as never,
+      itemCount,
+      lastOrdinal: 1_000_000 + itemCount,
+    });
+
+    it("shows the exact count for a 499-item group anchored on a real step", () => {
+      const anchor = {
+        ...command("cmd-anchor", "ls", "completed"),
+        deferredWork: deferredWork(499),
+      };
+      const work = runWork(projection([run("completed")], [anchor]));
+
+      expect(work.phase).toBe("settled");
+      if (work.phase !== "settled") return;
+      expect(work.steps).toHaveLength(1);
+      expect(work.deferredCount).toBe(498);
+      expect(work.summary.count).toBe(499);
+    });
+
+    it("does not count an empty anchor as a step or as an omitted row", () => {
+      const anchor = {
+        ...reasoning("think-anchor", "", "completed"),
+        deferredWork: deferredWork(499),
+      };
+      const work = runWork(projection([run("completed")], [anchor]));
+
+      expect(work.phase).toBe("settled");
+      if (work.phase !== "settled") return;
+      expect(work.steps).toHaveLength(0);
+      expect(work.deferredCount).toBe(498);
+      expect(work.summary.count).toBe(498);
+    });
+  });
+
+  describe("groupRunWork", () => {
+    const member = (status: OrchestrationV2Run["status"], items: OrchestrationV2TurnItem[]) =>
+      projection([run(status)], items);
+
+    it("shows the speaking member's work while the round is live", () => {
+      const work = groupRunWork({
+        roundLive: true,
+        memberProjection: member("running", [
+          command("cmd-1", "pnpm test", "completed"),
+          command("cmd-2", "git status", "running"),
+        ]),
+      });
+
+      expect(work.phase).toBe("working");
+      if (work.phase !== "working") return;
+      expect(work.current).toMatchObject({ label: "git status" });
+    });
+
+    it("shows nothing before the member thread has loaded", () => {
+      expect(groupRunWork({ roundLive: true, memberProjection: null }).phase).toBe("idle");
+    });
+
+    it("shows nothing when the round is not live", () => {
+      const work = groupRunWork({
+        roundLive: false,
+        memberProjection: member("running", [command("cmd-1", "ls", "running")]),
+      });
+
+      expect(work.phase).toBe("idle");
+    });
+
+    it("hides the member's previous turn while the next one is queued", () => {
+      const work = groupRunWork({
+        roundLive: true,
+        memberProjection: member("completed", [command("cmd-1", "ls", "completed")]),
+      });
+
+      expect(work.phase).toBe("idle");
+    });
   });
 });

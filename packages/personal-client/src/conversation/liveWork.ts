@@ -132,6 +132,7 @@ function basename(path: string): string {
  */
 export function commandStepLabel(input: string): string {
   let label = commandDisplayText(input).trim();
+  if (isPlaceholderLine(label)) return "";
   for (;;) {
     const match = /^cd\s+(?:"[^"]*"|'[^']*'|[^;&\n]+?)\s*(?:&&|;)\s*/u.exec(label);
     if (match === null) return label;
@@ -139,6 +140,15 @@ export function commandStepLabel(input: string): string {
     if (next === "") return label;
     label = next;
   }
+}
+
+/**
+ * A command that has just started can carry an empty input before the real
+ * one arrives: blank, `{}` or `[]`. That is no line to show, so the row falls
+ * back to the previous step, or "Starting…" when there is none.
+ */
+function isPlaceholderLine(text: string): boolean {
+  return /^(?:\{\s*\}|\[\s*\])?$/u.test(text.trim());
 }
 
 /** `mcp__t3-code__update_work_record` reads as "update work record". */
@@ -181,27 +191,27 @@ function stepForItem(item: OrchestrationV2TurnItem): WorkStep | null {
   switch (item.type) {
     case "reasoning": {
       const line = liveThoughtLine(item.text);
-      return line === ""
+      return isPlaceholderLine(line)
         ? null
         : { kind: "thinking", id: item.id, line, status: stepStatus(item.status) };
     }
     case "command_execution": {
       const label = commandStepLabel(item.input);
-      return label === ""
+      return isPlaceholderLine(label)
         ? null
         : { kind: "command", id: item.id, label, status: stepStatus(item.status) };
     }
     case "dynamic_tool": {
-      const label = humanizeToolName(item.toolName ?? item.title ?? "Tool") || "Tool";
+      const named = humanizeToolName(item.toolName ?? item.title ?? "Tool");
+      const label = isPlaceholderLine(named) ? "Tool" : named;
       return { kind: "tool", id: item.id, label, status: stepStatus(item.status) };
     }
-    case "file_change":
-      return {
-        kind: "file",
-        id: item.id,
-        label: basename(item.fileName),
-        status: stepStatus(item.status),
-      };
+    case "file_change": {
+      const label = basename(item.fileName);
+      return isPlaceholderLine(label)
+        ? null
+        : { kind: "file", id: item.id, label, status: stepStatus(item.status) };
+    }
     default: {
       if (NON_STEP_ITEM_TYPES.has(item.type)) return null;
       return {
@@ -281,14 +291,15 @@ function runSteps(
   for (const row of rows) {
     const item = row.item;
     const step = stepForItem(item);
+    // The wire count includes the anchor item itself, so the rows the server
+    // left out number one fewer, whether or not the anchor is a real step.
+    // Empty items among the omitted rows are not on the wire; the server
+    // would have to report them for the count to be exact.
     const deferred = item.deferredWork?.itemCount;
-    if (step === null) {
-      if (deferred !== undefined) deferredCount += deferred;
-      continue;
-    }
+    if (deferred !== undefined) deferredCount += deferred - 1;
+    if (step === null) continue;
     steps.push(settleStep(step, runStatus));
     itemTypes.push(item.type);
-    if (deferred !== undefined) deferredCount += deferred - 1;
   }
   return { steps, itemTypes, deferredCount };
 }
@@ -333,4 +344,18 @@ export function runWork(projection: OrchestrationV2ThreadProjection): RunWork {
       hasFailure: summary.hasFailure || run.status === "failed",
     },
   };
+}
+
+/**
+ * A group's bots run on their members' threads, not the group thread, which holds
+ * only mirrored messages. Shows the speaking member's work in progress. A settled
+ * row would be that member's previous turn while the next one is queued.
+ */
+export function groupRunWork(input: {
+  readonly roundLive: boolean;
+  readonly memberProjection: OrchestrationV2ThreadProjection | null;
+}): RunWork {
+  if (!input.roundLive || input.memberProjection === null) return IDLE_RUN_WORK;
+  const work = runWork(input.memberProjection);
+  return work.phase === "working" ? work : IDLE_RUN_WORK;
 }
