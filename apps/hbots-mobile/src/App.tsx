@@ -38,6 +38,7 @@ import { describeSignOut, revokeRemoteSession } from "./signOut";
 import { UnpairedShareNotice } from "./share/UnpairedShareNotice";
 import { unpairedShareMessage } from "./share/unpairedShare";
 import { useUnpairedShare } from "./share/useUnpairedShare";
+import { AppLockGate } from "./security/AppLockGate";
 import { AppShell } from "./shell/AppShell";
 import { COLORS } from "./theme";
 import {
@@ -460,16 +461,18 @@ function App() {
     <AppAtomRegistryProvider>
       <SafeAreaProvider>
         {screen.kind === "ready" ? (
-          <AppShell
-            native={screen.native}
-            installedVersion={installedVersion}
-            update={update}
-            latest={latest}
-            onCheckNow={() => void checkForUpdate(screen.session, true)}
-            onInstall={() => void confirmUpdateInstall()}
-            onOpenPermission={() => void openInstallPermission()}
-            onSignOut={() => confirmSignOut(screen.session)}
-          />
+          <AppLockGate>
+            <AppShell
+              native={screen.native}
+              installedVersion={installedVersion}
+              update={update}
+              latest={latest}
+              onCheckNow={() => void checkForUpdate(screen.session, true)}
+              onInstall={() => void confirmUpdateInstall()}
+              onOpenPermission={() => void openInstallPermission()}
+              onSignOut={() => confirmSignOut(screen.session)}
+            />
+          </AppLockGate>
         ) : screen.kind === "unpaired" ? (
           <View style={styles.flex}>
             <OnboardingScreen

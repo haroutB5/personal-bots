@@ -50,6 +50,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-secure-store",
     "expo-system-ui",
+    "expo-local-authentication",
     [
       "expo-camera",
       {

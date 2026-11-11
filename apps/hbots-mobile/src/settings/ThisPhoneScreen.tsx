@@ -1,8 +1,13 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Alert, StyleSheet, Text, View } from "react-native";
 
 import type { AndroidRelease } from "../compat";
 import { useNow } from "../chat/useNow";
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { LOCK_CHOICES, choiceOfLock, lockFromChoice, lockLabel } from "../security/appLock";
+import { hasScreenLock } from "../security/deviceAuth";
+import { saveLock, useLockSetting } from "../security/lockSetting";
+import { ChoiceSheet } from "../sheets/ChoiceSheet";
 import { tokens } from "../shell/tokens";
 import { sanitizeUpdateNotes } from "../updateNotes";
 import { describeLastCheck, describeUpdate } from "../updateView";
@@ -45,6 +50,25 @@ export function ThisPhoneScreen({
   const label = native.deviceLabel;
   const notifications = phoneNotificationState(push.data?.devices ?? null, label);
   const now = useNow();
+  const lock = useLockSetting();
+  const [choosingLock, setChoosingLock] = useState(false);
+  const chooseLock = (value: string) => {
+    const next = lockFromChoice(value);
+    if (next.kind === "off") {
+      void saveLock(next);
+      return;
+    }
+    void hasScreenLock().then((ready) => {
+      if (ready) {
+        void saveLock(next);
+      } else {
+        Alert.alert(
+          "Set up a screen lock first",
+          "Add a fingerprint, PIN, pattern or password in your phone's settings, then turn on the app lock.",
+        );
+      }
+    });
+  };
   const description = describeUpdate(snapshot, latest);
   const notes = sanitizeUpdateNotes(latest?.notes);
   const action =
@@ -75,6 +99,16 @@ export function ThisPhoneScreen({
             last
           />
         ) : null}
+      </Section>
+
+      <Section label="Security">
+        <Row
+          title="App lock"
+          hint="Ask for your fingerprint, face or phone PIN when you come back"
+          value={lockLabel(lock)}
+          onPress={() => setChoosingLock(true)}
+          last
+        />
       </Section>
 
       <Section label="Update">
@@ -111,6 +145,14 @@ export function ThisPhoneScreen({
         hbots checks for updates when it opens and every six hours while open. An update installs
         only after ten minutes in the background.
       </SectionNote>
+      <ChoiceSheet
+        visible={choosingLock}
+        title="App lock"
+        choices={LOCK_CHOICES}
+        value={choiceOfLock(lock)}
+        onSelect={chooseLock}
+        onClose={() => setChoosingLock(false)}
+      />
     </SettingsPage>
   );
 }
