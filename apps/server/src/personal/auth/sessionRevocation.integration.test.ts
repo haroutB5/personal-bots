@@ -65,20 +65,24 @@ const openSocket = (makeWebSocket: (url: string) => Socket.WebSocketLike, url: s
       }),
   );
 
-const closed = (socket: Socket.WebSocketLike) =>
-  Effect.promise(
-    () =>
-      new Promise<Closed>((resolve) => {
-        socket.addEventListener(
-          "close",
-          (event) => {
-            const closeEvent = event as { readonly code: number; readonly reason: string };
-            resolve({ code: closeEvent.code, reason: closeEvent.reason });
-          },
-          { once: true },
-        );
-      }),
-  );
+// Attaches the close listener when this effect runs, not when the returned wait
+// is awaited. The server can write the 4401 close before the HTTP answer to the
+// revoke arrives, so a listener attached after the action would miss the event
+// and the wait would never finish. Run it before the action, await the result after.
+const watchClose = (socket: Socket.WebSocketLike) =>
+  Effect.sync(() => {
+    const result = new Promise<Closed>((resolve) => {
+      socket.addEventListener(
+        "close",
+        (event) => {
+          const closeEvent = event as { readonly code: number; readonly reason: string };
+          resolve({ code: closeEvent.code, reason: closeEvent.reason });
+        },
+        { once: true },
+      );
+    });
+    return Effect.promise(() => result);
+  });
 
 it.live("17 revoke cases: /ws close, renewed-first, isolation, expiry, HTTP and devices", () =>
   Effect.gen(function* () {
@@ -131,7 +135,7 @@ it.live("17 revoke cases: /ws close, renewed-first, isolation, expiry, HTTP and 
     // 1. An idle socket closes with 4401 when its session is revoked.
     {
       const socket = yield* openSocket(makeWebSocket, yield* ticketUrl(first.sessionId));
-      const closing = closed(socket);
+      const closing = yield* watchClose(socket);
       const response = yield* post("/api/auth/session/revoke", first.token);
       expect(response.status).toBe(200);
       const close = yield* closing;
@@ -162,7 +166,7 @@ it.live("17 revoke cases: /ws close, renewed-first, isolation, expiry, HTTP and 
     // 4. A socket keeps closing after a same-row renewal (the stale-expiry bug).
     {
       const socket = yield* openSocket(makeWebSocket, yield* ticketUrl(renewed.phone.sessionId));
-      const closing = closed(socket);
+      const closing = yield* watchClose(socket);
       const response = yield* post("/api/auth/session/revoke", renewed.token);
       expect(response.status).toBe(200);
       expect((yield* closing).code).toBe(4401);
@@ -175,7 +179,7 @@ it.live("17 revoke cases: /ws close, renewed-first, isolation, expiry, HTTP and 
       const revoked = yield* issuePhone("phone-revoked");
       const otherSocket = yield* openSocket(makeWebSocket, yield* ticketUrl(other.sessionId));
       const revokedSocket = yield* openSocket(makeWebSocket, yield* ticketUrl(revoked.sessionId));
-      const revokedClosing = closed(revokedSocket);
+      const revokedClosing = yield* watchClose(revokedSocket);
       const response = yield* post("/api/auth/session/revoke", revoked.token);
       expect(response.status).toBe(200);
       expect((yield* revokedClosing).code).toBe(4401);
@@ -188,7 +192,7 @@ it.live("17 revoke cases: /ws close, renewed-first, isolation, expiry, HTTP and 
     {
       const short = yield* issuePhone("phone-expiring", Duration.seconds(1));
       const socket = yield* openSocket(makeWebSocket, yield* ticketUrl(short.sessionId));
-      const closing = closed(socket);
+      const closing = yield* watchClose(socket);
       expect((yield* closing).code).toBe(4401);
       cases.push("expiry closes 4401");
     }
@@ -399,7 +403,7 @@ it.live(
       const revokedSocket = yield* connect(revoked.sessionId);
       const keptSocket = yield* connect(kept.sessionId);
 
-      const closing = closed(revokedSocket);
+      const closing = yield* watchClose(revokedSocket);
       const revokedAtMs = Date.now();
       yield* repository.revoke({ sessionId: revoked.sessionId, revokedAt: yield* DateTime.now });
       const close = yield* closing.pipe(Effect.timeout(Duration.seconds(6)));
