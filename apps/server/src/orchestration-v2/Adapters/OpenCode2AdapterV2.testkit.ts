@@ -225,7 +225,7 @@ export const replayServer = (
     };
     const borrowers = options?.borrowers;
     const connections = options?.connections;
-    const lend = <A, E, R>(use: (connection: typeof connection) => Effect.Effect<A, E, R>) =>
+    const lend = <A, E, R>(use: (lent: typeof connection) => Effect.Effect<A, E, R>) =>
       connections === undefined
         ? use(connection)
         : Effect.acquireUseRelease(
