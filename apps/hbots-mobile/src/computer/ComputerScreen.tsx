@@ -270,8 +270,8 @@ export function ComputerScreen({
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- the toolbar address follows the embedded view
-    if (toolbar.address !== address) setAddress(toolbar.address);
-  }, [toolbar.address, address]);
+    setAddress(toolbar.address);
+  }, [toolbar.address]);
 
   const selectSource = (source: ComputerSource) => {
     setPrefs({ auto: false, pinned: source });
