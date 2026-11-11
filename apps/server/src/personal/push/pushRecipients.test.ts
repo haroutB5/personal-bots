@@ -1,12 +1,14 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
 import { purgeDeadPushRecipients, purgeRevokedPushRecipients } from "./pushRecipients.ts";
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  yield* TestClock.setTime(Date.parse("2026-06-01T00:00:00Z"));
   const session = (id: string, revokedAt: string | null, expiresAt: string) =>
     sql`
       INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at, revoked_at)
