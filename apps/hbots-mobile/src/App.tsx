@@ -34,6 +34,9 @@ import { clearSession, loadSession, saveSession, type StoredSession } from "./se
 import { authMethodOf } from "./sessionAuth";
 import { createSessionLifetime } from "./sessionLifetime";
 import { describeSignOut, revokeRemoteSession } from "./signOut";
+import { UnpairedShareNotice } from "./share/UnpairedShareNotice";
+import { unpairedShareMessage } from "./share/unpairedShare";
+import { useUnpairedShare } from "./share/useUnpairedShare";
 import { AppShell } from "./shell/AppShell";
 import { COLORS } from "./theme";
 import {
@@ -118,6 +121,8 @@ function App() {
     installedVersion,
     update?.rejected ?? null,
   );
+  const unpairedShare = useUnpairedShare(screen.kind);
+  const unpairedShareText = unpairedShareMessage(unpairedShare.share);
   const pairingNotice =
     screen.kind !== "unpaired"
       ? null
@@ -462,18 +467,26 @@ function App() {
             onSignOut={() => confirmSignOut(screen.session)}
           />
         ) : screen.kind === "unpaired" ? (
-          <OnboardingScreen
-            state={pairing}
-            dispatch={dispatchPairing}
-            defaultLabel={Device.modelName ?? "This phone"}
-            notice={pairingNotice}
-            onUpdate={() =>
-              Alert.alert(
-                "Update hbots",
-                "Install the newest hbots from your laptop, then pair this phone again.",
-              )
-            }
-          />
+          <View style={styles.flex}>
+            <OnboardingScreen
+              state={pairing}
+              dispatch={dispatchPairing}
+              defaultLabel={Device.modelName ?? "This phone"}
+              notice={pairingNotice}
+              onUpdate={() =>
+                Alert.alert(
+                  "Update hbots",
+                  "Install the newest hbots from your laptop, then pair this phone again.",
+                )
+              }
+            />
+            {unpairedShareText === null ? null : (
+              <UnpairedShareNotice
+                message={unpairedShareText}
+                onOpenSignIn={unpairedShare.dismiss}
+              />
+            )}
+          </View>
         ) : (
           <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
             <View style={styles.pairScreen}>

@@ -12,8 +12,16 @@ import {
 import { deleteOutboxBlobs, putOutboxBlobs } from "@hbots/personal-client/composer/outboxBlobs";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/composerText";
 
+import type { StartChatResult } from "../chat/useStartChat";
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import type { ShareMessage } from "./pickerModel";
+import {
+  SHARE_MAX_BYTES,
+  buildShareMessage,
+  sendFailed,
+  sendSucceeded,
+  type PickerState,
+  type ShareMessage,
+} from "./pickerModel";
 
 const MAX_TITLE_SEED = 80;
 
@@ -92,4 +100,30 @@ export async function queueShare(input: {
     return { ok: false, error: "Couldn't save that message on this device." };
   }
   return { ok: true };
+}
+
+/**
+ * The picker's send step: a confirm state in, the next state out. Any failure
+ * returns to confirm with content and note intact, and nothing is queued
+ * unless every check passed. The caller discards the copied files on success.
+ */
+export async function sendShare(input: {
+  readonly state: PickerState;
+  readonly bots: ReadonlyArray<PersonalBot>;
+  readonly native: NativePersonal;
+  readonly start: (botId: string) => Promise<StartChatResult>;
+}): Promise<PickerState> {
+  const { state, bots, native, start } = input;
+  if (state.step !== "confirm") return state;
+  const bot = bots.find((candidate) => candidate.botId === state.botId);
+  if (bot === undefined) return sendFailed(state, "That bot isn't available any more.");
+  const message = buildShareMessage(state.intent, state.note);
+  if (message.files.some((file) => file.bytes > SHARE_MAX_BYTES)) {
+    return sendFailed(state, "That file is over 25 MB. Share a smaller one.");
+  }
+  const started = await start(bot.botId as string);
+  if (started.kind === "failed") return sendFailed(state, "Couldn't send. Try again.");
+  const queued = await queueShare({ native, bot, threadId: started.threadId, message });
+  if (!queued.ok) return sendFailed(state, queued.error);
+  return sendSucceeded(bot.botId as string, started.threadId);
 }

@@ -175,7 +175,7 @@ export function emptySearchText(query: string): string {
 export function blockedMessage(reason: BlockedReason): string {
   switch (reason) {
     case "not-paired":
-      return "Pair this phone first.";
+      return "hbots isn't signed in on this phone. What you shared was not kept. Sign in, then share it again.";
     case "offline-attachments":
       return "Offline. Photos and files send when you're connected.";
     case "too-large":

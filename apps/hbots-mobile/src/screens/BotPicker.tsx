@@ -19,21 +19,18 @@ import {
   backToPick,
   beginSend,
   blockedMessage,
-  buildShareMessage,
   emptySearchText,
   filterBots,
   intakeShare,
   openPicker,
   pickBot,
   previewLabel,
-  sendFailed,
-  sendSucceeded,
   setNote,
   setQuery,
   type PickerIntent,
   type PickerState,
 } from "../share/pickerModel";
-import { queueShare } from "../share/sendShare";
+import { sendShare } from "../share/sendShare";
 import { discardShare, readShare } from "../share/shareIntake";
 import { BotAvatar } from "../shell/BotAvatar";
 import { ScreenHeader } from "../shell/ScreenHeader";
@@ -74,25 +71,10 @@ export function BotPicker({
 
   const send = async () => {
     if (state.step !== "confirm") return;
-    const bot = bots.find((candidate) => candidate.botId === state.botId);
-    if (bot === undefined) {
-      setState(sendFailed(state, "That bot isn't available any more."));
-      return;
-    }
     setState(beginSend(state));
-    const message = buildShareMessage(state.intent, state.note);
-    const started = await start(bot.botId as string);
-    if (started.kind === "failed") {
-      setState(sendFailed(state, "Couldn't send. Try again."));
-      return;
-    }
-    const queued = await queueShare({ native, bot, threadId: started.threadId, message });
-    if (!queued.ok) {
-      setState(sendFailed(state, queued.error));
-      return;
-    }
-    discardShare(shareId);
-    setState(sendSucceeded(bot.botId as string, started.threadId));
+    const next = await sendShare({ state, bots, native, start });
+    if (next.step === "sent") discardShare(shareId);
+    setState(next);
   };
 
   const title = intent?.kind === "ask" ? "Ask a bot" : "Send to";
