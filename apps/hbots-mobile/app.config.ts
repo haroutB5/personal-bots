@@ -50,6 +50,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-secure-store",
     "expo-system-ui",
+    "expo-local-authentication",
     [
       "expo-camera",
       {
@@ -72,7 +73,11 @@ const config: ExpoConfig = {
     ],
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidReleaseSigning.cjs",
+    "./plugins/withDarkSplash.cjs",
     "./plugins/withSharedHttpClient.cjs",
+    "./plugins/withCtoShortcut.cjs",
+    "./plugins/withShareTarget.cjs",
+    "./plugins/withFirebase.cjs",
   ],
 };
 

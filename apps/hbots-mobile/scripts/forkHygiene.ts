@@ -39,8 +39,8 @@ export const FORBIDDEN_RULES: ReadonlyArray<ForbiddenRule> = [
   {
     id: "upstream-relay-push",
     pattern:
-      /remoteRegistration|getDevicePushTokenAsync|googleServicesFile|google-services|relay\.t3\.codes|T3CODE_RELAY_URL/,
-    why: "Upstream relay push registration. Push comes later through the hbots server.",
+      /remoteRegistration|getDevicePushTokenAsync|googleServicesFile|relay\.t3\.codes|T3CODE_RELAY_URL/,
+    why: "Upstream relay push registration. Phone push goes through the hbots server and modules/hbots-notify.",
   },
   {
     id: "eas-project",

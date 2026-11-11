@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <application>
+    <receiver android:name="expo.modules.hbotsnotify.NotificationActionReceiver" android:exported="false"/>
+    <!-- Test hook for a build with no Firebase: a shell broadcast feeds the same handler a push would.
+         Held by the shell only (DUMP), and it does nothing in a build that has Firebase. -->
+    <receiver
+      android:name="expo.modules.hbotsnotify.DebugPushReceiver"
+      android:exported="true"
+      android:permission="android.permission.DUMP">
+      <intent-filter>
+        <action android:name="expo.modules.hbotsnotify.DEBUG_PUSH"/>
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

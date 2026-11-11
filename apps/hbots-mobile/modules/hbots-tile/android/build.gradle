@@ -1,0 +1,26 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.hbotstile'
+version = '0.0.1'
+
+android {
+  namespace 'expo.modules.hbotstile'
+  defaultConfig {
+    minSdkVersion 26
+    versionCode 1
+    versionName '0.0.1'
+  }
+}
+
+android {
+  testOptions {
+    unitTests.returnDefaultValues = true
+  }
+}
+
+dependencies {
+  testImplementation 'junit:junit:4.13.2'
+}

@@ -16,9 +16,12 @@ import type { AndroidRelease } from "../compat";
 import { chatComputerTarget } from "../chat/chatComputer";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
+import { useLinkGate } from "../security/useLinkGate";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
 import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
+import { BotNewChatScreen } from "../screens/BotNewChatScreen";
+import { BotPicker } from "../screens/BotPicker";
 import { GroupConversationScreen } from "../groups/GroupConversationScreen";
 import { NewGroupScreen } from "../groups/NewGroupScreen";
 import { NewTeamScreen } from "../teams/NewTeamScreen";
@@ -68,6 +71,8 @@ export type RootStackParamList = {
   Chats: { readonly botId: string };
   Bot: { readonly botId: string };
   BotNew: undefined;
+  BotNewChat: { readonly botId: string };
+  Share: { readonly shareId: string };
   BotEdit: { readonly botId: string };
   Group: { readonly groupId: string };
   GroupNew: undefined;
@@ -183,6 +188,10 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Bot", params: { botId: route.botId } };
     case "botNew":
       return { name: "BotNew" };
+    case "botNewChat":
+      return { name: "BotNewChat", params: { botId: route.botId } };
+    case "share":
+      return { name: "Share", params: { shareId: route.shareId } };
     case "botEdit":
       return { name: "BotEdit", params: { botId: route.botId } };
     case "group":
@@ -238,13 +247,15 @@ function Shell({ props }: { readonly props: AppShellProps }) {
     navigationRef.reset({ index: routes.length - 1, routes });
   }, []);
 
+  // Every link from outside goes through the app lock gate: while locked it is held, not acted on.
+  const receiveLink = useLinkGate(openLink);
   useEffect(() => {
     void Linking.getInitialURL().then((url) => {
-      if (url !== null) openLink(url);
+      if (url !== null) receiveLink(url);
     });
-    const subscription = Linking.addEventListener("url", (event) => openLink(event.url));
+    const subscription = Linking.addEventListener("url", (event) => receiveLink(event.url));
     return () => subscription.remove();
-  }, [openLink]);
+  }, [receiveLink]);
 
   return (
     <NavigationContainer
@@ -329,6 +340,26 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               onLeave={() => navigation.goBack()}
               onDeleted={() => navigation.popToTop()}
               onOpenTeam={() => navigation.navigate("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="BotNewChat">
+          {({ navigation, route }) => (
+            <BotNewChatScreen
+              native={props.native}
+              botId={route.params.botId}
+              onBack={() => navigation.goBack()}
+              onStarted={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Share">
+          {({ navigation, route }) => (
+            <BotPicker
+              native={props.native}
+              shareId={route.params.shareId}
+              onClose={() => navigation.goBack()}
+              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
             />
           )}
         </Stack.Screen>

@@ -111,8 +111,13 @@ const exported = components
   .filter((component) => component.exported === "true")
   .map((component) => component.name);
 // ProfileInstallReceiver comes from the baseline-profile dependency the scaffold already shipped.
+// ShareActivity is the share target and CtoTileService the Quick Settings tile; both must be exported.
+// DebugPushReceiver is the no-Firebase test hook. It must be guarded by the DUMP permission, checked below.
 const expectedExported = [
   "com.haroutb5.hbots.MainActivity",
+  "expo.modules.hbotsshare.ShareActivity",
+  "expo.modules.hbotstile.CtoTileService",
+  "expo.modules.hbotsnotify.DebugPushReceiver",
   "androidx.profileinstaller.ProfileInstallReceiver",
 ];
 const exportedOk =
@@ -122,6 +127,12 @@ failed ||= !exportedOk;
 console.log(
   `${exportedOk ? "ok  " : "FAIL"} exported=${exported.join(",")} (expected ${expectedExported.join(",")})`,
 );
+
+const debugReceiverTag =
+  manifest.match(/<receiver\b[^>]*expo\.modules\.hbotsnotify\.DebugPushReceiver[^>]*>/u)?.[0] ?? "";
+const debugGuarded = debugReceiverTag.includes('android:permission="android.permission.DUMP"');
+failed ||= !debugGuarded;
+console.log(`${debugGuarded ? "ok  " : "FAIL"} DebugPushReceiver guarded by DUMP`);
 
 const receiver = components.find(
   (component) => component.name === "expo.modules.hbotsupdater.UpdateInstallReceiver",

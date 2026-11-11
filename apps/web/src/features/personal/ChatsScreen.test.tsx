@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { BotAvatar } from "./BotAvatar";
 import { ChatsScreen } from "./ChatsScreen";
-import { buildChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
+import { buildChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
+import { writeChatsSnapshot } from "./chatsSnapshot";
 import { SwipeToDelete } from "./SwipeToDelete";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);

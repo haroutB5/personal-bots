@@ -25,15 +25,24 @@ import { classifyFailure } from "./failure";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
 import { failureFor, reducePairing } from "./onboarding/model";
 import { inspectServer, pair } from "./pairing";
+import { PushBridge } from "./notifications/PushBridge";
+import { pushController } from "./notifications/pushRuntime";
 import { AppAtomRegistryProvider } from "./personal/atomRegistry";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
+import { getOutboxSnapshot } from "@hbots/personal-client/composer/outbox";
+import { wipeLocalData } from "./platform/nativePorts";
 import { renewSession } from "./renew";
 import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
 import { loadServer, saveServer } from "./serverMemory";
 import { clearSession, loadSession, saveSession, type StoredSession } from "./session";
 import { authMethodOf } from "./sessionAuth";
 import { createSessionLifetime } from "./sessionLifetime";
-import { describeSignOut, revokeRemoteSession } from "./signOut";
+import { describeSignOut, revokeRemoteSession, signOutConfirmBody } from "./signOut";
+import { UnpairedShareNotice } from "./share/UnpairedShareNotice";
+import { unpairedShareMessage } from "./share/unpairedShare";
+import { useShareSweepAtStart } from "./share/useShareSweep";
+import { useUnpairedShare } from "./share/useUnpairedShare";
+import { AppLockGate } from "./security/AppLockGate";
 import { AppShell } from "./shell/AppShell";
 import { COLORS } from "./theme";
 import {
@@ -118,6 +127,9 @@ function App() {
     installedVersion,
     update?.rejected ?? null,
   );
+  useShareSweepAtStart();
+  const unpairedShare = useUnpairedShare(screen.kind);
+  const unpairedShareText = unpairedShareMessage(unpairedShare.share);
   const pairingNotice =
     screen.kind !== "unpaired"
       ? null
@@ -151,6 +163,8 @@ function App() {
         native.client.ports.kv.removeItem(CHATS_SNAPSHOT_KEY);
       }
       disposeNative();
+      await wipeLocalData();
+      void pushController.teardown({ remote: false });
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
       setScreen(next);
@@ -272,6 +286,7 @@ function App() {
         return;
       }
       if (session === null) {
+        await wipeLocalData();
         const server = await loadServer();
         if (!live) {
           return;
@@ -392,8 +407,13 @@ function App() {
   const signOut = useCallback(
     async (session: StoredSession) => {
       const native = nativeRef.current;
-      disposeNative();
+      // The server forgets this phone while the connection is still up. It is capped at a few
+      // seconds, and the screen already says "Signing out" while it runs.
+      const forgotten = pushController.teardown({ remote: true });
       setScreen({ kind: "connecting", step: "Signing out" });
+      await forgotten;
+      disposeNative();
+      await wipeLocalData();
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
       if (native !== null) {
@@ -424,7 +444,7 @@ function App() {
     (session: StoredSession) => {
       Alert.alert(
         "Sign out this phone?",
-        "This removes the sign-in, cached chats and notifications from this phone. Your bots keep running.",
+        signOutConfirmBody(getOutboxSnapshot().entries.length),
         [
           { text: "Cancel", style: "cancel" },
           { text: "Sign out", style: "destructive", onPress: () => void signOut(session) },
@@ -451,29 +471,42 @@ function App() {
     <AppAtomRegistryProvider>
       <SafeAreaProvider>
         {screen.kind === "ready" ? (
-          <AppShell
-            native={screen.native}
-            installedVersion={installedVersion}
-            update={update}
-            latest={latest}
-            onCheckNow={() => void checkForUpdate(screen.session, true)}
-            onInstall={() => void confirmUpdateInstall()}
-            onOpenPermission={() => void openInstallPermission()}
-            onSignOut={() => confirmSignOut(screen.session)}
-          />
+          <>
+            <PushBridge native={screen.native} appVersion={installedVersion} />
+            <AppLockGate onSignOut={() => confirmSignOut(screen.session)}>
+              <AppShell
+                native={screen.native}
+                installedVersion={installedVersion}
+                update={update}
+                latest={latest}
+                onCheckNow={() => void checkForUpdate(screen.session, true)}
+                onInstall={() => void confirmUpdateInstall()}
+                onOpenPermission={() => void openInstallPermission()}
+                onSignOut={() => confirmSignOut(screen.session)}
+              />
+            </AppLockGate>
+          </>
         ) : screen.kind === "unpaired" ? (
-          <OnboardingScreen
-            state={pairing}
-            dispatch={dispatchPairing}
-            defaultLabel={Device.modelName ?? "This phone"}
-            notice={pairingNotice}
-            onUpdate={() =>
-              Alert.alert(
-                "Update hbots",
-                "Install the newest hbots from your laptop, then pair this phone again.",
-              )
-            }
-          />
+          <View style={styles.flex}>
+            <OnboardingScreen
+              state={pairing}
+              dispatch={dispatchPairing}
+              defaultLabel={Device.modelName ?? "This phone"}
+              notice={pairingNotice}
+              onUpdate={() =>
+                Alert.alert(
+                  "Update hbots",
+                  "Install the newest hbots from your laptop, then pair this phone again.",
+                )
+              }
+            />
+            {unpairedShareText === null ? null : (
+              <UnpairedShareNotice
+                message={unpairedShareText}
+                onOpenSignIn={unpairedShare.dismiss}
+              />
+            )}
+          </View>
         ) : (
           <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
             <View style={styles.pairScreen}>

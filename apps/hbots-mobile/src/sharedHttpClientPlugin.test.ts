@@ -36,6 +36,15 @@ describe("withSharedHttpClient", () => {
     expect(output).toContain(".connectTimeout(3, TimeUnit.SECONDS)");
   });
 
+  it("writes no response to a disk cache", () => {
+    const output = applyToMainApplication(TEMPLATE);
+    const builder = output.slice(
+      output.indexOf("OkHttpClientProvider.createClientBuilder(this)"),
+      output.indexOf(".build()"),
+    );
+    expect(builder).toContain(".cache(null)");
+  });
+
   it("refreshes a cached host at most once at a time", () => {
     const output = applyToMainApplication(TEMPLATE);
     expect(output).toContain("private val refreshing = ConcurrentHashMap<String, Boolean>()");

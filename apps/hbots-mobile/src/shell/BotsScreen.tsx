@@ -5,6 +5,7 @@ import {
   partitionPinnedSummaries,
   type BotSummary,
 } from "@hbots/personal-client/bots/botSummaries";
+import { useCtoTilePublisher } from "../tile/ctoTile";
 import {
   buildChatsSnapshot,
   partitionPinnedSnapshotRows,
@@ -331,6 +332,7 @@ export function BotsScreen({
 }) {
   const environmentId = native.environmentId;
   const list = native.bots.usePersonalBotsList(environmentId);
+  useCtoTilePublisher(list.data?.bots ?? null);
   const routines = native.bots.usePersonalRoutinesList(environmentId);
   const groupsList = native.groups.usePersonalGroupsList(environmentId);
   const { feed: groupsFeed } = native.groups.usePersonalGroupsFeed(environmentId);

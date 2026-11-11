@@ -149,6 +149,22 @@ describe("deep links", () => {
     );
   });
 
+  it("opens a new chat for the CTO link and for an encoded bot id", () => {
+    expect(parseDeepLink("hbots://bot/cto?new=1")).toEqual(
+      stack(bots, { kind: "botNewChat", botId: "cto" }),
+    );
+    expect(parseDeepLink("hbots://bot/b%201?new=1")).toEqual(
+      stack(bots, { kind: "botNewChat", botId: "b 1" }),
+    );
+  });
+
+  it("opens the bot picker for a share id and ignores a bare share link", () => {
+    expect(parseDeepLink("hbots://share/abc123")).toEqual(
+      stack(bots, { kind: "share", shareId: "abc123" }),
+    );
+    expect(parseDeepLink("hbots://share")).toBeNull();
+  });
+
   it("ignores unknown paths and other schemes", () => {
     expect(parseDeepLink("hbots://nope/x")).toBeNull();
     expect(parseDeepLink("https://example.com/chat/b1/t1")).toBeNull();

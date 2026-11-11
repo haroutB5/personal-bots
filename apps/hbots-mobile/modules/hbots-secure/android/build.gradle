@@ -13,4 +13,11 @@ android {
     versionCode 1
     versionName '0.0.1'
   }
+  testOptions {
+    unitTests.returnDefaultValues = true
+  }
+}
+
+dependencies {
+  testImplementation 'junit:junit:4.13.2'
 }

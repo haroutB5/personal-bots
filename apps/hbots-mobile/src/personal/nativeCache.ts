@@ -10,9 +10,20 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { readDecryptedText, writeEncryptedText } from "../platform/secureStorage";
 import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 
-const CACHE_DIRECTORY = "hbots-thread-cache";
+export const CACHE_DIRECTORY = "hbots-thread-cache";
+
+/** Set by a wipe: a save that was already running cannot recreate the folder after it. */
+let sealed = false;
+
+/** Deletes every cached chat and the folder itself. Nothing is written again until a new session starts. */
+export function wipeThreadCache(): void {
+  sealed = true;
+  const root = new Directory(Paths.document, CACHE_DIRECTORY);
+  if (root.exists) root.delete();
+}
 
 function cacheRoot(): Directory {
   const root = new Directory(Paths.document, CACHE_DIRECTORY);
@@ -38,17 +49,35 @@ function persistenceError(
   });
 }
 
+/**
+ * The last cached detail of a thread, or none. A file that cannot be read back
+ * (an old plaintext file, a lost key, damage) is deleted and counts as a miss,
+ * so the thread is fetched again instead of failing.
+ */
 export async function readCachedThread(
   environmentId: string,
   threadId: string,
 ): Promise<Option.Option<ThreadSnapshot>> {
+  if (sealed) return Option.none();
   const file = threadFile(environmentId, threadId);
   if (!file.exists) return Option.none();
-  return Option.some(decodeThreadSnapshotJson(JSON.parse(await file.text()) as unknown));
+  const text = await readDecryptedText(file.uri);
+  if (text !== null) {
+    try {
+      return Option.some(decodeThreadSnapshotJson(JSON.parse(text) as unknown));
+    } catch {
+      // Falls through: decrypted but not a snapshot, so it is dropped like any unreadable file.
+    }
+  }
+  if (file.exists) file.delete();
+  return Option.none();
 }
 
+/** Writes the snapshot encrypted. Throws when the Keystore helper is missing: nothing is cached in the clear. */
 export function writeCachedThread(environmentId: string, snapshot: ThreadSnapshot): void {
-  threadFile(environmentId, snapshot.projection.thread.id).write(JSON.stringify(snapshot));
+  if (sealed) return;
+  const file = threadFile(environmentId, snapshot.projection.thread.id);
+  writeEncryptedText(file.uri, JSON.stringify(snapshot));
 }
 
 /**
@@ -57,6 +86,7 @@ export function writeCachedThread(environmentId: string, snapshot: ThreadSnapsho
  * cached open under the 150 ms budget.
  */
 export function createNativeEnvironmentCache(): Persistence.EnvironmentCacheStore["Service"] {
+  sealed = false;
   return Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeed(Option.none<OrchestrationV2ShellSnapshot>()),
     saveShell: () => Effect.void,

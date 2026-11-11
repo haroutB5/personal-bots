@@ -42,6 +42,7 @@ import {
 import { confirmDestructive } from "../components/confirmDestructive";
 import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { useSecureScreen } from "../platform/secureScreen";
 import { PersonalFilePreviewSheet } from "../sheets/PersonalFilePreviewSheet";
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { BotAvatar } from "../shell/BotAvatar";
@@ -108,6 +109,7 @@ function Check({ checked }: { readonly checked: boolean }) {
 }
 
 export function FilesScreen({ native }: { readonly native: NativePersonal }) {
+  useSecureScreen(true);
   const environmentId = native.environmentId;
   const filesList = native.bots.usePersonalFiles(environmentId);
   const botsList = native.bots.usePersonalBotsList(environmentId);

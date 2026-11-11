@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   configureOutbox,
+  discardOutbox,
   enqueueOutboxEntry,
   getOutboxSnapshot,
   hasOutboxForThread,
@@ -405,5 +406,36 @@ describe("a removal the device refuses to write", () => {
     resetOutboxForTesting(device.storage);
     enqueueOutboxEntry(entry("a"));
     expect(getOutboxSnapshot().entries.map((item) => item.id)).toEqual(["a"]);
+  });
+});
+
+describe("discarding the queue on sign-out", () => {
+  afterEach(() => resetOutboxForTesting(undefined));
+
+  it("empties the queue and both storage keys, and says how many were dropped", () => {
+    const values = new Map<string, string>();
+    const device: OutboxStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => void values.set(key, value),
+      removeItem: (key) => void values.delete(key),
+    };
+    resetOutboxForTesting(device);
+    enqueueOutboxEntry(entry("a"));
+    enqueueOutboxEntry(entry("b", "t2"));
+    values.set(OUTBOX_REMOVED_STORAGE_KEY, '["gone"]');
+
+    expect(discardOutbox()).toBe(2);
+
+    expect(getOutboxSnapshot().entries).toEqual([]);
+    expect(values.has(OUTBOX_STORAGE_KEY)).toBe(false);
+    expect(values.has(OUTBOX_REMOVED_STORAGE_KEY)).toBe(false);
+    // A fresh page reads nothing back from the device.
+    resetOutboxForTesting(device);
+    expect(getOutboxSnapshot().entries).toEqual([]);
+  });
+
+  it("is safe on an empty queue", () => {
+    resetOutboxForTesting(memoryStorage());
+    expect(discardOutbox()).toBe(0);
   });
 });
