@@ -114,7 +114,7 @@ class ActionRunnerTest {
   @Test fun theBudgetStopsTheRetries() {
     var clock = 0L
     val http = FakeHttp(listOf(busy))
-    val outcome = ActionRunner.run(http, path, body, sleep = { clock += 20_000 }, now = { clock })
+    val outcome = ActionRunner.run(http, path, body, sleep = { clock += 40_000 }, now = { clock })
     assertEquals(ActionOutcome.Unconfirmed, outcome)
     assertEquals(2, http.calls.size)
   }
