@@ -64,7 +64,7 @@ export const makeBrowserControl = (
       tasks,
       viewers,
     } = core;
-    const { ensureLaunched, syncHumanViewport } = launch;
+    const { ensureLaunched, syncHumanViewport, syncScreencast } = launch;
     const {
       attempt,
       clearHelpForAgentSwitch,
@@ -244,6 +244,7 @@ export const makeBrowserControl = (
           (viewer) => viewer.sessionId === sessionId,
         );
         st.controlAbsentSince = null;
+        yield* syncScreencast;
         // Another device taking over drops the previous controller's phone viewport.
         yield* syncHumanViewport;
         if (!(before.ownerType === "human" && before.ownerId === sessionId)) {
@@ -364,6 +365,7 @@ export const makeBrowserControl = (
         st.controlViewerSeen = false;
         st.controlAbsentSince = null;
         // The agent gets its own viewport back before it can run another op.
+        yield* syncScreencast;
         yield* syncHumanViewport;
         if (before.ownerType === "human") {
           const finishedHelp = st.activeHelp;

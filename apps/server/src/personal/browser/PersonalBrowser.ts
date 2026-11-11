@@ -27,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { backendSettingFromEnvironment, type BrowserBackendSetting } from "./browserBackend.ts";
 import { type BrowserDriver, makePlaywrightDriver } from "./driver.ts";
 import { HostOperationError, type PersonalLoginFilledField } from "./pageOperations.ts";
 import { resolveBrowserUrl } from "./urlPolicy.ts";
@@ -212,6 +213,7 @@ export interface PersonalBrowserOptions {
    * agent (ms; default 60 000). 0 turns it off: control then stays until it is handed back.
    */
   readonly controlGraceMs?: number | undefined;
+  readonly backend?: BrowserBackendSetting | undefined;
 }
 
 /**
@@ -250,6 +252,7 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   headless: resolveBrowserHeadless(process.env),
   headlessAuto: !browserModePinned(),
   executablePath: process.env.T3CODE_PERSONAL_BROWSER_EXECUTABLE?.trim() || undefined,
+  backend: backendSettingFromEnvironment(process.env),
   // Kill switch: T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY=off stops the stream log lines.
   streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",
   // Kill switch: T3CODE_PERSONAL_BROWSER_WHEEL_FOLD=off sends the move and the wheel separately again.
@@ -274,8 +277,6 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
     process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS,
   ),
 });
-
-const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = (rawOptions: PersonalBrowserOptions) =>

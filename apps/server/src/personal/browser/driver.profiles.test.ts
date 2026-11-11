@@ -33,7 +33,10 @@ const fake = vi.hoisted(() => {
 });
 
 vi.mock("playwright-core", () => ({ chromium: { launchPersistentContext: fake.launch } }));
-vi.mock("node:fs/promises", () => ({ mkdir: vi.fn() }));
+vi.mock("node:fs/promises", () => ({
+  mkdir: vi.fn(),
+  access: async () => Promise.reject(new Error("ENOENT")),
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -22,13 +22,14 @@ import type { BrowserPage } from "./driver.ts";
 export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
   const {
     abandonHelp,
+    adoptsExistingPages,
     clearHelpForThread,
     lease,
     notify,
     openPage,
     options,
     originOf,
-    ownedPages,
+    pageOwners,
     persistProtections,
     previewManager,
     refreshCredentialProtection,
@@ -73,7 +74,9 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
     Effect.gen(function* () {
       if (runtime.activeTabId === tab.tabId) return;
       runtime.activeTabId = tab.tabId;
-      yield* attempt({}, () => tab.page.bringToFront()).pipe(Effect.ignore);
+      if (adoptsExistingPages) {
+        yield* attempt({}, () => tab.page.bringToFront()).pipe(Effect.ignore);
+      }
       yield* syncScreencast;
       yield* syncHumanViewport;
       yield* notify;
@@ -122,16 +125,16 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
             (error) => new HostOperationError("PreviewAutomationExecutionError", error.message),
           ),
         );
-      // Reuse Chrome's initial blank window page before opening another tab.
-      const owned = ownedPages();
-      const blank = context
-        .pages()
-        .find(
-          (page) =>
-            !owned.has(page) &&
-            !page.isClosed() &&
-            (page.url() === "about:blank" || page.url().startsWith("chrome://newtab")),
-        );
+      const blank = adoptsExistingPages
+        ? context
+            .pages()
+            .find(
+              (page) =>
+                pageOwners.ownerOf(page).kind === "owner" &&
+                !page.isClosed() &&
+                (page.url() === "about:blank" || page.url().startsWith("chrome://newtab")),
+            )
+        : undefined;
       // Compensate the preview registration when the page never materializes,
       // or every retry would orphan another row in the preview manager.
       const page =
@@ -153,6 +156,7 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
         dialogPromptText: null,
         loginOriginRevision: 0,
       };
+      pageOwners.recordBot(page, threadId);
       runtime.tabs.set(tab.tabId, tab);
       page.onClose(() => runFork(onTabPageClosed(tab)));
       page.onOriginChange?.(() => {

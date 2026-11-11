@@ -193,7 +193,9 @@ export const make = Effect.gen(function* () {
     query(
       "sensitiveOrigins",
       sql<{ readonly origin: string }>`
-        SELECT DISTINCT origin FROM personal_logins WHERE sensitive <> 0
+        SELECT origin FROM personal_logins WHERE sensitive <> 0
+        UNION
+        SELECT origin FROM personal_sensitive_sites
       `,
     ).pipe(Effect.map((rows) => rows.map((row) => row.origin)));
 
@@ -201,7 +203,9 @@ export const make = Effect.gen(function* () {
     query(
       "sensitiveSites",
       sql<{ readonly origin: string; readonly label: string }>`
-        SELECT DISTINCT origin, label FROM personal_logins WHERE sensitive <> 0
+        SELECT origin, label FROM personal_logins WHERE sensitive <> 0
+        UNION
+        SELECT origin, label FROM personal_sensitive_sites
       `,
     ).pipe(Effect.map((rows) => rows.map((row) => ({ origin: row.origin, label: row.label }))));
 

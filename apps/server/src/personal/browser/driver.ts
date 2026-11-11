@@ -19,9 +19,12 @@ import {
   type AdblockCounter,
   type AdblockStats,
 } from "./adblock.ts";
+import { sharedAttachError } from "./browserBackend.ts";
 import { resolveBrowserExecutable } from "./browserExecutable.ts";
 import { keepBrowserPriorityNormal } from "./browserPriority.ts";
+import { refuseImportedProfile } from "./importedProfile.ts";
 import { jpegSize } from "./jpegSize.ts";
+import { resolveSharedEndpoint } from "./sharedBrowser.ts";
 
 export interface ViewportSize {
   readonly width: number;
@@ -222,15 +225,26 @@ export interface BrowserPage {
   close(): Promise<void>;
 }
 
-export interface BrowserContextHandle {
+interface LiveBrowserBase {
   pages(): ReadonlyArray<BrowserPage>;
   newPage(): Promise<BrowserPage>;
-  /** Fires once when Chrome exits for any reason (crash, window closed, close()). */
   onClose(listener: () => void): void;
   /** Request and ad-blocking counts since launch. Absent on drivers without it. */
   adblockStats?(): AdblockStats;
+}
+
+export interface BrowserContextHandle extends LiveBrowserBase {
   close(): Promise<void>;
 }
+
+export interface SharedBrowserHandle extends LiveBrowserBase {
+  detach(): Promise<void>;
+}
+
+export type LiveBrowser = BrowserContextHandle | SharedBrowserHandle;
+
+export const releaseBrowser = (browser: LiveBrowser): Promise<void> =>
+  "detach" in browser ? browser.detach() : browser.close();
 
 export interface BrowserLaunchOptions {
   readonly userDataDir: string;
@@ -242,10 +256,16 @@ export interface BrowserLaunchOptions {
   readonly onDownloadSaved: (file: { readonly name: string; readonly path: string }) => void;
 }
 
-export interface BrowserDriver {
-  launch(options: BrowserLaunchOptions): Promise<BrowserContextHandle>;
+export interface BrowserAttachOptions {
+  readonly userDataDir: string;
 }
 
+export interface BrowserDriver {
+  launch(options: BrowserLaunchOptions): Promise<BrowserContextHandle>;
+  attach(options: BrowserAttachOptions): Promise<SharedBrowserHandle>;
+}
+
+const ATTACH_TIMEOUT_MS = 10_000;
 const RING_LIMIT = 50;
 const MAX_AX_NODES = 1_500;
 const screencastOptions = (profile: ScreencastProfile) =>
@@ -828,7 +848,60 @@ export interface PlaywrightDriverOptions {
 export const makePlaywrightDriver = (
   driverOptions: PlaywrightDriverOptions = {},
 ): BrowserDriver => ({
+  attach: async (options) => {
+    const endpoint = await resolveSharedEndpoint(options.userDataDir);
+    const { chromium } = await import("playwright-core");
+    const browser = await chromium
+      .connectOverCDP(endpoint.wsEndpoint, { noDefaults: true, timeout: ATTACH_TIMEOUT_MS })
+      .catch(() => {
+        throw sharedAttachError("port-file-stale");
+      });
+    const context = browser.contexts()[0];
+    if (context === undefined) {
+      await browser.close().catch(() => undefined);
+      throw sharedAttachError("port-file-stale");
+    }
+    const holdDialogsOpen = () => undefined;
+    context.on("dialog", holdDialogsOpen);
+    const counter = makeAdblockCounter(undefined, false);
+    const wrappers = new WeakMap<Playwright.Page, BrowserPage>();
+    const wrap = (page: Playwright.Page) => {
+      let wrapped = wrappers.get(page);
+      if (wrapped === undefined) {
+        wrapped = wrapPlaywrightPage(page, counter);
+        wrappers.set(page, wrapped);
+      }
+      return wrapped;
+    };
+    const mine = new Set<Playwright.Page>();
+    const adopt = (page: Playwright.Page) => {
+      mine.add(page);
+      page.on("popup", adopt);
+    };
+    return {
+      pages: () => [...mine].filter((page) => !page.isClosed()).map(wrap),
+      newPage: async () => {
+        const created = await context.newPage();
+        adopt(created);
+        const page = wrap(created);
+        await page.evaluate("undefined");
+        return page;
+      },
+      onClose: (listener) => {
+        browser.once("disconnected", listener);
+      },
+      detach: async () => {
+        await Promise.all(
+          [...mine]
+            .filter((page) => !page.isClosed())
+            .map((page) => page.close().catch(() => undefined)),
+        );
+        await browser.close();
+      },
+    };
+  },
   launch: async (options) => {
+    await refuseImportedProfile(options.userDataDir);
     const { chromium } = await import("playwright-core");
     const resolveExecutable =
       driverOptions.resolveExecutable ??
