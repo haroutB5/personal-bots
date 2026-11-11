@@ -119,6 +119,29 @@ const subscription = (endpoint: string) => {
   };
 };
 
+const WEB_SESSION = "session-web";
+
+/** A live sign-in, created once; a second call for the same id leaves it as it is. */
+const ensureSession = (sessionId: string, subject = "owner") =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT OR IGNORE INTO auth_sessions (
+        session_id, subject, scopes, method, issued_at, expires_at
+      )
+      VALUES (${sessionId}, ${subject}, '[]', 'one-time-token',
+              '2026-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z')
+    `;
+  });
+
+/** What the socket does: the session id is the connection's, never part of the input. */
+const subscribeWeb = (input: ReturnType<typeof subscription>, sessionId: string = WEB_SESSION) =>
+  Effect.gen(function* () {
+    yield* ensureSession(sessionId);
+    const push = yield* PersonalPushService.PersonalPushService;
+    return yield* push.subscribe({ ...input, sessionId });
+  });
+
 const BOT = PersonalBotId.make("bot-assistant");
 
 const makeTask = (patch: Partial<PersonalTask>) =>
@@ -233,8 +256,8 @@ it.effect("a completed task queues one minimal notification per device, deduped"
     yield* TestClock.setTime(Date.parse("2026-09-14T09:00:00Z"));
     yield* seedBot;
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
-    yield* push.subscribe(subscription("https://fcm.googleapis.com/fcm/send/device-2"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://fcm.googleapis.com/fcm/send/device-2"));
     const task = yield* makeTask({});
 
     yield* push.notifyTask(task);
@@ -286,11 +309,11 @@ it.effect("lists the pushes sent to one device since a time, and only that devic
     const push = yield* PersonalPushService.PersonalPushService;
     const iphone = "https://web.push.apple.com/device-1";
     const laptop = "https://fcm.googleapis.com/fcm/send/device-2";
-    yield* push.subscribe(subscription(iphone));
+    yield* subscribeWeb(subscription(iphone));
     yield* push.notifyTask(yield* makeTask({ taskId: PersonalTaskId.make("old") }));
     yield* push.drain;
     yield* TestClock.setTime(Date.parse("2026-10-01T06:16:59Z"));
-    yield* push.subscribe(subscription(laptop));
+    yield* subscribeWeb(subscription(laptop));
     yield* push.notifyTask(yield* makeTask({}));
     yield* push.drain;
 
@@ -322,7 +345,7 @@ it.effect("a disabled event type queues nothing", () => {
   const harness: Harness = { sent: [], status: 201 };
   return Effect.gen(function* () {
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     yield* push.setPreferences({
       taskCompleted: false,
       taskNeedsInput: true,
@@ -342,7 +365,7 @@ it.effect("browser help uses a specific needs-help notification", () => {
   return Effect.gen(function* () {
     yield* seedBot;
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/browser-help"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/browser-help"));
     yield* push.notifyTask(
       yield* makeTask({ status: "waiting_for_browser", threadId: ThreadId.make("thread-help") }),
     );
@@ -361,7 +384,7 @@ it.effect("a chat that is open on some connection is confirmed quietly, and only
     yield* TestClock.setTime(Date.parse("2026-09-16T09:00:00Z"));
     yield* seedBot;
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const open = ThreadId.make("thread-open");
     const other = ThreadId.make("thread-other");
     const page = yield* visiblePage("conn-1");
@@ -412,7 +435,7 @@ it.effect("a chat stops holding notifications back when it is closed, hidden or 
     yield* TestClock.setTime(Date.parse("2026-09-16T09:00:00Z"));
     yield* seedBot;
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const open = ThreadId.make("thread-open");
     const waiting = (taskId: string) =>
       makeTask({ status: "waiting_for_user", threadId: open, taskId: PersonalTaskId.make(taskId) });
@@ -451,7 +474,7 @@ it.effect("a second device reading the same chat keeps holding it back", () => {
     yield* TestClock.setTime(Date.parse("2026-09-16T09:00:00Z"));
     yield* seedBot;
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/phone"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/phone"));
     const open = ThreadId.make("thread-open");
     yield* visiblePage("laptop");
     yield* push.reportViewing({ connectionId: "phone", threadId: open });
@@ -562,8 +585,7 @@ it.effect("a bot ending its turn in a chat notifies once while the user is away"
     yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
     yield* seedBot;
     yield* linkThread(CHAT);
-    const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
 
@@ -594,7 +616,7 @@ it.effect("a turn that only reaches ready without running is not a reply", () =>
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // A session starting or re-attaching publishes "ready" with nobody having
     // spoken; only the running -> ready edge is a reply.
@@ -640,7 +662,7 @@ it.effect("a chat turn that fails and stays failed notifies once, with a short r
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // A turn that fails to start never runs: starting -> error.
     yield* feed(sessionSet(CHAT, "starting", "2026-09-18T09:00:00.000Z"));
@@ -696,7 +718,7 @@ it.effect("the chat the user is reading gets no reply notification", () => {
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const page = yield* visiblePage("phone");
     yield* push.reportViewing({ connectionId: "phone", threadId: CHAT });
 
@@ -740,7 +762,7 @@ it.effect("a group buzzes once when its round ends, never per member reply", () 
       )
     `;
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // Member turns are silent, whether or not the group is open.
     yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
@@ -796,7 +818,7 @@ it.effect("a turn a task drove notifies once, from the task, not twice", () => {
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // The turn parked a task on a secret request: that is the specific
     // notification, and the turn ending behind it adds nothing.
@@ -818,7 +840,7 @@ it.effect("the chat-reply preference turned off queues nothing", () => {
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     yield* push.setPreferences({
       taskCompleted: true,
       taskNeedsInput: true,
@@ -857,7 +879,7 @@ it.effect("404/410 from the push service deletes the subscription", () => {
   const harness: Harness = { sent: [], status: 410 };
   return Effect.gen(function* () {
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/gone"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/gone"));
     expect(yield* push.test({})).toBe(1);
     yield* push.drain;
     expect((yield* push.getSettings()).devices).toEqual([]);
@@ -870,7 +892,7 @@ it.effect("transient failures retry with backoff and stop after 5 attempts", () 
   return Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-09-14T09:00:00Z"));
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://fcm.googleapis.com/fcm/send/flaky"));
+    yield* subscribeWeb(subscription("https://fcm.googleapis.com/fcm/send/flaky"));
     yield* push.test({});
     yield* push.drain;
     expect((yield* outbox)[0]).toMatchObject({ status: "pending", attempts: 1 });
@@ -899,18 +921,19 @@ it.effect("subscribe accepts only browser push services with well-formed keys", 
   const harness: Harness = { sent: [], status: 201 };
   return Effect.gen(function* () {
     const push = yield* PersonalPushService.PersonalPushService;
-    const bad = yield* Effect.flip(push.subscribe(subscription("https://example.com/hook")));
+    const bad = yield* Effect.flip(subscribeWeb(subscription("https://example.com/hook")));
     expect(bad.message).toContain("push service");
     const malformed = yield* Effect.flip(
       push.subscribe({
         endpoint: "https://web.push.apple.com/x",
         keys: { p256dh: "AAAA", auth: "BBBB" },
+        sessionId: WEB_SESSION,
       }),
     );
     expect(malformed.message).toContain("malformed");
     // Re-subscribing one endpoint updates it in place.
-    const first = yield* push.subscribe(subscription("https://web.push.apple.com/same"));
-    const second = yield* push.subscribe(subscription("https://web.push.apple.com/same"));
+    const first = yield* subscribeWeb(subscription("https://web.push.apple.com/same"));
+    const second = yield* subscribeWeb(subscription("https://web.push.apple.com/same"));
     expect(second).toBe(first);
     expect((yield* push.getSettings()).devices.length).toBe(1);
     // The VAPID key is stable across calls.
@@ -953,8 +976,7 @@ it.effect("each notification carries the sending bot's own avatar", () => {
       updatedAt: now,
     });
     yield* bots.insertThreadLink({ botId: OTHER, threadId: otherThread, createdAt: now });
-    const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     yield* runTurn(CHAT, "2026-09-19T09:00:00.000Z");
     yield* runTurn(otherThread, "2026-09-19T09:01:00.000Z");
@@ -983,7 +1005,7 @@ it.effect("a notification with no bot behind it carries no avatar at all", () =>
   return Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-09-19T09:00:00Z"));
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // The bot row is gone (deleted between the turn and the sweep), so the
     // task notification names it generically and has no avatar to draw.
@@ -1052,7 +1074,7 @@ it.effect("an app in front gets the reply as an in-app banner, not a push", () =
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const received = yield* listenInApp("phone");
     yield* push.reportForeground({ connectionId: "phone", foreground: true });
     yield* seedReply(
@@ -1094,7 +1116,7 @@ it.effect("an in-app banner nobody acknowledges goes out as a push after all", (
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const received = yield* listenInApp("phone");
     yield* push.reportForeground({ connectionId: "phone", foreground: true });
 
@@ -1118,7 +1140,7 @@ it.effect("in the background, stale or not listening, it is a web push as before
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // In front but not listening (an old page without the stream).
     yield* push.reportForeground({ connectionId: "phone", foreground: true });
@@ -1155,7 +1177,7 @@ it.effect("a chat left open on a phone that locked gets a push after all", () =>
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     // The page was reading the chat and listening, then iOS locked the phone
     // without a visibility event: the report is fresh, but nothing answers.
     const received = yield* listenInApp("phone");
@@ -1211,7 +1233,7 @@ it.effect("a bot with hidden previews: no reply text in the outbox, push body or
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     yield* hideBotPreviews(true);
 
     // A routine run whose bot said notify with a line of its own, a plain
@@ -1277,7 +1299,7 @@ it.effect("a bot with hidden previews: the in-app banner carries no preview of t
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const received = yield* listenInApp("phone");
     yield* push.reportForeground({ connectionId: "phone", foreground: true });
     yield* seedReply(CHAT, "Portfolio £27,636 at 21:06 (Kraken)", "2026-10-05T09:00:00.000Z");
@@ -1330,7 +1352,7 @@ it.effect("a muted bot's reply takes neither path, in-app or push, until the mut
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const received = yield* listenInApp("phone");
     yield* push.reportForeground({ connectionId: "phone", foreground: true });
     yield* muteBotUntil("2026-09-24T10:00:00.000Z");
@@ -1370,7 +1392,7 @@ it.effect("an indefinite mute holds until it is turned back on", () => {
     yield* seedBot;
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     const received = yield* listenInApp("phone");
     yield* push.reportForeground({ connectionId: "phone", foreground: true });
     yield* muteBotUntil(PERSONAL_BOT_MUTED_INDEFINITELY_ISO);
@@ -1422,7 +1444,7 @@ it.effect(
         updatedAt: now,
       });
       const push = yield* PersonalPushService.PersonalPushService;
-      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+      yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
       const routineTask = (taskId: string, idempotencyKey: string, summary: string) =>
         makeTask({
           taskId: PersonalTaskId.make(taskId),
@@ -1568,7 +1590,7 @@ it.effect(
         updatedAt: yield* DateTime.now,
       });
       const push = yield* PersonalPushService.PersonalPushService;
-      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+      yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
       yield* push.notifyTeamBotChange({
         actionId: "action-1",
@@ -1637,7 +1659,7 @@ const oneDevice = Effect.gen(function* () {
   yield* TestClock.setTime(Date.parse("2026-10-05T09:00:00Z"));
   yield* seedBot;
   const push = yield* PersonalPushService.PersonalPushService;
-  yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+  yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
   return push;
 });
 
@@ -1842,7 +1864,7 @@ it.effect("a question in a plain chat notifies once, and the tap opens the chat"
     yield* linkThread(CHAT);
     yield* chatRow(CHAT, "Weekend in Lisbon");
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     yield* feed(questionAsked(CHAT, "req-1", "Which table should I book for Saturday?"));
     yield* push.drain;
@@ -1883,7 +1905,7 @@ it.effect("the in-app notice for a question carries the same deep link as the pu
     yield* linkThread(CHAT);
     yield* chatRow(CHAT, "Weekend in Lisbon");
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
     // The app is open on another screen: the notice comes over the socket,
     // not as a push, which is the path the tap is taken on.
     const received = yield* listenInApp("phone");
@@ -1910,7 +1932,7 @@ it.effect(
       yield* linkThread(CHAT);
       yield* chatRow(CHAT, "Weekend in Lisbon");
       const push = yield* PersonalPushService.PersonalPushService;
-      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+      yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
       yield* feed(questionAsked(CHAT, null, "Which table?"));
       yield* push.drain;
@@ -1932,7 +1954,7 @@ it.effect("a task chat, a routine chat and a group thread never notify the chat"
     yield* seedBot;
     const sql = yield* SqlClient.SqlClient;
     const push = yield* PersonalPushService.PersonalPushService;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // A task's own chat: the task that made it came first (the rule the
     // 48 h auto-archive and the lead's chat picker use).
@@ -2010,7 +2032,7 @@ it.effect(
       yield* linkThread(CHAT);
       yield* chatRow(CHAT, "Weekend in Lisbon");
       const push = yield* PersonalPushService.PersonalPushService;
-      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+      yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
       yield* visiblePage("phone");
       yield* push.reportViewing({ connectionId: "phone", threadId: CHAT });
 
@@ -2048,7 +2070,7 @@ it.effect("a sign-in and a secret in a plain chat notify the chat, not the task 
     yield* chatRow(CHAT, "Weekend in Lisbon");
     const push = yield* PersonalPushService.PersonalPushService;
     const sql = yield* SqlClient.SqlClient;
-    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* subscribeWeb(subscription("https://web.push.apple.com/device-1"));
 
     // The real order: the bot's request_login inserts the pending row and then
     // parks the turn's caller task, which is the transition that notifies.
@@ -2755,3 +2777,183 @@ it.effect("a real FCM request on the wire carries ids only, never the notificati
     }
   }).pipe(Effect.scoped),
 );
+
+const A_ENDPOINT = "https://web.push.apple.com/device-a";
+const B_ENDPOINT = "https://fcm.googleapis.com/fcm/send/device-b";
+
+const sentEndpoints = (harness: Harness) => harness.sent.map((request) => request.url);
+
+const outboxFor = (subscriptionId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql<{ readonly status: string }>`
+      SELECT status AS "status" FROM personal_notification_outbox
+      WHERE subscription_id = ${subscriptionId}
+    `;
+  });
+
+const bothBrowsers = Effect.gen(function* () {
+  yield* TestClock.setTime(Date.parse("2026-11-11T09:00:00Z"));
+  const a = yield* subscribeWeb(subscription(A_ENDPOINT), "session-a-web");
+  const b = yield* subscribeWeb(subscription(B_ENDPOINT), "session-b-web");
+  return { a, b };
+});
+
+it.effect("a revoked session's browser gets no push, though no revoke path purged it", () => {
+  const harness: Harness = { sent: [], status: 503 };
+  return Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    const { a } = yield* bothBrowsers;
+    expect(yield* push.test({})).toBe(2);
+    yield* push.drain;
+    expect(sentEndpoints(harness).toSorted()).toEqual([A_ENDPOINT, B_ENDPOINT].toSorted());
+
+    yield* sql`UPDATE auth_sessions SET revoked_at = '2026-11-11T09:00:05.000Z'
+               WHERE session_id = 'session-a-web'`;
+    harness.status = 201;
+    yield* TestClock.adjust("2 minutes");
+    yield* sweep;
+
+    expect(sentEndpoints(harness).slice(2)).toEqual([B_ENDPOINT]);
+    expect((yield* outboxFor(a)).map((row) => row.status)).not.toContain("sent");
+    expect((yield* push.getSettings()).devices.map((device) => device.endpointHost)).toEqual([
+      "fcm.googleapis.com",
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("an expired session's browser gets no push", () => {
+  const harness: Harness = { sent: [], status: 503 };
+  return Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* bothBrowsers;
+    yield* push.test({});
+    yield* push.drain;
+    expect(harness.sent.length).toBe(2);
+
+    yield* sql`UPDATE auth_sessions SET expires_at = '2026-11-11T09:00:05.000Z'
+               WHERE session_id = 'session-a-web'`;
+    harness.status = 201;
+    yield* TestClock.adjust("2 minutes");
+    yield* sweep;
+
+    expect(sentEndpoints(harness).slice(2)).toEqual([B_ENDPOINT]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a push queued after the revoke is queued for the live browser only", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* bothBrowsers;
+    yield* sql`UPDATE auth_sessions SET revoked_at = '2026-11-11T08:00:00.000Z'
+               WHERE session_id = 'session-a-web'`;
+
+    expect(yield* push.test({})).toBe(1);
+    yield* push.drain;
+
+    expect(sentEndpoints(harness)).toEqual([B_ENDPOINT]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a subscription row with no session never receives", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* TestClock.setTime(Date.parse("2026-11-11T09:00:00Z"));
+    const legacy = subscription("https://web.push.apple.com/legacy");
+    yield* sql`
+      INSERT INTO personal_push_subscriptions (
+        subscription_id, endpoint, p256dh, auth, device_label, created_at, updated_at,
+        auth_session_id
+      )
+      VALUES ('legacy-1', ${legacy.endpoint}, ${legacy.keys.p256dh}, ${legacy.keys.auth},
+              'old', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', NULL)
+    `;
+    yield* subscribeWeb(subscription(B_ENDPOINT), "session-b-web");
+
+    expect(yield* push.test({})).toBe(1);
+    yield* push.drain;
+
+    expect(sentEndpoints(harness)).toEqual([B_ENDPOINT]);
+    expect((yield* push.getSettings()).devices.length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a sign-in that is revoked or unknown cannot register a browser", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* TestClock.setTime(Date.parse("2026-11-11T09:00:00Z"));
+    yield* ensureSession("session-dead");
+    yield* sql`UPDATE auth_sessions SET revoked_at = '2026-11-11T08:00:00.000Z'
+               WHERE session_id = 'session-dead'`;
+
+    const revoked = yield* subscribeWeb(subscription(A_ENDPOINT), "session-dead").pipe(Effect.flip);
+    const unknown = yield* push
+      .subscribe({ ...subscription(A_ENDPOINT), sessionId: "no-such-session" })
+      .pipe(Effect.flip);
+    expect(revoked.message).toBe("This sign-in cannot register for notifications.");
+    expect(unknown.message).toBe("This sign-in cannot register for notifications.");
+    expect((yield* push.getSettings()).devices).toEqual([]);
+
+    const live = yield* subscribeWeb(subscription(B_ENDPOINT), "session-b-web");
+    expect(typeof live).toBe("string");
+    expect((yield* push.getSettings()).devices.length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a re-sync moves an existing browser to the current session without a second row", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* TestClock.setTime(Date.parse("2026-11-11T09:00:00Z"));
+    const first = yield* subscribeWeb(subscription(A_ENDPOINT), "session-a-web");
+    yield* sql`UPDATE auth_sessions SET revoked_at = '2026-11-11T08:00:00.000Z'
+               WHERE session_id = 'session-a-web'`;
+
+    const resynced = yield* subscribeWeb(subscription(A_ENDPOINT), "session-b-web");
+    expect(resynced).toBe(first);
+    expect((yield* push.getSettings()).devices.length).toBe(1);
+    const bound = yield* sql<{ readonly sessionId: string | null }>`
+      SELECT auth_session_id AS "sessionId" FROM personal_push_subscriptions
+    `;
+    expect(bound).toEqual([{ sessionId: "session-b-web" }]);
+
+    expect(yield* push.test({})).toBe(1);
+    yield* push.drain;
+    expect(sentEndpoints(harness)).toEqual([A_ENDPOINT]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a re-sync binds a row that has no session and keeps its id", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* TestClock.setTime(Date.parse("2026-11-11T09:00:00Z"));
+    const legacy = subscription(A_ENDPOINT);
+    yield* sql`
+      INSERT INTO personal_push_subscriptions (
+        subscription_id, endpoint, p256dh, auth, device_label, created_at, updated_at,
+        auth_session_id
+      )
+      VALUES ('legacy-1', ${legacy.endpoint}, ${legacy.keys.p256dh}, ${legacy.keys.auth},
+              'old', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', NULL)
+    `;
+
+    const id = yield* subscribeWeb(subscription(A_ENDPOINT), "session-a-web");
+
+    expect(id).toBe("legacy-1");
+    expect((yield* push.getSettings()).devices.length).toBe(1);
+    expect(yield* push.test({})).toBe(1);
+    yield* push.drain;
+    expect(sentEndpoints(harness)).toEqual([A_ENDPOINT]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
