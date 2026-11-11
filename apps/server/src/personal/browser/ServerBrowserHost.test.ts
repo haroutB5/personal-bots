@@ -253,10 +253,12 @@ it.effect("stops reconnecting once the layer scope closes", () =>
 );
 
 it("advertises the 1.66.6 operations and still leaves recording to the desktop app", () => {
-  for (const operation of ["click", "hover", "drag", "history", "closeTab"] as const) {
+  for (const operation of ["click", "hover", "drag", "history", "closeTab", "select"] as const) {
     expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).toContain(operation);
   }
-  expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).not.toContain("recordingStart");
+  for (const operation of ["upload", "dialog", "recordingStart", "recordingStop"] as const) {
+    expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).not.toContain(operation);
+  }
   // Every operation the host serves is one the broker knows. The contract set
   // is wider: desktop hosts also answer dialog, upload, select and the V1 close.
   const known = new Set<string>(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
@@ -264,3 +266,46 @@ it("advertises the 1.66.6 operations and still leaves recording to the desktop a
     expect(known).toContain(operation);
   }
 });
+
+it.effect(
+  "serves select, and refuses upload, dialog and recording as unsupported with no retry advice",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connects = { count: 0 };
+        const seen: string[] = [];
+        const context = yield* Layer.build(
+          hostLayer((request) => {
+            seen.push(request.operation);
+            return Effect.succeed(
+              request.operation === "select" ? { selected: ["two"] } : { available: true },
+            );
+          }, connects),
+        );
+        const broker = yield* Effect.service(PreviewAutomationBroker.PreviewAutomationBroker).pipe(
+          Effect.provide(context),
+        );
+        yield* awaitHostReady(broker);
+
+        const selected = yield* broker.invoke<{ selected: string[] }>({
+          scope,
+          operation: "select",
+          input: { selector: "#s", values: ["two"] },
+        });
+        expect(selected).toEqual({ selected: ["two"] });
+
+        for (const operation of ["upload", "dialog", "recordingStart", "recordingStop"] as const) {
+          const error = yield* broker.invoke({ scope, operation, input: {} }).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+          expect(error.message).toContain("not supported on the shared browser");
+          // A permanent refusal: nothing here may send the bot back to retry.
+          expect(error.message).not.toMatch(
+            /retry|reconnect|starting|preview_open|preview_status/i,
+          );
+        }
+        // Refused by the broker itself: the host never saw them, and stayed registered.
+        expect(seen.filter((operation) => operation !== "status")).toEqual(["select"]);
+        expect(connects.count).toBe(1);
+      }),
+    ),
+);
