@@ -9,7 +9,7 @@ import {
   type NativeStackScreenProps,
 } from "@react-navigation/native-stack";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { BackHandler, Linking, StyleSheet, Text, View } from "react-native";
+import { BackHandler, Linking, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AndroidRelease } from "../compat";
@@ -34,6 +34,7 @@ import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
 import { FilesScreen } from "../files/FilesScreen";
 import { ChatScreen } from "../screens/ChatScreen";
+import { StopList } from "../screens/StopList";
 import { ChatsListScreen } from "../screens/ChatsListScreen";
 import { ComputerScreen } from "../computer/ComputerScreen";
 import { DevicesScreen } from "../settings/DevicesScreen";
@@ -117,15 +118,6 @@ const navigationTheme: Theme = {
 };
 
 type TabsProps = NativeStackScreenProps<RootStackParamList, "Tabs">;
-
-function Placeholder({ title, body }: { readonly title: string; readonly body: string }) {
-  return (
-    <View style={styles.placeholder}>
-      <Text style={styles.placeholderTitle}>{title}</Text>
-      <Text style={styles.placeholderBody}>{body}</Text>
-    </View>
-  );
-}
 
 function HeaderScreen({
   title,
@@ -539,7 +531,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         <Stack.Screen name="Stop">
           {({ navigation }) => (
             <HeaderScreen title="Stop" onBack={() => navigation.goBack()}>
-              <Placeholder title="Bots working" body="Nothing is working right now." />
+              <StopList native={props.native} chat={chat} />
             </HeaderScreen>
           )}
         </Stack.Screen>
