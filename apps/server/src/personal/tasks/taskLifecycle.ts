@@ -5,7 +5,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
-  CommandId,
   MessageId,
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PersonalTaskId,
@@ -36,6 +35,7 @@ export const makeTaskLifecycle = (
     carryExposureFromChat,
     carryExposureToChat,
     carryExposureToTree,
+    continuationTurnOf,
     engine,
     fail,
     lock,
@@ -483,14 +483,17 @@ export const makeTaskLifecycle = (
             releaseThread(attempt.providerThreadId, DateTime.toEpochMillis(interruptedAt));
             // Interrupt by the attempt's own thread (and turn when known),
             // never by process name.
-            yield* engine.interrupt(attempt.providerThreadId, attempt.turnId ?? undefined).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("personal task cancel could not interrupt its turn", {
-                  taskId: attempt.taskId,
-                  cause: Cause.pretty(cause),
-                }),
-              ),
-            );
+            const continuation = yield* continuationTurnOf(attempt);
+            yield* engine
+              .interrupt(attempt.providerThreadId, continuation ?? attempt.turnId ?? undefined)
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("personal task cancel could not interrupt its turn", {
+                    taskId: attempt.taskId,
+                    cause: Cause.pretty(cause),
+                  }),
+                ),
+              );
           }
           yield* publish(changed);
           yield* worker.enqueue({ type: "pump" });

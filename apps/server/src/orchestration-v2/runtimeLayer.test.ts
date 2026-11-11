@@ -9005,4 +9005,57 @@ it.layer(layerTest)("provider server loss continuation", (it) => {
       assert.lengthOf(yield* continuationsOf(threadId, original.id), 0);
     }),
   );
+
+  const interruptRun = (
+    threadId: ThreadId,
+    runId: RunId,
+    key: string,
+    reason = "Stopped by the personal layer",
+  ) =>
+    Effect.gen(function* () {
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      return yield* threadManagement.interruptThread({
+        projectId: ProjectId.make(`${threadId}:project`),
+        commandId: CommandId.make(`${threadId}:interrupt:${key}`),
+        threadId,
+        runId,
+        reason,
+      });
+    });
+
+  it.effect("a cancel that lands before the continuation dispatches yields no continuation", () =>
+    Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { threadId, original } = yield* prepareThread("cancel-before-dispatch");
+      yield* endRun(threadId, original, "lost");
+      const interrupt = yield* interruptRun(threadId, original.id, "before");
+      assert.equal(interrupt.type, "already_terminal");
+      yield* worker.drain();
+      assert.lengthOf(yield* continuationsOf(threadId, original.id), 0);
+      const projection = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(threadId);
+      assert.isFalse(projection.runs.some((run) => ThreadManagementService.isActiveRun(run)));
+    }),
+  );
+
+  it.effect("a cancel aimed at the lost run after its continuation started leaves it active", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { threadId, original } = yield* prepareThread("cancel-after-dispatch");
+      yield* endRun(threadId, original, "lost");
+      yield* worker.drain();
+      const [continuation] = yield* continuationsOf(threadId, original.id);
+      assert.isDefined(continuation);
+      const aimedAtLost = yield* interruptRun(threadId, original.id, "lost-id");
+      assert.equal(aimedAtLost.type, "already_terminal");
+      const stillActive = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === continuation.id,
+      );
+      assert.isTrue(stillActive !== undefined && ThreadManagementService.isActiveRun(stillActive));
+      const aimedAtContinuation = yield* interruptRun(threadId, continuation.id, "continuation-id");
+      assert.equal(aimedAtContinuation.type, "interrupt_requested");
+      const afterwards = yield* orchestrator.getThreadProjection(threadId);
+      assert.isFalse(afterwards.runs.some((run) => ThreadManagementService.isActiveRun(run)));
+    }),
+  );
 });

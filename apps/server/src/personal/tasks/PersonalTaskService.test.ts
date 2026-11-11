@@ -4007,6 +4007,35 @@ describe("a task whose provider server was lost", () => {
         expect(startsOn(harness, rootThread).length - leadBefore).toBe(1);
       }).pipe(Effect.provide(makeLayer(harness)));
     });
+
+    it.effect("a cancel interrupts the continuation's run, not the lost one", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const { rootThread, child, childThread } = yield* delegatedChild(harness, "cancel");
+        const leadBefore = startsOn(harness, rootThread).length;
+        const { lostTurn, continuationTurn } = yield* loseAndContinueBeforeDrain(
+          harness,
+          childThread,
+        );
+        const cancelled = yield* service.cancel({ taskId: child.taskId });
+        yield* service.drain;
+        expect(cancelled.status).toBe("cancelled");
+        const turns = interrupts(harness)
+          .filter((call) => call.threadId === childThread)
+          .map((call) => call.turnId);
+        expect(turns).toEqual([continuationTurn]);
+        expect(turns).not.toContain(lostTurn);
+        expect(harness.sessions.get(childThread)?.activeTurnId).toBe(continuationTurn);
+        yield* endTurn(harness, childThread, continuationTurn, "Late continuation reply.");
+        yield* TestClock.adjust("200 seconds");
+        yield* sweepNow;
+        const settled = yield* reload(child.taskId);
+        expect(settled.status).toBe("cancelled");
+        expect(settled.result).toBeNull();
+        expect(startsOn(harness, rootThread).length - leadBefore).toBe(1);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    });
   });
 
   it.effect("does not hold a task that the user stopped", () => {
