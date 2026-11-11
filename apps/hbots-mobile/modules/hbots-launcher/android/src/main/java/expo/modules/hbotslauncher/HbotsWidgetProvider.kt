@@ -14,7 +14,7 @@ import android.widget.RemoteViews
 /**
  * The home screen widget: the pinned bots and a dot for the ones working. The system calls
  * [onUpdate] every 30 minutes (`updatePeriodMillis`); the app also calls [refresh] when the feed
- * changes. It draws only from [WidgetStore], so it never needs the app to be running.
+ * changes, and a lit dot schedules one more redraw for the moment it goes stale. It draws only from [WidgetStore], so it never needs the app to be running.
  */
 class HbotsWidgetProvider : AppWidgetProvider() {
   override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {

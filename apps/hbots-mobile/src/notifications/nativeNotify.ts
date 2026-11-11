@@ -34,6 +34,8 @@ export interface HbotsNotifyModule {
   wipe(): void;
   setWorking(bots: readonly WorkingBot[]): void;
   clearWorking(): void;
+  /** The chat was opened: take its notifications out of the shade. */
+  cancelForChat(threadId: string): void;
   addListener(
     event: "tokenRefresh",
     listener: (event: { token: string }) => void,

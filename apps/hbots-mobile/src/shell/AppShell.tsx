@@ -17,6 +17,7 @@ import { chatComputerTarget } from "../chat/chatComputer";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { storeLinkDraft } from "../chat/linkDraft";
+import { clearChatNotifications } from "../notifications/clearChatNotifications";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
 import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
@@ -219,6 +220,14 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
   }
 }
 
+/** Renders nothing: it clears the opened chat's notifications from the shade. */
+function ChatRead({ threadId }: { readonly threadId: string }) {
+  useEffect(() => {
+    clearChatNotifications(threadId);
+  }, [threadId]);
+  return null;
+}
+
 function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
   const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
@@ -286,18 +295,21 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         </Stack.Screen>
         <Stack.Screen name="Chat">
           {({ navigation, route }) => (
-            <ChatScreen
-              native={props.native}
-              chat={chat}
-              botId={route.params.botId}
-              threadId={route.params.threadId}
-              onBack={() => navigation.goBack()}
-              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
-              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
-              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
-              onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
-              onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
-            />
+            <>
+              <ChatRead threadId={route.params.threadId} />
+              <ChatScreen
+                native={props.native}
+                chat={chat}
+                botId={route.params.botId}
+                threadId={route.params.threadId}
+                onBack={() => navigation.goBack()}
+                onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+                onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+                onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
+                onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
+              />
+            </>
           )}
         </Stack.Screen>
         <Stack.Screen name="Chats">

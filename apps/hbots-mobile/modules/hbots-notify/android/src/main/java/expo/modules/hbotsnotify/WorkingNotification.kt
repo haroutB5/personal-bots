@@ -16,7 +16,13 @@ object WorkingNotification {
   private const val TAG = "HbotsNotify"
   const val NOTIFICATION_ID = 0x4B07_0001
 
-  /** If JS stops sending (its process is frozen or gone), Android removes the notice by itself. */
+  /**
+   * If JS stops sending (its process is frozen or gone), Android removes the notice by itself, so a
+   * stale "working" row never stays. A frozen background app stops its 15 s heartbeat, so a run that lasts
+   * longer than this loses its notice while the bot still works. That is a disclosed limit, accepted until
+   * FCM is live. No keep-alive service is added. The real fix is server-driven start and end pushes, which
+   * need no running JS: the server tells the phone when a run begins and when it ends.
+   */
   const val EXPIRE_MS = 45_000L
 
   fun post(context: Context, plan: WorkingPlan, startedAt: Long) {

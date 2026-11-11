@@ -54,7 +54,10 @@ class HbotsNotifyModule : Module() {
     /** The lock flag and the bot list the push service needs while JS is not running. */
     Function("syncPolicy") { appLockOn: Boolean, bots: List<Map<String, Any?>> ->
       val policy = PolicyCodec.fromJs(appLockOn, bots)
+      // Notices already in the shade were drawn under the old policy; take out the ones the new one forbids.
+      val leftBehind = ShadeCleanup.scopeAfter(PolicyStore.read(app()), policy)
       PolicyStore.write(app(), policy)
+      ShadeCleanup.cancelScope(app(), leftBehind)
       NotifyChannels.syncBots(app(), policy.bots)
       if (BuildConfig.FCM_CONFIGURED) NotifyChannels.ensureBots(app(), policy.bots)
     }
@@ -74,6 +77,9 @@ class HbotsNotifyModule : Module() {
           .putExtra(Settings.EXTRA_CHANNEL_ID, channelId),
       )
     }
+
+    /** The chat was opened: its notifications are read, so they leave the shade. */
+    Function("cancelForChat") { threadId: String -> ShadeCleanup.cancelChat(app(), threadId) }
 
     Function("channelStates") { NotifyChannels.states(app()) }
 

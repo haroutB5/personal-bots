@@ -34,7 +34,8 @@ object NotificationSender {
    * (A hash of the id could.) The numeric id is the same for all of them.
    */
   const val SLOT = 1
-  fun tagFor(notificationId: String): String = "n.$notificationId"
+  const val TAG_PREFIX = "n."
+  fun tagFor(notificationId: String): String = "$TAG_PREFIX$notificationId"
 
   /**
    * A PendingIntent is told apart by its data, not its extras. A data URI that holds the id and the
