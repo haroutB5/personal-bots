@@ -111,8 +111,11 @@ const exported = components
   .filter((component) => component.exported === "true")
   .map((component) => component.name);
 // ProfileInstallReceiver comes from the baseline-profile dependency the scaffold already shipped.
+// ShareActivity is the share target and CtoTileService the Quick Settings tile; both must be exported.
 const expectedExported = [
   "com.haroutb5.hbots.MainActivity",
+  "expo.modules.hbotsshare.ShareActivity",
+  "expo.modules.hbotstile.CtoTileService",
   "androidx.profileinstaller.ProfileInstallReceiver",
 ];
 const exportedOk =
