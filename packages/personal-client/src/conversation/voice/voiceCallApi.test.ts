@@ -11,6 +11,7 @@ import {
   hasVoiceCallKey,
   isVoiceCallErrorCode,
   voiceApiKeyCheckLine,
+  voiceCallClientFailureCode,
   voiceCallFailureCode,
   voiceCallKeySecret,
   voiceFailureDetail,
@@ -51,6 +52,16 @@ describe("the error the server sent", () => {
     expect(voiceCallFailureCode(new Error("socket closed"))).toBe("google_unavailable");
     expect(voiceCallFailureCode(null)).toBe("google_unavailable");
     expect(voiceCallFailureCode({ code: "something_new" })).toBe("google_unavailable");
+  });
+
+  it("tells a phone that a failure with no code is the laptop, while the typed code still wins", () => {
+    expect(voiceCallClientFailureCode(new Error("socket closed"))).toBe("server_unreachable");
+    expect(voiceCallClientFailureCode(null)).toBe("server_unreachable");
+    expect(voiceCallClientFailureCode({ code: "no_key" })).toBe("no_key");
+    expect(
+      voiceCallClientFailureCode({ _tag: "PersonalVoiceCallsError", code: "google_unavailable" }),
+    ).toBe("google_unavailable");
+    expect(isVoiceCallErrorCode("server_unreachable")).toBe(false);
   });
 
   it("knows every code the contract lists, and nothing else", () => {

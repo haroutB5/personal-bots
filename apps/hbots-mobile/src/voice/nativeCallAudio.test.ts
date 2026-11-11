@@ -102,4 +102,15 @@ describe("createNativeCallAudio", () => {
     expect(native.cue).toHaveBeenCalledWith("connected");
     expect(audio.readLevel("voice")).toBe(0.25);
   });
+
+  it("forwards the mic lease to the native module until the audio is closed", () => {
+    const holdMicUntil = vi.fn();
+    const { native } = module({ holdMicUntil } as never);
+    const audio = createNativeCallAudio(native);
+    audio.holdMicUntil?.("quiet", 120_000);
+    expect(holdMicUntil).toHaveBeenCalledExactlyOnceWith("quiet", 120_000);
+    audio.close();
+    audio.holdMicUntil?.("limit", 1_000);
+    expect(holdMicUntil).toHaveBeenCalledTimes(1);
+  });
 });

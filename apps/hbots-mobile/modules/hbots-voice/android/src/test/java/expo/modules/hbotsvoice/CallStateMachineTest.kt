@@ -7,6 +7,7 @@ import org.junit.Test
 internal class RecordingEffects : CallEffects {
   val log = mutableListOf<String>()
   var marker = false
+  var lastEnd: EndReason? = null
 
   override fun startService(botName: String) { log.add("start:$botName") }
   override fun stopService() { log.add("stop") }
@@ -14,6 +15,7 @@ internal class RecordingEffects : CallEffects {
   override fun resumeAudio() { log.add("resume") }
   override fun writeMarker() { marker = true; log.add("marker+") }
   override fun clearMarker() { marker = false; log.add("marker-") }
+  override fun writeLastEnd(reason: EndReason) { lastEnd = reason; log.add("lastEnd:${reason.wire}") }
   override fun ended(reason: EndReason) { log.add("ended:${reason.wire}") }
 }
 
@@ -196,5 +198,94 @@ class CallStateMachineTest {
     assertEquals("live", CallState.Live("x", false).wire)
     assertEquals("held", CallState.Live("x", true).wire)
     assertEquals("stopping", CallState.Stopping(EndReason.HUNG_UP).wire)
+  }
+
+  private var elapsed = 5_000L
+
+  private fun leased(effects: RecordingEffects = RecordingEffects()): Pair<CallRuntime, RecordingEffects> {
+    val runtime = CallRuntime(effects) { elapsed }
+    runtime.dispatch(tap())
+    return runtime to effects
+  }
+
+  @Test
+  fun aCallThatNeverGoesLiveEndsOnTheConnectLeaseWithoutAnyHelpFromJs() {
+    val (runtime, effects) = leased()
+    effects.log.clear()
+    elapsed = 5_000L + 44_999L
+    runtime.checkLease()
+    assertEquals(CallState.Starting("CTO"), runtime.state)
+    elapsed = 5_000L + 45_000L
+    runtime.checkLease()
+    assertEquals(CallState.Stopping(EndReason.DEADLINE_CONNECT), runtime.state)
+    assertEquals(
+      listOf("stop", "marker-", "lastEnd:deadline_connect", "ended:deadline_connect"),
+      effects.log,
+    )
+  }
+
+  @Test
+  fun aLeaseJsMovesKeepsALiveCallOpenUntilTheNewTime() {
+    val (runtime, effects) = leased()
+    runtime.dispatch(CallEvent.ServiceStarted)
+    runtime.dispatch(CallEvent.LeaseSet(Deadline.QUIET, 5_000L + 120_000L))
+    effects.log.clear()
+    elapsed = 5_000L + 100_000L
+    runtime.checkLease()
+    assertEquals(CallState.Live("CTO", onHold = false), runtime.state)
+    assertTrue(effects.log.isEmpty())
+    elapsed = 5_000L + 120_000L
+    runtime.checkLease()
+    assertEquals(CallState.Stopping(EndReason.DEADLINE_QUIET), runtime.state)
+    assertEquals("deadline_quiet", EndReason.DEADLINE_QUIET.wire)
+  }
+
+  @Test
+  fun theLastEndSurvivesTheMarkerBeingCleared() {
+    val (runtime, effects) = leased()
+    elapsed = 5_000L + 45_000L
+    runtime.checkLease()
+    assertEquals(EndReason.DEADLINE_CONNECT, effects.lastEnd)
+    assertEquals(false, effects.marker)
+  }
+
+  @Test
+  fun aLeaseSetAfterTheCallStoppedChangesNothing() {
+    val (runtime, effects) = leased()
+    runtime.dispatch(CallEvent.Stop(EndReason.HUNG_UP))
+    effects.log.clear()
+    runtime.dispatch(CallEvent.LeaseSet(Deadline.QUIET, 5_000L + 120_000L))
+    elapsed = 5_000L + 500_000L
+    runtime.checkLease()
+    assertEquals(CallState.Stopping(EndReason.HUNG_UP), runtime.state)
+    assertTrue(effects.log.isEmpty())
+  }
+
+  @Test
+  fun aDueDeadlineStopsALiveCallWithItsOwnReasonAndTheLastEndOutlivesTheService() {
+    val (runtime, effects) = live()
+    runtime.dispatch(CallEvent.DeadlineDue(Deadline.QUIET))
+    assertEquals(CallState.Stopping(EndReason.DEADLINE_QUIET), runtime.state)
+    assertEquals(
+      listOf("stop", "marker-", "lastEnd:deadline_quiet", "ended:deadline_quiet"),
+      effects.log,
+    )
+    runtime.dispatch(CallEvent.ServiceDestroyed)
+    assertEquals(CallState.Idle, runtime.state)
+    assertEquals(EndReason.DEADLINE_QUIET, effects.lastEnd)
+  }
+
+  @Test
+  fun everyDeadlineKindHasItsOwnWireReason() {
+    assertEquals(
+      listOf(
+        "deadline_connect",
+        "deadline_quiet",
+        "deadline_waiting_cap",
+        "deadline_reconnect",
+        "deadline_limit",
+      ),
+      Deadline.values().map { it.endReason().wire },
+    )
   }
 }

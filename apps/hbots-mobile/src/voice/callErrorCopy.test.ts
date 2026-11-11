@@ -45,6 +45,16 @@ describe("errorCopyFor", () => {
     expect(calls).toEqual(["retry", "close"]);
   });
 
+  it("says the laptop cannot be reached, and does not blame Google", () => {
+    const { calls, made } = actions();
+    const copy = errorCopyFor("server_unreachable", null, made);
+    expect(copy?.title).toBe("Can't reach your laptop");
+    expect(copy?.body).toBe("Check that it is on and online, then try again.");
+    expect(copy?.primary).toBe("Try again");
+    copy?.onPrimary();
+    expect(calls).toEqual(["retry"]);
+  });
+
   it("gives every code a way out", () => {
     const codes = [
       "no_key",
@@ -56,6 +66,7 @@ describe("errorCopyFor", () => {
       "key_quota",
       "mic_blocked",
       "google_unavailable",
+      "server_unreachable",
       "unknown",
     ] as const;
     for (const code of codes) {

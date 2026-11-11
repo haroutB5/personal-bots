@@ -14,6 +14,7 @@ import {
   liftForContrast,
   limitBannerText,
   limitPointsMs,
+  nextVoiceDeadline,
   pendingSendTitle,
   pillLabel,
   quietDeadlineMs,
@@ -196,5 +197,84 @@ describe("saying no, wait", () => {
   it("wraps the lines the client asks the voice to speak", () => {
     expect(spokenInstruction(VOICE_QUIET_SPOKEN_LINE)).toContain('"Still there?"');
     expect(spokenInstruction(VOICE_GOODBYE_SPOKEN_LINE)).toContain("30 minute limit");
+  });
+});
+
+describe("nextVoiceDeadline", () => {
+  const rules = { startedAtMs: 1_000, maxCallMinutes: 30, quietMinutes: 2 };
+
+  it("gives a call that was never answered the accept wait, then the 20 s connect wait", () => {
+    expect(nextVoiceDeadline({ kind: "accepting", sinceMs: 1_000 }, rules)).toEqual({
+      kind: "connect",
+      atMs: 46_000,
+    });
+    expect(nextVoiceDeadline({ kind: "connecting", sinceMs: 10_000 }, rules)).toEqual({
+      kind: "connect",
+      atMs: 30_000,
+    });
+  });
+
+  it("gives quiet only to a live call, counted from its last speech", () => {
+    expect(
+      nextVoiceDeadline({ kind: "live", lastSpeechAtMs: 5_000, pendingSinceMs: null }, rules),
+    ).toEqual({ kind: "quiet", atMs: 125_000 });
+    for (const phase of [
+      { kind: "accepting", sinceMs: 1_000 },
+      { kind: "connecting", sinceMs: 1_000 },
+      { kind: "reconnecting", sinceMs: 1_000 },
+    ] as const) {
+      expect(nextVoiceDeadline(phase, rules)?.kind).not.toBe("quiet");
+    }
+  });
+
+  it("swaps quiet for the five minute waiting cap while a send is pending", () => {
+    expect(
+      nextVoiceDeadline({ kind: "live", lastSpeechAtMs: 5_000, pendingSinceMs: 20_000 }, rules),
+    ).toEqual({ kind: "waiting_cap", atMs: 320_000 });
+  });
+
+  it("gives a dropped line fifteen seconds and a finished call nothing", () => {
+    expect(nextVoiceDeadline({ kind: "reconnecting", sinceMs: 50_000 }, rules)).toEqual({
+      kind: "reconnect",
+      atMs: 65_000,
+    });
+    expect(nextVoiceDeadline({ kind: "ended" }, rules)).toBeNull();
+  });
+
+  it("lets the call limit win when it is nearer", () => {
+    expect(
+      nextVoiceDeadline(
+        { kind: "live", lastSpeechAtMs: 1_790_000, pendingSinceMs: null },
+        { ...rules, maxCallMinutes: 30 },
+      ),
+    ).toEqual({ kind: "limit", atMs: 1_801_000 });
+  });
+});
+
+describe("callHint with the microphone already allowed", () => {
+  const connecting = {
+    status: "connecting",
+    pill: "none",
+    muted: false,
+    captionsOn: true,
+    level: 0,
+    pending: null,
+    work: null,
+    caption: null,
+    hint: null,
+    errorCode: null,
+    endReason: null,
+    nearLimit: false,
+    quietWarning: false,
+  } as const;
+
+  it("says nothing about allowing the microphone, and still says Still connecting", () => {
+    expect(callHint({ state: connecting, waitingMs: 500, micAlreadyGranted: true })).toBeNull();
+    expect(callHint({ state: connecting, waitingMs: 9_000, micAlreadyGranted: true })).toBe(
+      "Still connecting…",
+    );
+    expect(callHint({ state: connecting, waitingMs: 500, micAlreadyGranted: false })).toBe(
+      "Allow the microphone when your iPhone asks.",
+    );
   });
 });

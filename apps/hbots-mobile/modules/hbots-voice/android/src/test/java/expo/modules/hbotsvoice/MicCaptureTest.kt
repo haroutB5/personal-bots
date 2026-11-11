@@ -12,10 +12,13 @@ import org.junit.Test
 private class FakeRecorder : MicRecorder {
   @Volatile var released = false
   @Volatile var recording = false
+  @Volatile var stopRequested = false
+  val startedAfterStop = AtomicInteger()
   private val stopped = CountDownLatch(1)
 
   override fun startRecording() {
     check(!released) { "startRecording on a released recorder" }
+    if (stopRequested) startedAfterStop.incrementAndGet()
     recording = true
   }
 
@@ -26,6 +29,7 @@ private class FakeRecorder : MicRecorder {
   }
 
   override fun stop() {
+    stopRequested = true
     recording = false
     stopped.countDown()
   }
@@ -146,5 +150,45 @@ class MicCaptureTest {
     assertFalse(stopper.isAlive)
     assertTrue(source.held().isEmpty())
     assertTrue(captureThreads().isEmpty())
+  }
+
+  @Test
+  fun aCaptureWhoseLeaseIsDueStopsReadingAndAsksForTheEndOnce() {
+    val source = FakeSource()
+    val due = java.util.concurrent.atomic.AtomicBoolean(false)
+    val asked = AtomicInteger()
+    val mic = MicCapture(
+      { frames.incrementAndGet() },
+      { synchronized(failures) { failures.add(it) } },
+      source,
+      leaseDue = { due.get() },
+      onLeaseDue = { asked.incrementAndGet() },
+      post = { it() },
+    ).also { capture = it }
+    startAndWait(mic)
+    val before = frames.get()
+    due.set(true)
+    val end = System.currentTimeMillis() + 2000
+    while (asked.get() == 0 && System.currentTimeMillis() < end) Thread.sleep(5)
+    Thread.sleep(100)
+    val frozen = frames.get()
+    Thread.sleep(100)
+    assertEquals(1, asked.get())
+    assertEquals(frozen, frames.get())
+    assertTrue(frozen >= before)
+    mic.stop()
+    assertTrue(captureThreads().isEmpty())
+  }
+
+  @Test
+  fun aStopRightAfterAStartNeverStartsTheRecorderAfterItWasStopped() {
+    val source = FakeSource()
+    repeat(200) {
+      val mic = MicCapture({ }, { }, source)
+      mic.start { }
+      mic.stop()
+    }
+    assertEquals(0, source.opened.sumOf { it.startedAfterStop.get() })
+    assertTrue(source.held().isEmpty())
   }
 }

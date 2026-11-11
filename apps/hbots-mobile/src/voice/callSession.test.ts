@@ -35,6 +35,8 @@ function fakeNative(options: { granted?: boolean; startError?: unknown } = {}) {
     micPermission: vi.fn(() => (options.granted === false ? "denied" : "granted")),
     openAppSettings: vi.fn(),
     takeRecovery: vi.fn(() => false),
+    takeLastEnd: vi.fn((): { reason: string } | null => null),
+    holdMicUntil: vi.fn(),
     callState: vi.fn((): NativeCallState => "idle"),
     startCall: vi.fn(async () => {
       if (options.startError !== undefined) throw options.startError;
@@ -70,6 +72,13 @@ function fakeController(onChange: VoiceCallControllerOptions["onChange"]) {
       onChange(snapshot);
     }),
     sendAudio: vi.fn(),
+    expire: vi.fn((kind: string) => {
+      ended = true;
+      snapshot = {
+        ...snapshot,
+        state: { ...snapshot.state, status: "ended", endReason: kind as never },
+      };
+    }),
     undoPendingSend: vi.fn(),
     interruptPlayback: vi.fn(),
     botTurnEnded: vi.fn(),
@@ -393,6 +402,62 @@ describe("mute", () => {
     await session.start(REQUEST);
     session.toggleMute();
     expect(controllers[0]!.setMuted).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("a deadline from the native lease", () => {
+  it("goes through expire, never through end", async () => {
+    const { session, controllers, emit } = setup();
+    await session.start(REQUEST);
+    emit("callEnded", { reason: "deadline_connect" });
+    expect(controllers[0]!.expire).toHaveBeenCalledExactlyOnceWith("connect");
+    expect(controllers[0]!.end).not.toHaveBeenCalled();
+  });
+
+  it("maps each of the five wires to its own kind", async () => {
+    for (const kind of ["connect", "quiet", "waiting_cap", "reconnect", "limit"] as const) {
+      const { session, controllers, emit } = setup();
+      await session.start(REQUEST);
+      emit("callEnded", { reason: `deadline_${kind}` });
+      expect(controllers[0]!.expire).toHaveBeenCalledExactlyOnceWith(kind);
+    }
+  });
+
+  it("is not shown as a recovered call after the app comes back, once expire handled it", async () => {
+    const { session, native, emit } = setup();
+    let stored: { reason: string } | null = { reason: "deadline_connect" };
+    native.takeLastEnd.mockImplementation(() => {
+      const kept = stored;
+      stored = null;
+      return kept;
+    });
+    await session.start(REQUEST);
+    emit("callEnded", { reason: "deadline_connect" });
+    session.end();
+    session.appForegrounded();
+    expect(session.getView().recovered).toBe(false);
+  });
+
+  it("shows the recovered notice after a relaunch when JS never heard the end", () => {
+    const { session, native } = setup();
+    native.takeLastEnd.mockReturnValue({ reason: "deadline_connect" });
+    session.appForegrounded();
+    expect(session.getView().recovered).toBe(true);
+  });
+
+  it("starts the engine knowing the microphone is already allowed", async () => {
+    const seen: VoiceCallControllerOptions[] = [];
+    const { session } = setup(
+      {},
+      {
+        createController: ((opts: VoiceCallControllerOptions) => {
+          seen.push(opts);
+          return fakeController(opts.onChange);
+        }) as never,
+      },
+    );
+    await session.start(REQUEST);
+    expect(seen[0]!.micAlreadyGranted).toBe(true);
   });
 });
 

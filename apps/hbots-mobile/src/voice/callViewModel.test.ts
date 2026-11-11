@@ -6,6 +6,7 @@ import {
   CALL_BAR_RESERVE,
   CALL_TIP,
   callBarShowing,
+  callHeaderLine,
   callIsOver,
   NOTICE_RESERVE,
   outsideLine,
@@ -174,6 +175,34 @@ describe("outsideLine", () => {
     expect(outsideLine("asking")).toContain("Android will ask");
     expect(outsideLine("off")).toBe("This call will not show outside the app. Hang up here.");
     expect(outsideLine(null)).toBeNull();
+  });
+
+  it("says nothing about hanging up once the call is over", () => {
+    expect(outsideLine("off", true)).toBeNull();
+    expect(outsideLine("off", false)).toBe(
+      "This call will not show outside the app. Hang up here.",
+    );
+  });
+});
+
+describe("callHeaderLine", () => {
+  it("reads Voice call above the Microphone allowed card, not Can't start the call", () => {
+    const allowed = view("error", 0, { micRefusal: "allowed" });
+    allowed.snapshot = {
+      ...allowed.snapshot,
+      state: { ...allowed.snapshot.state, errorCode: "mic_blocked" },
+    };
+    expect(callHeaderLine(allowed)).toBe("Voice call");
+  });
+
+  it("keeps the usual line for every other failure", () => {
+    const failed = view("error", 0, { micRefusal: "denied" });
+    failed.snapshot = {
+      ...failed.snapshot,
+      state: { ...failed.snapshot.state, errorCode: "mic_blocked" },
+    };
+    expect(callHeaderLine(failed)).toBe("Can't start the call");
+    expect(callHeaderLine(view("live", 134_000))).toBe("Voice call · 2:14");
   });
 });
 
