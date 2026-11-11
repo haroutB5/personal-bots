@@ -25,6 +25,8 @@ import { classifyFailure } from "./failure";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
 import { failureFor, reducePairing } from "./onboarding/model";
 import { inspectServer, pair } from "./pairing";
+import { PushBridge } from "./notifications/PushBridge";
+import { pushController } from "./notifications/pushRuntime";
 import { AppAtomRegistryProvider } from "./personal/atomRegistry";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
 import { wipeLocalData } from "./platform/nativePorts";
@@ -159,6 +161,7 @@ function App() {
       }
       disposeNative();
       wipeLocalData();
+      void pushController.teardown({ remote: false });
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
       setScreen(next);
@@ -401,9 +404,13 @@ function App() {
   const signOut = useCallback(
     async (session: StoredSession) => {
       const native = nativeRef.current;
+      // The server forgets this phone while the connection is still up. It is capped at a few
+      // seconds, and the screen already says "Signing out" while it runs.
+      const forgotten = pushController.teardown({ remote: true });
+      setScreen({ kind: "connecting", step: "Signing out" });
+      await forgotten;
       disposeNative();
       wipeLocalData();
-      setScreen({ kind: "connecting", step: "Signing out" });
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
       if (native !== null) {
@@ -461,18 +468,21 @@ function App() {
     <AppAtomRegistryProvider>
       <SafeAreaProvider>
         {screen.kind === "ready" ? (
-          <AppLockGate>
-            <AppShell
-              native={screen.native}
-              installedVersion={installedVersion}
-              update={update}
-              latest={latest}
-              onCheckNow={() => void checkForUpdate(screen.session, true)}
-              onInstall={() => void confirmUpdateInstall()}
-              onOpenPermission={() => void openInstallPermission()}
-              onSignOut={() => confirmSignOut(screen.session)}
-            />
-          </AppLockGate>
+          <>
+            <PushBridge native={screen.native} appVersion={installedVersion} />
+            <AppLockGate>
+              <AppShell
+                native={screen.native}
+                installedVersion={installedVersion}
+                update={update}
+                latest={latest}
+                onCheckNow={() => void checkForUpdate(screen.session, true)}
+                onInstall={() => void confirmUpdateInstall()}
+                onOpenPermission={() => void openInstallPermission()}
+                onSignOut={() => confirmSignOut(screen.session)}
+              />
+            </AppLockGate>
+          </>
         ) : screen.kind === "unpaired" ? (
           <View style={styles.flex}>
             <OnboardingScreen

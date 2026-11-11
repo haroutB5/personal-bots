@@ -1,0 +1,46 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.hbotsnotify'
+version = '0.0.1'
+
+// One decision, made at Gradle time: Firebase is compiled in only when the build was given a
+// google-services.json (HBOTS_GOOGLE_SERVICES_JSON at prebuild put it in android/app) and the same
+// variable is still set. Without both, no Firebase class is on the classpath, so none can load.
+def servicesPath = (System.getenv('HBOTS_GOOGLE_SERVICES_JSON') ?: '').trim()
+def fcmConfigured = !servicesPath.isEmpty() && new File(rootProject.projectDir, 'app/google-services.json').isFile()
+
+android {
+  namespace 'expo.modules.hbotsnotify'
+  defaultConfig {
+    minSdkVersion 26
+    versionCode 1
+    versionName '0.0.1'
+    buildConfigField 'boolean', 'FCM_CONFIGURED', fcmConfigured.toString()
+  }
+  buildFeatures {
+    buildConfig = true
+  }
+  sourceSets {
+    main {
+      java.srcDirs += fcmConfigured ? 'src/firebase/java' : 'src/nofirebase/java'
+    }
+  }
+  testOptions {
+    unitTests.returnDefaultValues = true
+  }
+}
+
+dependencies {
+  implementation project(':hbots-updater')
+  implementation 'androidx.core:core-ktx:1.15.0'
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  if (fcmConfigured) {
+    implementation 'com.google.firebase:firebase-messaging:25.0.1'
+  }
+
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.json:json:20240303'
+}

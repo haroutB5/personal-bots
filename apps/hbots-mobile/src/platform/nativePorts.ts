@@ -3,6 +3,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import { Alert, AppState, InteractionManager } from "react-native";
 
+import { wipeNativeNotifications } from "../notifications/nativeNotify";
 import { wipeThreadCache } from "../personal/nativeCache";
 import { decryptFile, deleteCacheKey, encryptFile } from "./secureStorage";
 import type { BlobStore } from "@hbots/personal-client/ports/blobStore";
@@ -84,7 +85,12 @@ export function wipeBlobDirectory(): void {
 
 /** Everything this phone kept for a signed-in session: cached chats, queued attachments and the key. */
 export function wipeLocalData(): void {
-  for (const wipe of [wipeThreadCache, wipeBlobDirectory, deleteCacheKey]) {
+  for (const wipe of [
+    wipeThreadCache,
+    wipeBlobDirectory,
+    deleteCacheKey,
+    wipeNativeNotifications,
+  ]) {
     try {
       wipe();
     } catch (cause) {

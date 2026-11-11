@@ -15,3 +15,7 @@ modules/hbots-network/android/build/
 !modules/hbots-liveview/android/**
 modules/hbots-liveview/android/build/
 *.aab
+google-services.json
+!modules/hbots-notify/android/
+!modules/hbots-notify/android/**
+modules/hbots-notify/android/build/

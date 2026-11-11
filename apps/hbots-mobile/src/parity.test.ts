@@ -394,3 +394,19 @@ describe("Android parity ratchet", () => {
     }
   });
 });
+
+describe("N1 phone push", () => {
+  it("claims the five event toggles and the two presence reports", () => {
+    for (const item of [
+      "pref:push#taskCompleted",
+      "pref:push#taskNeedsInput",
+      "pref:push#taskFailed",
+      "pref:push#routineResult",
+      "pref:push#chatReply",
+      "rpc:personalPushReportViewing",
+      "rpc:personalPushReportForeground",
+    ]) {
+      expect(DONE_ITEMS).toContain(item);
+    }
+  });
+});

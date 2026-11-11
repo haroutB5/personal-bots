@@ -6,6 +6,7 @@ const fs = vi.hoisted(() => ({
   dirs: new Set<string>(),
   files: new Map<string, string>(),
   keyDeletes: 0,
+  notifyWipes: 0,
 }));
 
 vi.mock("./secureStorage", () => ({
@@ -23,6 +24,12 @@ vi.mock("./secureStorage", () => ({
   },
   deleteCacheKey: () => {
     fs.keyDeletes += 1;
+  },
+}));
+
+vi.mock("../notifications/nativeNotify", () => ({
+  wipeNativeNotifications: () => {
+    fs.notifyWipes += 1;
   },
 }));
 
@@ -117,6 +124,7 @@ beforeEach(() => {
   fs.files.clear();
   fs.files.set(payload.uri, "abc");
   fs.keyDeletes = 0;
+  fs.notifyWipes = 0;
   createNativeEnvironmentCache();
 });
 
@@ -139,6 +147,12 @@ describe("wipe on sign-out and revoke", () => {
     wipeLocalData();
 
     expect(fs.keyDeletes).toBe(1);
+  });
+
+  it("clears shown notifications, channels and the push policy", () => {
+    wipeLocalData();
+
+    expect(fs.notifyWipes).toBe(1);
   });
 
   it("removes the plain copy made for an upload as well", async () => {

@@ -381,4 +381,11 @@ export const DONE_ITEMS: readonly string[] = [
   "rpc:personalDesktopStatus",
   "rpc:personalDesktopStop",
   "rpc:personalDesktopActivity",
+  "pref:push#taskCompleted",
+  "pref:push#taskNeedsInput",
+  "pref:push#taskFailed",
+  "pref:push#routineResult",
+  "pref:push#chatReply",
+  "rpc:personalPushReportViewing",
+  "rpc:personalPushReportForeground",
 ];
