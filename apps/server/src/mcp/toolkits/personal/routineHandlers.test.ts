@@ -269,7 +269,7 @@ describe("routine management tools", () => {
 });
 
 describe("routines run in the chat they were created from", () => {
-  it.effect("create_routine records the calling chat unless newChatEachRun is set", () =>
+  it.effect("create_routine records the calling chat and refuses a new chat per run", () =>
     Effect.gen(function* () {
       const routines = fakeRoutines([]);
       const inChat = yield* call(routines, "create_routine", {
@@ -279,18 +279,18 @@ describe("routines run in the chat they were created from", () => {
         date: "2026-09-25",
         time: "16:20",
       });
-      const optedOut = yield* call(routines, "create_routine", {
+      const [first] = [...routines.store.values()];
+      expect([first?.threadId, first?.newChatEachRun]).toEqual(["thread", false]);
+      expect(inChat).toContain("Each run is posted in this chat.");
+      const refused = yield* call(routines, "create_routine", {
         title: "Nightly",
         prompt: "Report.",
         frequency: "daily",
         time: "04:00",
         newChatEachRun: true,
       });
-      const [first, second] = [...routines.store.values()];
-      expect([first?.threadId, first?.newChatEachRun]).toEqual(["thread", false]);
-      expect([second?.threadId, second?.newChatEachRun]).toEqual(["thread", true]);
-      expect(inChat).toContain("Each run is posted in this chat.");
-      expect(optedOut).toContain("Each run opens a new chat.");
+      expect(refused).toContain("A new chat per run is not offered.");
+      expect(routines.store.size).toBe(1);
     }),
   );
 
@@ -322,30 +322,32 @@ describe("routines run in the chat they were created from", () => {
     }),
   );
 
-  it.effect("update_routine flips newChatEachRun, and refuses a chat for a screen-made one", () =>
-    Effect.gen(function* () {
-      const routines = fakeRoutines([
-        routine({ routineId: "r1", threadId: ThreadId.make("thread") }),
-        routine({ routineId: "screen" }),
-      ]);
-      const out = yield* call(routines, "update_routine", {
-        routineId: "r1",
-        newChatEachRun: true,
-      });
-      expect(routines.store.get("r1")?.newChatEachRun).toBe(true);
-      expect(out).toContain("Each run opens a new chat.");
-      const back = yield* call(routines, "update_routine", {
-        routineId: "r1",
-        newChatEachRun: false,
-      });
-      expect(routines.store.get("r1")?.newChatEachRun).toBe(false);
-      expect(back).toContain("Each run is posted in this chat.");
-      const refused = yield* call(routines, "update_routine", {
-        routineId: "screen",
-        newChatEachRun: false,
-      });
-      expect(refused).toContain("was not created from a chat");
-    }),
+  it.effect(
+    "update_routine refuses a new chat per run, keeps false, and refuses a chat for a screen-made one",
+    () =>
+      Effect.gen(function* () {
+        const routines = fakeRoutines([
+          routine({ routineId: "r1", threadId: ThreadId.make("thread"), newChatEachRun: true }),
+          routine({ routineId: "screen" }),
+        ]);
+        const out = yield* call(routines, "update_routine", {
+          routineId: "r1",
+          newChatEachRun: true,
+        });
+        expect(out).toContain("A new chat per run is not offered.");
+        expect(routines.store.get("r1")?.newChatEachRun).toBe(true);
+        const back = yield* call(routines, "update_routine", {
+          routineId: "r1",
+          newChatEachRun: false,
+        });
+        expect(routines.store.get("r1")?.newChatEachRun).toBe(false);
+        expect(back).toContain("Each run is posted in this chat.");
+        const refused = yield* call(routines, "update_routine", {
+          routineId: "screen",
+          newChatEachRun: false,
+        });
+        expect(refused).toContain("was not created from a chat");
+      }),
   );
 });
 

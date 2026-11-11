@@ -149,6 +149,9 @@ export function formatNextRun(instantIso: string | null, timeZone: string): stri
   }).format(Date.parse(instantIso));
 }
 
+const NEW_CHAT_REFUSAL =
+  "A routine's runs always post into the chat it was made in. A new chat per run is not offered. Leave newChatEachRun out.";
+
 /** Whether a routine's runs open a new chat rather than going into its source chat. */
 export const opensNewChat = (routine: PersonalRoutine) =>
   (routine.threadId ?? null) === null || routine.newChatEachRun === true;
@@ -687,6 +690,7 @@ const make = Effect.gen(function* () {
     create_routine: (input) =>
       Effect.gen(function* () {
         const { scope, botId } = yield* requireBotThread;
+        if (input.newChatEachRun === true) return yield* refuse(NEW_CHAT_REFUSAL);
         const schedule = routineScheduleFromToolInput(input);
         if (typeof schedule === "string") return yield* refuse(schedule);
         const targetBotId = (yield* botByName(input.botName)) ?? botId;
@@ -710,7 +714,6 @@ const make = Effect.gen(function* () {
             missedPolicy: input.missedRuns === "skip" ? "skip" : "coalesce",
             // The chat that asked for it: each run comes back here unless opted out.
             threadId: McpInvocationContext.requireMcpThread(scope).threadId,
-            newChatEachRun: input.newChatEachRun === true,
             ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
@@ -758,6 +761,7 @@ const make = Effect.gen(function* () {
     update_routine: (input) =>
       Effect.gen(function* () {
         const { scope } = yield* requireBotThread;
+        if (input.newChatEachRun === true) return yield* refuse(NEW_CHAT_REFUSAL);
         const current = yield* requireRoutine(input.routineId);
         let schedule: PersonalRoutineSchedule | undefined;
         if (touchesSchedule(input)) {

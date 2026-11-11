@@ -90,7 +90,7 @@ export const CreateRoutineInput = Schema.Struct({
   newChatEachRun: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "false (default): runs post into this chat as new turns. true: each run opens a new chat. A run also opens a new chat if this chat is archived or deleted, or the routine moved to another bot.",
+        "Leave this out. Runs post into this chat as new turns. true is refused. A run opens a new chat only if this chat is archived or deleted, or the routine moved to another bot.",
     }),
   ),
   notifyMode: Schema.optional(RoutineNotifyModeField),
@@ -149,7 +149,7 @@ export const UpdateRoutineInput = Schema.Struct({
   newChatEachRun: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "true: each run opens a new chat. false: runs go into the chat the routine was created in (only for a routine created from a chat).",
+        "false: runs go into the chat the routine was created in (only for a routine created from a chat). true is refused.",
     }),
   ),
   notifyMode: Schema.optional(RoutineNotifyModeField),
@@ -397,7 +397,7 @@ export const SaveMemoryResult = Schema.Struct({
 
 const CreateRoutineTool = Tool.make("create_routine", {
   description:
-    "Schedule a recurring or one-off routine. Each run gives the chosen bot the prompt as a task with no other context, so make it self-contained. Runs post into this chat as new turns by default (after any running turn here finishes); newChatEachRun true gives each run a new chat. Times are local wall-clock in the routine's time zone (default Europe/London). Identical arguments in this chat return the same routine. Use notifyMode bot_decides when the user wants to hear only if something is worth it. Change, pause or delete later with update_routine, set_routine_enabled or delete_routine and the routineId. Show the user the returned summary, with its time zone and next run.",
+    "Schedule a recurring or one-off routine. Each run gives the chosen bot the prompt as a task with no other context, so make it self-contained. Runs post into this chat as new turns by default (after any running turn here finishes). Times are local wall-clock in the routine's time zone (default Europe/London). Identical arguments in this chat return the same routine. Use notifyMode bot_decides when the user wants to hear only if something is worth it. Change, pause or delete later with update_routine, set_routine_enabled or delete_routine and the routineId. Show the user the returned summary, with its time zone and next run.",
   parameters: CreateRoutineInput,
   success: CreateRoutineResult,
   failure: PersonalToolFailure,
