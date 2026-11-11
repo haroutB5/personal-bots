@@ -1,7 +1,8 @@
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Cause } from "effect";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
+import { startChatResult } from "../chat/useStartChat";
 import {
   MAX_START_FAILURES,
   NEW_CHAT_INITIAL,
@@ -27,6 +28,7 @@ const failed = (message: string): NewChatEvent => ({
   type: "result",
   result: { kind: "failed", message },
 });
+const interrupted: NewChatEvent = { type: "result", result: { kind: "interrupted" } };
 const started: NewChatEvent = { type: "result", result: { kind: "started", threadId: "t1" } };
 
 describe("stepNewChat", () => {
@@ -60,10 +62,10 @@ describe("stepNewChat", () => {
     expect(afterFailure?.kind).not.toBe("failed");
   });
 
-  it("gives up with the error after repeated transport failures", () => {
+  it("goes offline after repeated transport failures, never showing the transport text", () => {
     const events: NewChatEvent[] = [];
     for (let i = 0; i < MAX_START_FAILURES; i += 1) events.push(link(true), failed(NOT_CONNECTED));
-    expect(play(events).at(-1)).toEqual({ kind: "failed", message: NOT_CONNECTED });
+    expect(play(events).at(-1)).toEqual({ kind: "offline" });
   });
 
   it("shows any other failure at once", () => {
@@ -76,10 +78,8 @@ describe("stepNewChat", () => {
     expect(states.at(-1)?.kind).toBe("started");
   });
 
-  it("N1: a start interrupted while the link is down waits and goes again, and never shows the interrupt text", () => {
-    const interruptMessage = (squashAtomCommandFailure({ cause: Cause.interrupt() }) as Error)
-      .message;
-    const states = play([link(true), failed(interruptMessage), link(false), link(true), started]);
+  it("N1: a start interrupted while the link is down waits and goes again", () => {
+    const states = play([link(true), interrupted, link(false), link(true), started]);
     expect(states.map((state) => state.kind)).toEqual([
       "starting",
       "waiting",
@@ -89,13 +89,42 @@ describe("stepNewChat", () => {
     ]);
   });
 
-  it("N1: repeated interrupts end in the offline copy, never the interrupt text", () => {
-    const interruptMessage = (squashAtomCommandFailure({ cause: Cause.interrupt() }) as Error)
-      .message;
+  it("N1: repeated interrupts end offline, with no text to show", () => {
     const events: NewChatEvent[] = [];
-    for (let i = 0; i < MAX_START_FAILURES; i += 1)
-      events.push(link(true), failed(interruptMessage));
-    const last = play(events).at(-1);
-    expect(JSON.stringify(last)).not.toContain(interruptMessage);
+    for (let i = 0; i < MAX_START_FAILURES; i += 1) events.push(link(true), interrupted);
+    expect(play(events).at(-1)).toEqual({ kind: "offline" });
+  });
+
+  it("N1: offline starts again when the link drops and returns, or on retry", () => {
+    const events: NewChatEvent[] = [];
+    for (let i = 0; i < MAX_START_FAILURES; i += 1) events.push(link(true), interrupted);
+    const viaLink = play([...events, link(false), link(true)]);
+    expect(viaLink.at(-2)).toEqual(NEW_CHAT_INITIAL);
+    expect(viaLink.at(-1)?.kind).toBe("starting");
+    const viaRetry = play([...events, { type: "retry" }, link(true)]);
+    expect(viaRetry.at(-1)?.kind).toBe("starting");
+  });
+
+  it("a retry changes nothing outside offline", () => {
+    const states = play([link(true), { type: "retry" }]);
+    expect(states.at(-1)).toEqual({ kind: "starting", failures: 0 });
+  });
+});
+
+describe("startChatResult", () => {
+  it("N1: an interrupt-only cause carries no interrupt text", () => {
+    const result = startChatResult("t1", AsyncResult.failure(Cause.interrupt()));
+    expect(result).toEqual({ kind: "interrupted" });
+  });
+
+  it("keeps a real failure message and a success", () => {
+    expect(startChatResult("t1", AsyncResult.failure(Cause.fail(new Error("Nope."))))).toEqual({
+      kind: "failed",
+      message: "Nope.",
+    });
+    expect(startChatResult("t1", AsyncResult.success(undefined))).toEqual({
+      kind: "started",
+      threadId: "t1",
+    });
   });
 });

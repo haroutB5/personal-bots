@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useStartChat } from "../chat/useStartChat";
@@ -7,7 +7,12 @@ import type { NativePersonal } from "../personal/nativePersonalClient";
 import { ScreenHeader } from "../shell/ScreenHeader";
 import { tokens } from "../shell/tokens";
 import { resolveNewChatTarget } from "../tile/ctoTarget";
-import { NEW_CHAT_INITIAL, NEW_CHAT_RETRY_MS, stepNewChat } from "./newChatStart";
+import {
+  NEW_CHAT_INITIAL,
+  NEW_CHAT_OFFLINE_MESSAGE,
+  NEW_CHAT_RETRY_MS,
+  stepNewChat,
+} from "./newChatStart";
 
 /**
  * Opened by `hbots://bot/<id>?new=1` (the Quick Settings tile and the launcher
@@ -38,9 +43,9 @@ export function BotNewChatScreen({
   // asks again when a start was dropped under; a failed start waits a moment so a link that still
   // claims to be up does not spin.
   useEffect(() => {
-    if (step.kind !== "waiting") return undefined;
+    if (step.kind !== "waiting" && step.kind !== "offline") return undefined;
     const event = { type: "inputs", connected, hasTarget: targetBotId !== null } as const;
-    if (step.failures === 0) {
+    if (step.kind === "offline" || step.failures === 0) {
       dispatch(event);
       return undefined;
     }
@@ -73,7 +78,12 @@ export function BotNewChatScreen({
     onStarted(targetBotId, step.threadId);
   }, [step, targetBotId, onStarted]);
 
-  const error = step.kind === "failed" ? step.message : null;
+  const error =
+    step.kind === "failed"
+      ? step.message
+      : step.kind === "offline"
+        ? NEW_CHAT_OFFLINE_MESSAGE
+        : null;
   const notice =
     error ??
     (target?.kind === "no-cto"
@@ -98,9 +108,20 @@ export function BotNewChatScreen({
             )}
           </>
         ) : (
-          <Text style={styles.notice} accessibilityRole="alert" maxFontSizeMultiplier={1.6}>
-            {notice}
-          </Text>
+          <>
+            <Text style={styles.notice} accessibilityRole="alert" maxFontSizeMultiplier={1.6}>
+              {notice}
+            </Text>
+            {step.kind === "offline" ? (
+              <Pressable
+                onPress={() => dispatch({ type: "retry" })}
+                accessibilityRole="button"
+                style={styles.retry}
+              >
+                <Text style={styles.retryLabel}>Try again</Text>
+              </Pressable>
+            ) : null}
+          </>
         )}
       </View>
     </View>
@@ -111,5 +132,15 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.bg },
   body: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
   waiting: { color: tokens.textSecondary, fontSize: 13, marginTop: 12, textAlign: "center" },
+  retry: {
+    minHeight: 44,
+    marginTop: 16,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
+    justifyContent: "center",
+  },
+  retryLabel: { color: tokens.text, fontSize: 15, fontWeight: "500" },
   notice: { color: tokens.textSecondary, fontSize: 14, lineHeight: 20, textAlign: "center" },
 });

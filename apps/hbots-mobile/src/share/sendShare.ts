@@ -122,7 +122,7 @@ export async function sendShare(input: {
     return sendFailed(state, "That file is over 25 MB. Share a smaller one.");
   }
   const started = await start(bot.botId as string);
-  if (started.kind === "failed") return sendFailed(state, "Couldn't send. Try again.");
+  if (started.kind !== "started") return sendFailed(state, "Couldn't send. Try again.");
   const queued = await queueShare({ native, bot, threadId: started.threadId, message });
   if (!queued.ok) return sendFailed(state, queued.error);
   return sendSucceeded(bot.botId as string, started.threadId);

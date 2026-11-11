@@ -12,11 +12,15 @@ export type NewChatStart =
   | { readonly kind: "waiting"; readonly failures: number }
   | { readonly kind: "starting"; readonly failures: number }
   | { readonly kind: "started"; readonly threadId: string }
+  | { readonly kind: "offline" }
   | { readonly kind: "failed"; readonly message: string };
 
 export type NewChatEvent =
   | { readonly type: "inputs"; readonly connected: boolean; readonly hasTarget: boolean }
-  | { readonly type: "result"; readonly result: StartChatResult };
+  | { readonly type: "result"; readonly result: StartChatResult }
+  | { readonly type: "retry" };
+
+export const NEW_CHAT_OFFLINE_MESSAGE = "Can't reach your laptop. It may be off or restarting.";
 
 /** Starts the link dropped under before the screen shows the error. */
 export const MAX_START_FAILURES = 3;
@@ -27,7 +31,11 @@ export const NEW_CHAT_RETRY_MS = 1_500;
 export const NEW_CHAT_INITIAL: NewChatStart = { kind: "waiting", failures: 0 };
 
 export function stepNewChat(state: NewChatStart, event: NewChatEvent): NewChatStart {
+  if (event.type === "retry") {
+    return state.kind === "offline" ? NEW_CHAT_INITIAL : state;
+  }
   if (event.type === "inputs") {
+    if (state.kind === "offline" && !event.connected) return NEW_CHAT_INITIAL;
     if (state.kind === "waiting" && event.hasTarget && event.connected) {
       return { kind: "starting", failures: state.failures };
     }
@@ -36,9 +44,9 @@ export function stepNewChat(state: NewChatStart, event: NewChatEvent): NewChatSt
   if (state.kind !== "starting") return state;
   const { result } = event;
   if (result.kind === "started") return { kind: "started", threadId: result.threadId };
+  const droppedLink =
+    result.kind === "interrupted" || isTransportConnectionErrorMessage(result.message);
+  if (!droppedLink) return { kind: "failed", message: result.message };
   const failures = state.failures + 1;
-  if (isTransportConnectionErrorMessage(result.message) && failures < MAX_START_FAILURES) {
-    return { kind: "waiting", failures };
-  }
-  return { kind: "failed", message: result.message };
+  return failures < MAX_START_FAILURES ? { kind: "waiting", failures } : { kind: "offline" };
 }
