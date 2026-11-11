@@ -4,8 +4,8 @@ import * as SecureStore from "expo-secure-store";
 import { Alert, AppState, InteractionManager } from "react-native";
 
 import { wipeNativeNotifications } from "../notifications/nativeNotify";
-import { wipeThreadCache } from "../personal/nativeCache";
-import { decryptFile, deleteCacheKey, encryptFile } from "./secureStorage";
+import { CACHE_DIRECTORY as THREAD_CACHE_DIRECTORY, wipeThreadCache } from "../personal/nativeCache";
+import { decryptFile, deleteCacheKey, encryptFile, purgeLegacyPlaintext } from "./secureStorage";
 import {
   discardOutbox,
   OUTBOX_REMOVED_STORAGE_KEY,
@@ -110,6 +110,34 @@ export function wipeCacheRoot(): void {
     } catch (cause) {
       console.warn("Could not remove a cache entry on sign-out.", cause);
     }
+  }
+}
+
+/** Written once the pre-encryption files are gone, so the scan runs on the first start after the upgrade only. */
+const LEGACY_PURGE_MARKER = "hbots.legacy-cache-purged.v1";
+
+/**
+ * First start after the upgrade that encrypts the cache: deletes the plaintext
+ * thread cache, plaintext attachments and the old HTTP and image caches. A
+ * cache is rebuilt from the server, so deleting is safer than converting. Safe
+ * to call on every start; it does nothing after it has succeeded once.
+ */
+export function purgeLegacyCache(): void {
+  try {
+    if (SecureStore.getItem(LEGACY_PURGE_MARKER) === "done") return;
+  } catch {
+    // An unreadable marker means the purge runs again, which is harmless.
+  }
+  try {
+    const purged = purgeLegacyPlaintext([
+      new Directory(Paths.document, THREAD_CACHE_DIRECTORY).uri,
+      new Directory(Paths.document, BLOB_DIRECTORY).uri,
+    ]);
+    if (!purged) return;
+    wipeCacheRoot();
+    SecureStore.setItem(LEGACY_PURGE_MARKER, "done");
+  } catch (cause) {
+    console.warn("Could not remove the old unencrypted cache.", cause);
   }
 }
 
@@ -282,6 +310,7 @@ export function createNativeIds(): Ids {
 }
 
 export function createNativePorts(): PersonalPorts<NativeBlob> {
+  purgeLegacyCache();
   return {
     kv: createSecureKeyValueStore(),
     blobs: createFileBlobStore(),

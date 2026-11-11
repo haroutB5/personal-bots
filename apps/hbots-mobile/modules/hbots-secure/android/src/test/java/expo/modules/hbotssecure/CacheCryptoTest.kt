@@ -140,4 +140,27 @@ class CacheCryptoTest {
     assertNull(FileCrypto(MemoryKeys()).readText(path("nope")))
     assertFalse(FileCrypto(MemoryKeys()).decryptFile(path("nope"), path("out")))
   }
+
+  @Test fun purgeDeletesPlaintextFilesAndKeepsEncryptedOnes() {
+    val crypto = FileCrypto(MemoryKeys())
+    crypto.writeText(path("kept"), "encrypted reply")
+    File(path("old-thread.json")).writeText("{\"plain\":\"json\"}")
+    File(path("tiny")).writeText("v")
+    File(path("half.part")).writeBytes(byteArrayOf('v'.code.toByte(), '1'.code.toByte(), 1))
+    File(dir, "nested").mkdirs()
+    File(dir, "nested/old-blob").writeText("plain attachment")
+
+    val removed = crypto.purgeUnencrypted(dir)
+
+    assertEquals(4, removed)
+    assertEquals("encrypted reply", crypto.readText(path("kept")))
+    assertFalse(File(path("old-thread.json")).exists())
+    assertFalse(File(path("tiny")).exists())
+    assertFalse(File(path("half.part")).exists())
+    assertFalse(File(dir, "nested/old-blob").exists())
+  }
+
+  @Test fun purgeOfAMissingFolderRemovesNothing() {
+    assertEquals(0, FileCrypto(MemoryKeys()).purgeUnencrypted(File(dir, "nope")))
+  }
 }

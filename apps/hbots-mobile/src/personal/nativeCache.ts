@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import { readDecryptedText, writeEncryptedText } from "../platform/secureStorage";
 import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 
-const CACHE_DIRECTORY = "hbots-thread-cache";
+export const CACHE_DIRECTORY = "hbots-thread-cache";
 
 /** Set by a wipe: a save that was already running cannot recreate the folder after it. */
 let sealed = false;

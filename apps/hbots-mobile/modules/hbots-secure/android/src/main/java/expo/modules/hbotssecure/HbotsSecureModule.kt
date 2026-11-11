@@ -82,5 +82,10 @@ class HbotsSecureModule : Module() {
     }
 
     Function("deleteCacheKey") { CacheCrypto.deleteKey() }
+
+    // Files from before encryption: deleted, not served. Returns how many it removed.
+    Function("purgeLegacyPlaintext") { directories: List<String> ->
+      directories.sumOf { CacheCrypto.purgeUnencrypted(File(pathOf(it))) }
+    }
   }
 }

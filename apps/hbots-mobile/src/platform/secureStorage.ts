@@ -6,6 +6,7 @@ interface SecureStorageModule {
   encryptFile(sourceUri: string, destinationPath: string): Promise<boolean>;
   decryptFile(sourcePath: string, destinationPath: string): Promise<boolean>;
   deleteCacheKey(): void;
+  purgeLegacyPlaintext(directories: readonly string[]): number;
   setRecentsBlanked(blank: boolean): void;
 }
 
@@ -36,6 +37,16 @@ export async function decryptFile(sourcePath: string, destinationPath: string): 
 /** Removes the Keystore key. Files written under it become unreadable. */
 export function deleteCacheKey(): void {
   native?.deleteCacheKey();
+}
+
+/**
+ * Deletes every file under these folders that is not in the encrypted format.
+ * Returns false when the Keystore helper is missing, so the caller tries again later.
+ */
+export function purgeLegacyPlaintext(directories: readonly string[]): boolean {
+  if (native === null) return false;
+  native.purgeLegacyPlaintext(directories);
+  return true;
 }
 
 /** Blanks the Recents thumbnail and shields the app in the background while the app lock is on. */

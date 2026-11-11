@@ -69,6 +69,32 @@ class FileCrypto(private val keys: CacheKeys) {
 
   fun deleteKey() = keys.delete()
 
+  /**
+   * One-time migration for files written before encryption existed: deletes every
+   * file under [root] that does not start with the v1 header (and every leftover
+   * partial write). Returns how many files it removed. A readable v1 file stays.
+   */
+  fun purgeUnencrypted(root: File): Int {
+    if (!root.exists()) return 0
+    var removed = 0
+    root.walkBottomUp().forEach { entry ->
+      if (entry.isFile && (entry.name.endsWith(".part") || !hasHeader(entry))) {
+        if (entry.delete()) removed += 1
+      }
+    }
+    return removed
+  }
+
+  private fun hasHeader(file: File): Boolean =
+    try {
+      file.inputStream().use { raw ->
+        val head = ByteArray(MAGIC.size)
+        readFully(raw, head) == head.size && head.contentEquals(MAGIC)
+      }
+    } catch (_: Exception) {
+      false
+    }
+
   /** Writes to a sibling file and renames, so a crash never leaves half a file. */
   private fun atomically(target: File, write: (OutputStream) -> Unit) {
     target.parentFile?.mkdirs()
@@ -162,6 +188,8 @@ object CacheCrypto {
   private val files = FileCrypto(KeystoreCacheKeys)
 
   fun deleteKey() = files.deleteKey()
+
+  fun purgeUnencrypted(root: File): Int = files.purgeUnencrypted(root)
 
   fun writeText(path: String, text: String) = files.writeText(path, text)
 

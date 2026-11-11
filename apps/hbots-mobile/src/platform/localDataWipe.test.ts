@@ -8,6 +8,8 @@ const fs = vi.hoisted(() => ({
   keyDeletes: 0,
   notifyWipes: 0,
   secure: new Map<string, string>(),
+  nativeMissing: false,
+  purgeCalls: 0,
 }));
 
 vi.mock("./secureStorage", () => ({
@@ -25,6 +27,16 @@ vi.mock("./secureStorage", () => ({
   },
   deleteCacheKey: () => {
     fs.keyDeletes += 1;
+  },
+  /** Like the native one: every file under the folders that is not in the v1 format goes. */
+  purgeLegacyPlaintext: (directories: readonly string[]) => {
+    fs.purgeCalls += 1;
+    if (fs.nativeMissing) return false;
+    for (const key of [...fs.files.keys()]) {
+      const inside = directories.some((directory) => key.startsWith(`${directory}/`));
+      if (inside && !(fs.files.get(key) ?? "").startsWith("v1:")) fs.files.delete(key);
+    }
+    return true;
   },
 }));
 
@@ -138,7 +150,13 @@ import {
   getOutboxSnapshot,
   OUTBOX_STORAGE_KEY,
 } from "@hbots/personal-client/composer/outbox";
-import { createFileBlobStore, createSecureKeyValueStore, secureStoreKey, wipeLocalData } from "./nativePorts";
+import {
+  createFileBlobStore,
+  createSecureKeyValueStore,
+  purgeLegacyCache,
+  secureStoreKey,
+  wipeLocalData,
+} from "./nativePorts";
 
 const snapshot = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot))(
   serverBody,
@@ -160,6 +178,8 @@ beforeEach(() => {
   fs.keyDeletes = 0;
   fs.notifyWipes = 0;
   fs.secure.clear();
+  fs.nativeMissing = false;
+  fs.purgeCalls = 0;
   fs.dirs.add("file:///cache-dir");
   fs.dirs.add("file:///documents");
   createNativeEnvironmentCache();
@@ -291,5 +311,51 @@ describe("wipe on sign-out and revoke", () => {
     await wipeLocalData();
 
     expect(fs.secure.has(secureStoreKey(OUTBOX_STORAGE_KEY))).toBe(false);
+  });
+});
+
+describe("the first start after the cache became encrypted", () => {
+  const OLD_THREAD = `${CACHE}/thread-old.json`;
+  const OLD_BLOB = `${BLOBS}/old-photo`;
+  const OLD_HTTP = "file:///cache-dir/http-cache/journal";
+
+  function legacyFiles() {
+    fs.files.set(OLD_THREAD, '{"plain":"chat"}');
+    fs.files.set(OLD_BLOB, "plain attachment");
+    fs.files.set(OLD_HTTP, "cached api response");
+    fs.dirs.add(CACHE);
+    fs.dirs.add(BLOBS);
+    fs.dirs.add("file:///cache-dir/http-cache");
+  }
+
+  it("deletes every plaintext cache file and keeps the encrypted ones", () => {
+    legacyFiles();
+    writeCachedThread("environment-phone", snapshot);
+
+    purgeLegacyCache();
+
+    expect(fs.files.has(OLD_THREAD)).toBe(false);
+    expect(fs.files.has(OLD_BLOB)).toBe(false);
+    expect(fs.files.has(OLD_HTTP)).toBe(false);
+    expect(filesUnder(CACHE)).toHaveLength(1);
+  });
+
+  it("scans once, then leaves the cache alone on later starts", () => {
+    legacyFiles();
+    purgeLegacyCache();
+    purgeLegacyCache();
+
+    expect(fs.purgeCalls).toBe(1);
+  });
+
+  it("tries again next start when the Keystore helper was missing", () => {
+    legacyFiles();
+    fs.nativeMissing = true;
+    purgeLegacyCache();
+    expect(fs.files.has(OLD_THREAD)).toBe(true);
+
+    fs.nativeMissing = false;
+    purgeLegacyCache();
+    expect(fs.files.has(OLD_THREAD)).toBe(false);
   });
 });
