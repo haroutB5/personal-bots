@@ -63,9 +63,14 @@ export const INLINE_REFUSALS = [
   "label-too-long",
   "duplicate-label",
   "destructive-word",
+  "unknown-choice",
+  "previews-hidden",
 ] as const;
 
 export type InlineRefusal = (typeof INLINE_REFUSALS)[number];
+
+/** Refusals that blame the request body, not the notification, so the command id stays free to retry. */
+export const isRetryableRefusal = (reason: InlineRefusal): boolean => reason === "unknown-choice";
 
 export const isInlineRefusal = (value: string): value is InlineRefusal =>
   (INLINE_REFUSALS as ReadonlyArray<string>).includes(value);

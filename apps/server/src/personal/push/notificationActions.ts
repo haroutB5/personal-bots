@@ -27,6 +27,7 @@ import {
   answersForChoice,
   inlineVerdict,
   isInlineRefusal,
+  isRetryableRefusal,
   kindRefusal,
   type InlineRefusal,
   type PendingQuestion,
@@ -205,9 +206,10 @@ export const make = Effect.gen(function* () {
   /**
    * Runs an action once per (command id, subject). The first call claims the
    * row and stores what it came to; a repeat gets that stored answer and has
-   * no effect. A claim whose action failed is released so the same id can try
-   * again. A claim left unfinished by a crash stays: that id answers
-   * "in progress" and never re-runs, so a tap never takes effect twice.
+   * no effect. A claim whose action failed, or that ended in a retryable
+   * refusal, is released so the same id can try again. A claim left unfinished
+   * by a crash stays: that id answers "in progress" and never re-runs, so a
+   * tap never takes effect twice.
    */
   const once = (input: {
     readonly subject: string;
@@ -241,14 +243,15 @@ export const make = Effect.gen(function* () {
         }
         return decodeOutcome(stored.body);
       }
-      const outcome = yield* input.run.pipe(
-        Effect.onError(() =>
-          sql`
-            DELETE FROM personal_phone_commands
-            WHERE command_id = ${input.commandId} AND subject = ${input.subject}
-          `.pipe(Effect.ignore),
-        ),
-      );
+      const release = sql`
+        DELETE FROM personal_phone_commands
+        WHERE command_id = ${input.commandId} AND subject = ${input.subject}
+      `;
+      const outcome = yield* input.run.pipe(Effect.onError(() => release.pipe(Effect.ignore)));
+      if (outcome._tag === "Refused" && isRetryableRefusal(outcome.reason)) {
+        yield* release;
+        return outcome;
+      }
       yield* sql`
         UPDATE personal_phone_commands
         SET status = ${outcomeStatus(outcome)}, body = ${encodeOutcome(outcome)}
@@ -296,13 +299,14 @@ export const make = Effect.gen(function* () {
         run: Effect.gen(function* () {
           const byKind = kindRefusal(row.kind);
           if (byKind !== null) return refused(byKind);
+          if (yield* hidesPreviews(row.botId)) return refused("previews-hidden");
           if (row.requestId === null) return { _tag: "Stale" } as const satisfies ActionOutcome;
           const pending = yield* pendingQuestion(row);
           if (pending._tag === "Gone") return { _tag: "Stale" } as const satisfies ActionOutcome;
           const verdict = inlineVerdict(row.kind, pending.questions);
           if (verdict._tag === "Refused") return refused(verdict.reason);
           const answers = answersForChoice(pending.questions, input.choice);
-          if (answers === null) return { _tag: "Stale" } as const satisfies ActionOutcome;
+          if (answers === null) return refused("unknown-choice");
           yield* threads.dispatch({
             type: "runtime-request.respond",
             threadId: ThreadId.make(row.threadId),

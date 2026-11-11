@@ -305,17 +305,56 @@ it.effect("a stale tap answers stale and does not respond", () => {
   }).pipe(Effect.provide(layerFor(harness)));
 });
 
-it.effect("a choice the notification did not offer is stale and does not respond", () => {
-  const harness = newHarness();
+it.effect(
+  "a choice the notification did not offer is refused 422 and keeps the command id free",
+  () => {
+    const harness = newHarness();
+    return Effect.gen(function* () {
+      const actions = yield* setup;
+      const wrong = yield* actions.answer({
+        ...pick("chat-needs:req-1"),
+        commandId: "cmd-1",
+        choice: "Patio",
+      });
+      expect(wrong).toEqual({ _tag: "Refused", reason: "unknown-choice" });
+      expect(outcomeStatus(wrong)).toBe(422);
+      expect(harness.dispatched).toEqual([]);
+      expect(yield* commandRows).toEqual([]);
+
+      const retry = yield* actions.answer({
+        ...pick("chat-needs:req-1"),
+        commandId: "cmd-1",
+        choice: "Window",
+      });
+      expect(retry).toEqual({ _tag: "Done" });
+      expect(harness.dispatched).toHaveLength(1);
+      expect(harness.dispatched[0]).toMatchObject({ answers: { q1: "table-window" } });
+      expect(yield* commandRows).toEqual([{ commandId: "cmd-1", status: 200 }]);
+    }).pipe(Effect.provide(layerFor(harness)));
+  },
+);
+
+it.effect("a bot that hides previews cannot have its question answered from the phone", () => {
+  const harness = newHarness({ hidePreviews: true });
   return Effect.gen(function* () {
     const actions = yield* setup;
-    const result = yield* actions.answer({
+    const blind = yield* actions.answer({
       ...pick("chat-needs:req-1"),
       commandId: "cmd-1",
-      choice: "Patio",
+      choice: "Window",
     });
-    expect(result).toEqual({ _tag: "Stale" });
+    expect(blind).toEqual({ _tag: "Refused", reason: "previews-hidden" });
+    expect(outcomeStatus(blind)).toBe(422);
     expect(harness.dispatched).toEqual([]);
+
+    harness.hidePreviews = false;
+    const shown = yield* actions.answer({
+      ...pick("chat-needs:req-1"),
+      commandId: "cmd-2",
+      choice: "Window",
+    });
+    expect(shown).toEqual({ _tag: "Done" });
+    expect(harness.dispatched).toHaveLength(1);
   }).pipe(Effect.provide(layerFor(harness)));
 });
 
