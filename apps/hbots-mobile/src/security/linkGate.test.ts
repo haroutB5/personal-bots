@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { parseDeepLink } from "../nav/routes";
+import { createLockController, LOCK_OFF, type AuthResult, type Lock } from "./appLock";
 import { createLinkGate, HELD_LINK_TTL_MS } from "./linkGate";
 
 /** The real links each entry point sends, with the screen each one opens. */
@@ -168,5 +169,128 @@ describe("the owner of the gate re-renders", () => {
 
     expect(first).not.toHaveBeenCalled();
     expect(latest).toHaveBeenCalledExactlyOnceWith("hbots://stop");
+  });
+});
+
+describe("a link that arrives while the app lock decides", () => {
+  const LINK = "hbots://bot/personal-seed-researcher?new=1";
+  const IMMEDIATE: Lock = { kind: "on", timeout: "immediate" };
+  const ONE_MINUTE: Lock = { kind: "on", timeout: "1m" };
+
+  async function flush() {
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+  }
+
+  /** The lock and the gate wired as the app wires them. `answer` opens the prompt the lock raises. */
+  function lockedApp(lock: Lock) {
+    let clock = 1_000_000;
+    const prompts: Array<() => void> = [];
+    const controller = createLockController({
+      authenticate: () =>
+        new Promise<AuthResult>((resolve) => {
+          prompts.push(() => resolve("unlocked"));
+        }),
+      blankRecents: () => undefined,
+      now: () => clock,
+    });
+    const act = vi.fn();
+    const gate = createLinkGate(act, () => clock);
+    gate.setCovered(controller.view().covered);
+    controller.subscribe(() => gate.setCovered(controller.view().covered));
+    controller.start(lock);
+    return {
+      act,
+      receive: gate.receive,
+      leave: () => controller.presence("background"),
+      returnAfter: (ms: number) => {
+        clock += ms;
+        controller.presence("foreground");
+      },
+      wait: (ms: number) => {
+        clock += ms;
+      },
+      answer: async () => {
+        prompts.shift()?.();
+        await flush();
+      },
+      pendingPrompts: () => prompts.length,
+    };
+  }
+
+  it("holds a link that comes before the return to the app, and acts once after the unlock", async () => {
+    const app = lockedApp(IMMEDIATE);
+    await app.answer();
+    app.leave();
+    app.wait(500);
+
+    app.receive(LINK);
+    expect(app.act).not.toHaveBeenCalled();
+
+    app.returnAfter(20);
+    expect(app.act).not.toHaveBeenCalled();
+
+    await app.answer();
+    expect(app.act).toHaveBeenCalledExactlyOnceWith(LINK);
+  });
+
+  it("holds it after the grace period ran out", async () => {
+    const app = lockedApp(ONE_MINUTE);
+    await app.answer();
+    app.leave();
+    app.wait(90_000);
+
+    app.receive(LINK);
+    expect(app.act).not.toHaveBeenCalled();
+
+    app.returnAfter(10);
+    await app.answer();
+    expect(app.act).toHaveBeenCalledExactlyOnceWith(LINK);
+  });
+
+  it("acts at once inside the grace period", async () => {
+    const app = lockedApp(ONE_MINUTE);
+    await app.answer();
+    app.leave();
+    app.wait(30_000);
+
+    app.receive(LINK);
+
+    expect(app.act).toHaveBeenCalledExactlyOnceWith(LINK);
+    app.returnAfter(10);
+    expect(app.pendingPrompts()).toBe(0);
+    expect(app.act).toHaveBeenCalledTimes(1);
+  });
+
+  it("acts at once with the lock off, however long the app was away", async () => {
+    const app = lockedApp(LOCK_OFF);
+    app.leave();
+    app.wait(60 * 60_000);
+
+    app.receive(LINK);
+
+    expect(app.act).toHaveBeenCalledExactlyOnceWith(LINK);
+  });
+
+  it("still holds a link that comes with the lock screen up", async () => {
+    const app = lockedApp(IMMEDIATE);
+    await app.answer();
+    app.leave();
+    app.returnAfter(20);
+
+    app.receive(LINK);
+    expect(app.act).not.toHaveBeenCalled();
+
+    await app.answer();
+    expect(app.act).toHaveBeenCalledExactlyOnceWith(LINK);
+  });
+
+  it("still holds a link that starts the app cold", async () => {
+    const app = lockedApp(IMMEDIATE);
+
+    app.receive(LINK);
+    expect(app.act).not.toHaveBeenCalled();
+
+    await app.answer();
+    expect(app.act).toHaveBeenCalledExactlyOnceWith(LINK);
   });
 });
