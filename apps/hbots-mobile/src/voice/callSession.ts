@@ -32,6 +32,20 @@ export type MicAnswer = "granted" | "denied" | "blocked";
 
 export type MicRefusal = "denied" | "blocked";
 
+/**
+ * What the owner is told about the call outside the app. `asking` is the line
+ * shown while Android's notification prompt is up. `off` stays for the whole
+ * call when notifications are refused, because the call would otherwise run
+ * with a live microphone and no sign anywhere but this screen.
+ */
+export type OutsideNotice = "asking" | "off" | null;
+
+export interface NotificationAsk {
+  enabled(): boolean;
+  alreadyAsked(): boolean;
+  ask(): Promise<void>;
+}
+
 export interface CallRequest {
   readonly threadId: string;
   readonly botId: string;
@@ -65,16 +79,18 @@ export interface CallView {
   readonly snapshot: VoiceCallSnapshot;
   readonly captionsOn: boolean;
   readonly micRefusal: MicRefusal | null;
+  readonly outside: OutsideNotice;
   readonly held: boolean;
   readonly route: NativeRoute | null;
   readonly recovered: boolean;
 }
 
-const IDLE_VIEW: CallView = {
+export const IDLE_VIEW: CallView = {
   call: null,
   snapshot: EMPTY_SNAPSHOT,
   captionsOn: true,
   micRefusal: null,
+  outside: null,
   held: false,
   route: null,
   recovered: false,
@@ -88,6 +104,7 @@ export interface CallSessionDeps {
     readonly callId: string;
   }) => Promise<VoiceApiResult<VoiceCallSnapshotResult>>;
   readonly askMic: () => Promise<MicAnswer>;
+  readonly notifications: NotificationAsk;
   readonly createSocket?: VoiceCallControllerOptions["createSocket"];
   readonly createController?: typeof createVoiceCallController;
   readonly createAudio?: (native: HbotsVoiceModule) => NativeCallAudio;
@@ -111,8 +128,9 @@ export interface CallSession {
   dispose(): void;
 }
 
-const NATIVE_END: Record<NativeEndReason, { reason: VoiceEndReason; notice: string | null }> = {
-  hung_up: { reason: "hung_up", notice: null },
+type NativeEnding = Exclude<NativeEndReason, "hung_up">;
+
+const NATIVE_END: Record<NativeEnding, { reason: VoiceEndReason; notice: string | null }> = {
   notification_hangup: { reason: "hung_up", notice: null },
   signed_out: { reason: "hung_up", notice: null },
   permission_revoked: { reason: "dropped", notice: "The microphone was turned off for hbots." },
@@ -121,7 +139,7 @@ const NATIVE_END: Record<NativeEndReason, { reason: VoiceEndReason; notice: stri
   failed: { reason: "failed", notice: null },
 };
 
-export function nativeEndFor(reason: NativeEndReason): {
+export function nativeEndFor(reason: NativeEnding): {
   readonly reason: VoiceEndReason;
   readonly notice: string | null;
 } {
@@ -256,7 +274,7 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
     if (subscriptions.length > 0) return;
     subscriptions.push(
       native.addListener("callEnded", ({ reason }) => {
-        if (view.call === null) return;
+        if (reason === "hung_up" || view.call === null) return;
         const mapped = nativeEndFor(reason);
         if (controller === null) {
           finishCall(mapped.reason);
@@ -298,6 +316,7 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
       ...view,
       call,
       micRefusal: null,
+      outside: null,
       recovered: false,
       held: false,
       route: null,
@@ -321,6 +340,15 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
       }
     }
 
+    if (!deps.notifications.enabled()) {
+      if (!deps.notifications.alreadyAsked()) {
+        set({ outside: "asking" });
+        await deps.notifications.ask();
+        if (generation !== mine) return;
+      }
+      set({ outside: deps.notifications.enabled() ? null : "off" });
+    }
+
     try {
       await native.startCall(request.botName, "tap");
     } catch (error) {
@@ -341,6 +369,7 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
       botName: request.botName,
       api: deps.api,
       audio,
+      micStart: "after_accept",
       botStatus: readBotStatus,
       refreshBotStatus: refreshSnapshot,
       onChange: publish,
@@ -390,6 +419,16 @@ export function createCallSession(deps: CallSessionDeps): CallSession {
       controller?.retryFinish();
       const native = deps.native;
       if (native !== null && view.call === null && native.takeRecovery()) set({ recovered: true });
+      const call = view.call;
+      if (
+        native !== null &&
+        call !== null &&
+        view.micRefusal !== null &&
+        view.snapshot.state.status === "error" &&
+        native.micPermission() === "granted"
+      ) {
+        void start(call);
+      }
     },
     wipe() {
       const live = controller;

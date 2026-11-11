@@ -6,12 +6,15 @@ import type {
   VoiceCallSnapshot,
 } from "@hbots/personal-client/voice/voiceCallController";
 
+import { createVoiceCallController } from "@hbots/personal-client/voice/voiceCallController";
+
 import { lockCallLine } from "./callLock";
 import {
   createCallSession,
   EMPTY_SNAPSHOT,
   nativeEndFor,
   type CallSessionDeps,
+  type NotificationAsk,
 } from "./callSession";
 import type { HbotsVoiceModule, NativeCallState, NativeVoiceEvents } from "./hbotsVoice";
 import type { NativeCallAudio } from "./nativeCallAudio";
@@ -96,6 +99,21 @@ function fakeController(onChange: VoiceCallControllerOptions["onChange"]) {
   return controller satisfies VoiceCallController;
 }
 
+function fakeNotifications(options: { enabled?: boolean; asked?: boolean; grant?: boolean } = {}) {
+  let enabled = options.enabled ?? true;
+  let asked = options.asked ?? false;
+  const ask = vi.fn(async () => {
+    asked = true;
+    if (options.grant === true) enabled = true;
+  });
+  const port: NotificationAsk = {
+    enabled: () => enabled,
+    alreadyAsked: () => asked,
+    ask,
+  };
+  return { port, ask };
+}
+
 function setup(
   options: Parameters<typeof fakeNative>[0] = {},
   extra: Partial<CallSessionDeps> = {},
@@ -116,6 +134,7 @@ function setup(
     api: {} as never,
     fetchSnapshot,
     askMic,
+    notifications: fakeNotifications().port,
     createAudio: () => audio,
     createController: ((opts: VoiceCallControllerOptions) => {
       const controller = fakeController(opts.onChange);
@@ -196,6 +215,7 @@ describe("starting a call", () => {
       api: {} as never,
       fetchSnapshot: vi.fn() as never,
       askMic: vi.fn() as never,
+      notifications: fakeNotifications().port,
     });
     await session.start(REQUEST);
     expect(session.getView().snapshot.state.status).toBe("error");
@@ -250,6 +270,23 @@ describe("ending a call", () => {
     controllers[0]!.end.mockImplementation((reason: string) => void seen.push(reason));
     session.end("hung_up");
     expect(seen).toEqual(["quiet"]);
+  });
+
+  it("does not treat the module's own hang up echo as the owner hanging up", async () => {
+    const { session, controllers, emit } = setup();
+    await session.start(REQUEST);
+    emit("callEnded", { reason: "hung_up" });
+    expect(controllers[0]!.end).not.toHaveBeenCalled();
+    expect(session.getView().call).not.toBeNull();
+  });
+
+  it("leaves an error card without an end reason when the echo arrives after a failed start", async () => {
+    const { session, emit } = setup({ startError: new Error("boom") });
+    await session.start(REQUEST);
+    emit("callEnded", { reason: "hung_up" });
+    const view = session.getView();
+    expect(view.snapshot.state.status).toBe("error");
+    expect(view.snapshot.state.endReason).toBeNull();
   });
 
   it("maps every native end reason to a call end reason", () => {
@@ -367,5 +404,147 @@ describe("recovery after the process died", () => {
     expect(session.getView().recovered).toBe(true);
     session.dismissRecovered();
     expect(session.getView().recovered).toBe(false);
+  });
+});
+
+describe("asking to show the call outside the app", () => {
+  it("asks once, after the microphone is allowed and before the call starts", async () => {
+    const order: string[] = [];
+    const notifications = fakeNotifications({ enabled: false, grant: true });
+    notifications.ask.mockImplementation(async () => {
+      order.push("ask");
+    });
+    const { session, native, askMic } = setup(
+      { granted: false },
+      { notifications: notifications.port },
+    );
+    askMic.mockImplementation((async () => {
+      order.push("mic");
+      return "granted";
+    }) as never);
+    native.startCall.mockImplementation(async () => {
+      order.push("startCall");
+    });
+    await session.start(REQUEST);
+    expect(order).toEqual(["mic", "ask", "startCall"]);
+  });
+
+  it("does not ask when notifications are already on", async () => {
+    const notifications = fakeNotifications({ enabled: true });
+    const { session } = setup({}, { notifications: notifications.port });
+    await session.start(REQUEST);
+    expect(notifications.ask).not.toHaveBeenCalled();
+    expect(session.getView().outside).toBeNull();
+  });
+
+  it("does not ask a second time after the owner already answered", async () => {
+    const notifications = fakeNotifications({ enabled: false, asked: true });
+    const { session, native } = setup({}, { notifications: notifications.port });
+    await session.start(REQUEST);
+    expect(notifications.ask).not.toHaveBeenCalled();
+    expect(native.startCall).toHaveBeenCalledOnce();
+    expect(session.getView().outside).toBe("off");
+  });
+
+  it("still runs the call and says so inside the app when the owner says no", async () => {
+    const notifications = fakeNotifications({ enabled: false, grant: false });
+    const { session, native } = setup({}, { notifications: notifications.port });
+    await session.start(REQUEST);
+    expect(notifications.ask).toHaveBeenCalledOnce();
+    expect(native.startCall).toHaveBeenCalledOnce();
+    expect(session.getView().outside).toBe("off");
+    expect(session.getView().snapshot.state.status).not.toBe("error");
+  });
+
+  it("shows no notice when the owner says yes", async () => {
+    const notifications = fakeNotifications({ enabled: false, grant: true });
+    const { session } = setup({}, { notifications: notifications.port });
+    await session.start(REQUEST);
+    expect(session.getView().outside).toBeNull();
+  });
+
+  it("starts nothing when the owner hangs up during the ask", async () => {
+    const notifications = fakeNotifications({ enabled: false });
+    let answer: () => void = () => undefined;
+    notifications.ask.mockReturnValue(new Promise<void>((resolve) => (answer = resolve)));
+    const { session, native } = setup({}, { notifications: notifications.port });
+    const started = session.start(REQUEST);
+    expect(session.getView().outside).toBe("asking");
+    session.end();
+    answer();
+    await started;
+    expect(native.startCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("the microphone and the server's answer", () => {
+  function realController(gate: Promise<void>, native: ReturnType<typeof fakeNative>["native"]) {
+    const start = vi.fn(async () => {
+      await gate;
+      return { ok: false as const, code: "no_key" as const, detail: "" };
+    });
+    const api = { start, finish: vi.fn(async () => ({ ok: true as const, value: {} })) };
+    const session = createCallSession({
+      native,
+      api: api as never,
+      fetchSnapshot: vi.fn() as never,
+      askMic: vi.fn() as never,
+      notifications: fakeNotifications().port,
+      createController: createVoiceCallController,
+    });
+    return { session, start };
+  }
+
+  it("opens no capture before the server accepts the call", async () => {
+    const { native } = fakeNative();
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const { session, start } = realController(gate, native);
+    const starting = session.start(REQUEST);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(start).toHaveBeenCalledOnce();
+    expect(native.startCapture).not.toHaveBeenCalled();
+    open();
+    await starting;
+  });
+
+  it("never opens capture when the owner hangs up before the server answers", async () => {
+    const { native } = fakeNative();
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const { session } = realController(gate, native);
+    const starting = session.start(REQUEST);
+    await vi.advanceTimersByTimeAsync(2_000);
+    session.end("hung_up");
+    open();
+    await starting;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(native.startCapture).not.toHaveBeenCalled();
+    expect(session.getView().call).toBeNull();
+  });
+});
+
+describe("coming back from the system settings", () => {
+  it("clears the microphone card and starts the call once the owner allowed it", async () => {
+    const { session, native, askMic } = setup({ granted: false });
+    askMic.mockResolvedValue("blocked" as never);
+    await session.start(REQUEST);
+    expect(session.getView().micRefusal).toBe("blocked");
+    native.micPermission.mockReturnValue("granted");
+    session.appForegrounded();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.startCall).toHaveBeenCalledOnce();
+    expect(session.getView().micRefusal).toBeNull();
+    expect(session.getView().snapshot.state.status).not.toBe("error");
+  });
+
+  it("keeps the card while the microphone is still refused", async () => {
+    const { session, native, askMic } = setup({ granted: false });
+    askMic.mockResolvedValue("blocked" as never);
+    await session.start(REQUEST);
+    session.appForegrounded();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.startCall).not.toHaveBeenCalled();
+    expect(session.getView().micRefusal).toBe("blocked");
   });
 });

@@ -12,26 +12,17 @@ import { appAtomRegistry } from "../personal/atomRegistry";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import {
   createCallSession,
-  EMPTY_SNAPSHOT,
+  IDLE_VIEW,
   type CallSession,
   type CallView,
   type MicAnswer,
 } from "./callSession";
 import { lockCallLine, type LockCallLine } from "./callLock";
+import { callNotificationAsk } from "./callNotificationAsk";
 import { hbotsVoice } from "./hbotsVoice";
 import { createVoiceRunner } from "./nativeVoiceRunner";
 import { createVoiceCallPort } from "./voiceCallPort";
 import { registerCallSessionForWipe } from "./voiceWipe";
-
-const IDLE_VIEW: CallView = {
-  call: null,
-  snapshot: EMPTY_SNAPSHOT,
-  captionsOn: true,
-  micRefusal: null,
-  held: false,
-  route: null,
-  recovered: false,
-};
 
 export async function askMicrophone(): Promise<MicAnswer> {
   const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
@@ -48,7 +39,13 @@ export function VoiceCallProvider({
 }: PropsWithChildren<{ readonly native: NativePersonal }>) {
   const [session] = useState<CallSession>(() => {
     const { api, fetchSnapshot } = createVoiceCallPort(createVoiceRunner(native, appAtomRegistry));
-    return createCallSession({ native: hbotsVoice, api, fetchSnapshot, askMic: askMicrophone });
+    return createCallSession({
+      native: hbotsVoice,
+      api,
+      fetchSnapshot,
+      askMic: askMicrophone,
+      notifications: callNotificationAsk,
+    });
   });
 
   useEffect(() => {

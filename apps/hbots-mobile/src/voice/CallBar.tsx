@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { tokens } from "../shell/tokens";
 import type { CallView } from "./callSession";
-import { callBarLabel } from "./callViewModel";
+import { CALL_BAR_GAP, CALL_BAR_HEIGHT, callBarLabel } from "./callViewModel";
 
 export function CallBar({
   view,
@@ -23,7 +23,7 @@ export function CallBar({
   if (call === null) return null;
   const muted = view.snapshot.state.muted;
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
+    <View style={[styles.wrap, { paddingTop: insets.top + CALL_BAR_GAP }]} pointerEvents="box-none">
       <View style={styles.bar}>
         <Pressable
           onPress={onReturn}
@@ -70,8 +70,8 @@ const styles = StyleSheet.create({
   bar: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 52,
-    borderRadius: 26,
+    height: CALL_BAR_HEIGHT,
+    borderRadius: CALL_BAR_HEIGHT / 2,
     borderWidth: 1,
     borderColor: tokens.border,
     backgroundColor: tokens.raised,
@@ -84,9 +84,9 @@ const styles = StyleSheet.create({
   name: { flexShrink: 1, color: tokens.text, fontSize: 15, fontWeight: "600" },
   time: { color: tokens.textSecondary, fontSize: 14, fontVariant: ["tabular-nums"] },
   button: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: tokens.fillMuted,

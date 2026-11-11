@@ -3,7 +3,13 @@ import * as DateTime from "effect/DateTime";
 
 import {
   callBarLabel,
+  CALL_BAR_RESERVE,
   CALL_TIP,
+  callBarShowing,
+  callIsOver,
+  NOTICE_RESERVE,
+  outsideLine,
+  topReserve,
   cardFooterLine,
   chevronAction,
   liveCardItem,
@@ -28,6 +34,7 @@ function view(status: string, elapsedMs: number, overrides: Partial<CallView> = 
     held: false,
     route: null,
     recovered: false,
+    outside: null,
     ...overrides,
   };
 }
@@ -131,5 +138,62 @@ describe("liveCardItem", () => {
 describe("the lock-screen tip", () => {
   it("promises only what the service delivers", () => {
     expect(CALL_TIP).toContain("keeps going");
+  });
+});
+
+const CALL = {
+  threadId: "t",
+  botId: "b",
+  botName: "Astra",
+  avatarShape: "circle",
+  avatarColor: "#fff",
+  startedAtMs: 0,
+  minimised: false,
+};
+
+describe("callIsOver", () => {
+  it("is true for an ended call and for a hang up before the call connected", () => {
+    const base = EMPTY_SNAPSHOT.state;
+    expect(callIsOver({ ...base, status: "ended" })).toBe(true);
+    expect(callIsOver({ ...base, status: "error", endReason: "hung_up", errorCode: null })).toBe(
+      true,
+    );
+  });
+
+  it("is false while the call runs and for a failure that shows its own card", () => {
+    const base = EMPTY_SNAPSHOT.state;
+    expect(callIsOver({ ...base, status: "live" })).toBe(false);
+    expect(
+      callIsOver({ ...base, status: "error", endReason: "failed", errorCode: "unknown" }),
+    ).toBe(false);
+  });
+});
+
+describe("outsideLine", () => {
+  it("explains the prompt before it and the missing notification after a refusal", () => {
+    expect(outsideLine("asking")).toContain("Android will ask");
+    expect(outsideLine("off")).toBe("This call will not show outside the app. Hang up here.");
+    expect(outsideLine(null)).toBeNull();
+  });
+});
+
+describe("the space the call bar and the notice take", () => {
+  it("reserves the bar's height only while a minimised call runs", () => {
+    expect(topReserve(view("live", 0, { call: { ...CALL, minimised: true } }))).toBe(
+      CALL_BAR_RESERVE,
+    );
+    expect(topReserve(view("live", 0, { call: CALL }))).toBe(0);
+    expect(topReserve(view("error", 0, { call: { ...CALL, minimised: true } }))).toBe(0);
+    expect(topReserve(view("idle", 0))).toBe(0);
+  });
+
+  it("reserves the notice's height while the recovery notice shows and no call runs", () => {
+    expect(topReserve(view("idle", 0, { recovered: true }))).toBe(NOTICE_RESERVE);
+    expect(topReserve(view("live", 0, { recovered: true, call: CALL }))).toBe(0);
+  });
+
+  it("leaves a 48 dp row for the bar's buttons and keeps the bar clear of the header", () => {
+    expect(CALL_BAR_RESERVE).toBeGreaterThanOrEqual(48 + 12);
+    expect(callBarShowing(view("live", 0, { call: { ...CALL, minimised: true } }))).toBe(true);
   });
 });

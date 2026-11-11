@@ -32,7 +32,7 @@ import { CallStage } from "./CallStage";
 import { CallWorkCard } from "./CallWorkCard";
 import type { CallErrorCopy } from "./callErrorCopy";
 import type { CallView } from "./callSession";
-import { CALL_TIP, routeLine } from "./callViewModel";
+import { CALL_TIP, callIsOver, outsideLine, routeLine } from "./callViewModel";
 import { phoneWording } from "./phoneWording";
 
 let tipShown = false;
@@ -88,6 +88,7 @@ export function VoiceCallScreen({
   const inCall = state.status === "live" || state.status === "reconnecting";
   const caption = state.caption;
   const route = routeLine(view.route);
+  const outsideNote = outsideLine(view.outside);
 
   const hint =
     state.status === "ended"
@@ -213,6 +214,11 @@ export function VoiceCallScreen({
             Paused. Another app is using the audio.
           </Text>
         ) : null}
+        {outsideNote !== null ? (
+          <Text style={styles.small} maxFontSizeMultiplier={1.4}>
+            {outsideNote}
+          </Text>
+        ) : null}
         {route !== null && inCall ? (
           <Text style={styles.small} maxFontSizeMultiplier={1.4}>
             {route}
@@ -250,7 +256,7 @@ export function VoiceCallScreen({
 
       {error !== null ? (
         <ErrorBlock error={error} />
-      ) : state.status === "ended" ? null : (
+      ) : callIsOver(state) ? null : (
         <>
           {state.work !== null && state.work.kind !== "replied" ? (
             <CallWorkCard

@@ -6,7 +6,13 @@ import { tokens } from "../shell/tokens";
 
 import { CallBar } from "./CallBar";
 import { errorCopyFor } from "./callErrorCopy";
-import { chevronAction } from "./callViewModel";
+import {
+  CALL_BAR_GAP,
+  NOTICE_HEIGHT,
+  callBarShowing,
+  callIsOver,
+  chevronAction,
+} from "./callViewModel";
 import { useCallSession, useCallView } from "./VoiceCallProvider";
 import { VoiceCallScreen } from "./VoiceCallScreen";
 
@@ -23,7 +29,7 @@ export function VoiceCallLayer({ navigation }: { readonly navigation: VoiceCallN
   const view = useCallView();
   const call = view.call;
   const status = view.snapshot.state.status;
-  const ended = call !== null && status === "ended";
+  const ended = call !== null && callIsOver(view.snapshot.state);
 
   useEffect(() => {
     if (!ended || session === null || call === null) return;
@@ -70,7 +76,7 @@ export function VoiceCallLayer({ navigation }: { readonly navigation: VoiceCallN
     return view.recovered ? <RecoveredNotice onDismiss={session.dismissRecovered} /> : null;
   }
 
-  if (call.minimised && status !== "error") {
+  if (callBarShowing(view)) {
     return (
       <CallBar
         view={view}
@@ -111,7 +117,7 @@ export function VoiceCallLayer({ navigation }: { readonly navigation: VoiceCallN
 function RecoveredNotice({ onDismiss }: { readonly onDismiss: () => void }) {
   const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.notice, { top: insets.top + 6 }]} pointerEvents="box-none">
+    <View style={[styles.notice, { top: insets.top + CALL_BAR_GAP }]} pointerEvents="box-none">
       <Pressable
         onPress={onDismiss}
         accessibilityRole="button"
@@ -129,8 +135,8 @@ function RecoveredNotice({ onDismiss }: { readonly onDismiss: () => void }) {
 const styles = StyleSheet.create({
   notice: { position: "absolute", left: 8, right: 8 },
   noticeBody: {
-    minHeight: 48,
-    borderRadius: 24,
+    height: NOTICE_HEIGHT,
+    borderRadius: NOTICE_HEIGHT / 2,
     borderWidth: 1,
     borderColor: tokens.border,
     backgroundColor: tokens.raised,

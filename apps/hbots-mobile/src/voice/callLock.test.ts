@@ -22,6 +22,7 @@ function view(status: string, overrides: Partial<CallView> = {}): CallView {
     held: false,
     route: null,
     recovered: false,
+    outside: null,
     ...overrides,
   };
 }

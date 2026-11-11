@@ -41,6 +41,7 @@ import { AddProviderScreen } from "../settings/AddProviderScreen";
 import { CatalogProviderScreen } from "../settings/CatalogProviderScreen";
 import { ProviderScreen } from "../settings/ProviderScreen";
 import { SettingsScreen } from "../settings/SettingsScreen";
+import { TopReserveInsets } from "../voice/TopReserveInsets";
 import { VoiceCallLayer, type VoiceCallNavigation } from "../voice/VoiceCallLayer";
 import { ThisPhoneScreen } from "../settings/ThisPhoneScreen";
 import { NotificationsScreen } from "../settings/NotificationsScreen";
@@ -279,284 +280,286 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         }
       }}
     >
-      <Stack.Navigator
-        screenOptions={{
-          headerShown: false,
-          animation: "fade",
-          contentStyle: { backgroundColor: tokens.bg },
-        }}
-      >
-        <Stack.Screen name="Tabs">
-          {(screenProps) => (
-            <TabsWithBots
-              {...screenProps}
-              native={props.native}
-              chat={chat}
-              installedVersion={props.installedVersion}
-              update={props.update}
-              onOpenInstallPermission={props.onOpenPermission}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Chat">
-          {({ navigation, route }) => (
-            <ChatScreen
-              native={props.native}
-              chat={chat}
-              botId={route.params.botId}
-              threadId={route.params.threadId}
-              onBack={() => navigation.goBack()}
-              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
-              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
-              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
-              onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
-              onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Chats">
-          {({ navigation, route }) => (
-            <ChatsListScreen
-              native={props.native}
-              chat={chat}
-              botId={route.params.botId}
-              onBack={() => navigation.goBack()}
-              onOpenChat={(threadId) =>
-                navigation.replace("Chat", { botId: route.params.botId, threadId })
-              }
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Bot">
-          {({ navigation, route }) => (
-            <BotThreadsScreen
-              native={props.native}
-              chat={chat}
-              botId={route.params.botId}
-              onBack={() => navigation.goBack()}
-              onOpenChat={(threadId) =>
-                navigation.navigate("Chat", { botId: route.params.botId, threadId })
-              }
-              onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="BotNew">
-          {({ navigation }) => (
-            <BotFormScreen
-              native={props.native}
-              target={{ kind: "new" }}
-              onBack={() => navigation.goBack()}
-              onLeave={() => navigation.goBack()}
-              onDeleted={() => navigation.popToTop()}
-              onOpenTeam={() => navigation.navigate("Team")}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="BotNewChat">
-          {({ navigation, route }) => (
-            <BotNewChatScreen
-              native={props.native}
-              botId={route.params.botId}
-              onBack={() => navigation.goBack()}
-              onStarted={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Share">
-          {({ navigation, route }) => (
-            <BotPicker
-              native={props.native}
-              shareId={route.params.shareId}
-              onClose={() => navigation.goBack()}
-              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="BotEdit">
-          {({ navigation, route }) => (
-            <BotFormScreen
-              native={props.native}
-              target={{ kind: "edit", botId: route.params.botId }}
-              onBack={() => navigation.goBack()}
-              onLeave={() => navigation.goBack()}
-              onDeleted={() => navigation.popToTop()}
-              onOpenTeam={() => navigation.navigate("Team")}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Group">
-          {({ navigation, route }) => (
-            <GroupConversationScreen
-              native={props.native}
-              chat={chat}
-              groupId={route.params.groupId}
-              onBack={() => navigation.goBack()}
-              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
-              onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="GroupNew">
-          {({ navigation }) => (
-            <NewGroupScreen
-              native={props.native}
-              onBack={() => navigation.goBack()}
-              onCreated={(groupId) => navigation.replace("Group", { groupId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Task">
-          {({ navigation, route }) => (
-            <TaskDetailScreen
-              native={props.native}
-              taskId={route.params.taskId}
-              onBack={() => navigation.goBack()}
-              onOpenTask={(taskId) => navigation.push("Task", { taskId })}
-              onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Routine">
-          {({ navigation, route }) => (
-            <RoutineDetailScreen
-              native={props.native}
-              routineId={route.params.routineId}
-              onBack={() => navigation.goBack()}
-              onOpenTask={(taskId) => navigation.push("Task", { taskId })}
-              onEdit={() => navigation.push("RoutineForm", { routineId: route.params.routineId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="RoutineForm">
-          {({ navigation, route }) => (
-            <RoutineFormRoute
-              native={props.native}
-              routineId={route.params?.routineId}
-              onBack={() => navigation.goBack()}
-              onSaved={(routineId) => navigation.replace("Routine", { routineId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Team">
-          {({ navigation }) => (
-            <TeamScreen
-              native={props.native}
-              onBack={() => navigation.goBack()}
-              onNewTeam={() => navigation.navigate("TeamNew")}
-              onNewBot={() => navigation.navigate("BotNew")}
-              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
-              onOpenTask={(taskId) => navigation.navigate("Task", { taskId })}
-              onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
-              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="TeamNew">
-          {({ navigation }) => (
-            <NewTeamScreen
-              native={props.native}
-              onBack={() => navigation.goBack()}
-              onCreated={() => navigation.replace("Team")}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="TeamRemoved">
-          {({ navigation }) => (
-            <RemovedBotsScreen native={props.native} onBack={() => navigation.goBack()} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Settings">
-          {({ navigation }) => (
-            <SettingsScreen
-              native={props.native}
-              installedVersion={props.installedVersion}
-              onBack={() => navigation.goBack()}
-              onOpenThisPhone={() => navigation.navigate("ThisPhone")}
-              onOpenTeam={() => navigation.navigate("Team")}
-              onOpenNewBot={() => navigation.navigate("BotNew")}
-              onOpenRemovedBots={() => navigation.navigate("TeamRemoved")}
-              onOpenProvider={(instanceId) => navigation.navigate("Provider", { instanceId })}
-              onOpenAddProvider={() => navigation.navigate("ProviderAdd")}
-              onOpenNotifications={() => navigation.navigate("SettingsNotifications")}
-              onOpenMemory={() => navigation.navigate("Memory")}
-              onOpenPasswords={() => navigation.navigate("Passwords")}
-              onOpenApiKeys={() => navigation.navigate("ApiKeys")}
-              onOpenConnections={() => navigation.navigate("Connections")}
-              onOpenRoutines={() => undefined}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="SettingsNotifications">
-          {({ navigation }) => (
-            <NotificationsScreen native={props.native} onBack={() => navigation.goBack()} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Provider">
-          {({ navigation, route }) => (
-            <ProviderScreen
-              native={props.native}
-              instanceId={route.params.instanceId}
-              onBack={() => navigation.goBack()}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="ProviderAdd">
-          {({ navigation }) => (
-            <AddProviderScreen
-              native={props.native}
-              onBack={() => navigation.goBack()}
-              onOpenProvider={(instanceId) => navigation.navigate("Provider", { instanceId })}
-              onOpenCatalog={(catalogId) => navigation.navigate("ProviderCatalog", { catalogId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="ProviderCatalog">
-          {({ navigation, route }) => (
-            <CatalogProviderScreen
-              native={props.native}
-              catalogId={route.params.catalogId}
-              onBack={() => navigation.goBack()}
-              onInstalled={(instanceId) => navigation.replace("Provider", { instanceId })}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Memory">
-          {({ navigation }) => (
-            <MemoryScreen native={props.native} onBack={() => navigation.goBack()} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Passwords">
-          {({ navigation }) => (
-            <PasswordsScreen native={props.native} onBack={() => navigation.goBack()} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="ApiKeys">
-          {({ navigation }) => (
-            <ApiKeysScreen native={props.native} onBack={() => navigation.goBack()} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Connections">
-          {({ navigation }) => (
-            <ConnectionsScreen native={props.native} onBack={() => navigation.goBack()} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="ThisPhone">
-          {(screenProps) => <ThisPhoneRoute {...screenProps} props={props} />}
-        </Stack.Screen>
-        <Stack.Screen name="SettingsDevices">
-          {({ navigation }) => (
-            <DevicesScreen native={props.native} onBack={() => navigation.goBack()} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Stop">
-          {({ navigation }) => (
-            <HeaderScreen title="Stop" onBack={() => navigation.goBack()}>
-              <Placeholder title="Bots working" body="Nothing is working right now." />
-            </HeaderScreen>
-          )}
-        </Stack.Screen>
-      </Stack.Navigator>
+      <TopReserveInsets>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            animation: "fade",
+            contentStyle: { backgroundColor: tokens.bg },
+          }}
+        >
+          <Stack.Screen name="Tabs">
+            {(screenProps) => (
+              <TabsWithBots
+                {...screenProps}
+                native={props.native}
+                chat={chat}
+                installedVersion={props.installedVersion}
+                update={props.update}
+                onOpenInstallPermission={props.onOpenPermission}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Chat">
+            {({ navigation, route }) => (
+              <ChatScreen
+                native={props.native}
+                chat={chat}
+                botId={route.params.botId}
+                threadId={route.params.threadId}
+                onBack={() => navigation.goBack()}
+                onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+                onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+                onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
+                onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Chats">
+            {({ navigation, route }) => (
+              <ChatsListScreen
+                native={props.native}
+                chat={chat}
+                botId={route.params.botId}
+                onBack={() => navigation.goBack()}
+                onOpenChat={(threadId) =>
+                  navigation.replace("Chat", { botId: route.params.botId, threadId })
+                }
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Bot">
+            {({ navigation, route }) => (
+              <BotThreadsScreen
+                native={props.native}
+                chat={chat}
+                botId={route.params.botId}
+                onBack={() => navigation.goBack()}
+                onOpenChat={(threadId) =>
+                  navigation.navigate("Chat", { botId: route.params.botId, threadId })
+                }
+                onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="BotNew">
+            {({ navigation }) => (
+              <BotFormScreen
+                native={props.native}
+                target={{ kind: "new" }}
+                onBack={() => navigation.goBack()}
+                onLeave={() => navigation.goBack()}
+                onDeleted={() => navigation.popToTop()}
+                onOpenTeam={() => navigation.navigate("Team")}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="BotNewChat">
+            {({ navigation, route }) => (
+              <BotNewChatScreen
+                native={props.native}
+                botId={route.params.botId}
+                onBack={() => navigation.goBack()}
+                onStarted={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Share">
+            {({ navigation, route }) => (
+              <BotPicker
+                native={props.native}
+                shareId={route.params.shareId}
+                onClose={() => navigation.goBack()}
+                onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="BotEdit">
+            {({ navigation, route }) => (
+              <BotFormScreen
+                native={props.native}
+                target={{ kind: "edit", botId: route.params.botId }}
+                onBack={() => navigation.goBack()}
+                onLeave={() => navigation.goBack()}
+                onDeleted={() => navigation.popToTop()}
+                onOpenTeam={() => navigation.navigate("Team")}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Group">
+            {({ navigation, route }) => (
+              <GroupConversationScreen
+                native={props.native}
+                chat={chat}
+                groupId={route.params.groupId}
+                onBack={() => navigation.goBack()}
+                onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="GroupNew">
+            {({ navigation }) => (
+              <NewGroupScreen
+                native={props.native}
+                onBack={() => navigation.goBack()}
+                onCreated={(groupId) => navigation.replace("Group", { groupId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Task">
+            {({ navigation, route }) => (
+              <TaskDetailScreen
+                native={props.native}
+                taskId={route.params.taskId}
+                onBack={() => navigation.goBack()}
+                onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+                onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Routine">
+            {({ navigation, route }) => (
+              <RoutineDetailScreen
+                native={props.native}
+                routineId={route.params.routineId}
+                onBack={() => navigation.goBack()}
+                onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+                onEdit={() => navigation.push("RoutineForm", { routineId: route.params.routineId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="RoutineForm">
+            {({ navigation, route }) => (
+              <RoutineFormRoute
+                native={props.native}
+                routineId={route.params?.routineId}
+                onBack={() => navigation.goBack()}
+                onSaved={(routineId) => navigation.replace("Routine", { routineId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Team">
+            {({ navigation }) => (
+              <TeamScreen
+                native={props.native}
+                onBack={() => navigation.goBack()}
+                onNewTeam={() => navigation.navigate("TeamNew")}
+                onNewBot={() => navigation.navigate("BotNew")}
+                onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+                onOpenTask={(taskId) => navigation.navigate("Task", { taskId })}
+                onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+                onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="TeamNew">
+            {({ navigation }) => (
+              <NewTeamScreen
+                native={props.native}
+                onBack={() => navigation.goBack()}
+                onCreated={() => navigation.replace("Team")}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="TeamRemoved">
+            {({ navigation }) => (
+              <RemovedBotsScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Settings">
+            {({ navigation }) => (
+              <SettingsScreen
+                native={props.native}
+                installedVersion={props.installedVersion}
+                onBack={() => navigation.goBack()}
+                onOpenThisPhone={() => navigation.navigate("ThisPhone")}
+                onOpenTeam={() => navigation.navigate("Team")}
+                onOpenNewBot={() => navigation.navigate("BotNew")}
+                onOpenRemovedBots={() => navigation.navigate("TeamRemoved")}
+                onOpenProvider={(instanceId) => navigation.navigate("Provider", { instanceId })}
+                onOpenAddProvider={() => navigation.navigate("ProviderAdd")}
+                onOpenNotifications={() => navigation.navigate("SettingsNotifications")}
+                onOpenMemory={() => navigation.navigate("Memory")}
+                onOpenPasswords={() => navigation.navigate("Passwords")}
+                onOpenApiKeys={() => navigation.navigate("ApiKeys")}
+                onOpenConnections={() => navigation.navigate("Connections")}
+                onOpenRoutines={() => undefined}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="SettingsNotifications">
+            {({ navigation }) => (
+              <NotificationsScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Provider">
+            {({ navigation, route }) => (
+              <ProviderScreen
+                native={props.native}
+                instanceId={route.params.instanceId}
+                onBack={() => navigation.goBack()}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="ProviderAdd">
+            {({ navigation }) => (
+              <AddProviderScreen
+                native={props.native}
+                onBack={() => navigation.goBack()}
+                onOpenProvider={(instanceId) => navigation.navigate("Provider", { instanceId })}
+                onOpenCatalog={(catalogId) => navigation.navigate("ProviderCatalog", { catalogId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="ProviderCatalog">
+            {({ navigation, route }) => (
+              <CatalogProviderScreen
+                native={props.native}
+                catalogId={route.params.catalogId}
+                onBack={() => navigation.goBack()}
+                onInstalled={(instanceId) => navigation.replace("Provider", { instanceId })}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Memory">
+            {({ navigation }) => (
+              <MemoryScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Passwords">
+            {({ navigation }) => (
+              <PasswordsScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="ApiKeys">
+            {({ navigation }) => (
+              <ApiKeysScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Connections">
+            {({ navigation }) => (
+              <ConnectionsScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="ThisPhone">
+            {(screenProps) => <ThisPhoneRoute {...screenProps} props={props} />}
+          </Stack.Screen>
+          <Stack.Screen name="SettingsDevices">
+            {({ navigation }) => (
+              <DevicesScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Stop">
+            {({ navigation }) => (
+              <HeaderScreen title="Stop" onBack={() => navigation.goBack()}>
+                <Placeholder title="Bots working" body="Nothing is working right now." />
+              </HeaderScreen>
+            )}
+          </Stack.Screen>
+        </Stack.Navigator>
+      </TopReserveInsets>
       <VoiceCallLayer navigation={VOICE_CALL_NAVIGATION} />
     </NavigationContainer>
   );
