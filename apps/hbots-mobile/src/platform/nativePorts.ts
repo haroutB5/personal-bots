@@ -3,6 +3,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import { Alert, AppState, InteractionManager } from "react-native";
 
+import { wipeThreadCache } from "../personal/nativeCache";
 import type { BlobStore } from "@hbots/personal-client/ports/blobStore";
 import type { Clock } from "@hbots/personal-client/ports/clock";
 import type { Confirm, ConfirmRequest } from "@hbots/personal-client/ports/confirm";
@@ -64,7 +65,29 @@ export interface NativeBlob {
 
 const BLOB_DIRECTORY = "hbots-blobs";
 
+/** Set by a wipe: a copy that was already running cannot recreate the folder after it. */
+let blobsSealed = false;
+
+/** Deletes every stored attachment and the folder itself, until a new session starts. */
+export function wipeBlobDirectory(): void {
+  blobsSealed = true;
+  const root = new Directory(Paths.document, BLOB_DIRECTORY);
+  if (root.exists) root.delete();
+}
+
+/** Everything this phone kept for a signed-in session: cached chats and queued attachments. */
+export function wipeLocalData(): void {
+  for (const wipe of [wipeThreadCache, wipeBlobDirectory]) {
+    try {
+      wipe();
+    } catch (cause) {
+      console.warn("Could not remove local data on sign-out.", cause);
+    }
+  }
+}
+
 export function createFileBlobStore(): BlobStore<NativeBlob> {
+  blobsSealed = false;
   const root = new Directory(Paths.document, BLOB_DIRECTORY);
   const ensureRoot = () => {
     if (!root.exists) {
@@ -75,11 +98,13 @@ export function createFileBlobStore(): BlobStore<NativeBlob> {
   const fileFor = (key: string) => new File(ensureRoot(), key.replaceAll("/", "_"));
   return {
     put: async (key, payload) => {
+      if (blobsSealed) throw new Error("Local data was removed on sign-out.");
       const target = fileFor(key);
       if (target.exists) target.delete();
       new File(payload.uri).copy(target);
     },
     get: async (key) => {
+      if (blobsSealed) return null;
       const file = fileFor(key);
       if (!file.exists) return null;
       return {
@@ -90,6 +115,7 @@ export function createFileBlobStore(): BlobStore<NativeBlob> {
       };
     },
     deletePrefix: async (prefix) => {
+      if (blobsSealed) return;
       for (const entry of ensureRoot().list()) {
         if (entry instanceof File && entry.name.startsWith(prefix.replaceAll("/", "_"))) {
           entry.delete();
@@ -97,10 +123,12 @@ export function createFileBlobStore(): BlobStore<NativeBlob> {
       }
     },
     keys: async () =>
-      ensureRoot()
-        .list()
-        .filter((entry): entry is File => entry instanceof File)
-        .map((file) => file.name),
+      blobsSealed
+        ? []
+        : ensureRoot()
+            .list()
+            .filter((entry): entry is File => entry instanceof File)
+            .map((file) => file.name),
     sizeOf: (payload) => payload.size,
   };
 }

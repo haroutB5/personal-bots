@@ -27,6 +27,7 @@ import { failureFor, reducePairing } from "./onboarding/model";
 import { inspectServer, pair } from "./pairing";
 import { AppAtomRegistryProvider } from "./personal/atomRegistry";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
+import { wipeLocalData } from "./platform/nativePorts";
 import { renewSession } from "./renew";
 import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
 import { loadServer, saveServer } from "./serverMemory";
@@ -156,6 +157,7 @@ function App() {
         native.client.ports.kv.removeItem(CHATS_SNAPSHOT_KEY);
       }
       disposeNative();
+      wipeLocalData();
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
       setScreen(next);
@@ -277,6 +279,7 @@ function App() {
         return;
       }
       if (session === null) {
+        wipeLocalData();
         const server = await loadServer();
         if (!live) {
           return;
@@ -398,6 +401,7 @@ function App() {
     async (session: StoredSession) => {
       const native = nativeRef.current;
       disposeNative();
+      wipeLocalData();
       setScreen({ kind: "connecting", step: "Signing out" });
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());

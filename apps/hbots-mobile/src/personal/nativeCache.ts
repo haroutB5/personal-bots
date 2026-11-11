@@ -14,6 +14,16 @@ import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 
 const CACHE_DIRECTORY = "hbots-thread-cache";
 
+/** Set by a wipe: a save that was already running cannot recreate the folder after it. */
+let sealed = false;
+
+/** Deletes every cached chat and the folder itself. Nothing is written again until a new session starts. */
+export function wipeThreadCache(): void {
+  sealed = true;
+  const root = new Directory(Paths.document, CACHE_DIRECTORY);
+  if (root.exists) root.delete();
+}
+
 function cacheRoot(): Directory {
   const root = new Directory(Paths.document, CACHE_DIRECTORY);
   if (!root.exists) root.create({ intermediates: true });
@@ -42,12 +52,14 @@ export async function readCachedThread(
   environmentId: string,
   threadId: string,
 ): Promise<Option.Option<ThreadSnapshot>> {
+  if (sealed) return Option.none();
   const file = threadFile(environmentId, threadId);
   if (!file.exists) return Option.none();
   return Option.some(decodeThreadSnapshotJson(JSON.parse(await file.text()) as unknown));
 }
 
 export function writeCachedThread(environmentId: string, snapshot: ThreadSnapshot): void {
+  if (sealed) return;
   threadFile(environmentId, snapshot.projection.thread.id).write(JSON.stringify(snapshot));
 }
 
@@ -57,6 +69,7 @@ export function writeCachedThread(environmentId: string, snapshot: ThreadSnapsho
  * cached open under the 150 ms budget.
  */
 export function createNativeEnvironmentCache(): Persistence.EnvironmentCacheStore["Service"] {
+  sealed = false;
   return Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeed(Option.none<OrchestrationV2ShellSnapshot>()),
     saveShell: () => Effect.void,
