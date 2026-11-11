@@ -9,8 +9,8 @@ object ActionRunner {
   const val MAX_ATTEMPTS = 3
   private val BACKOFF_MS = longArrayOf(1_000, 2_000)
 
-  fun replyPath(notificationId: String) = "/api/personal/notifications/$notificationId/reply"
-  fun answerPath(notificationId: String) = "/api/personal/notifications/$notificationId/answer"
+  fun replyPath(notificationId: String) = "/api/personal/notifications/${PathSegment.encode(notificationId)}/reply"
+  fun answerPath(notificationId: String) = "/api/personal/notifications/${PathSegment.encode(notificationId)}/answer"
 
   fun replyBody(commandId: String, text: String): String =
     org.json.JSONObject().put("commandId", commandId).put("text", text).toString()
@@ -39,13 +39,27 @@ object ActionRunner {
   }
 }
 
+/** One id as one path segment: anything outside the unreserved set is percent-encoded. */
+object PathSegment {
+  fun encode(value: String): String {
+    val out = StringBuilder()
+    for (byte in value.toByteArray(Charsets.UTF_8)) {
+      val c = byte.toInt() and 0xFF
+      val plain = c in 'A'.code..'Z'.code || c in 'a'.code..'z'.code || c in '0'.code..'9'.code ||
+        c == '-'.code || c == '.'.code || c == '_'.code || c == '~'.code
+      if (plain) out.append(c.toChar()) else out.append('%').append("%02X".format(c))
+    }
+    return out.toString()
+  }
+}
+
 sealed interface FetchOutcome {
   data class Found(val content: NotificationContent) : FetchOutcome
   data object Unavailable : FetchOutcome
 }
 
 object ContentFetcher {
-  fun contentPath(notificationId: String) = "/api/personal/notifications/$notificationId/content"
+  fun contentPath(notificationId: String) = "/api/personal/notifications/${PathSegment.encode(notificationId)}/content"
 
   /**
    * One authenticated read. Anything that is not a clean 200 for the same notification
@@ -55,7 +69,12 @@ object ContentFetcher {
     val result = http.execute("GET", contentPath(payload.notificationId), null)
     if (result.status != 200) return FetchOutcome.Unavailable
     val content = NotificationContentParser.parse(result.body.orEmpty()) ?: return FetchOutcome.Unavailable
-    if (content.notificationId != payload.notificationId) return FetchOutcome.Unavailable
+    // Real text is shown under the payload's bot name and opens the payload's chat, so all of it must agree.
+    if (content.notificationId != payload.notificationId ||
+      content.kind != payload.kind ||
+      content.botId != payload.botId ||
+      content.threadId != payload.threadId
+    ) return FetchOutcome.Unavailable
     return FetchOutcome.Found(content)
   }
 }

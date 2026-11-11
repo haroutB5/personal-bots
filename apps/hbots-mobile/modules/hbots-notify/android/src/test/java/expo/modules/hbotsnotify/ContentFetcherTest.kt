@@ -24,4 +24,19 @@ class ContentFetcherTest {
     val other = good.replace("\"n1\"", "\"n2\"")
     assertTrue(ContentFetcher.fetch(FakeHttp(listOf(HttpResult(200, other))), payload()) is FetchOutcome.Unavailable)
   }
+
+  @Test fun aBodyForAnotherBotChatOrKindIsRefused() {
+    for (swap in listOf("\"bot-1\"" to "\"bot-9\"", "\"t1\"" to "\"t9\"", "\"chat-reply\"" to "\"question\"")) {
+      val forged = good.replace(swap.first, swap.second)
+      assertTrue(swap.toString(), ContentFetcher.fetch(FakeHttp(listOf(HttpResult(200, forged))), payload()) is FetchOutcome.Unavailable)
+    }
+  }
+
+  @Test fun theIdIsEncodedIntoTheRequestPath() {
+    assertEquals("/api/personal/notifications/a%3Ab%2Fc/content", ContentFetcher.contentPath("a:b/c"))
+    assertEquals("/api/personal/notifications/a%3Ab%2Fc/reply", ActionRunner.replyPath("a:b/c"))
+    assertEquals("/api/personal/notifications/a%3Ab%2Fc/answer", ActionRunner.answerPath("a:b/c"))
+    assertEquals("/api/personal/notifications/n.1_x-y/content", ContentFetcher.contentPath("n.1_x-y"))
+    assertEquals("%C3%A9%20.", PathSegment.encode("\u00e9 ."))
+  }
 }
