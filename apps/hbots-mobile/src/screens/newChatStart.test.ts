@@ -1,5 +1,7 @@
 import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import { describe, expect, it } from "vite-plus/test";
 
 import { startChatResult } from "../chat/useStartChat";
@@ -126,5 +128,54 @@ describe("startChatResult", () => {
       kind: "started",
       threadId: "t1",
     });
+  });
+});
+
+describe("N2: every socket error the RPC client raises is a dropped link, never screen text", () => {
+  const cause = new Error("link lost");
+  const reasons = [
+    new Socket.SocketReadError({ cause }),
+    new Socket.SocketWriteError({ cause }),
+    new Socket.SocketOpenError({ kind: "Unknown", cause }),
+    new Socket.SocketOpenError({ kind: "Timeout", cause }),
+    new Socket.SocketCloseError({ code: 1006 }),
+  ] as const;
+
+  const startAfter = (reason: (typeof reasons)[number]) => {
+    const result = startChatResult(
+      "t1",
+      AsyncResult.failure(Cause.fail(new RpcClientError.RpcClientError({ reason }))),
+    );
+    return play([link(true), { type: "result", result }]);
+  };
+
+  it.each(reasons.map((reason) => [reason._tag, reason] as const))(
+    "%s waits for the link instead of failing",
+    (_tag, reason) => {
+      expect(startAfter(reason).at(-1)).toEqual({ kind: "waiting", failures: 1 });
+    },
+  );
+
+  it.each(reasons.map((reason) => [reason._tag, reason] as const))(
+    "%s three times ends offline",
+    (_tag, reason) => {
+      const results = Array.from({ length: MAX_START_FAILURES }, () => {
+        const result = startChatResult(
+          "t1",
+          AsyncResult.failure(Cause.fail(new RpcClientError.RpcClientError({ reason }))),
+        );
+        return [link(true), { type: "result", result } as const];
+      }).flat();
+      expect(play(results).at(-1)).toEqual({ kind: "offline" });
+    },
+  );
+
+  it("a failure that is not a dropped link reaches the failed state with no text in it", () => {
+    const result = startChatResult(
+      "t1",
+      AsyncResult.failure(Cause.fail(new Error("db is locked"))),
+    );
+    const state = play([link(true), { type: "result", result }]).at(-1);
+    expect(state).toEqual({ kind: "failed" });
   });
 });
