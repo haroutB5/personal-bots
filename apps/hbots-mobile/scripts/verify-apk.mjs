@@ -122,6 +122,7 @@ const expectedExported = [
   "expo.modules.hbotstile.CtoTileService",
   "expo.modules.hbotsnotify.DebugPushReceiver",
   "expo.modules.hbotslauncher.HbotsWidgetProvider",
+  "expo.modules.hbotslauncher.ShortcutTrampolineActivity", // forwards hbots:// links only
   "androidx.profileinstaller.ProfileInstallReceiver",
 ];
 const exportedOk =
@@ -137,8 +138,7 @@ const pipComponents = [...manifest.matchAll(/<(?:activity|activity-alias)\b[^>]*
   .map(([tag = ""]) => tag)
   .filter((tag) => tag.includes('android:supportsPictureInPicture="true"'))
   .map((tag) => tag.match(/android:name="([^"]*)"/u)?.[1] ?? "");
-const pipOk =
-  pipComponents.length === 1 && pipComponents[0] === "com.haroutb5.hbots.MainActivity";
+const pipOk = pipComponents.length === 1 && pipComponents[0] === "com.haroutb5.hbots.MainActivity";
 failed ||= !pipOk;
 console.log(
   `${pipOk ? "ok  " : "FAIL"} supportsPictureInPicture on ${pipComponents.join(",") || "none"} (expected MainActivity only)`,
