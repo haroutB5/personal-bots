@@ -68,6 +68,8 @@ export const makeTaskCore = () =>
     const activeThreadIds = new Set<string>();
     // When an attempt's turn first ended on a lost conversation (see PERSONAL_TASKS_RENEWAL_WAIT_MS).
     const renewalWaitSince = new Map<string, number>();
+    // When an attempt's turn first ended on a lost provider server (see PERSONAL_TASKS_SERVER_LOSS_WAIT_MS).
+    const serverLossWaitSince = new Map<string, number>();
     // Threads whose waiting task queues once their provider session is gone.
     const resumingThreadIds = new Set<string>();
     // Threads with a queued task held back because a turn (usually the user's
@@ -609,6 +611,7 @@ export const makeTaskCore = () =>
       refreshActiveThreads,
       releaseThread,
       renewalWaitSince,
+      serverLossWaitSince,
       repository,
       requireLiveBot,
       requireLiveBotInTransaction,

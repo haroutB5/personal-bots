@@ -21,6 +21,12 @@ export const PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES = [1, 5, 15] as const;
  */
 export const PERSONAL_TASKS_RENEWAL_WAIT_MS = 60_000;
 
+/**
+ * A turn lost to a dead provider server is continued by a new run within seconds.
+ * The attempt waits this long for that run before the loss counts as its end.
+ */
+export const PERSONAL_TASKS_SERVER_LOSS_WAIT_MS = 90_000;
+
 /** A provider wait longer than this gives the task's slot back instead of holding it. */
 export const PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS = 2 * 60_000;
 

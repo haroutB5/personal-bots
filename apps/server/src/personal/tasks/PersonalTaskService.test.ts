@@ -3826,6 +3826,65 @@ it.effect("an interrupted task keeps the reply but not the waiting mark", () => 
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+describe("a task whose provider server was lost", () => {
+  const LOST = "provider-server-lost";
+  const lose = (harness: Harness, thread: ThreadId, reason: string) =>
+    Effect.gen(function* () {
+      harness.interruptReasons.set(thread, reason);
+      yield* runTurn(harness, thread, "", { status: "interrupted" });
+    });
+
+  it.effect("waits for the continuation run and ends with that run's one result", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("server-lost-continued");
+      const thread = threadOf(root);
+
+      yield* lose(harness, thread, LOST);
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      yield* TestClock.adjust("30 seconds");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      harness.interruptReasons.delete(thread);
+      yield* runTurn(harness, thread, "Finished after the restart.");
+      const ended = yield* reload(root.taskId);
+      expect(ended.status).toBe("completed");
+      expect(ended.result).toEqual({ summary: "Finished after the restart." });
+      expect(startsOn(harness, thread)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("ends interrupted when no continuation run follows", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("server-lost-abandoned");
+      const thread = threadOf(root);
+
+      yield* lose(harness, thread, LOST);
+      yield* TestClock.adjust("60 seconds");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      yield* TestClock.adjust("40 seconds");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("interrupted");
+      expect(startsOn(harness, thread)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("does not hold a task that the user stopped", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("server-lost-user-stop");
+      yield* lose(harness, threadOf(root), "Stopped by user");
+      expect((yield* reload(root.taskId)).status).toBe("interrupted");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+});
+
 it("composeTaskReplies: is the reply itself when there is one, and empty when there is none", () => {
   expect(PersonalTaskService.composeTaskReplies(["Done."])).toBe("Done.");
   expect(PersonalTaskService.composeTaskReplies([])).toBe("");
