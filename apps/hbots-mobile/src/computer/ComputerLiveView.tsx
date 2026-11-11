@@ -16,6 +16,7 @@ import {
 
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
+import { liveKeyboardStep, type LiveKeyboardEvent } from "./computerScreenModel";
 import {
   browserInput,
   desktopInput,
@@ -71,6 +72,9 @@ export function ComputerLiveView({
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [field, setField] = useState<string>("text");
   const [keysOpen, setKeysOpen] = useState(false);
+  const fieldRef = useRef<TextInput>(null);
+  const keyboardOpenRef = useRef(false);
+  const keyboardPinned = useRef(false);
   const failures = useRef(0);
   const scrollEndWanted = useRef(false);
   const metaRef = useRef<{ width: number; height: number } | null>(null);
@@ -164,10 +168,31 @@ export function ComputerLiveView({
     }, 1500);
   };
 
+  const stepKeyboard = (event: LiveKeyboardEvent) => {
+    const step = liveKeyboardStep(
+      { open: keyboardOpenRef.current, pinned: keyboardPinned.current },
+      event,
+    );
+    keyboardPinned.current = step.pinned;
+    if (step.command === "focus") fieldRef.current?.focus();
+    if (step.command === "blur") fieldRef.current?.blur();
+  };
+
+  useEffect(() => {
+    if (interactive) return;
+    keyboardOpenRef.current = false;
+    keyboardPinned.current = liveKeyboardStep(
+      { open: false, pinned: keyboardPinned.current },
+      { kind: "released" },
+    ).pinned;
+    // eslint-disable-next-line react/set-state-in-effect -- losing control unmounts the field without an onBlur
+    setKeyboardOpen(false);
+  }, [interactive]);
+
   const focusChanged = (event: NativeSyntheticEvent<FocusChangedEvent>) => {
     const next = event.nativeEvent;
     setField(next.field ?? "text");
-    if (!next.editable) setKeyboardOpen(false);
+    stepKeyboard({ kind: "focusReport", editable: next.editable });
   };
 
   const fitted = fullScreen && box.width > 0 && box.height > 0 ? fitFrame(box, aspect) : null;
@@ -306,10 +331,18 @@ export function ComputerLiveView({
         {interactive ? <View style={styles.fill} {...responder.panHandlers} /> : null}
         {interactive ? (
           <TextInput
+            ref={fieldRef}
             style={styles.hiddenField}
             value=""
-            onFocus={() => setKeyboardOpen(true)}
-            onBlur={() => setKeyboardOpen(false)}
+            onFocus={() => {
+              keyboardOpenRef.current = true;
+              setKeyboardOpen(true);
+            }}
+            onBlur={() => {
+              keyboardOpenRef.current = false;
+              keyboardPinned.current = false;
+              setKeyboardOpen(false);
+            }}
             onChangeText={(text) => {
               if (text.length > 0) send({ _tag: "InsertText", text });
             }}
@@ -356,7 +389,7 @@ export function ComputerLiveView({
           <DockButton
             label={keyboardOpen ? "Hide keyboard" : "Show keyboard"}
             active={keyboardOpen}
-            onPress={() => setKeyboardOpen((open) => !open)}
+            onPress={() => stepKeyboard({ kind: "toggle" })}
           >
             <IconKeyboard size={18} color={keyboardOpen ? tokens.primaryText : tokens.text} />
           </DockButton>

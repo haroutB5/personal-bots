@@ -293,3 +293,39 @@ export function formatFileRow(file: PersonalBrowserFile): {
     detail: `${formatFileSize(file.sizeBytes)} · ${file.kind}`,
   };
 }
+
+export type LiveKeyboardEvent =
+  | { readonly kind: "focusReport"; readonly editable: boolean }
+  | { readonly kind: "toggle" }
+  | { readonly kind: "tap" }
+  | { readonly kind: "released" };
+
+export interface LiveKeyboardState {
+  readonly open: boolean;
+  readonly pinned: boolean;
+}
+
+export interface LiveKeyboardStep {
+  readonly command: "focus" | "blur" | null;
+  readonly pinned: boolean;
+}
+
+/** `open` is the field's real focus. The step only says what to ask the field to do. */
+export function liveKeyboardStep(
+  state: LiveKeyboardState,
+  event: LiveKeyboardEvent,
+): LiveKeyboardStep {
+  switch (event.kind) {
+    case "toggle":
+      return state.open ? { command: "blur", pinned: false } : { command: "focus", pinned: true };
+    case "focusReport":
+      if (event.editable) {
+        return { command: state.open ? null : "focus", pinned: state.pinned };
+      }
+      return { command: state.pinned ? null : "blur", pinned: state.pinned };
+    case "tap":
+      return { command: null, pinned: state.pinned };
+    case "released":
+      return { command: "blur", pinned: false };
+  }
+}

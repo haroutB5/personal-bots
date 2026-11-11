@@ -9,7 +9,7 @@ const SOURCE = NodeFS.readFileSync(
 );
 
 function openingTag(text: string, tag: string): string {
-  const start = text.indexOf(`<${tag}`);
+  const start = text.search(new RegExp(`<${tag}\\s`));
   expect(start).toBeGreaterThanOrEqual(0);
   const end = text.indexOf("/>", start);
   return text.slice(start, end + 2);
@@ -20,12 +20,13 @@ describe("ComputerLiveView keyboard wiring", () => {
     expect(openingTag(SOURCE, "TextInput")).toContain("ref={fieldRef}");
   });
 
-  it("lets only the field's own focus events write the keyboard state", () => {
-    const writes = SOURCE.match(/setKeyboardOpen\(/g) ?? [];
-    expect(SOURCE).toContain("onFocus={() => setKeyboardOpen(true)}");
-    expect(SOURCE).toContain("onBlur={() => {");
-    expect(SOURCE).not.toContain("setKeyboardOpen((open)");
-    expect(writes.length).toBeLessThanOrEqual(3);
+  it("lets only the field's own focus events open the keyboard state", () => {
+    expect(SOURCE.match(/setKeyboardOpen\(true\)/g)).toHaveLength(1);
+    expect(SOURCE).not.toContain("setKeyboardOpen((");
+    expect(SOURCE).toMatch(
+      /onFocus=\{\(\) => \{\s*keyboardOpenRef\.current = true;\s*setKeyboardOpen\(true\);/,
+    );
+    expect(SOURCE).toContain("active={keyboardOpen}");
   });
 
   it("routes the dock button and the server's focus report through liveKeyboardStep", () => {
