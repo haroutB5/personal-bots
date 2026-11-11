@@ -44,6 +44,7 @@ import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalProviderUpdates from "../providerUpdates/PersonalProviderUpdates.ts";
 import * as NotificationActions from "../push/notificationActions.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
+import { purgeRevokedPushRecipients } from "../push/pushRecipients.ts";
 import * as PersonalRoutineService from "../routines/PersonalRoutineService.ts";
 import * as PersonalConnectionApprovalService from "../connections/approvalService.ts";
 import * as PersonalConnectionService from "../connections/service.ts";
@@ -964,7 +965,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
             environmentAuth,
             AuthSessionId.make(currentSessionId),
             input.sessionId,
-          ),
+          ).pipe(Effect.tap(() => purgeRevokedPushRecipients(sql))),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushPublicKey]: (_input) =>
@@ -980,7 +981,9 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
       [WS_METHODS.personalPushSubscribe]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalPushSubscribe,
-          personalPush.subscribe(input).pipe(Effect.map((subscriptionId) => ({ subscriptionId }))),
+          personalPush
+            .subscribe({ ...input, sessionId: currentSessionId })
+            .pipe(Effect.map((subscriptionId) => ({ subscriptionId }))),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalPushUnsubscribe]: (input) =>

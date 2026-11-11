@@ -16,6 +16,7 @@ import {
   pushNeedsHomeScreenInstall,
   readyServiceWorker,
 } from "./serviceWorker";
+import { subscribeInputFrom } from "./pushRegistrationSync";
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from "./TaskDetailScreen";
 import {
   personalPushSetPreferences,
@@ -41,16 +42,6 @@ const EVENTS: ReadonlyArray<{
   { key: "chatReply", label: "A bot replies in a chat you are not reading" },
 ];
 
-/** A short, non-identifying name for this device in the device list. */
-export function deviceLabelFrom(userAgent: string): string {
-  if (/iPhone/.test(userAgent)) return "iPhone";
-  if (/iPad/.test(userAgent)) return "iPad";
-  if (/Android/.test(userAgent)) return "Android";
-  if (/Macintosh|Mac OS X/.test(userAgent)) return "Mac";
-  if (/Windows/.test(userAgent)) return "Windows";
-  return "This device";
-}
-
 type Support = "checking" | "not-installed" | "no-worker" | "ready";
 
 /** Settings > Notifications: opt in on this device, per-event toggles, test send. */
@@ -70,6 +61,7 @@ export function NotificationsScreen(): JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
 
   // What this device can do: installed PWA, registered worker, existing subscription.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the worker registration and push subscription from the browser, ignored after unmount
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -120,25 +112,14 @@ export function NotificationsScreen(): JSX.Element {
           userVisibleOnly: true,
           applicationServerKey: applicationServerKeyFrom(settings.data.publicKey),
         }));
-      const json = subscription.toJSON();
-      if (
-        json.endpoint === undefined ||
-        json.keys?.p256dh === undefined ||
-        json.keys.auth === undefined
-      ) {
+      const subscribeInput = subscribeInputFrom(subscription.toJSON(), navigator.userAgent);
+      if (subscribeInput === null) {
         setMessage("This browser returned an incomplete subscription.");
         return;
       }
-      const result = await subscribe({
-        environmentId,
-        input: {
-          endpoint: json.endpoint,
-          keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
-          deviceLabel: deviceLabelFrom(navigator.userAgent),
-        },
-      });
+      const result = await subscribe({ environmentId, input: subscribeInput });
       const failure = commandFailureMessage(result, "Could not turn on notifications.");
-      if (failure === null) setEndpoint(json.endpoint);
+      if (failure === null) setEndpoint(subscribeInput.endpoint);
       setMessage(failure);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not turn on notifications.");
@@ -196,6 +177,7 @@ export function NotificationsScreen(): JSX.Element {
           to="/bots/settings"
           activeOptions={{ exact: true }}
           aria-label="Back to Settings"
+          // oxlint-disable-next-line t3code/no-outset-state-indicators -- the back arrow sits in the header's own padding, nothing clips its ring
           className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />

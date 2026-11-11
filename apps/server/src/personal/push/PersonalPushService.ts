@@ -67,6 +67,7 @@ import {
 } from "./chatNeedsInput.ts";
 import * as FcmSender from "./fcmSender.ts";
 import { makeFcmTokenStore } from "./fcmTokens.ts";
+import { liveSessionIds, purgeDeadPushRecipients } from "./pushRecipients.ts";
 import { taskNotifyVerdict, type TaskNotifyState } from "./notifyDecision.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -557,8 +558,12 @@ export class PersonalPushService extends Context.Service<
   {
     readonly publicKey: () => Effect.Effect<string, PersonalPushError>;
     readonly getSettings: () => Effect.Effect<PersonalPushSettings, PersonalPushError>;
+    /**
+     * Stores the browser subscription for the calling session; only that
+     * session's pushes reach it, and it stops when the session ends.
+     */
     readonly subscribe: (
-      input: PersonalPushSubscribeInput,
+      input: PersonalPushSubscribeInput & { readonly sessionId: string },
     ) => Effect.Effect<PersonalPushSubscriptionId, PersonalPushError>;
     readonly unsubscribe: (input: {
       readonly endpoint: string;
@@ -741,13 +746,18 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const listDevices = sql`
-    SELECT subscription_id AS "subscriptionId", endpoint AS "endpoint",
-           device_label AS "deviceLabel", created_at AS "createdAt",
-           last_success_at AS "lastSuccessAt", last_failure_at AS "lastFailureAt",
-           last_error AS "lastError"
-    FROM personal_push_subscriptions ORDER BY created_at ASC
-  `.pipe(
+  const listDevices = Effect.gen(function* () {
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    return yield* sql`
+      SELECT subscription_id AS "subscriptionId", endpoint AS "endpoint",
+             device_label AS "deviceLabel", created_at AS "createdAt",
+             last_success_at AS "lastSuccessAt", last_failure_at AS "lastFailureAt",
+             last_error AS "lastError"
+      FROM personal_push_subscriptions
+      WHERE auth_session_id IN ${liveSessionIds(sql, nowIso)}
+      ORDER BY created_at ASC
+    `;
+  }).pipe(
     Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeSubscriptionRow(row))),
     Effect.map((rows) =>
       rows.map(({ endpoint, ...row }): PersonalPushDevice => ({
@@ -779,7 +789,8 @@ export const make = Effect.gen(function* () {
                ${notBeforeIso ?? nowIso}, NULL, ${nowIso}, ${nowIso}
         FROM personal_push_subscriptions
         -- SQLite needs a WHERE on INSERT ... SELECT ... ON CONFLICT to parse it.
-        WHERE ${endpoint === undefined ? sql`1 = 1` : sql`endpoint = ${endpoint}`}
+        WHERE auth_session_id IN ${liveSessionIds(sql, nowIso)}
+          AND ${endpoint === undefined ? sql`1 = 1` : sql`endpoint = ${endpoint}`}
         ON CONFLICT (event_id, subscription_id) DO NOTHING
         RETURNING subscription_id AS "subscriptionId"
       `;
@@ -891,6 +902,10 @@ export const make = Effect.gen(function* () {
       WHERE status <> 'pending' AND updated_at < ${prunedBefore}
     `;
     yield* phoneTokens.pruneNotifications;
+    // Sign-outs, revokes and expiry end a browser's pushes: drop those devices
+    // first, and let the due query below match live sessions only, so a
+    // subscription that was missed here still cannot be sent to.
+    yield* purgeDeadPushRecipients(sql);
     const due = yield* sql<OutboxDueRow>`
       SELECT o.event_id AS "eventId", o.subscription_id AS "subscriptionId",
              o.payload_json AS "payloadJson", o.attempts AS "attempts",
@@ -898,6 +913,7 @@ export const make = Effect.gen(function* () {
       FROM personal_notification_outbox o
       JOIN personal_push_subscriptions s ON s.subscription_id = o.subscription_id
       WHERE o.status = 'pending' AND o.next_attempt_at <= ${nowIso}
+        AND s.auth_session_id IN ${liveSessionIds(sql, nowIso)}
       ORDER BY o.created_at ASC
       LIMIT ${BATCH_SIZE}
     `;
@@ -948,18 +964,27 @@ export const make = Effect.gen(function* () {
         return yield* fail("The subscription keys are malformed.");
       }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const live = yield* sql<{ readonly sessionId: string }>`
+        SELECT session_id AS "sessionId" FROM auth_sessions
+        WHERE session_id = ${input.sessionId} AND session_id IN ${liveSessionIds(sql, nowIso)}
+      `;
+      if (live.length === 0) {
+        return yield* fail("This sign-in cannot register for notifications.");
+      }
       const rows = yield* sql<{ readonly subscriptionId: PersonalPushSubscriptionId }>`
         INSERT INTO personal_push_subscriptions (
-          subscription_id, endpoint, p256dh, auth, device_label, created_at, updated_at
+          subscription_id, endpoint, p256dh, auth, device_label, auth_session_id,
+          created_at, updated_at
         )
         VALUES (
           ${NodeCrypto.randomUUID()}, ${input.endpoint}, ${input.keys.p256dh}, ${input.keys.auth},
-          ${input.deviceLabel?.trim() ?? ""}, ${nowIso}, ${nowIso}
+          ${input.deviceLabel?.trim() ?? ""}, ${input.sessionId}, ${nowIso}, ${nowIso}
         )
         ON CONFLICT (endpoint) DO UPDATE SET
           p256dh = excluded.p256dh,
           auth = excluded.auth,
           device_label = excluded.device_label,
+          auth_session_id = excluded.auth_session_id,
           updated_at = excluded.updated_at
         RETURNING subscription_id AS "subscriptionId"
       `;
@@ -1186,7 +1211,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const config = yield* fcm.config;
       if (config.kind === "disabled") return { sent: 0, configured: false };
-      yield* phoneTokens.purgeRevoked;
+      yield* purgeDeadPushRecipients(sql);
       const tokens = yield* phoneTokens.list;
       if (tokens.length === 0) return { sent: 0, configured: true };
       const fresh = yield* phoneTokens.recordNotification(

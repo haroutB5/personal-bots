@@ -18,6 +18,7 @@ import {
 } from "./desktopColumns";
 import { InAppNotifications } from "./InAppNotifications";
 import { OutboxFlusher } from "./OutboxFlusher";
+import { PushRegistrationSync } from "./PushRegistrationSync";
 import { useKeptBotsList, useKeptBotsListScroll } from "./keptBotsList";
 import { whenIdle } from "./perfFlags";
 import { installPerfRum } from "./perfRum";
@@ -141,6 +142,7 @@ export function PersonalShell(): JSX.Element {
           {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
           <InAppNotifications />
           <OutboxFlusher />
+          <PushRegistrationSync />
           <ChunkLoadBoundary>
             <Suspense fallback={null}>
               <VoiceCallMount />
@@ -220,6 +222,7 @@ export function PersonalShell(): JSX.Element {
         </main>
         <InAppNotifications />
         <OutboxFlusher />
+        <PushRegistrationSync />
         <ChunkLoadBoundary>
           <Suspense fallback={null}>
             <VoiceCallMount />

@@ -64,3 +64,36 @@ it.effect(
       }),
     ),
 );
+
+it.effect(
+  "auth session revoke removes the browser subscriptions of the revoked session and keeps the rest",
+  () =>
+    provideCliTestLayers(
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-revoke-test-"));
+        yield* runCli(["auth", "session", "issue", "--json", "--base-dir", baseDir]);
+        yield* runCli(["auth", "session", "issue", "--json", "--base-dir", baseDir]);
+        const issued = (yield* TestConsole.logLines)
+          .filter((line): line is string => typeof line === "string")
+          .map((line) => JSON.parse(line) as { readonly sessionId: string });
+        const [revoked, kept] = issued;
+
+        withStateDb(baseDir, (db) => {
+          const insert = db.prepare(
+            `INSERT INTO personal_push_subscriptions
+             (subscription_id, endpoint, p256dh, auth, device_label, created_at, updated_at, auth_session_id)
+           VALUES (?, ?, 'k', 'a', '', '2026-11-11T09:00:00.000Z', '2026-11-11T09:00:00.000Z', ?)`,
+          );
+          insert.run("sub-revoked", "https://web.push.apple.com/revoked", revoked!.sessionId);
+          insert.run("sub-kept", "https://web.push.apple.com/kept", kept!.sessionId);
+        });
+
+        yield* runCli(["auth", "session", "revoke", revoked!.sessionId, "--base-dir", baseDir]);
+
+        const subscriptions = withStateDb(baseDir, (db) =>
+          db.prepare("SELECT subscription_id FROM personal_push_subscriptions").all(),
+        );
+        expect(subscriptions.map((row) => row.subscription_id)).toEqual(["sub-kept"]);
+      }),
+    ),
+);

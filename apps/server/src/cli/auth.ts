@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { purgeRevokedFcmTokens } from "../personal/push/fcmTokens.ts";
+import { purgeRevokedPushRecipients } from "../personal/push/pushRecipients.ts";
 
 import {
   formatIssuedPairingCredential,
@@ -237,7 +237,7 @@ const sessionRevokeCommand = Command.make("revoke", {
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
         const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
-        yield* purgeRevokedFcmTokens(yield* SqlClient.SqlClient);
+        yield* purgeRevokedPushRecipients(yield* SqlClient.SqlClient);
         yield* Console.log(
           revoked
             ? `Revoked session ${flags.sessionId}.\n`
