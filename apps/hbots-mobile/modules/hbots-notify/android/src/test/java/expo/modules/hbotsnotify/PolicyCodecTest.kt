@@ -37,4 +37,9 @@ class PolicyCodecTest {
   @Test fun aBlankNameFallsBackToTheAppName() {
     assertEquals("hbots", PolicyCodec.fromJs(false, listOf(mapOf("id" to "a", "name" to " ", "hidePreviews" to false))).bots.getValue("a").name)
   }
+
+  @Test fun jsInputUsesTheBotIdKeyJsSends() {
+    val policy = PolicyCodec.fromJs(false, listOf(mapOf("botId" to "a", "name" to "Juno", "hidePreviews" to false)))
+    assertEquals("Juno", policy.bots.getValue("a").name)
+  }
 }
