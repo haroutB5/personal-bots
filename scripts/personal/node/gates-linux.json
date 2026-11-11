@@ -72,7 +72,8 @@
       "cd android && ./gradlew :hbots-launcher:testDebugUnitTest --no-daemon --console=plain",
       "cd android && ./gradlew :hbots-liveview:testDebugUnitTest --no-daemon --console=plain",
       "cd android && ./gradlew :hbots-share:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-display:testDebugUnitTest --no-daemon --console=plain"
+      "cd android && ./gradlew :hbots-display:testDebugUnitTest --no-daemon --console=plain",
+      "cd android && ./gradlew :hbots-tile:testDebugUnitTest --no-daemon --console=plain"
     ]
   },
   {

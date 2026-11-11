@@ -206,7 +206,8 @@ describe("openSocketUrl", () => {
     const ticketCall = fetchSpy.mock.calls.find(([target]) =>
       String(target).endsWith("/api/auth/websocket-ticket"),
     );
-    expect((ticketCall?.[1] as RequestInit).headers).toEqual({ authorization: "Bearer tok-1" });
+    const ticketInit = ticketCall?.[1] as RequestInit | undefined;
+    expect(ticketInit?.headers).toEqual({ authorization: "Bearer tok-1" });
     expect(createDpopProof).not.toHaveBeenCalled();
   });
 
