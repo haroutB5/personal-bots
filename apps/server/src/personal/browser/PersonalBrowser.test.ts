@@ -67,6 +67,7 @@ import type {
   PageDialog,
   UnstickOutcome,
 } from "./driver.ts";
+import type { BrowserBackendSetting } from "./browserBackend.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
@@ -207,7 +208,10 @@ class FakePage implements BrowserPage {
     return { width: 390, height: 844 };
   }
   async setColorScheme() {}
-  async bringToFront() {}
+  fronted = 0;
+  async bringToFront() {
+    this.fronted++;
+  }
   mouseMoveFails = false;
   async mouseMove(x?: number, y?: number, steps?: number) {
     this.pointer.push({ op: "mouseMove", detail: [x, y, steps] });
@@ -466,6 +470,7 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     readonly streamMaxFps?: number;
     readonly adaptiveJpeg?: boolean;
     readonly controlGraceMs?: number;
+    readonly backend?: BrowserBackendSetting;
   } = {},
 ) =>
   PersonalBrowser.makeLayer({
@@ -505,6 +510,7 @@ const makeLayer = (
     readonly streamMaxFps?: number;
     readonly adaptiveJpeg?: boolean;
     readonly controlGraceMs?: number;
+    readonly backend?: BrowserBackendSetting;
   },
 ) =>
   baseLayer(
@@ -5523,6 +5529,137 @@ describe("preview automation host composition", () => {
     );
     expect(source).toContain("ServerBrowser.layerWithoutAutomationHost");
     expect(source).not.toContain("ServerBrowser.layer.pipe");
+  });
+
+  describe("page owners", () => {
+    const SHARED = { backend: { kind: "shared", userDataDir: "/unused" } } as const;
+    const foreignPage = () => {
+      const page = new FakePage();
+      page.currentUrl = "https://mail.example/inbox";
+      return page;
+    };
+
+    it.effect("shared: a new tab is a new page and the blank window page is left alone", () => {
+      const fake = makeFakeDriver();
+      const blank = fake.state.page;
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        expect(fake.state.pages).toHaveLength(2);
+        expect(blank.gotos).toEqual([]);
+        expect(fake.state.pages[1]!.gotos).toEqual(["https://example.com/"]);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("owned: the blank window page is still reused as before", () => {
+      const fake = makeFakeDriver();
+      const blank = fake.state.page;
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        expect(fake.state.pages).toHaveLength(1);
+        expect(blank.gotos).toEqual(["https://example.com/"]);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    const closedLastTab = (browser: PersonalBrowser.PersonalBrowser["Service"]) =>
+      Effect.gen(function* () {
+        const opened = yield* browser.handleAutomationRequest(
+          request("navigate", { url: "example.com" }),
+        );
+        yield* browser.handleAutomationRequest({
+          ...request("closeTab", {}),
+          tabId: (opened as { tabId: string }).tabId,
+          tabIdExplicit: true,
+        } as PreviewAutomationRequest);
+      });
+
+    it.effect("shared: with no bot tab open a viewer is shown none of the owner's pages", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* closedLastTab(browser);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            expect(mail.screencasts).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: once he takes control the viewer may fall back to his pages", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* closedLastTab(browser);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+            expect(mail.screencasts).toBe(1);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: a bot with no tab cannot act on a page the owner opened", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.status("session-1");
+        const error = yield* browser
+          .handleAutomationRequest(request("click", { locator: "text=Delete" }))
+          .pipe(Effect.flip);
+        expect(error.message).toBe("No open browser tab for this thread. Call preview_open first.");
+        expect(mail.closed).toBe(false);
+        expect(mail.gotos).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: releasing a thread closes its tab and leaves the owner's page open", () => {
+      const fake = makeFakeDriver();
+      const mail = foreignPage();
+      fake.state.pages.splice(0, fake.state.pages.length, mail);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const botPage = fake.state.pages[1]!;
+        yield* browser.releaseThread(threadId);
+        expect(botPage.closed).toBe(true);
+        expect(mail.closed).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("shared: switching the active tab never raises the window", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.handleAutomationRequest(
+          request("open", { url: "https://other.example/", reuseExistingTab: false }),
+        );
+        expect(fake.state.pages.map((page) => page.fronted)).toEqual([0, 0, 0]);
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, SHARED)));
+    });
+
+    it.effect("owned: switching the active tab still raises it", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.handleAutomationRequest(
+          request("open", { url: "https://other.example/", reuseExistingTab: false }),
+        );
+        expect(fake.state.pages.map((page) => page.fronted).reduce((a, b) => a + b, 0)).toBe(2);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
   });
 
   describe("an imported profile folder", () => {
