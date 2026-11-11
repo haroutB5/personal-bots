@@ -1,6 +1,6 @@
 # 1.67.6: OpenCode restarts, one browser host, steer follow-ups, phone keyboard, FCM push server side
 
-Based on 1.67.5 (`96538634780c`). Branch `integ/1.67.6`. One migration: 143 `PersonalFcmTokens`, schema 142 to 143. `PERSONAL_TASKS_CONCURRENCY` stays 5.
+Based on 1.67.5 (`96538634780c`). Branch `integ/1.67.6`. Two migrations: 143 `PersonalFcmTokens` and 144 `PersonalPhoneCommands`, schema 142 to 144. `PERSONAL_TASKS_CONCURRENCY` stays 5.
 
 ## Why
 
@@ -14,14 +14,20 @@ Follow-ups from 1.67.5 (the steer refusal, empty rows in the live work list), a 
 - **Phone Computer screen.** The live keyboard opens from the field's real focus, reopens after Back hides it, and the address bar keeps typed text.
 - **FCM push, server side.** Data-only FCM pushes go to registered phones. The server serves notification content, reply and safe answer, removes phone tokens when the CLI revokes a session, and refuses an unknown or blind phone answer without burning the command id. The Firebase service account key is server-only: bots cannot read it through `secret_request`, the session environment or any other secret path. No Firebase key is saved yet, so FCM stays off on the live server. The APK is built without `HBOTS_GOOGLE_SERVICES_JSON`.
 
-## Migration 143 `PersonalFcmTokens`
+## Migrations 143 and 144
 
-Adds two tables and two indexes. Nothing existing is altered.
+Both add tables and indexes only. Nothing existing is altered.
+
+### 143 `PersonalFcmTokens`
 
 - `personal_fcm_tokens` (token, auth_session_id, subject, app_version, created_at, last_seen_at, last_error), index `idx_personal_fcm_tokens_session` on `auth_session_id`. A phone token belongs to the session that registered it and to that session's subject.
 - `personal_phone_notifications` (notification_id, subject, kind, bot_id, thread_id, request_id, body, created_at), primary key (notification_id, subject), index `idx_personal_phone_notifications_created` on `created_at`. A notification row is readable only by the subject it was sent to.
 
-Both statements use `IF NOT EXISTS`. The release is a migration change, so the runner takes the full production backup first.
+### 144 `PersonalPhoneCommands`
+
+Adds `personal_phone_commands` (command_id, subject, action, notification_id, status, body, created_at), primary key (command_id, subject), index `idx_personal_phone_commands_created` on `created_at`. One row per phone notification action, keyed by the command id the phone chose. The first call claims the row and a retried tap with the same id gets the stored result, so it sends one message and answers one request.
+
+All statements use `IF NOT EXISTS`. The release is a migration change, so the runner takes the full production backup first.
 
 ## Verification
 
@@ -34,7 +40,7 @@ Both statements use `IF NOT EXISTS`. The release is a migration change, so the r
 
 ## Rollback
 
-Binary only. The previous release is `96538634780c` (1.67.5). Migration 143 only adds tables, so the 1.67.5 binary runs on the 143 schema without change.
+Binary only. The previous release is `96538634780c` (1.67.5). Migrations 143 and 144 only add tables, so the 1.67.5 binary runs on the 144 schema without change.
 
 ## Known and accepted
 
