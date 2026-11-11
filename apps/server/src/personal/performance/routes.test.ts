@@ -29,7 +29,7 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0)) await dispose();
 });
 
-const fixture = () => {
+const fixture = (watch: Effect.Effect<void, unknown> | undefined = undefined) => {
   let revoke: () => void = () => undefined;
   const revoked = new Promise<void>((resolve) => {
     revoke = resolve;
@@ -59,7 +59,7 @@ const fixture = () => {
       ),
       Layer.provideMerge(
         Layer.succeed(SessionStore, {
-          awaitInvalidation: () => Effect.promise(() => revoked),
+          awaitInvalidation: () => watch ?? Effect.promise(() => revoked),
         } as unknown as SessionStore["Service"]),
       ),
       Layer.provideMerge(
@@ -111,5 +111,27 @@ describe("the performance stream", () => {
     ]);
     expect(ended).toEqual({ done: true, value: undefined });
     expect(counts).toEqual({ subscribed: 1, unsubscribed: 1 });
+  });
+
+  it("fails the stream, never ending it as a revoke, when the session check fails", async () => {
+    const { handler, counts } = fixture(Effect.fail(new Error("database is unreadable")));
+    const response = await handler(
+      new Request(`http://t3.test${PERSONAL_PERFORMANCE_STREAM_PATH}`, { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    const outcome = await reader.read().then(
+      async (first) => {
+        if (first.done) return "ended" as const;
+        const next = await reader.read().then(
+          (second) => (second.done ? ("ended" as const) : ("frame" as const)),
+          () => "errored" as const,
+        );
+        return next;
+      },
+      () => "errored" as const,
+    );
+    expect(outcome).toBe("errored");
+    expect(counts.unsubscribed).toBe(1);
   });
 });

@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { AuthSessionId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,6 +17,8 @@ import {
 } from "./sessionRevocationClose.ts";
 
 const SESSION_ID = AuthSessionId.make("session-1");
+
+const READ_FAILURE_CLOSE_CODE = 1011;
 
 const makeFixture = () => {
   const closes: Array<Socket.CloseEvent> = [];
@@ -39,11 +42,12 @@ const makeFixture = () => {
     body: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<unknown, HttpServerError.HttpServerError>,
+    until: Effect.Effect<void, unknown> = Deferred.await(revoked),
   ) =>
     serveUntilSessionRevoked({
       sessionId: SESSION_ID,
       serve: Effect.flatMap(HttpServerRequest.HttpServerRequest, body),
-      until: Deferred.await(revoked),
+      until,
     }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped);
   const closed = Effect.promise(async () => {
     const until = performance.now() + 2000;
@@ -151,5 +155,33 @@ it.effect("ends a stream with the frames it delivered once its session is revoke
     expect(received).toEqual([1, 2]);
     yield* Deferred.succeed(revoked, undefined);
     yield* Fiber.join(fiber);
+  }),
+);
+
+it.effect("closes with a retryable code, never 4401, when the session check fails", () =>
+  Effect.gen(function* () {
+    const fixture = makeFixture();
+    const fiber = yield* Effect.forkChild(
+      fixture.serve(
+        (request) => Effect.andThen(request.upgrade, Effect.never),
+        Effect.fail(new Error("database is unreadable")),
+      ),
+    );
+    const close = yield* fixture.closed;
+    expect(close?.code).toBe(READ_FAILURE_CLOSE_CODE);
+    expect(close?.code).not.toBe(SESSION_REVOKED_CLOSE_CODE);
+    expect(close?.reason).not.toBe("session_revoked");
+    yield* Fiber.interrupt(fiber);
+  }),
+);
+
+it.effect("fails a stream, instead of ending it as revoked, when the session check fails", () =>
+  Effect.gen(function* () {
+    const body = yield* endStreamWhenSessionRevoked({
+      stream: Stream.make(1, 2).pipe(Stream.concat(Stream.never)),
+      until: Effect.fail(new Error("database is unreadable")),
+    });
+    const exit = yield* body.pipe(Stream.runDrain, Effect.exit);
+    expect(Exit.isFailure(exit)).toBe(true);
   }),
 );
