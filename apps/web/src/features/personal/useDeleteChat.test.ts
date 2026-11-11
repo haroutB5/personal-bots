@@ -2,7 +2,8 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { buildChatsSnapshot, readChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
+import { buildChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
+import { readChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
 import { deleteChatConfirmMessage, useDeleteChat } from "./useDeleteChat";
 
 const command = vi.hoisted(() => ({

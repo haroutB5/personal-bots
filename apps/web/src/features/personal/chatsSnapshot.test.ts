@@ -2,14 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildChatsSnapshot,
-  dropChatFromSnapshot,
   partitionPinnedSnapshotRows,
   MAX_SNAPSHOT_PREVIEW_CHARS,
   MAX_SNAPSHOT_ROWS,
-  readChatsSnapshot,
-  writeChatsSnapshot,
   type ChatsSnapshotRowInput,
-} from "./chatsSnapshot";
+} from "@hbots/personal-client/bots/chatsSnapshot";
+import { dropChatFromSnapshot, readChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
 
 function createLocalStorageStub(): Storage {
   const store = new Map<string, string>();

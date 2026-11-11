@@ -22,7 +22,7 @@
  */
 import { isElectron } from "~/env";
 
-import { isPersonalPath } from "./personalMode";
+import { isPersonalPath } from "@hbots/personal-client/bots/personalMode";
 
 export function shouldOmitProviderWorkspaceData(input: {
   readonly pathname: string;

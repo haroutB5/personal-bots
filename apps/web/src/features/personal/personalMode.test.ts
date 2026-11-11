@@ -7,7 +7,7 @@ import {
   groupSelectionKey,
   isPersonalPath,
   sidebarSelectionKey,
-} from "./personalMode";
+} from "@hbots/personal-client/bots/personalMode";
 
 describe("sidebarSelectionKey", () => {
   it("selects the bot for any of its chats, its chats list and its editor", () => {

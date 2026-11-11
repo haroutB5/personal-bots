@@ -9,8 +9,6 @@ import {
 
 import { webKeyValueStore } from "./platform/webStorage";
 
-export * from "@hbots/personal-client/bots/chatsSnapshot";
-
 export const readChatsSnapshot = (environmentId: string | null): ChatsSnapshot | null =>
   readChatsSnapshotIn(webKeyValueStore, environmentId);
 

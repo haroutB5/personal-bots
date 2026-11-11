@@ -6,7 +6,7 @@ import { CircleCheck, File, Laptop, MessageCircle, type LucideIcon } from "lucid
 import { cn } from "~/lib/utils";
 
 import { useComputerAsk } from "./computer/useComputerAsk";
-import { PERSONAL_TABS, type PersonalTab } from "./personalMode";
+import { PERSONAL_TABS, type PersonalTab } from "@hbots/personal-client/bots/personalMode";
 
 const TAB_ICONS: Record<PersonalTab, LucideIcon> = {
   chats: MessageCircle,

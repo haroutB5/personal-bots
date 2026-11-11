@@ -27,7 +27,7 @@ import {
   type DesktopPaneLayout,
   desktopPaneLayout,
   sidebarSelectionKey,
-} from "./personalMode";
+} from "@hbots/personal-client/bots/personalMode";
 import {
   setPersonalNumberPreference,
   useImportPersonalSharedPreferences,

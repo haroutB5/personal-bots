@@ -57,12 +57,14 @@ import { useDesktopStatus, useDesktopSummaryInput } from "./computer/desktopStat
 import {
   buildChatsSnapshot,
   partitionPinnedSnapshotRows,
-  readChatsSnapshot,
-  readChatsSnapshotBeforeEnvironment,
-  writeChatsSnapshot,
   type ChatsSnapshot,
   type ChatsSnapshotRow,
   type ChatsSnapshotRowInput,
+} from "@hbots/personal-client/bots/chatsSnapshot";
+import {
+  readChatsSnapshot,
+  readChatsSnapshotBeforeEnvironment,
+  writeChatsSnapshot,
 } from "./chatsSnapshot";
 import {
   resolveTurnChildren,
@@ -110,7 +112,11 @@ import { usePreloadChatRoute } from "./usePreloadChatRoute";
 import { reportChatsListPainted } from "./perfRum";
 import { perfOptimizationOn } from "./perfFlags";
 import { formatRelativeTime } from "./relativeTime";
-import { botSelectionKey, groupSelectionKey, type SidebarSelectionKey } from "./personalMode";
+import {
+  botSelectionKey,
+  groupSelectionKey,
+  type SidebarSelectionKey,
+} from "@hbots/personal-client/bots/personalMode";
 import { revealInSidebar } from "./sidebarReveal";
 
 const MINUTE_MS = 60_000;

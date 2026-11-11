@@ -23,7 +23,7 @@ import { BotMuteMenuItems, MutedBell, useSetBotMute } from "./BotMute";
 import { botMuteState } from "./botMuteModel";
 import { selectedChatProps } from "./BotRow";
 import { botStatus, type BotSummary } from "./botSummaries";
-import type { ChatsSnapshotRow } from "./chatsSnapshot";
+import type { ChatsSnapshotRow } from "@hbots/personal-client/bots/chatsSnapshot";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { activeGroupMembers, groupStatusLine, isGroupRoundLive, groupSubtitle } from "./groupModel";
 import { useNewChatPrompt } from "./useNewChatPrompt";
