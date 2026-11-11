@@ -91,6 +91,8 @@ const REQUIRED_PERMISSIONS = [
   "android.permission.REQUEST_INSTALL_PACKAGES",
   "android.permission.POST_NOTIFICATIONS",
   "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION",
+  // Live Updates on Android 16 (X3): lets the working notification ask to be promoted.
+  "android.permission.POST_PROMOTED_NOTIFICATIONS",
 ];
 for (const permission of REQUIRED_PERMISSIONS) {
   const present = manifest.includes(permission);
@@ -128,6 +130,18 @@ const exportedOk =
 failed ||= !exportedOk;
 console.log(
   `${exportedOk ? "ok  " : "FAIL"} exported=${exported.join(",")} (expected ${expectedExported.join(",")})`,
+);
+
+// Picture-in-picture (X5) is on the main activity only: no other component may enter PiP.
+const pipComponents = [...manifest.matchAll(/<(?:activity|activity-alias)\b[^>]*>/gu)]
+  .map(([tag = ""]) => tag)
+  .filter((tag) => tag.includes('android:supportsPictureInPicture="true"'))
+  .map((tag) => tag.match(/android:name="([^"]*)"/u)?.[1] ?? "");
+const pipOk =
+  pipComponents.length === 1 && pipComponents[0] === "com.haroutb5.hbots.MainActivity";
+failed ||= !pipOk;
+console.log(
+  `${pipOk ? "ok  " : "FAIL"} supportsPictureInPicture on ${pipComponents.join(",") || "none"} (expected MainActivity only)`,
 );
 
 const debugReceiverTag =

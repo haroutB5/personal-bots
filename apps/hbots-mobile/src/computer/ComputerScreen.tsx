@@ -54,6 +54,9 @@ import {
   SensitiveCard,
 } from "./ComputerCards";
 import { ComputerLiveView, type ComputerLiveViewHandle } from "./ComputerLiveView";
+import { fullScreenVisible, inlinePaused, pipEnabled } from "./pipModel";
+import type { FrameSize } from "./pipModel";
+import { useInPip, usePipRequest } from "./usePictureInPicture";
 import {
   activeEgressPause,
   browserEvents,
@@ -266,7 +269,15 @@ export function ComputerScreen({
   });
   const isLive = liveViewMode({ status, reachable }) === "live";
   const control = takeControlView({ stage, takeError, urlError });
-  const liveActive = focused && appActive && !fullScreen;
+  const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
+  const streaming = fullScreen
+    ? control.kind === "live"
+    : shown === "browser"
+      ? reachable && stage.kind !== "idle" && isLive
+      : desktopAvailable;
+  const inPip = useInPip();
+  usePipRequest(pipEnabled({ streaming, focused, appActive, inPip }), frameSize);
+  const liveActive = !inlinePaused({ focused, appActive, fullScreen, inPip });
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- the toolbar address follows the embedded view
@@ -508,6 +519,7 @@ export function ComputerScreen({
                 paused={!liveActive}
                 attemptKey={urlEpoch}
                 syncViewport={false}
+                onFrameSize={setFrameSize}
                 onNeedsURL={refreshURLs}
               />
             ) : (
@@ -525,6 +537,7 @@ export function ComputerScreen({
                 paused={!liveActive}
                 attemptKey={urlEpoch}
                 syncViewport={false}
+                onFrameSize={setFrameSize}
                 onNeedsURL={refreshURLs}
               />
               <View style={styles.desktopCaption}>
@@ -683,7 +696,7 @@ export function ComputerScreen({
       </ScrollView>
 
       <Modal
-        visible={fullScreen}
+        visible={fullScreenVisible({ fullScreen, inPip })}
         animationType="fade"
         statusBarTranslucent
         navigationBarTranslucent
@@ -731,6 +744,7 @@ export function ComputerScreen({
               paused={!appActive}
               attemptKey={urlEpoch}
               syncViewport={youBrowser}
+              onFrameSize={setFrameSize}
               onNeedsURL={refreshURLs}
             />
           ) : (
@@ -758,6 +772,28 @@ export function ComputerScreen({
               ) : null}
             </View>
           )}
+        </View>
+      </Modal>
+
+      {/* The PiP window shows the live view and nothing else: no controls, no touch input. */}
+      <Modal
+        visible={inPip}
+        animationType="none"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => undefined}
+      >
+        <View style={styles.pipWindow}>
+          <ComputerLiveView
+            mode={fullScreen || shown === "browser" ? "browser" : "desktop"}
+            url={(fullScreen || shown === "browser" ? urls?.browser : urls?.desktop) ?? null}
+            interactive={false}
+            fullScreen
+            paused={false}
+            attemptKey={urlEpoch}
+            syncViewport={false}
+            onNeedsURL={refreshURLs}
+          />
         </View>
       </Modal>
 
@@ -958,6 +994,7 @@ const styles = StyleSheet.create({
   cardGap: { marginTop: 4 },
   error: { color: tokens.danger, fontSize: 13 },
   fullScreen: { flex: 1, backgroundColor: tokens.bg },
+  pipWindow: { flex: 1, backgroundColor: "#000000" },
   controlBar: {
     height: 52,
     flexDirection: "row",

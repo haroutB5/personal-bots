@@ -46,6 +46,7 @@ export function ComputerLiveView({
   attemptKey,
   syncViewport,
   onClosed,
+  onFrameSize,
   onNeedsURL,
 }: {
   readonly ref?: Ref<ComputerLiveViewHandle>;
@@ -58,6 +59,8 @@ export function ComputerLiveView({
   /** Browser full screen in control: ask the page to lay out for this box. */
   readonly syncViewport: boolean;
   readonly onClosed?: () => void;
+  /** The last frame's size, for the picture-in-picture window's shape. */
+  readonly onFrameSize?: (size: { readonly width: number; readonly height: number }) => void;
   readonly onNeedsURL: () => void;
 }) {
   const liveRef = useRef<LiveViewHandle>(null);
@@ -141,6 +144,7 @@ export function ComputerLiveView({
   const frame = (event: NativeSyntheticEvent<{ width: number; height: number; scale: number }>) => {
     const next = event.nativeEvent;
     metaRef.current = { width: next.width, height: next.height };
+    onFrameSize?.({ width: next.width, height: next.height });
     setAspect((previous) => {
       const ratio = next.width / next.height;
       return Math.abs(previous - ratio) < 0.001 ? previous : ratio;
