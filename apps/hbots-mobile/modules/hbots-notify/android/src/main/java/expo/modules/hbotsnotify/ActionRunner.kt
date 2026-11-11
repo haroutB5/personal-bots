@@ -10,9 +10,15 @@ object ActionRunner {
   const val MAX_ATTEMPTS = 3
   /** The server answers InProgress at once, so more tries are cheap. They stop at the budget below. */
   const val MAX_IN_PROGRESS_ATTEMPTS = 5
-  /** Wall clock for one action. A broadcast that runs much longer than this risks being killed. */
-  const val BUDGET_MS = 30_000L
-  const val CALL_TIMEOUT_MS = 10_000L
+  /**
+   * Wall clock for one action, every wait and every call included. The receiver runs inside a foreground
+   * broadcast, which the system kills after about 10 s, so this leaves room to post the final notice.
+   */
+  const val BUDGET_MS = 7_000L
+  /** The longest one call may take. A stalled server then leaves time for one more try. */
+  const val CALL_TIMEOUT_MS = 3_500L
+  /** A call with less than this left is not worth starting. */
+  private const val MIN_CALL_MS = 500L
   private val BACKOFF_MS = longArrayOf(1_000, 2_000)
   private val IN_PROGRESS_BACKOFF_MS = longArrayOf(1_000, 2_000, 3_000, 4_000)
 
@@ -26,11 +32,13 @@ object ActionRunner {
     org.json.JSONObject().put("commandId", commandId).put("choice", choice).toString()
 
   /**
-   * Sends one command. A transient failure repeats with the same command id, which the
+   * Sends one command inside [BUDGET_MS]. A transient failure repeats with the same command id, which the
    * server stores per (command id, user), so a repeat can never act twice.
    * InProgress means the server still holds that id: wait, tell the caller, ask again with the
    * same id, and end as Unconfirmed when it never settles. Any other outcome ends the loop,
    * and a 422 does not consume the id on the server.
+   * When the budget runs out, or a call timed out so the server may have it, the end is Unconfirmed: this
+   * phone cannot say whether it went through. Only fast failures end as Transient, which really did not send.
    */
   fun run(
     http: HttpGateway,
@@ -41,26 +49,41 @@ object ActionRunner {
     onWaiting: () -> Unit = {},
   ): ActionOutcome {
     val startedAt = now()
+    fun left() = BUDGET_MS - (now() - startedAt)
     var transient = 0
     var busy = 0
+    var mayHaveArrived = false
     while (true) {
-      val outcome = ActionOutcomes.classify(http.execute("POST", path, body, CALL_TIMEOUT_MS))
-      val outOfTime = now() - startedAt >= BUDGET_MS
-      when (outcome) {
+      val allowed = minOf(CALL_TIMEOUT_MS, left())
+      if (allowed < MIN_CALL_MS) return ActionOutcome.Unconfirmed
+      val calledAt = now()
+      val result = http.execute("POST", path, body, allowed)
+      if (result.status == null && now() - calledAt >= allowed - TIMED_OUT_SLACK_MS) mayHaveArrived = true
+      when (val outcome = ActionOutcomes.classify(result)) {
         ActionOutcome.Transient -> {
           transient++
-          if (transient >= MAX_ATTEMPTS || outOfTime) return ActionOutcome.Transient
-          sleep(BACKOFF_MS[transient - 1])
+          if (transient >= MAX_ATTEMPTS) return if (mayHaveArrived) ActionOutcome.Unconfirmed else ActionOutcome.Transient
+          if (!pause(BACKOFF_MS[transient - 1], ::left, sleep)) return ActionOutcome.Unconfirmed
         }
         ActionOutcome.InProgress -> {
           busy++
-          if (busy >= MAX_IN_PROGRESS_ATTEMPTS || outOfTime) return ActionOutcome.Unconfirmed
+          if (busy >= MAX_IN_PROGRESS_ATTEMPTS) return ActionOutcome.Unconfirmed
           onWaiting()
-          sleep(IN_PROGRESS_BACKOFF_MS[busy - 1])
+          if (!pause(IN_PROGRESS_BACKOFF_MS[busy - 1], ::left, sleep)) return ActionOutcome.Unconfirmed
         }
         else -> return outcome
       }
     }
+  }
+
+  private const val TIMED_OUT_SLACK_MS = 50L
+
+  /** Waits, but never so long that no call fits afterwards. False when there is no room left. */
+  private fun pause(wanted: Long, left: () -> Long, sleep: (Long) -> Unit): Boolean {
+    val room = left() - MIN_CALL_MS
+    if (room <= 0) return false
+    sleep(minOf(wanted, room))
+    return true
   }
 }
 

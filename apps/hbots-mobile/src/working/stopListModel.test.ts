@@ -16,6 +16,7 @@ const thread = (threadId: string, botId: string, botName: string): WorkingThread
   botId,
   botName,
   title: `Chat ${threadId}`,
+  state: "working",
 });
 
 describe("stopListView", () => {

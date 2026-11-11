@@ -116,7 +116,8 @@ class ActionRunnerTest {
     val http = FakeHttp(listOf(busy))
     val outcome = ActionRunner.run(http, path, body, sleep = { clock += 40_000 }, now = { clock })
     assertEquals(ActionOutcome.Unconfirmed, outcome)
-    assertEquals(2, http.calls.size)
+    // The sleep passes the whole budget, so no second call is started.
+    assertEquals(1, http.calls.size)
   }
 
   @Test fun aTimeoutThenInProgressStillEndsWithTheSameId() {

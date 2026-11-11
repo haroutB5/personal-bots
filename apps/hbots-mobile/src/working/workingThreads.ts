@@ -1,4 +1,4 @@
-import { isThreadLive } from "@hbots/personal-client/bots/botSummaries";
+import { isThreadLive, threadNeedsAttention } from "@hbots/personal-client/bots/botSummaries";
 import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 
 export interface WorkingBotRecord {
@@ -11,19 +11,26 @@ export interface WorkingLink {
   readonly threadId: string;
 }
 
+/**
+ * `working`: the bot is doing the work. `waiting`: its turn is open but it needs the owner's approval or
+ * answer first, so it is not working and the "bots working" notice must not count it.
+ */
+export type WorkingThreadState = "working" | "waiting";
+
 /** One chat that is running a turn right now. */
 export interface WorkingThread {
   readonly threadId: string;
   readonly botId: string;
   readonly botName: string;
   readonly title: string;
+  readonly state: WorkingThreadState;
 }
 
 const FALLBACK_BOT_NAME = "hbots";
 
 /**
  * Every chat of a known bot that is running now, in a steady order (bot name, then chat id) so the
- * notification and the Stop list do not shuffle between reads. A parked rate limit is not working.
+ * notification and the Stop list do not shuffle between reads. A parked rate limit is not working. A chat that waits for an answer is listed, as `waiting`.
  */
 export function workingThreads(input: {
   readonly bots: ReadonlyArray<WorkingBotRecord>;
@@ -39,7 +46,13 @@ export function workingThreads(input: {
     const botName = nameByBot.get(link.botId);
     const shell = shellById.get(link.threadId);
     if (botName === undefined || shell === undefined || !isThreadLive(shell)) continue;
-    found.push({ threadId: link.threadId, botId: link.botId, botName, title: shell.title });
+    found.push({
+      threadId: link.threadId,
+      botId: link.botId,
+      botName,
+      title: shell.title,
+      state: threadNeedsAttention(shell) ? "waiting" : "working",
+    });
   }
   return found.toSorted(
     (left, right) =>

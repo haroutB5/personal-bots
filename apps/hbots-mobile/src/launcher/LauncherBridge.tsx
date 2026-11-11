@@ -24,7 +24,14 @@ export function LauncherBridge({ native }: { readonly native: NativePersonal }) 
   const shortcuts = useMemo(() => (bots === null ? null : buildShortcutFeed(bots)), [bots]);
   const widget = useMemo(() => {
     if (bots === null || working.status !== "ready") return null;
-    return buildWidgetFeed(bots, new Set(working.threads.map((thread) => thread.botId)));
+    return buildWidgetFeed(
+      bots,
+      new Set(
+        working.threads
+          .filter((thread) => thread.state === "working")
+          .map((thread) => thread.botId),
+      ),
+    );
   }, [bots, working]);
 
   const lastShortcuts = useRef<string | null>(null);

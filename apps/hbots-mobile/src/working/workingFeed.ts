@@ -12,14 +12,38 @@ export interface WorkingFeedBot {
 export const MAX_FEED_BOTS = 8;
 const MAX_NOTE = 80;
 
-/** One entry per bot, even when a bot runs several chats. The first chat with a note supplies it. */
+const STEP_WORDS: Readonly<Record<string, string>> = {
+  command_execution: "Running a command",
+  file_change: "Editing files",
+  file_search: "Searching files",
+  web_search: "Searching the web",
+  dynamic_tool: "Using a tool",
+  subagent: "Working with a helper",
+};
+
+/** What the server leaves as a step when a tool item has no title: its raw item type, such as `user_input_request`. */
+const RAW_TOKEN = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
+
+/** A step in words. A raw type with no wording is dropped, so the notice says "Working…" instead. */
+export function humanStep(note: string | undefined): string | undefined {
+  const trimmed = note?.trim();
+  if (!trimmed) return undefined;
+  if (!RAW_TOKEN.test(trimmed)) return trimmed;
+  return STEP_WORDS[trimmed];
+}
+
+/**
+ * One entry per bot that is working, even when it runs several chats. A chat that only waits for an
+ * answer is not working. The first working chat with a note supplies it.
+ */
 export function buildWorkingFeed(
   threads: ReadonlyArray<WorkingThread>,
   notes: ReadonlyMap<string, string>,
 ): ReadonlyArray<WorkingFeedBot> {
   const byBot = new Map<string, { name: string; note: string | undefined }>();
   for (const thread of threads) {
-    const note = notes.get(thread.threadId)?.trim();
+    if (thread.state === "waiting") continue;
+    const note = humanStep(notes.get(thread.threadId));
     const entry = byBot.get(thread.botId);
     if (entry === undefined) {
       byBot.set(thread.botId, { name: thread.botName, note: note ? note : undefined });

@@ -45,7 +45,30 @@ object ActionDelivery {
     post(ActionNotice.Sending)
     val path = if (request.type == ActionType.REPLY) ActionRunner.replyPath(request.notificationId) else ActionRunner.answerPath(request.notificationId)
     val body = if (request.type == ActionType.REPLY) ActionRunner.replyBody(request.commandId, request.value) else ActionRunner.answerBody(request.commandId, request.value)
-    val outcome = ActionRunner.run(http, path, body, sleep = sleep, now = now, onWaiting = { post(ActionNotice.StillSending) })
+    // Whatever goes wrong inside, the notice still ends in a settled state and never stays on "Sending…".
+    val outcome = try {
+      ActionRunner.run(http, path, body, sleep = sleep, now = now, onWaiting = { post(ActionNotice.StillSending) })
+    } catch (error: Throwable) {
+      ActionOutcome.Unconfirmed
+    }
+    return settle(outcome, request)
+  }
+
+  /**
+   * The end state. A reply that could not be confirmed opens the chat with the text as a draft, so it is
+   * never lost. Without a chat to open the command stays retryable instead, with the same command id.
+   */
+  internal fun settle(outcome: ActionOutcome, request: ActionRequest): ActionNotice.Settled {
+    if (outcome == ActionOutcome.Unconfirmed && request.type == ActionType.REPLY) {
+      val draft = ReplyLimit.draftLink(request.chatLink, request.value)
+      return if (draft != null) {
+        ActionNotice.Settled(outcome, Presentation(After.NOTICE_OPEN_CHAT, UNCONFIRMED_REPLY), draft)
+      } else {
+        ActionNotice.Settled(ActionOutcome.Transient, ActionPresentations.of(ActionOutcome.Transient, request.type, request.choice), request.chatLink)
+      }
+    }
     return ActionNotice.Settled(outcome, ActionPresentations.of(outcome, request.type, request.choice), request.chatLink)
   }
+
+  const val UNCONFIRMED_REPLY = "Could not confirm. Open the chat. Your reply is in the message box."
 }

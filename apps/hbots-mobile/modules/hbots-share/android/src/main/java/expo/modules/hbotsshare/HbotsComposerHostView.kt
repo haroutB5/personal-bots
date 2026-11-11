@@ -4,6 +4,8 @@ import android.content.Context
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.os.SystemClock
+import android.util.Log
 import android.widget.EditText
 import androidx.core.view.ContentInfoCompat
 import androidx.core.view.OnReceiveContentListener
@@ -26,11 +28,23 @@ class HbotsComposerHostView(context: Context, appContext: AppContext) :
   private val onContent by EventDispatcher()
   private var bound: EditText? = null
 
+  private companion object {
+    const val TAG = "HbotsShare"
+  }
+
   private val listener = OnReceiveContentListener { _, payload ->
+    val startedAt = SystemClock.elapsedRealtime()
     val split = payload.partition { item -> ContentRoute.takesItem(item.uri != null) }
     val taken = split.first
     if (taken != null) take(taken)
     // Text goes back to the field, so a plain paste is unchanged.
+    // Counts and timing only, never a uri or content: this is how a keyboard that reports a failed
+    // commit (X6.5) is told apart from a slow copy.
+    Log.i(
+      TAG,
+      "receive source=${payload.source} items=${payload.clip.itemCount} mime=${payload.clip.description.takeIf { it.mimeTypeCount > 0 }?.getMimeType(0)} " +
+        "taken=${taken != null} remainder=${split.second != null} ms=${SystemClock.elapsedRealtime() - startedAt}",
+    )
     split.second
   }
 
