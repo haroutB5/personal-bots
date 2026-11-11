@@ -13,8 +13,8 @@ import * as Schema from "effect/Schema";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import { personalSecretStoreKey } from "../secrets/PersonalSecretService.ts";
+import { FCM_SERVICE_ACCOUNT_SECRET_NAME } from "../secrets/serverOnlySecrets.ts";
 
-export const FCM_SERVICE_ACCOUNT_SECRET_NAME = "HBOTS_FCM_SERVICE_ACCOUNT";
 export const FCM_CONFIG_RELOAD_MS = 10 * 60_000;
 const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 const DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token";

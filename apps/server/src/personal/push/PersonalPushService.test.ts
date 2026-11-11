@@ -28,6 +28,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import { personalSecretStoreKey } from "../secrets/PersonalSecretService.ts";
+import { FCM_SERVICE_ACCOUNT_SECRET_NAME } from "../secrets/serverOnlySecrets.ts";
 import { UPDATES_BOT_ID } from "../claudeCodeReview/reviewPrompts.ts";
 import type { PersonalThreadEvent, PersonalSessionView } from "../engine/PersonalEngine.ts";
 import { personalStatusOf } from "../engine/PersonalThreadShellV2.ts";
@@ -2200,7 +2201,7 @@ const accountBytes = (projectId: string) => {
 
 const serviceAccountBytes = accountBytes("bots-test-project");
 
-const FCM_SECRET = personalSecretStoreKey(FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME);
+const FCM_SECRET = personalSecretStoreKey(FCM_SERVICE_ACCOUNT_SECRET_NAME);
 
 interface FcmCalls {
   readonly posts: Array<FcmSender.FcmHttpRequest>;
@@ -2232,7 +2233,7 @@ const saveFulfilledKey = (input: {
     const botId = PersonalBotId.make(input.botId);
     yield* store.set(
       personalSecretStoreKey({
-        name: FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME,
+        name: FCM_SERVICE_ACCOUNT_SECRET_NAME,
         botId,
         shared: input.shared,
       }),
@@ -2244,7 +2245,7 @@ const saveFulfilledKey = (input: {
       rootTaskId: null,
       threadId: ThreadId.make("owner-saved"),
       botId,
-      name: FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME,
+      name: FCM_SERVICE_ACCOUNT_SECRET_NAME,
       label: "Firebase",
       purpose: "Phone push",
       status: "fulfilled",

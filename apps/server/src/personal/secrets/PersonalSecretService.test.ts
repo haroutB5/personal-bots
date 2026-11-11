@@ -65,10 +65,11 @@ import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import * as PersonalSecretService from "./PersonalSecretService.ts";
 import { secretAccessLock } from "./secretAccessLock.ts";
 import * as PersonalSessionAccess from "./PersonalSessionAccess.ts";
-import { SecretBrokerConfig } from "./secretBroker.ts";
+import { prepareBrokerRequest, SecretBrokerConfig, SecretBrokerError } from "./secretBroker.ts";
 import { TEST_TLS_CERT, TEST_TLS_KEY } from "./secretBrokerTestCert.ts";
 import { redactSecretsInLogs } from "./secretLogRedaction.ts";
 import { secretRedactor } from "./secretRedaction.ts";
+import { FCM_SERVICE_ACCOUNT_SECRET_NAME } from "./serverOnlySecrets.ts";
 
 // These tests are about keys saved as environment variables, the only way before
 // 1.66.0. The brokered default has its own tests in PersonalSecretBrokering.test.ts.
@@ -2536,4 +2537,200 @@ describe("secrets boundary: a bot that tries to print its keys", () => {
         }),
       ),
   );
+});
+
+describe("server-only keys", () => {
+  const SERVER_KEY = FCM_SERVICE_ACCOUNT_SECRET_NAME;
+  const SERVER_VALUE = "made-up-service-account-json-9d2f41";
+  const ORDINARY_VALUE = "made-up-deploy-key-5b7c03";
+  const ORIGIN = "https://fcm.googleapis.com";
+
+  const placements = {
+    header: (name: string) => ({
+      method: "POST",
+      url: `${ORIGIN}/v1/send`,
+      headers: { Authorization: `Bearer {{secret:${name}}}` },
+    }),
+    url: (name: string) => ({ method: "POST", url: `${ORIGIN}/v1/send?key={{secret:${name}}}` }),
+    body: (name: string) => ({
+      method: "POST",
+      url: `${ORIGIN}/v1/send`,
+      body: `{{secret:${name}}}`,
+    }),
+  } as const;
+
+  const brokerAnswers = (
+    name: string,
+    saved: ReadonlyArray<PersonalSessionAccess.PersonalSessionSecret>,
+  ) =>
+    Object.values(placements).map((request) => {
+      try {
+        prepareBrokerRequest(request(name), saved);
+      } catch (error) {
+        expect(error).toBeInstanceOf(SecretBrokerError);
+        return (error as Error).message;
+      }
+      return "sent";
+    });
+
+  const saveFor = (
+    harness: Harness,
+    input: {
+      readonly key: string;
+      readonly name: string;
+      readonly value: string;
+      readonly mode: "brokered" | "env";
+      readonly shared: boolean;
+    },
+  ) =>
+    Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const secrets = yield* PersonalSecretService.PersonalSecretService;
+      const asker = yield* runningTask(harness, `${input.key}-asker`, "assistant");
+      const other = yield* runningTask(harness, `${input.key}-other`, "developer");
+      yield* bots.createThread({ botId: botId("assistant"), threadId: asker.threadId });
+      yield* bots.createThread({ botId: botId("developer"), threadId: other.threadId });
+      const asked = yield* secrets.request({
+        task: asker.task,
+        threadId: asker.threadId,
+        botId: botId("assistant"),
+        name: input.name,
+        label: input.name,
+        purpose: "Test.",
+        origins: [ORIGIN],
+      });
+      yield* secrets.fulfill({
+        requestId: asked.request.requestId,
+        value: Redacted.make(input.value),
+        mode: input.mode,
+        shared: input.shared,
+        ...(input.mode === "brokered" ? { origins: [ORIGIN] } : {}),
+      });
+      return { asker: asker.threadId, other: other.threadId };
+    });
+
+  const slots = [
+    { mode: "brokered", shared: false },
+    { mode: "brokered", shared: true },
+    { mode: "env", shared: false },
+    { mode: "env", shared: true },
+  ] as const;
+
+  for (const slot of slots) {
+    const label = `${slot.mode} ${slot.shared ? "shared" : "private"}`;
+
+    it.effect(`no bot can use the service account saved as ${label}`, () =>
+      withLayer((harness) =>
+        Effect.gen(function* () {
+          const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+          const store = yield* ServerSecretStore.ServerSecretStore;
+          const threads = yield* saveFor(harness, {
+            key: `server-${label}`,
+            name: SERVER_KEY,
+            value: SERVER_VALUE,
+            ...slot,
+          });
+          const missing = `No saved key named ${SERVER_KEY}. Ask for it with request_secret.`;
+
+          for (const threadId of [threads.asker, threads.other]) {
+            const saved = yield* access.secretsForThread(threadId);
+            expect(saved.map((entry) => entry.name)).toEqual([]);
+            expect(brokerAnswers(SERVER_KEY, saved)).toEqual([missing, missing, missing]);
+            expect((yield* access.forThread(threadId)).environment).toEqual({});
+          }
+          expect(yield* access.sharedSecrets()).toEqual([]);
+
+          const stillStored = yield* store.get(
+            PersonalSecretService.personalSecretStoreKey({
+              name: SERVER_KEY,
+              botId: botId("assistant"),
+              shared: slot.shared,
+            }),
+          );
+          expect(Option.isSome(stillStored)).toBe(true);
+        }),
+      ),
+    );
+
+    it.effect(
+      `an ordinary key saved as ${label} stays usable by the bots it was always usable by`,
+      () =>
+        withLayer((harness) =>
+          Effect.gen(function* () {
+            const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+            const threads = yield* saveFor(harness, {
+              key: `ordinary-${label}`,
+              name: "DEPLOY_KEY",
+              value: ORDINARY_VALUE,
+              ...slot,
+            });
+            const readers = slot.shared ? [threads.asker, threads.other] : [threads.asker];
+            for (const threadId of readers) {
+              const saved = yield* access.secretsForThread(threadId);
+              expect(saved.map((entry) => [entry.name, entry.value])).toEqual([
+                ["DEPLOY_KEY", ORDINARY_VALUE],
+              ]);
+              if (slot.mode === "brokered") {
+                const [header, ...elsewhere] = brokerAnswers("DEPLOY_KEY", saved);
+                expect(header).toBe("sent");
+                for (const answer of elsewhere) expect(answer).toContain("Authorization header");
+                expect((yield* access.forThread(threadId)).environment).toEqual({});
+              } else {
+                expect((yield* access.forThread(threadId)).environment).toEqual({
+                  PB_SECRET_DEPLOY_KEY: ORDINARY_VALUE,
+                });
+              }
+            }
+            if (!slot.shared) {
+              expect(yield* access.secretsForThread(threads.other)).toEqual([]);
+            }
+          }),
+        ),
+    );
+  }
+
+  it.effect("a service account the owner saves without any bot asking is not usable by bots", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const threads = yield* saveFor(harness, {
+          key: "owner-saved",
+          name: "DEPLOY_KEY",
+          value: ORDINARY_VALUE,
+          mode: "env",
+          shared: false,
+        });
+        yield* secrets.create({
+          name: SERVER_KEY,
+          value: Redacted.make(SERVER_VALUE),
+          mode: "brokered",
+          origins: [ORIGIN],
+        });
+        for (const threadId of [threads.asker, threads.other]) {
+          const saved = yield* access.secretsForThread(threadId);
+          expect(saved.map((entry) => entry.name)).not.toContain(SERVER_KEY);
+          expect(Object.keys((yield* access.forThread(threadId)).environment)).not.toContain(
+            `PB_SECRET_${SERVER_KEY}`,
+          );
+        }
+        expect((yield* access.secretsForThread(threads.asker)).map((entry) => entry.name)).toEqual([
+          "DEPLOY_KEY",
+        ]);
+      }),
+    ),
+  );
+
+  it("the continuation note after saving a server-only key says bots cannot use it", () => {
+    const note = PersonalSecretService.secretAvailableNote([
+      { name: SERVER_KEY, mode: "env" },
+      { name: "DEPLOY_KEY", mode: "env" },
+    ]);
+    const [serverLine, ordinaryLine] = note.split("\n");
+    expect(serverLine).toContain("server-only");
+    expect(serverLine).toContain("bots cannot use it");
+    expect(serverLine).not.toContain("PB_SECRET");
+    expect(ordinaryLine).toContain("PB_SECRET_DEPLOY_KEY");
+  });
 });

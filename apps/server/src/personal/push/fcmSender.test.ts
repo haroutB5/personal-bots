@@ -12,6 +12,7 @@ import { PersonalBotId } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
+import { FCM_SERVICE_ACCOUNT_SECRET_NAME } from "../secrets/serverOnlySecrets.ts";
 import * as FcmSender from "./fcmSender.ts";
 
 const keyPair = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -29,7 +30,7 @@ const accountJson = (patch: Record<string, unknown> = {}) =>
     }),
   );
 
-const KEY_NAME = FcmSender.FCM_SERVICE_ACCOUNT_SECRET_NAME;
+const KEY_NAME = FCM_SERVICE_ACCOUNT_SECRET_NAME;
 const SHARED_KEY = `personal-secret-${KEY_NAME}`;
 
 const noSecretRows = Layer.succeed(PersonalSecretRepository.PersonalSecretRepository, {

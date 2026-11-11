@@ -38,6 +38,7 @@ import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import { secretAccessLock, withSecretAccessLock } from "./secretAccessLock.ts";
 import { secretRedactor } from "./secretRedaction.ts";
+import { isServerOnlySecretName, serverOnlySecretNote } from "./serverOnlySecrets.ts";
 
 /**
  * Server secret store key of a fulfilled secret. `name` is UPPER_SNAKE-validated.
@@ -82,6 +83,7 @@ export const secretAvailableNote = (
   names
     .map((entry) => {
       const { name, mode } = typeof entry === "string" ? { name: entry, mode: "env" } : entry;
+      if (isServerOnlySecretName(name)) return serverOnlySecretNote(name);
       return mode === "brokered"
         ? `Secret ${name} is now saved. Use it only through the secret_request tool by writing ${personalSecretPlaceholder(name)} in the Authorization header (the URL or body only if the owner allowed that for this key); the server adds it and never shows it to you.`
         : `Secret ${name} is now available as the environment variable ${personalSecretEnvVar(name)} in new shell commands. Do not print it.`;
@@ -734,9 +736,11 @@ export const make = Effect.gen(function* () {
     // Only the owner's row being rotated is exempt. Any other row on the slot (a
     // bot's, or a second owner row that sharing merged in) reads the same bytes,
     // so it must already grant this access: refuse before writing otherwise.
-    yield* requireSlotAccessMatch({ name: input.name, botId: OWNER_SAVED_BOT_ID, shared }, access, {
-      ...(existing?.botId === OWNER_SAVED_BOT_ID ? { ignoreRequestId: existing.requestId } : {}),
-    });
+    yield* requireSlotAccessMatch(
+      { name: input.name, botId: OWNER_SAVED_BOT_ID, shared },
+      access,
+      existing?.botId === OWNER_SAVED_BOT_ID ? { ignoreRequestId: existing.requestId } : {},
+    );
     const previous = yield* store
       .get(storeKey)
       .pipe(Effect.mapError((cause) => fail("Could not read the secret store.", cause)));
