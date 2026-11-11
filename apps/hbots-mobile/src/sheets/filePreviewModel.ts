@@ -73,9 +73,13 @@ export function imageSizeVerdict(
   return bytes > maxBytes ? "too-large" : "ready";
 }
 
+function isHighSurrogate(unit: number): boolean {
+  return unit >= 0xd800 && unit <= 0xdbff;
+}
+
 /**
  * The rows the sheet draws. Newlines split first, then any line over the row
- * cap splits into equal chunks, so no single Text node lays out a huge line.
+ * cap splits into chunks of at most the cap, so no single Text node lays out a huge line.
  * Joining the rows loses the inserted breaks only, never a character.
  */
 export function textPreviewRows(text: string): string[] {
@@ -85,8 +89,14 @@ export function textPreviewRows(text: string): string[] {
       rows.push(line);
       continue;
     }
-    for (let index = 0; index < line.length; index += TEXT_PREVIEW_MAX_ROW_CHARS) {
-      rows.push(line.slice(index, index + TEXT_PREVIEW_MAX_ROW_CHARS));
+    let index = 0;
+    while (index < line.length) {
+      let end = Math.min(index + TEXT_PREVIEW_MAX_ROW_CHARS, line.length);
+      // A cut between the halves of a surrogate pair shows two broken glyphs
+      // where one emoji stood, so the pair moves whole to the next row.
+      if (end < line.length && isHighSurrogate(line.charCodeAt(end - 1))) end -= 1;
+      rows.push(line.slice(index, end));
+      index = end;
     }
   }
   return rows;

@@ -4,7 +4,6 @@ import {
   assetUrlStateFromResult,
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
-import { decodeFilePreviewText } from "@t3tools/shared/filePreview";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { fetch as expoFetch } from "expo/fetch";
 import { useEffect, useMemo, useState } from "react";
@@ -23,7 +22,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
-import { PreviewTooLargeError, readBoundedBody } from "./boundedPreview";
+import { decodeTextHead, PreviewTooLargeError, readTextHead } from "./boundedPreview";
 import {
   FILE_PREVIEW_TOO_LARGE_TEXT,
   filePreviewErrorText,
@@ -75,14 +74,14 @@ function useFileText(url: string | null): FileTextRead {
     })
       .then(async (response) => {
         // An empty file cannot satisfy the range; it is simply empty.
-        if (response.status === 416) return new Uint8Array();
+        if (response.status === 416) return { bytes: new Uint8Array(), truncated: false };
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return readBoundedBody(response, TEXT_READ_BYTES, controller);
+        return readTextHead(response, TEXT_READ_BYTES, controller);
       })
-      .then((bytes) => {
+      .then((head) => {
         if (!active) return;
         try {
-          const decoded = decodeFilePreviewText(bytes);
+          const decoded = decodeTextHead(head);
           setState({ url, status: "ready", text: decoded.text, truncated: decoded.truncated });
         } catch {
           setState({ url, status: "binary" });

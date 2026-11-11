@@ -192,6 +192,25 @@ describe("textPreviewRows", () => {
     expect(rows.join("")).toBe(line);
   });
 
+  it("moves an emoji that spans the row boundary whole to the next row", () => {
+    const emoji = "\u{1F600}";
+    const line = `${"a".repeat(TEXT_PREVIEW_MAX_ROW_CHARS - 1)}${emoji}${"b".repeat(10)}`;
+    const rows = textPreviewRows(line);
+    expect(rows).toEqual(["a".repeat(TEXT_PREVIEW_MAX_ROW_CHARS - 1), `${emoji}${"b".repeat(10)}`]);
+    expect(rows.join("")).toBe(line);
+  });
+
+  it("never leaves half a surrogate pair in any row of a long emoji line", () => {
+    const line = "\u{1F600}".repeat(5_000);
+    const rows = textPreviewRows(line);
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(row.length).toBeLessThanOrEqual(TEXT_PREVIEW_MAX_ROW_CHARS);
+      expect(row.isWellFormed()).toBe(true);
+    }
+    expect(rows.join("")).toBe(line);
+  });
+
   it("leaves an empty file as one empty row", () => {
     expect(textPreviewRows("")).toEqual([""]);
   });
