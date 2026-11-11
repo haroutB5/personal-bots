@@ -294,8 +294,56 @@ export function formatFileRow(file: PersonalBrowserFile): {
   };
 }
 
+/**
+ * A take is either not asked for, in flight, or settled. `pending` is the only
+ * state that may disable Take control: a settled take says nothing about who
+ * controls the browser now.
+ */
+export type TakeState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "pending"; readonly source: ComputerSource }
+  | { readonly kind: "settled"; readonly source: ComputerSource };
+
+export type TakeEvent =
+  | { readonly kind: "requested"; readonly source: ComputerSource }
+  | { readonly kind: "succeeded" }
+  | { readonly kind: "failed" }
+  | { readonly kind: "handedBack" };
+
+export function takeStep(state: TakeState, event: TakeEvent): TakeState {
+  switch (event.kind) {
+    case "requested":
+      return { kind: "pending", source: event.source };
+    case "succeeded":
+      return state.kind === "pending" ? { kind: "settled", source: state.source } : state;
+    case "failed":
+      return state.kind === "pending" ? { kind: "idle" } : state;
+    case "handedBack":
+      return { kind: "idle" };
+  }
+}
+
+export function takeProgress(input: {
+  readonly take: TakeState;
+  readonly shown: ComputerSource;
+  readonly youBrowser: boolean;
+}): {
+  readonly youShown: boolean;
+  readonly taking: boolean;
+  readonly controlSource: ComputerSource | null;
+} {
+  const { take, shown, youBrowser } = input;
+  const youShown =
+    shown === "browser" ? youBrowser : take.kind === "settled" && take.source === "desktop";
+  return {
+    youShown,
+    taking: take.kind === "pending" && take.source === shown && !youShown,
+    controlSource: youBrowser ? "browser" : take.kind === "idle" ? null : take.source,
+  };
+}
+
 export type LiveKeyboardEvent =
-  | { readonly kind: "focusReport"; readonly editable: boolean }
+  | { readonly kind: "focusReport"; readonly editable: boolean; readonly field?: string }
   | { readonly kind: "toggle" }
   | { readonly kind: "tap" }
   | { readonly kind: "released" }
@@ -305,34 +353,45 @@ export type LiveKeyboardEvent =
 export interface LiveKeyboardState {
   readonly open: boolean;
   readonly pinned: boolean;
+  readonly field: string;
 }
 
 export interface LiveKeyboardStep {
   readonly command: "focus" | "blur" | null;
   readonly pinned: boolean;
+  readonly field: string;
 }
 
-/** `open` is the field's real focus. The step only says what to ask the field to do. */
+/**
+ * `open` is the field's real focus. The step only says what to ask the field to do.
+ * `field` is the kind the hidden input is built for. A different kind is a new input
+ * that must take focus, because Android keeps the previous kind's flags on a reused one.
+ */
 export function liveKeyboardStep(
   state: LiveKeyboardState,
   event: LiveKeyboardEvent,
 ): LiveKeyboardStep {
+  const field = state.field;
   switch (event.kind) {
     case "toggle":
-      return state.open ? { command: "blur", pinned: false } : { command: "focus", pinned: true };
+      return state.open
+        ? { command: "blur", pinned: false, field }
+        : { command: "focus", pinned: true, field };
     case "focusReport":
       if (event.editable) {
-        return { command: state.open ? null : "focus", pinned: state.pinned };
+        const reported = event.field ?? "text";
+        if (reported !== field) return { command: "focus", pinned: state.pinned, field: reported };
+        return { command: state.open ? null : "focus", pinned: state.pinned, field };
       }
-      return { command: state.pinned ? null : "blur", pinned: state.pinned };
+      return { command: state.pinned ? null : "blur", pinned: state.pinned, field };
     case "tap":
-      return { command: null, pinned: state.pinned };
+      return { command: null, pinned: state.pinned, field };
     case "released":
-      return { command: "blur", pinned: false };
+      return { command: "blur", pinned: false, field };
     case "keyboardHidden":
       // Blurring makes `open` false again, so the next field tap can reopen the keyboard.
       return state.open
-        ? { command: "blur", pinned: false }
-        : { command: null, pinned: state.pinned };
+        ? { command: "blur", pinned: false, field }
+        : { command: null, pinned: state.pinned, field };
   }
 }

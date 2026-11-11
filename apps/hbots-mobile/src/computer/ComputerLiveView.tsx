@@ -76,6 +76,8 @@ export function ComputerLiveView({
   const fieldRef = useRef<TextInput>(null);
   const keyboardOpenRef = useRef(false);
   const keyboardPinned = useRef(false);
+  const fieldKind = useRef("text");
+  const focusWhenBuilt = useRef(false);
   const failures = useRef(0);
   const scrollEndWanted = useRef(false);
   const metaRef = useRef<{ width: number; height: number } | null>(null);
@@ -171,19 +173,37 @@ export function ComputerLiveView({
 
   const stepKeyboard = (event: LiveKeyboardEvent) => {
     const step = liveKeyboardStep(
-      { open: keyboardOpenRef.current, pinned: keyboardPinned.current },
+      {
+        open: keyboardOpenRef.current,
+        pinned: keyboardPinned.current,
+        field: fieldKind.current,
+      },
       event,
     );
     keyboardPinned.current = step.pinned;
+    if (step.field !== fieldKind.current) {
+      fieldKind.current = step.field;
+      keyboardOpenRef.current = false;
+      focusWhenBuilt.current = step.command === "focus";
+      setField(step.field);
+      return;
+    }
     if (step.command === "focus") fieldRef.current?.focus();
     if (step.command === "blur") fieldRef.current?.blur();
   };
 
   useEffect(() => {
+    if (!focusWhenBuilt.current) return;
+    focusWhenBuilt.current = false;
+    fieldRef.current?.focus();
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- a new field kind is a new input that needs the focus
+  }, [field]);
+
+  useEffect(() => {
     if (interactive) return;
     keyboardOpenRef.current = false;
     keyboardPinned.current = liveKeyboardStep(
-      { open: false, pinned: keyboardPinned.current },
+      { open: false, pinned: keyboardPinned.current, field: fieldKind.current },
       { kind: "released" },
     ).pinned;
     // eslint-disable-next-line react/set-state-in-effect -- losing control unmounts the field without an onBlur
@@ -201,8 +221,7 @@ export function ComputerLiveView({
 
   const focusChanged = (event: NativeSyntheticEvent<FocusChangedEvent>) => {
     const next = event.nativeEvent;
-    setField(next.field ?? "text");
-    stepKeyboard({ kind: "focusReport", editable: next.editable });
+    stepKeyboard({ kind: "focusReport", editable: next.editable, field: next.field });
   };
 
   const fitted = fullScreen && box.width > 0 && box.height > 0 ? fitFrame(box, aspect) : null;
@@ -341,6 +360,7 @@ export function ComputerLiveView({
         {interactive ? <View style={styles.fill} {...responder.panHandlers} /> : null}
         {interactive ? (
           <TextInput
+            key={field}
             ref={fieldRef}
             style={styles.hiddenField}
             value=""

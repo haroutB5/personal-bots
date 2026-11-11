@@ -67,7 +67,10 @@ import {
   liveViewMode,
   pageAddressLabel,
   takeControlView,
+  takeProgress,
+  takeStep,
   type BrowserStage,
+  type TakeState,
 } from "./computerScreenModel";
 import type { LiveViewURLs } from "./liveViewAccess";
 
@@ -115,7 +118,7 @@ export function ComputerScreen({
   const [tapAt, setTapAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [fullScreen, setFullScreen] = useState(false);
-  const [takeSource, setTakeSource] = useState<ComputerSource | null>(null);
+  const [take, setTake] = useState<TakeState>({ kind: "idle" });
   const [takeError, setTakeError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [egressBusy, setEgressBusy] = useState(false);
@@ -200,11 +203,12 @@ export function ComputerScreen({
   const helpOpen = help !== null || pause !== null;
   const desktopAvailable = desktopStatus?.available !== false;
 
+  const progress = takeProgress({ take, shown, youBrowser });
   const resolved = resolveSource({
     prefs,
     current: shown,
     helpOpen,
-    controlSource: youBrowser ? "browser" : takeSource,
+    controlSource: progress.controlSource,
     lastBotAction: lastAction,
     lastTapAt: tapAt,
     now,
@@ -224,8 +228,7 @@ export function ComputerScreen({
   const shownDriver = shown === "desktop" ? desktopDriverNow : browserDriverNow;
   const otherSource: ComputerSource = shown === "browser" ? "desktop" : "browser";
   const otherDriver = shown === "browser" ? desktopDriverNow : browserDriverNow;
-  const youShown = shown === "browser" ? youBrowser : takeSource === "desktop";
-  const takingShown = takeSource === shown && !youShown;
+  const { youShown, taking: takingShown } = progress;
   const queue = desktopQueue({
     browser: status,
     desktop: desktopStatus,
@@ -289,15 +292,17 @@ export function ComputerScreen({
     setTakeError(null);
     setActionError(null);
     setPausedDriver(browserDriverNow.state === "using" ? browserDriverNow : null);
-    setTakeSource("browser");
+    setTake((current) => takeStep(current, { kind: "requested", source: "browser" }));
     setFullScreen(true);
     const result = await takeBrowser({ environmentId, input: {} });
     const failure = commandFailureMessage(result, "Could not take the browser.");
     if (failure !== null) {
-      setTakeSource(null);
+      setTake((current) => takeStep(current, { kind: "failed" }));
       setPausedDriver(null);
       setTakeError(failure);
+      return;
     }
+    setTake((current) => takeStep(current, { kind: "succeeded" }));
   };
 
   const handBack = async () => {
@@ -308,7 +313,7 @@ export function ComputerScreen({
       setTakeError(failure);
       return;
     }
-    setTakeSource(null);
+    setTake((current) => takeStep(current, { kind: "handedBack" }));
     setPausedDriver(null);
     setFullScreen(false);
   };
