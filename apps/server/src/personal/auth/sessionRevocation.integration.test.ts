@@ -5,6 +5,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { AuthStandardClientScopes, ORCHESTRATION_PROTOCOL_QUERY_PARAM } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -14,6 +15,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpServer } from "effe
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
+import * as AuthSessions from "../../persistence/AuthSessions.ts";
 import * as ServerConfig from "../../config.ts";
 import * as PersonalDevices from "../devices/PersonalDevices.ts";
 import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
@@ -335,4 +337,102 @@ it.live("17 revoke cases: /ws close, renewed-first, isolation, expiry, HTTP and 
       Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, FetchHttpClient.layer),
     ),
   ),
+);
+
+const nextMessage = (socket: Socket.WebSocketLike, withinMs: number) =>
+  Effect.promise(
+    () =>
+      new Promise<string | null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), withinMs);
+        socket.addEventListener(
+          "message",
+          (event) => {
+            clearTimeout(timer);
+            resolve(String((event as { readonly data: unknown }).data));
+          },
+          { once: true },
+        );
+      }),
+  );
+
+it.live(
+  "18. a revoke written to the row alone closes only that socket within the recheck bound",
+  () =>
+    Effect.gen(function* () {
+      const services = yield* Layer.build(layerTestServer);
+      const wsServices = yield* Layer.build(NodeWS.layerWebSocketConstructor);
+      const makeWebSocket = Context.get(wsServices, Socket.WebSocketConstructor);
+      const origin = HttpServer.formatAddress(Context.get(services, HttpServer.HttpServer).address);
+      const sessions = Context.get(services, SessionStore.SessionStore);
+      const repository = Context.get(services, AuthSessions.AuthSessionRepository);
+      const wsOrigin = origin.replace(/^http/, "ws");
+
+      const issuePhone = (label: string) =>
+        sessions.issue({
+          method: "bearer-access-token",
+          subject: "one-time-token",
+          scopes: AuthStandardClientScopes,
+          ttl: Duration.days(30),
+          renewal: "sliding",
+          client: { label, deviceType: "mobile", os: "android" },
+        });
+      const connect = (sessionId: SessionStore.IssuedSession["sessionId"]) =>
+        Effect.gen(function* () {
+          const ticket = yield* sessions.issueWebSocketToken(sessionId, { audience: "rpc" });
+          return yield* openSocket(
+            makeWebSocket,
+            `${wsOrigin}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=2&wsTicket=${encodeURIComponent(ticket.token)}`,
+          );
+        });
+      const authenticated = (token: string) =>
+        Effect.gen(function* () {
+          const response = yield* HttpClient.execute(
+            HttpClientRequest.get(`${origin}/api/auth/session`).pipe(
+              HttpClientRequest.bearerToken(token),
+            ),
+          );
+          return ((yield* response.json) as { readonly authenticated: boolean }).authenticated;
+        });
+
+      const revoked = yield* issuePhone("phone-revoked-by-cli");
+      const kept = yield* issuePhone("phone-kept");
+      const revokedSocket = yield* connect(revoked.sessionId);
+      const keptSocket = yield* connect(kept.sessionId);
+
+      const closing = closed(revokedSocket);
+      const revokedAtMs = Date.now();
+      yield* repository.revoke({ sessionId: revoked.sessionId, revokedAt: yield* DateTime.now });
+      const close = yield* closing.pipe(Effect.timeout(Duration.seconds(6)));
+      const closeAfterMs = Date.now() - revokedAtMs;
+      console.log(`row-only revoke closed the socket after ${String(closeAfterMs)} ms`);
+
+      expect(close.code).toBe(4401);
+      expect(close.reason).toBe("session_revoked");
+      expect(closeAfterMs).toBeLessThan(
+        Duration.toMillis(SessionStore.SESSION_RECHECK_INTERVAL) + 1000,
+      );
+      expect(yield* authenticated(revoked.token)).toBe(false);
+
+      expect(revokedSocket.readyState).toBe(3);
+      const silent = nextMessage(revokedSocket, 300);
+      yield* Effect.ignore(Effect.try(() => revokedSocket.send(JSON.stringify({ _tag: "Ping" }))));
+      expect(yield* silent).toBeNull();
+
+      expect(keptSocket.readyState).toBe(1);
+      const pong = nextMessage(keptSocket, 2000);
+      keptSocket.send(JSON.stringify({ _tag: "Ping" }));
+      expect(yield* pong).toContain("Pong");
+      expect(keptSocket.readyState).toBe(1);
+      keptSocket.close();
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          NetService.layer,
+          FetchHttpClient.layer,
+        ),
+      ),
+    ),
 );

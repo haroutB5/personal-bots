@@ -443,6 +443,8 @@ const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 const SESSION_RENEWAL_INTERVAL = Duration.days(1);
+export const SESSION_RECHECK_INTERVAL = Duration.seconds(2);
+export const SESSION_RECHECK_MAX_FAILED_READS = 15;
 
 export type SessionGrant =
   | "one-time-token"
@@ -1204,8 +1206,8 @@ const make = Effect.gen(function* () {
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
         // Revoking any session the socket has used closes it. Events only wake this loop
-        // and the rows decide: revocations are written before they are published, and
-        // clientRemoved also reports an expired session losing its last socket.
+        // early and the rows decide: the CLI revokes in another process by writing the
+        // row alone, so the loop also rereads every SESSION_RECHECK_INTERVAL.
         const chain = [sessionId];
         const nextRemoval = Effect.gen(function* () {
           while (true) {
@@ -1214,8 +1216,28 @@ const make = Effect.gen(function* () {
           }
         });
         let current = original.value;
+        let failedReads = 0;
+        const tolerateFailedRead = <A>(
+          read: Effect.Effect<A, SessionCredentialVerificationError>,
+        ) =>
+          read.pipe(
+            Effect.map(Option.some),
+            Effect.catchTags({
+              SessionCredentialVerificationError: (error) => {
+                failedReads += 1;
+                return failedReads >= SESSION_RECHECK_MAX_FAILED_READS
+                  ? Effect.fail(error)
+                  : Effect.succeed(Option.none());
+              },
+            }),
+          );
         while (true) {
-          const rows = yield* Effect.forEach(chain, readRow);
+          const read = yield* tolerateFailedRead(Effect.forEach(chain, readRow));
+          if (Option.isNone(read)) {
+            yield* Effect.raceFirst(nextRemoval, Effect.sleep(SESSION_RECHECK_INTERVAL));
+            continue;
+          }
+          const rows = read.value;
           if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
           // A renewal slides this same row, so the loop must read its new expiry
           // instead of waking at the expiry the socket opened with.
@@ -1224,7 +1246,13 @@ const make = Effect.gen(function* () {
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
+            failedReads = 0;
+            yield* Effect.raceFirst(
+              nextRemoval,
+              Effect.sleep(
+                Duration.millis(Math.min(remaining, Duration.toMillis(SESSION_RECHECK_INTERVAL))),
+              ),
+            );
             continue;
           }
           const successorId =
@@ -1232,7 +1260,13 @@ const make = Effect.gen(function* () {
               ? undefined
               : latestSessionByProofKey.get(proofKeyThumbprint);
           if (successorId === undefined || successorId === current.sessionId) return;
-          const successor = yield* readRow(successorId);
+          const read2 = yield* tolerateFailedRead(readRow(successorId));
+          if (Option.isNone(read2)) {
+            yield* Effect.raceFirst(nextRemoval, Effect.sleep(SESSION_RECHECK_INTERVAL));
+            continue;
+          }
+          failedReads = 0;
+          const successor = read2.value;
           // The socket keeps its original scopes, so the renewal must still grant all of them.
           if (
             Option.isNone(successor) ||

@@ -16,7 +16,9 @@ import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { listBotProviderProcesses } from "../../provider/botProviderProcesses.ts";
 import { ServerConfig } from "../../config.ts";
+import { SessionStore } from "../../auth/SessionStore.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
+import { endStreamWhenSessionRevoked } from "../auth/sessionRevocationClose.ts";
 import {
   PersonalBotRepository,
   type PersonalBotProviderSession,
@@ -49,7 +51,8 @@ export const makePersonalPerformanceStreamRouteLayer = (options: PerformanceRout
     PERSONAL_PERFORMANCE_STREAM_PATH,
     Effect.gen(function* () {
       // Authenticate before anything else so an anonymous probe learns nothing.
-      yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
+      const session = yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
+      const sessions = yield* SessionStore;
       const config = yield* Effect.serviceOption(ServerConfig);
       const baseDir = config._tag === "Some" ? config.value.baseDir : undefined;
       const staticDir = config._tag === "Some" ? config.value.staticDir : undefined;
@@ -109,12 +112,14 @@ export const makePersonalPerformanceStreamRouteLayer = (options: PerformanceRout
       Queue.offerUnsafe(queue, subscription.hello);
 
       const encoder = new TextEncoder();
-      const body = Stream.fromQueue(queue).pipe(
+      const events = Stream.fromQueue(queue).pipe(
         Stream.map((event) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`)),
-        // Either side ending (a client disconnect, the server shutting down)
-        // gives the viewer slot back, exactly once.
         Stream.ensuring(Effect.sync(() => subscription.unsubscribe())),
       );
+      const body = yield* endStreamWhenSessionRevoked({
+        stream: events,
+        until: sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
+      });
       return HttpServerResponse.stream(body, {
         headers: {
           "content-type": "text/event-stream",

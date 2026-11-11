@@ -2,8 +2,10 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
@@ -17,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -50,6 +53,25 @@ const layerSessionStore = (
     Layer.provide(layerServerEnvironment(environmentId)),
     Layer.provide(layerServerConfig(overrides)),
   );
+
+const layerSessionStoreWithSql = SessionStore.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
+  Layer.provide(layerServerConfig()),
+);
+
+const databaseReads = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return {
+    fail: sql`ALTER TABLE auth_sessions RENAME TO auth_sessions_offline`.pipe(Effect.asVoid),
+    recover: sql`ALTER TABLE auth_sessions_offline RENAME TO auth_sessions`.pipe(Effect.asVoid),
+    revokeRow: (sessionId: string) =>
+      sql`UPDATE auth_sessions SET revoked_at = '2030-01-01T00:00:00.000Z' WHERE session_id = ${sessionId}`.pipe(
+        Effect.asVoid,
+      ),
+  };
+});
 
 const LegacySessionClaims = Schema.Struct({
   v: Schema.Literal(1),
@@ -164,6 +186,44 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       yield* Fiber.join(watcher);
       yield* sessions.awaitInvalidation(client.sessionId);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect(
+    "invalidates a session revoked by writing its row alone, within the recheck interval",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const repository = yield* AuthSessions.AuthSessionRepository;
+        const client = yield* sessions.issue(relaySessionInput);
+        const other = yield* sessions.issue(relaySessionInput);
+        const invalidated = yield* Deferred.make<void>();
+        const otherInvalidated = yield* Deferred.make<void>();
+        yield* sessions
+          .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+          .pipe(
+            Effect.andThen(Deferred.succeed(invalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        yield* sessions
+          .awaitInvalidation(other.sessionId, relaySessionInput.proofKeyThumbprint)
+          .pipe(
+            Effect.andThen(Deferred.succeed(otherInvalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        yield* Effect.yieldNow;
+        yield* repository.revoke({
+          sessionId: client.sessionId,
+          revokedAt: yield* DateTime.now,
+        });
+        yield* TestClock.adjust(
+          Duration.millis(Duration.toMillis(SessionStore.SESSION_RECHECK_INTERVAL) - 1),
+        );
+        expect(yield* Deferred.isDone(invalidated)).toBe(false);
+        yield* TestClock.adjust(Duration.millis(1));
+        yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow);
+        expect(yield* Deferred.isDone(invalidated)).toBe(true);
+        expect(yield* Deferred.isDone(otherInvalidated)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect.each([
@@ -287,6 +347,85 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       yield* sessions.revoke(sliding.sessionId);
       yield* Fiber.join(watcher);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps a socket open through a failed recheck read", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const reads = yield* databaseReads;
+      const phone = yield* sessions.issue({ method: "bearer-access-token", subject: "phone" });
+      const outcome = yield* Deferred.make<Exit.Exit<void, unknown>>();
+      yield* sessions.awaitInvalidation(phone.sessionId).pipe(
+        Effect.exit,
+        Effect.flatMap((exit) => Deferred.succeed(outcome, exit)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* reads.fail;
+      yield* TestClock.adjust(SessionStore.SESSION_RECHECK_INTERVAL);
+      expect(yield* Deferred.isDone(outcome)).toBe(false);
+      yield* reads.recover;
+      yield* TestClock.adjust(SessionStore.SESSION_RECHECK_INTERVAL);
+      expect(yield* Deferred.isDone(outcome)).toBe(false);
+      yield* sessions.revoke(phone.sessionId);
+      expect(Exit.isSuccess(yield* Deferred.await(outcome))).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(layerSessionStoreWithSql, TestClock.layer())),
+    ),
+  );
+
+  it.effect("closes on the next good read when the row was revoked during a failed read", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const reads = yield* databaseReads;
+      const phone = yield* sessions.issue({ method: "bearer-access-token", subject: "phone" });
+      const outcome = yield* Deferred.make<Exit.Exit<void, unknown>>();
+      yield* sessions.awaitInvalidation(phone.sessionId).pipe(
+        Effect.exit,
+        Effect.flatMap((exit) => Deferred.succeed(outcome, exit)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* reads.fail;
+      yield* TestClock.adjust(SessionStore.SESSION_RECHECK_INTERVAL);
+      yield* reads.recover;
+      yield* reads.revokeRow(phone.sessionId);
+      yield* reads.fail;
+      yield* TestClock.adjust(SessionStore.SESSION_RECHECK_INTERVAL);
+      expect(yield* Deferred.isDone(outcome)).toBe(false);
+      yield* reads.recover;
+      yield* TestClock.adjust(SessionStore.SESSION_RECHECK_INTERVAL);
+      expect(Exit.isSuccess(yield* Deferred.await(outcome))).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(layerSessionStoreWithSql, TestClock.layer())),
+    ),
+  );
+
+  it.effect("fails the wait, without reporting an invalidation, after 15 failed reads in a row", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const reads = yield* databaseReads;
+      const phone = yield* sessions.issue({ method: "bearer-access-token", subject: "phone" });
+      const outcome = yield* Deferred.make<Exit.Exit<void, unknown>>();
+      yield* sessions.awaitInvalidation(phone.sessionId).pipe(
+        Effect.exit,
+        Effect.flatMap((exit) => Deferred.succeed(outcome, exit)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      expect(SessionStore.SESSION_RECHECK_MAX_FAILED_READS).toBe(15);
+      yield* reads.fail;
+      for (let read = 1; read < SessionStore.SESSION_RECHECK_MAX_FAILED_READS; read += 1) {
+        yield* TestClock.adjust(SessionStore.SESSION_RECHECK_INTERVAL);
+        expect(yield* Deferred.isDone(outcome)).toBe(false);
+      }
+      yield* TestClock.adjust(SessionStore.SESSION_RECHECK_INTERVAL);
+      const exit = yield* Deferred.await(outcome);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("SessionCredentialVerificationError");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(layerSessionStoreWithSql, TestClock.layer())),
+    ),
   );
 
   it.effect("keys remote cookies by environment identity instead of state directory", () =>

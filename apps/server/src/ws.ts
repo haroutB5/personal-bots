@@ -3687,15 +3687,7 @@ export const layer = Layer.unwrap(
             serveUntilSessionRevoked({
               sessionId: session.sessionId,
               serve: framedRpcWebSocketHttpEffect,
-              until: sessions
-                .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
-                .pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logError("Failed to watch a websocket session for revocation.").pipe(
-                      Effect.annotateLogs({ sessionId: session.sessionId, cause }),
-                    ),
-                  ),
-                ),
+              until: sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
             }),
           () =>
             sessions
