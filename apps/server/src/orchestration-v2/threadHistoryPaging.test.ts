@@ -179,12 +179,19 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
 }
 
 describe("threadHistoryPaging", () => {
-  it("reports how many omitted rows are empty reasoning", () => {
+  it("reports how many omitted rows are empty reasoning or empty commands", () => {
     const reasoning = (index: number, text: string) => {
       const row = makeRow(index);
       return {
         ...row,
         item: { ...row.item, type: "reasoning", text, runId: RUN, runStatus: "completed" },
+      } as unknown as OrchestrationV2ProjectedTurnItem;
+    };
+    const command = (index: number, input: string) => {
+      const row = makeRow(index);
+      return {
+        ...row,
+        item: { ...row.item, type: "command_execution", input, runId: RUN, runStatus: "completed" },
       } as unknown as OrchestrationV2ProjectedTurnItem;
     };
     const work = Array.from({ length: 499 }, (_, index) => {
@@ -201,11 +208,27 @@ describe("threadHistoryPaging", () => {
             ? reasoning(index, "[]")
             : index === 22
               ? reasoning(index, "Checking the schema.")
-              : row,
+              : index === 23
+                ? reasoning(index, "{ }")
+                : index === 24
+                  ? reasoning(index, "\u00a0\n")
+                  : index === 25
+                    ? command(index, "")
+                    : index === 26
+                      ? command(index, "Bash: {}")
+                      : index === 27
+                        ? command(index, "mcp__t3.tool: [ ]")
+                        : index === 28
+                          ? command(index, "Bash: ls")
+                          : index === 29
+                            ? command(index, 'Bash: {"command":"ls"}')
+                            : index === 30
+                              ? command(index, "echo hello: {}")
+                              : row,
     );
     const deferred = deferWorkHistoryRows(rows)[0]!.item.deferredWork!;
     expect(deferred.itemCount).toBe(499);
-    expect(deferred.emptyItemCount).toBe(5);
+    expect(deferred.emptyItemCount).toBe(10);
     expect(deferWorkHistoryRows(work as never)[0]!.item.deferredWork!.emptyItemCount).toBe(0);
   });
 

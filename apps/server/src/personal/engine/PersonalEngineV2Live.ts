@@ -463,6 +463,12 @@ const make = Effect.gen(function* () {
       });
     }).pipe(Effect.mapError(engineError("interrupt")));
 
+  const canSteer = (threadId: ThreadId): Effect.Effect<boolean, PersonalEngineError> =>
+    threads.getThreadRecords(threadId, ["runs", "providerTurns"]).pipe(
+      Effect.map((records) => ThreadManagementService.latestSteerableRun(records) !== undefined),
+      Effect.mapError(engineError("canSteer")),
+    );
+
   const cancelQueuedMessages = (input: {
     readonly threadId: ThreadId;
     readonly messageIdPrefix: string;
@@ -1104,6 +1110,7 @@ const make = Effect.gen(function* () {
     continueTurn,
     setProviderRetry,
     interrupt,
+    canSteer,
     cancelQueuedMessages,
     stop,
     archive,

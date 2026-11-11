@@ -314,7 +314,8 @@ export const SteerTaskResult = Schema.Struct({
   taskId: PersonalTaskId,
   /**
    * steered: delivered into the running turn now. queued: the task is not in
-   * a turn; the update opens its next one (a queued task starts with it).
+   * a turn or its run cannot take a steer yet; the update opens its next one
+   * (a queued task starts with it).
    * reopened: the task had ended; it continues in its own chat with the update.
    */
   outcome: Schema.Literals(["steered", "queued", "reopened"]),

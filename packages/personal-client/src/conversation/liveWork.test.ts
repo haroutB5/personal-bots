@@ -277,6 +277,24 @@ describe("runWork", () => {
     expect(work.summary.count).toBe(1);
   });
 
+  it("does not count a checkpoint as a step", () => {
+    const checkpoint = item("checkpoint-1", 11, {
+      status: "completed",
+      type: "checkpoint",
+      checkpointId: "checkpoint-1",
+      scopeId: "scope-1",
+      files: [],
+    });
+    const work = runWork(
+      projection([run("completed")], [checkpoint, command("cmd-1", "ls", "completed")]),
+    );
+
+    expect(work.phase).toBe("settled");
+    if (work.phase !== "settled") return;
+    expect(work.steps).toHaveLength(1);
+    expect(work.summary.count).toBe(1);
+  });
+
   it("uses only the latest run's items", () => {
     const older: OrchestrationV2TurnItem = {
       ...command("cmd-old", "pnpm old", "completed"),
@@ -429,6 +447,28 @@ describe("runWork", () => {
         expect(work.steps).toHaveLength(0);
       },
     );
+
+    it.each(["Bash: {}", "mcp__t3-code__update_work_record: {}", "Read: [ ]", "Bash:{ }"])(
+      "treats a tool called without arguments (%j) as not started yet",
+      (input) => {
+        const work = runWork(projection([run("running")], [command("cmd-1", input, "running")]));
+
+        expect(work.phase).toBe("working");
+        if (work.phase !== "working") return;
+        expect(work.current).toBeNull();
+        expect(work.steps).toHaveLength(0);
+      },
+    );
+
+    it("keeps a command whose arguments follow the tool name", () => {
+      const work = runWork(
+        projection([run("running")], [command("cmd-1", 'Bash: {"command":"ls"}', "running")]),
+      );
+
+      expect(work.phase).toBe("working");
+      if (work.phase !== "working") return;
+      expect(work.steps).toHaveLength(1);
+    });
 
     it("falls back to the previous step while the new command has no input", () => {
       const work = runWork(

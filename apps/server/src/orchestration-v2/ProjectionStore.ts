@@ -3032,10 +3032,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT item_rowid, ordinal, turn_item_id, run_id, type, attempt_id,
                     MAX(CASE WHEN type = 'user_message' THEN ordinal ELSE 0 END)
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
-                    -- Same rule as isEmptyReasoningItem in threadHistoryPaging.ts.
-                    CASE WHEN type = 'reasoning'
-                      AND trim(COALESCE(json_extract(payload_json, '$.text'), ''), ' ' || char(9, 10, 13)) IN ('', '{}', '[]')
-                      THEN 1 ELSE 0 END AS is_empty_reasoning,
+                    -- Same rule as isEmptyWorkItem in threadHistoryPaging.ts.
+                    CASE WHEN (type = 'reasoning'
+                        AND replace(replace(replace(replace(replace(COALESCE(json_extract(payload_json, '$.text'), ''), ' ', ''), char(9), ''), char(10), ''), char(13), ''), char(160), '') IN ('', '{}', '[]'))
+                      OR (type = 'command_execution'
+                        AND CASE WHEN instr(COALESCE(json_extract(payload_json, '$.input'), ''), ':') > 1 AND substr(COALESCE(json_extract(payload_json, '$.input'), ''), 1, instr(COALESCE(json_extract(payload_json, '$.input'), ''), ':') - 1) NOT GLOB '*[^A-Za-z0-9_.-]*'
+                          THEN replace(replace(replace(replace(replace(substr(COALESCE(json_extract(payload_json, '$.input'), ''), instr(COALESCE(json_extract(payload_json, '$.input'), ''), ':') + 1), ' ', ''), char(9), ''), char(10), ''), char(13), ''), char(160), '') IN ('{}', '[]')
+                          ELSE replace(replace(replace(replace(replace(COALESCE(json_extract(payload_json, '$.input'), ''), ' ', ''), char(9), ''), char(10), ''), char(13), ''), char(160), '') IN ('', '{}', '[]') END)
+                      THEN 1 ELSE 0 END AS is_empty_work,
                     CASE WHEN status = 'completed' AND (run_status = 'completed' OR attempt_status = 'superseded')
                       AND type IN ('command_execution', 'reasoning', 'file_change', 'file_search', 'web_search', 'dynamic_tool')
                       AND NOT (${inlineWorkOutput})
@@ -3051,9 +3055,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM work_segments WHERE can_defer = 1
                   GROUP BY run_id, segment, attempt_id HAVING COUNT(*) > ${THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT}
                 ), deferred_empty AS (
-                  -- Empty reasoning among the omitted rows (the anchor is not one).
+                  -- Empty reasoning or commands among the omitted rows (the anchor is not one).
                   SELECT item.run_id, item.segment, item.attempt_id,
-                    SUM(item.is_empty_reasoning) AS empty_count
+                    SUM(item.is_empty_work) AS empty_count
                   FROM work_segments item JOIN deferred_work deferred
                     ON deferred.run_id = item.run_id AND deferred.segment = item.segment
                     AND deferred.attempt_id IS item.attempt_id

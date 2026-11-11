@@ -132,7 +132,7 @@ function basename(path: string): string {
  */
 export function commandStepLabel(input: string): string {
   let label = commandDisplayText(input).trim();
-  if (isPlaceholderLine(label)) return "";
+  if (isPlaceholderLine(label) || isEmptyToolCall(label)) return "";
   for (;;) {
     const match = /^cd\s+(?:"[^"]*"|'[^']*'|[^;&\n]+?)\s*(?:&&|;)\s*/u.exec(label);
     if (match === null) return label;
@@ -149,6 +149,14 @@ export function commandStepLabel(input: string): string {
  */
 function isPlaceholderLine(text: string): boolean {
   return /^(?:\{\s*\}|\[\s*\])?$/u.test(text.trim());
+}
+
+/**
+ * A tool called without arguments reaches the row as `Name: {}`, the server's
+ * stand-in for a command. No command text is behind it, so it is a placeholder.
+ */
+function isEmptyToolCall(text: string): boolean {
+  return /^[\w.-]+:\s*(?:\{\s*\}|\[\s*\])$/u.test(text.trim());
 }
 
 /** `mcp__t3-code__update_work_record` reads as "update work record". */
@@ -171,6 +179,7 @@ const GENERIC_STEP_LABELS: Partial<Record<OrchestrationV2TurnItem["type"], strin
  */
 const NON_STEP_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "notification",
+  "checkpoint",
   "user_message",
   "assistant_message",
   "proposed_plan",

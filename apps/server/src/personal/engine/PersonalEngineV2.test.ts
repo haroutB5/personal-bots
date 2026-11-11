@@ -120,7 +120,11 @@ const runFor = (input: {
 interface Harness {
   readonly threads: Map<
     string,
-    { shell: OrchestrationV2ThreadShell; runs: Array<OrchestrationV2Run> }
+    {
+      shell: OrchestrationV2ThreadShell;
+      runs: Array<OrchestrationV2Run>;
+      providerTurns?: ReadonlyArray<{ runAttemptId: string; status: string }>;
+    }
   >;
   readonly projects: Map<string, { id: ProjectId; workspaceRoot: string; title: string }>;
   readonly dispatched: Array<OrchestrationV2ServerCommand>;
@@ -206,7 +210,12 @@ const makeHarness = (): Harness => {
         if (record === undefined) throw new Error(`no thread ${threadId}`);
         return {
           thread: record.shell,
-          ...Object.fromEntries(fields.map((field) => [field, record.runs])),
+          ...Object.fromEntries(
+            fields.map((field) => [
+              field,
+              field === "providerTurns" ? (record.providerTurns ?? []) : record.runs,
+            ]),
+          ),
         };
       }),
     getShellSnapshot: (options?: { unsettledOnly?: boolean }) => {
@@ -662,6 +671,31 @@ describe("PersonalEngineV2 verbs", () => {
 
         yield* engine.deleteThread(ThreadId.make("thread-1"));
         expect(harness.dispatched.at(-1)).toMatchObject({ type: "thread.delete" });
+      }),
+    );
+  });
+
+  it.effect("canSteer is true only for a run with a running provider turn", () => {
+    const harness = makeHarness();
+    return withEngine(harness, (engine) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-1");
+        yield* seedThread(harness);
+        yield* seedRun(harness, "thread-1", "run-1", "starting");
+        expect(yield* engine.canSteer(threadId)).toBe(false);
+
+        const record = harness.threads.get("thread-1")!;
+        record.runs[0] = {
+          ...record.runs[0]!,
+          status: "waiting",
+          activeAttemptId: "attempt-1" as never,
+        };
+        record.providerTurns = [{ runAttemptId: "attempt-1", status: "completed" }];
+        expect(yield* engine.canSteer(threadId)).toBe(false);
+
+        record.runs[0] = { ...record.runs[0]!, status: "running" };
+        record.providerTurns = [{ runAttemptId: "attempt-1", status: "running" }];
+        expect(yield* engine.canSteer(threadId)).toBe(true);
       }),
     );
   });

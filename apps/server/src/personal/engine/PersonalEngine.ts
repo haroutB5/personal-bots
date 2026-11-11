@@ -308,6 +308,12 @@ export interface PersonalEngineShape {
     turnId?: TurnId,
   ) => Effect.Effect<void, PersonalEngineError>;
   /**
+   * Whether the chat has a running turn that a `steer` send would join now.
+   * False while its run is starting, preparing or waiting, when a steer is
+   * refused and only a queued send can carry the text.
+   */
+  readonly canSteer: (threadId: ThreadId) => Effect.Effect<boolean, PersonalEngineError>;
+  /**
    * Cancels the chat's queued runs whose user message id starts with
    * `messageIdPrefix`, so a stopped task's queued steer never starts a run.
    * A run that is not queued is left alone.

@@ -39,6 +39,7 @@ import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import type { PersonalThreadStatus } from "../engine/PersonalEngine.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import { PersonalEngineError } from "../engine/errors.ts";
 import {
   PERSONAL_V2_RELATIONS,
   PersonalProjectionRelationsV2Live,
@@ -153,6 +154,8 @@ interface Harness {
   /** Texts delivered into a running turn by a steer send. */
   readonly steered: Array<{ readonly threadId: ThreadId; readonly text: string }>;
   steerQueues: boolean;
+  /** Runs that cannot take a steer yet (starting, or waiting on background work). */
+  steerRefused: boolean;
   sequence: number;
 }
 
@@ -168,6 +171,7 @@ const makeHarness = (): Harness => ({
   queued: [],
   steered: [],
   steerQueues: false,
+  steerRefused: false,
   sequence: 0,
 });
 
@@ -346,6 +350,12 @@ const makeEngine = (harness: Harness) =>
           ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         });
         const busy = harness.sessions.get(input.threadId)?.activeTurnId != null;
+        if (busy && input.mode === "steer" && harness.steerRefused) {
+          return yield* new PersonalEngineError({
+            operation: "send",
+            detail: "Target run is waiting and cannot be steered.",
+          });
+        }
         if (busy && (input.mode !== "steer" || harness.steerQueues)) {
           harness.queued.push({ threadId: input.threadId, messageId: input.messageId });
         } else if (busy) {
@@ -376,6 +386,7 @@ const makeEngine = (harness: Harness) =>
             ...(turnId === undefined ? {} : { turnId }),
           });
         }),
+      canSteer: () => Effect.succeed(!harness.steerRefused),
       cancelQueuedMessages: (input) =>
         Effect.sync(() => {
           harness.calls.push({
@@ -1361,6 +1372,40 @@ it("the task-turn marker survives persistence decoding and never reaches the pro
   const text = "[Task continuation] Your delegated tasks have finished.";
   expect(projectComposerContextForProvider({ text, records: decoded.records })).toBe(text);
 });
+
+it.effect(
+  "cancelling a reopened task drops its undelivered steer instead of reporting it delivered",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("cancel-steer");
+      const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+      const child = yield* delegate("developer", "Animate avatars");
+      yield* endTurn(harness, rootThread, turnId, "Delegated.");
+      const childThread = threadOf(yield* reload(child.taskId));
+      yield* runTurn(harness, childThread, "Done.");
+      yield* runTurn(harness, rootThread, "Child finished.");
+
+      const steered = yield* service.steer({
+        taskId: child.taskId,
+        fromName: "Assistant",
+        message: "One more avatar.",
+      });
+      expect(steered.outcome).toBe("reopened");
+      expect(yield* service.steers({ taskId: child.taskId })).toMatchObject([
+        { text: "Update from Assistant: One more avatar.", deliveredAt: null },
+      ]);
+
+      yield* service.cancel({ taskId: child.taskId });
+      yield* service.drain;
+
+      expect((yield* reload(child.taskId)).status).toBe("cancelled");
+      expect(yield* service.steers({ taskId: child.taskId })).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
 
 it.effect("cancel cascades by task id, interrupts live turns and keeps completed children", () => {
   const harness = makeHarness();
@@ -2360,6 +2405,45 @@ it.effect.each([false, true])(
       yield* service.drain;
       expect(turnStarts(harness).length).toBe(startsAfterCancel);
       expect(harness.queued.filter((run) => run.threadId === thread)).toEqual([]);
+      expect((yield* reload(root.taskId)).status).toBe("cancelled");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect(
+  "a steer to a run that cannot take one yet is queued with a clear note, and stop_task cancels it",
+  () => {
+    const harness = makeHarness();
+    harness.steerRefused = true;
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("steer-not-running");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+
+      const steered = yield* service.steer({
+        taskId: root.taskId,
+        fromName: "CTO",
+        message: "Only the login page.",
+      });
+      expect(steered.outcome).toBe("queued");
+      expect(turnStarts(harness).at(-1)!.mode).toBe("queue");
+      expect(harness.steered).toEqual([]);
+      expect(harness.queued.filter((run) => run.threadId === thread)).toHaveLength(1);
+      expect(yield* service.steers({ taskId: root.taskId })).toMatchObject([
+        { text: "Update from CTO: Only the login page." },
+      ]);
+
+      yield* service.cancel({ taskId: root.taskId });
+      expect(harness.queued.filter((run) => run.threadId === thread)).toEqual([]);
+
+      const startsAfterCancel = turnStarts(harness).length;
+      yield* endTurn(harness, thread, turnId, "Stopped.", { status: "interrupted" });
+      yield* TestClock.adjust("5 minutes");
+      yield* service.sweep;
+      yield* service.drain;
+      expect(turnStarts(harness).length).toBe(startsAfterCancel);
       expect((yield* reload(root.taskId)).status).toBe("cancelled");
     }).pipe(Effect.provide(makeLayer(harness)));
   },

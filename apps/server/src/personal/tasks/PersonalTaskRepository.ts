@@ -303,6 +303,14 @@ export class PersonalTaskRepository extends Context.Service<
       taskId: PersonalTaskId,
       now: DateTime.Utc,
     ) => Effect.Effect<void, PersonalTaskRepositoryError>;
+    /**
+     * Ends a cancelled task's notes. A steer note that never reached a turn is
+     * deleted, so it is not reported as delivered; any other note is marked delivered.
+     */
+    readonly dropUndeliveredNotes: (
+      taskId: PersonalTaskId,
+      now: DateTime.Utc,
+    ) => Effect.Effect<void, PersonalTaskRepositoryError>;
     /** A task's steer notes (see `PERSONAL_TASK_STEER_NOTE_PREFIX`), oldest first. */
     readonly listSteerNotes: (
       taskId: PersonalTaskId,
@@ -862,6 +870,20 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.asVoid);
 
+  const dropUndeliveredNotes: PersonalTaskRepository["Service"]["dropUndeliveredNotes"] = (
+    taskId,
+    now,
+  ) =>
+    query(
+      "dropUndeliveredNotes",
+      sql`
+        DELETE FROM personal_task_resume_notes
+        WHERE task_id = ${taskId}
+          AND delivered_at IS NULL
+          AND note_id LIKE ${`${PERSONAL_TASK_STEER_NOTE_PREFIX}%`}
+      `,
+    ).pipe(Effect.andThen(markNotesDelivered(taskId, now)));
+
   const listSteerNotes: PersonalTaskRepository["Service"]["listSteerNotes"] = (taskId) =>
     query(
       "listSteerNotes",
@@ -938,6 +960,7 @@ export const make = Effect.gen(function* () {
     insertResumeNote,
     listUndeliveredNotes: asRead(listUndeliveredNotes),
     markNotesDelivered,
+    dropUndeliveredNotes,
     listSteerNotes: asRead(listSteerNotes),
     listTasksAwaitingResume: asRead(listTasksAwaitingResume),
   } satisfies PersonalTaskRepository["Service"];

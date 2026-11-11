@@ -193,15 +193,22 @@ const DEFERRED_WORK_ITEM_TYPES = [
   "dynamic_tool",
 ] as const;
 
+const EMPTY_WORK_TEXT = new Set(["", "{}", "[]"]);
+const withoutBlanks = (text: string): string => text.replace(/[ \t\n\r\u00a0]/gu, "");
+
 /**
- * Reasoning with nothing to show: blank, or the `{}` / `[]` placeholder a
- * provider emits. Clients drop these from the step list, so the deferred work
- * count must not include them. The SQL window path repeats this rule.
+ * Blank, `{}` or `[]` once spaces, line breaks and no-break spaces are
+ * removed, with an optional leading tool name (`Bash: {}`). The SQL window
+ * path repeats this rule.
  */
-function isEmptyReasoningItem(item: HistoryRow["item"]): boolean {
-  if (item.type !== "reasoning") return false;
-  const text = (item.text ?? "").trim();
-  return text === "" || text === "{}" || text === "[]";
+function isEmptyWorkItem(item: HistoryRow["item"]): boolean {
+  if (item.type === "reasoning") return EMPTY_WORK_TEXT.has(withoutBlanks(item.text ?? ""));
+  if (item.type !== "command_execution") return false;
+  const input = "input" in item && typeof item.input === "string" ? item.input : "";
+  const named = /^[A-Za-z0-9_.-]+:/u.exec(input);
+  if (named === null) return EMPTY_WORK_TEXT.has(withoutBlanks(input));
+  const tail = withoutBlanks(input.slice(named[0].length));
+  return tail === "{}" || tail === "[]";
 }
 
 function isDeferrableWorkItem(item: HistoryRow["item"]): boolean {
@@ -261,7 +268,7 @@ export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArra
           }),
           itemCount: group.length,
           lastOrdinal: last.item.ordinal ?? last.position,
-          emptyItemCount: group.slice(1).filter((row) => isEmptyReasoningItem(row.item)).length,
+          emptyItemCount: group.slice(1).filter((row) => isEmptyWorkItem(row.item)).length,
         },
       },
     });
