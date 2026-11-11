@@ -27,6 +27,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
+import { resolveBackend, SHARED_PROTECTION_PROFILE_ID } from "./browserBackend.ts";
 import { applyRequestedProfileReset } from "./browserProfileReset.ts";
 import { makeCredentialRedactor } from "./credentialRedactor.ts";
 import { type EgressApproval, type EgressIntent, egressNeedingApproval } from "./egressGuard.ts";
@@ -36,7 +37,7 @@ import {
   type SensitiveExposureKind,
   threadExposureKey,
 } from "./sensitiveExposureStore.ts";
-import { type BrowserContextHandle, type BrowserPage, type ViewportSize } from "./driver.ts";
+import { type BrowserPage, type LiveBrowser, type ViewportSize } from "./driver.ts";
 import { createMotionController } from "./adaptiveJpeg.ts";
 import { makePageOwners } from "./pageOwners.ts";
 import { BOT_CHECK_PROBE, classifyBotCheck, HostOperationError } from "./pageOperations.ts";
@@ -68,7 +69,6 @@ export const DESKTOP_APPROVAL_KEY = "desktop-input";
 export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
     const options = rawOptions;
-    const adoptsExistingPages = options.backend?.kind !== "shared";
     const config = yield* ServerConfig.ServerConfig;
     const previewManager = yield* PreviewManager.PreviewManager;
     const bots = yield* PersonalBotRepository.PersonalBotRepository;
@@ -78,6 +78,10 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
     const runFork = yield* FiberSet.makeRuntime<never>();
 
     const profileDir = NodePath.join(config.baseDir, "personal", "browser-profiles", "default");
+    const backend = resolveBackend(options.backend, profileDir);
+    const adoptsExistingPages = backend.kind === "owned";
+    const protectionProfileId =
+      backend.kind === "shared" ? SHARED_PROTECTION_PROFILE_ID : PERSONAL_BROWSER_PROFILE_ID;
     const artifactsDir = config.browserArtifactsDir;
     const downloadsDir = NodePath.join(artifactsDir, "downloads");
 
@@ -88,7 +92,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       phase: "offline" as Phase,
       detail: null as string | null,
       lockedByPid: null as number | null,
-      context: null as BrowserContextHandle | null,
+      context: null as LiveBrowser | null,
       contextSerial: 0,
       closing: false,
       tabs: new Map<string, TabEntry>(),
@@ -119,18 +123,20 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
     // An owner-approved reset swaps in an empty profile and clears the
     // protections of the old one. It only runs when its request file exists,
     // and before the protections below are read.
-    yield* applyRequestedProfileReset({
-      personalDir: NodePath.join(config.baseDir, "personal"),
-      profileDir,
-      profileId: PERSONAL_BROWSER_PROFILE_ID,
-      now: yield* DateTime.now,
-      isProfileLocked: async (dir) => (await detectProfileLock(dir)).locked,
-      saveProtections: protections.save,
-    });
+    if (backend.kind === "owned") {
+      yield* applyRequestedProfileReset({
+        personalDir: NodePath.join(config.baseDir, "personal"),
+        profileDir,
+        profileId: protectionProfileId,
+        now: yield* DateTime.now,
+        isProfileLocked: async (dir) => (await detectProfileLock(dir)).locked,
+        saveProtections: protections.save,
+      });
+    }
     // Restored while the layer is still being built, so no tool call can reach
     // the shared browser before the protections that gate its persistent,
     // still-authenticated profile are back in place.
-    const restored = yield* protections.load(PERSONAL_BROWSER_PROFILE_ID).pipe(
+    const restored = yield* protections.load(protectionProfileId).pipe(
       Effect.catch((cause) =>
         Effect.logWarning(
           "Personal browser protections could not be read; starting with page scripts disabled.",
@@ -141,7 +147,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
           // used", which is the restrictive answer.
           Effect.as(
             Option.some<BrowserProtectionState>({
-              profileId: PERSONAL_BROWSER_PROFILE_ID,
+              profileId: protectionProfileId,
               loginUsed: true,
               loginOrigins: null,
               taintedOrigins: [],
@@ -157,6 +163,10 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       for (const origin of restored.value.loginOrigins ?? []) runtime.loginOrigins.add(origin);
       for (const origin of restored.value.taintedOrigins) runtime.taintedOrigins.add(origin);
     }
+    if (backend.kind === "shared") {
+      runtime.loginUsed = true;
+      runtime.loginOriginsUnknown = true;
+    }
 
     /**
      * Writes the whole protection state. Callers treat a failure as a refusal
@@ -165,7 +175,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
      */
     const persistProtections = Effect.suspend(() =>
       protections.save({
-        profileId: PERSONAL_BROWSER_PROFILE_ID,
+        profileId: protectionProfileId,
         loginUsed: runtime.loginUsed,
         loginOrigins: runtime.loginOriginsUnknown ? null : [...runtime.loginOrigins],
         taintedOrigins: [...runtime.taintedOrigins],
@@ -663,10 +673,6 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
 
     const pageOwners = makePageOwners();
 
-    /**
-     * The page the viewport shows: the active agent tab, else another bot page.
-     * His own pages are shown only while he holds control.
-     */
     const viewportPage = (): BrowserPage | null => {
       const active =
         runtime.activeTabId === null ? undefined : runtime.tabs.get(runtime.activeTabId);
@@ -865,6 +871,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       openPage,
       options,
       adoptsExistingPages,
+      backend,
       originOf,
       pageOwners,
       pendingApprovals,

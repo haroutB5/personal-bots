@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+import { releaseBrowser } from "./driver.ts";
 import { HostOperationError } from "./pageOperations.ts";
 import {
   HELP_ENDED_BY_CLOSE,
@@ -92,7 +93,7 @@ export const makeBrowserLifecycle = (core: BrowserCore, launch: BrowserLaunch, t
             // The serial bump above silences the context's own close callback,
             // so this is the one place a deliberate close reports its counts.
             yield* logAdblockSummary(context);
-            yield* Effect.promise(() => context.close().catch(() => undefined));
+            yield* Effect.promise(() => releaseBrowser(context).catch(() => undefined));
           }
           runtime.context = null;
           runtime.tabs.clear();

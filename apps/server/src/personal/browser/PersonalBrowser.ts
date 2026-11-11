@@ -27,7 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { BrowserBackendSetting } from "./browserBackend.ts";
+import { backendSettingFromEnvironment, type BrowserBackendSetting } from "./browserBackend.ts";
 import { type BrowserDriver, makePlaywrightDriver } from "./driver.ts";
 import { HostOperationError, type PersonalLoginFilledField } from "./pageOperations.ts";
 import { resolveBrowserUrl } from "./urlPolicy.ts";
@@ -213,7 +213,6 @@ export interface PersonalBrowserOptions {
    * agent (ms; default 60 000). 0 turns it off: control then stays until it is handed back.
    */
   readonly controlGraceMs?: number | undefined;
-  /** Which browser the bots use. Owned (their own profile) when left out. */
   readonly backend?: BrowserBackendSetting | undefined;
 }
 
@@ -253,6 +252,7 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   headless: resolveBrowserHeadless(process.env),
   headlessAuto: !browserModePinned(),
   executablePath: process.env.T3CODE_PERSONAL_BROWSER_EXECUTABLE?.trim() || undefined,
+  backend: backendSettingFromEnvironment(process.env),
   // Kill switch: T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY=off stops the stream log lines.
   streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",
   // Kill switch: T3CODE_PERSONAL_BROWSER_WHEEL_FOLD=off sends the move and the wheel separately again.

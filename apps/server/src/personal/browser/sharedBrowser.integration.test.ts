@@ -44,24 +44,31 @@ const openRawCdp = async (url: string): Promise<RawCdp> => {
 };
 
 describe.skipIf(BRAVE === undefined)("shared attach against a throwaway headless Brave", () => {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-shared-live-"));
-  const profile = NodePath.join(root, "profile");
-  const home = NodePath.join(root, "home");
-  const downloads = NodePath.join(home, "Downloads");
+  let root: string | null = null;
   let pid: number | null = null;
 
-  afterAll(() => {
+  afterAll(async () => {
     if (pid !== null) {
       try {
         process.kill(pid);
+        for (let tries = 0; tries < 50; tries++) {
+          process.kill(pid, 0);
+          await NodeTimersPromises.setTimeout(100);
+        }
       } catch {
         pid = null;
       }
     }
-    NodeFS.rmSync(root, { recursive: true, force: true });
+    if (root !== null) {
+      NodeFS.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
   });
 
   it("detaching closes the bot page only; his browser, his page, his dialog and his downloads stay", async () => {
+    root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-shared-live-"));
+    const profile = NodePath.join(root, "profile");
+    const home = NodePath.join(root, "home");
+    const downloads = NodePath.join(home, "Downloads");
     NodeFS.mkdirSync(NodePath.join(profile, "Default"), { recursive: true });
     NodeFS.mkdirSync(downloads, { recursive: true });
     NodeFS.writeFileSync(

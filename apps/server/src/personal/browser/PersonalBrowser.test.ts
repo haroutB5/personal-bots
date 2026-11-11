@@ -5743,7 +5743,6 @@ describe("preview automation host composition", () => {
   describe("the shared backend", () => {
     const SHARED = { backend: { kind: "shared", userDataDir: "/scratch/brave" } } as const;
     const ownerPage = (fake: ReturnType<typeof makeFakeDriver>) => fake.state.page;
-    const flushIo = Effect.promise(() => NodeTimersPromises.setTimeout(20));
 
     it.effect("attaches to the configured folder and never launches", () => {
       const fake = makeFakeDriver();
@@ -5853,7 +5852,9 @@ describe("preview automation host composition", () => {
         const browser = yield* PersonalBrowser.PersonalBrowser;
         yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
         fake.state.crash();
-        yield* flushIo;
+        yield* awaitCondition(
+          Effect.map(browser.status("session-1"), (current) => current.state === "crashed"),
+        );
         const status = yield* browser.status("session-1");
         expect(status.state).toBe("crashed");
         expect(status.detail).toBe("Brave is closed on the laptop. Ask Harout to open it.");

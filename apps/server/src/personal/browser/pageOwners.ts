@@ -1,9 +1,5 @@
 import type { BrowserPage } from "./driver.ts";
 
-/**
- * Who a page belongs to. Only a page hbots opened for a thread is `bot`.
- * Every other page in the browser, however it appeared, is `owner`.
- */
 export type PageOwner =
   | { readonly kind: "bot"; readonly threadId: string }
   | { readonly kind: "owner" };

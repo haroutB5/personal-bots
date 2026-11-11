@@ -7,11 +7,13 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import {
-  type BrowserContextHandle,
   type BrowserPage,
+  type LiveBrowser,
+  releaseBrowser,
   type ScreencastMeta,
   type ViewportOverride,
 } from "./driver.ts";
+import { SHARED_BROWSER_CLOSED, SharedAttachError } from "./browserBackend.ts";
 import { ImportedProfileRefused, refuseImportedProfile } from "./importedProfile.ts";
 import { HostOperationError } from "./pageOperations.ts";
 import {
@@ -44,6 +46,7 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
     const {
       abandonHelp,
       agentViewports,
+      backend,
       downloadsDir,
       launchLock,
       lease,
@@ -52,7 +55,6 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
       openPage,
       options,
       previewManager,
-      profileDir,
       recordActivity,
       refreshCredentialProtection,
       refreshPageInfo,
@@ -252,9 +254,9 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
 
     // Every way a context ends (Chrome exiting, the deliberate teardown, the
     // server shutting down) reports it; the set keeps that to one line each.
-    const summarisedContexts = new WeakSet<BrowserContextHandle>();
+    const summarisedContexts = new WeakSet<LiveBrowser>();
     /** One line per launch: counts only, never a URL. */
-    const logAdblockSummary = (context: BrowserContextHandle | null) =>
+    const logAdblockSummary = (context: LiveBrowser | null) =>
       Effect.gen(function* () {
         if (context === null || summarisedContexts.has(context)) return;
         const adblock = context.adblockStats?.();
@@ -282,7 +284,9 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
         runtime.phase = runtime.closing ? "offline" : "crashed";
         runtime.detail = runtime.closing
           ? null
-          : "Chrome exited. It restarts on the next browser action or when you take control.";
+          : backend.kind === "shared"
+            ? SHARED_BROWSER_CLOSED
+            : "Chrome exited. It restarts on the next browser action or when you take control.";
         yield* abandonHelp(runtime.closing ? HELP_ENDED_BY_CLOSE : HELP_ENDED_BY_CRASH);
         yield* Effect.forEach(
           tabs,
@@ -293,14 +297,8 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
         yield* notify;
       });
 
-    const ensureLaunched = launchLock.withPermit(
+    const launchOwned = (profileDir: string) =>
       Effect.gen(function* () {
-        if (runtime.context !== null && runtime.phase === "connected") return runtime.context;
-        runtime.phase = "starting";
-        runtime.detail = null;
-        runtime.lockedByPid = null;
-        yield* notify;
-        // Before anything in the folder is touched, not just before the launch.
         const refusedProfile = yield* Effect.promise(() =>
           refuseImportedProfile(profileDir).then(
             () => null,
@@ -389,7 +387,49 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
             new HostOperationError("PreviewAutomationExecutionError", detail),
           );
         }
-        const context = exit.value;
+        return exit.value;
+      });
+
+    const attachShared = (userDataDir: string) =>
+      Effect.gen(function* () {
+        yield* Effect.logInfo("Attaching to the laptop browser");
+        const exit = yield* Effect.exit(
+          Effect.tryPromise({
+            try: () => options.driver.attach({ userDataDir }),
+            catch: (cause) => cause,
+          }),
+        );
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          const detail =
+            error instanceof SharedAttachError
+              ? error.message
+              : launchFailureDetail(error instanceof Error ? error.message : String(error));
+          runtime.phase = "crashed";
+          runtime.detail = detail;
+          yield* Effect.logWarning("Personal browser attach failed.", {
+            detail,
+            reason: error instanceof SharedAttachError ? error.reason : "unexpected",
+          });
+          yield* notify;
+          return yield* Effect.fail(
+            new HostOperationError("PreviewAutomationExecutionError", detail),
+          );
+        }
+        return exit.value;
+      });
+
+    const ensureLaunched = launchLock.withPermit(
+      Effect.gen(function* () {
+        if (runtime.context !== null && runtime.phase === "connected") return runtime.context;
+        runtime.phase = "starting";
+        runtime.detail = null;
+        runtime.lockedByPid = null;
+        yield* notify;
+        const context: LiveBrowser =
+          backend.kind === "owned"
+            ? yield* launchOwned(backend.profileDir)
+            : yield* attachShared(backend.userDataDir);
         const serial = ++runtime.contextSerial;
         runtime.context = context;
         context.onClose(() => runFork(onContextClosed(serial)));
@@ -412,7 +452,7 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
         const context = runtime.context;
         yield* logAdblockSummary(context);
         yield* Effect.promise(async () => {
-          await context?.close().catch(() => undefined);
+          if (context !== null) await releaseBrowser(context).catch(() => undefined);
         });
       }),
     );
@@ -432,7 +472,6 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
           ) {
             yield* abandonHelp(HELP_ENDED_BY_SWITCH);
           }
-          // His pages may be shown only while he holds control.
           yield* syncScreencast;
           // Control moving anywhere else hands the page its own viewport back.
           yield* syncHumanViewport;

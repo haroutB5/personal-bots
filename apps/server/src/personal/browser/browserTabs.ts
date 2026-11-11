@@ -125,8 +125,6 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
             (error) => new HostOperationError("PreviewAutomationExecutionError", error.message),
           ),
         );
-      // Chrome's initial blank window page is reused only in hbots' own
-      // browser. In his browser every tab is a new page: a blank tab there is his.
       const blank = adoptsExistingPages
         ? context
             .pages()
