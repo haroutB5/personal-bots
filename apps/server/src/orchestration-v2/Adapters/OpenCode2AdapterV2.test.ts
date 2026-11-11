@@ -28,6 +28,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -322,6 +323,8 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly alive?: { current: boolean };
+    readonly connections?: { opened: number; closed: number };
   },
 ) =>
   Effect.gen(function* () {
@@ -344,6 +347,8 @@ const resumed = (
       {
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
+        ...(options?.alive === undefined ? {} : { alive: options.alive }),
+        ...(options?.connections === undefined ? {} : { connections: options.connections }),
         ...(options?.external === undefined ? {} : { external: options.external }),
         ...(options?.replayGate === undefined ? {} : { replayGate: options.replayGate }),
         ...(options?.attachmentsDir === undefined
@@ -2615,6 +2620,97 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps the running server when only the event stream is lost", () =>
+    Effect.gen(function* () {
+      const connections = { opened: 0, closed: 0 };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          ...openRequests([]),
+          event("session.text.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_assistant_after",
+            ordinal: 0,
+            text: "Arrived on the resubscribed stream.",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { alive: { current: true }, connections },
+      );
+      const opened = connections.opened;
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = yield* Fiber.join(events);
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.equal(connections.opened, opened);
+      assert.equal(connections.closed, 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("replaces the server when the process behind a lost stream has exited", () =>
+    Effect.gen(function* () {
+      const alive = { current: true };
+      const connections = { opened: 0, closed: 0 };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          ...openRequests([]),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { alive, connections },
+      );
+      alive.current = false;
+      const opened = connections.opened;
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = yield* Fiber.join(events);
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.equal(connections.opened, opened + 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("replaces the server as before when PERSONAL_OPENCODE_RESUBSCRIBE is off", () =>
+    Effect.gen(function* () {
+      const connections = { opened: 0, closed: 0 };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          ...openRequests([]),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { alive: { current: true }, connections },
+      );
+      const opened = connections.opened;
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Fiber.join(events);
+      assert.equal(connections.opened, opened + 1);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PERSONAL_OPENCODE_RESUBSCRIBE: "off" } })),
+      ),
+      Effect.scoped,
+    ),
   );
 
   it.effect("continues a reply still streaming at reconnect from the text already shown", () =>
