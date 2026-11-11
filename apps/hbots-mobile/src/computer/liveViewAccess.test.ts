@@ -1,14 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("../dpop", () => ({ createDpopProof: vi.fn() }));
 
+import { createDpopProof } from "../dpop";
 import { RequestFailure } from "../failure";
 import type { StoredSession } from "../session";
 import {
   BROWSER_STREAM_PATH,
   DESKTOP_STREAM_PATH,
   liveViewURLs,
-  mintStreamTicket,
   streamSocketUrl,
 } from "./liveViewAccess";
 
@@ -40,6 +40,17 @@ function ticketFetch() {
   return fetchSpy;
 }
 
+const BOUND: StoredSession = { ...SESSION, authMethod: "dpop" };
+const TICKET_URL = "https://relay.example.test/api/auth/websocket-ticket";
+
+beforeEach(() => {
+  vi.mocked(createDpopProof).mockReset();
+  vi.mocked(createDpopProof).mockResolvedValue({
+    proof: "proof-1",
+    thumbprint: "thumb-1",
+  } as Awaited<ReturnType<typeof createDpopProof>>);
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -69,17 +80,45 @@ describe("streamSocketUrl", () => {
   });
 });
 
-describe("mintStreamTicket", () => {
-  it("posts the session bearer to the websocket-ticket route and returns its ticket", async () => {
+describe("live view ticket request", () => {
+  it("signs a DPoP-bound session with its access token and a proof for the ticket route", async () => {
     const fetchSpy = ticketFetch();
 
-    await expect(mintStreamTicket(SESSION)).resolves.toBe("ticket-1");
+    await liveViewURLs(BOUND);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as [URL, RequestInit];
-    expect(url.toString()).toBe("https://relay.example.test/api/auth/websocket-ticket");
+    expect(url.toString()).toBe(TICKET_URL);
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ authorization: "DPoP tok-1", dpop: "proof-1" });
+    expect(createDpopProof).toHaveBeenCalledTimes(1);
+    expect(createDpopProof).toHaveBeenCalledWith({
+      method: "POST",
+      url: TICKET_URL,
+      accessToken: "tok-1",
+    });
+  });
+
+  it("keeps a bearer session on the plain bearer header with no proof", async () => {
+    const fetchSpy = ticketFetch();
+
+    await liveViewURLs(SESSION);
+
+    const [url, init] = fetchSpy.mock.calls[0] as [URL, RequestInit];
+    expect(url.toString()).toBe(TICKET_URL);
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ authorization: "Bearer tok-1" });
+    expect(createDpopProof).not.toHaveBeenCalled();
+  });
+
+  it("passes the abort signal through to the request", async () => {
+    const fetchSpy = ticketFetch();
+    const controller = new AbortController();
+
+    await liveViewURLs(BOUND, controller.signal);
+
+    const [, init] = fetchSpy.mock.calls[0] as [URL, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("rejects a ticket response the contract cannot read", async () => {
@@ -88,7 +127,7 @@ describe("mintStreamTicket", () => {
       vi.fn(async () => new Response(JSON.stringify({ ticket: "" }), { status: 200 })),
     );
 
-    await expect(mintStreamTicket(SESSION)).rejects.toBeInstanceOf(Error);
+    await expect(liveViewURLs(SESSION)).rejects.toBeInstanceOf(Error);
   });
 
   it("surfaces an HTTP failure as a request failure", async () => {
@@ -97,7 +136,7 @@ describe("mintStreamTicket", () => {
       vi.fn(async () => new Response("no", { status: 401 })),
     );
 
-    const failure = await mintStreamTicket(SESSION).catch((error: unknown) => error);
+    const failure = await liveViewURLs(BOUND).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(RequestFailure);
     expect((failure as RequestFailure).detail).toEqual({
       kind: "http",
