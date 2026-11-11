@@ -1,5 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - asserts the stored payload JSON verbatim.
 import * as NodeCrypto from "node:crypto";
+import * as NodeHttp from "node:http";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
@@ -2638,3 +2639,98 @@ it.effect("with two private keys, the newest save is used", () => {
     ]);
   }).pipe(Effect.provide(phoneLayer(calls)));
 });
+
+interface StubRequest {
+  readonly path: string;
+  readonly authorization: string | undefined;
+  readonly body: string;
+}
+
+const startFcmStub = Effect.acquireRelease(
+  Effect.promise(
+    () =>
+      new Promise<{
+        readonly origin: string;
+        readonly requests: Array<StubRequest>;
+        readonly server: NodeHttp.Server;
+      }>((resolve) => {
+        const requests: Array<StubRequest> = [];
+        const server = NodeHttp.createServer((request, response) => {
+          const chunks: Array<Buffer> = [];
+          request.on("data", (chunk: Buffer) => chunks.push(chunk));
+          request.on("end", () => {
+            const path = request.url ?? "";
+            requests.push({
+              path,
+              authorization: request.headers.authorization,
+              body: Buffer.concat(chunks).toString("utf8"),
+            });
+            response.setHeader("content-type", "application/json");
+            response.end(
+              path === "/token"
+                ? JSON.stringify({ access_token: "ya29.stub", expires_in: 3600 })
+                : JSON.stringify({ name: "projects/bots-test-project/messages/1" }),
+            );
+          });
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          const port = typeof address === "object" && address !== null ? address.port : 0;
+          resolve({ origin: `http://127.0.0.1:${String(port)}`, requests, server });
+        });
+      }),
+  ),
+  (stub) =>
+    Effect.promise(() => new Promise<void>((resolve) => stub.server.close(() => resolve()))),
+);
+
+it.effect("a real FCM request on the wire carries ids only, never the notification text", () =>
+  Effect.gen(function* () {
+    const stub = yield* startFcmStub;
+    const viaStub: FcmSender.FcmFetch = (url, init) =>
+      fetch(`${stub.origin}${new URL(url).pathname}`, init);
+    const layer = makeLayer({ sent: [], status: 201 }, undefined, FcmSender.fcmHttpWith(viaStub));
+    yield* Effect.gen(function* () {
+      const push = yield* setupChat;
+      yield* storeServiceAccount();
+      yield* push.registerFcm({ token: "tok-1", appVersion: "1.67.5", sessionId: "session-a" });
+      yield* ask("req-1");
+      yield* push.drain;
+    }).pipe(Effect.provide(layer));
+
+    expect(stub.requests.map((request) => request.path)).toEqual([
+      "/token",
+      "/v1/projects/bots-test-project/messages:send",
+    ]);
+    const send = stub.requests[1]!;
+    expect(send.authorization).toBe("Bearer ya29.stub");
+    const message = JSON.parse(send.body) as {
+      message: { token: string; data: Record<string, string>; android: unknown };
+    };
+    expect(message).toEqual({
+      message: {
+        token: "tok-1",
+        data: {
+          kind: "question",
+          notificationId: "chat-needs:req-1",
+          botId: BOT,
+          threadId: CHAT,
+          v: "1",
+        },
+        android: { priority: "HIGH" },
+      },
+    });
+    expect(Object.keys(message.message).toSorted()).toEqual(["android", "data", "token"]);
+    expect(Object.keys(message.message.data).toSorted()).toEqual([
+      "botId",
+      "kind",
+      "notificationId",
+      "threadId",
+      "v",
+    ]);
+    for (const request of stub.requests) {
+      expect(request.body).not.toContain("Which table");
+      expect(request.body).not.toContain("Lisbon");
+    }
+  }).pipe(Effect.scoped),
+);
