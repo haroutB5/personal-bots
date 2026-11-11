@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -17,6 +18,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -164,6 +166,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       yield* Fiber.join(watcher);
       yield* sessions.awaitInvalidation(client.sessionId);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect(
+    "invalidates a session revoked by writing its row alone, within the recheck interval",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const repository = yield* AuthSessions.AuthSessionRepository;
+        const client = yield* sessions.issue(relaySessionInput);
+        const other = yield* sessions.issue(relaySessionInput);
+        const invalidated = yield* Deferred.make<void>();
+        const otherInvalidated = yield* Deferred.make<void>();
+        yield* sessions
+          .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+          .pipe(
+            Effect.andThen(Deferred.succeed(invalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        yield* sessions
+          .awaitInvalidation(other.sessionId, relaySessionInput.proofKeyThumbprint)
+          .pipe(
+            Effect.andThen(Deferred.succeed(otherInvalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        yield* Effect.yieldNow;
+        yield* repository.revoke({
+          sessionId: client.sessionId,
+          revokedAt: yield* DateTime.now,
+        });
+        yield* TestClock.adjust(
+          Duration.millis(Duration.toMillis(SessionStore.SESSION_RECHECK_INTERVAL) - 1),
+        );
+        expect(yield* Deferred.isDone(invalidated)).toBe(false);
+        yield* TestClock.adjust(Duration.millis(1));
+        yield* Deferred.await(invalidated);
+        expect(yield* Deferred.isDone(otherInvalidated)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect.each([

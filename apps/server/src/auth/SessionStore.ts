@@ -443,6 +443,7 @@ const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 const SESSION_RENEWAL_INTERVAL = Duration.days(1);
+export const SESSION_RECHECK_INTERVAL = Duration.seconds(2);
 
 export type SessionGrant =
   | "one-time-token"
