@@ -16,6 +16,11 @@ function openingTag(text: string, tag: string): string {
 }
 
 describe("ComputerLiveView keyboard wiring", () => {
+  it("rebuilds the hidden field for each reported field kind so a password never inherits the email flags", () => {
+    expect(openingTag(SOURCE, "TextInput")).toContain("key={field}");
+    expect(openingTag(SOURCE, "TextInput")).toContain('secureTextEntry={field === "password"}');
+  });
+
   it("gives the hidden text field a ref so the app can focus it", () => {
     expect(openingTag(SOURCE, "TextInput")).toContain("ref={fieldRef}");
   });

@@ -25,7 +25,10 @@ import {
   liveViewMode,
   pageAddressLabel,
   takeControlView,
+  takeProgress,
+  takeStep,
   type BrowserStage,
+  type TakeState,
 } from "./computerScreenModel";
 
 const thread = ThreadId.make("thread-1");
@@ -656,102 +659,286 @@ describe("takeControlView", () => {
 });
 
 describe("liveKeyboardStep", () => {
-  const closed = { open: false, pinned: false };
-  const open = { open: true, pinned: false };
-  const pinned = { open: true, pinned: true };
+  const closed = { open: false, pinned: false, field: "text" };
+  const open = { open: true, pinned: false, field: "text" };
+  const pinned = { open: true, pinned: true, field: "text" };
 
   it.each([
     [
       "an editable report on a closed keyboard focuses it",
       closed,
       { kind: "focusReport", editable: true },
-      { command: "focus", pinned: false },
+      { command: "focus", pinned: false, field: "text" },
     ],
     [
       "an editable report on an open keyboard does nothing",
       open,
       { kind: "focusReport", editable: true },
-      { command: null, pinned: false },
+      { command: null, pinned: false, field: "text" },
     ],
     [
       "an editable report keeps a pinned keyboard pinned",
-      { open: false, pinned: true },
+      { open: false, pinned: true, field: "text" },
       { kind: "focusReport", editable: true },
-      { command: "focus", pinned: true },
+      { command: "focus", pinned: true, field: "text" },
     ],
     [
       "a non-editable report closes an unpinned keyboard",
       open,
       { kind: "focusReport", editable: false },
-      { command: "blur", pinned: false },
+      { command: "blur", pinned: false, field: "text" },
     ],
     [
       "a non-editable report leaves a pinned keyboard up",
       pinned,
       { kind: "focusReport", editable: false },
-      { command: null, pinned: true },
+      { command: null, pinned: true, field: "text" },
+    ],
+    [
+      "an email field after a text field gets a fresh input of that kind",
+      open,
+      { kind: "focusReport", editable: true, field: "email" },
+      { command: "focus", pinned: false, field: "email" },
+    ],
+    [
+      "a password field after an email field gets a fresh input, not the email one",
+      { open: true, pinned: false, field: "email" },
+      { kind: "focusReport", editable: true, field: "password" },
+      { command: "focus", pinned: false, field: "password" },
+    ],
+    [
+      "a password field after an email field on a closed keyboard also gets a fresh input",
+      { open: false, pinned: false, field: "email" },
+      { kind: "focusReport", editable: true, field: "password" },
+      { command: "focus", pinned: false, field: "password" },
+    ],
+    [
+      "a password field keeps a pinned keyboard pinned",
+      { open: true, pinned: true, field: "email" },
+      { kind: "focusReport", editable: true, field: "password" },
+      { command: "focus", pinned: true, field: "password" },
+    ],
+    [
+      "the same kind again keeps the input and the keyboard",
+      { open: true, pinned: false, field: "password" },
+      { kind: "focusReport", editable: true, field: "password" },
+      { command: null, pinned: false, field: "password" },
+    ],
+    [
+      "an editable report without a kind means plain text",
+      { open: true, pinned: false, field: "password" },
+      { kind: "focusReport", editable: true },
+      { command: "focus", pinned: false, field: "text" },
+    ],
+    [
+      "a non-editable report keeps the input kind so a pinned keyboard is not rebuilt",
+      { open: true, pinned: true, field: "password" },
+      { kind: "focusReport", editable: false },
+      { command: null, pinned: true, field: "password" },
     ],
     [
       "the button on a closed keyboard focuses and pins it",
       closed,
       { kind: "toggle" },
-      { command: "focus", pinned: true },
+      { command: "focus", pinned: true, field: "text" },
     ],
     [
       "the button on an open keyboard blurs and unpins it",
       pinned,
       { kind: "toggle" },
-      { command: "blur", pinned: false },
+      { command: "blur", pinned: false, field: "text" },
     ],
     [
       "the button on an open unpinned keyboard blurs it",
       open,
       { kind: "toggle" },
-      { command: "blur", pinned: false },
+      { command: "blur", pinned: false, field: "text" },
     ],
     [
       "a plain tap with no focus report does nothing",
       closed,
       { kind: "tap" },
-      { command: null, pinned: false },
+      { command: null, pinned: false, field: "text" },
     ],
     [
       "a plain tap leaves a pinned keyboard alone",
       pinned,
       { kind: "tap" },
-      { command: null, pinned: true },
+      { command: null, pinned: true, field: "text" },
     ],
     [
       "losing control blurs and unpins",
       pinned,
       { kind: "released" },
-      { command: "blur", pinned: false },
+      { command: "blur", pinned: false, field: "text" },
     ],
     [
       "losing control with the keyboard closed still unpins",
-      { open: false, pinned: true },
+      { open: false, pinned: true, field: "text" },
       { kind: "released" },
-      { command: "blur", pinned: false },
+      { command: "blur", pinned: false, field: "text" },
     ],
     [
       "the system hiding the keyboard blurs the still-focused field",
       open,
       { kind: "keyboardHidden" },
-      { command: "blur", pinned: false },
+      { command: "blur", pinned: false, field: "text" },
     ],
     [
       "the system hiding a pinned keyboard blurs and unpins it",
       pinned,
       { kind: "keyboardHidden" },
-      { command: "blur", pinned: false },
+      { command: "blur", pinned: false, field: "text" },
     ],
     [
       "a hide report with the field already blurred does nothing",
       closed,
       { kind: "keyboardHidden" },
-      { command: null, pinned: false },
+      { command: null, pinned: false, field: "text" },
     ],
   ] as const)("%s", (_name, state, event, expected) => {
     expect(liveKeyboardStep(state, event)).toEqual(expected);
+  });
+});
+
+describe("takeProgress", () => {
+  const idle: TakeState = { kind: "idle" };
+  const pendingBrowser: TakeState = { kind: "pending", source: "browser" };
+  const settledBrowser: TakeState = { kind: "settled", source: "browser" };
+  const pendingDesktop: TakeState = { kind: "pending", source: "desktop" };
+  const settledDesktop: TakeState = { kind: "settled", source: "desktop" };
+
+  it.each([
+    ["nothing requested", idle, "browser", false, false, false, null],
+    ["a take request in flight", pendingBrowser, "browser", false, true, false, "browser"],
+    [
+      "the take landed and the status shows you",
+      pendingBrowser,
+      "browser",
+      true,
+      false,
+      true,
+      "browser",
+    ],
+    [
+      "a settled take while you still control",
+      settledBrowser,
+      "browser",
+      true,
+      false,
+      true,
+      "browser",
+    ],
+    [
+      "a settled take after another session took control",
+      settledBrowser,
+      "browser",
+      false,
+      false,
+      false,
+      "browser",
+    ],
+    ["a desktop take in flight", pendingDesktop, "desktop", false, true, false, "desktop"],
+    [
+      "a settled desktop take is you controlling the desktop",
+      settledDesktop,
+      "desktop",
+      false,
+      false,
+      true,
+      "desktop",
+    ],
+    [
+      "a browser take does not make the desktop yours",
+      settledBrowser,
+      "desktop",
+      false,
+      false,
+      false,
+      "browser",
+    ],
+    [
+      "a browser take in flight is not a desktop take",
+      pendingBrowser,
+      "desktop",
+      false,
+      false,
+      false,
+      "browser",
+    ],
+  ] as const)("%s", (_name, take, shown, youBrowser, taking, youShown, controlSource) => {
+    expect(takeProgress({ take, shown, youBrowser })).toEqual({
+      taking,
+      youShown,
+      controlSource,
+    });
+  });
+
+  it("enables Take control after a settled take lost to another session", () => {
+    const progress = takeProgress({ take: settledBrowser, shown: "browser", youBrowser: false });
+    expect(
+      computerActions({
+        shown: "browser",
+        reachable: true,
+        status: browserStatus({ controller: { _tag: "Human", self: false } as never }),
+        desktop: desktopStatus(),
+        driver: { source: "browser", state: "idle", botName: null, since: null } as never,
+        youShown: progress.youShown,
+        taking: progress.taking,
+        helpOpen: false,
+      }),
+    ).toMatchObject({ canTake: true, takeDisabled: false, canHandBack: false });
+  });
+});
+
+describe("takeStep", () => {
+  const idle: TakeState = { kind: "idle" };
+
+  it.each([
+    [
+      "a request starts pending",
+      idle,
+      { kind: "requested", source: "browser" },
+      { kind: "pending", source: "browser" },
+    ],
+    [
+      "a landed request settles",
+      { kind: "pending", source: "browser" },
+      { kind: "succeeded" },
+      { kind: "settled", source: "browser" },
+    ],
+    ["a failed request clears", { kind: "pending", source: "browser" }, { kind: "failed" }, idle],
+    [
+      "handing back clears a settled take",
+      { kind: "settled", source: "browser" },
+      { kind: "handedBack" },
+      idle,
+    ],
+    [
+      "handing back clears a pending take",
+      { kind: "pending", source: "browser" },
+      { kind: "handedBack" },
+      idle,
+    ],
+    [
+      "a late success after handing back does not resurrect the take",
+      idle,
+      { kind: "succeeded" },
+      idle,
+    ],
+    [
+      "a late failure never clears a settled take",
+      { kind: "settled", source: "browser" },
+      { kind: "failed" },
+      { kind: "settled", source: "browser" },
+    ],
+    [
+      "a new request replaces a settled take",
+      { kind: "settled", source: "browser" },
+      { kind: "requested", source: "browser" },
+      { kind: "pending", source: "browser" },
+    ],
+  ] as const)("%s", (_name, state, event, expected) => {
+    expect(takeStep(state, event)).toEqual(expected);
   });
 });
