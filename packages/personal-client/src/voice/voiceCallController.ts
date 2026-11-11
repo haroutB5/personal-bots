@@ -1385,7 +1385,6 @@ export function createVoiceCallController(
     micStarted ??= openMic();
     await micStarted;
     if (disposed) return;
-    // Once the call has an end reason, a late microphone rejection must not replace it.
     if (ended) {
       closeAudio();
       return;
