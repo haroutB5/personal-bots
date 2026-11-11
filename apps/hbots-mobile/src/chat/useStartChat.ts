@@ -7,15 +7,18 @@ export type StartChatResult =
   | { readonly kind: "started"; readonly threadId: string }
   | { readonly kind: "failed"; readonly message: string };
 
-/** Creates a new chat with a bot. The caller decides what to open or queue next. */
+/**
+ * Creates a new chat with a bot. The caller decides what to open or queue next.
+ * Pass `threadId` to retry with the same id, so one chat is created however many attempts it takes.
+ */
 export function useStartChat(
   native: NativePersonal,
-): (botId: string, title?: string) => Promise<StartChatResult> {
+): (botId: string, title?: string, threadId?: string) => Promise<StartChatResult> {
   const create = native.client.useAtomCommand(native.bots.personalBotCreateThread, {
     reportFailure: false,
   });
-  return async (botId, title) => {
-    const threadId = native.client.ports.ids.randomUUID();
+  return async (botId, title, existingThreadId) => {
+    const threadId = existingThreadId ?? native.client.ports.ids.randomUUID();
     try {
       const result = await create({
         environmentId: native.environmentId,
