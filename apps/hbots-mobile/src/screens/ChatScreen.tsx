@@ -19,7 +19,7 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -67,6 +67,7 @@ import {
 import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
+import { chipScrollX } from "../chat/chipScroll";
 import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
@@ -324,6 +325,37 @@ export function ChatScreen({
       }),
     [botId, links, shells, threadId],
   );
+  const chipScrollRef = useRef<ScrollView | null>(null);
+  const chipLayouts = useRef(new Map<string, { x: number; width: number }>());
+  const chipOffset = useRef(0);
+  const chipDidInitialScroll = useRef(false);
+  const [chipViewportWidth, setChipViewportWidth] = useState(0);
+  const [chipContentWidth, setChipContentWidth] = useState(0);
+  const scrollChipIntoView = useCallback(
+    (targetThreadId: string, animated: boolean): boolean => {
+      const layout = chipLayouts.current.get(targetThreadId);
+      if (layout === undefined || chipViewportWidth <= 0 || chipContentWidth <= 0) return false;
+      const x = chipScrollX({
+        chipX: layout.x,
+        chipWidth: layout.width,
+        currentX: chipOffset.current,
+        viewportWidth: chipViewportWidth,
+        contentWidth: chipContentWidth,
+      });
+      chipOffset.current = x;
+      chipScrollRef.current?.scrollTo({ x, animated });
+      return true;
+    },
+    [chipContentWidth, chipViewportWidth],
+  );
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (scrollChipIntoView(threadId, !chipDidInitialScroll.current)) {
+        chipDidInitialScroll.current = true;
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollChipIntoView, threadId]);
   const running = thread?.session?.status === "running" || thread?.session?.status === "starting";
   const hidePreviews = record?.bot != null && hidesBotPreviews(record.bot);
   // The strip shows the open chat even before its link is in the list; the menu does the same.
@@ -777,15 +809,31 @@ export function ChatScreen({
 
       {!searchOpen && chips.length >= 2 ? (
         <ScrollView
+          ref={chipScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentOffset={{ x: 134, y: 0 }}
+          onScroll={(event) => {
+            chipOffset.current = event.nativeEvent.contentOffset.x;
+          }}
+          scrollEventThrottle={16}
+          onLayout={(event) => setChipViewportWidth(event.nativeEvent.layout.width)}
+          onContentSizeChange={(width) => setChipContentWidth(width)}
           contentContainerStyle={styles.chips}
           style={styles.chipScroll}
         >
           {chips.map((chip) => (
             <Pressable
               key={chip.threadId}
+              onLayout={(event) => {
+                const { x, width } = event.nativeEvent.layout;
+                chipLayouts.current.set(chip.threadId, { x, width });
+                if (!chip.current) return;
+                requestAnimationFrame(() => {
+                  if (scrollChipIntoView(chip.threadId, !chipDidInitialScroll.current)) {
+                    chipDidInitialScroll.current = true;
+                  }
+                });
+              }}
               onPress={() => {
                 if (!chip.current) onOpenChat(botId, chip.threadId);
               }}
