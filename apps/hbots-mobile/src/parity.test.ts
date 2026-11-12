@@ -31,6 +31,8 @@ const A12_ITEMS = [
   "screen:routes/_personal.tasks_.routines_.$routineId.tsx#tasks-routines-routineid",
   "screen:routes/_personal.tasks_.routines_.$routineId_.edit.tsx#tasks-routines-routineid-edit",
   "screen:routes/_personal.tasks_.routines_.new.tsx#tasks-routines-new",
+  "screen:routes/_personal.work.tsx#work",
+  "sheet:WorkScreen.tsx#detailsheet",
   "action:TasksScreen.tsx#select-routines",
   "action:TasksScreen.tsx#long-press",
   "setting:RoutineForm.tsx#name",
