@@ -27,6 +27,24 @@ export function nameRowValue(profile: PersonalProfile | null): string | undefine
   return name.length === 0 ? "Not set" : name;
 }
 
+/** What the name sheet does when Save is pressed or the keyboard's Done key is. */
+export type NameSaveAction =
+  | { readonly kind: "save"; readonly name: string }
+  | { readonly kind: "close" }
+  | { readonly kind: "blocked" };
+
+export function nameSaveAction(draft: string, currentName: string | undefined): NameSaveAction {
+  const name = draft.trim();
+  if (name.length === 0) return { kind: "blocked" };
+  if (name === currentName) return { kind: "close" };
+  return { kind: "save", name };
+}
+
+/** Save is tappable whenever there is a name to submit and no save is in flight. */
+export function nameSaveEnabled(draft: string, saving: boolean): boolean {
+  return !saving && draft.trim().length > 0;
+}
+
 /** The root screen's search keeps a row when its title, hint or keywords contain the words typed. */
 export function settingsRowMatches(row: SettingsSearchRow, query: string): boolean {
   const needle = query.trim().toLowerCase();
