@@ -1101,7 +1101,7 @@
       "id": "sheet:PersonalResetCredits.tsx#alertdialog-in-personalresetcredits",
       "kind": "sheet",
       "title": "AlertDialog in PersonalResetCredits",
-      "web": "PersonalResetCredits.tsx:105",
+      "web": "PersonalResetCredits.tsx:117",
       "primitive": "AlertDialog",
       "logic": {
         "files": 4,
@@ -1110,7 +1110,7 @@
       },
       "pr": "A2",
       "status": "done",
-      "check": "Open \"AlertDialog in PersonalResetCredits\" from its screen on Android. Same fields, buttons and confirm wording as PersonalResetCredits.tsx:105. Back closes only the sheet."
+      "check": "Open \"AlertDialog in PersonalResetCredits\" from its screen on Android. Same fields, buttons and confirm wording as PersonalResetCredits.tsx:117. Back closes only the sheet."
     },
     {
       "id": "sheet:PersonalUsageStrip.tsx#sheet-in-personalusagestrip",
