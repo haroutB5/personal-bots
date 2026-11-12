@@ -136,6 +136,71 @@ class CacheCryptoTest {
     assertFalse(File(path("old")).exists())
   }
 
+  /** Counts key requests: a file refused before decryption never asks for the key. */
+  private class CountingKeys(private val inner: CacheKeys = MemoryKeys()) : CacheKeys {
+    var requests = 0
+      private set
+
+    override fun key(): SecretKey {
+      requests += 1
+      return inner.key()
+    }
+
+    override fun delete() = inner.delete()
+  }
+
+  /** A v1-headed file of `bytes` bytes, sparse so the test stays fast. */
+  private fun oversizedFile(name: String, bytes: Long): File {
+    val file = File(path(name))
+    java.io.RandomAccessFile(file, "rw").use {
+      it.write(byteArrayOf('v'.code.toByte(), '1'.code.toByte()))
+      it.setLength(bytes)
+    }
+    return file
+  }
+
+  @Test fun anOversizedFileIsRefusedAndDeletedWithoutDecrypting() {
+    val keys = CountingKeys()
+    val crypto = FileCrypto(keys)
+    val file = oversizedFile("big", MAX_CACHED_TEXT_BYTES + 100L)
+
+    assertNull(crypto.readText(file.path))
+
+    assertEquals(0, keys.requests)
+    assertFalse(file.exists())
+  }
+
+  @Test fun aTwentyMegabyteFileIsRefusedWithoutDecrypting() {
+    val keys = CountingKeys()
+    val file = oversizedFile("huge", 20L * 1024 * 1024)
+
+    assertNull(FileCrypto(keys).readText(file.path))
+
+    assertEquals(0, keys.requests)
+    assertFalse(file.exists())
+  }
+
+  @Test fun aTextRightAtTheLimitStillReads() {
+    val crypto = FileCrypto(MemoryKeys())
+    val text = "x".repeat(MAX_CACHED_TEXT_BYTES)
+    crypto.writeText(path("edge"), text)
+
+    assertEquals(text, crypto.readText(path("edge")))
+  }
+
+  @Test fun anOutOfMemoryErrorBecomesNoCacheAndTheFileIsDeleted() {
+    val crypto = FileCrypto(MemoryKeys())
+    crypto.writeText(path("t"), "small")
+    val exploding = FileCrypto(object : CacheKeys {
+      override fun key(): SecretKey = throw OutOfMemoryError("simulated")
+
+      override fun delete() {}
+    })
+
+    assertNull(exploding.readText(path("t")))
+    assertFalse(File(path("t")).exists())
+  }
+
   @Test fun aMissingFileReadsAsNothing() {
     assertNull(FileCrypto(MemoryKeys()).readText(path("nope")))
     assertFalse(FileCrypto(MemoryKeys()).decryptFile(path("nope"), path("out")))

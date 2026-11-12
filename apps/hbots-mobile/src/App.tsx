@@ -39,6 +39,14 @@ import { loadServer, saveServer } from "./serverMemory";
 import { clearSession, loadSession, saveSession, type StoredSession } from "./session";
 import { authMethodOf } from "./sessionAuth";
 import { createSessionLifetime } from "./sessionLifetime";
+import {
+  SESSION_DEADLINE_MS,
+  SNAPSHOT_DEADLINE_MS,
+  orFallbackAfter,
+  startWithRetry,
+  withDeadline,
+  type StartStep,
+} from "./startup";
 import { describeSignOut, revokeRemoteSession, signOutConfirmBody } from "./signOut";
 import { UnpairedShareNotice } from "./share/UnpairedShareNotice";
 import { unpairedShareMessage } from "./share/unpairedShare";
@@ -116,6 +124,7 @@ function App() {
   const activeSessionRef = useRef<StoredSession | null>(null);
   const nativeRef = useRef<NativePersonal | null>(null);
   const stopRenewRef = useRef<(() => void) | null>(null);
+  const stopStartRef = useRef<(() => void) | null>(null);
 
   const setSnapshot = useCallback((snapshot: UpdateSnapshot | null) => {
     updateRef.current = snapshot;
@@ -150,6 +159,11 @@ function App() {
     stopRenewRef.current = null;
   }, []);
 
+  const stopStart = useCallback(() => {
+    stopStartRef.current?.();
+    stopStartRef.current = null;
+  }, []);
+
   const disposeNative = useCallback(() => {
     const native = nativeRef.current;
     nativeRef.current = null;
@@ -161,6 +175,7 @@ function App() {
   const endSession = useCallback(
     async (next: Screen) => {
       stopRenew();
+      stopStart();
       const native = nativeRef.current;
       if (native !== null) {
         native.client.ports.kv.removeItem(CHATS_SNAPSHOT_KEY);
@@ -172,7 +187,7 @@ function App() {
       await resetUpdater(sessionLifetime.epoch());
       setScreen(next);
     },
-    [disposeNative, stopRenew],
+    [disposeNative, stopRenew, stopStart],
   );
 
   const readCompat = useCallback(async (session: StoredSession, manual: boolean) => {
@@ -217,7 +232,7 @@ function App() {
   );
 
   const goOnline = useCallback(
-    async (session: StoredSession, attempt: number) => {
+    async (session: StoredSession): Promise<StartStep> => {
       const epoch = sessionLifetime.epoch();
       disposeNative();
       let native: NativePersonal;
@@ -230,16 +245,17 @@ function App() {
       } catch (cause) {
         if (classifyFailure(cause).kind === "authDead") {
           await endSession({ kind: "signedOut" });
-          return;
+          return "done";
         }
         setScreen((previous) =>
           previous.kind === "connecting" ? { kind: "connecting", step: "Starting" } : previous,
         );
-        return;
+        // Not signed out and not ready: try again with a growing wait instead of waiting forever.
+        return "retry";
       }
       if (sessionLifetime.epoch() !== epoch) {
         void native.dispose();
-        return;
+        return "done";
       }
       nativeRef.current = native;
       setCrashBaseUrl(session.httpBaseUrl);
@@ -247,9 +263,20 @@ function App() {
       reportUpdaterState(updateRef.current);
       setScreen({ kind: "ready", session, native });
       void checkForUpdate(session, false);
-      void attempt;
+      return "done";
     },
     [checkForUpdate, disposeNative, endSession],
+  );
+
+  const goOnlineWithRetry = useCallback(
+    (session: StoredSession) => {
+      stopStart();
+      const epoch = sessionLifetime.epoch();
+      stopStartRef.current = startWithRetry(async () =>
+        sessionLifetime.epoch() === epoch ? goOnline(session) : "done",
+      );
+    },
+    [goOnline, stopStart],
   );
 
   const startRenew = useCallback(() => {
@@ -278,26 +305,28 @@ function App() {
 
   useEffect(() => {
     let live = true;
-    void (async () => {
-      const snapshot = await readUpdateSnapshot();
+    // A launch step that throws or never answers is tried again, so "Starting" does not last.
+    const stopLaunch = startWithRetry(async (): Promise<StartStep> => {
+      const snapshot = await orFallbackAfter(readUpdateSnapshot(), SNAPSHOT_DEADLINE_MS, null);
       if (!live) {
-        return;
+        return "done";
       }
       setSnapshot(snapshot);
-      const session = await loadSession();
+      // A session that cannot be read is never taken for "no session": that would wipe the phone.
+      const session = await withDeadline(loadSession(), SESSION_DEADLINE_MS, "The saved session");
       if (!live) {
-        return;
+        return "done";
       }
       if (session === null) {
         await wipeLocalData();
         const server = await loadServer();
         if (!live) {
-          return;
+          return "done";
         }
         if (server !== null) {
           const compat = await fetchCompat(server);
           if (!live) {
-            return;
+            return "done";
           }
           if (compat !== null) {
             setLatest(compat.latest);
@@ -314,24 +343,27 @@ function App() {
                 notice: null,
                 requiredVersion: compat.minimumNativeVersion,
               });
-              return;
+              return "done";
             }
           }
         }
         setScreen({ kind: "unpaired", error: null, notice: null, requiredVersion: null });
-        return;
+        return "done";
       }
       sessionLifetime.restore(session);
       void saveServer(session.httpBaseUrl);
       startRenew();
-      await goOnline(session, 0);
-    })();
+      goOnlineWithRetry(session);
+      return "done";
+    });
     return () => {
       live = false;
+      stopLaunch();
+      stopStart();
       stopRenew();
       disposeNative();
     };
-  }, [disposeNative, goOnline, setSnapshot, startRenew, stopRenew]);
+  }, [disposeNative, goOnlineWithRetry, setSnapshot, startRenew, stopRenew, stopStart]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (next) => {
@@ -397,7 +429,7 @@ function App() {
         await sessionLifetime.adopt(session);
         await saveServer(session.httpBaseUrl);
         startRenew();
-        await goOnline(session, 0);
+        goOnlineWithRetry(session);
       } catch (cause) {
         if (live) dispatchPairing({ type: "pairFailed", reason: failureFor(cause) });
       }
@@ -405,11 +437,12 @@ function App() {
     return () => {
       live = false;
     };
-  }, [goOnline, pairing, startRenew]);
+  }, [goOnlineWithRetry, pairing, startRenew]);
 
   const signOut = useCallback(
     async (session: StoredSession) => {
       const native = nativeRef.current;
+      stopStart();
       // The server forgets this phone while the connection is still up. It is capped at a few
       // seconds, and the screen already says "Signing out" while it runs.
       const forgotten = pushController.teardown({ remote: true });
@@ -440,7 +473,7 @@ function App() {
         requiredVersion: required !== null && isTooOld(installed, required) ? required : null,
       });
     },
-    [disposeNative],
+    [disposeNative, stopStart],
   );
 
   const confirmSignOut = useCallback(

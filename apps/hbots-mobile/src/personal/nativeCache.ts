@@ -15,6 +15,34 @@ import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 
 export const CACHE_DIRECTORY = "hbots-thread-cache";
 
+/**
+ * The largest chat copy kept on the phone, in UTF-8 bytes. It is the server's own page limit
+ * (`maxEncodedBytes`). A bigger copy is not saved: that chat opens from the server's bounded
+ * window instead. The Kotlin `CacheCrypto.MAX_PLAIN_BYTES` refuses to read anything larger.
+ */
+export const MAX_CACHED_THREAD_BYTES = 1_048_576;
+
+/** True when `text` is longer than `limit` bytes as UTF-8. Stops counting at the limit. */
+function exceedsUtf8Bytes(text: string, limit: number): boolean {
+  if (text.length > limit) return true;
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (unit < 0x80) {
+      bytes += 1;
+    } else if (unit < 0x800) {
+      bytes += 2;
+    } else if (unit >= 0xd800 && unit <= 0xdbff && index + 1 < text.length) {
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
+    }
+    if (bytes > limit) return true;
+  }
+  return false;
+}
+
 /** Set by a wipe: a save that was already running cannot recreate the folder after it. */
 let sealed = false;
 
@@ -73,11 +101,17 @@ export async function readCachedThread(
   return Option.none();
 }
 
-/** Writes the snapshot encrypted. Throws when the Keystore helper is missing: nothing is cached in the clear. */
+/** Writes the snapshot encrypted unless it is over the cap. Throws when the Keystore helper is missing: nothing is cached in the clear. */
 export function writeCachedThread(environmentId: string, snapshot: ThreadSnapshot): void {
   if (sealed) return;
   const file = threadFile(environmentId, snapshot.projection.thread.id);
-  writeEncryptedText(file.uri, JSON.stringify(snapshot));
+  const text = JSON.stringify(snapshot);
+  if (exceedsUtf8Bytes(text, MAX_CACHED_THREAD_BYTES)) {
+    // Too big to read back safely: drop the older copy too, so no stale one is shown later.
+    if (file.exists) file.delete();
+    return;
+  }
+  writeEncryptedText(file.uri, text);
 }
 
 /**
