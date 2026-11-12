@@ -45,3 +45,19 @@ Binary only. The previous release is `1bc6ad15a20a` (1.67.9), schema 148, so the
 - Animations are back on Android. Pages slide, sheets rise, the notification banner, chips, the working avatar and the call screen move again.
 - The Bots page has a gaming PC stats line under the laptop line.
 - A tap made while a sheet is closing is no longer lost.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=6ff88a7d1ee74bb33ecb2ddb86ba08a18d8a79d2 release=6ff88a7d1ee7 json-sha256=cddc521d78aaf1778b07f4d6c440e19184806482574640c55760af8252aec467 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
