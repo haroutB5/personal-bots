@@ -72,6 +72,15 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+/** A failed read may serve the last credit for this long before it must be re-read. */
+const KEPT_RESET_CREDITS_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+/** The last credit a usage read answered, with the account and time it was read. */
+interface KeptClaudeResetCredits {
+  readonly credits: ServerProviderResetCredits;
+  readonly accountId: string | undefined;
+  readonly readAtMs: number;
+}
 
 const withoutUsage = (capabilities: ClaudeCapabilitiesProbe): ClaudeCapabilitiesProbe => {
   const result = { ...capabilities };
@@ -225,8 +234,40 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
-    // A rate-limited usage read must not hide a credit the last read found.
-    const lastResetCredits = yield* Ref.make<ServerProviderResetCredits | undefined>(undefined);
+    // A rate-limited usage read must not hide a credit the last read found. A
+    // kept credit is retired by its account, its own expiry and a maximum age.
+    const lastResetCredits = yield* Ref.make<KeptClaudeResetCredits | undefined>(undefined);
+    const rememberResetCredits = Effect.fn("ClaudeDriver.rememberResetCredits")(function* (
+      credits: ServerProviderResetCredits | undefined,
+    ) {
+      if (credits === undefined) {
+        yield* Ref.set(lastResetCredits, undefined);
+        return undefined;
+      }
+      const accountId = yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath);
+      const readAtMs = yield* Clock.currentTimeMillis;
+      yield* Ref.set(lastResetCredits, { credits, accountId, readAtMs });
+      return credits;
+    });
+    const readKeptResetCredits = Effect.gen(function* () {
+      const kept = yield* Ref.get(lastResetCredits);
+      if (kept === undefined) return undefined;
+      const accountId = yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath);
+      const now = yield* Clock.currentTimeMillis;
+      const expiresAtMs =
+        kept.credits.nextExpiresAt === undefined
+          ? undefined
+          : Date.parse(kept.credits.nextExpiresAt);
+      if (
+        kept.accountId !== accountId ||
+        (expiresAtMs !== undefined && (!Number.isFinite(expiresAtMs) || expiresAtMs <= now)) ||
+        now - kept.readAtMs > KEPT_RESET_CREDITS_MAX_AGE_MS
+      ) {
+        yield* Ref.set(lastResetCredits, undefined);
+        return undefined;
+      }
+      return kept.credits;
+    });
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
@@ -311,8 +352,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
                   Effect.flatMap((read) =>
                     read._tag === "Read"
-                      ? Ref.set(lastResetCredits, read.credits).pipe(Effect.as(read.credits))
-                      : Ref.get(lastResetCredits),
+                      ? rememberResetCredits(read.credits)
+                      : readKeptResetCredits,
                   ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -424,6 +465,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
       Effect.tap((outcome) =>
         Effect.gen(function* () {
+          // A spent, already-used or absent credit must not survive a failed refresh.
+          if (outcome === "reset" || outcome === "alreadyRedeemed" || outcome === "noCredit") {
+            yield* Ref.set(lastResetCredits, undefined);
+          }
           const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
           yield* Cache.invalidateAll(capabilitiesProbeCache);
           const refreshed = yield* snapshot.refresh;

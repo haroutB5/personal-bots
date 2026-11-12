@@ -26,6 +26,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -671,6 +672,203 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provide(layerTest),
       ),
+  );
+
+  const makeClaudeKeptCreditFixture = Effect.fnUntraced(function* (input: {
+    readonly endsAtMs?: number;
+    readonly claimResult?: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fixtures = yield* makeTildeProviderFixtures();
+    const credentialsPath = path.join(fixtures.claudeHomePath, ".credentials.json");
+    const accountConfigPath = path.join(fixtures.claudeHomePath, ".claude.json");
+    yield* fs.writeFileString(credentialsPath, '{"claudeAiOauth":{"accessToken":"fake-token"}}');
+    yield* fs.writeFileString(accountConfigPath, '{"oauthAccount":{"organizationUuid":"org-a"}}');
+    const unreadable = yield* Ref.make(false);
+    const client = HttpClient.make((request) =>
+      Effect.gen(function* () {
+        if (request.url.endsWith("/api/oauth/usage")) {
+          if (yield* Ref.get(unreadable)) {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ error: "rate limited" }, { status: 429 }),
+            );
+          }
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              cedar_ember: {
+                eligible: true,
+                next_grant_id: "grant_a",
+                grants: [
+                  {
+                    id: "grant_a",
+                    resets_left: 1,
+                    usable_now: true,
+                    ...(input.endsAtMs === undefined
+                      ? {}
+                      : { ends_at: new Date(input.endsAtMs).toISOString() }),
+                  },
+                ],
+              },
+            }),
+          );
+        }
+        if (request.url.endsWith("/reset_rate_limits")) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ result: input.claimResult ?? "reset" }),
+          );
+        }
+        return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
+      }),
+    );
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: () =>
+            Promise.resolve({
+              commands: [{ name: "compact", description: "", argumentHint: "" }],
+              account: {
+                email: "account-a@example.com",
+                subscriptionType: "pro",
+                tokenSource: "oauth",
+              },
+            }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+            rate_limits_available: true,
+            rate_limits: {
+              five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" },
+            },
+          }),
+        }) as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const instanceId = ProviderInstanceId.make("claude_kept_credit");
+    const { registry } = yield* makeProviderInstanceRegistry({
+      drivers: [ClaudeDriver],
+      configMap: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          config: makeClaudeConfig({
+            enabled: true,
+            binaryPath: fixtures.claudeBinaryPath,
+            homePath: fixtures.claudeHomePath,
+          }),
+        },
+      },
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+    const instance = yield* registry.getInstance(instanceId);
+    expect(instance).toBeDefined();
+    return {
+      instance: instance!,
+      unreadable,
+      fs,
+      credentialsPath,
+      accountConfigPath,
+      refresh: instance!.snapshot.refresh,
+      invalidateCaches: instance!.invalidateCaches ?? Effect.void,
+    };
+  });
+
+  it.effect.skipIf(windowsHost)(
+    "retires the kept Claude reset credit after a successful redeem",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeClaudeKeptCreditFixture({ claimResult: "reset" });
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* Ref.set(fixture.unreadable, true);
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        // The redeem's re-probe must land in a later millisecond than the read.
+        yield* TestClock.adjust("1 second");
+        yield* fixture.instance.consumeResetCredit!();
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits).toBeUndefined();
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "retires the kept Claude reset credit after an already redeemed answer",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeClaudeKeptCreditFixture({ claimResult: "already_used" });
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* Ref.set(fixture.unreadable, true);
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        // The redeem's re-probe must land in a later millisecond than the read.
+        yield* TestClock.adjust("1 second");
+        yield* fixture.instance.consumeResetCredit!();
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits).toBeUndefined();
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "retires the kept Claude reset credit when the account changes or signs out",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeClaudeKeptCreditFixture({});
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* Ref.set(fixture.unreadable, true);
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* fixture.fs.writeFileString(
+          fixture.accountConfigPath,
+          '{"oauthAccount":{"organizationUuid":"org-b"}}',
+        );
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits).toBeUndefined();
+
+        yield* Ref.set(fixture.unreadable, false);
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* Ref.set(fixture.unreadable, true);
+        yield* fixture.fs.remove(fixture.credentialsPath);
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits).toBeUndefined();
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "retires the kept Claude reset credit after its own expiry passes",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const fixture = yield* makeClaudeKeptCreditFixture({
+          endsAtMs: now + 60 * 60 * 1000,
+        });
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* TestClock.adjust("2 hours");
+        yield* Ref.set(fixture.unreadable, true);
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits).toBeUndefined();
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "retires the kept Claude reset credit after the six hour backstop",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeClaudeKeptCreditFixture({});
+        expect((yield* fixture.refresh).usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* TestClock.adjust(6 * 60 * 60 * 1000 + 1);
+        yield* Ref.set(fixture.unreadable, true);
+        yield* fixture.invalidateCaches;
+        expect((yield* fixture.refresh).usageLimits?.resetCredits).toBeUndefined();
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
   );
 
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
