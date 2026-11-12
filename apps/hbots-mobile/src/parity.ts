@@ -189,7 +189,7 @@ export const DONE_ITEMS: readonly string[] = [
   "setting:BotForm.tsx#name",
   "setting:BotForm.tsx#title-optional",
   "setting:BotForm.tsx#description",
-  "setting:BotForm.tsx#instructions",
+  "setting:BotInstructionsField.tsx#instructions",
   "setting:BotForm.tsx#provider",
   "setting:BotForm.tsx#model",
   "setting:BotForm.tsx#effort",

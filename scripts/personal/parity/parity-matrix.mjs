@@ -568,7 +568,7 @@ const RULES = [
   [/TasksScreen|TaskDetailScreen|Routine(DetailScreen|Form)/, { pr: "A12" }],
   [/FilesScreen|FilePreviewSheet|FileTextPreview/, { pr: "A13" }],
   [
-    /BotThreadsScreen|BotForm|BotAvatarPicker|BotModel(Pick)?Fields|BotScheduleSection|BotFallbackSection|BotRoutinesSection/,
+    /BotThreadsScreen|BotForm|BotInstructionsField|BotAvatarPicker|BotModel(Pick)?Fields|BotScheduleSection|BotFallbackSection|BotRoutinesSection/,
     { pr: "A9" },
   ],
   [
