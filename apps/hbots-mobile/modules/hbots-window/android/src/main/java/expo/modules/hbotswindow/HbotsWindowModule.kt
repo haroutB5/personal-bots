@@ -4,7 +4,6 @@ import android.content.Context
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import com.facebook.react.views.modal.ReactModalHostView
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -40,9 +39,10 @@ class HbotsWindowModule : Module() {
     }
   }
 
-  private fun findHost(root: View, dialogDecor: View): ReactModalHostView? {
-    if (root is ReactModalHostView) {
-      return if (root.dialog?.window?.decorView === dialogDecor) root else null
+  private fun findHost(root: View, dialogDecor: View): View? {
+    if (root.javaClass.simpleName == "ReactModalHostView") {
+      val content = (root as? ViewGroup)?.takeIf { it.childCount > 0 }?.getChildAt(0)
+      return if (content?.rootView === dialogDecor) root else null
     }
     if (root is ViewGroup) {
       for (index in 0 until root.childCount) {
