@@ -25,7 +25,6 @@ import {
 import { putOutboxBlobs, deleteOutboxBlobs } from "@hbots/personal-client/composer/outboxBlobs";
 import { classifySendFailure } from "@hbots/personal-client/composer/outboxFlush";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/composerText";
-import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import {
   IconArrowUp,
   IconFile,
@@ -38,7 +37,27 @@ import { useEffect, useRef, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ChatEnvironment } from "./chatEnvironment";
-import { beginSend, hasDraftContent, settle, type ComposerDraft } from "./composerSendModel";
+import {
+  addStoredOutgoing,
+  awaitAck,
+  beginSend,
+  hasDraftContent,
+  mergePending,
+  outgoingFromStored,
+  outgoingStorageKey,
+  parseStoredOutgoing,
+  pendingSend,
+  removePending,
+  removeStoredOutgoing,
+  restoreDraft,
+  retrySend,
+  setPendingState,
+  settle,
+  type AckEnd,
+  type ComposerDraft,
+  type Outgoing,
+  type PendingSend,
+} from "./composerSendModel";
 import { uploadDraftAttachments, type DraftAttachment } from "./outboxNative";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
@@ -77,6 +96,21 @@ function sizeOf(uri: string, fallback: number): number {
 /** Sends a plain message without touching the draft; used by tap-to-answer choices. */
 export interface ComposerControl {
   readonly sendText: (text: string) => Promise<boolean>;
+  /** Sends a failed bubble again under the same message id. */
+  readonly retry: (id: string) => Promise<boolean>;
+  /** Drops a bubble once the transcript shows the message arrived. */
+  readonly forget: (id: string) => void;
+}
+
+interface SendMeta {
+  readonly followUp: ThreadTurnFollowUp | undefined;
+  readonly quote: PersonalReplyQuote | null;
+  readonly clearDraftAfter: boolean;
+}
+
+interface ActiveSend {
+  readonly outgoing: Outgoing;
+  readonly meta: SendMeta;
 }
 
 export function Composer({
@@ -105,9 +139,7 @@ export function Composer({
   readonly replyTo: PersonalReplyQuote | null;
   readonly onClearReply: () => void;
   readonly onPendingChange: (
-    update: (
-      pending: ReadonlyArray<PendingOutgoingMessage>,
-    ) => ReadonlyArray<PendingOutgoingMessage>,
+    update: (pending: ReadonlyArray<PendingSend>) => ReadonlyArray<PendingSend>,
   ) => void;
   readonly onSendError: (message: string | null) => void;
   readonly onInterrupt: () => Promise<void>;
@@ -115,11 +147,13 @@ export function Composer({
   readonly control?: { current: ComposerControl | null } | undefined;
 }) {
   const key = draftKey(native.environmentId, threadId);
+  const outgoingKey = outgoingStorageKey(native.environmentId, threadId);
   const [draft, setDraftState] = useState<ComposerDraft>(() => ({
     text: native.client.ports.kv.getItem(key) ?? "",
     attachments: [],
   }));
   const draftRef = useRef<ComposerDraft>(draft);
+  const activeSends = useRef(new Map<string, ActiveSend>());
   const setDraft = (update: ComposerDraft | ((current: ComposerDraft) => ComposerDraft)) => {
     const next = typeof update === "function" ? update(draftRef.current) : update;
     draftRef.current = next;
@@ -150,6 +184,31 @@ export function Composer({
       if (saveTimer.current !== null) clearTimeout(saveTimer.current);
     };
   }, [key, native, text]);
+
+  // A send that outlived the screen comes back as a failed bubble with its text.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    const stored = parseStoredOutgoing(native.client.ports.kv.getItem(outgoingKey));
+    if (stored.length === 0) return;
+    const outgoing = stored.map(outgoingFromStored);
+    for (const item of outgoing) {
+      activeSends.current.set(item.id, {
+        outgoing: item,
+        meta: { followUp: undefined, quote: null, clearDraftAfter: false },
+      });
+    }
+    onPendingChange((pending) =>
+      mergePending(
+        pending,
+        outgoing.map((item) =>
+          pendingSend(item, threadId, item.text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
+        ),
+      ),
+    );
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- restore once per composer mount
+  }, []);
 
   // Keyboard images wait in the share intake dir until the draft lets go of them.
   const intakeHeld = useRef(new Map<string, string>());
@@ -395,6 +454,169 @@ export function Composer({
 
   const choiceSendingRef = useRef(false);
 
+  const writeStored = (next: string | null): boolean => {
+    try {
+      if (next === null) native.client.ports.kv.removeItem(outgoingKey);
+      else native.client.ports.kv.setItem(outgoingKey, next);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const dropStored = (messageId: string) => {
+    writeStored(removeStoredOutgoing(native.client.ports.kv.getItem(outgoingKey), messageId));
+  };
+
+  const keepStored = (outgoing: Outgoing): boolean =>
+    writeStored(addStoredOutgoing(native.client.ports.kv.getItem(outgoingKey), outgoing));
+
+  /** The server has the message: the bubble and its saved copy both go. */
+  const landed = (messageId: string) => {
+    if (!activeSends.current.has(messageId)) return;
+    activeSends.current.delete(messageId);
+    onPendingChange((pending) => removePending(pending, messageId));
+    dropStored(messageId);
+    void deleteOutboxBlobs(messageId);
+    onSent();
+  };
+
+  /** A send nobody answered: the bubble stays, with the text and Try again. */
+  const markFailed = (outgoing: Outgoing) => {
+    const active = activeSends.current.get(outgoing.id);
+    if (active === undefined) return;
+    const failed = settle(outgoing, { ok: false });
+    activeSends.current.set(outgoing.id, { ...active, outgoing: failed });
+    onPendingChange((pending) => setPendingState(pending, outgoing.id, "failed"));
+    if (!keepStored(failed)) {
+      setError("Couldn't keep this message on the device. Try again before leaving the chat.");
+    }
+  };
+
+  const dropActive = (outgoing: Outgoing) => {
+    activeSends.current.delete(outgoing.id);
+    onPendingChange((pending) => removePending(pending, outgoing.id));
+    dropStored(outgoing.id);
+  };
+
+  const queueForLater = async (outgoing: Outgoing, meta: SendMeta): Promise<boolean> =>
+    await queue(
+      outgoing.id,
+      outgoing.text,
+      outgoing.createdAt,
+      meta.followUp ?? null,
+      outgoing.attachments,
+      meta.quote,
+    );
+
+  /**
+   * Sends one active message. A resolution, a refusal, a dropped socket and a
+   * server that never answers all end here; only a success drops the bubble.
+   */
+  const dispatch = async (messageId: string): Promise<boolean> => {
+    const active = activeSends.current.get(messageId);
+    if (active === undefined) return true;
+    const { outgoing, meta } = active;
+    const snapshot = outgoing.attachments;
+    let uploaded: ReadonlyArray<ChatAttachment> = [];
+    if (snapshot.length > 0) {
+      setPreparing(true);
+      try {
+        uploaded = (await uploadDraftAttachments(native, chat, snapshot)) ?? [];
+      } finally {
+        setPreparing(false);
+      }
+      if (uploaded.length !== snapshot.length) {
+        markFailed(outgoing);
+        setError("An attachment didn't upload. Try again.");
+        return false;
+      }
+    }
+    const turn = {
+      modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
+      titleSeed: titleSeedFor(outgoing.text, snapshot),
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      followUp: meta.followUp ?? null,
+    };
+    const context = withPersonalFollowUp(
+      meta.quote !== null ? personalReplyContext(meta.quote) : null,
+      meta.followUp,
+    );
+    const attempt = startTurn({
+      environmentId: native.environmentId,
+      input: {
+        commandId: CommandId.make(outboxCommandId(messageId)),
+        threadId: ThreadId.make(threadId),
+        message: {
+          messageId: MessageId.make(messageId),
+          role: "user",
+          text: outgoing.text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          attachments: uploaded,
+          ...(context !== null ? { context } : {}),
+        },
+        modelSelection: turn.modelSelection,
+        titleSeed: turn.titleSeed,
+        runtimeMode: turn.runtimeMode,
+        interactionMode: turn.interactionMode,
+        ...(meta.followUp !== undefined ? { followUp: meta.followUp } : {}),
+        createdAt: outgoing.createdAt,
+      },
+    });
+    // The reply may arrive after the deadline: the message landed, so the
+    // failed bubble goes instead of doubling the transcript.
+    void attempt.then(
+      (result) => {
+        if (result._tag === "Success") landed(messageId);
+      },
+      () => undefined,
+    );
+    const generation = native.readConnection().generation;
+    const end = await awaitAck(
+      attempt,
+      (result): AckEnd => {
+        if (result._tag === "Success") return { kind: "sent" };
+        const outcome = classifySendFailure(squashAtomCommandFailure(result));
+        if (outcome.kind === "rejected") return { kind: "rejected", message: outcome.message };
+        if (outcome.kind === "not-sent") return { kind: "not-sent" };
+        return { kind: "unknown" };
+      },
+      () => {
+        const current = native.readConnection();
+        return !current.connected || current.generation !== generation;
+      },
+    );
+    if (!activeSends.current.has(messageId)) return true;
+    switch (end.kind) {
+      case "sent":
+        landed(messageId);
+        return true;
+      case "rejected": {
+        const failed = settle(outgoing, { ok: false });
+        dropActive(failed);
+        if (meta.clearDraftAfter) setDraft(restoreDraft(failed, draftRef.current));
+        void deleteOutboxBlobs(messageId);
+        setError(end.message);
+        return false;
+      }
+      case "not-sent": {
+        dropActive(outgoing);
+        const queued = await queueForLater(outgoing, meta);
+        if (!queued) {
+          if (meta.clearDraftAfter) setDraft(restoreDraft(outgoing, draftRef.current));
+          return false;
+        }
+        onSent();
+        return true;
+      }
+      case "timeout":
+      case "disconnected":
+      case "unknown":
+        markFailed(outgoing);
+        return false;
+    }
+  };
+
   const submit = async ({
     textValue,
     snapshot,
@@ -413,6 +635,7 @@ export function Composer({
     const { draft: clearedDraft, outgoing } = beginSend(
       { text: textValue, attachments: snapshot },
       messageId,
+      createdAt,
     );
     if (clearDraftAfter) {
       setDraft(clearedDraft);
@@ -421,147 +644,59 @@ export function Composer({
     }
     setError(null);
     onSendError(null);
+    activeSends.current.set(messageId, {
+      outgoing,
+      meta: { followUp, quote, clearDraftAfter },
+    });
     onPendingChange((pending) => [
       ...pending,
-      {
-        id: messageId,
-        threadId,
-        text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-        createdAt,
-        attachments: snapshot.map((attachment) => ({
-          id: attachment.id,
-          name: attachment.name,
-        })),
-        ...(quote !== null ? { replyTo: quote } : {}),
-      },
+      pendingSend(outgoing, threadId, textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
     ]);
-    const removePending = () =>
-      onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-    const restoreDraft = () => {
-      if (clearDraftAfter) setDraft(settle(outgoing, { ok: false }, draftRef.current).draft);
-    };
+    if (!keepStored(outgoing)) {
+      setError("Couldn't save that message on the device. Don't leave the chat until it sends.");
+    }
     if (snapshot.length > 0) {
       const stored = await storeBlobs(messageId, snapshot);
       if (!stored) {
-        removePending();
-        restoreDraft();
+        activeSends.current.delete(messageId);
+        onPendingChange((pending) => removePending(pending, messageId));
+        dropStored(messageId);
+        if (clearDraftAfter) setDraft(restoreDraft(outgoing, draftRef.current));
         setError("Couldn't save those photos on this device. Your draft is still here.");
         return false;
       }
     }
     if (offline || hasOutboxForThread(threadId)) {
-      const queued = await queue(
-        messageId,
-        textValue,
-        createdAt,
-        followUp ?? null,
-        snapshot,
-        quote,
-      );
+      activeSends.current.delete(messageId);
+      onPendingChange((pending) => removePending(pending, messageId));
+      dropStored(messageId);
+      const queued = await queueForLater(outgoing, { followUp, quote, clearDraftAfter });
       if (!queued) {
-        removePending();
-        restoreDraft();
+        if (clearDraftAfter) setDraft(restoreDraft(outgoing, draftRef.current));
         return false;
       }
-      removePending();
       onSent();
       return true;
     }
-    let uploaded: ReadonlyArray<ChatAttachment> = [];
-    if (snapshot.length > 0) {
-      setPreparing(true);
-      try {
-        uploaded = (await uploadDraftAttachments(native, chat, snapshot)) ?? [];
-      } finally {
-        setPreparing(false);
-      }
-      if (uploaded.length !== snapshot.length) {
-        removePending();
-        restoreDraft();
-        setError("An attachment didn't upload. Remove it or try again.");
-        void deleteOutboxBlobs(messageId);
-        return false;
-      }
-    }
-    const turn = {
-      modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
-      titleSeed: titleSeedFor(textValue, snapshot),
-      runtimeMode: thread.runtimeMode,
-      interactionMode: thread.interactionMode,
-      followUp: followUp ?? null,
-    };
-    const context = withPersonalFollowUp(
-      quote !== null ? personalReplyContext(quote) : null,
-      followUp,
-    );
-    try {
-      const result = await startTurn({
-        environmentId: native.environmentId,
-        input: {
-          commandId: CommandId.make(outboxCommandId(messageId)),
-          threadId: ThreadId.make(threadId),
-          message: {
-            messageId: MessageId.make(messageId),
-            role: "user",
-            text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-            attachments: uploaded,
-            ...(context !== null ? { context } : {}),
-          },
-          modelSelection: turn.modelSelection,
-          titleSeed: turn.titleSeed,
-          runtimeMode: turn.runtimeMode,
-          interactionMode: turn.interactionMode,
-          ...(followUp !== undefined ? { followUp } : {}),
-          createdAt,
-        },
-      });
-      if (result._tag === "Success") {
-        removePending();
-        void deleteOutboxBlobs(messageId);
-        onSent();
-        return true;
-      }
-      const outcome = classifySendFailure(squashAtomCommandFailure(result));
-      if (outcome.kind === "rejected") {
-        removePending();
-        restoreDraft();
-        setError(outcome.message);
-        void deleteOutboxBlobs(messageId);
-        return false;
-      }
-      const queued = await queue(
-        messageId,
-        textValue,
-        createdAt,
-        followUp ?? null,
-        snapshot,
-        quote,
-      );
-      if (!queued) {
-        removePending();
-        restoreDraft();
-        return false;
-      }
-      removePending();
+    return await dispatch(messageId);
+  };
+
+  const retry = async (messageId: string): Promise<boolean> => {
+    const active = activeSends.current.get(messageId);
+    if (active === undefined) return false;
+    activeSends.current.set(messageId, { ...active, outgoing: retrySend(active.outgoing) });
+    onPendingChange((pending) => setPendingState(pending, messageId, "sending"));
+    setError(null);
+    return await dispatch(messageId);
+  };
+
+  const forget = (messageId: string) => {
+    const active = activeSends.current.delete(messageId);
+    onPendingChange((pending) => removePending(pending, messageId));
+    dropStored(messageId);
+    if (active) {
+      void deleteOutboxBlobs(messageId);
       onSent();
-      return true;
-    } catch {
-      const queued = await queue(
-        messageId,
-        textValue,
-        createdAt,
-        followUp ?? null,
-        snapshot,
-        quote,
-      );
-      if (!queued) {
-        removePending();
-        restoreDraft();
-        return false;
-      }
-      removePending();
-      onSent();
-      return true;
     }
   };
 
@@ -596,7 +731,7 @@ export function Composer({
   useEffect(() => {
     if (control === undefined) return;
     // eslint-disable-next-line react/immutability -- the chat screen owns this ref for choice sends
-    control.current = { sendText: sendChoice };
+    control.current = { sendText: sendChoice, retry, forget };
     return () => {
       if (control.current?.sendText === sendChoice) control.current = null;
     };

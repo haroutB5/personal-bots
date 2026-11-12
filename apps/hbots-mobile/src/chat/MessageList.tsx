@@ -15,7 +15,6 @@ import {
 import { turnStartByAssistantItem } from "@hbots/personal-client/feed/contextUsed";
 import { groupSystemLabel } from "@hbots/personal-client/conversation/groupModel";
 import type { LatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
-import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import type { OutboxRow } from "@hbots/personal-client/composer/outbox";
 import type { RunWork } from "@hbots/personal-client/conversation/liveWork";
 import {
@@ -73,6 +72,7 @@ import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./message
 import { AttachmentImage } from "./AttachmentImage";
 import { ChoiceButtons } from "./ChoiceButtons";
 import { LiveWorkRow } from "./LiveWorkRow";
+import type { PendingSend } from "./composerSendModel";
 import { JUMP_SETTLE_MS, jumpVisible } from "./jumpToLatest";
 import {
 
@@ -94,7 +94,7 @@ export interface MessageListHandle {
 type Row =
   | { readonly kind: "item"; readonly key: string; readonly item: ConversationItem }
   | { readonly kind: "work"; readonly key: string; readonly work: RunWork }
-  | { readonly kind: "pending"; readonly key: string; readonly message: PendingOutgoingMessage }
+  | { readonly kind: "pending"; readonly key: string; readonly message: PendingSend }
   | { readonly kind: "queued"; readonly key: string; readonly row: OutboxRow };
 
 type ImageAttachment = Extract<ChatAttachment, { readonly type: "image" }>;
@@ -872,7 +872,13 @@ function UserBubble({
   );
 }
 
-function PendingBubble({ message }: { readonly message: PendingOutgoingMessage }) {
+function PendingBubble({
+  message,
+  onRetry,
+}: {
+  readonly message: PendingSend;
+  readonly onRetry: (() => void) | undefined;
+}) {
   const createdAtMs = Date.parse(message.createdAt);
   const [sending, setSending] = useState(
     () => !Number.isFinite(createdAtMs) || Date.now() - createdAtMs >= 2_000,
@@ -883,11 +889,28 @@ function PendingBubble({ message }: { readonly message: PendingOutgoingMessage }
     const timer = setTimeout(() => setSending(true), remaining);
     return () => clearTimeout(timer);
   }, [createdAtMs, sending]);
+  const failed = message.state === "failed";
   return (
     <View style={styles.messageRowEnd}>
-      <View style={[styles.userBubble, styles.pendingBubble]}>
+      <View style={[styles.userBubble, failed ? null : styles.pendingBubble]}>
         <Text style={styles.userText}>{message.text}</Text>
-        {sending ? <Text style={styles.pendingState}>Sending…</Text> : null}
+        {failed ? (
+          <View style={styles.pendingFooter}>
+            <Text style={styles.pendingFailed}>Not sent</Text>
+            {onRetry === undefined ? null : (
+              <Pressable
+                onPress={onRetry}
+                accessibilityRole="button"
+                accessibilityLabel="Try again"
+                style={styles.pendingRetry}
+              >
+                <Text style={styles.pendingRetryText}>Try again</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : sending ? (
+          <Text style={styles.pendingState}>Sending…</Text>
+        ) : null}
       </View>
     </View>
   );
@@ -912,6 +935,7 @@ export function MessageList({
   onChoose,
   onCancelQueued,
   onRetryQueued,
+  onRetryPending,
   onLoadEarlier,
   loadEarlierBusy,
   groupSpeaker,
@@ -923,7 +947,7 @@ export function MessageList({
   readonly chat: ChatEnvironment;
   readonly cardContext?: CardContext;
   readonly items: ReadonlyArray<ConversationItem>;
-  readonly pending: ReadonlyArray<PendingOutgoingMessage>;
+  readonly pending: ReadonlyArray<PendingSend>;
   readonly queued: ReadonlyArray<OutboxRow>;
   readonly botName: string;
   readonly currentUserId: string;
@@ -943,6 +967,7 @@ export function MessageList({
   readonly onChoose?: ((text: string) => Promise<boolean>) | undefined;
   readonly onCancelQueued: (id: string) => void;
   readonly onRetryQueued: (id: string) => void;
+  readonly onRetryPending?: ((id: string) => void) | undefined;
   readonly onLoadEarlier: (() => void) | null;
   readonly loadEarlierBusy: boolean;
   /** The body's keyboard padding, so the reveal runs after the list shrinks. */
@@ -1079,7 +1104,14 @@ export function MessageList({
             return <LiveWorkRow work={row.work} />;
           }
           if (row.kind === "pending") {
-            return <PendingBubble message={row.message} />;
+            return (
+              <PendingBubble
+                message={row.message}
+                onRetry={
+                  onRetryPending === undefined ? undefined : () => onRetryPending(row.message.id)
+                }
+              />
+            );
           }
           if (row.kind === "queued") {
             return (
@@ -1421,6 +1453,10 @@ const styles = StyleSheet.create({
   },
   pendingBubble: { opacity: 0.82 },
   pendingState: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 6 },
+  pendingFooter: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2 },
+  pendingFailed: { color: tokens.danger, fontSize: 12, lineHeight: 17 },
+  pendingRetry: { minHeight: 44, minWidth: 44, justifyContent: "center" },
+  pendingRetryText: { color: tokens.text, fontSize: 12, fontWeight: "600" },
   userText: { color: tokens.text, fontSize: 15, lineHeight: 21 },
   assistantPress: { alignSelf: "flex-start", maxWidth: "90%", gap: 6 },
   speakerRow: { flexDirection: "row", alignItems: "center", gap: 6 },

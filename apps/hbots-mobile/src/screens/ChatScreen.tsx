@@ -80,7 +80,7 @@ import { pendingQuestionRequests } from "@hbots/personal-client/conversation/que
 import { useNow } from "../chat/useNow";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
-import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
+import type { PendingSend } from "../chat/composerSendModel";
 import { BotAvatar } from "../shell/BotAvatar";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
@@ -142,7 +142,7 @@ export function ChatScreen({
   const retryThread = useAtomRefresh(chat.states.stateAtom(environmentId, ThreadId.make(threadId)));
   const now = useNow();
   const queued = useOutboxRows(threadId);
-  const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
+  const [pending, setPending] = useState<ReadonlyArray<PendingSend>>([]);
   const [replyTo, setReplyTo] = useState<PersonalReplyQuote | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsThreadId, setSettingsThreadId] = useState<string | null>(null);
@@ -285,6 +285,13 @@ export function ChatScreen({
           }),
     [cards.items, thread],
   );
+  // A send the transcript now shows arrived: drop its failed bubble and saved copy.
+  const arrivedIds = useMemo(() => new Set(cards.items.map((item) => item.id)), [cards.items]);
+  useEffect(() => {
+    const arrived = pending.filter((message) => arrivedIds.has(message.id));
+    if (arrived.length === 0) return;
+    for (const message of arrived) composerControl.current?.forget(message.id);
+  }, [arrivedIds, pending]);
   const contextUsage = useMemo(() => chatContextUsage(view.projection), [view.projection]);
   const questionOpen = useMemo(
     () => view.projection !== null && pendingQuestionRequests(view.projection).length > 0,
@@ -949,6 +956,7 @@ export function ChatScreen({
                 // otherwise turn the tap into another 20 s of "Sending…".
                 if (!native.readConnection().connected) native.retry();
               }}
+              onRetryPending={(id) => void composerControl.current?.retry(id)}
               onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
               loadEarlierBusy={history.loading}
               listControl={messageListControl}
