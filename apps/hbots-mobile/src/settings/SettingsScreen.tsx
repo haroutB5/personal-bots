@@ -230,8 +230,6 @@ export function SettingsScreen(props: SettingsScreenProps) {
             />
           </View>
         );
-      case "voice.calls":
-        return <VoiceSettingsSection key={id} native={props.native} />;
       case "providers.versions":
         return (
           <ProvidersSettingsCard
@@ -294,11 +292,15 @@ export function SettingsScreen(props: SettingsScreenProps) {
       />
       {profileError === null ? null : <Notice tone="danger">{profileError}</Notice>}
       {archiveError === null ? null : <Notice tone="danger">{archiveError}</Notice>}
-      {sections.map(({ section, rows }) => (
-        <Section key={section.id} label={section.label}>
-          {rows.map((row) => renderRow(row.id))}
-        </Section>
-      ))}
+      {sections.map(({ section, rows }) =>
+        section.id === "voice" ? (
+          <VoiceSettingsSection key={section.id} native={props.native} />
+        ) : (
+          <Section key={section.id} label={section.label}>
+            {rows.map((row) => renderRow(row.id))}
+          </Section>
+        ),
+      )}
       {sections.length === 0 ? (
         <Text style={styles.empty}>{`Nothing in settings matches "${query.trim()}".`}</Text>
       ) : null}
