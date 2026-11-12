@@ -1,6 +1,6 @@
 # 1.67.12: a Work tab that shows what every bot works on
 
-Based on 1.67.11 (`5a1d157f6007`, trunk `af79b1171d`). Branch `release/16712`, built from `feat/16712-work` at `22a0d0751a`. No migration and no schema change, schema stays 148. `PERSONAL_TASKS_CONCURRENCY` stays 5. `minimumNativeVersion` stays `1.66.110`. A new Android APK ships so the phone gets the new tab. No new native dependency and no new exported Android component.
+Based on 1.67.11 (`5a1d157f6007`, trunk `af79b1171d`). Branch `release/16712`, built from `feat/16712-work` at `69c48c1014`. No migration and no schema change, schema stays 148. `PERSONAL_TASKS_CONCURRENCY` stays 5. `minimumNativeVersion` stays `1.66.110`. A new Android APK ships so the phone gets the new tab and the widget picker pictures. No new native dependency and no new exported Android component.
 
 ## Why
 
@@ -13,6 +13,7 @@ There was no single place to see what the bots are doing, for how long, and who 
 - **Web.** `apps/web/src/features/personal/WorkScreen.tsx`, the route `_personal.work.tsx` and the tab bar.
 - **Android.** `apps/hbots-mobile/src/work/WorkScreen.tsx`, the bottom bar, the app shell and the navigation routes.
 - **Parity.** The Work tab is owned on Android in the parity registry, and `parity.json` is regenerated.
+- **Widget picker pictures.** Each of the eight home screen widgets has an example picture in the widget picker. Eight PNG files in `drawable-nodpi`, one `android:previewImage` line in each widget info XML, and a test, `apps/hbots-mobile/src/widgetPreviews.test.ts`. Resources only, no code and no new component.
 
 ## Migration
 
@@ -42,3 +43,4 @@ Binary only. The previous release is `5a1d157f6007` (1.67.11), schema 148, so th
 
 - A new Work tab shows what every bot works on, how long it took, and who started it.
 - It is the second tab, on web and on Android.
+- Each widget now shows an example picture in the widget picker.
