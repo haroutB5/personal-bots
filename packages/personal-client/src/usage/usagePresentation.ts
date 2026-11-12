@@ -275,16 +275,46 @@ export const RESET_CREDIT_NO_SCOPE_TEXT =
   "This device is not allowed to redeem resets. Pair it again to allow it. No credit was used.";
 
 /** The claim was sent, but its outcome cannot be known from the answer. */
-export const RESET_CREDIT_UNCONFIRMED_TEXT =
-  "The reset may not have gone through. Check your limit before trying again.";
-
-const RESET_CREDIT_REFUSED_TEXT = "Could not use the reset credit. No credit was used.";
-const RESET_CREDIT_UNKNOWN_OUTCOME = /could not (?:confirm|redeem) the reset/i;
+export const RESET_CREDIT_UNKNOWN_OUTCOME_TEXT =
+  "The reset outcome is unknown. Refresh usage before trying again.";
 
 /**
- * What to say when a redeem fails. The server's typed error sits inside the
- * command's `Cause`, not on it. A scope refusal and an unreadable answer are
- * different promises: one means nothing was spent, the other cannot say.
+ * What a banked-credit card may offer this device. One rule for the phone and
+ * both web cards: a redeem needs `providers:manage`, else the pairing line.
+ */
+export type ResetCreditOffer =
+  | { readonly _tag: "Hidden" }
+  | { readonly _tag: "Redeem" }
+  | { readonly _tag: "PairAgain"; readonly notice: string };
+
+export function resetCreditOffer(
+  availableCount: number,
+  hasProvidersManageScope: boolean,
+): ResetCreditOffer {
+  if (availableCount === 0) return { _tag: "Hidden" };
+  return hasProvidersManageScope
+    ? { _tag: "Redeem" }
+    : { _tag: "PairAgain", notice: RESET_CREDIT_PAIR_AGAIN_TEXT };
+}
+
+const RESET_CREDIT_REFUSED_TEXT = "Could not use the reset credit. No credit was used.";
+
+/** Server outcomes that may reach the user unchanged. */
+const KNOWN_RESET_CREDIT_FAILURES: ReadonlySet<string> = new Set([
+  "Claude returned a malformed reset credit.",
+  "Claude could not read its login.",
+  "Claude could not read its account.",
+  "Sign in to Claude again to redeem resets.",
+  "Claude is rate limiting resets. Try again soon.",
+  "Claude resets are cooling down. Try again later.",
+  "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
+  "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+]);
+
+/**
+ * Only a known server sentence is repeated. A transport error, a defect or an
+ * unknown shape cannot say whether a credit was spent, and its text can carry
+ * hosts, paths or error codes.
  */
 export function resetCreditFailureText(cause: Cause.Cause<unknown>): string {
   const error = Cause.hasInterruptsOnly(cause) ? undefined : Cause.squash(cause);
@@ -294,8 +324,8 @@ export function resetCreditFailureText(cause: Cause.Cause<unknown>): string {
       : RESET_CREDIT_REFUSED_TEXT;
   }
   const message = error instanceof Error ? error.message.trim() : "";
-  if (message.length === 0) return RESET_CREDIT_UNCONFIRMED_TEXT;
-  return RESET_CREDIT_UNKNOWN_OUTCOME.test(message) ? RESET_CREDIT_UNCONFIRMED_TEXT : message;
+  if (KNOWN_RESET_CREDIT_FAILURES.has(message)) return message;
+  return RESET_CREDIT_UNKNOWN_OUTCOME_TEXT;
 }
 
 /** "Resets 14:30" today, or "Resets Mon 09:00" on another local day. */

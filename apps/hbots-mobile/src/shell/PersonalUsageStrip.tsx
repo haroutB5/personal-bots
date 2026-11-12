@@ -48,6 +48,7 @@ import {
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "./tokens";
+import { usageRedeemRow } from "./usageRedeem";
 import { sendUsageRefresh } from "./usageRefresh";
 
 const PROVIDER_DOT: Record<UsageProviderKind, string> = {
@@ -241,6 +242,7 @@ function RedeemBlock({
   const expiresIn = resetCreditsExpiresIn(resetCredits.credits, now);
   const confirm = resetCreditConfirm(resetCredits.credits, card.title);
   const redeemLabel = resetCreditRedeemLabel(resetCredits.credits);
+  const redeemRow = usageRedeemRow(resetCredits.credits, canRedeem);
 
   const redeem = async () => {
     if (inFlight.current) return;
@@ -279,7 +281,7 @@ function RedeemBlock({
               </Text>
             ) : null}
           </View>
-          {canRedeem ? (
+          {redeemRow.showButton ? (
             <Pressable
               onPress={() => setConfirming(true)}
               disabled={busy}
@@ -293,8 +295,8 @@ function RedeemBlock({
           ) : null}
         </View>
       ) : null}
-      {!canRedeem && resetCredits.credits.availableCount > 0 ? (
-        <Text style={styles.redeemStatus}>{RESET_CREDIT_PAIR_AGAIN_TEXT}</Text>
+      {redeemRow.notice !== null ? (
+        <Text style={styles.redeemStatus}>{redeemRow.notice}</Text>
       ) : null}
       {status !== null ? (
         <Text style={styles.redeemStatus} accessibilityLiveRegion="polite">

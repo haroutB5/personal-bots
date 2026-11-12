@@ -15,6 +15,7 @@ import { useResetCredit } from "~/components/usage/UsageLimits";
 
 import {
   resetCreditConfirm,
+  resetCreditOffer,
   resetCreditRedeemLabel,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
@@ -48,11 +49,15 @@ export default function PersonalResetCredits({
   readonly onRedeemed: () => void;
 }): JSX.Element | null {
   const { credits, input } = resetCredits;
-  const { confirming, setConfirming, busy, status, redeem } = useResetCredit(environmentId, input);
+  const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
+    environmentId,
+    input,
+  );
   // Two taps inside one frame both see busy=false; the ref makes it one spend.
   const inFlightRef = useRef(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
   if (credits.availableCount === 0 && status === null) return null;
+  const offer = resetCreditOffer(credits.availableCount, canManageProviders);
   const expiresIn = resetCreditsExpiresIn(credits, now);
   const confirm = resetCreditConfirm(credits, title);
   const redeemLabel = resetCreditRedeemLabel(credits);
@@ -83,18 +88,25 @@ export default function PersonalResetCredits({
               </span>
             ) : null}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            aria-busy={busy}
-            aria-label={confirm.title.replace(/\?$/, "")}
-            className="h-11 shrink-0 px-4 text-[15px] sm:h-11"
-            onClick={() => setConfirming(true)}
-          >
-            {busy ? "Redeeming…" : redeemLabel}
-          </Button>
+          {offer._tag === "Redeem" ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              aria-busy={busy}
+              aria-label={confirm.title.replace(/\?$/, "")}
+              className="h-11 shrink-0 px-4 text-[15px] sm:h-11"
+              onClick={() => setConfirming(true)}
+            >
+              {busy ? "Redeeming…" : redeemLabel}
+            </Button>
+          ) : null}
         </div>
+      ) : null}
+      {offer._tag === "PairAgain" ? (
+        <p className="text-[13px] leading-snug text-[var(--personal-text-secondary)]">
+          {offer.notice}
+        </p>
       ) : null}
       <p
         role="status"
