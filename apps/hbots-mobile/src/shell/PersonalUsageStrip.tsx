@@ -37,6 +37,7 @@ import { IconRefresh, IconX } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Modal,
   PanResponder,
   Pressable,
@@ -46,6 +47,7 @@ import {
   View,
 } from "react-native";
 
+import { useSheetMotion } from "../motion/useSheetMotion";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "./tokens";
 import { usageRedeemRow } from "./usageRedeem";
@@ -491,17 +493,22 @@ function UsageSheet({
   );
 
   const spendLine = selectOpenCodeSpendLine(tokenUsage.data);
+  const motion = useSheetMotion(visible);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={motion.mounted} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.sheetScrim}>
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.sheetScrimFill, motion.backdropStyle]}
+        />
         <Pressable
           style={StyleSheet.absoluteFill}
           accessibilityRole="button"
           accessibilityLabel="Close usage"
           onPress={onClose}
         />
-        <View style={styles.sheet}>
+        <Animated.View style={[styles.sheet, motion.panelStyle]}>
           <View {...pan.panHandlers} style={styles.sheetDragZone}>
             <View style={styles.dragHandle} />
             <View style={styles.sheetHeader}>
@@ -557,7 +564,7 @@ function UsageSheet({
               />
             ))}
           </ScrollView>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -675,7 +682,8 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.track,
   },
   stripFill: { height: "100%", borderRadius: 999 },
-  sheetScrim: { flex: 1, justifyContent: "flex-end", backgroundColor: tokens.scrim },
+  sheetScrim: { flex: 1, justifyContent: "flex-end" },
+  sheetScrimFill: { backgroundColor: tokens.scrim },
   sheet: {
     maxHeight: "90%",
     borderTopLeftRadius: 12,

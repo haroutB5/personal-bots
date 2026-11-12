@@ -3,6 +3,7 @@ import type { PersonalBot } from "@t3tools/contracts";
 import { PersonalBotId, PersonalGroupId, ThreadId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import {
+  Animated,
   Keyboard,
   Modal,
   Pressable,
@@ -13,6 +14,7 @@ import {
   View,
 } from "react-native";
 
+import { useSheetMotion } from "../motion/useSheetMotion";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { BotAvatar } from "./BotAvatar";
 import type { RootStackParamList } from "./AppShell";
@@ -183,17 +185,22 @@ export function NewItemsSheet({
   };
 
   const title = mode === "group" ? "New group" : "New";
+  const motion = useSheetMotion(visible);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={closeOrBack}>
+    <Modal visible={motion.mounted} transparent animationType="none" onRequestClose={closeOrBack}>
       <View style={[styles.scrim, { paddingBottom: keyboardHeight }]}>
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.scrimFill, motion.backdropStyle]}
+        />
         <Pressable
           style={StyleSheet.absoluteFill}
           accessibilityRole="button"
           accessibilityLabel="Close"
           onPress={onClose}
         />
-        <View style={styles.sheet}>
+        <Animated.View style={[styles.sheet, motion.panelStyle]}>
           <View style={styles.header}>
             {mode === "menu" ? null : (
               <Pressable
@@ -278,14 +285,15 @@ export function NewItemsSheet({
               </Pressable>
             </ScrollView>
           )}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  scrim: { flex: 1, justifyContent: "flex-end", backgroundColor: tokens.scrim },
+  scrim: { flex: 1, justifyContent: "flex-end" },
+  scrimFill: { backgroundColor: tokens.scrim },
   sheet: {
     maxHeight: "88%",
     borderTopLeftRadius: 12,
