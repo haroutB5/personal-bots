@@ -19,6 +19,7 @@ import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import type { OutboxRow } from "@hbots/personal-client/composer/outbox";
 import type { RunWork } from "@hbots/personal-client/conversation/liveWork";
 import {
+  IconArrowDown,
   IconFile,
   IconFileCode,
   IconFileText,
@@ -45,6 +46,8 @@ import {
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -70,6 +73,7 @@ import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./message
 import { AttachmentImage } from "./AttachmentImage";
 import { ChoiceButtons } from "./ChoiceButtons";
 import { LiveWorkRow } from "./LiveWorkRow";
+import { JUMP_SETTLE_MS, jumpVisible } from "./jumpToLatest";
 import {
 
   /* eslint-disable react/refs -- the list owns imperative scroll and swipe handles */
@@ -868,6 +872,27 @@ function UserBubble({
   );
 }
 
+function PendingBubble({ message }: { readonly message: PendingOutgoingMessage }) {
+  const createdAtMs = Date.parse(message.createdAt);
+  const [sending, setSending] = useState(
+    () => !Number.isFinite(createdAtMs) || Date.now() - createdAtMs >= 2_000,
+  );
+  useEffect(() => {
+    if (sending || !Number.isFinite(createdAtMs)) return;
+    const remaining = Math.max(0, 2_000 - (Date.now() - createdAtMs));
+    const timer = setTimeout(() => setSending(true), remaining);
+    return () => clearTimeout(timer);
+  }, [createdAtMs, sending]);
+  return (
+    <View style={styles.messageRowEnd}>
+      <View style={[styles.userBubble, styles.pendingBubble]}>
+        <Text style={styles.userText}>{message.text}</Text>
+        {sending ? <Text style={styles.pendingState}>Sending…</Text> : null}
+      </View>
+    </View>
+  );
+}
+
 export function MessageList({
   native,
   chat,
@@ -985,151 +1010,305 @@ export function MessageList({
     return () => cancelAnimationFrame(frame);
   }, [keyboardInset, scrollToCard]);
 
+  const [jumpShown, setJumpShown] = useState(false);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearJumpTimer = () => {
+    if (jumpTimer.current !== null) {
+      clearTimeout(jumpTimer.current);
+      jumpTimer.current = null;
+    }
+  };
+  const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetY = event.nativeEvent.contentOffset.y;
+    clearJumpTimer();
+    jumpTimer.current = setTimeout(() => {
+      jumpTimer.current = null;
+      setJumpShown(jumpVisible(offsetY));
+    }, JUMP_SETTLE_MS);
+  };
+  useEffect(
+    () => () => {
+      if (jumpTimer.current !== null) clearTimeout(jumpTimer.current);
+    },
+    [],
+  );
+  const jumpToLatest = () => {
+    clearJumpTimer();
+    setJumpShown(false);
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  };
+
   return (
-    <FlatList
-      ref={listRef}
-      data={rows.toReversed()}
-      extraData={cardContext}
-      inverted
-      nestedScrollEnabled
-      onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
-      style={styles.list}
-      keyExtractor={(row) => row.key}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="interactive"
-      initialNumToRender={24}
-      maxToRenderPerBatch={16}
-      windowSize={9}
-      removeClippedSubviews
-      onScrollToIndexFailed={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
-      {...highRefresh}
-      ListFooterComponent={
-        onLoadEarlier === null ? null : (
-          <Pressable
-            onPress={onLoadEarlier}
-            disabled={loadEarlierBusy}
-            accessibilityRole="button"
-            style={styles.loadEarlier}
-          >
-            <Text style={styles.loadEarlierText}>
-              {loadEarlierBusy ? "Loading…" : "Load earlier messages"}
-            </Text>
-          </Pressable>
-        )
-      }
-      renderItem={({ item: row }) => {
-        if (row.kind === "work") {
-          return <LiveWorkRow work={row.work} />;
+    <View style={styles.listWrap}>
+      <FlatList
+        ref={listRef}
+        data={rows.toReversed()}
+        extraData={cardContext}
+        inverted
+        nestedScrollEnabled
+        onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        style={styles.list}
+        keyExtractor={(row) => row.key}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        initialNumToRender={24}
+        maxToRenderPerBatch={16}
+        windowSize={9}
+        removeClippedSubviews
+        onScrollToIndexFailed={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
+        {...highRefresh}
+        ListFooterComponent={
+          onLoadEarlier === null ? null : (
+            <Pressable
+              onPress={onLoadEarlier}
+              disabled={loadEarlierBusy}
+              accessibilityRole="button"
+              style={styles.loadEarlier}
+            >
+              <Text style={styles.loadEarlierText}>
+                {loadEarlierBusy ? "Loading…" : "Load earlier messages"}
+              </Text>
+            </Pressable>
+          )
         }
-        if (row.kind === "pending") {
-          return (
-            <View style={styles.messageRowEnd}>
-              <View style={[styles.userBubble, styles.pendingBubble]}>
-                <Text style={styles.userText}>{row.message.text}</Text>
-              </View>
-            </View>
-          );
-        }
-        if (row.kind === "queued") {
-          return (
-            <View style={styles.messageRowEnd}>
-              <View style={[styles.userBubble, styles.pendingBubble]}>
-                <Text style={styles.userText}>{row.row.entry.text}</Text>
-                <View style={styles.queuedFooter}>
-                  <Text style={styles.queuedState}>
-                    {row.row.state === "sending"
-                      ? "Sending…"
-                      : row.row.state === "failed"
-                        ? (row.row.entry.error ?? "Not sent")
-                        : "Queued"}
-                  </Text>
-                  {row.row.state === "failed" ? (
+        renderItem={({ item: row }) => {
+          if (row.kind === "work") {
+            return <LiveWorkRow work={row.work} />;
+          }
+          if (row.kind === "pending") {
+            return <PendingBubble message={row.message} />;
+          }
+          if (row.kind === "queued") {
+            return (
+              <View style={styles.messageRowEnd}>
+                <View style={[styles.userBubble, styles.pendingBubble]}>
+                  <Text style={styles.userText}>{row.row.entry.text}</Text>
+                  <View style={styles.queuedFooter}>
+                    <Text style={styles.queuedState}>
+                      {row.row.state === "sending"
+                        ? "Sending…"
+                        : row.row.state === "failed"
+                          ? (row.row.entry.error ?? "Not sent")
+                          : "Queued"}
+                    </Text>
+                    {row.row.state === "failed" ? (
+                      <Pressable
+                        onPress={() => onRetryQueued(row.row.entry.id)}
+                        accessibilityRole="button"
+                        style={styles.queuedButton}
+                      >
+                        <Text style={styles.queuedButtonText}>Retry</Text>
+                      </Pressable>
+                    ) : null}
                     <Pressable
-                      onPress={() => onRetryQueued(row.row.entry.id)}
+                      onPress={() => onCancelQueued(row.row.entry.id)}
                       accessibilityRole="button"
                       style={styles.queuedButton}
                     >
-                      <Text style={styles.queuedButtonText}>Retry</Text>
+                      <Text style={styles.queuedButtonText}>Cancel</Text>
                     </Pressable>
-                  ) : null}
-                  <Pressable
-                    onPress={() => onCancelQueued(row.row.entry.id)}
-                    accessibilityRole="button"
-                    style={styles.queuedButton}
-                  >
-                    <Text style={styles.queuedButtonText}>Cancel</Text>
-                  </Pressable>
+                  </View>
                 </View>
               </View>
-            </View>
-          );
-        }
-        const item = row.item;
-        if (item.kind === "divider") {
-          return (
-            <View style={styles.dividerRow}>
-              {/* eslint-disable-next-line react/purity -- the divider names the day in the device's zone */}
-              <Text style={styles.dividerText}>{formatDayDivider(item.at, new Date())}</Text>
-            </View>
-          );
-        }
-        if (isChatCard(item)) {
-          return cardContext === undefined ? null : renderChatCard(item, cardContext);
-        }
-        if (item.kind === "work") {
-          return (
-            <View style={styles.work}>
-              {item.entries.map((entry) => (
-                <View key={entry.id} style={styles.workRow}>
-                  <View
-                    style={[styles.workDot, entry.tone === "error" ? styles.workError : null]}
-                  />
-                  <Text style={styles.workText} numberOfLines={2}>
-                    {entry.label}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          );
-        }
-        if (item.kind === "plan") {
-          return (
-            <View style={styles.planCard}>
-              <Text style={styles.planLabel}>Plan</Text>
-              <MarkdownBody
-                text={item.plan.planMarkdown}
-                tone="assistant"
-                onOpenFile={onOpenFile}
-                onOpenLink={onOpenLink}
-              />
-            </View>
-          );
-        }
-        if (item.kind === "notice" || item.kind === "system-turn") {
-          return (
-            <Text style={styles.notice} numberOfLines={3}>
-              {item.message.text}
-            </Text>
-          );
-        }
-        if (item.kind === "group-system") {
-          return (
-            <Text style={styles.notice} numberOfLines={3}>
-              {groupSystemLabel(item.event, item.message.text)}
-            </Text>
-          );
-        }
-        if (item.kind === "group-message") {
+            );
+          }
+          const item = row.item;
+          if (item.kind === "divider") {
+            return (
+              <View style={styles.dividerRow}>
+                {/* eslint-disable-next-line react/purity -- the divider names the day in the device's zone */}
+                <Text style={styles.dividerText}>{formatDayDivider(item.at, new Date())}</Text>
+              </View>
+            );
+          }
+          if (isChatCard(item)) {
+            return cardContext === undefined ? null : renderChatCard(item, cardContext);
+          }
+          if (item.kind === "work") {
+            return (
+              <View style={styles.work}>
+                {item.entries.map((entry) => (
+                  <View key={entry.id} style={styles.workRow}>
+                    <View
+                      style={[styles.workDot, entry.tone === "error" ? styles.workError : null]}
+                    />
+                    <Text style={styles.workText} numberOfLines={2}>
+                      {entry.label}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            );
+          }
+          if (item.kind === "plan") {
+            return (
+              <View style={styles.planCard}>
+                <Text style={styles.planLabel}>Plan</Text>
+                <MarkdownBody
+                  text={item.plan.planMarkdown}
+                  tone="assistant"
+                  onOpenFile={onOpenFile}
+                  onOpenLink={onOpenLink}
+                />
+              </View>
+            );
+          }
+          if (item.kind === "notice" || item.kind === "system-turn") {
+            return (
+              <Text style={styles.notice} numberOfLines={3}>
+                {item.message.text}
+              </Text>
+            );
+          }
+          if (item.kind === "group-system") {
+            return (
+              <Text style={styles.notice} numberOfLines={3}>
+                {groupSystemLabel(item.event, item.message.text)}
+              </Text>
+            );
+          }
+          if (item.kind === "group-message") {
+            const message = item.message;
+            const text = ownerVisibleText(message.text);
+            if (text.length === 0) return null;
+            const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
+            const body = reply.body;
+            const sentAt = Number.isNaN(Date.parse(message.createdAt))
+              ? null
+              : new Date(message.createdAt);
+            const speaker = groupSpeaker?.(item.speaker.botId) ?? null;
+            return (
+              <View style={styles.messageRowStart}>
+                <SwipeMessageRow
+                  align="start"
+                  sentAt={sentAt}
+                  onReply={() =>
+                    onReply(
+                      replyQuoteForMessage({
+                        message: { id: message.id, role: message.role, text: body },
+                        botName: item.speaker.name,
+                      }),
+                    )
+                  }
+                >
+                  <LongPressSurface
+                    onLongPress={() =>
+                      onMessageMenu({
+                        messageId: String(message.id),
+                        name: item.speaker.name,
+                        text: body,
+                        sentAt,
+                      })
+                    }
+                    style={[
+                      styles.assistantPress,
+                      markdownNeedsWidth(body) || reply.options !== null
+                        ? styles.assistantWide
+                        : null,
+                    ]}
+                  >
+                    {item.showSpeaker ? (
+                      <View style={styles.speakerRow}>
+                        {speaker !== null ? (
+                          <BotAvatar
+                            shape={speaker.avatarShape}
+                            color={speaker.avatarColor}
+                            size={18}
+                            label={speaker.name}
+                          />
+                        ) : null}
+                        <Text style={styles.speakerName} numberOfLines={1}>
+                          {item.speaker.name}
+                        </Text>
+                      </View>
+                    ) : null}
+                    <MarkdownBody
+                      text={body}
+                      tone="assistant"
+                      onOpenFile={onOpenFile}
+                      onOpenLink={onOpenLink}
+                    />
+                    {reply.options !== null && reply.state !== null ? (
+                      <ChoiceButtons
+                        options={reply.options}
+                        state={reply.state}
+                        onChoose={onChoose}
+                      />
+                    ) : null}
+                    {message.attachments?.map((attachment) =>
+                      isImageAttachment(attachment) ? (
+                        <AttachmentImage
+                          key={attachment.id}
+                          native={native}
+                          chat={chat}
+                          attachment={attachment}
+                        />
+                      ) : (
+                        <View key={attachment.id} style={styles.attachment}>
+                          <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+                          <Text style={styles.attachmentText} numberOfLines={1}>
+                            {attachment.name}
+                          </Text>
+                        </View>
+                      ),
+                    )}
+                  </LongPressSurface>
+                </SwipeMessageRow>
+              </View>
+            );
+          }
+          if (item.kind !== "message") return null;
           const message = item.message;
           const text = ownerVisibleText(message.text);
-          if (text.length === 0) return null;
-          const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
-          const body = reply.body;
+          const role = message.role;
           const sentAt = Number.isNaN(Date.parse(message.createdAt))
             ? null
             : new Date(message.createdAt);
-          const speaker = groupSpeaker?.(item.speaker.botId) ?? null;
+          const quote = readPersonalReplyQuote(message.context);
+          if (role === "user") {
+            return (
+              <View style={styles.messageRowEnd}>
+                <SwipeMessageRow
+                  align="end"
+                  sentAt={sentAt}
+                  onReply={() => onReply(replyQuoteForMessage({ message, botName: currentUserId }))}
+                >
+                  <View style={styles.userColumn}>
+                    <UserBubble
+                      native={native}
+                      chat={chat}
+                      text={text}
+                      quote={quote}
+                      attachments={message.attachments}
+                      onLongPress={() =>
+                        onMessageMenu({
+                          messageId: String(message.id),
+                          name: "You",
+                          text,
+                          sentAt,
+                        })
+                      }
+                    />
+                    {latestMessageStatus?.messageId === String(message.id) ? (
+                      <Text style={styles.readStatus}>
+                        {latestMessageStatus.status === "read"
+                          ? "Read"
+                          : latestMessageStatus.status === "queued"
+                            ? "Queued"
+                            : "Steering"}
+                      </Text>
+                    ) : null}
+                  </View>
+                </SwipeMessageRow>
+              </View>
+            );
+          }
+          if (text.length === 0) return null;
+          const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
+          const body = reply.body;
           return (
             <View style={styles.messageRowStart}>
               <SwipeMessageRow
@@ -1139,7 +1318,7 @@ export function MessageList({
                   onReply(
                     replyQuoteForMessage({
                       message: { id: message.id, role: message.role, text: body },
-                      botName: item.speaker.name,
+                      botName,
                     }),
                   )
                 }
@@ -1148,7 +1327,7 @@ export function MessageList({
                   onLongPress={() =>
                     onMessageMenu({
                       messageId: String(message.id),
-                      name: item.speaker.name,
+                      name: botName,
                       text: body,
                       sentAt,
                     })
@@ -1160,34 +1339,13 @@ export function MessageList({
                       : null,
                   ]}
                 >
-                  {item.showSpeaker ? (
-                    <View style={styles.speakerRow}>
-                      {speaker !== null ? (
-                        <BotAvatar
-                          shape={speaker.avatarShape}
-                          color={speaker.avatarColor}
-                          size={18}
-                          label={speaker.name}
-                        />
-                      ) : null}
-                      <Text style={styles.speakerName} numberOfLines={1}>
-                        {item.speaker.name}
-                      </Text>
-                    </View>
-                  ) : null}
                   <MarkdownBody
                     text={body}
+                    messageId={String(message.id)}
                     tone="assistant"
                     onOpenFile={onOpenFile}
                     onOpenLink={onOpenLink}
                   />
-                  {reply.options !== null && reply.state !== null ? (
-                    <ChoiceButtons
-                      options={reply.options}
-                      state={reply.state}
-                      onChoose={onChoose}
-                    />
-                  ) : null}
                   {message.attachments?.map((attachment) =>
                     isImageAttachment(attachment) ? (
                       <AttachmentImage
@@ -1205,128 +1363,42 @@ export function MessageList({
                       </View>
                     ),
                   )}
+                  {reply.options !== null && reply.state !== null ? (
+                    <ChoiceButtons
+                      options={reply.options}
+                      state={reply.state}
+                      onChoose={onChoose}
+                    />
+                  ) : null}
+                  {contextTurns.has(String(message.id)) ? (
+                    <Text style={styles.contextUsed}>{"Context used ⌄"}</Text>
+                  ) : null}
                 </LongPressSurface>
               </SwipeMessageRow>
             </View>
           );
-        }
-        if (item.kind !== "message") return null;
-        const message = item.message;
-        const text = ownerVisibleText(message.text);
-        const role = message.role;
-        const sentAt = Number.isNaN(Date.parse(message.createdAt))
-          ? null
-          : new Date(message.createdAt);
-        const quote = readPersonalReplyQuote(message.context);
-        if (role === "user") {
-          return (
-            <View style={styles.messageRowEnd}>
-              <SwipeMessageRow
-                align="end"
-                sentAt={sentAt}
-                onReply={() => onReply(replyQuoteForMessage({ message, botName: currentUserId }))}
-              >
-                <View style={styles.userColumn}>
-                  <UserBubble
-                    native={native}
-                    chat={chat}
-                    text={text}
-                    quote={quote}
-                    attachments={message.attachments}
-                    onLongPress={() =>
-                      onMessageMenu({
-                        messageId: String(message.id),
-                        name: "You",
-                        text,
-                        sentAt,
-                      })
-                    }
-                  />
-                  {latestMessageStatus?.messageId === String(message.id) ? (
-                    <Text style={styles.readStatus}>
-                      {latestMessageStatus.status === "read"
-                        ? "Read"
-                        : latestMessageStatus.status === "queued"
-                          ? "Queued"
-                          : "Steering"}
-                    </Text>
-                  ) : null}
-                </View>
-              </SwipeMessageRow>
+        }}
+      />
+      {jumpShown ? (
+        <View style={styles.jumpWrap} pointerEvents="box-none">
+          <Pressable
+            onPress={jumpToLatest}
+            accessibilityRole="button"
+            accessibilityLabel="Jump to latest message"
+            style={styles.jumpButton}
+          >
+            <View style={styles.jumpDisc}>
+              <IconArrowDown size={18} color={tokens.text} strokeWidth={2} />
             </View>
-          );
-        }
-        if (text.length === 0) return null;
-        const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
-        const body = reply.body;
-        return (
-          <View style={styles.messageRowStart}>
-            <SwipeMessageRow
-              align="start"
-              sentAt={sentAt}
-              onReply={() =>
-                onReply(
-                  replyQuoteForMessage({
-                    message: { id: message.id, role: message.role, text: body },
-                    botName,
-                  }),
-                )
-              }
-            >
-              <LongPressSurface
-                onLongPress={() =>
-                  onMessageMenu({
-                    messageId: String(message.id),
-                    name: botName,
-                    text: body,
-                    sentAt,
-                  })
-                }
-                style={[
-                  styles.assistantPress,
-                  markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
-                ]}
-              >
-                <MarkdownBody
-                  text={body}
-                  messageId={String(message.id)}
-                  tone="assistant"
-                  onOpenFile={onOpenFile}
-                  onOpenLink={onOpenLink}
-                />
-                {message.attachments?.map((attachment) =>
-                  isImageAttachment(attachment) ? (
-                    <AttachmentImage
-                      key={attachment.id}
-                      native={native}
-                      chat={chat}
-                      attachment={attachment}
-                    />
-                  ) : (
-                    <View key={attachment.id} style={styles.attachment}>
-                      <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
-                      <Text style={styles.attachmentText} numberOfLines={1}>
-                        {attachment.name}
-                      </Text>
-                    </View>
-                  ),
-                )}
-                {reply.options !== null && reply.state !== null ? (
-                  <ChoiceButtons options={reply.options} state={reply.state} onChoose={onChoose} />
-                ) : null}
-                {contextTurns.has(String(message.id)) ? (
-                  <Text style={styles.contextUsed}>{"Context used ⌄"}</Text>
-                ) : null}
-              </LongPressSurface>
-            </SwipeMessageRow>
-          </View>
-        );
-      }}
-    />
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  listWrap: { flex: 1 },
   list: { flex: 1 },
   content: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16, gap: 10 },
   messageRowEnd: { width: "100%", alignItems: "flex-end" },
@@ -1348,6 +1420,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   pendingBubble: { opacity: 0.82 },
+  pendingState: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 6 },
   userText: { color: tokens.text, fontSize: 15, lineHeight: 21 },
   assistantPress: { alignSelf: "flex-start", maxWidth: "90%", gap: 6 },
   speakerRow: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -1499,4 +1572,16 @@ const styles = StyleSheet.create({
   queuedButtonText: { color: tokens.text, fontSize: 12, fontWeight: "600" },
   loadEarlier: { minHeight: 44, alignItems: "center", justifyContent: "center" },
   loadEarlierText: { color: tokens.textSecondary, fontSize: 13 },
+  jumpWrap: { position: "absolute", left: 0, right: 0, bottom: 8, alignItems: "center" },
+  jumpButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  jumpDisc: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: tokens.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
+  },
 });

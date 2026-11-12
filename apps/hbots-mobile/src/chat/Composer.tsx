@@ -38,6 +38,7 @@ import { useEffect, useRef, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ChatEnvironment } from "./chatEnvironment";
+import { beginSend, hasDraftContent, settle, type ComposerDraft } from "./composerSendModel";
 import { uploadDraftAttachments, type DraftAttachment } from "./outboxNative";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
@@ -114,10 +115,17 @@ export function Composer({
   readonly control?: { current: ComposerControl | null } | undefined;
 }) {
   const key = draftKey(native.environmentId, threadId);
-  const [text, setText] = useState(() => native.client.ports.kv.getItem(key) ?? "");
-  const [attachments, setAttachments] = useState<ReadonlyArray<DraftAttachment>>([]);
-  const [sending, setSending] = useState(false);
-  const [attachOpen, setAttachOpen] = useState(false);
+  const [draft, setDraftState] = useState<ComposerDraft>(() => ({
+    text: native.client.ports.kv.getItem(key) ?? "",
+    attachments: [],
+  }));
+  const draftRef = useRef<ComposerDraft>(draft);
+  const setDraft = (update: ComposerDraft | ((current: ComposerDraft) => ComposerDraft)) => {
+    const next = typeof update === "function" ? update(draftRef.current) : update;
+    draftRef.current = next;
+    setDraftState(next);
+  };
+  const [addOpen, setAddOpen] = useState(false);
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -129,6 +137,8 @@ export function Composer({
   });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const offline = connection.phase !== "connected";
+  const text = draft.text;
+  const attachments = draft.attachments;
 
   useEffect(() => {
     if (saveTimer.current !== null) clearTimeout(saveTimer.current);
@@ -161,21 +171,23 @@ export function Composer({
     };
   }, []);
 
-  const hasContent = text.trim().length > 0 || attachments.length > 0;
+  const hasContent = hasDraftContent(draft);
   const showStop = working && !hasContent;
-  const canSend = hasContent && !sending && !preparing;
+  const canSend = hasContent && !preparing;
 
   const addPicked = (next: ReadonlyArray<DraftAttachment>) => {
-    setAttachments((current) => {
-      const room = MAX_ATTACHMENTS - current.length;
-      const accepted = next.slice(0, Math.max(0, room));
-      const tooBig = accepted.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
-      if (tooBig.length > 0) {
-        setError(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`);
-        return current;
-      }
-      return [...current, ...accepted.filter((attachment) => !tooBig.includes(attachment))];
-    });
+    const current = draftRef.current.attachments;
+    const room = MAX_ATTACHMENTS - current.length;
+    const accepted = next.slice(0, Math.max(0, room));
+    const tooBig = accepted.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
+    if (tooBig.length > 0) {
+      setError(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`);
+      return;
+    }
+    setDraft((draft) => ({
+      ...draft,
+      attachments: [...draft.attachments, ...accepted.filter((item) => !tooBig.includes(item))],
+    }));
   };
 
   /** An image from the keyboard: the share intake's caps and refusals, then a draft attachment. */
@@ -192,17 +204,21 @@ export function Composer({
       setError(result.message);
       return;
     }
-    if (attachments.length + result.drafts.length > MAX_ATTACHMENTS) {
+    if (draftRef.current.attachments.length + result.drafts.length > MAX_ATTACHMENTS) {
       discardShare(intakeId);
       setError(blockedMessage("too-many-items"));
       return;
     }
     for (const draft of result.drafts) intakeHeld.current.set(draft.id, intakeId);
     setError(null);
-    setAttachments((current) => [...current, ...result.drafts]);
+    setDraft((current) => ({
+      ...current,
+      attachments: [...current.attachments, ...result.drafts],
+    }));
   };
 
   const pickPhotos = async () => {
+    setAddOpen(false);
     setPicking(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -238,7 +254,7 @@ export function Composer({
   };
 
   const pickCamera = async () => {
-    setAttachOpen(false);
+    setAddOpen(false);
     setPicking(true);
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -272,7 +288,6 @@ export function Composer({
   };
 
   const pickFiles = async () => {
-    setAttachOpen(false);
     setPicking(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -325,13 +340,6 @@ export function Composer({
     }
   };
 
-  const clearDraft = () => {
-    setText("");
-    setAttachments([]);
-    native.client.ports.kv.removeItem(key);
-    onClearReply();
-  };
-
   const queue = async (
     messageId: string,
     textValue: string,
@@ -377,8 +385,6 @@ export function Composer({
         setError("Couldn't save that message on this device. Your draft is still here.");
         return false;
       }
-      clearDraft();
-      onSent();
       return true;
     } catch (cause) {
       console.warn("outbox queue failed", cause);
@@ -387,7 +393,7 @@ export function Composer({
     }
   };
 
-  const sendingRef = useRef(false);
+  const choiceSendingRef = useRef(false);
 
   const submit = async ({
     textValue,
@@ -402,141 +408,169 @@ export function Composer({
     readonly quote: PersonalReplyQuote | null;
     readonly clearDraftAfter: boolean;
   }): Promise<boolean> => {
-    if (sendingRef.current) return false;
-    sendingRef.current = true;
     const messageId = newOutboxId();
     const createdAt = new Date().toISOString();
-    setSending(true);
+    const { draft: clearedDraft, outgoing } = beginSend(
+      { text: textValue, attachments: snapshot },
+      messageId,
+    );
+    if (clearDraftAfter) {
+      setDraft(clearedDraft);
+      native.client.ports.kv.removeItem(key);
+      onClearReply();
+    }
     setError(null);
     onSendError(null);
-    try {
-      if (snapshot.length > 0) {
-        const stored = await storeBlobs(messageId, snapshot);
-        if (!stored) {
-          setError("Couldn't save those photos on this device. Your draft is still here.");
-          return false;
-        }
+    onPendingChange((pending) => [
+      ...pending,
+      {
+        id: messageId,
+        threadId,
+        text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        createdAt,
+        attachments: snapshot.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+        })),
+        ...(quote !== null ? { replyTo: quote } : {}),
+      },
+    ]);
+    const removePending = () =>
+      onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+    const restoreDraft = () => {
+      if (clearDraftAfter) setDraft(settle(outgoing, { ok: false }, draftRef.current).draft);
+    };
+    if (snapshot.length > 0) {
+      const stored = await storeBlobs(messageId, snapshot);
+      if (!stored) {
+        removePending();
+        restoreDraft();
+        setError("Couldn't save those photos on this device. Your draft is still here.");
+        return false;
       }
-      if (offline || hasOutboxForThread(threadId)) {
-        const queued = await queue(
-          messageId,
-          textValue,
-          createdAt,
-          followUp ?? null,
-          snapshot,
-          quote,
-        );
-        if (!queued) return false;
-        if (clearDraftAfter) setText("");
-        return true;
-      }
-      let uploaded: ReadonlyArray<ChatAttachment> = [];
-      if (snapshot.length > 0) {
-        setPreparing(true);
-        uploaded = (await uploadDraftAttachments(native, chat, snapshot)) ?? [];
-        setPreparing(false);
-        if (uploaded.length !== snapshot.length) {
-          setError("An attachment didn't upload. Remove it or try again.");
-          void deleteOutboxBlobs(messageId);
-          return false;
-        }
-      }
-      const turn = {
-        modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
-        titleSeed: titleSeedFor(textValue, snapshot),
-        runtimeMode: thread.runtimeMode,
-        interactionMode: thread.interactionMode,
-        followUp: followUp ?? null,
-      };
-      const context = withPersonalFollowUp(
-        quote !== null ? personalReplyContext(quote) : null,
-        followUp,
+    }
+    if (offline || hasOutboxForThread(threadId)) {
+      const queued = await queue(
+        messageId,
+        textValue,
+        createdAt,
+        followUp ?? null,
+        snapshot,
+        quote,
       );
-      onPendingChange((pending) => [
-        ...pending,
-        {
-          id: messageId,
-          threadId,
-          text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-          createdAt,
-          attachments: snapshot.map((attachment) => ({
-            id: attachment.id,
-            name: attachment.name,
-          })),
-          ...(quote !== null ? { replyTo: quote } : {}),
-        },
-      ]);
+      if (!queued) {
+        removePending();
+        restoreDraft();
+        return false;
+      }
+      removePending();
+      onSent();
+      return true;
+    }
+    let uploaded: ReadonlyArray<ChatAttachment> = [];
+    if (snapshot.length > 0) {
+      setPreparing(true);
       try {
-        const result = await startTurn({
-          environmentId: native.environmentId,
-          input: {
-            commandId: CommandId.make(outboxCommandId(messageId)),
-            threadId: ThreadId.make(threadId),
-            message: {
-              messageId: MessageId.make(messageId),
-              role: "user",
-              text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-              attachments: uploaded,
-              ...(context !== null ? { context } : {}),
-            },
-            modelSelection: turn.modelSelection,
-            titleSeed: turn.titleSeed,
-            runtimeMode: turn.runtimeMode,
-            interactionMode: turn.interactionMode,
-            ...(followUp !== undefined ? { followUp } : {}),
-            createdAt,
+        uploaded = (await uploadDraftAttachments(native, chat, snapshot)) ?? [];
+      } finally {
+        setPreparing(false);
+      }
+      if (uploaded.length !== snapshot.length) {
+        removePending();
+        restoreDraft();
+        setError("An attachment didn't upload. Remove it or try again.");
+        void deleteOutboxBlobs(messageId);
+        return false;
+      }
+    }
+    const turn = {
+      modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
+      titleSeed: titleSeedFor(textValue, snapshot),
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      followUp: followUp ?? null,
+    };
+    const context = withPersonalFollowUp(
+      quote !== null ? personalReplyContext(quote) : null,
+      followUp,
+    );
+    try {
+      const result = await startTurn({
+        environmentId: native.environmentId,
+        input: {
+          commandId: CommandId.make(outboxCommandId(messageId)),
+          threadId: ThreadId.make(threadId),
+          message: {
+            messageId: MessageId.make(messageId),
+            role: "user",
+            text: textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+            attachments: uploaded,
+            ...(context !== null ? { context } : {}),
           },
-        });
-        onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-        if (result._tag === "Success") {
-          if (clearDraftAfter) clearDraft();
-          void deleteOutboxBlobs(messageId);
-          onSent();
-          return true;
-        }
-        const outcome = classifySendFailure(squashAtomCommandFailure(result));
-        if (outcome.kind === "rejected") {
-          setError(outcome.message);
-          void deleteOutboxBlobs(messageId);
-          return false;
-        }
-        const queued = await queue(
-          messageId,
-          textValue,
+          modelSelection: turn.modelSelection,
+          titleSeed: turn.titleSeed,
+          runtimeMode: turn.runtimeMode,
+          interactionMode: turn.interactionMode,
+          ...(followUp !== undefined ? { followUp } : {}),
           createdAt,
-          followUp ?? null,
-          snapshot,
-          quote,
-        );
-        if (!queued) return false;
-        onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-        if (clearDraftAfter) setText("");
-        return true;
-      } catch {
-        const queued = await queue(
-          messageId,
-          textValue,
-          createdAt,
-          followUp ?? null,
-          snapshot,
-          quote,
-        );
-        if (!queued) return false;
-        onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-        if (clearDraftAfter) setText("");
+        },
+      });
+      if (result._tag === "Success") {
+        removePending();
+        void deleteOutboxBlobs(messageId);
+        onSent();
         return true;
       }
-    } finally {
-      sendingRef.current = false;
-      setSending(false);
+      const outcome = classifySendFailure(squashAtomCommandFailure(result));
+      if (outcome.kind === "rejected") {
+        removePending();
+        restoreDraft();
+        setError(outcome.message);
+        void deleteOutboxBlobs(messageId);
+        return false;
+      }
+      const queued = await queue(
+        messageId,
+        textValue,
+        createdAt,
+        followUp ?? null,
+        snapshot,
+        quote,
+      );
+      if (!queued) {
+        removePending();
+        restoreDraft();
+        return false;
+      }
+      removePending();
+      onSent();
+      return true;
+    } catch {
+      const queued = await queue(
+        messageId,
+        textValue,
+        createdAt,
+        followUp ?? null,
+        snapshot,
+        quote,
+      );
+      if (!queued) {
+        removePending();
+        restoreDraft();
+        return false;
+      }
+      removePending();
+      onSent();
+      return true;
     }
   };
 
   const send = async (followUp?: ThreadTurnFollowUp) => {
-    if (!canSend || sending) return;
+    const current = draftRef.current;
+    if (!hasDraftContent(current) || preparing) return;
     await submit({
-      textValue: text.trim(),
-      snapshot: attachments,
+      textValue: current.text.trim(),
+      snapshot: current.attachments,
       followUp,
       quote: replyTo,
       clearDraftAfter: true,
@@ -544,14 +578,19 @@ export function Composer({
   };
 
   const sendChoice = async (option: string): Promise<boolean> => {
-    if (sending || preparing) return false;
-    return submit({
-      textValue: option,
-      snapshot: [],
-      followUp: undefined,
-      quote: null,
-      clearDraftAfter: false,
-    });
+    if (choiceSendingRef.current || preparing) return false;
+    choiceSendingRef.current = true;
+    try {
+      return await submit({
+        textValue: option,
+        snapshot: [],
+        followUp: undefined,
+        quote: null,
+        clearDraftAfter: false,
+      });
+    } finally {
+      choiceSendingRef.current = false;
+    }
   };
 
   useEffect(() => {
@@ -615,7 +654,10 @@ export function Composer({
               </Pressable>
               <Pressable
                 onPress={() =>
-                  setAttachments((current) => current.filter((item) => item.id !== attachment.id))
+                  setDraft((current) => ({
+                    ...current,
+                    attachments: current.attachments.filter((item) => item.id !== attachment.id),
+                  }))
                 }
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${attachment.name}, ${index + 1} of ${attachmentCount}`}
@@ -629,10 +671,10 @@ export function Composer({
       ) : null}
       <View style={styles.row}>
         <Pressable
-          onPress={() => void pickPhotos()}
-          disabled={picking || sending || preparing}
+          onPress={() => setAddOpen(true)}
+          disabled={picking || preparing}
           accessibilityRole="button"
-          accessibilityLabel="Add photos"
+          accessibilityLabel="Add photo or camera"
           style={styles.roundButton}
         >
           <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
@@ -645,7 +687,7 @@ export function Composer({
           >
             <TextInput
               value={text}
-              onChangeText={setText}
+              onChangeText={(value) => setDraft((current) => ({ ...current, text: value }))}
               placeholder={placeholder}
               placeholderTextColor={tokens.textSecondary}
               accessibilityLabel={placeholder}
@@ -655,10 +697,10 @@ export function Composer({
             />
           </ComposerHost>
           <Pressable
-            onPress={() => setAttachOpen(true)}
-            disabled={picking || sending || preparing}
+            onPress={() => void pickFiles()}
+            disabled={picking || preparing}
             accessibilityRole="button"
-            accessibilityLabel="Attach camera or files"
+            accessibilityLabel="Attach files"
             style={styles.fieldIconButton}
           >
             <IconPaperclip size={19} color={tokens.textSecondary} strokeWidth={1.75} />
@@ -699,14 +741,14 @@ export function Composer({
           Offline. Your draft is saved and sends when the laptop is back.
         </Text>
       ) : null}
-      <SheetShell visible={attachOpen} title="Attach" onClose={() => setAttachOpen(false)}>
+      <SheetShell visible={addOpen} title="Add" onClose={() => setAddOpen(false)}>
         <SheetAction label="Camera" detail="Take a photo" onPress={() => void pickCamera()} />
         <SheetAction
-          label="Files"
-          detail="Documents and anything else"
-          onPress={() => void pickFiles()}
+          label="Photos"
+          detail="From your photo library"
+          onPress={() => void pickPhotos()}
         />
-        <SheetCancel onPress={() => setAttachOpen(false)} />
+        <SheetCancel onPress={() => setAddOpen(false)} />
       </SheetShell>
       <SheetShell
         visible={previewAttachment !== null}

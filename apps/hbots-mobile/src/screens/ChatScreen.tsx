@@ -19,7 +19,7 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -67,6 +67,7 @@ import {
 import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
+import { chipScrollX } from "../chat/chipScroll";
 import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
@@ -86,6 +87,7 @@ import { tokens } from "../shell/tokens";
 import { BotUsageSheet } from "../sheets/BotUsageSheet";
 import { ChatMenuSheet } from "../sheets/ChatMenuSheet";
 import { ChatSettingsSheet } from "../sheets/ChatSettingsSheet";
+import { chatMenuRows } from "../sheets/chatMenuRows";
 import { ContextUsedSheet } from "../sheets/ContextUsedSheet";
 import { RoutinesSheet } from "../sheets/RoutinesSheet";
 import { FilePreviewSheet } from "../sheets/FilePreviewSheet";
@@ -113,7 +115,7 @@ export function ChatScreen({
   onBack,
   onOpenChat,
   onOpenChats,
-  onOpenBot,
+  onEditBot,
   onOpenRoutine,
   onOpenComputer,
 }: {
@@ -124,7 +126,7 @@ export function ChatScreen({
   readonly onBack: () => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
-  readonly onOpenBot: (botId: string) => void;
+  readonly onEditBot: (botId: string) => void;
   readonly onOpenRoutine: (routineId: string) => void;
   readonly onOpenComputer: () => void;
 }) {
@@ -324,6 +326,37 @@ export function ChatScreen({
       }),
     [botId, links, shells, threadId],
   );
+  const chipScrollRef = useRef<ScrollView | null>(null);
+  const chipLayouts = useRef(new Map<string, { x: number; width: number }>());
+  const chipOffset = useRef(0);
+  const chipDidInitialScroll = useRef(false);
+  const [chipViewportWidth, setChipViewportWidth] = useState(0);
+  const [chipContentWidth, setChipContentWidth] = useState(0);
+  const scrollChipIntoView = useCallback(
+    (targetThreadId: string, animated: boolean): boolean => {
+      const layout = chipLayouts.current.get(targetThreadId);
+      if (layout === undefined || chipViewportWidth <= 0 || chipContentWidth <= 0) return false;
+      const x = chipScrollX({
+        chipX: layout.x,
+        chipWidth: layout.width,
+        currentX: chipOffset.current,
+        viewportWidth: chipViewportWidth,
+        contentWidth: chipContentWidth,
+      });
+      chipOffset.current = x;
+      chipScrollRef.current?.scrollTo({ x, animated });
+      return true;
+    },
+    [chipContentWidth, chipViewportWidth],
+  );
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (scrollChipIntoView(threadId, !chipDidInitialScroll.current)) {
+        chipDidInitialScroll.current = true;
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollChipIntoView, threadId]);
   const running = thread?.session?.status === "running" || thread?.session?.status === "starting";
   const hidePreviews = record?.bot != null && hidesBotPreviews(record.bot);
   // The strip shows the open chat even before its link is in the list; the menu does the same.
@@ -353,7 +386,7 @@ export function ChatScreen({
       }),
     [hidePreviews, menuOpen, now, running, sheetLinks, shells, thread, threadId],
   );
-  const menuChatRows = useMemo(() => menuSettings?.groups.flat() ?? [], [menuSettings]);
+  const menuChatGroups = useMemo(() => chatMenuRows(menuSettings?.groups ?? []), [menuSettings]);
   const settings = useMemo(
     () =>
       chatSettingsSheet({
@@ -671,7 +704,7 @@ export function ChatScreen({
           </Pressable>
           {record?.bot != null || cachedBot !== null ? (
             <Pressable
-              onPress={() => onOpenBot(botId)}
+              onPress={() => onEditBot(botId)}
               accessibilityRole="button"
               accessibilityLabel={`Edit ${header.botName}`}
               style={styles.headerIdentity}
@@ -777,15 +810,31 @@ export function ChatScreen({
 
       {!searchOpen && chips.length >= 2 ? (
         <ScrollView
+          ref={chipScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentOffset={{ x: 134, y: 0 }}
+          onScroll={(event) => {
+            chipOffset.current = event.nativeEvent.contentOffset.x;
+          }}
+          scrollEventThrottle={16}
+          onLayout={(event) => setChipViewportWidth(event.nativeEvent.layout.width)}
+          onContentSizeChange={(width) => setChipContentWidth(width)}
           contentContainerStyle={styles.chips}
           style={styles.chipScroll}
         >
           {chips.map((chip) => (
             <Pressable
               key={chip.threadId}
+              onLayout={(event) => {
+                const { x, width } = event.nativeEvent.layout;
+                chipLayouts.current.set(chip.threadId, { x, width });
+                if (!chip.current) return;
+                requestAnimationFrame(() => {
+                  if (scrollChipIntoView(chip.threadId, !chipDidInitialScroll.current)) {
+                    chipDidInitialScroll.current = true;
+                  }
+                });
+              }}
               onPress={() => {
                 if (!chip.current) onOpenChat(botId, chip.threadId);
               }}
@@ -972,13 +1021,12 @@ export function ChatScreen({
         running={running}
         providerWait={providerWait}
         nowMs={now}
-        chatRows={menuChatRows}
-        contextLabel={header.contextBadge}
+        chatGroups={menuChatGroups}
         onClose={() => setMenuOpen(false)}
         onStop={() => void stop()}
         onSwitchModel={() => {
           setMenuOpen(false);
-          onOpenBot(botId);
+          onEditBot(botId);
         }}
         onChatRow={(id) => {
           const target = menuSettings?.target ?? null;
@@ -989,14 +1037,6 @@ export function ChatScreen({
           setMenuOpen(false);
           setSearchOpen(true);
         }}
-        onCall={
-          startCall === null
-            ? null
-            : () => {
-                setMenuOpen(false);
-                startCall();
-              }
-        }
         onAllChats={() => {
           setMenuOpen(false);
           onOpenChats(botId);
@@ -1005,10 +1045,6 @@ export function ChatScreen({
         onTokenUsage={() => {
           setMenuOpen(false);
           setUsageOpen(true);
-        }}
-        onContextUsed={() => {
-          setMenuOpen(false);
-          setContextOpen(true);
         }}
         onRoutines={() => {
           setMenuOpen(false);

@@ -332,7 +332,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                   onBack={() => navigation.goBack()}
                   onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
                   onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
-                  onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+                  onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
                   onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
                   onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
                 />

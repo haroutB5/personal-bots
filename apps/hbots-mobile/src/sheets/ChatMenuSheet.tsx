@@ -8,11 +8,9 @@ import {
   IconChartBar,
   IconClock,
   IconFlag,
-  IconGauge,
   IconMail,
   IconMessages,
   IconPencil,
-  IconPhone,
   IconPin,
   IconPinnedOff,
   IconPlayerStop,
@@ -32,6 +30,7 @@ import type {
 } from "@hbots/personal-client/bots/chatSettingsModel";
 
 import { tokens } from "../shell/tokens";
+import { CHAT_MENU_BOT_ROWS } from "./chatMenuRows";
 import { SheetShell } from "./SheetShell";
 
 type Icon = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
@@ -156,18 +155,15 @@ export function ChatMenuSheet({
   running,
   providerWait,
   nowMs,
-  chatRows,
-  contextLabel,
+  chatGroups,
   onClose,
   onStop,
   onSwitchModel,
   onChatRow,
   onSearch,
-  onCall,
   onAllChats,
   onMute,
   onTokenUsage,
-  onContextUsed,
   onRoutines,
 }: {
   readonly visible: boolean;
@@ -176,20 +172,16 @@ export function ChatMenuSheet({
   readonly running: boolean;
   readonly providerWait: boolean;
   readonly nowMs: number;
-  /** The open chat's settings rows, already in order. */
-  readonly chatRows: ReadonlyArray<ChatSettingsRow>;
-  /** "84k / 200k", or null before the first report. */
-  readonly contextLabel: string | null;
+  /** The open chat's settings groups, destructive rows already last. */
+  readonly chatGroups: ReadonlyArray<ReadonlyArray<ChatSettingsRow>>;
   readonly onClose: () => void;
   readonly onStop: () => void;
   readonly onSwitchModel: () => void;
   readonly onChatRow: (id: ChatSettingsRowId) => void;
   readonly onSearch: () => void;
-  readonly onCall: (() => void) | null;
   readonly onAllChats: () => void;
   readonly onMute: (mute: PersonalBotNotificationMute) => void;
   readonly onTokenUsage: () => void;
-  readonly onContextUsed: () => void;
   readonly onRoutines: () => void;
 }) {
   const { height } = useWindowDimensions();
@@ -255,26 +247,31 @@ export function ChatMenuSheet({
         <Text style={styles.section} maxFontSizeMultiplier={1.3}>
           This chat
         </Text>
-        {chatRows.map((row) => (
-          <Row
-            key={row.id}
-            icon={ROW_ICONS[row.id]}
-            label={row.label}
-            detail={row.detail}
-            danger={row.destructive}
-            disabled={row.disabled}
-            onPress={() => onChatRow(row.id)}
-          />
+        {chatGroups.map((group, index) => (
+          <View
+            key={group.map((row) => row.id).join(":")}
+            style={index === 0 ? null : styles.groupGap}
+          >
+            {group.map((row) => (
+              <Row
+                key={row.id}
+                icon={ROW_ICONS[row.id]}
+                label={row.label}
+                detail={row.detail}
+                danger={row.destructive}
+                disabled={row.disabled}
+                onPress={() => onChatRow(row.id)}
+              />
+            ))}
+          </View>
         ))}
-        <Row icon={IconGauge} label="Context used" detail={contextLabel} onPress={onContextUsed} />
 
         <Text style={styles.section} maxFontSizeMultiplier={1.3}>
           {bot?.name ?? "Bot"}
         </Text>
-        <Row icon={IconChartBar} label="Token usage" onPress={onTokenUsage} />
-        {bot !== null && onCall !== null ? (
-          <Row icon={IconPhone} label={`Call ${bot.name}`} onPress={onCall} />
-        ) : null}
+        {CHAT_MENU_BOT_ROWS.map((row) => (
+          <Row key={row.id} icon={IconChartBar} label={row.label} onPress={onTokenUsage} />
+        ))}
       </ScrollView>
     </SheetShell>
   );
@@ -314,6 +311,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   muteChoiceText: { color: tokens.text, fontSize: 14, fontWeight: "500" },
+  groupGap: { marginTop: 16 },
   section: {
     color: tokens.textTertiary,
     fontSize: 11,
