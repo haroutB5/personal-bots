@@ -6,14 +6,15 @@ import type { KeyValueStore } from "../ports/keyValueStore.ts";
  * Developer view is tab-scoped, so it reads and writes the store the app
  */
 
-export type PersonalTab = "chats" | "tasks" | "computer" | "files";
+export type PersonalTab = "chats" | "work" | "tasks" | "computer" | "files";
 
 export const PERSONAL_TABS: ReadonlyArray<{
   readonly tab: PersonalTab;
   readonly label: string;
-  readonly to: "/bots" | "/tasks" | "/computer" | "/files";
+  readonly to: "/bots" | "/work" | "/tasks" | "/computer" | "/files";
 }> = [
   { tab: "chats", label: "Chats", to: "/bots" },
+  { tab: "work", label: "Work", to: "/work" },
   { tab: "tasks", label: "Tasks", to: "/tasks" },
   { tab: "computer", label: "Computer", to: "/computer" },
   { tab: "files", label: "Files", to: "/files" },
@@ -33,6 +34,7 @@ export function isPersonalPath(pathname: string): boolean {
     path.startsWith("/bots/") ||
     path === "/tasks" ||
     path.startsWith("/tasks/") ||
+    path === "/work" ||
     path === "/computer" ||
     path === "/files"
   );
@@ -46,6 +48,7 @@ export function activeTabFor(pathname: string): PersonalTab | null {
   if (path === "/tasks" || (path.startsWith("/tasks/") && !isRoutineEditorPath(path))) {
     return "tasks";
   }
+  if (path === "/work") return "work";
   if (path === "/computer") return "computer";
   if (path === "/files") return "files";
   return null;

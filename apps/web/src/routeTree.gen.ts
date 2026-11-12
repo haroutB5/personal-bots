@@ -18,6 +18,7 @@ import { Route as PersonalRouteImport } from './routes/_personal'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as PersonalWorkRouteImport } from './routes/_personal.work'
 import { Route as PersonalTasksRouteImport } from './routes/_personal.tasks'
 import { Route as PersonalFilesRouteImport } from './routes/_personal.files'
 import { Route as PersonalComputerRouteImport } from './routes/_personal.computer'
@@ -121,6 +122,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
+} as any)
+const PersonalWorkRoute = PersonalWorkRouteImport.update({
+  id: '/work',
+  path: '/work',
+  getParentRoute: () => PersonalRoute,
 } as any)
 const PersonalTasksRoute = PersonalTasksRouteImport.update({
   id: '/tasks',
@@ -458,6 +464,7 @@ export interface FileRoutesByFullPath {
   '/computer': typeof PersonalComputerRoute
   '/files': typeof PersonalFilesRoute
   '/tasks': typeof PersonalTasksRoute
+  '/work': typeof PersonalWorkRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -527,6 +534,7 @@ export interface FileRoutesByTo {
   '/computer': typeof PersonalComputerRoute
   '/files': typeof PersonalFilesRoute
   '/tasks': typeof PersonalTasksRoute
+  '/work': typeof PersonalWorkRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -598,6 +606,7 @@ export interface FileRoutesById {
   '/_personal/computer': typeof PersonalComputerRoute
   '/_personal/files': typeof PersonalFilesRoute
   '/_personal/tasks': typeof PersonalTasksRoute
+  '/_personal/work': typeof PersonalWorkRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -670,6 +679,7 @@ export interface FileRouteTypes {
     | '/computer'
     | '/files'
     | '/tasks'
+    | '/work'
     | '/projects/$projectKey'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -739,6 +749,7 @@ export interface FileRouteTypes {
     | '/computer'
     | '/files'
     | '/tasks'
+    | '/work'
     | '/projects/$projectKey'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -809,6 +820,7 @@ export interface FileRouteTypes {
     | '/_personal/computer'
     | '/_personal/files'
     | '/_personal/tasks'
+    | '/_personal/work'
     | '/projects/$projectKey'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
@@ -941,6 +953,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectKey'
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_personal/work': {
+      id: '/_personal/work'
+      path: '/work'
+      fullPath: '/work'
+      preLoaderRoute: typeof PersonalWorkRouteImport
+      parentRoute: typeof PersonalRoute
     }
     '/_personal/tasks': {
       id: '/_personal/tasks'
@@ -1456,6 +1475,7 @@ interface PersonalRouteChildren {
   PersonalComputerRoute: typeof PersonalComputerRoute
   PersonalFilesRoute: typeof PersonalFilesRoute
   PersonalTasksRoute: typeof PersonalTasksRoute
+  PersonalWorkRoute: typeof PersonalWorkRoute
   PersonalBotsNewRoute: typeof PersonalBotsNewRoute
   PersonalBotsSettingsRoute: typeof PersonalBotsSettingsRoute
   PersonalBotsTeamRoute: typeof PersonalBotsTeamRoute
@@ -1485,6 +1505,7 @@ const PersonalRouteChildren: PersonalRouteChildren = {
   PersonalComputerRoute: PersonalComputerRoute,
   PersonalFilesRoute: PersonalFilesRoute,
   PersonalTasksRoute: PersonalTasksRoute,
+  PersonalWorkRoute: PersonalWorkRoute,
   PersonalBotsNewRoute: PersonalBotsNewRoute,
   PersonalBotsSettingsRoute: PersonalBotsSettingsRoute,
   PersonalBotsTeamRoute: PersonalBotsTeamRoute,

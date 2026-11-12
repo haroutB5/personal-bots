@@ -354,3 +354,84 @@ export function workInitiatorLabel(initiator: WorkInitiator): string {
   if (initiator.kind === "routine") return `Started by ${initiator.title} · routine`;
   return "Started earlier";
 }
+
+/** The few chat fields the timeline reads, so any client's shell fits. */
+export interface WorkChatShell {
+  readonly id: string;
+  readonly title: string;
+  readonly latestTurn?: {
+    readonly turnId: string;
+    readonly state: string;
+    readonly requestedAt: string;
+    readonly startedAt?: string | null;
+    readonly completedAt?: string | null;
+  } | null;
+  readonly hasPendingApprovals: boolean;
+  readonly hasPendingUserInput: boolean;
+}
+
+/**
+ * Each chat's latest turn as a timeline entry. A chat with no turn, or one
+ * that belongs to no known bot, is left out. Only the latest turn is known,
+ * so earlier turns of the same chat are never drawn.
+ */
+export function workChatTurns(
+  shells: ReadonlyArray<WorkChatShell>,
+  botIdByThread: ReadonlyMap<string, string>,
+): ReadonlyArray<WorkChatTurn> {
+  const turns: WorkChatTurn[] = [];
+  for (const shell of shells) {
+    const turn = shell.latestTurn;
+    const botId = botIdByThread.get(shell.id);
+    if (turn === null || turn === undefined || botId === undefined) continue;
+    const startedMs = Date.parse(turn.startedAt ?? turn.requestedAt);
+    if (Number.isNaN(startedMs)) continue;
+    const running = turn.state === "running";
+    const completedMs =
+      turn.completedAt === null || turn.completedAt === undefined
+        ? Number.NaN
+        : Date.parse(turn.completedAt);
+    // A turn that is not running but has no end time ended at an unknown
+    // moment: it is left out instead of drawn with an invented length.
+    if (!running && Number.isNaN(completedMs)) continue;
+    turns.push({
+      threadId: shell.id,
+      turnId: turn.turnId,
+      botId,
+      title: shell.title,
+      startedMs,
+      endedMs: running ? null : completedMs,
+      needsYou: shell.hasPendingApprovals || shell.hasPendingUserInput,
+    });
+  }
+  return turns;
+}
+
+/** "under 1 min", "12 min", "1 h 05 min". */
+export function workElapsedLabel(elapsedMs: number): string {
+  const minutes = Math.floor(Math.max(0, elapsedMs) / 60_000);
+  if (minutes < 1) return "under 1 min";
+  if (minutes < 60) return `${minutes} min`;
+  const rest = minutes % 60;
+  return `${Math.floor(minutes / 60)} h ${String(rest).padStart(2, "0")} min`;
+}
+
+/** What a bar says about time: how long it ran, or how long it has waited. */
+export function workBarTimeLabel(bar: WorkBar, nowMs: number): string {
+  if (bar.tone === "queued") return "Queued";
+  if (bar.endMs !== null)
+    return `${workToneLabel(bar.tone)} · ${workElapsedLabel(bar.endMs - bar.startMs)}`;
+  if (bar.waitSinceMs !== null && bar.tone !== "working") {
+    return `${workToneLabel(bar.tone)} · ${workElapsedLabel(nowMs - bar.waitSinceMs)}`;
+  }
+  return `${workToneLabel(bar.tone)} · ${workElapsedLabel(nowMs - bar.startMs)}`;
+}
+
+/** Every bar of a timeline by its id. */
+export function workBarsById(timeline: WorkTimeline): ReadonlyMap<string, WorkBar> {
+  const bars = new Map<string, WorkBar>();
+  for (const group of timeline.groups) {
+    for (const lane of group.lanes) for (const bar of lane.bars) bars.set(bar.id, bar);
+  }
+  return bars;
+}

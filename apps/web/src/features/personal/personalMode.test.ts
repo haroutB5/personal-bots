@@ -42,7 +42,7 @@ describe("sidebarSelectionKey", () => {
 });
 
 describe("isPersonalPath", () => {
-  it("claims the four tabs and everything under /bots and /tasks", () => {
+  it("claims the five tabs and everything under /bots and /tasks", () => {
     for (const path of [
       "/bots",
       "/bots/",
@@ -51,6 +51,7 @@ describe("isPersonalPath", () => {
       "/tasks",
       "/tasks/t1",
       "/tasks/routines/r1",
+      "/work",
       "/files",
     ]) {
       expect(isPersonalPath(path)).toBe(true);
