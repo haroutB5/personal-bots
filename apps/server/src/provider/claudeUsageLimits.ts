@@ -19,6 +19,9 @@ import {
 
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
+/** Epoch seconds a real window can still end at; a millisecond value is not one. */
+const MIN_RESET_EPOCH_SECONDS = 1_000_000_000;
+const MAX_RESET_EPOCH_SECONDS = 10_000_000_000;
 
 const WINDOWS: Readonly<
   Record<string, Pick<ServerProviderUsageWindow, "kind" | "label" | "windowDurationMins">>
@@ -169,6 +172,14 @@ function readUnifiedWindows(info: SDKRateLimitInfo): ReadonlyArray<ServerProvide
       readonly resetsAt?: unknown;
     };
     if (typeof utilization !== "number" || !Number.isFinite(utilization)) continue;
+    if (
+      typeof resetsAt === "number" &&
+      (!Number.isFinite(resetsAt) ||
+        resetsAt < MIN_RESET_EPOCH_SECONDS ||
+        resetsAt > MAX_RESET_EPOCH_SECONDS)
+    ) {
+      continue;
+    }
     windows.push(
       makeWindow(
         id,

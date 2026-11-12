@@ -290,6 +290,30 @@ describe("claudeRateLimitEventToUpdate", () => {
     });
   });
 
+  it("drops a unified window whose resetsAt is milliseconds, not seconds", () => {
+    const at = (resetsAt: number) =>
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          unifiedWindows: { five_hour: { utilization: 0.3, resetsAt } },
+        } as never,
+        noNames,
+      );
+    expect(at(1_794_486_000_000)).toBeUndefined();
+    expect(at(1_794_486_000)).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 30,
+          windowDurationMins: 300,
+          resetsAt: "2026-11-12T12:20:00.000Z",
+        },
+      ],
+    });
+  });
+
   it("falls back to the top-level utilization when unifiedWindows is absent", () => {
     expect(
       claudeRateLimitEventToUpdate(
