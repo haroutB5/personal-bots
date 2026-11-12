@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   consume: vi.fn(),
   popupProps: {} as Record<string, unknown>,
   closeRef: undefined as unknown,
+  scope: true,
 }));
 
 // Never the real RPC: a redeem spends one of the owner's banked resets.
@@ -25,8 +26,8 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 // Upstream gates consume behind AuthProvidersManageScope; the owner holds it.
 vi.mock("~/state/session", () => ({
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => state.scope,
+  readEnvironmentScope: () => state.scope,
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: { consumeResetCredit: { label: "consumeResetCredit" } },
@@ -142,6 +143,7 @@ async function openConfirmLabel(label: string) {
 
 beforeEach(() => {
   state.consume = vi.fn();
+  state.scope = true;
   onRedeemed = vi.fn<() => void>();
 });
 
@@ -151,6 +153,27 @@ afterEach(async () => {
 });
 
 describe("PersonalResetCredits", () => {
+  it("offers the pairing line and no Redeem button without providers:manage", async () => {
+    state.scope = false;
+    await mount(credits(1));
+    expect(text()).toContain("Pair this device again to redeem resets.");
+    expect(text()).not.toContain("Redeem a banked");
+    expect(
+      renderer!.root.findAll(
+        (node) =>
+          node.type === "button" &&
+          typeof node.props["aria-label"] === "string" &&
+          node.props["aria-label"].startsWith("Redeem a banked"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("shows the Redeem button and no pairing line with providers:manage", async () => {
+    await mount(credits(1));
+    expect(redeemButton().props.children).toBe("Redeem");
+    expect(text()).not.toContain("Pair this device again to redeem resets.");
+  });
+
   it("renders nothing with no banked credits", async () => {
     await mount(credits(0));
     expect(renderer!.toJSON()).toBeNull();
@@ -294,7 +317,7 @@ describe("PersonalResetCredits", () => {
     expect(text()).toContain("Reset applied, but the hub cooldown did not clear.");
   });
 
-  it("shows the server's error as text and keeps working", async () => {
+  it("shows a known server error as text and keeps working", async () => {
     // The shape the RPC command settles with: the typed error inside a Cause.
     state.consume.mockResolvedValue(
       AsyncResult.failure(
@@ -302,7 +325,7 @@ describe("PersonalResetCredits", () => {
           new ProviderSetupError({
             instanceId: ProviderInstanceId.make("claudeAgent"),
             operation: "consume-reset-credit",
-            detail: "401 Incorrect API key provided",
+            detail: "Sign in to Claude again to redeem resets.",
           }),
         ),
       ),
@@ -310,17 +333,17 @@ describe("PersonalResetCredits", () => {
     await mount(credits(1));
     await openConfirm();
     await act(async () => confirmButton().props.onClick());
-    expect(text()).toContain("401 Incorrect API key provided");
+    expect(text()).toContain("Sign in to Claude again to redeem resets.");
     expect(redeemButton().props.disabled).toBe(false);
     expect(onRedeemed).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to a plain sentence for an opaque failure", async () => {
+  it("says the outcome is unknown for an opaque failure", async () => {
     state.consume.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
     await mount(credits(1));
     await openConfirm();
     await act(async () => confirmButton().props.onClick());
-    expect(text()).toContain("Could not use the reset credit.");
+    expect(text()).toContain("The reset outcome is unknown. Refresh usage before trying again.");
   });
 
   it("keeps the outcome on screen after the last credit is spent", async () => {
@@ -340,6 +363,38 @@ describe("PersonalResetCredits", () => {
       ),
     );
     expect(text()).toContain("Reset applied. Your windows have cleared.");
+    expect(
+      renderer!.root.findAll((node) => node.props["aria-label"] === "Redeem a banked Claude reset"),
+    ).toHaveLength(0);
+  });
+
+  it("keeps a failure on screen when a refresh drops the last credit", async () => {
+    state.consume.mockResolvedValue(
+      AsyncResult.failure(
+        Cause.fail(
+          new ProviderSetupError({
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            operation: "consume-reset-credit",
+            detail: "Claude is rate limiting resets. Try again soon.",
+          }),
+        ),
+      ),
+    );
+    await mount(credits(1));
+    await openConfirm();
+    await act(async () => confirmButton().props.onClick());
+    await act(async () =>
+      renderer!.update(
+        <PersonalResetCredits
+          environmentId={ENV}
+          title="Claude"
+          resetCredits={credits(0)}
+          now={NOW}
+          onRedeemed={onRedeemed}
+        />,
+      ),
+    );
+    expect(text()).toContain("Claude is rate limiting resets. Try again soon.");
     expect(
       renderer!.root.findAll((node) => node.props["aria-label"] === "Redeem a banked Claude reset"),
     ).toHaveLength(0);

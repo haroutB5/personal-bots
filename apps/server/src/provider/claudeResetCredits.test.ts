@@ -200,15 +200,18 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         Effect.provideService(HttpClient.HttpClient, client),
       );
       expect(credits).toEqual({
-        availableCount: 1,
-        nextCreditId: "grant_a",
-        nextKind: "full",
-        kinds: [{ kind: "full", availableCount: 1 }],
+        _tag: "Read",
+        credits: {
+          availableCount: 1,
+          nextCreditId: "grant_a",
+          nextKind: "full",
+          kinds: [{ kind: "full", availableCount: 1 }],
+        },
       });
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("reads nothing from keychain logins and marks failed requests unreadable", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
       const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
@@ -219,7 +222,10 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );
-      expect([darwin, limited]).toEqual([undefined, undefined]);
+      expect([darwin, limited]).toEqual([
+        { _tag: "Read", credits: undefined },
+        { _tag: "Unreadable" },
+      ]);
     }),
   );
 });

@@ -9,7 +9,6 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import * as Cause from "effect/Cause";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   formatDuration,
@@ -24,6 +23,11 @@ import {
   useHiddenUsageProviders,
   usePersonalEnvironmentId,
 } from "~/features/personal/usePersonalBots";
+import {
+  resetCreditFailureText,
+  resetCreditOffer,
+  RESET_CREDIT_PAIR_AGAIN_TEXT,
+} from "~/features/personal/usagePresentation";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useLayoutEffect, useState } from "react";
 
@@ -243,17 +247,6 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/**
- * What to say when a redeem fails. The server's typed error (for example a
- * `UsageLimitSourceError`) sits inside the command's `Cause`, not on it.
- */
-export function resetCreditFailureText(cause: Cause.Cause<unknown>): string {
-  const error = Cause.hasInterruptsOnly(cause) ? undefined : Cause.squash(cause);
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : "Could not use the reset credit.";
-}
-
 export function useResetCredit(
   environmentId: EnvironmentId,
   input: ProviderConsumeResetCreditInput,
@@ -266,7 +259,10 @@ export function useResetCredit(
 
   const redeem = async () => {
     setConfirming(false);
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) {
+      setStatus(RESET_CREDIT_PAIR_AGAIN_TEXT);
+      return;
+    }
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input });
@@ -347,27 +343,22 @@ export function ResetCredits({
     input,
   );
   if (credits.availableCount === 0 && status === null) return null;
+  const offer = resetCreditOffer(credits.availableCount, canManageProviders);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
       <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
-      {credits.availableCount > 0 ? (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={busy || !canManageProviders}
-          onClick={() => {
-            if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
-          }}
-        >
+      {offer._tag === "Redeem" ? (
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
           {busy ? "Using…" : "Use reset"}
         </Button>
+      ) : offer._tag === "PairAgain" ? (
+        <span className="text-foreground">{offer.notice}</span>
       ) : null}
       {status ? <span className="text-foreground">{status}</span> : null}
       <ResetCreditDialog
         open={confirming}
         onOpenChange={setConfirming}
         onConfirm={() => void redeem()}
-        disabled={!canManageProviders}
       />
     </div>
   );

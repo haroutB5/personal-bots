@@ -8,9 +8,11 @@ import {
   deepSeekSpendText,
   formatBalanceAmount,
   resetCreditConfirm,
+  resetCreditFailureText,
   resetCreditRedeemLabel,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
+  RESET_CREDIT_PAIR_AGAIN_TEXT,
   selectOpenCodeSpendLine,
   selectUsageCards,
   usageAutoProbeDue,
@@ -30,6 +32,7 @@ import {
   type UsageStripCell,
 } from "@hbots/personal-client/usage/usageStrip";
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
+import { useAtomValue } from "@effect/atom-react";
 import { IconRefresh, IconX } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -45,6 +48,7 @@ import {
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "./tokens";
+import { usageRedeemRow } from "./usageRedeem";
 import { sendUsageRefresh } from "./usageRefresh";
 
 const PROVIDER_DOT: Record<UsageProviderKind, string> = {
@@ -65,12 +69,6 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   noCredit: "No reset credit left.",
   alreadyRedeemed: "That credit was already redeemed.",
 };
-
-function failureText(cause: unknown): string {
-  return cause instanceof Error && cause.message.trim().length > 0
-    ? cause.message
-    : "Could not use the reset credit.";
-}
 
 function usageProviderOfDriver(driver: UsageCard["driver"]): UsageProviderKind {
   return driver === "claudeAgent" ? "claude" : driver;
@@ -235,15 +233,24 @@ function RedeemBlock({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const canRedeem = useAtomValue(
+    native.bots.providerConsumeResetCredit.permissionAtom(environmentId),
+  );
   const resetCredits = card.resetCredits;
   if (resetCredits === null) return null;
   if (resetCredits.credits.availableCount === 0 && status === null) return null;
   const expiresIn = resetCreditsExpiresIn(resetCredits.credits, now);
   const confirm = resetCreditConfirm(resetCredits.credits, card.title);
   const redeemLabel = resetCreditRedeemLabel(resetCredits.credits);
+  const redeemRow = usageRedeemRow(resetCredits.credits, canRedeem);
 
   const redeem = async () => {
     if (inFlight.current) return;
+    if (!canRedeem) {
+      setConfirming(false);
+      setStatus(RESET_CREDIT_PAIR_AGAIN_TEXT);
+      return;
+    }
     inFlight.current = true;
     setConfirming(false);
     setBusy(true);
@@ -253,7 +260,7 @@ function RedeemBlock({
       if (result._tag === "Success") {
         setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       } else {
-        setStatus(failureText(result.cause));
+        setStatus(resetCreditFailureText(result.cause));
       }
     } finally {
       inFlight.current = false;
@@ -274,17 +281,22 @@ function RedeemBlock({
               </Text>
             ) : null}
           </View>
-          <Pressable
-            onPress={() => setConfirming(true)}
-            disabled={busy}
-            accessibilityRole="button"
-            accessibilityLabel={confirm.title.replace(/\?$/, "")}
-            accessibilityState={{ disabled: busy, busy }}
-            style={[styles.outlineButton, busy ? styles.disabled : null]}
-          >
-            <Text style={styles.outlineButtonText}>{busy ? "Redeeming…" : redeemLabel}</Text>
-          </Pressable>
+          {redeemRow.showButton ? (
+            <Pressable
+              onPress={() => setConfirming(true)}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel={confirm.title.replace(/\?$/, "")}
+              accessibilityState={{ disabled: busy, busy }}
+              style={[styles.outlineButton, busy ? styles.disabled : null]}
+            >
+              <Text style={styles.outlineButtonText}>{busy ? "Redeeming…" : redeemLabel}</Text>
+            </Pressable>
+          ) : null}
         </View>
+      ) : null}
+      {redeemRow.notice !== null ? (
+        <Text style={styles.redeemStatus}>{redeemRow.notice}</Text>
       ) : null}
       {status !== null ? (
         <Text style={styles.redeemStatus} accessibilityLiveRegion="polite">

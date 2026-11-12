@@ -270,6 +270,9 @@ export function createNativePersonal(
       Layer.succeed(KnownSessionGrants, {
         authenticated: true,
         scopes: grantedScopes(stored.scope),
+        // The token's scopes are the whole grant: never lend a legacy parent
+        // scope an authority the server will refuse.
+        permissions: grantedScopes(stored.scope),
       }),
       Layer.succeed(
         SecureRandom.SecureRandom,

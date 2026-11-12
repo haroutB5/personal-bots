@@ -146,6 +146,32 @@ export function shortProbeFailureReason(message: string | undefined): string | u
 }
 
 /**
+ * A probe can arrive after a newer reading and still describe the window that
+ * a reset replaced. Its window ends earlier while the published one is still
+ * open, so the probe is stale whatever its timestamp says.
+ */
+function probeDescribesOlderWindow(
+  published: ServerProviderUsageLimits,
+  probed: ServerProviderUsageLimits,
+): boolean {
+  const readAtMs = Date.parse(probed.checkedAt);
+  if (!Number.isFinite(readAtMs)) return false;
+  const publishedById = new Map(published.windows.map((window) => [window.id, window] as const));
+  return probed.windows.some((window) => {
+    const publishedWindow = publishedById.get(window.id);
+    if (publishedWindow?.resetsAt === undefined || window.resetsAt === undefined) return false;
+    const publishedEndMs = Date.parse(publishedWindow.resetsAt);
+    const probedEndMs = Date.parse(window.resetsAt);
+    return (
+      Number.isFinite(publishedEndMs) &&
+      Number.isFinite(probedEndMs) &&
+      publishedEndMs > readAtMs &&
+      probedEndMs < publishedEndMs
+    );
+  });
+}
+
+/**
  * A probe that read no usage keeps the last good windows and marks them
  * `refreshFailed`; a read replaces them. `unsupported`, a disabled provider and
  * an uninstalled CLI are authoritative and replace the reading.
@@ -161,12 +187,13 @@ export function resolveUsageLimitsAfterProbe(input: {
   const read =
     probed !== undefined && probed.unavailable === undefined && probed.windows.length > 0;
   if (read) {
-    if (
-      published !== undefined &&
-      published.unavailable === undefined &&
-      Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
-    ) {
-      return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+    if (published !== undefined && published.unavailable === undefined) {
+      const olderRead =
+        Date.parse(published.checkedAt) > Date.parse(probed.checkedAt) ||
+        probeDescribesOlderWindow(published, probed);
+      if (olderRead) {
+        return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+      }
     }
     return probed.fullReadAt === probed.checkedAt
       ? probed

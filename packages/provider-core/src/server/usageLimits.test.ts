@@ -216,6 +216,67 @@ describe("resolveUsageLimitsAfterProbe", () => {
     });
   });
 
+  const afterResetSession = {
+    id: "five_hour",
+    kind: "session" as const,
+    label: "Session",
+    usedPercent: 0,
+    windowDurationMins: 300,
+    resetsAt: "2026-11-12T12:20:00.000Z",
+  };
+  const afterResetWeekly = {
+    id: "seven_day",
+    kind: "weekly" as const,
+    label: "Weekly",
+    usedPercent: 0,
+    windowDurationMins: 10_080,
+    resetsAt: "2026-11-15T11:00:00.000Z",
+  };
+  const afterReset = {
+    checkedAt: "2026-11-12T07:28:16.205Z",
+    windows: [afterResetSession, afterResetWeekly],
+  };
+
+  it("keeps the published windows when a newer read describes an older five-hour window", () => {
+    const staleProbe = {
+      checkedAt: "2026-11-12T07:28:21.374Z",
+      fullReadAt: "2026-11-12T07:28:21.374Z",
+      windows: [
+        { ...afterResetSession, usedPercent: 9, resetsAt: "2026-11-12T10:40:00.000Z" },
+        { ...afterResetWeekly, usedPercent: 100 },
+      ],
+    };
+
+    expect(resolveUsageLimitsAfterProbe({ published: afterReset, probed: staleProbe })).toEqual({
+      ...staleProbe,
+      checkedAt: afterReset.checkedAt,
+      windows: afterReset.windows,
+    });
+  });
+
+  it("replaces the published windows when the probe's window ends at the same time or later", () => {
+    const sameEndProbe = {
+      checkedAt: "2026-11-12T07:28:21.374Z",
+      windows: [
+        { ...afterResetSession, usedPercent: 9 },
+        { ...afterResetWeekly, usedPercent: 100 },
+      ],
+    };
+    expect(resolveUsageLimitsAfterProbe({ published: afterReset, probed: sameEndProbe })).toEqual({
+      ...sameEndProbe,
+      fullReadAt: sameEndProbe.checkedAt,
+    });
+
+    const laterEndProbe = {
+      ...sameEndProbe,
+      windows: [{ ...afterResetSession, resetsAt: "2026-11-12T17:20:00.000Z" }, afterResetWeekly],
+    };
+    expect(resolveUsageLimitsAfterProbe({ published: afterReset, probed: laterEndProbe })).toEqual({
+      ...laterEndProbe,
+      fullReadAt: laterEndProbe.checkedAt,
+    });
+  });
+
   it("lets authoritative answers replace the reading", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(
