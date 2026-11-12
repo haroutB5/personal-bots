@@ -1,0 +1,42 @@
+/**
+ * The two-step swipe delete. The first left swipe arms the row: it shows
+ * Delete with a "Swipe again to delete" hint. A second left swipe past the
+ * same threshold commits; a right swipe or a tap elsewhere disarms it.
+ */
+export type SwipeDelete = { readonly kind: "closed" } | { readonly kind: "armed" };
+
+export type SwipeDeleteGesture =
+  | {
+      readonly kind: "swipe";
+      /** Negative moves left; the distance from where the finger went down. */
+      readonly distance: number;
+      readonly threshold: number;
+    }
+  | { readonly kind: "dismiss" };
+
+export interface SwipeDeleteResult {
+  readonly state: SwipeDelete;
+  readonly effect: "none" | "commit";
+}
+
+export const CLOSED: SwipeDelete = { kind: "closed" };
+export const ARMED: SwipeDelete = { kind: "armed" };
+
+export function nextSwipeDelete(
+  state: SwipeDelete,
+  gesture: SwipeDeleteGesture,
+): SwipeDeleteResult {
+  if (gesture.kind === "dismiss") {
+    return { state: CLOSED, effect: "none" };
+  }
+  if (gesture.distance > 0) {
+    return { state: CLOSED, effect: "none" };
+  }
+  if (gesture.distance > -gesture.threshold) {
+    return { state, effect: "none" };
+  }
+  if (state.kind === "armed") {
+    return { state: CLOSED, effect: "commit" };
+  }
+  return { state: ARMED, effect: "none" };
+}

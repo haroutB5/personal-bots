@@ -1,31 +1,36 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "../shell/tokens";
+import { CLOSED, nextSwipeDelete, type SwipeDelete } from "./swipeDeleteModel";
 
-const ACTION_WIDTH = 96;
+const ACTION_WIDTH = 136;
 
 /**
- * Swipe left to reveal one destructive action. The row follows the finger,
- * snaps open past half the action width, and closes on a tap or a right swipe.
- * A vertical drag still scrolls the list: the pan only claims mostly-horizontal
- * movement.
+ * Swipe left once to arm Delete, again to commit. A tap on Delete always
+ * calls `onDelete`, so each screen keeps its own dialog; `onSwipeConfirm`
+ * runs instead on the second swipe.
  */
 export function SwipeToDeleteRow({
   children,
   label,
   onDelete,
+  onSwipeConfirm,
 }: {
   readonly children: ReactNode;
   readonly label: string;
   readonly onDelete: () => void;
+  readonly onSwipeConfirm?: (() => void) | undefined;
 }) {
   // eslint-disable-next-line react/refs -- the animated value is created once
   const translateX = useRef(new Animated.Value(0)).current;
-  const openRef = useRef(false);
+  const stateRef = useRef<SwipeDelete>(CLOSED);
+  const [armed, setArmed] = useState(false);
 
-  const settle = (open: boolean) => {
-    openRef.current = open;
+  const settle = (next: SwipeDelete) => {
+    stateRef.current = next;
+    const open = next.kind === "armed";
+    setArmed(open);
     Animated.spring(translateX, {
       toValue: open ? -ACTION_WIDTH : 0,
       useNativeDriver: true,
@@ -40,15 +45,23 @@ export function SwipeToDeleteRow({
       onMoveShouldSetPanResponder: (_event, gesture) =>
         Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
       onPanResponderMove: (_event, gesture) => {
-        const base = openRef.current ? -ACTION_WIDTH : 0;
-        const next = Math.max(-ACTION_WIDTH, Math.min(0, base + gesture.dx));
+        const base = stateRef.current.kind === "armed" ? -ACTION_WIDTH : 0;
+        const next = Math.max(-ACTION_WIDTH * 1.25, Math.min(0, base + gesture.dx));
         translateX.setValue(next);
       },
       onPanResponderRelease: (_event, gesture) => {
-        const base = openRef.current ? -ACTION_WIDTH : 0;
-        settle(base + gesture.dx < -ACTION_WIDTH * 0.45);
+        const outcome = nextSwipeDelete(stateRef.current, {
+          kind: "swipe",
+          distance: gesture.dx,
+          threshold: ACTION_WIDTH * 0.4,
+        });
+        settle(outcome.state);
+        if (outcome.effect === "commit") {
+          if (onSwipeConfirm !== undefined) onSwipeConfirm();
+          else onDelete();
+        }
       },
-      onPanResponderTerminate: () => settle(openRef.current),
+      onPanResponderTerminate: () => settle(stateRef.current),
     }),
   ).current;
 
@@ -57,7 +70,7 @@ export function SwipeToDeleteRow({
       <View style={styles.actionLayer}>
         <Pressable
           onPress={() => {
-            settle(false);
+            settle(CLOSED);
             onDelete();
           }}
           accessibilityRole="button"
@@ -67,6 +80,11 @@ export function SwipeToDeleteRow({
           <Text style={styles.deleteText} maxFontSizeMultiplier={1.3}>
             Delete
           </Text>
+          {armed ? (
+            <Text style={styles.deleteHint} maxFontSizeMultiplier={1.3}>
+              Swipe again to delete
+            </Text>
+          ) : null}
         </Pressable>
       </View>
       <Animated.View
@@ -98,6 +116,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: tokens.dangerBg,
+    paddingHorizontal: 8,
   },
   deleteText: { color: tokens.danger, fontSize: 15, fontWeight: "600" },
+  deleteHint: {
+    color: tokens.textSecondary,
+    fontSize: 10,
+    lineHeight: 12,
+    textAlign: "center",
+    marginTop: 2,
+  },
 });

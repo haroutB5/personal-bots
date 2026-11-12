@@ -603,19 +603,23 @@ export function BotsScreen({
     setActionError(failureText(result, "Couldn't change notifications for that bot."));
   };
 
-  const removeBot = async (summary: BotSummary) => {
-    const ok = await native.client.ports.confirm.confirm({
-      title: `Delete ${summary.bot.name}?`,
-      body: "This deletes the bot and every chat you had with it.",
-      confirmLabel: "Delete",
-      destructive: true,
-    });
-    if (!ok) return;
+  const deleteBotNow = async (summary: BotSummary) => {
     const result = await deleteBot({
       environmentId,
       input: { botId: summary.bot.botId },
     });
     setActionError(failureText(result, "Couldn't delete that bot."));
+  };
+
+  const removeBot = async (summary: BotSummary) => {
+    const ok = await native.client.ports.confirm.confirm({
+      title: `Delete ${summary.bot.name}?`,
+      body: `Moves ${summary.bot.name} to Removed bots. Its chats stay.`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    await deleteBotNow(summary);
   };
 
   const snapshotSplit = snapshot === null ? null : partitionPinnedSnapshotRows(snapshot.rows);
@@ -840,6 +844,7 @@ export function BotsScreen({
                     key={summary.bot.botId}
                     label={`Delete ${summary.bot.name}`}
                     onDelete={() => void removeBot(summary)}
+                    onSwipeConfirm={() => void deleteBotNow(summary)}
                   >
                     <BotRow
                       summary={summary}
