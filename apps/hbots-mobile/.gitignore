@@ -37,3 +37,6 @@ modules/hbots-launcher/android/build/
 !modules/hbots-display/android/
 !modules/hbots-display/android/**
 modules/hbots-display/android/build/
+!modules/hbots-pageview/android/
+!modules/hbots-pageview/android/**
+modules/hbots-pageview/android/build/

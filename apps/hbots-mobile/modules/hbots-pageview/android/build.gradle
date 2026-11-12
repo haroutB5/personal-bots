@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.hbotspageview'
+version = '0.0.1'
+
+android {
+  namespace 'expo.modules.hbotspageview'
+  defaultConfig {
+    minSdkVersion 26
+    versionCode 1
+    versionName '0.0.1'
+  }
+}
+
+dependencies {
+  implementation 'com.facebook.react:react-android:0.86.3'
+  testImplementation 'junit:junit:4.13.2'
+}

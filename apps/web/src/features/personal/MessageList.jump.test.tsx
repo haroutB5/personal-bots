@@ -14,6 +14,7 @@ vi.mock("~/components/chat/MessagesTimeline.logic", () => ({
 }));
 vi.mock("~/session-logic", () => ({ selectMessageImageResources: () => [] }));
 vi.mock("./ToolDetails", () => ({ ToolDetails: () => null }));
+vi.mock("~/components/chat/HtmlRenderFrame", () => ({ HtmlRenderFrame: () => null }));
 vi.mock("./AttachmentPreview", () => ({ AttachmentPreview: () => null }));
 
 class Listeners {
@@ -109,6 +110,7 @@ beforeEach(() => {
   reduceMotion = false;
   windowListeners = new Listeners();
   vi.stubGlobal("document", { addEventListener: () => {}, removeEventListener: () => {} });
+  // oxlint-disable-next-line t3code/require-disposable-render -- this file's react-test-renderer harness owns the act environment
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
     matchMedia: (query: string) => ({ matches: reduceMotion && query.includes("reduce") }),

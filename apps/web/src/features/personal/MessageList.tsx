@@ -16,6 +16,7 @@ import { ArrowDown, ChevronRight, FileText, Phone } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { HtmlRenderFrame } from "~/components/chat/HtmlRenderFrame";
 import { ownerVisibleText } from "~/components/chat/composerPromptHistory";
 import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
@@ -1759,6 +1760,18 @@ export function MessageList({
                           cwd={workspaceRoot}
                           threadRef={threadRef}
                           onOpenFile={openFile ?? undefined}
+                        />
+                      </div>
+                    );
+                  case "html-render":
+                    // A page the bot showed. The same sandboxed frame and
+                    // short-lived asset link the developer chat uses.
+                    return (
+                      <div key={item.id} className="w-full min-w-0" data-personal-html-render="">
+                        <HtmlRenderFrame
+                          environmentId={environmentId}
+                          htmlRender={item.htmlRender}
+                          threadRef={threadRef}
                         />
                       </div>
                     );

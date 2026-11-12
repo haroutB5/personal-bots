@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import type { OrchestrationLatestTurn } from "../bots/threadShell.ts";
 import type { OrchestrationThreadActivity } from "./wireTypes.ts";
+import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { classifyTurnFailure, isRefusedTurnInput } from "@t3tools/shared/turnFailure";
 
 import { formatContextWindowTokens } from "./contextWindowTokens.ts";
@@ -562,6 +563,13 @@ export type ConversationItem =
       readonly turn: ServerTurn;
     }
   | { readonly kind: "plan"; readonly id: string; readonly plan: ProposedPlan }
+  /** A page the bot showed, drawn inline where the bot showed it. */
+  | {
+      readonly kind: "html-render";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly htmlRender: HtmlRenderReference;
+    }
   /**
    * A line the server wrote in the chat on its own behalf: paused on a usage
    * limit, or the automatic continue after it (a user-role turn message, never
@@ -802,6 +810,14 @@ export function buildConversationItems(
           ? { kind: "message", id: entry.id, message: entry.message }
           : { kind: "system-turn", id: entry.id, message: entry.message, turn },
       );
+    } else if (entry.kind === "html-render") {
+      lastSpeakerBotId = null;
+      items.push({
+        kind: "html-render",
+        id: entry.id,
+        createdAt: entry.createdAt,
+        htmlRender: entry.htmlRender,
+      });
     } else {
       lastSpeakerBotId = null;
       items.push({ kind: "plan", id: entry.id, plan: entry.proposedPlan });
@@ -852,6 +868,8 @@ function itemTimeMs(item: ConversationItem): number {
       return Date.parse(item.message.createdAt);
     case "plan":
       return Date.parse(item.plan.createdAt);
+    case "html-render":
+      return Date.parse(item.createdAt);
     case "work":
       return Date.parse(item.entries.at(-1)?.createdAt ?? "");
     case "delegation":
