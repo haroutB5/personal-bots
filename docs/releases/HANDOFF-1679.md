@@ -27,6 +27,7 @@ The release changes the schema number and compacts the database, so the runner t
 - Slices R and U (Redeem, usage bar), Verifier round 1 and 2: `/home/harout/Claude/AI/dev-team/qa/hbots-redeem/verify/VERIFY-RU.md` and `VERIFY-RU-2.md`. Finding N1 was fixed by the lead in `79c4537376` with a regression test, red then green, in `/home/harout/Claude/AI/dev-team/qa/hbots-redeem/build-n1/`. It was not re-reviewed by the Verifier.
 - Phone fixes, Verifier verdict FAIL on one criterion, F1, accepted by the lead: `/home/harout/Claude/AI/dev-team/qa/hbots-1679/verify/VERIFY-PHONE.md`.
 - Decisions and accepted items: `/home/harout/Claude/AI/dev-team/qa/hbots-1679/DECISIONS.md`.
+- The first gate run, at `5c3313f8cb`, passed 8 of 9. Parity failed because the generated matrix `scripts/personal/parity/parity.json` had stale line references after the Redeem fix. `1bc6ad15a2` regenerated it (two lines, data only) and all 9 gates passed at that commit. Logs: `/home/harout/Claude/AI/dev-team/qa/hbots-1679/ship/run1-failed/`.
 - The diff touches `apps/server`, `apps/web`, `packages/` and `apps/hbots-mobile`, so the gate is a full run at the release commit. The table is below.
 
 ## Rollback
@@ -45,3 +46,19 @@ Binary only for the server. The previous release is `244b94816e71` (1.67.8). The
 - The APK is built from the release commit on the laptop with the real key and published through `latest.json` after the runner reports `live_verified`.
 - Harout owns the real-phone check for the arm64 APK.
 - The pre-release checks are the test. No QA recheck after live (Harout, 27 Oct).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=1bc6ad15a20a410370844f2a66e8d5493386c261 release=1bc6ad15a20a json-sha256=a4657e4235ac203ff982fa7235db02c9f6135aa02a2ee23ac3fd520a2a93dffe result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
