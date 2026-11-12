@@ -10,4 +10,5 @@
   android:updatePeriodMillis="1800000"
   android:widgetCategory="home_screen"
   android:description="@string/hbots_widget_description"
+  android:previewImage="@drawable/hbots_preview_widget"
   android:initialLayout="@layout/hbots_widget_message"/>

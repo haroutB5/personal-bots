@@ -128,7 +128,7 @@ describe("buildWorkTimeline", () => {
     expect(bar?.waitSinceMs).toBe(msAt("11:20"));
   });
 
-  it("keeps finished work inside the window and drops older work", () => {
+  it("keeps finished work inside the span and drops older work", () => {
     const timeline = build([
       task({ taskId: "old", status: "completed", started: "06:00", completed: "07:00" }),
       task({ taskId: "recent", status: "failed", started: "09:00", completed: "09:30" }),
@@ -191,11 +191,11 @@ describe("buildWorkTimeline", () => {
 });
 
 describe("barGeometry", () => {
-  const window = { startMs: msAt("08:00"), nowMs: NOW };
+  const span = { startMs: msAt("08:00"), nowMs: NOW };
 
   it("places a running bar up to the now line", () => {
     const timeline = build([task({ taskId: "x", started: "10:00" })]);
-    const geometry = barGeometry(timeline.groups[0]!.lanes[0]!.bars[0]!, window, 0.8);
+    const geometry = barGeometry(timeline.groups[0]!.lanes[0]!.bars[0]!, span, 0.8);
     expect(geometry.left).toBeCloseTo(0.4);
     expect(geometry.width).toBeCloseTo(0.4);
     expect(geometry.workedShare).toBe(1);
@@ -206,7 +206,7 @@ describe("barGeometry", () => {
     const timeline = build([
       task({ taskId: "w", status: "waiting_for_user", started: "06:00", updated: "10:00" }),
     ]);
-    const geometry = barGeometry(timeline.groups[0]!.lanes[0]!.bars[0]!, window, 1);
+    const geometry = barGeometry(timeline.groups[0]!.lanes[0]!.bars[0]!, span, 1);
     expect(geometry.left).toBe(0);
     expect(geometry.width).toBe(1);
     expect(geometry.workedShare).toBeCloseTo(0.5);
@@ -215,7 +215,7 @@ describe("barGeometry", () => {
 
   it("puts queued work right of the now line", () => {
     const timeline = build([task({ taskId: "q", status: "queued", started: null })]);
-    const geometry = barGeometry(timeline.groups[0]!.lanes[0]!.bars[0]!, window, 0.8);
+    const geometry = barGeometry(timeline.groups[0]!.lanes[0]!.bars[0]!, span, 0.8);
     expect(geometry.left).toBe(0.8);
     expect(geometry.width).toBeCloseTo(0.2);
   });
