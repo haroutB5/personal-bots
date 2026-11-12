@@ -239,10 +239,15 @@ async function readSelection(
   const diskMilli = await read(selection.diskTempFile);
 
   const collected: HostSensorFan[] = [];
+  let lastChip: string | null = null;
   for (const fan of selection.fans) {
+    const sameChip = fan.chip === lastChip;
+    lastChip = fan.chip;
     const rpm = await read(fan.file);
     if (rpm === null || rpm <= 0) continue;
-    if (collected.some((kept) => kept.rpm === rpm)) continue;
+    // A second chip often repeats the first one's fans; one chip's own fans
+    // may genuinely share an rpm and both belong on screen.
+    if (!sameChip && collected.some((kept) => kept.rpm === rpm)) continue;
     collected.push({ label: fan.label, rpm });
     if (collected.length === 4) break;
   }

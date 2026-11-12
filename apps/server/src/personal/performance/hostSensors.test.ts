@@ -103,7 +103,7 @@ describe("readHostSensors", () => {
     });
   });
 
-  it("dedupes a repeated fan across chips", async () => {
+  it("dedupes across chips but keeps equal rpms inside one chip", async () => {
     const root = fixture({
       "class/hwmon/hwmon0/name": "dell_ddv",
       "class/hwmon/hwmon0/fan1_label": "CPU Fan",
@@ -119,6 +119,7 @@ describe("readHostSensors", () => {
 
     expect((await readHostSensors(root)).fans).toEqual([
       { label: "CPU Fan", rpm: 2812 },
+      { label: "Chassis Fan", rpm: 2812 },
       { label: "Rear Fan", rpm: 1100 },
     ]);
   });
