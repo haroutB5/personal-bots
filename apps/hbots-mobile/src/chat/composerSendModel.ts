@@ -1,3 +1,5 @@
+import type { PersonalReplyQuote } from "@t3tools/contracts";
+import type { ThreadTurnFollowUp } from "@hbots/personal-client/conversation/wireTypes";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 
 import type { DraftAttachment } from "./outboxNative";
@@ -5,6 +7,12 @@ import type { DraftAttachment } from "./outboxNative";
 export interface ComposerDraft {
   readonly text: string;
   readonly attachments: ReadonlyArray<DraftAttachment>;
+}
+
+export interface SendMeta {
+  readonly followUp: ThreadTurnFollowUp | undefined;
+  readonly quote: PersonalReplyQuote | null;
+  readonly clearDraftAfter: boolean;
 }
 
 export interface Outgoing extends ComposerDraft {
@@ -117,6 +125,9 @@ export interface StoredOutgoing {
   readonly text: string;
   readonly createdAt: string;
   readonly attachments: ReadonlyArray<DraftAttachment>;
+  readonly followUp: ThreadTurnFollowUp | null;
+  readonly quote: PersonalReplyQuote | null;
+  readonly clearDraftAfter: boolean;
 }
 
 /** A failed or in-flight send lives beside the draft, one key per chat. */
@@ -131,6 +142,14 @@ export function outgoingFromStored(stored: StoredOutgoing): Outgoing {
     attachments: stored.attachments,
     createdAt: stored.createdAt,
     state: "failed",
+  };
+}
+
+export function sendMetaFromStored(stored: StoredOutgoing): SendMeta {
+  return {
+    followUp: stored.followUp ?? undefined,
+    quote: stored.quote,
+    clearDraftAfter: stored.clearDraftAfter,
   };
 }
 
@@ -150,6 +169,19 @@ function isAttachment(value: unknown): value is DraftAttachment {
   );
 }
 
+function isQuote(value: unknown): value is PersonalReplyQuote {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.messageId === "string" &&
+    typeof value.name === "string" &&
+    typeof value.excerpt === "string"
+  );
+}
+
+function followUpOf(value: unknown): ThreadTurnFollowUp | null {
+  return value === "steer" || value === "queue" ? value : null;
+}
+
 export function parseStoredOutgoing(raw: string | null): ReadonlyArray<StoredOutgoing> {
   if (raw === null) return [];
   try {
@@ -164,28 +196,46 @@ export function parseStoredOutgoing(raw: string | null): ReadonlyArray<StoredOut
       const attachments = Array.isArray(value.attachments)
         ? value.attachments.filter(isAttachment)
         : [];
-      return [{ id, text, createdAt, attachments }];
+      return [
+        {
+          id,
+          text,
+          createdAt,
+          attachments,
+          followUp: followUpOf(value.followUp),
+          quote: isQuote(value.quote) ? value.quote : null,
+          clearDraftAfter: value.clearDraftAfter === true,
+        },
+      ];
     });
   } catch {
     return [];
   }
 }
 
-function storedOf(outgoing: Outgoing): StoredOutgoing {
+function storedOf(outgoing: Outgoing, meta: SendMeta | null): StoredOutgoing {
   return {
     id: outgoing.id,
     text: outgoing.text,
     createdAt: outgoing.createdAt,
     attachments: outgoing.attachments,
+    followUp: meta?.followUp ?? null,
+    quote: meta?.quote ?? null,
+    clearDraftAfter: meta?.clearDraftAfter ?? false,
   };
 }
 
 /** The next storage value with this message in it, replacing an older copy. */
-export function addStoredOutgoing(raw: string | null, outgoing: Outgoing): string {
-  return JSON.stringify([
+export function addStoredOutgoing(
+  raw: string | null,
+  outgoing: Outgoing,
+  meta: SendMeta | null = null,
+): string {
+  const entries = [
     ...parseStoredOutgoing(raw).filter((entry) => entry.id !== outgoing.id),
-    storedOf(outgoing),
-  ]);
+    storedOf(outgoing, meta),
+  ];
+  return JSON.stringify(entries);
 }
 
 /** The next storage value without this message, or null when nothing is left. */

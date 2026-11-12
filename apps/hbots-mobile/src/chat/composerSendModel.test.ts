@@ -16,6 +16,7 @@ import {
   removeStoredOutgoing,
   restoreDraft,
   retrySend,
+  sendMetaFromStored,
   settle,
 } from "./composerSendModel";
 
@@ -185,5 +186,20 @@ describe("retry and persistence", () => {
     expect(pending.state).toBe("failed");
     expect(pending.text).toBe("Hello");
     expect(mergePending([], [pending])).toEqual([pending]);
+  });
+
+  it("keeps a restored send's quote and follow-up so a refused retry restores the text", () => {
+    const quote = { messageId: "message-0", name: "Bot", excerpt: "Earlier" };
+    const meta = { followUp: "queue" as const, quote, clearDraftAfter: true };
+    const failed = settle(outgoingOf(), { ok: false });
+    const stored = parseStoredOutgoing(addStoredOutgoing(null, failed, meta));
+
+    expect(stored).toHaveLength(1);
+    expect(sendMetaFromStored(stored[0]!)).toEqual(meta);
+    const restored = outgoingFromStored(stored[0]!);
+    expect(restoreDraft(settle(restored, { ok: false }), EMPTY_DRAFT)).toEqual({
+      text: "Hello",
+      attachments: [photo],
+    });
   });
 });

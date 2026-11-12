@@ -51,12 +51,14 @@ import {
   removeStoredOutgoing,
   restoreDraft,
   retrySend,
+  sendMetaFromStored,
   setPendingState,
   settle,
   type AckEnd,
   type ComposerDraft,
   type Outgoing,
   type PendingSend,
+  type SendMeta,
 } from "./composerSendModel";
 import { uploadDraftAttachments, type DraftAttachment } from "./outboxNative";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -100,12 +102,6 @@ export interface ComposerControl {
   readonly retry: (id: string) => Promise<boolean>;
   /** Drops a bubble once the transcript shows the message arrived. */
   readonly forget: (id: string) => void;
-}
-
-interface SendMeta {
-  readonly followUp: ThreadTurnFollowUp | undefined;
-  readonly quote: PersonalReplyQuote | null;
-  readonly clearDraftAfter: boolean;
 }
 
 interface ActiveSend {
@@ -193,18 +189,22 @@ export function Composer({
     restored.current = true;
     const stored = parseStoredOutgoing(native.client.ports.kv.getItem(outgoingKey));
     if (stored.length === 0) return;
-    const outgoing = stored.map(outgoingFromStored);
-    for (const item of outgoing) {
-      activeSends.current.set(item.id, {
-        outgoing: item,
-        meta: { followUp: undefined, quote: null, clearDraftAfter: false },
-      });
+    const restoredSends = stored.map((item) => ({
+      outgoing: outgoingFromStored(item),
+      meta: sendMetaFromStored(item),
+    }));
+    for (const item of restoredSends) {
+      activeSends.current.set(item.outgoing.id, item);
     }
     onPendingChange((pending) =>
       mergePending(
         pending,
-        outgoing.map((item) =>
-          pendingSend(item, threadId, item.text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
+        restoredSends.map((item) =>
+          pendingSend(
+            item.outgoing,
+            threadId,
+            item.outgoing.text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          ),
         ),
       ),
     );
@@ -477,8 +477,15 @@ export function Composer({
     writeStored(removeStoredOutgoing(native.client.ports.kv.getItem(outgoingKey), messageId));
   };
 
-  const keepStored = (outgoing: Outgoing): boolean =>
-    writeStored(addStoredOutgoing(native.client.ports.kv.getItem(outgoingKey), outgoing));
+  const keepStored = (outgoing: Outgoing, meta: SendMeta): boolean =>
+    writeStored(addStoredOutgoing(native.client.ports.kv.getItem(outgoingKey), outgoing, meta));
+
+  const restoreIntoComposer = (outgoing: Outgoing) => {
+    const next = restoreDraft(outgoing, draftRef.current);
+    setDraft(next);
+    if (next.text.length === 0) native.client.ports.kv.removeItem(key);
+    else native.client.ports.kv.setItem(key, next.text);
+  };
 
   /** The server has the message: the bubble and its saved copy both go. */
   const landed = (messageId: string) => {
@@ -497,7 +504,7 @@ export function Composer({
     const failed = settle(outgoing, { ok: false });
     activeSends.current.set(outgoing.id, { ...active, outgoing: failed });
     onPendingChange((pending) => setPendingState(pending, outgoing.id, "failed"));
-    if (!keepStored(failed)) {
+    if (!keepStored(failed, active.meta)) {
       setError("Couldn't keep this message on the device. Try again before leaving the chat.");
     }
   };
@@ -612,7 +619,7 @@ export function Composer({
       case "rejected": {
         const failed = settle(outgoing, { ok: false });
         dropActive(failed);
-        if (meta.clearDraftAfter) setDraft(restoreDraft(failed, draftRef.current));
+        if (meta.clearDraftAfter) restoreIntoComposer(failed);
         void deleteOutboxBlobs(messageId);
         setError(end.message);
         return false;
@@ -621,7 +628,7 @@ export function Composer({
         dropActive(outgoing);
         const queued = await queueForLater(outgoing, meta);
         if (!queued) {
-          if (meta.clearDraftAfter) setDraft(restoreDraft(outgoing, draftRef.current));
+          if (meta.clearDraftAfter) restoreIntoComposer(outgoing);
           return false;
         }
         onSent();
@@ -657,6 +664,7 @@ export function Composer({
       messageId,
       createdAt,
     );
+    const meta: SendMeta = { followUp, quote, clearDraftAfter };
     if (clearDraftAfter) {
       setDraft(clearedDraft);
       native.client.ports.kv.removeItem(key);
@@ -664,15 +672,12 @@ export function Composer({
     }
     setError(null);
     onSendError(null);
-    activeSends.current.set(messageId, {
-      outgoing,
-      meta: { followUp, quote, clearDraftAfter },
-    });
+    activeSends.current.set(messageId, { outgoing, meta });
     onPendingChange((pending) => [
       ...pending,
       pendingSend(outgoing, threadId, textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
     ]);
-    if (!keepStored(outgoing)) {
+    if (!keepStored(outgoing, meta)) {
       setError("Couldn't save that message on the device. Don't leave the chat until it sends.");
     }
     if (snapshot.length > 0) {
@@ -690,9 +695,9 @@ export function Composer({
       activeSends.current.delete(messageId);
       onPendingChange((pending) => removePending(pending, messageId));
       dropStored(messageId);
-      const queued = await queueForLater(outgoing, { followUp, quote, clearDraftAfter });
+      const queued = await queueForLater(outgoing, meta);
       if (!queued) {
-        if (clearDraftAfter) setDraft(restoreDraft(outgoing, draftRef.current));
+        if (clearDraftAfter) restoreIntoComposer(outgoing);
         return false;
       }
       onSent();
