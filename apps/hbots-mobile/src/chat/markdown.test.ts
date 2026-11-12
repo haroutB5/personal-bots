@@ -35,6 +35,77 @@ describe("markdownBlocks", () => {
     expect(blocks[0]).toMatchObject({ kind: "paragraph", text: "first line\nsecond line" });
   });
 
+  it("makes a web address written out in plain text a link", () => {
+    expect(
+      markdownBlocks("Mockups are at https://example.com/mockups and http://example.org")[0],
+    ).toMatchObject({
+      kind: "paragraph",
+      spans: [
+        { kind: "text", text: "Mockups are at " },
+        { kind: "link", text: "https://example.com/mockups", href: "https://example.com/mockups" },
+        { kind: "text", text: " and " },
+        { kind: "link", text: "http://example.org", href: "http://example.org" },
+      ],
+    });
+  });
+
+  it("leaves the punctuation after a written-out address out of the link", () => {
+    expect(
+      markdownBlocks(
+        "See https://example.com/a. Or (https://example.com/b), then https://example.com/c_(d)!",
+      )[0],
+    ).toMatchObject({
+      spans: [
+        { kind: "text", text: "See " },
+        { kind: "link", href: "https://example.com/a" },
+        { kind: "text", text: ". Or (" },
+        { kind: "link", href: "https://example.com/b" },
+        { kind: "text", text: "), then " },
+        { kind: "link", href: "https://example.com/c_(d)" },
+        { kind: "text", text: "!" },
+      ],
+    });
+  });
+
+  it("keeps an address with underscores and a query whole", () => {
+    expect(markdownBlocks("https://example.com/foo_bar_baz?a=1&b=2#top")[0]).toMatchObject({
+      spans: [
+        {
+          kind: "link",
+          text: "https://example.com/foo_bar_baz?a=1&b=2#top",
+          href: "https://example.com/foo_bar_baz?a=1&b=2#top",
+        },
+      ],
+    });
+  });
+
+  it("links a written-out address inside bold text and a list item", () => {
+    expect(JSON.stringify(markdownBlocks("**Link: https://example.com/x**"))).toContain(
+      '"href":"https://example.com/x"',
+    );
+    expect(JSON.stringify(markdownBlocks("- open https://example.com/y now"))).toContain(
+      '"href":"https://example.com/y"',
+    );
+  });
+
+  it("links only http and https, never another scheme or a bare word", () => {
+    const text =
+      "ftp://example.com/f mailto:a@b.c javascript:alert(1) file:///etc/x www.example.com xhttps://example.com https://";
+    const serialised = JSON.stringify(markdownBlocks(text));
+    expect(serialised).not.toContain('"kind":"link"');
+  });
+
+  it("does not link an address inside inline code or change a markdown link", () => {
+    const spans = markdownBlocks(
+      "Run `curl https://example.com/api` or [docs](https://example.com/docs)",
+    )[0];
+    const links = JSON.stringify(spans).match(/"kind":"link"/gu) ?? [];
+    expect(links).toHaveLength(1);
+    expect(spans).toMatchObject({
+      spans: [{}, {}, {}, { kind: "link", text: "docs", href: "https://example.com/docs" }],
+    });
+  });
+
   it("turns external markdown links into link spans, keeping the label and target", () => {
     const blocks = markdownBlocks(
       "Read [the plan](https://example.com/plan) and [the docs](http://example.com).",

@@ -290,3 +290,24 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
   ]);
 });
+
+it("links a written-out http or https address in a bot message, and nothing else", () => {
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const links = (markdown: string): ReadonlyArray<string> => {
+    const found: string[] = [];
+    const visit = (node: Root | RootContent): void => {
+      if (node.type === "link") found.push(node.url);
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(processor.runSync(processor.parse(markdown), markdown) as Root);
+    return found;
+  };
+  expect(links("Mockups are at https://example.com/mockups and http://example.org")).toEqual([
+    "https://example.com/mockups",
+    "http://example.org",
+  ]);
+  expect(
+    links("See https://example.com/a. Or (https://example.com/b), then https://example.com/c!"),
+  ).toEqual(["https://example.com/a", "https://example.com/b", "https://example.com/c"]);
+  expect(links("ftp://example.com/f javascript:alert(1) file:///etc/x")).toEqual([]);
+});

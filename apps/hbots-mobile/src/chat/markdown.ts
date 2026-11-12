@@ -188,7 +188,7 @@ function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
   for (const match of source.matchAll(INLINE_TOKEN)) {
     const index = match.index ?? 0;
     if (index > last) {
-      spans.push({ kind: "text", text: unshieldUnderscores(source.slice(last, index)) });
+      pushTextWithAddresses(spans, unshieldUnderscores(source.slice(last, index)));
     }
     const token = match[0];
     const link = LINK.exec(token);
@@ -210,9 +210,59 @@ function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
     last = index + token.length;
   }
   if (last < source.length) {
-    spans.push({ kind: "text", text: unshieldUnderscores(source.slice(last)) });
+    pushTextWithAddresses(spans, unshieldUnderscores(source.slice(last)));
   }
   return spans.length === 0 ? [{ kind: "text", text }] : spans;
+}
+
+/** A web address written out in plain text. Only http and https count. */
+const BARE_ADDRESS = /https?:\/\/[^\s<>]+/giu;
+const ADDRESS_TRAILING_PUNCTUATION = /[.,;:!?'"*_~]$/u;
+const CLOSERS: ReadonlyArray<readonly [string, string]> = [
+  [")", "("],
+  ["]", "["],
+  ["}", "{"],
+];
+
+function count(text: string, character: string): number {
+  return text.split(character).length - 1;
+}
+
+/**
+ * Where a written-out address really ends: sentence punctuation after it is
+ * not part of it, and a closing bracket is only when the address opened one.
+ */
+function trimAddress(candidate: string): string {
+  let address = candidate;
+  for (;;) {
+    if (ADDRESS_TRAILING_PUNCTUATION.test(address)) {
+      address = address.slice(0, -1);
+      continue;
+    }
+    const closer = CLOSERS.find(([close]) => address.endsWith(close));
+    if (closer !== undefined && count(address, closer[0]) > count(address, closer[1])) {
+      address = address.slice(0, -1);
+      continue;
+    }
+    return address;
+  }
+}
+
+/** Adds plain text, turning each written-out http or https address into a link. */
+function pushTextWithAddresses(spans: InlineSpan[], text: string): void {
+  let last = 0;
+  for (const match of text.matchAll(BARE_ADDRESS)) {
+    const index = match.index ?? 0;
+    const previous = index === 0 ? "" : (text[index - 1] ?? "");
+    // "xhttps://" is a word that happens to contain the letters, not an address.
+    if (/[\p{L}\p{N}]/u.test(previous)) continue;
+    const address = trimAddress(match[0]);
+    if (!/^https?:\/\/[^/?#]/iu.test(address)) continue;
+    if (index > last) spans.push({ kind: "text", text: text.slice(last, index) });
+    spans.push({ kind: "link", text: address, href: address });
+    last = index + address.length;
+  }
+  if (last < text.length) spans.push({ kind: "text", text: text.slice(last) });
 }
 
 /**
