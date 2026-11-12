@@ -1,6 +1,7 @@
 package expo.modules.hbotswindow
 
 import android.content.Context
+import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import expo.modules.kotlin.modules.Module
@@ -18,11 +19,13 @@ class HbotsWindowModule : Module() {
 
     /** Sets whether the window holding the view takes touches. */
     Function("setTouchable") { viewTag: Int, touchable: Boolean ->
+      Log.i("HbotsWin", "call tag=$viewTag touchable=$touchable")
       val activity = appContext.currentActivity
       activity?.runOnUiThread {
         val view = appContext.findView<View>(viewTag)
         val decor = view?.rootView
         val params = decor?.layoutParams as? WindowManager.LayoutParams
+        Log.i("HbotsWin", "view=${view != null} decor=${decor?.javaClass?.simpleName} params=${params != null} attached=${decor?.isAttachedToWindow} main=${decor === activity.window.decorView} flags=${params?.flags}")
         if (decor != null && params != null && decor.isAttachedToWindow && decor !== activity.window.decorView) {
           val flags =
             if (touchable) params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
