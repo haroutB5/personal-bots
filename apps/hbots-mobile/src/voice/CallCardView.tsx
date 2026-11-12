@@ -4,10 +4,11 @@ import type {
   VoiceCallSummary,
   VoiceCallTranscriptEntry,
 } from "@hbots/personal-client/conversation/voice/voiceCallApi";
-import { IconChevronDown, IconChevronUp, IconPhone } from "@tabler/icons-react-native";
+import { IconChevronDown, IconPhone } from "@tabler/icons-react-native";
 import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { TurnIcon } from "../motion/TurnIcon";
 import { tokens } from "../shell/tokens";
 import { cardFooterLine, rowKeys, sentLine, transcriptOffset } from "./callViewModel";
 
@@ -142,11 +143,9 @@ export function CallCardView({
             <Text style={styles.toggleText} maxFontSizeMultiplier={1.4}>
               Transcript
             </Text>
-            {open ? (
-              <IconChevronUp size={16} color={tokens.textSecondary} strokeWidth={1.75} />
-            ) : (
+            <TurnIcon turned={open} degrees={180}>
               <IconChevronDown size={16} color={tokens.textSecondary} strokeWidth={1.75} />
-            )}
+            </TurnIcon>
           </Pressable>
           {open ? (
             <View style={styles.transcript}>

@@ -18,6 +18,8 @@ export const motionDuration = {
   swipeSettle: 220,
   callIn: 280,
   replyHighlight: 1600,
+  pulse: 2000,
+  chevron: 150,
 } as const;
 
 export type MotionEase = readonly [number, number, number, number];
@@ -28,6 +30,7 @@ export const motionEase = {
   in: [0.4, 0, 1, 1],
   inOut: [0.4, 0, 0.2, 1],
   cssEaseOut: [0, 0, 0.58, 1],
+  pulse: [0.4, 0, 0.6, 1],
 } as const satisfies Record<string, MotionEase>;
 
 export const motionRise = { translateY: 8 } as const;
@@ -35,3 +38,5 @@ export const motionRise = { translateY: 8 } as const;
 export const motionSheet = { translateY: 32 } as const;
 
 export const motionPress = { chip: 0.96, chipHold: 0.92, chipHeld: 1.04 } as const;
+
+export const motionPulse = { low: 0.5 } as const;

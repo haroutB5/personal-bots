@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import {
   motionDuration,
   motionEase,
+  motionPulse,
   motionRise,
   motionSheet,
 } from "@hbots/personal-client/motion/motionTokens";
@@ -15,6 +16,7 @@ const css = read("./personal.css");
 const sheet = read("../../components/ui/sheet.tsx");
 const swipeBack = read("./useChatSwipeBack.tsx");
 const inAppBanner = read("./InAppNotifications.tsx");
+const tailwindTheme = read("../../../node_modules/tailwindcss/theme.css");
 
 function match(source: string, pattern: RegExp): RegExpMatchArray {
   const found = source.match(pattern);
@@ -41,6 +43,8 @@ describe("motion tokens against the web CSS", () => {
       )[1]!,
       1,
     ],
+    ["pulse", match(tailwindTheme, /--animate-pulse: pulse (\d+)s/)[1]!, 1000],
+    ["chevron", match(tailwindTheme, /--default-transition-duration: (\d+)ms/)[1]!, 1],
     ["rise", match(css, /animation: personal-chat-enter (\d+)ms/)[1]!, 1],
     ["banner", match(css, /animation: personal-in-app-in (\d+)ms/)[1]!, 1],
     ["bannerSnap", match(inAppBanner, /touch-none[^"]*transition-transform duration-(\d+)/)[1]!, 1],
@@ -70,6 +74,30 @@ describe("motion tokens against the web CSS", () => {
     expect(
       bezier(css, /transform 350ms cubic-bezier\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\) 150ms/),
     ).toEqual([...motionEase.in]);
+  });
+
+  it("pulse easing is the Tailwind animate-pulse curve", () => {
+    expect(
+      bezier(
+        tailwindTheme,
+        /--animate-pulse: pulse \d+s cubic-bezier\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\)/,
+      ),
+    ).toEqual([...motionEase.pulse]);
+  });
+
+  it("the pulse dips to the Tailwind keyframe opacity", () => {
+    expect(
+      Number(match(tailwindTheme, /@keyframes pulse \{\s*50% \{\s*opacity: ([\d.]+)/)[1]),
+    ).toBe(motionPulse.low);
+  });
+
+  it("chevron easing is the Tailwind default transition curve", () => {
+    expect(
+      bezier(
+        tailwindTheme,
+        /--default-transition-timing-function: cubic-bezier\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\)/,
+      ),
+    ).toEqual([...motionEase.inOut]);
   });
 
   it("out easing is the team rise curve", () => {
