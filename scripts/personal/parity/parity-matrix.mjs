@@ -215,7 +215,7 @@ const add = (kind, file, title, line, extra = {}) => {
 };
 
 // 1. Screens: every route file. Upstream routes are the T3 developer view.
-const PERSONAL_PATH = /^\/(bots|tasks|computer|files)(\/|$)/;
+const PERSONAL_PATH = /^\/(bots|tasks|work|computer|files)(\/|$)/;
 for (const file of routeFiles) {
   const src = show(REF, file);
   const m = src.match(/createFileRoute\(\s*["']([^"']+)["']\s*\)/) ?? src.match(/createRootRoute/);
@@ -506,7 +506,7 @@ const RULES = [
   ],
   [/^screen routes\/_personal\.computer\.tsx/, { pr: "A16" }],
   [/^screen routes\/_personal\.files\.tsx/, { pr: "A13" }],
-  [/^screen routes\/_personal\.tasks/, { pr: "A12" }],
+  [/^screen routes\/_personal\.(tasks|work)/, { pr: "A12" }],
   [
     /^sheet PersonalSettingsScreen\.tsx Create pairing link/,
     NA(
@@ -565,7 +565,7 @@ const RULES = [
     /Team(Screen|MembersSheet|LeadConfirm|MoveOverlay|ConstellationCard|WorkingNow)|NewTeam(Screen|Form)|RemovedBotsScreen/,
     { pr: "A11" },
   ],
-  [/TasksScreen|TaskDetailScreen|Routine(DetailScreen|Form)/, { pr: "A12" }],
+  [/TasksScreen|TaskDetailScreen|WorkScreen|Routine(DetailScreen|Form)/, { pr: "A12" }],
   [/FilesScreen|FilePreviewSheet|FileTextPreview/, { pr: "A13" }],
   [
     /BotThreadsScreen|BotForm|BotInstructionsField|BotAvatarPicker|BotModel(Pick)?Fields|BotScheduleSection|BotFallbackSection|BotRoutinesSection/,

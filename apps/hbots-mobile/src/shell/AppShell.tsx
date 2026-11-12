@@ -59,6 +59,7 @@ import { RoutineDetailScreen } from "../tasks/RoutineDetailScreen";
 import { RoutineFormScreen } from "../tasks/RoutineFormScreen";
 import { TaskDetailScreen } from "../tasks/TaskDetailScreen";
 import { TasksScreen } from "../tasks/TasksScreen";
+import { WorkScreen } from "../work/WorkScreen";
 import { EmptyText } from "../tasks/TaskUi";
 
 export interface AppShellProps {
@@ -699,6 +700,12 @@ function TabsWithBots({
             onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
             onOpenTeam={() => navigation.navigate("Team")}
             onOpenSettings={() => navigation.navigate("Settings")}
+          />
+        ) : tab === "work" ? (
+          <WorkScreen
+            native={native}
+            onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+            onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
           />
         ) : tab === "tasks" ? (
           <TasksScreen

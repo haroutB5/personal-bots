@@ -24,7 +24,7 @@ describe("tab roots", () => {
   });
 
   it("returns every other tab to Bots", () => {
-    for (const tab of ["tasks", "computer", "files"] as const) {
+    for (const tab of ["work", "tasks", "computer", "files"] as const) {
       expect(back(stack({ kind: "tab", tab }))).toEqual(stack(bots));
     }
   });
