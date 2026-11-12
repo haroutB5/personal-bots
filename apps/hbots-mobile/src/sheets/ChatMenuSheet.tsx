@@ -24,13 +24,10 @@ import type { ComponentType } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { botMuteState, mutedUntilLabel } from "@hbots/personal-client/bots/botMuteModel";
-import type {
-  ChatSettingsRow,
-  ChatSettingsRowId,
-} from "@hbots/personal-client/bots/chatSettingsModel";
+import type { ChatSettingsRowId } from "@hbots/personal-client/bots/chatSettingsModel";
 
 import { tokens } from "../shell/tokens";
-import { CHAT_MENU_BOT_ROWS } from "./chatMenuRows";
+import { type ChatMenuSection } from "./chatMenuRows";
 import { SheetShell } from "./SheetShell";
 
 type Icon = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
@@ -155,7 +152,7 @@ export function ChatMenuSheet({
   running,
   providerWait,
   nowMs,
-  chatGroups,
+  sections,
   onClose,
   onStop,
   onSwitchModel,
@@ -172,8 +169,8 @@ export function ChatMenuSheet({
   readonly running: boolean;
   readonly providerWait: boolean;
   readonly nowMs: number;
-  /** The open chat's settings groups, destructive rows already last. */
-  readonly chatGroups: ReadonlyArray<ReadonlyArray<ChatSettingsRow>>;
+  /** The open chat's menu sections, Delete chat alone in the last one. */
+  readonly sections: ReadonlyArray<ChatMenuSection>;
   readonly onClose: () => void;
   readonly onStop: () => void;
   readonly onSwitchModel: () => void;
@@ -247,30 +244,31 @@ export function ChatMenuSheet({
         <Text style={styles.section} maxFontSizeMultiplier={1.3}>
           This chat
         </Text>
-        {chatGroups.map((group, index) => (
-          <View
-            key={group.map((row) => row.id).join(":")}
-            style={index === 0 ? null : styles.groupGap}
-          >
-            {group.map((row) => (
-              <Row
-                key={row.id}
-                icon={ROW_ICONS[row.id]}
-                label={row.label}
-                detail={row.detail}
-                danger={row.destructive}
-                disabled={row.disabled}
-                onPress={() => onChatRow(row.id)}
-              />
-            ))}
+        {sections.map((section, index) => (
+          <View key={section.key} style={index === 0 ? null : styles.groupGap}>
+            {section.kind === "bot" ? (
+              <>
+                <Text style={styles.section} maxFontSizeMultiplier={1.3}>
+                  {bot?.name ?? "Bot"}
+                </Text>
+                {section.rows.map((row) => (
+                  <Row key={row.id} icon={IconChartBar} label={row.label} onPress={onTokenUsage} />
+                ))}
+              </>
+            ) : (
+              section.rows.map((row) => (
+                <Row
+                  key={row.id}
+                  icon={ROW_ICONS[row.id]}
+                  label={row.label}
+                  detail={row.detail}
+                  danger={row.destructive}
+                  disabled={row.disabled}
+                  onPress={() => onChatRow(row.id)}
+                />
+              ))
+            )}
           </View>
-        ))}
-
-        <Text style={styles.section} maxFontSizeMultiplier={1.3}>
-          {bot?.name ?? "Bot"}
-        </Text>
-        {CHAT_MENU_BOT_ROWS.map((row) => (
-          <Row key={row.id} icon={IconChartBar} label={row.label} onPress={onTokenUsage} />
         ))}
       </ScrollView>
     </SheetShell>

@@ -80,7 +80,7 @@ import { pendingQuestionRequests } from "@hbots/personal-client/conversation/que
 import { useNow } from "../chat/useNow";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
-import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
+import type { PendingSend } from "../chat/composerSendModel";
 import { BotAvatar } from "../shell/BotAvatar";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
@@ -142,7 +142,7 @@ export function ChatScreen({
   const retryThread = useAtomRefresh(chat.states.stateAtom(environmentId, ThreadId.make(threadId)));
   const now = useNow();
   const queued = useOutboxRows(threadId);
-  const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
+  const [pending, setPending] = useState<ReadonlyArray<PendingSend>>([]);
   const [replyTo, setReplyTo] = useState<PersonalReplyQuote | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsThreadId, setSettingsThreadId] = useState<string | null>(null);
@@ -285,6 +285,13 @@ export function ChatScreen({
           }),
     [cards.items, thread],
   );
+  // A send the transcript now shows arrived: drop its failed bubble and saved copy.
+  const arrivedIds = useMemo(() => new Set(cards.items.map((item) => item.id)), [cards.items]);
+  useEffect(() => {
+    const arrived = pending.filter((message) => arrivedIds.has(message.id));
+    if (arrived.length === 0) return;
+    for (const message of arrived) composerControl.current?.forget(message.id);
+  }, [arrivedIds, pending]);
   const contextUsage = useMemo(() => chatContextUsage(view.projection), [view.projection]);
   const questionOpen = useMemo(
     () => view.projection !== null && pendingQuestionRequests(view.projection).length > 0,
@@ -386,7 +393,7 @@ export function ChatScreen({
       }),
     [hidePreviews, menuOpen, now, running, sheetLinks, shells, thread, threadId],
   );
-  const menuChatGroups = useMemo(() => chatMenuRows(menuSettings?.groups ?? []), [menuSettings]);
+  const menuSections = useMemo(() => chatMenuRows(menuSettings?.groups ?? []), [menuSettings]);
   const settings = useMemo(
     () =>
       chatSettingsSheet({
@@ -949,6 +956,7 @@ export function ChatScreen({
                 // otherwise turn the tap into another 20 s of "Sending…".
                 if (!native.readConnection().connected) native.retry();
               }}
+              onRetryPending={(id) => void composerControl.current?.retry(id)}
               onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
               loadEarlierBusy={history.loading}
               listControl={messageListControl}
@@ -973,6 +981,7 @@ export function ChatScreen({
                     onLayout={(event) => setDockHeight(event.nativeEvent.layout.height)}
                     accessibilityRole="button"
                     accessibilityLabel="Computer"
+                    hitSlop={{ top: 4, bottom: 4 }}
                     style={styles.computerDock}
                   >
                     <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
@@ -1021,7 +1030,7 @@ export function ChatScreen({
         running={running}
         providerWait={providerWait}
         nowMs={now}
-        chatGroups={menuChatGroups}
+        sections={menuSections}
         onClose={() => setMenuOpen(false)}
         onStop={() => void stop()}
         onSwitchModel={() => {
@@ -1282,7 +1291,7 @@ const styles = StyleSheet.create({
   },
   stateDot: { width: 7, height: 7, borderRadius: 999 },
   subtitle: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
-  iconButton: { width: 42, height: 44, alignItems: "center", justifyContent: "center" },
+  iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   chipScroll: { height: 48, flexGrow: 0 },
   chips: { paddingHorizontal: 12, gap: 6, alignItems: "center" },
   chip: {
