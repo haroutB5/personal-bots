@@ -3,6 +3,7 @@ import type { PersonalBot } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   Image,
   Pressable,
   ScrollView,
@@ -69,6 +70,14 @@ export function BotPicker({
   const state = picked ?? openPicker(intake, { paired: true, online });
 
   useEffect(() => () => discardShare(shareId), [shareId]);
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (state.step !== "confirm") return false;
+      setState(backToPick(state));
+      return true;
+    });
+    return () => subscription.remove();
+  }, [state]);
   // A refusal never reads the files, so they go now, not when the picker closes.
   const filesNeeded = keepsSharedFiles(state);
   useEffect(() => {
