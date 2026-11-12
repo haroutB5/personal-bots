@@ -18,6 +18,7 @@ import { KnownSessionGrants } from "@t3tools/client-runtime/state/runtime";
 import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
+import { deleteOutboxBlobs } from "@hbots/personal-client/composer/outboxBlobs";
 import { createPersonalAutomationClient } from "@hbots/personal-client/automation/automationClient";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
 import { createPersonalGroupsClient } from "@hbots/personal-client/groups/personalGroups";
@@ -45,6 +46,7 @@ import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import { authorizedFetch } from "../authorizedRequest";
+import { wipeOutgoingThread } from "../chat/composerSendModel";
 import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
 import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
@@ -105,8 +107,8 @@ const offlineState = (
  * snapshot; activity lands with the socket a moment later. Threads settle into
  * `nativeCache.ts`, which is what makes a chat reopen paint at once.
  */
-function makeShellCache() {
-  return createNativeEnvironmentCache();
+function makeShellCache(onThreadRemoved?: (environmentId: string, threadId: string) => void) {
+  return createNativeEnvironmentCache(onThreadRemoved);
 }
 
 function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
@@ -250,7 +252,11 @@ export function createNativePersonal(
           )) as EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"],
   });
 
-  const cache = makeShellCache();
+  const cache = makeShellCache((environmentId, threadId) => {
+    for (const messageId of wipeOutgoingThread(ports.kv, environmentId, threadId)) {
+      void deleteOutboxBlobs(messageId);
+    }
+  });
   const loader = threadSnapshotLoader(stored);
 
   const runtime = Atom.runtime(

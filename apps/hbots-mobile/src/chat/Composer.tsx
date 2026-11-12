@@ -41,12 +41,15 @@ import {
   addStoredOutgoing,
   awaitAck,
   beginSend,
+  forgetOutgoingKey,
   hasDraftContent,
   mergePending,
+  OUTGOING_INDEX_KEY,
   outgoingFromStored,
   outgoingStorageKey,
   parseStoredOutgoing,
   pendingSend,
+  rememberOutgoingKey,
   removePending,
   removeStoredOutgoing,
   restoreDraft,
@@ -465,8 +468,19 @@ export function Composer({
 
   const writeStored = (next: string | null): boolean => {
     try {
-      if (next === null) native.client.ports.kv.removeItem(outgoingKey);
-      else native.client.ports.kv.setItem(outgoingKey, next);
+      const kv = native.client.ports.kv;
+      if (next === null) {
+        kv.removeItem(outgoingKey);
+        const index = forgetOutgoingKey(kv.getItem(OUTGOING_INDEX_KEY), outgoingKey);
+        if (index === null) kv.removeItem(OUTGOING_INDEX_KEY);
+        else kv.setItem(OUTGOING_INDEX_KEY, index);
+      } else {
+        kv.setItem(outgoingKey, next);
+        kv.setItem(
+          OUTGOING_INDEX_KEY,
+          rememberOutgoingKey(kv.getItem(OUTGOING_INDEX_KEY), outgoingKey),
+        );
+      }
       return true;
     } catch {
       return false;

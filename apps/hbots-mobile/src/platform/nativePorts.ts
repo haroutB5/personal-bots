@@ -5,6 +5,7 @@ import { Alert, AppState, InteractionManager } from "react-native";
 
 import { wipeNativeLauncher } from "../launcher/nativeLauncher";
 import { wipeNativeNotifications } from "../notifications/nativeNotify";
+import { OUTGOING_INDEX_KEY, parseOutgoingIndex } from "../chat/composerSendModel";
 import {
   CACHE_DIRECTORY as THREAD_CACHE_DIRECTORY,
   wipeThreadCache,
@@ -81,6 +82,9 @@ const OPEN_DIRECTORY = "hbots-blobs-open";
 
 /** Set by a wipe: a copy that was already running cannot recreate the folder after it. */
 let blobsSealed = false;
+
+/** The live session's store, so a wipe clears its in-memory cache as well as SecureStore. */
+let activeKeyValueStore: KeyValueStore | null = null;
 
 /** Deletes every stored attachment and the folder itself, until a new session starts. */
 export function wipeBlobDirectory(): void {
@@ -161,6 +165,32 @@ async function wipeOutbox(): Promise<void> {
 }
 
 /**
+ * Forgets every saved outgoing send. The index lists the per-chat keys; their
+ * attachment copies live in the blob directory, which the sign-out wipe
+ * deletes as well.
+ */
+async function wipeOutgoing(): Promise<void> {
+  const store = activeKeyValueStore;
+  let indexRaw: string | null = null;
+  try {
+    indexRaw =
+      store?.getItem(OUTGOING_INDEX_KEY) ?? SecureStore.getItem(secureStoreKey(OUTGOING_INDEX_KEY));
+  } catch {
+    return;
+  }
+  const keys = parseOutgoingIndex(indexRaw);
+  await Promise.all(
+    keys.map((key) =>
+      store !== null
+        ? Promise.resolve(store.removeItem(key))
+        : SecureStore.deleteItemAsync(secureStoreKey(key)).catch(() => undefined),
+    ),
+  );
+  if (store !== null) store.removeItem(OUTGOING_INDEX_KEY);
+  else await SecureStore.deleteItemAsync(secureStoreKey(OUTGOING_INDEX_KEY)).catch(() => undefined);
+}
+
+/**
  * Everything this phone kept for a signed-in session: cached chats, queued
  * messages and attachments, the app cache folder (HTTP, image, share intake)
  * and the key. Resolves once the asynchronous deletes finished.
@@ -170,6 +200,9 @@ export async function wipeLocalData(): Promise<void> {
   // does not wait still gets the folders, the key and the queue in memory gone.
   const stored = wipeOutbox().catch((cause: unknown) => {
     console.warn("Could not remove the queued messages on sign-out.", cause);
+  });
+  const outgoing = wipeOutgoing().catch((cause: unknown) => {
+    console.warn("Could not remove the unsent messages on sign-out.", cause);
   });
   for (const wipe of [
     wipeThreadCache,
@@ -186,7 +219,7 @@ export async function wipeLocalData(): Promise<void> {
       console.warn("Could not remove local data on sign-out.", cause);
     }
   }
-  await stored;
+  await Promise.all([stored, outgoing]);
 }
 
 export function createFileBlobStore(): BlobStore<NativeBlob> {
@@ -318,8 +351,10 @@ export function createNativeIds(): Ids {
 
 export function createNativePorts(): PersonalPorts<NativeBlob> {
   purgeLegacyCache();
+  const kv = createSecureKeyValueStore();
+  activeKeyValueStore = kv;
   return {
-    kv: createSecureKeyValueStore(),
+    kv,
     blobs: createFileBlobStore(),
     clock: createNativeClock(),
     lifecycle: createNativeLifecycle(),

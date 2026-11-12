@@ -1,6 +1,7 @@
 import type { PersonalReplyQuote } from "@t3tools/contracts";
 import type { ThreadTurnFollowUp } from "@hbots/personal-client/conversation/wireTypes";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
+import type { KeyValueStore } from "@hbots/personal-client/ports/keyValueStore";
 
 import type { DraftAttachment } from "./outboxNative";
 
@@ -131,8 +132,12 @@ export interface StoredOutgoing {
 }
 
 /** A failed or in-flight send lives beside the draft, one key per chat. */
+export const OUTGOING_STORAGE_PREFIX = "t3code:composer-outgoing:v1:";
+export const OUTGOING_INDEX_KEY = `${OUTGOING_STORAGE_PREFIX}index`;
+export const MAX_STORED_OUTGOING = 20;
+
 export function outgoingStorageKey(environmentId: string, threadId: string): string {
-  return `t3code:composer-outgoing:v1:${environmentId}:${threadId}`;
+  return `${OUTGOING_STORAGE_PREFIX}${environmentId}:${threadId}`;
 }
 
 export function outgoingFromStored(stored: StoredOutgoing): Outgoing {
@@ -151,6 +156,51 @@ export function sendMetaFromStored(stored: StoredOutgoing): SendMeta {
     quote: stored.quote,
     clearDraftAfter: stored.clearDraftAfter,
   };
+}
+
+/** Every saved chat key a wipe must remove. */
+export function parseOutgoingIndex(raw: string | null): ReadonlyArray<string> {
+  if (raw === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return [
+      ...new Set(
+        parsed.filter(
+          (value): value is string =>
+            typeof value === "string" &&
+            value.startsWith(OUTGOING_STORAGE_PREFIX) &&
+            value !== OUTGOING_INDEX_KEY,
+        ),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+export function rememberOutgoingKey(raw: string | null, key: string): string {
+  return JSON.stringify([...new Set([...parseOutgoingIndex(raw), key])]);
+}
+
+export function forgetOutgoingKey(raw: string | null, key: string): string | null {
+  const left = parseOutgoingIndex(raw).filter((entry) => entry !== key);
+  return left.length === 0 ? null : JSON.stringify(left);
+}
+
+/** Removes a deleted thread's saved sends and returns their message ids for blob cleanup. */
+export function wipeOutgoingThread(
+  store: Pick<KeyValueStore, "getItem" | "setItem" | "removeItem">,
+  environmentId: string,
+  threadId: string,
+): ReadonlyArray<string> {
+  const key = outgoingStorageKey(environmentId, threadId);
+  const messageIds = parseStoredOutgoing(store.getItem(key)).map((entry) => entry.id);
+  store.removeItem(key);
+  const index = forgetOutgoingKey(store.getItem(OUTGOING_INDEX_KEY), key);
+  if (index === null) store.removeItem(OUTGOING_INDEX_KEY);
+  else store.setItem(OUTGOING_INDEX_KEY, index);
+  return messageIds;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -235,7 +285,7 @@ export function addStoredOutgoing(
     ...parseStoredOutgoing(raw).filter((entry) => entry.id !== outgoing.id),
     storedOf(outgoing, meta),
   ];
-  return JSON.stringify(entries);
+  return JSON.stringify(entries.slice(-MAX_STORED_OUTGOING));
 }
 
 /** The next storage value without this message, or null when nothing is left. */

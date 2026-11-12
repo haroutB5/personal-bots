@@ -4,20 +4,27 @@ import {
   ACK_CONNECTION_CHECK_MS,
   ACK_TIMEOUT_MS,
   EMPTY_DRAFT,
+  MAX_STORED_OUTGOING,
+  OUTGOING_INDEX_KEY,
   addStoredOutgoing,
   awaitAck,
   beginSend,
+  forgetOutgoingKey,
   hasDraftContent,
   mergePending,
   outgoingFromStored,
+  outgoingStorageKey,
+  parseOutgoingIndex,
   parseStoredOutgoing,
   pendingSend,
+  rememberOutgoingKey,
   removePending,
   removeStoredOutgoing,
   restoreDraft,
   retrySend,
   sendMetaFromStored,
   settle,
+  wipeOutgoingThread,
 } from "./composerSendModel";
 
 const photo: DraftAttachment = {
@@ -201,5 +208,56 @@ describe("retry and persistence", () => {
       text: "Hello",
       attachments: [photo],
     });
+  });
+
+  it("keeps at most 20 failed sends per chat, dropping the oldest", () => {
+    let raw: string | null = null;
+    for (let index = 0; index < MAX_STORED_OUTGOING + 1; index += 1) {
+      const outgoing = beginSend(
+        { text: `Message ${index}`, attachments: [] },
+        `message-${index}`,
+        createdAt,
+      ).outgoing;
+      raw = addStoredOutgoing(raw, outgoing);
+    }
+
+    const stored = parseStoredOutgoing(raw);
+
+    expect(stored).toHaveLength(MAX_STORED_OUTGOING);
+    expect(stored[0]?.id).toBe("message-1");
+    expect(stored.at(-1)?.id).toBe(`message-${MAX_STORED_OUTGOING}`);
+  });
+});
+
+function memoryStore() {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
+  };
+}
+
+describe("the saved sends index", () => {
+  it("lists a chat's key so a sign-out can find it, and forgets it when the entry goes", () => {
+    const key = outgoingStorageKey("environment-phone", "thread-1");
+
+    expect(parseOutgoingIndex(rememberOutgoingKey(null, key))).toEqual([key]);
+    expect(forgetOutgoingKey(JSON.stringify([key]), key)).toBeNull();
+  });
+
+  it("removes a deleted thread's saved sends and returns their message ids", () => {
+    const store = memoryStore();
+    const key = outgoingStorageKey("environment-phone", "thread-1");
+    store.setItem(key, addStoredOutgoing(null, outgoingOf()));
+    store.setItem(OUTGOING_INDEX_KEY, rememberOutgoingKey(null, key));
+
+    expect(wipeOutgoingThread(store, "environment-phone", "thread-1")).toEqual(["message-1"]);
+    expect(store.getItem(key)).toBeNull();
+    expect(parseOutgoingIndex(store.getItem(OUTGOING_INDEX_KEY))).toEqual([]);
   });
 });

@@ -85,7 +85,9 @@ export function writeCachedThread(environmentId: string, snapshot: ThreadSnapsho
  * new run paints from here before the socket catches up, which is what keeps a
  * cached open under the 150 ms budget.
  */
-export function createNativeEnvironmentCache(): Persistence.EnvironmentCacheStore["Service"] {
+export function createNativeEnvironmentCache(
+  onThreadRemoved?: (environmentId: string, threadId: string) => void,
+): Persistence.EnvironmentCacheStore["Service"] {
   sealed = false;
   return Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeed(Option.none<OrchestrationV2ShellSnapshot>()),
@@ -105,6 +107,7 @@ export function createNativeEnvironmentCache(): Persistence.EnvironmentCacheStor
         try: () => {
           const file = threadFile(environmentId, threadId);
           if (file.exists) file.delete();
+          onThreadRemoved?.(environmentId, threadId);
         },
         catch: (cause) => persistenceError("remove-thread", cause),
       }),

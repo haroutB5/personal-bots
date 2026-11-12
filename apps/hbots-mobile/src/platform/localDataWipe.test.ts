@@ -165,6 +165,7 @@ import {
   getOutboxSnapshot,
   OUTBOX_STORAGE_KEY,
 } from "@hbots/personal-client/composer/outbox";
+import { OUTGOING_INDEX_KEY, outgoingStorageKey } from "../chat/composerSendModel";
 import {
   createFileBlobStore,
   createSecureKeyValueStore,
@@ -340,6 +341,17 @@ describe("wipe on sign-out and revoke", () => {
     await wipeLocalData();
 
     expect(fs.secure.has(secureStoreKey(OUTBOX_STORAGE_KEY))).toBe(false);
+  });
+
+  it("removes an unsent message's saved text and its index on sign-out", async () => {
+    const key = outgoingStorageKey("environment-phone", "thread-1");
+    fs.secure.set(secureStoreKey(key), '[{"id":"message-1","text":"private words"}]');
+    fs.secure.set(secureStoreKey(OUTGOING_INDEX_KEY), JSON.stringify([key]));
+
+    await wipeLocalData();
+
+    expect(fs.secure.has(secureStoreKey(key))).toBe(false);
+    expect(fs.secure.has(secureStoreKey(OUTGOING_INDEX_KEY))).toBe(false);
   });
 });
 
