@@ -8,6 +8,7 @@ import type {
   TurnId,
   UserInputAttachmentAnswerPayload,
 } from "@t3tools/contracts";
+import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
@@ -89,4 +90,11 @@ export type TimelineEntry =
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
+    }
+  /** A page the bot showed with its page tool; drawn inline in the chat. */
+  | {
+      id: string;
+      kind: "html-render";
+      createdAt: string;
+      htmlRender: HtmlRenderReference;
     };

@@ -237,9 +237,11 @@ export function GroupConversationScreen({
   const messages = thread?.messages ?? EMPTY_MESSAGES;
   // The group thread runs no provider, so there are no tool steps to show and
   // `groups` is what turns each message into its speaker's row.
-  const items = buildConversationItems(deriveTimelineEntries(messages, EMPTY_PLANS, EMPTY_WORK), {
-    groups: true,
-  });
+  // Activities are passed only so a page shown in the group thread is drawn.
+  const items = buildConversationItems(
+    deriveTimelineEntries(messages, EMPTY_PLANS, EMPTY_WORK, thread?.activities ?? []),
+    { groups: true },
+  );
 
   const live = isGroupRoundLive(round);
   const stateLabel = groupStatusLine(round, nameOf, { archived });

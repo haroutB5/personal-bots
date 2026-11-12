@@ -70,6 +70,7 @@ import {
 } from "./messageListModel";
 import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./messageTouch";
 import { AttachmentImage } from "./AttachmentImage";
+import { PageFrame } from "./PageFrame";
 import { ChoiceButtons } from "./ChoiceButtons";
 import { LiveWorkRow } from "./LiveWorkRow";
 import type { PendingSend } from "./composerSendModel";
@@ -1173,6 +1174,16 @@ export function MessageList({
                   </View>
                 ))}
               </View>
+            );
+          }
+          if (item.kind === "html-render") {
+            return (
+              <PageFrame
+                native={native}
+                chat={chat}
+                htmlRender={item.htmlRender}
+                onOpenLink={onOpenLink}
+              />
             );
           }
           if (item.kind === "plan") {

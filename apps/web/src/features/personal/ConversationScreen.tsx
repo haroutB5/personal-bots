@@ -437,7 +437,7 @@ export function ConversationScreen({
   // out exactly as it always was.
   const { fits: sidePanelFits, open: sidePanelOpen } = useChatSidePanel();
   const baseItems = buildConversationItems(
-    deriveTimelineEntries(messages, proposedPlans, workEntries),
+    deriveTimelineEntries(messages, proposedPlans, workEntries, activities),
     { showToolSteps },
   );
   const delegationItems = placeDelegationCards(baseItems, children);

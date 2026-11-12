@@ -70,6 +70,7 @@ import {
   TextField,
 } from "./BotFormUi";
 import { BotScheduleSection } from "./BotScheduleSection";
+import { InstructionsField } from "./InstructionsField";
 import {
   BOT_GONE_MESSAGE,
   BOT_SAVE_FAILED_MESSAGE,
@@ -378,12 +379,10 @@ function BotForm({
         onChange={(description) => update({ description })}
         placeholder="What this bot is for"
       />
-      <TextField
-        label="Instructions"
+      <InstructionsField
         value={draft.instructions}
         onChange={(instructions) => update({ instructions })}
         placeholder="How the bot should work and respond"
-        multiline
       />
 
       <View style={styles.group}>

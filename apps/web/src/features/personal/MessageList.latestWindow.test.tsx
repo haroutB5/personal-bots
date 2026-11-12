@@ -24,6 +24,7 @@ vi.mock("~/components/chat/MessagesTimeline.logic", () => ({
 }));
 vi.mock("~/session-logic", () => ({ selectMessageImageResources: () => [] }));
 vi.mock("./ToolDetails", () => ({ ToolDetails: () => null }));
+vi.mock("~/components/chat/HtmlRenderFrame", () => ({ HtmlRenderFrame: () => null }));
 vi.mock("./AttachmentPreview", () => ({ AttachmentPreview: () => null }));
 
 class Listeners {
@@ -89,6 +90,7 @@ class FakeScroller {
 
 let renderer: ReactTestRenderer | undefined;
 let scroller: FakeScroller;
+// oxlint-disable-next-line no-unused-vars -- kept by the harness for parity with the jump test
 let resize: () => void;
 let windowListeners: Listeners;
 let documentListeners: Listeners;
@@ -124,6 +126,7 @@ beforeEach(() => {
   resize = () => {};
   windowListeners = new Listeners();
   documentListeners = new Listeners();
+  // oxlint-disable-next-line t3code/require-disposable-render -- this file's react-test-renderer harness owns the act environment
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("document", {
     addEventListener: (type: string, listener: (event: unknown) => void) =>

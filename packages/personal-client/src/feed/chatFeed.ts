@@ -8,6 +8,7 @@ import {
   buildConversationItems,
   type ConversationItem,
 } from "../conversation/conversationModel.ts";
+import { htmlRenderEntriesFromActivities } from "../conversation/timeline.ts";
 import type {
   ChatMessage,
   ProposedPlan,
@@ -107,6 +108,7 @@ export function buildChatFeed(input: ChatFeedInput): ConversationItem[] {
     ...messageEntries(input.messages),
     ...planEntries(input.proposedPlans),
     ...workTimelineEntries(work),
+    ...htmlRenderEntriesFromActivities(input.activities),
   ].toSorted((left, right) => {
     const leftAt = Date.parse(left.createdAt);
     const rightAt = Date.parse(right.createdAt);
