@@ -1,14 +1,14 @@
-import type { EnvironmentId, PersonalProfile } from "@t3tools/contracts";
-import { commandFailureMessage } from "@hbots/personal-client/bots/commandFeedback";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { pendingTidyChanges } from "@hbots/personal-client/memory/presentation";
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import { NameSheet } from "./NameSheet";
 import { ProvidersSettingsCard } from "./ProvidersSettingsCard";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
-import { Notice, Row, Section, SectionNote, SettingsPage, ToggleRow } from "./SettingsUi";
+import { Notice, Row, Section, SettingsPage, ToggleRow } from "./SettingsUi";
 import {
   autoArchiveEnabled,
   autoArchiveFieldValue,
@@ -17,6 +17,7 @@ import {
   parseAutoArchiveDraft,
   settingsVersionValue,
   sharedPreferencesOf,
+  visibleSettingsSections,
 } from "./settingsScreenModel";
 
 export interface SettingsScreenProps {
@@ -46,28 +47,8 @@ export function SettingsScreen(props: SettingsScreenProps) {
     reportFailure: false,
   });
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [savingName, setSavingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState(profile.data?.displayName ?? "");
   const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    /* eslint-disable react/set-state-in-effect, react/exhaustive-effect-dependencies -- the profile arrives after the first render */
-    if (profile.data !== null) setNameDraft(profile.data.displayName);
-    /* eslint-enable react/set-state-in-effect, react/exhaustive-effect-dependencies */
-  }, [profile.data?.displayName]);
-
-  const writeProfile = async (input: Record<string, unknown>) => {
-    const result = await setProfile({ environmentId, input });
-    return commandFailureMessage(result, "Couldn't save the setting. Try again.");
-  };
-
-  const saveName = async () => {
-    const next = nameDraft.trim();
-    if (next.length === 0 || next === profile.data?.displayName) return;
-    setSavingName(true);
-    setProfileError(await writeProfile({ displayName: next }));
-    setSavingName(false);
-  };
+  const [nameOpen, setNameOpen] = useState(false);
 
   const shared = sharedPreferencesOf(profile.data);
   const archiveOn = autoArchiveEnabled(profile.data);
@@ -90,15 +71,216 @@ export function SettingsScreen(props: SettingsScreenProps) {
       setArchiveError(null);
       return;
     }
-    const failure = await writeProfile({ autoArchiveTaskChatsAfterMinutes: parsed.minutes });
-    setArchiveError(failure);
-    if (failure !== null) setArchiveDraft(autoArchiveFieldValue(archiveMinutes));
+    const result = await setProfile({
+      environmentId,
+      input: { autoArchiveTaskChatsAfterMinutes: parsed.minutes },
+    });
+    if (result._tag !== "Success") {
+      setArchiveError("Couldn't save the setting. Try again.");
+      setArchiveDraft(autoArchiveFieldValue(archiveMinutes));
+      return;
+    }
+    setArchiveError(null);
   };
 
   const waiting = pendingTidyChanges(tidyLog.data?.runs ?? []).length;
   const removedCount = removed.data?.bots.length ?? 0;
-  const matches = (text: string) =>
-    query.trim().length === 0 || text.toLowerCase().includes(query.trim().toLowerCase());
+  const hiddenRowIds = new Set<string>([
+    ...(removedCount > 0 ? [] : ["bots.removed"]),
+    ...(archiveOn ? [] : ["chat.archiveAfter"]),
+  ]);
+  const sections = visibleSettingsSections(query, hiddenRowIds);
+
+  const renderRow = (id: string) => {
+    switch (id) {
+      case "you.name":
+        return (
+          <Row
+            key={id}
+            title="Your name"
+            hint="How your bots address you, and your name on the Team screen"
+            value={profile.data?.displayName.trim() || "Not set"}
+            onPress={() => setNameOpen(true)}
+          />
+        );
+      case "you.phone":
+        return (
+          <Row
+            key={id}
+            title="This phone"
+            hint="Update, permissions and this device"
+            value={settingsVersionValue(props.installedVersion)}
+            onPress={props.onOpenThisPhone}
+          />
+        );
+      case "you.notifications":
+        return (
+          <Row
+            key={id}
+            title="Notifications"
+            hint="Alerts on this phone when bots finish or need you"
+            onPress={props.onOpenNotifications}
+          />
+        );
+      case "bots.team":
+        return (
+          <Row
+            key={id}
+            title="Team"
+            hint="See how your bots work together"
+            onPress={props.onOpenTeam}
+          />
+        );
+      case "bots.new":
+        return <Row key={id} title="New bot" onPress={props.onOpenNewBot} />;
+      case "bots.routines":
+        return (
+          <Row
+            key={id}
+            title="Routines"
+            hint="Scheduled work for your bots"
+            onPress={props.onOpenRoutines}
+          />
+        );
+      case "bots.memory":
+        return (
+          <Row
+            key={id}
+            title="Memory"
+            hint="What bots remember, and deleting it"
+            value={waiting > 0 ? `${waiting} waiting` : undefined}
+            onPress={props.onOpenMemory}
+          />
+        );
+      case "bots.removed":
+        return (
+          <Row
+            key={id}
+            title="Removed bots"
+            hint="Bots a team lead removed, and bringing them back"
+            value={String(removedCount)}
+            onPress={props.onOpenRemovedBots}
+          />
+        );
+      case "chat.toolSteps":
+        return (
+          <ToggleRow
+            key={id}
+            title="Show tool steps"
+            hint={
+              'The compact work rows showing what a bot did between replies, like "Ran 3 commands".'
+            }
+            value={shared.showToolSteps}
+            onValueChange={(next) => {
+              void setProfile({ environmentId, input: { showToolSteps: next } }).then((result) =>
+                setProfileError(result._tag === "Success" ? null : "Couldn't save the setting."),
+              );
+            }}
+          />
+        );
+      case "chat.routinesStrip":
+        return (
+          <ToggleRow
+            key={id}
+            title="Show routines in chats"
+            hint="The Routines strip under a chat, listing that bot's scheduled work."
+            value={shared.showRoutinesStrip}
+            onValueChange={(next) => {
+              void setProfile({ environmentId, input: { showRoutinesStrip: next } }).then(
+                (result) =>
+                  setProfileError(result._tag === "Success" ? null : "Couldn't save the setting."),
+              );
+            }}
+          />
+        );
+      case "chat.autoArchive":
+        return (
+          <ToggleRow
+            key={id}
+            title="Auto-archive finished task and routine chats"
+            hint={autoArchiveHint(archiveMinutes)}
+            value={archiveOn}
+            onValueChange={(next) => {
+              void setProfile({ environmentId, input: { autoArchiveTaskChats: next } }).then(
+                (result) =>
+                  setProfileError(result._tag === "Success" ? null : "Couldn't save the setting."),
+              );
+            }}
+          />
+        );
+      case "chat.archiveAfter":
+        return (
+          <View key={id} style={styles.waitRow}>
+            <View style={styles.waitText}>
+              <Text style={styles.rowTitle} maxFontSizeMultiplier={1.4}>
+                Archive after
+              </Text>
+              <Text style={styles.rowHint} maxFontSizeMultiplier={1.4}>
+                Time unused before a finished chat archives. 5m to 720h.
+              </Text>
+            </View>
+            <TextInput
+              value={archiveDraft}
+              onChangeText={setArchiveDraft}
+              onBlur={() => void commitArchiveDraft()}
+              onSubmitEditing={() => void commitArchiveDraft()}
+              accessibilityLabel="Archive after"
+              autoCapitalize="none"
+              style={styles.waitInput}
+            />
+          </View>
+        );
+      case "voice.calls":
+        return <VoiceSettingsSection key={id} native={props.native} />;
+      case "providers.versions":
+        return (
+          <ProvidersSettingsCard
+            key={id}
+            native={props.native}
+            onOpenProvider={props.onOpenProvider}
+            onAddProvider={props.onOpenAddProvider}
+          />
+        );
+      case "privacy.connections":
+        return (
+          <Row
+            key={id}
+            title="Connections"
+            hint="GitHub, Vercel and other accounts bots can use"
+            onPress={props.onOpenConnections}
+          />
+        );
+      case "privacy.passwords":
+        return (
+          <Row
+            key={id}
+            title="Passwords"
+            hint="Saved website logins and bot grants"
+            onPress={props.onOpenPasswords}
+          />
+        );
+      case "privacy.apiKeys":
+        return (
+          <Row
+            key={id}
+            title="API keys"
+            hint="Keys bots can use, like Tavily and SerpApi"
+            onPress={props.onOpenApiKeys}
+          />
+        );
+      case "about.server":
+        return (
+          <Row
+            key={id}
+            title="Server"
+            hint="The computer hosting your bots"
+            value={props.native.httpBaseUrl.replace(/^https?:\/\//, "")}
+          />
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <SettingsPage title="Settings" onBack={props.onBack}>
@@ -110,229 +292,19 @@ export function SettingsScreen(props: SettingsScreenProps) {
         accessibilityLabel="Search settings"
         style={styles.search}
       />
-      {matches("This phone update version app") ? (
-        <Section label="This phone">
-          <Row
-            title="This phone"
-            hint="Update, permissions and this device"
-            value={settingsVersionValue(props.installedVersion)}
-            onPress={props.onOpenThisPhone}
-          />
+      {profileError === null ? null : <Notice tone="danger">{profileError}</Notice>}
+      {archiveError === null ? null : <Notice tone="danger">{archiveError}</Notice>}
+      {sections.map(({ section, rows }) => (
+        <Section key={section.id} label={section.label}>
+          {rows.map((row) => renderRow(row.id))}
         </Section>
+      ))}
+      {sections.length === 0 ? (
+        <Text style={styles.empty}>{`Nothing in settings matches "${query.trim()}".`}</Text>
       ) : null}
-
-      {matches("Your name display name") ? (
-        <Section label="Your name">
-          {profile.data === null ? (
-            <Row
-              title={
-                profile.error === null ? "Loading…" : "Available when your laptop is back online."
-              }
-            />
-          ) : (
-            <View style={styles.nameForm}>
-              <Text style={styles.fieldLabel} maxFontSizeMultiplier={1.4}>
-                Your name
-              </Text>
-              <TextInput
-                value={nameDraft}
-                onChangeText={setNameDraft}
-                placeholder="Your name"
-                placeholderTextColor={tokens.textTertiary}
-                accessibilityLabel="Your name"
-                autoComplete="given-name"
-                maxLength={80}
-                style={styles.input}
-              />
-              <PrimaryInline
-                label="Save"
-                onPress={() => void saveName()}
-                busy={savingName}
-                disabled={nameDraft.trim() === profile.data.displayName}
-              />
-              {profileError === null ? null : <Notice tone="danger">{profileError}</Notice>}
-              <SectionNote>
-                How your bots address you, and your name on the Team screen.
-              </SectionNote>
-            </View>
-          )}
-        </Section>
-      ) : null}
-
-      {matches("Bots team new bot removed") ? (
-        <Section label="Bots">
-          <Row title="Team" hint="See how your bots work together" onPress={props.onOpenTeam} />
-          <Row title="New bot" onPress={props.onOpenNewBot} />
-          {removedCount > 0 ? (
-            <Row
-              title="Removed bots"
-              hint="Bots a team lead removed, and bringing them back"
-              value={String(removedCount)}
-              onPress={props.onOpenRemovedBots}
-            />
-          ) : null}
-        </Section>
-      ) : null}
-
-      {matches("Providers versions update") ? (
-        <Section label="Providers">
-          <ProvidersSettingsCard
-            native={props.native}
-            onOpenProvider={props.onOpenProvider}
-            onAddProvider={props.onOpenAddProvider}
-          />
-        </Section>
-      ) : null}
-
-      {matches("Chat tool steps routines auto-archive") ? (
-        <Section label="Chat">
-          <ToggleRow
-            title="Show tool steps"
-            hint={
-              'The compact work rows showing what a bot did between replies, like "Ran 3 commands".'
-            }
-            value={shared.showToolSteps}
-            onValueChange={(next) => {
-              void writeProfile({ showToolSteps: next }).then(setProfileError);
-            }}
-          />
-          <ToggleRow
-            title="Show routines in chats"
-            hint="The Routines strip under a chat, listing that bot's scheduled work."
-            value={shared.showRoutinesStrip}
-            onValueChange={(next) => {
-              void writeProfile({ showRoutinesStrip: next }).then(setProfileError);
-            }}
-          />
-          <ToggleRow
-            title="Auto-archive finished task and routine chats"
-            hint={autoArchiveHint(archiveMinutes)}
-            value={archiveOn}
-            onValueChange={(next) => {
-              void writeProfile({ autoArchiveTaskChats: next }).then(setProfileError);
-            }}
-          />
-          {archiveOn ? (
-            <View style={styles.waitRow}>
-              <View style={styles.waitText}>
-                <Text style={styles.rowTitle} maxFontSizeMultiplier={1.4}>
-                  Archive after
-                </Text>
-                <Text style={styles.rowHint} maxFontSizeMultiplier={1.4}>
-                  Time unused before a finished chat archives. 5m to 720h.
-                </Text>
-              </View>
-              <TextInput
-                value={archiveDraft}
-                onChangeText={setArchiveDraft}
-                onBlur={() => void commitArchiveDraft()}
-                onSubmitEditing={() => void commitArchiveDraft()}
-                accessibilityLabel="Archive after"
-                autoCapitalize="none"
-                style={styles.waitInput}
-              />
-            </View>
-          ) : null}
-          {archiveError === null ? null : <Notice tone="danger">{archiveError}</Notice>}
-          {profileError === null ? null : <Notice tone="danger">{profileError}</Notice>}
-        </Section>
-      ) : null}
-
-      {matches("Voice calls Gemini key voice languages hang up quiet") ? (
-        <VoiceSettingsSection native={props.native} />
-      ) : null}
-
-      {matches("Privacy Connections Passwords API keys Memory") ? (
-        <Section label="Privacy and security">
-          <Row
-            title="Connections"
-            hint="GitHub, Vercel and other accounts bots can use"
-            onPress={props.onOpenConnections}
-          />
-          <Row
-            title="Passwords"
-            hint="Saved website logins and bot grants"
-            onPress={props.onOpenPasswords}
-          />
-          <Row
-            title="API keys"
-            hint="Keys bots can use, like Tavily and SerpApi"
-            onPress={props.onOpenApiKeys}
-          />
-          <Row
-            title="Memory"
-            hint="What bots remember, and deleting it"
-            value={waiting > 0 ? `${waiting} waiting` : undefined}
-            onPress={props.onOpenMemory}
-            last
-          />
-        </Section>
-      ) : null}
-
-      {matches("Routines memory notifications") ? (
-        <Section label="Routines, memory and notifications">
-          <Row
-            title="Routines"
-            hint="Scheduled work for your bots"
-            onPress={props.onOpenRoutines}
-          />
-          <Row
-            title="Memory"
-            hint="What bots remember, and deleting it"
-            value={waiting > 0 ? `${waiting} waiting for your OK` : undefined}
-            onPress={props.onOpenMemory}
-          />
-          <Row
-            title="Notifications"
-            hint="Alerts on this phone when bots finish or need you"
-            onPress={props.onOpenNotifications}
-            last
-          />
-        </Section>
-      ) : null}
-
-      {matches("About version server") ? (
-        <Section label="About">
-          <Row title="App version" value={settingsVersionValue(props.installedVersion)} />
-          <Row title="Server" value={props.native.httpBaseUrl.replace(/^https?:\/\//, "")} last />
-        </Section>
-      ) : null}
+      <NameSheet native={props.native} visible={nameOpen} onClose={() => setNameOpen(false)} />
     </SettingsPage>
   );
-}
-
-function PrimaryInline({
-  label,
-  onPress,
-  busy,
-  disabled,
-}: {
-  readonly label: string;
-  readonly onPress: () => void;
-  readonly busy: boolean;
-  readonly disabled: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled || busy}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [
-        styles.save,
-        pressed ? styles.pressed : null,
-        disabled || busy ? styles.disabled : null,
-      ]}
-    >
-      <Text style={styles.saveLabel} maxFontSizeMultiplier={1.3}>
-        {busy ? "Saving…" : label}
-      </Text>
-    </Pressable>
-  );
-}
-
-export function profileName(profile: PersonalProfile | null): string {
-  return profile?.displayName ?? "";
 }
 
 const styles = StyleSheet.create({
@@ -347,26 +319,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     marginBottom: 4,
   },
-  nameForm: { padding: 16, gap: 8 },
-  fieldLabel: { color: tokens.textSecondary, fontSize: 13, fontWeight: "500" },
-  input: {
-    minHeight: 44,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: tokens.border,
-    backgroundColor: tokens.bg,
-    color: tokens.text,
-    fontSize: 16,
-    paddingHorizontal: 12,
-  },
-  save: {
-    minHeight: 44,
-    borderRadius: 10,
-    backgroundColor: tokens.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  saveLabel: { color: tokens.primaryText, fontSize: 15, fontWeight: "600" },
   waitRow: {
     minHeight: 64,
     flexDirection: "row",
@@ -392,6 +344,5 @@ const styles = StyleSheet.create({
   },
   rowTitle: { color: tokens.text, fontSize: 16, fontWeight: "500" },
   rowHint: { color: tokens.textSecondary, fontSize: 13, lineHeight: 18 },
-  pressed: { opacity: 0.75 },
-  disabled: { opacity: 0.5 },
+  empty: { color: tokens.textSecondary, fontSize: 14, paddingHorizontal: 4, paddingTop: 8 },
 });
