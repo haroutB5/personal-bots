@@ -48,6 +48,7 @@ import {
 } from "react-native";
 
 import { useSheetMotion } from "../motion/useSheetMotion";
+import { useWindowTouch } from "../motion/useWindowTouch";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "./tokens";
 import { usageRedeemRow } from "./usageRedeem";
@@ -494,10 +495,11 @@ function UsageSheet({
 
   const spendLine = selectOpenCodeSpendLine(tokenUsage.data);
   const motion = useSheetMotion(visible);
+  const attachRoot = useWindowTouch(motion.closing, motion.mounted);
 
   return (
     <Modal visible={motion.mounted} transparent animationType="none" onRequestClose={onClose}>
-      <View style={styles.sheetScrim}>
+      <View ref={attachRoot} style={styles.sheetScrim}>
         <Animated.View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, styles.sheetScrimFill, motion.backdropStyle]}

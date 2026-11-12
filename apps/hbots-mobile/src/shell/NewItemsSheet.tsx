@@ -15,6 +15,7 @@ import {
 } from "react-native";
 
 import { useSheetMotion } from "../motion/useSheetMotion";
+import { useWindowTouch } from "../motion/useWindowTouch";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { BotAvatar } from "./BotAvatar";
 import type { RootStackParamList } from "./AppShell";
@@ -186,10 +187,11 @@ export function NewItemsSheet({
 
   const title = mode === "group" ? "New group" : "New";
   const motion = useSheetMotion(visible);
+  const attachRoot = useWindowTouch(motion.closing, motion.mounted);
 
   return (
     <Modal visible={motion.mounted} transparent animationType="none" onRequestClose={closeOrBack}>
-      <View style={[styles.scrim, { paddingBottom: keyboardHeight }]}>
+      <View ref={attachRoot} style={[styles.scrim, { paddingBottom: keyboardHeight }]}>
         <Animated.View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, styles.scrimFill, motion.backdropStyle]}

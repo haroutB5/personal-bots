@@ -10,13 +10,13 @@ import { createSheetPresence, type SheetPresence } from "./sheetPresence";
 import { useReducedMotion } from "./useReducedMotion";
 
 /**
- * Drives a bottom sheet's enter and exit on the native driver. The dim layer
- * fades over 200 ms. The panel moves 32 px and fades over the same time.
- * `mounted` is what to hand the Modal (or the inline root): it stays true
- * until the close motion is done.
+ * Drives a bottom sheet's enter and exit on the native driver. `mounted` is
+ * what to hand the Modal: it stays true until the close motion is done.
+ * `closing` marks that motion.
  */
 export function useSheetMotion(visible: boolean): {
   readonly mounted: boolean;
+  readonly closing: boolean;
   readonly backdropStyle: { readonly opacity: Animated.Value };
   readonly panelStyle: {
     readonly opacity: Animated.Value;
@@ -57,8 +57,11 @@ export function useSheetMotion(visible: boolean): {
     else presence.hide(reducedRef.current);
   }, [visible, presence]);
 
+  const closing = mounted && !visible;
+
   return {
     mounted,
+    closing,
     backdropStyle: { opacity: progress },
     panelStyle: {
       opacity: progress,

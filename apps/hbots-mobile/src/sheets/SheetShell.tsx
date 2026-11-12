@@ -14,6 +14,7 @@ import { useLayoutEffect, useRef } from "react";
 import type { PropsWithChildren } from "react";
 
 import { useSheetMotion } from "../motion/useSheetMotion";
+import { useWindowTouch } from "../motion/useWindowTouch";
 import { tokens } from "../shell/tokens";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
 
@@ -43,6 +44,7 @@ export function SheetShell({
   const { height } = useWindowDimensions();
   const keyboard = useKeyboardInset(inline && visible);
   const motion = useSheetMotion(visible);
+  const attachRoot = useWindowTouch(motion.closing, motion.mounted);
   const visibleRef = useRef(visible);
   // eslint-disable-next-line react/refs -- the animated value is created once
   const translateY = useRef(new Animated.Value(0)).current;
@@ -75,7 +77,7 @@ export function SheetShell({
   }, [visible, translateY]);
   const content = (
     <>
-      <View style={styles.root}>
+      <View ref={inline ? undefined : attachRoot} style={styles.root}>
         <Animated.View pointerEvents="none" style={[styles.backdrop, motion.backdropStyle]} />
         <Pressable
           accessibilityRole="button"
@@ -119,7 +121,11 @@ export function SheetShell({
   if (inline) {
     if (!motion.mounted) return null;
     return (
-      <View style={styles.inlineRoot} onLayout={keyboard.onLayout}>
+      <View
+        style={styles.inlineRoot}
+        pointerEvents={motion.closing ? "none" : "auto"}
+        onLayout={keyboard.onLayout}
+      >
         {content}
       </View>
     );
