@@ -49,6 +49,7 @@ import {
   type ChatSettingsTarget,
 } from "@hbots/personal-client/bots/chatSettingsModel";
 import { DEFAULT_TOKEN_USAGE_WINDOW } from "@hbots/personal-client/usage/tokenUsagePresentation";
+import { motionForConversationState } from "@hbots/personal-client/bots/avatarMotionState";
 import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
@@ -729,6 +730,7 @@ export function ChatScreen({
                 color={record?.bot?.avatarColor ?? cachedBot?.avatarColor ?? tokens.primary}
                 size={32}
                 label={header.botName}
+                motion={motionForConversationState(header.state, header.thinking)}
               />
               <View style={styles.headerText}>
                 <View style={styles.headerTitleRow}>

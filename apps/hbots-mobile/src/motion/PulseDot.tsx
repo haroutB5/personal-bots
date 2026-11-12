@@ -5,20 +5,12 @@ import {
 } from "@hbots/personal-client/motion/motionTokens";
 import { useIsFocused } from "@react-navigation/native";
 import { useEffect, useState } from "react";
-import { AppState, Animated, Easing } from "react-native";
+import { Animated, Easing } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
 
 import { pulseRuns } from "./pulseGate";
+import { useAppState } from "./useAppState";
 import { useReducedMotion } from "./useReducedMotion";
-
-function useAppState(): string {
-  const [state, setState] = useState(AppState.currentState);
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", setState);
-    return () => subscription.remove();
-  }, []);
-  return state;
-}
 
 /**
  * A dot that breathes between full and half opacity every 2 s while its screen
