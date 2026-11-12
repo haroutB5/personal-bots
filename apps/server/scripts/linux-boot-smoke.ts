@@ -5,29 +5,17 @@
 // @effect-diagnostics globalDate:off - elapsed-time guard for the stream reader.
 // @effect-diagnostics globalRandom:off - picks a free test port.
 /**
- * Live boot smoke for a Linux hbots server (migration milestone 1).
- *
- * Starts the built server against a throwaway data root, mints an admin
- * bearer token with the CLI, and checks what the phone and the Performance
- * tab rely on:
- *
- *   - /version.txt, the web app's index and a 401 on an unauthenticated API;
- *   - the authenticated PC summary (real CPU, RAM, disk);
- *   - the performance stream: statics from this machine and live samples with
- *     CPU, memory and disk, plus whatever sensors the hardware exposes.
- *
- * It never touches %USERPROFILE%\.personal-bots or the live release. The server
- * is stopped by its recorded PID (never by name) at the end, success or not.
- *
+ * Live boot smoke for a Linux hbots server, on a throwaway data root. The
+ * gaming PC env is removed so the smoke never opens an ssh link.
  *   cd apps/server && node scripts/linux-boot-smoke.ts [--keep-root]
  */
-import { spawn, spawnSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeURL from "node:url";
 
-const here = NodePath.dirname(fileURLToPath(import.meta.url));
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const serverDir = NodePath.dirname(here);
 const bin = NodePath.join(serverDir, "dist", "bin.mjs");
 const keepRoot = process.argv.includes("--keep-root");
@@ -47,7 +35,7 @@ const pass = (name: string, detail: string) => {
 if (!NodeFS.existsSync(bin)) fail(`build the server first: ${bin} is missing`);
 
 // 1. An admin token for the throwaway root, before the server owns the DB.
-const issued = spawnSync(
+const issued = NodeChildProcess.spawnSync(
   process.execPath,
   [bin, "auth", "session", "issue", "--base-dir", root, "--ttl", "1h", "--token-only"],
   { encoding: "utf8", timeout: 120_000 },
@@ -61,10 +49,13 @@ pass("auth token minted", `${token.length} characters`);
 // 2. Start the server exactly as a service would.
 const logFile = NodePath.join(root, "server.log");
 const log = NodeFS.openSync(logFile, "a");
-const server = spawn(
+const smokeEnv: NodeJS.ProcessEnv = { ...process.env, T3CODE_NO_BROWSER: "1" };
+delete smokeEnv["T3CODE_PERSONAL_GAMINGPC_HOST"];
+delete smokeEnv["T3CODE_PERSONAL_GAMINGPC_RIG_DIR"];
+const server = NodeChildProcess.spawn(
   process.execPath,
   [bin, "serve", "--base-dir", root, "--port", String(port), "--host", "127.0.0.1", "--no-browser"],
-  { cwd: serverDir, env: { ...process.env, T3CODE_NO_BROWSER: "1" }, stdio: ["ignore", log, log] },
+  { cwd: serverDir, env: smokeEnv, stdio: ["ignore", log, log] },
 );
 
 const base = `http://127.0.0.1:${port}`;
@@ -165,9 +156,7 @@ const main = async (): Promise<void> => {
   const samples: any[] = [];
   const deadline = Date.now() + 30_000;
   const hasRates = () =>
-    samples.some(
-      (sample) => sample.diskActivePct !== null && sample.diskReadMBps !== null,
-    );
+    samples.some((sample) => sample.diskActivePct !== null && sample.diskReadMBps !== null);
   while (
     Date.now() < deadline &&
     (samples.length < 5 || statics === null || typeof statics["pcCpu"] !== "string" || !hasRates())
@@ -209,10 +198,13 @@ const main = async (): Promise<void> => {
   if (samples.length < 2) fail(`only ${samples.length} samples arrived`);
   const latest = samples[samples.length - 1]!;
   if (typeof latest.cpuPct !== "number") fail("no CPU percent in the sample");
-  if (typeof latest.memTotalGB !== "number" || latest.memTotalGB <= 0) fail("no memory in the sample");
+  if (typeof latest.memTotalGB !== "number" || latest.memTotalGB <= 0)
+    fail("no memory in the sample");
   if (!hasRates()) fail("no disk activity in any sample");
   const sensorFields = ["cpuTempC", "ssdC", "fan1Rpm", "powerCpuW", "memFreeGB"] as const;
-  const present = sensorFields.filter((field) => latest[field] !== null && latest[field] !== undefined);
+  const present = sensorFields.filter(
+    (field) => latest[field] !== null && latest[field] !== undefined,
+  );
   if (present.length === 0) fail("no sensor field has a value");
   pass(
     "live samples",
@@ -238,7 +230,9 @@ const main = async (): Promise<void> => {
   stop();
   const errors = logText.split("\n").filter((line) => /ERROR|FATAL/.test(line));
   if (errors.length > 0) {
-    process.stdout.write(`NOTE server log has ${errors.length} ERROR line(s):\n${errors.slice(0, 5).join("\n")}\n`);
+    process.stdout.write(
+      `NOTE server log has ${errors.length} ERROR line(s):\n${errors.slice(0, 5).join("\n")}\n`,
+    );
   } else {
     pass("server log", "0 ERROR lines");
   }
