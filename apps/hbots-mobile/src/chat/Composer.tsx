@@ -701,6 +701,7 @@ export function Composer({
             disabled={picking || preparing}
             accessibilityRole="button"
             accessibilityLabel="Attach files"
+            hitSlop={4}
             style={styles.fieldIconButton}
           >
             <IconPaperclip size={19} color={tokens.textSecondary} strokeWidth={1.75} />

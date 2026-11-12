@@ -973,6 +973,7 @@ export function ChatScreen({
                     onLayout={(event) => setDockHeight(event.nativeEvent.layout.height)}
                     accessibilityRole="button"
                     accessibilityLabel="Computer"
+                    hitSlop={{ top: 4, bottom: 4 }}
                     style={styles.computerDock}
                   >
                     <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
@@ -1282,7 +1283,7 @@ const styles = StyleSheet.create({
   },
   stateDot: { width: 7, height: 7, borderRadius: 999 },
   subtitle: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
-  iconButton: { width: 42, height: 44, alignItems: "center", justifyContent: "center" },
+  iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   chipScroll: { height: 48, flexGrow: 0 },
   chips: { paddingHorizontal: 12, gap: 6, alignItems: "center" },
   chip: {
