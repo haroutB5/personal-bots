@@ -27,6 +27,7 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/co
 import {
   IconArrowUp,
   IconFile,
+  IconCamera,
   IconPaperclip,
   IconPlus,
   IconSquare,
@@ -160,7 +161,6 @@ export function Composer({
     draftRef.current = next;
     setDraftState(next);
   };
-  const [addOpen, setAddOpen] = useState(false);
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -290,7 +290,6 @@ export function Composer({
   };
 
   const pickPhotos = async () => {
-    setAddOpen(false);
     setPicking(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -326,7 +325,6 @@ export function Composer({
   };
 
   const pickCamera = async () => {
-    setAddOpen(false);
     setPicking(true);
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -870,10 +868,10 @@ export function Composer({
       ) : null}
       <View style={styles.row}>
         <Pressable
-          onPress={() => setAddOpen(true)}
+          onPress={() => void pickPhotos()}
           disabled={picking || preparing}
           accessibilityRole="button"
-          accessibilityLabel="Add photo or camera"
+          accessibilityLabel="Add photos"
           style={styles.roundButton}
         >
           <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
@@ -895,6 +893,17 @@ export function Composer({
               style={[styles.field, styles.fieldInHost]}
             />
           </ComposerHost>
+          <Pressable
+            onPress={() => void pickCamera()}
+            disabled={picking || preparing}
+            accessibilityRole="button"
+            accessibilityLabel="Take a photo"
+            hitSlop={4}
+            testID="composer-camera"
+            style={styles.fieldIconButton}
+          >
+            <IconCamera size={19} color={tokens.textSecondary} strokeWidth={1.75} />
+          </Pressable>
           <Pressable
             onPress={() => void pickFiles()}
             disabled={picking || preparing}
@@ -941,15 +950,6 @@ export function Composer({
           Offline. Your draft is saved and sends when the laptop is back.
         </Text>
       ) : null}
-      <SheetShell visible={addOpen} title="Add" onClose={() => setAddOpen(false)}>
-        <SheetAction label="Camera" detail="Take a photo" onPress={() => void pickCamera()} />
-        <SheetAction
-          label="Photos"
-          detail="From your photo library"
-          onPress={() => void pickPhotos()}
-        />
-        <SheetCancel onPress={() => setAddOpen(false)} />
-      </SheetShell>
       <SheetShell
         visible={previewAttachment !== null}
         title={previewAttachment?.name ?? "Attachment"}
@@ -1019,7 +1019,7 @@ const styles = StyleSheet.create({
   fieldHost: { flex: 1 },
   fieldInHost: { flex: 0, alignSelf: "stretch" },
   field: { flex: 1, color: tokens.text, fontSize: 16, lineHeight: 22, paddingVertical: 10 },
-  fieldIconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  fieldIconButton: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
   sendButton: {
     width: 44,
     height: 44,
