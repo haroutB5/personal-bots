@@ -117,7 +117,7 @@ export function Composer({
   const [text, setText] = useState(() => native.client.ports.kv.getItem(key) ?? "");
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftAttachment>>([]);
   const [sending, setSending] = useState(false);
-  const [attachOpen, setAttachOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -203,6 +203,7 @@ export function Composer({
   };
 
   const pickPhotos = async () => {
+    setAddOpen(false);
     setPicking(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -238,7 +239,7 @@ export function Composer({
   };
 
   const pickCamera = async () => {
-    setAttachOpen(false);
+    setAddOpen(false);
     setPicking(true);
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -272,7 +273,6 @@ export function Composer({
   };
 
   const pickFiles = async () => {
-    setAttachOpen(false);
     setPicking(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -629,10 +629,10 @@ export function Composer({
       ) : null}
       <View style={styles.row}>
         <Pressable
-          onPress={() => void pickPhotos()}
+          onPress={() => setAddOpen(true)}
           disabled={picking || sending || preparing}
           accessibilityRole="button"
-          accessibilityLabel="Add photos"
+          accessibilityLabel="Add photo or camera"
           style={styles.roundButton}
         >
           <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
@@ -655,10 +655,10 @@ export function Composer({
             />
           </ComposerHost>
           <Pressable
-            onPress={() => setAttachOpen(true)}
+            onPress={() => void pickFiles()}
             disabled={picking || sending || preparing}
             accessibilityRole="button"
-            accessibilityLabel="Attach camera or files"
+            accessibilityLabel="Attach files"
             style={styles.fieldIconButton}
           >
             <IconPaperclip size={19} color={tokens.textSecondary} strokeWidth={1.75} />
@@ -699,14 +699,14 @@ export function Composer({
           Offline. Your draft is saved and sends when the laptop is back.
         </Text>
       ) : null}
-      <SheetShell visible={attachOpen} title="Attach" onClose={() => setAttachOpen(false)}>
+      <SheetShell visible={addOpen} title="Add" onClose={() => setAddOpen(false)}>
         <SheetAction label="Camera" detail="Take a photo" onPress={() => void pickCamera()} />
         <SheetAction
-          label="Files"
-          detail="Documents and anything else"
-          onPress={() => void pickFiles()}
+          label="Photos"
+          detail="From your photo library"
+          onPress={() => void pickPhotos()}
         />
-        <SheetCancel onPress={() => setAttachOpen(false)} />
+        <SheetCancel onPress={() => setAddOpen(false)} />
       </SheetShell>
       <SheetShell
         visible={previewAttachment !== null}
