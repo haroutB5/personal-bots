@@ -166,6 +166,7 @@ export function ChatScreen({
   >([]);
   const [searchBusy, setSearchBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [enteredVia] = useState(entry);
   const prewarmed = useRef(false);
   // eslint-disable-next-line react/purity -- open latency starts once per mount
   const openedAt = useRef(performance.now());
@@ -934,7 +935,7 @@ export function ChatScreen({
         ) : (
           <>
             {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
-            <RiseIn enabled={entry === "chip"} style={styles.riseHost}>
+            <RiseIn enabled={enteredVia === "chip"} style={styles.riseHost}>
               <MessageList
                 native={native}
                 chat={chat}

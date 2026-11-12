@@ -78,7 +78,7 @@ export type RootStackParamList = {
     readonly botId: string;
     readonly threadId: string;
     readonly requestId?: string;
-    readonly via?: ChatEntry;
+    readonly via?: ChatEntry | undefined;
   };
   Chats: { readonly botId: string };
   Bot: { readonly botId: string };
@@ -250,6 +250,19 @@ function ChatRead({ threadId }: { readonly threadId: string }) {
   return null;
 }
 
+function ChipEntrySettled({
+  via,
+  onSettled,
+}: {
+  readonly via: ChatEntry | undefined;
+  readonly onSettled: () => void;
+}) {
+  useEffect(() => {
+    if (via === "chip") onSettled();
+  }, [via, onSettled]);
+  return null;
+}
+
 function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
   const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
@@ -335,6 +348,10 @@ function Shell({ props }: { readonly props: AppShellProps }) {
             {({ navigation, route }) => (
               <>
                 <ChatRead threadId={route.params.threadId} />
+                <ChipEntrySettled
+                  via={route.params.via}
+                  onSettled={() => navigation.setParams({ via: undefined })}
+                />
                 <ChatScreen
                   native={props.native}
                   chat={chat}
