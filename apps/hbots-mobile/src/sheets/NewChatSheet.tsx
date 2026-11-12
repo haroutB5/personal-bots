@@ -9,6 +9,7 @@ import {
   renameChatDraftTitle,
 } from "@hbots/personal-client/feed/renameChat";
 
+import { markChatStarted } from "../chat/useStartChat";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { SheetShell } from "./SheetShell";
@@ -65,6 +66,7 @@ export function NewChatSheet({
         },
       });
       if (result._tag === "Success") {
+        markChatStarted(threadId);
         onCreated(threadId);
         onClose();
         return;

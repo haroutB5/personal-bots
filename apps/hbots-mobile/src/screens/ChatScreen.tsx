@@ -68,6 +68,7 @@ import {
 import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
+import { wasChatStartedHere } from "../chat/useStartChat";
 import { chipScrollX } from "../chat/chipScroll";
 import { ChipPill } from "../chat/ChipPill";
 import { useFreshChipIds } from "../chat/useFreshChipIds";
@@ -338,6 +339,7 @@ export function ChatScreen({
         currentThreadId: threadId,
         links,
         shells,
+        startedHere: wasChatStartedHere(threadId),
       }),
     [botId, links, shells, threadId],
   );

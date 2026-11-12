@@ -86,6 +86,7 @@ function build(input: {
   relays?: string[];
   waiting?: Record<string, string>;
   seen?: ChatSeenState;
+  startedHere?: boolean;
 }): ChatChipModel {
   return buildChatChips({
     botId: BOT,
@@ -96,6 +97,7 @@ function build(input: {
     tasks: input.tasks ?? [],
     waitingLabels: new Map(Object.entries(input.waiting ?? {})),
     seen: input.seen ?? NO_CHAT_SEEN,
+    startedHere: input.startedHere,
   });
 }
 
@@ -184,6 +186,25 @@ describe("chat chip list: which chats get a chip", () => {
     const model = build({ links: [link("only", 10)], current: "only" });
     expect(model.chips).toHaveLength(1);
     expect(model.visible).toBe(false);
+  });
+
+  it("shows a chat the owner just started at once, before the list or its shell arrive", () => {
+    const model = build({ links: [link("only", 10)], current: "fresh", startedHere: true });
+    expect(model.chips.map((chip) => [chip.threadId, chip.text, chip.current])).toEqual([
+      ["fresh", "New chat", true],
+      ["only", "Chat only", false],
+    ]);
+    expect(model.visible).toBe(true);
+    expect(model.openCount).toBe(2);
+  });
+
+  it("draws a started chat once after its row arrives", () => {
+    const model = build({
+      links: [link("only", 10), link("fresh", 20)],
+      current: "fresh",
+      startedHere: true,
+    });
+    expect(model.chips.map((chip) => chip.threadId).toSorted()).toEqual(["fresh", "only"]);
   });
 
   it("has no strip with one owner chat while a task chat is open but not known as a task", () => {

@@ -18,6 +18,17 @@ export type StartChatResult =
   | { readonly kind: "unreachable" }
   | { readonly kind: "rejected" };
 
+// Chats started in this app run: the chat screen draws their chip before the list knows them.
+const startedChats = new Set<string>();
+
+export function markChatStarted(threadId: string): void {
+  startedChats.add(threadId);
+}
+
+export function wasChatStartedHere(threadId: string): boolean {
+  return startedChats.has(threadId);
+}
+
 function failedStartResult(error: unknown): StartChatResult {
   return error instanceof Error && isTransportConnectionErrorMessage(error.message)
     ? { kind: "unreachable" }
@@ -28,7 +39,10 @@ export function startChatResult(
   threadId: string,
   result: AtomCommandResult<unknown, unknown>,
 ): StartChatResult {
-  if (result._tag === "Success") return { kind: "started", threadId };
+  if (result._tag === "Success") {
+    markChatStarted(threadId);
+    return { kind: "started", threadId };
+  }
   if (isAtomCommandInterrupted(result)) return { kind: "interrupted" };
   return failedStartResult(squashAtomCommandFailure(result));
 }

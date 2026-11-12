@@ -45,6 +45,34 @@ describe("chatHeaderModel", () => {
 });
 
 describe("buildChatChips", () => {
+  it("gives a chat just started its chip before the list or its shell arrive", () => {
+    const input = {
+      botId: "bot-1",
+      currentThreadId: "thread-new",
+      links: [
+        {
+          botId: "bot-1",
+          threadId: "thread-old",
+          createdAt: at("2026-11-01T09:00:00.000Z"),
+          archivedAt: null,
+        },
+      ] as never,
+      shells: [{ id: "thread-old", title: "Old chat" }] as never,
+    } as const;
+    expect(
+      buildChatChips({ ...input, startedHere: true }).map((chip) => [
+        chip.threadId,
+        chip.text,
+        chip.current,
+      ]),
+    ).toEqual([
+      ["thread-new", "New chat", true],
+      ["thread-old", "Old chat", false],
+    ]);
+    // A chat opened cold has no chip until its shell arrives.
+    expect(buildChatChips(input).map((chip) => chip.threadId)).toEqual(["thread-old"]);
+  });
+
   it("puts pinned chats first and then newest activity, current chip included", () => {
     const chips = buildChatChips({
       botId: "bot-1",

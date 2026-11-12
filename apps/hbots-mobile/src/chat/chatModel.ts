@@ -177,6 +177,8 @@ export function buildChatChips(input: {
   readonly currentThreadId: string;
   readonly links: ReadonlyArray<PersonalBotThread>;
   readonly shells: ReadonlyArray<EnvironmentThreadShell>;
+  /** The owner started the open chat in this app a moment ago. */
+  readonly startedHere?: boolean | undefined;
 }): ReadonlyArray<ChatChipModel> {
   const shellById = new Map(input.shells.map((shell) => [shell.id as string, shell]));
   const rows = input.links
@@ -195,21 +197,7 @@ export function buildChatChips(input: {
     const rightAt = DateTime.toEpochMillis(right.link.lastActivityAt ?? right.link.createdAt);
     return rightAt - leftAt;
   });
-  if (current === undefined && input.currentThreadId.length > 0) {
-    const shell = shellById.get(input.currentThreadId);
-    if (shell !== undefined) {
-      sorted.unshift({
-        link: {
-          botId: input.botId as PersonalBotThread["botId"],
-          threadId: input.currentThreadId as PersonalBotThread["threadId"],
-          createdAt: shell.createdAt as never,
-          archivedAt: null,
-        },
-        shell,
-      });
-    }
-  }
-  return sorted.map((row) => {
+  const chips = sorted.map((row): ChatChipModel => {
     const threadId = row.link.threadId as string;
     const currentChip = threadId === input.currentThreadId;
     const state: ConversationState = currentChip
@@ -229,6 +217,21 @@ export function buildChatChips(input: {
       state,
     };
   });
+  if (current !== undefined || input.currentThreadId.length === 0) return chips;
+  // A chat just started is open before the list and its shell arrive: its chip shows at once.
+  const shell = shellById.get(input.currentThreadId);
+  if (shell === undefined && input.startedHere !== true) return chips;
+  return [
+    {
+      threadId: input.currentThreadId,
+      text: conversationChatTitle(shell?.title ?? null) ?? "New chat",
+      current: true,
+      pinned: false,
+      unread: false,
+      state: "idle",
+    },
+    ...chips,
+  ];
 }
 
 export function chatSendModelSelection(

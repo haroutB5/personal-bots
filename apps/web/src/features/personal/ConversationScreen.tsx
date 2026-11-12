@@ -103,6 +103,7 @@ import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { ConversationDesktopLine } from "./ConversationDesktopLine";
 import { useLeaveResumedChatIfGone } from "./resumeLastChat";
+import { wasChatStartedHere } from "./startBotChat";
 import { useCloseChatNotifications } from "./staleNotifications";
 import { useDesktopStatus } from "./computer/desktopState";
 import { useComputerFeed } from "./computer/computerState";
@@ -1043,6 +1044,7 @@ export function ConversationScreen({
           waitingLabels,
           seen: chatSeen,
           nowMs: wakeClock,
+          startedHere: wasChatStartedHere(threadIdParam),
         });
   // The order holds still while the owner stays in this bot's chats (chatChipOrder.ts).
   const frozenOwner = useFrozenChipOrder(botId, chipModel?.ownerChips ?? null);

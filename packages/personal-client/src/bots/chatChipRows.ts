@@ -135,6 +135,8 @@ export function buildChatChips(input: {
   readonly seen: ChatSeenState;
   /** The time a snooze is judged against (the screen's wake clock). */
   readonly nowMs?: number | undefined;
+  /** The owner started the open chat on this screen a moment ago. */
+  readonly startedHere?: boolean | undefined;
 }): ChatChipModel {
   const { active, archived, snoozed } = botThreadRows(
     input.botId,
@@ -196,6 +198,27 @@ export function buildChatChips(input: {
     else if (taskRow !== undefined) temporary = toChip(taskRow, "task");
     else if (archivedRow !== undefined) temporary = toChip(archivedRow, "archived");
   }
+  // A chat just started is open before the list and its shell arrive: its chip shows at once.
+  const known = [...active, ...archived, ...snoozed].some(
+    (row) => row.link.threadId === input.currentThreadId,
+  );
+  const started = input.startedHere === true && !known;
+  const startedShell = input.shells.find((shell) => shell.id === input.currentThreadId);
+  const startedTitle = startedShell === undefined ? UNTITLED_CHIP : chipTitle(startedShell);
+  const startedChips: ReadonlyArray<ChatChip> = started
+    ? [
+        {
+          threadId: input.currentThreadId,
+          text: startedTitle,
+          kind: "chat",
+          current: true,
+          state: "idle",
+          unread: false,
+          pinned: false,
+          label: `${startedTitle}, current chat`,
+        },
+      ]
+    : [];
   // A task or routine chat with work still running is live work, so the owner must always see it in
   // the strip even when he has never written in it. Without this a bot can be busy in a chat that
   // only exists in the All chats list, and the work looks like it went missing.
@@ -213,7 +236,11 @@ export function buildChatChips(input: {
       !owner.some((owned) => owned.link.threadId === row.link.threadId),
   );
   const liveChips = liveRows.map((row) => toChip(row, "task"));
-  const chips = [...liveChips, ...(temporary === null ? ownerChips : [temporary, ...ownerChips])];
+  const chips = [
+    ...liveChips,
+    ...startedChips,
+    ...(temporary === null ? ownerChips : [temporary, ...ownerChips]),
+  ];
   const turnsKey = [...owner, ...liveRows]
     .filter((row) => row.link.threadId !== input.currentThreadId)
     .map((row) => `${row.link.threadId}:${row.shell.latestTurn?.completedAt ?? ""}`)
@@ -225,7 +252,7 @@ export function buildChatChips(input: {
     // The same number as "All chats N open" in the chat options menu and the rows of the bot's chat
     // list: every open chat with this bot, task and routine chats included (the strip itself only
     // lists the owner's chats). One definition, so the chip never disagrees with the list it opens.
-    openCount: active.length,
+    openCount: active.length + startedChips.length,
     visible: chips.length >= MIN_CHIPS_FOR_STRIP,
     turnsKey,
   };
