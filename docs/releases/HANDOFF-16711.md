@@ -45,3 +45,19 @@ Binary only. The previous release is `6ff88a7d1ee7` (1.67.10), schema 148, so th
 - Web addresses written in chat can be tapped on Android.
 - The Instructions box on Edit bot starts collapsed.
 - The Android home screen now has eight widgets.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=5a1d157f60071487e8e894d5e205e5a23e710491 release=5a1d157f6007 json-sha256=d48d9193cd3509e55b5774517dd4fbd7ca761d01ecfc720929c4037fe0f85d86 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
