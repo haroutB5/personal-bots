@@ -10,7 +10,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 /**
  * A Modal is its own window, and its host view still covers the screen while a sheet plays its
  * close motion. Both swallow taps meant for the screen beneath. This turns the window touchable
- * flag and the host view's enabled flag off together so the taps fall through, and back on if the
+ * flag and the enabled flag of the host view and its content group off together so the taps fall through, and back on if the
  * sheet reopens. Both die with the Modal.
  */
 class HbotsWindowModule : Module() {
@@ -30,7 +30,6 @@ class HbotsWindowModule : Module() {
           (host as? ViewGroup)?.let { group ->
             for (index in 0 until group.childCount) group.getChildAt(index).isEnabled = touchable
           }
-          android.util.Log.d("HbotsWindow", "setTouchable=$touchable host=${host?.javaClass?.simpleName} children=${(host as? ViewGroup)?.childCount}")
           val flags =
             if (touchable) params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             else params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
