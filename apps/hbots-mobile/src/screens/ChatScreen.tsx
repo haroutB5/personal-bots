@@ -87,6 +87,7 @@ import { tokens } from "../shell/tokens";
 import { BotUsageSheet } from "../sheets/BotUsageSheet";
 import { ChatMenuSheet } from "../sheets/ChatMenuSheet";
 import { ChatSettingsSheet } from "../sheets/ChatSettingsSheet";
+import { chatMenuRows } from "../sheets/chatMenuRows";
 import { ContextUsedSheet } from "../sheets/ContextUsedSheet";
 import { RoutinesSheet } from "../sheets/RoutinesSheet";
 import { FilePreviewSheet } from "../sheets/FilePreviewSheet";
@@ -385,7 +386,7 @@ export function ChatScreen({
       }),
     [hidePreviews, menuOpen, now, running, sheetLinks, shells, thread, threadId],
   );
-  const menuChatRows = useMemo(() => menuSettings?.groups.flat() ?? [], [menuSettings]);
+  const menuChatGroups = useMemo(() => chatMenuRows(menuSettings?.groups ?? []), [menuSettings]);
   const settings = useMemo(
     () =>
       chatSettingsSheet({
@@ -1020,8 +1021,7 @@ export function ChatScreen({
         running={running}
         providerWait={providerWait}
         nowMs={now}
-        chatRows={menuChatRows}
-        contextLabel={header.contextBadge}
+        chatGroups={menuChatGroups}
         onClose={() => setMenuOpen(false)}
         onStop={() => void stop()}
         onSwitchModel={() => {
@@ -1037,14 +1037,6 @@ export function ChatScreen({
           setMenuOpen(false);
           setSearchOpen(true);
         }}
-        onCall={
-          startCall === null
-            ? null
-            : () => {
-                setMenuOpen(false);
-                startCall();
-              }
-        }
         onAllChats={() => {
           setMenuOpen(false);
           onOpenChats(botId);
@@ -1053,10 +1045,6 @@ export function ChatScreen({
         onTokenUsage={() => {
           setMenuOpen(false);
           setUsageOpen(true);
-        }}
-        onContextUsed={() => {
-          setMenuOpen(false);
-          setContextOpen(true);
         }}
         onRoutines={() => {
           setMenuOpen(false);
