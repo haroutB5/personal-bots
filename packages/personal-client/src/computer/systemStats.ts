@@ -10,6 +10,9 @@
 export const SYSTEM_SUMMARY_URL = "/api/personal/performance/summary";
 export const SYSTEM_SUMMARY_TIMEOUT_MS = 5_000;
 
+/** While the gaming PC link is starting, ask again this soon so the line appears quickly. */
+export const GAMING_PC_STARTING_POLL_MS = 3_000;
+
 /** A figure at or above this is inked amber. */
 export const BUSY_PERCENT = 90;
 /** Free disk below this share of the drive is inked amber. */
@@ -354,4 +357,14 @@ export function gamingPcAriaLabel(pc: GamingPc | null): string | null {
     return ` In use by ${user.bot}${purpose}${job}.`;
   });
   return `Gaming PC: ${words.join(", ")}.${use.join("")}`;
+}
+
+/**
+ * How long to wait before the next summary request: the normal delay, or 3 s
+ * while the gaming PC link is still starting (never longer than the normal one).
+ */
+export function systemPollDelayMs(summary: SystemSummary | null, normalMs: number): number {
+  return summary?.gamingPc?.state === "starting"
+    ? Math.min(normalMs, GAMING_PC_STARTING_POLL_MS)
+    : normalMs;
 }

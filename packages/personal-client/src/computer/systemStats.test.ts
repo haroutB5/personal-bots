@@ -7,6 +7,7 @@ import {
   machineStatRows,
   parseGamingPc,
   parseSystemSummary,
+  systemPollDelayMs,
   type GamingPc,
 } from "./systemStats.ts";
 
@@ -327,5 +328,22 @@ describe("gamingPcAriaLabel", () => {
   it("is null when there is nothing to say", () => {
     expect(gamingPcAriaLabel({ state: "starting" })).toBeNull();
     expect(gamingPcAriaLabel(null)).toBeNull();
+  });
+});
+
+describe("systemPollDelayMs", () => {
+  const base = parseSystemSummary({ cpuPct: 1 });
+  it("asks again in 3 s while the gaming PC link is starting", () => {
+    const starting = parseSystemSummary({ cpuPct: 1, gamingPc: { state: "starting" } });
+    expect(systemPollDelayMs(starting, 10_000)).toBe(3_000);
+  });
+  it("keeps the normal delay otherwise", () => {
+    expect(systemPollDelayMs(base, 10_000)).toBe(10_000);
+    expect(systemPollDelayMs(null, 10_000)).toBe(10_000);
+    expect(systemPollDelayMs(parseSystemSummary({ cpuPct: 1, gamingPc: ON }), 10_000)).toBe(10_000);
+  });
+  it("never lengthens a delay shorter than 3 s", () => {
+    const starting = parseSystemSummary({ cpuPct: 1, gamingPc: { state: "starting" } });
+    expect(systemPollDelayMs(starting, 1_000)).toBe(1_000);
   });
 });

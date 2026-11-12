@@ -8,6 +8,8 @@
  * server answers from a 5 s CPU/RAM cache and a one-minute disk cache, and
  * never starts the Performance sampler. The line keeps its height from the
  * first paint (an empty row until the first answer), so the list never jumps.
+ * The gaming PC lines below it take no room while the PC is off. While its
+ * link is starting the next request comes after 3 s, not 10 s.
  */
 import type { JSX } from "react";
 import { Fragment, useEffect, useState } from "react";
@@ -16,8 +18,10 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "~/lib/utils";
 
 import { requestComputerPerformance } from "./computer/computerModel";
+import { GamingPcLines } from "./GamingPcLines";
 import {
   fetchSystemSummary,
+  systemPollDelayMs,
   systemStatParts,
   systemStatsAriaLabel,
   type SystemSummary,
@@ -34,6 +38,7 @@ export function useSystemSummary(): SystemSummary | null {
   const environmentId = usePersonalEnvironmentId();
   const [summary, setSummary] = useState<SystemSummary | null>(lastSummary);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a visibility listener and a poll timer in step with the mounted line
   useEffect(() => {
     if (environmentId === null || typeof document === "undefined") return;
     let cancelled = false;
@@ -61,7 +66,7 @@ export function useSystemSummary(): SystemSummary | null {
       }
       lastSummary = next;
       setSummary(next);
-      schedule(SYSTEM_POLL_MS);
+      schedule(systemPollDelayMs(next, SYSTEM_POLL_MS));
     };
 
     const onVisibility = () => {
@@ -91,31 +96,34 @@ export function SystemStatsLine(): JSX.Element {
 
   return (
     // The link's py-3.5 over the 16px line makes a 44px tap target; -my-3.5 gives the room back.
-    <div className="-mt-1.5 mb-1 h-4">
-      {summary !== null && parts.length > 0 ? (
-        <Link
-          to="/computer"
-          onClick={() => requestComputerPerformance()}
-          aria-label={systemStatsAriaLabel(summary)}
-          className="-my-3.5 inline-flex max-w-full items-center truncate rounded py-3.5 text-[12px] leading-4 font-medium text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-        >
-          {parts.map((part, index) => (
-            <Fragment key={part.key}>
-              {index > 0 ? (
-                <span aria-hidden="true" className="px-1">
-                  ·
+    <div className="-mt-1.5 mb-1">
+      <div className="h-4">
+        {summary !== null && parts.length > 0 ? (
+          <Link
+            to="/computer"
+            onClick={() => requestComputerPerformance()}
+            aria-label={systemStatsAriaLabel(summary)}
+            className="-my-3.5 inline-flex max-w-full items-center truncate rounded py-3.5 text-[12px] leading-4 font-medium text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
+          >
+            {parts.map((part, index) => (
+              <Fragment key={part.key}>
+                {index > 0 ? (
+                  <span aria-hidden="true" className="px-1">
+                    ·
+                  </span>
+                ) : null}
+                <span
+                  aria-hidden="true"
+                  className={cn(part.busy && "text-[var(--personal-review-text)]")}
+                >
+                  {part.text}
                 </span>
-              ) : null}
-              <span
-                aria-hidden="true"
-                className={cn(part.busy && "text-[var(--personal-review-text)]")}
-              >
-                {part.text}
-              </span>
-            </Fragment>
-          ))}
-        </Link>
-      ) : null}
+              </Fragment>
+            ))}
+          </Link>
+        ) : null}
+      </div>
+      <GamingPcLines pc={summary?.gamingPc ?? null} />
     </div>
   );
 }
