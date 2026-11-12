@@ -57,7 +57,7 @@ vi.mock("expo-file-system", () => {
 });
 
 import serverBody from "./fixtures/boundedThreadSnapshot.json";
-import { readCachedThread, writeCachedThread } from "./nativeCache";
+import { MAX_CACHED_THREAD_BYTES, readCachedThread, writeCachedThread } from "./nativeCache";
 
 const FILE =
   "file:///documents/hbots-thread-cache/thread-environment-phone-f37b73c4-f46d-4da7-8d7b-32007f18562b.json";
@@ -90,6 +90,43 @@ describe("thread cache file", () => {
     expect(stored.length).toBeGreaterThan(0);
     expect(() => JSON.parse(stored)).toThrow();
     expect(stored).not.toContain("phone flow ping");
+  });
+
+  const withMessageText = (text: string) => ({
+    ...snapshot,
+    projection: {
+      ...snapshot.projection,
+      messages: snapshot.projection.messages.map((message, index) =>
+        index === 0 ? { ...message, text } : message,
+      ),
+    },
+  });
+
+  it("does not write a copy over 1 MB and removes the one already on the phone", () => {
+    writeCachedThread("environment-phone", snapshot);
+    expect(files.has(FILE)).toBe(true);
+
+    writeCachedThread("environment-phone", withMessageText("x".repeat(MAX_CACHED_THREAD_BYTES)));
+
+    expect(files.has(FILE)).toBe(false);
+  });
+
+  it("counts bytes, not characters, against the cap", () => {
+    writeCachedThread(
+      "environment-phone",
+      withMessageText("é".repeat(MAX_CACHED_THREAD_BYTES / 2)),
+    );
+
+    expect(files.has(FILE)).toBe(false);
+  });
+
+  it("still writes a copy just under 1 MB", () => {
+    writeCachedThread(
+      "environment-phone",
+      withMessageText("x".repeat(MAX_CACHED_THREAD_BYTES - 200_000)),
+    );
+
+    expect(files.has(FILE)).toBe(true);
   });
 
   it("deletes an old plaintext file and treats it as a miss", async () => {
