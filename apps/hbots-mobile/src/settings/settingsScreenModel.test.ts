@@ -77,6 +77,32 @@ describe("settings registry", () => {
     expect(visible.flatMap((entry) => entry.rows.map((row) => row.title))).toEqual(["Memory"]);
   });
 
+  it("finds App lock under This phone from lock, pin, fingerprint and password", () => {
+    for (const query of ["lock", "pin", "fingerprint", "password"]) {
+      const rows = visibleSettingsSections(query).flatMap((entry) =>
+        entry.rows.map((row) => row.id),
+      );
+      expect(rows).toContain("you.phone");
+    }
+  });
+
+  it("matches the obvious words for each setting", () => {
+    const expected: ReadonlyArray<readonly [string, string]> = [
+      ["memory", "bots.memory"],
+      ["voice", "voice.calls"],
+      ["call", "voice.calls"],
+      ["provider", "providers.versions"],
+      ["update", "providers.versions"],
+      ["name", "you.name"],
+    ];
+    for (const [query, rowId] of expected) {
+      const rows = visibleSettingsSections(query).flatMap((entry) =>
+        entry.rows.map((row) => row.id),
+      );
+      expect(rows, query).toContain(rowId);
+    }
+  });
+
   it("hides a section whose only row is hidden", () => {
     expect(visibleSettingsSections("restore", new Set(["bots.removed"]))).toEqual([]);
   });
