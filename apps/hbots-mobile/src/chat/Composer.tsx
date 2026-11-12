@@ -22,7 +22,6 @@ import {
   outboxCommandId,
   type OutboxEntry,
 } from "@hbots/personal-client/composer/outbox";
-import { putOutboxBlobs, deleteOutboxBlobs } from "@hbots/personal-client/composer/outboxBlobs";
 import { classifySendFailure } from "@hbots/personal-client/composer/outboxFlush";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/composerText";
 import {
@@ -64,6 +63,7 @@ import {
   type SendMeta,
 } from "./composerSendModel";
 import { uploadDraftAttachments, type DraftAttachment } from "./outboxNative";
+import { discardOutgoingFiles, readableOutgoingFiles, retainOutgoingFiles } from "./outgoingFiles";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
@@ -154,6 +154,7 @@ export function Composer({
   const draftRef = useRef<ComposerDraft>(draft);
   const activeSends = useRef(new Map<string, ActiveSend>());
   const sendAborts = useRef(new Map<string, AbortController>());
+  const claimedIntakes = useRef(new Map<string, Map<string, string>>());
   const setDraft = (update: ComposerDraft | ((current: ComposerDraft) => ComposerDraft)) => {
     const next = typeof update === "function" ? update(draftRef.current) : update;
     draftRef.current = next;
@@ -387,28 +388,29 @@ export function Composer({
     }
   };
 
-  const storeBlobs = async (
-    messageId: string,
-    snapshot: ReadonlyArray<DraftAttachment>,
-  ): Promise<boolean> => {
-    if (snapshot.length === 0) return true;
-    try {
-      await putOutboxBlobs(
-        messageId,
-        snapshot.map((attachment) => ({
-          id: attachment.id,
-          blob: {
-            uri: attachment.uri,
-            size: attachment.sizeBytes,
-            mimeType: attachment.mimeType,
-            name: attachment.name,
-          },
-        })),
-      );
-      return true;
-    } catch {
-      return false;
+  const claimIntakes = (messageId: string, snapshot: ReadonlyArray<DraftAttachment>) => {
+    const claimed = new Map<string, string>();
+    for (const attachment of snapshot) {
+      const intakeId = intakeHeld.current.get(attachment.id);
+      if (intakeId === undefined) continue;
+      intakeHeld.current.delete(attachment.id);
+      claimed.set(attachment.id, intakeId);
     }
+    if (claimed.size > 0) claimedIntakes.current.set(messageId, claimed);
+  };
+
+  const discardClaimedIntakes = (messageId: string) => {
+    const claimed = claimedIntakes.current.get(messageId);
+    if (claimed === undefined) return;
+    claimedIntakes.current.delete(messageId);
+    for (const intakeId of new Set(claimed.values())) discardShare(intakeId);
+  };
+
+  const reholdClaimedIntakes = (messageId: string) => {
+    const claimed = claimedIntakes.current.get(messageId);
+    if (claimed === undefined) return;
+    claimedIntakes.current.delete(messageId);
+    for (const [attachmentId, intakeId] of claimed) intakeHeld.current.set(attachmentId, intakeId);
   };
 
   const queue = async (
@@ -420,11 +422,6 @@ export function Composer({
     quote: PersonalReplyQuote | null,
   ): Promise<boolean> => {
     try {
-      const stored = await storeBlobs(messageId, snapshot);
-      if (!stored) {
-        setError("Couldn't save those photos on this device. Your draft is still here.");
-        return false;
-      }
       const entry: OutboxEntry | null = enqueueOutboxEntry({
         id: messageId,
         commandId: outboxCommandId(messageId),
@@ -452,7 +449,6 @@ export function Composer({
         })),
       });
       if (entry === null) {
-        void deleteOutboxBlobs(messageId);
         setError("Couldn't save that message on this device. Your draft is still here.");
         return false;
       }
@@ -507,7 +503,8 @@ export function Composer({
     activeSends.current.delete(messageId);
     onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
-    void deleteOutboxBlobs(messageId);
+    discardClaimedIntakes(messageId);
+    void discardOutgoingFiles(messageId);
     onSent();
   };
 
@@ -554,7 +551,14 @@ export function Composer({
     if (snapshot.length > 0) {
       setPreparing(true);
       try {
-        uploaded = (await uploadDraftAttachments(native, chat, snapshot)) ?? [];
+        const readable = await readableOutgoingFiles(messageId, snapshot);
+        if (readable === null) {
+          sendAborts.current.delete(messageId);
+          markFailed(outgoing);
+          setError("An attachment didn't upload. Try again.");
+          return false;
+        }
+        uploaded = (await uploadDraftAttachments(native, chat, readable)) ?? [];
       } finally {
         setPreparing(false);
       }
@@ -633,8 +637,13 @@ export function Composer({
       case "rejected": {
         const failed = settle(outgoing, { ok: false });
         dropActive(failed);
-        if (meta.clearDraftAfter) restoreIntoComposer(failed);
-        void deleteOutboxBlobs(messageId);
+        if (meta.clearDraftAfter) {
+          reholdClaimedIntakes(messageId);
+          restoreIntoComposer(failed);
+        } else {
+          discardClaimedIntakes(messageId);
+        }
+        void discardOutgoingFiles(messageId);
         setError(end.message);
         return false;
       }
@@ -642,9 +651,12 @@ export function Composer({
         dropActive(outgoing);
         const queued = await queueForLater(outgoing, meta);
         if (!queued) {
+          reholdClaimedIntakes(messageId);
           if (meta.clearDraftAfter) restoreIntoComposer(outgoing);
+          void discardOutgoingFiles(messageId);
           return false;
         }
+        discardClaimedIntakes(messageId);
         onSent();
         return true;
       }
@@ -673,6 +685,21 @@ export function Composer({
   }): Promise<boolean> => {
     const messageId = newOutboxId();
     const createdAt = new Date().toISOString();
+    setError(null);
+    onSendError(null);
+    if (snapshot.length > 0) {
+      setPreparing(true);
+      let retained = false;
+      try {
+        retained = await retainOutgoingFiles(messageId, snapshot);
+      } finally {
+        setPreparing(false);
+      }
+      if (!retained) {
+        setError("Couldn't save those photos on this device. Your draft is still here.");
+        return false;
+      }
+    }
     const { draft: clearedDraft, outgoing } = beginSend(
       { text: textValue, attachments: snapshot },
       messageId,
@@ -684,8 +711,7 @@ export function Composer({
       native.client.ports.kv.removeItem(key);
       onClearReply();
     }
-    setError(null);
-    onSendError(null);
+    claimIntakes(messageId, snapshot);
     activeSends.current.set(messageId, { outgoing, meta });
     onPendingChange((pending) => [
       ...pending,
@@ -694,26 +720,18 @@ export function Composer({
     if (!keepStored(outgoing, meta)) {
       setError("Couldn't save that message on the device. Don't leave the chat until it sends.");
     }
-    if (snapshot.length > 0) {
-      const stored = await storeBlobs(messageId, snapshot);
-      if (!stored) {
-        activeSends.current.delete(messageId);
-        onPendingChange((pending) => removePending(pending, messageId));
-        dropStored(messageId);
-        if (clearDraftAfter) setDraft(restoreDraft(outgoing, draftRef.current));
-        setError("Couldn't save those photos on this device. Your draft is still here.");
-        return false;
-      }
-    }
     if (offline || hasOutboxForThread(threadId)) {
       activeSends.current.delete(messageId);
       onPendingChange((pending) => removePending(pending, messageId));
       dropStored(messageId);
       const queued = await queueForLater(outgoing, meta);
       if (!queued) {
+        reholdClaimedIntakes(messageId);
         if (clearDraftAfter) restoreIntoComposer(outgoing);
+        void discardOutgoingFiles(messageId);
         return false;
       }
+      discardClaimedIntakes(messageId);
       onSent();
       return true;
     }
@@ -734,7 +752,8 @@ export function Composer({
     onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
     if (active) {
-      void deleteOutboxBlobs(messageId);
+      discardClaimedIntakes(messageId);
+      void discardOutgoingFiles(messageId);
       onSent();
     }
   };
