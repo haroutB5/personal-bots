@@ -687,6 +687,26 @@ export function Composer({
     const createdAt = new Date().toISOString();
     setError(null);
     onSendError(null);
+    const { draft: clearedDraft, outgoing } = beginSend(
+      { text: textValue, attachments: snapshot },
+      messageId,
+      createdAt,
+    );
+    const meta: SendMeta = { followUp, quote, clearDraftAfter };
+    claimIntakes(messageId, snapshot);
+    if (clearDraftAfter) {
+      setDraft(clearedDraft);
+      native.client.ports.kv.removeItem(key);
+      onClearReply();
+    }
+    activeSends.current.set(messageId, { outgoing, meta });
+    onPendingChange((pending) => [
+      ...pending,
+      pendingSend(outgoing, threadId, textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
+    ]);
+    if (!keepStored(outgoing, meta)) {
+      setError("Couldn't save that message on the device. Don't leave the chat until it sends.");
+    }
     if (snapshot.length > 0) {
       setPreparing(true);
       let retained = false;
@@ -696,29 +716,15 @@ export function Composer({
         setPreparing(false);
       }
       if (!retained) {
+        activeSends.current.delete(messageId);
+        onPendingChange((pending) => removePending(pending, messageId));
+        dropStored(messageId);
+        reholdClaimedIntakes(messageId);
+        if (clearDraftAfter) restoreIntoComposer(outgoing);
+        void discardOutgoingFiles(messageId);
         setError("Couldn't save those photos on this device. Your draft is still here.");
         return false;
       }
-    }
-    const { draft: clearedDraft, outgoing } = beginSend(
-      { text: textValue, attachments: snapshot },
-      messageId,
-      createdAt,
-    );
-    const meta: SendMeta = { followUp, quote, clearDraftAfter };
-    if (clearDraftAfter) {
-      setDraft(clearedDraft);
-      native.client.ports.kv.removeItem(key);
-      onClearReply();
-    }
-    claimIntakes(messageId, snapshot);
-    activeSends.current.set(messageId, { outgoing, meta });
-    onPendingChange((pending) => [
-      ...pending,
-      pendingSend(outgoing, threadId, textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
-    ]);
-    if (!keepStored(outgoing, meta)) {
-      setError("Couldn't save that message on the device. Don't leave the chat until it sends.");
     }
     if (offline || hasOutboxForThread(threadId)) {
       activeSends.current.delete(messageId);
