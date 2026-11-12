@@ -21,7 +21,7 @@ import { HttpRouter, HttpServerResponse } from "effect/http";
 import { ServerConfig } from "../../config.ts";
 import { HostResources } from "../../resourceTelemetry/HostResources.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
-import { readHostSensors, type HostSensors } from "./hostSensors.ts";
+import { makeHostSensorReader, type HostSensors } from "./hostSensors.ts";
 
 export const PERSONAL_SYSTEM_SUMMARY_PATH = "/api/personal/performance/summary";
 
@@ -107,8 +107,9 @@ export const makePersonalSystemSummaryRouteLayer = (
   const sensorCacheMs = options.sensorCacheMs ?? SENSOR_CACHE_MS;
   let diskAt: number | null = null;
   let disk: DiskReading | null = null;
-  let sensorsAt: number | null = null;
-  let sensors: HostSensors = { cpuTempC: null, diskTempC: null, fans: [] };
+  const sensorReader = makeHostSensorReader({ staleAfterMs: sensorCacheMs });
+  // Warm the cache at startup so the first phone poll already has a reading.
+  sensorReader.revalidate(0);
 
   return HttpRouter.add(
     "GET",
@@ -124,10 +125,10 @@ export const makePersonalSystemSummaryRouteLayer = (
         disk = yield* readDisk(path.parse(path.resolve(baseDir)).root);
         diskAt = nowMs;
       }
-      if (sensorsAt === null || nowMs - sensorsAt >= sensorCacheMs) {
-        sensors = yield* Effect.sync(() => readHostSensors());
-        sensorsAt = nowMs;
-      }
+      // Serve the last reading and let a stale cache refresh in the background;
+      // a request never waits on `/sys`.
+      sensorReader.revalidate(nowMs);
+      const sensors: HostSensors = sensorReader.current();
       const host = yield* (yield* HostResources).read;
       return yield* HttpServerResponse.json(
         systemSummaryFrom({

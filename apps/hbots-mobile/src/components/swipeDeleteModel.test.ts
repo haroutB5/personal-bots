@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ARMED, CLOSED, nextSwipeDelete } from "./swipeDeleteModel.ts";
+import {
+  ARMED,
+  armedRowsAfterArm,
+  armedRowsAfterTouch,
+  armTimedOut,
+  CLOSED,
+  nextSwipeDelete,
+  SWIPE_ARM_TIMEOUT_MS,
+} from "./swipeDeleteModel.ts";
 
 const swipe = (distance: number) => ({ kind: "swipe" as const, distance, threshold: 40 });
 
@@ -27,5 +35,27 @@ describe("nextSwipeDelete", () => {
       state: CLOSED,
       effect: "none",
     });
+  });
+});
+
+describe("armed rows", () => {
+  it("closes an armed row when another row is touched", () => {
+    expect([...armedRowsAfterTouch(new Set(["a"]), "b")]).toEqual([]);
+  });
+
+  it("keeps the armed row when its own row is touched", () => {
+    expect([...armedRowsAfterTouch(new Set(["a"]), "a")]).toEqual(["a"]);
+  });
+
+  it("closes the old row when another row arms", () => {
+    expect([...armedRowsAfterArm(new Set(["a"]), "b")]).toEqual(["b"]);
+  });
+});
+
+describe("armTimedOut", () => {
+  it("keeps a fresh arm open and closes it at five seconds", () => {
+    expect(armTimedOut(1_000, 1_000)).toBe(false);
+    expect(armTimedOut(1_000, 1_000 + SWIPE_ARM_TIMEOUT_MS - 1)).toBe(false);
+    expect(armTimedOut(1_000, 1_000 + SWIPE_ARM_TIMEOUT_MS)).toBe(true);
   });
 });

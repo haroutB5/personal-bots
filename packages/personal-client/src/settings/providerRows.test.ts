@@ -46,3 +46,51 @@ describe("registry provider update action", () => {
     expect(row.detail).toBe("Update it on your computer.");
   });
 });
+
+describe("update failures", () => {
+  it("keeps raw process text out of a failed update", () => {
+    const row = providerRow({
+      snapshot: {
+        ...registryProvider,
+        updateState: {
+          status: "failed",
+          startedAt: checkedAt,
+          finishedAt: checkedAt,
+          message: "Unknown: ChildProcess.exitCode (/home/me/.local/bin/claude update)",
+          output: null,
+        },
+      },
+      label: "Test Agent",
+      bots: [],
+      install: null,
+      now: new Date(checkedAt),
+    });
+
+    expect(row.state).toBe("updateFailed");
+    expect(row.statusText).toBe("Update failed");
+    expect(row.detail).toBe("Try again.");
+  });
+
+  it("keeps raw process text out of an automatic update failure", () => {
+    const row = providerRow({
+      snapshot: {
+        ...registryProvider,
+        autoUpdate: {
+          status: "failed",
+          message: "Unknown: ChildProcess.exitCode (/home/me/.local/bin/claude update)",
+          fromVersion: "1.0.0",
+          toVersion: "1.1.0",
+          finishedAt: checkedAt,
+          nextAttemptAt: null,
+        },
+      },
+      label: "Test Agent",
+      bots: [],
+      install: null,
+      now: new Date(checkedAt),
+    });
+
+    expect(row.state).toBe("updateFailed");
+    expect(row.detail).toBe("Try again.");
+  });
+});
