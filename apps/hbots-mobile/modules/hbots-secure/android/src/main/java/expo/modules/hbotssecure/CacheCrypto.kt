@@ -14,6 +14,12 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/**
+ * The most text a cache file may hold, in UTF-8 bytes. Mirrors `MAX_CACHED_THREAD_BYTES` in
+ * nativeCache.ts. A bigger file is never decrypted: it is deleted and read as "no cache".
+ */
+const val MAX_CACHED_TEXT_BYTES = 1_048_576
+
 /** Where the AES key lives. The phone uses the Keystore; a JVM test passes an in-memory key. */
 interface CacheKeys {
   fun key(): SecretKey
