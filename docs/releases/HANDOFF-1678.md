@@ -48,3 +48,19 @@ Binary only. The previous release is `0ac33352a228` (1.67.7). Migration 147 adds
 - The APK is built from the release commit and published through `latest.json` after the runner reports `live_verified`.
 - Harout owns the real-phone check for the arm64 APK.
 - The pre-release checks are the test. No QA recheck after live (Harout, 27 Oct).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=244b94816e7126e8cbe3215b4c35655292b0d86d release=244b94816e71 json-sha256=a1da5a2561ee6b04af579e2288a2a5584cc0c11a6c6e2f0b24835d3d15b59e32 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
