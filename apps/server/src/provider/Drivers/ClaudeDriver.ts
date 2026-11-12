@@ -237,9 +237,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // A rate-limited usage read must not hide a credit the last read found. A
     // kept credit is retired by its account, its own expiry and a maximum age.
     const lastResetCredits = yield* Ref.make<KeptClaudeResetCredits | undefined>(undefined);
+    // Counts redeems that retired the credit. A read that started under an
+    // older count describes the account before the spend, so its credit is void.
+    const resetCreditRetirements = yield* Ref.make(0);
     const rememberResetCredits = Effect.fn("ClaudeDriver.rememberResetCredits")(function* (
       credits: ServerProviderResetCredits | undefined,
+      retirementsAtStart: number,
     ) {
+      if (retirementsAtStart !== (yield* Ref.get(resetCreditRetirements))) {
+        return undefined;
+      }
       if (credits === undefined) {
         yield* Ref.set(lastResetCredits, undefined);
         return undefined;
@@ -349,11 +356,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
-                  Effect.flatMap((read) =>
-                    read._tag === "Read"
-                      ? rememberResetCredits(read.credits)
-                      : readKeptResetCredits,
+                Ref.get(resetCreditRetirements).pipe(
+                  Effect.flatMap((retirementsAtStart) =>
+                    ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                      Effect.flatMap((read) =>
+                        read._tag === "Read"
+                          ? rememberResetCredits(read.credits, retirementsAtStart)
+                          : readKeptResetCredits,
+                      ),
+                    ),
                   ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -468,6 +479,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           // A spent, already-used or absent credit must not survive a failed refresh.
           if (outcome === "reset" || outcome === "alreadyRedeemed" || outcome === "noCredit") {
             yield* Ref.set(lastResetCredits, undefined);
+            yield* Ref.update(resetCreditRetirements, (count) => count + 1);
           }
           const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
           yield* Cache.invalidateAll(capabilitiesProbeCache);

@@ -871,6 +871,151 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
   );
 
+  type RaceMode = "ok" | "429" | "nocredit";
+  const raceFixture = Effect.fnUntraced(function* (input: {
+    readonly endsAtMs?: number;
+    readonly claim?: () => Response;
+    readonly name: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fixtures = yield* makeTildeProviderFixtures();
+    const credentialsPath = path.join(fixtures.claudeHomePath, ".credentials.json");
+    const accountConfigPath = path.join(fixtures.claudeHomePath, ".claude.json");
+    yield* fs.writeFileString(credentialsPath, '{"claudeAiOauth":{"accessToken":"fake-token"}}');
+    yield* fs.writeFileString(accountConfigPath, '{"oauthAccount":{"organizationUuid":"org-a"}}');
+    const mode = yield* Ref.make<RaceMode>("ok");
+    const armed = yield* Ref.make(false);
+    const gate = yield* Deferred.make<void>();
+    const blocked = yield* Deferred.make<void>();
+    const events: string[] = [];
+    const client = HttpClient.make((request) =>
+      Effect.gen(function* () {
+        if (request.url.endsWith("/api/oauth/usage")) {
+          if (yield* Ref.get(armed)) {
+            yield* Ref.set(armed, false);
+            events.push("usageA:start(blocked)");
+            yield* Deferred.succeed(blocked, undefined);
+            yield* Deferred.await(gate);
+            events.push("usageA:end(returns 1 credit)");
+            return HttpClientResponse.fromWeb(request, Response.json(grant(input.endsAtMs)));
+          }
+          const m = yield* Ref.get(mode);
+          events.push(`usage:${m}`);
+          if (m === "429")
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ error: "rl" }, { status: 429 }),
+            );
+          if (m === "nocredit") return HttpClientResponse.fromWeb(request, Response.json({}));
+          return HttpClientResponse.fromWeb(request, Response.json(grant(input.endsAtMs)));
+        }
+        if (request.url.endsWith("/reset_rate_limits")) {
+          events.push("claim");
+          return HttpClientResponse.fromWeb(
+            request,
+            input.claim ? input.claim() : Response.json({ result: "reset" }),
+          );
+        }
+        return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
+      }),
+    );
+    const grant = (endsAtMs?: number) => ({
+      cedar_ember: {
+        eligible: true,
+        next_grant_id: "grant_a",
+        grants: [
+          {
+            id: "grant_a",
+            resets_left: 1,
+            usable_now: true,
+            ...(endsAtMs === undefined ? {} : { ends_at: new Date(endsAtMs).toISOString() }),
+          },
+        ],
+      },
+    });
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: () =>
+            Promise.resolve({
+              commands: [{ name: "compact", description: "", argumentHint: "" }],
+              account: { email: "a@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+            }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+            rate_limits_available: true,
+            rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
+          }),
+        }) as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const instanceId = ProviderInstanceId.make(input.name);
+    const { registry } = yield* makeProviderInstanceRegistry({
+      drivers: [ClaudeDriver],
+      configMap: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          config: makeClaudeConfig({
+            enabled: true,
+            binaryPath: fixtures.claudeBinaryPath,
+            homePath: fixtures.claudeHomePath,
+          }),
+        },
+      },
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+    const instance = (yield* registry.getInstance(instanceId))!;
+    const credits = (s: {
+      readonly usageLimits?:
+        | { readonly resetCredits?: { readonly availableCount: number } | undefined }
+        | undefined;
+    }) => s.usageLimits?.resetCredits?.availableCount ?? null;
+    const refresh = Effect.gen(function* () {
+      yield* instance.invalidateCaches ?? Effect.void;
+      return credits(yield* instance.snapshot.refresh);
+    });
+    return {
+      instance,
+      mode,
+      armed,
+      gate,
+      blocked,
+      events,
+      fs,
+      credentialsPath,
+      accountConfigPath,
+      refresh,
+      credits,
+    };
+  });
+
+  // A read that started before a redeem answers with the pre-spend credit.
+  // It must not bring the spent credit back.
+  it.live.skipIf(windowsHost)(
+    "ignores a usage read that started before a redeem retired the credit",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* raceFixture({ name: "claude_redeem_race" });
+        expect(yield* f.refresh).toBe(1);
+        yield* f.instance.invalidateCaches ?? Effect.void;
+        yield* Ref.set(f.armed, true);
+        const readBefore = yield* Effect.forkChild(f.instance.snapshot.refresh);
+        yield* Deferred.await(f.blocked);
+        yield* Ref.set(f.mode, "429");
+        const redeem = yield* Effect.forkChild(
+          f.instance.consumeResetCredit!().pipe(Effect.result),
+        );
+        // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- the redeem retires the credit after the claim answers, then waits on the blocked read; no event marks the retire
+        yield* Effect.sleep("1500 millis");
+        expect(f.events).toContain("claim");
+        yield* Deferred.succeed(f.gate, undefined);
+        expect(f.credits(yield* Fiber.join(readBefore))).toBeNull();
+        yield* Fiber.join(redeem);
+        expect(f.credits(yield* f.instance.snapshot.getSnapshot)).toBeNull();
+        expect(yield* f.refresh).toBeNull();
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
+  );
+
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
