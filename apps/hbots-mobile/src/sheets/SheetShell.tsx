@@ -77,7 +77,7 @@ export function SheetShell({
   }, [visible, translateY]);
   const content = (
     <>
-      <View ref={inline ? undefined : attachRoot} style={styles.root}>
+      <View ref={inline ? undefined : attachRoot} collapsable={false} style={styles.root}>
         <Animated.View pointerEvents="none" style={[styles.backdrop, motion.backdropStyle]} />
         <Pressable
           accessibilityRole="button"

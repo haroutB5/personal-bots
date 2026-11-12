@@ -499,7 +499,7 @@ function UsageSheet({
 
   return (
     <Modal visible={motion.mounted} transparent animationType="none" onRequestClose={onClose}>
-      <View ref={attachRoot} style={styles.sheetScrim}>
+      <View ref={attachRoot} collapsable={false} style={styles.sheetScrim}>
         <Animated.View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, styles.sheetScrimFill, motion.backdropStyle]}
