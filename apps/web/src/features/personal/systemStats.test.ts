@@ -18,6 +18,9 @@ const summary = (overrides: Partial<SystemSummary> = {}): SystemSummary => ({
   diskLabel: "C:",
   diskFreeGB: 120.4,
   diskTotalGB: 951.6,
+  cpuTempC: null,
+  diskTempC: null,
+  fans: [],
   ...overrides,
 });
 
