@@ -1,112 +1,105 @@
 package expo.modules.hbotslauncher
 
-import android.app.PendingIntent
 import android.app.AlarmManager
+import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.view.View
-import android.widget.RemoteViews
+import android.os.Bundle
 
 /**
- * The home screen widget: the pinned bots and a dot for the ones working. The system calls
- * [onUpdate] every 30 minutes (`updatePeriodMillis`); the app also calls [refresh] when the feed
- * changes, and a lit dot schedules one more redraw for the moment it goes stale. It draws only from [WidgetStore], so it never needs the app to be running.
+ * One home screen widget. The system calls [onUpdate] when it is placed and every 30 minutes; the
+ * app calls [HbotsWidgets.refresh] when the feed changes. It draws only from [WidgetStore], so it
+ * never needs the app to be running and never touches the network.
  */
-class HbotsWidgetProvider : AppWidgetProvider() {
+abstract class BaseWidgetProvider(private val key: String) : AppWidgetProvider() {
   override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
-    val feed = WidgetStore.read(context)
-    val now = System.currentTimeMillis()
-    val views = render(context, WidgetModel.build(feed, now))
-    for (id in ids) manager.updateAppWidget(id, views)
-    scheduleRefresh(context, WidgetModel.nextRefreshAt(feed, now))
+    HbotsWidgets.refresh(context, only = key, force = true)
   }
 
-  override fun onReceive(context: Context, intent: Intent) {
-    if (intent.action == ACTION_REFRESH) refresh(context) else super.onReceive(context, intent)
+  /** A resize changes how many rows fit. */
+  override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) {
+    HbotsWidgets.refresh(context, only = key, force = true)
   }
 
   override fun onDisabled(context: Context) {
-    scheduleRefresh(context, null)
+    HbotsWidgets.refresh(context)
+  }
+}
+
+/** Widget 1, the Live board. It keeps the first widget's class name, so a placed one upgrades in place. */
+class HbotsWidgetProvider : BaseWidgetProvider(WidgetPictures.BOARD) {
+  override fun onReceive(context: Context, intent: Intent) {
+    if (intent.action == ACTION_REFRESH) HbotsWidgets.refresh(context) else super.onReceive(context, intent)
   }
 
   companion object {
     const val ACTION_REFRESH = "expo.modules.hbotslauncher.WIDGET_REFRESH"
+  }
+}
 
-    private val rowIds = intArrayOf(R.id.hbots_row1, R.id.hbots_row2, R.id.hbots_row3, R.id.hbots_row4, R.id.hbots_row5)
-    private val nameIds = intArrayOf(R.id.hbots_name1, R.id.hbots_name2, R.id.hbots_name3, R.id.hbots_name4, R.id.hbots_name5)
-    private val dotIds = intArrayOf(R.id.hbots_dot1, R.id.hbots_dot2, R.id.hbots_dot3, R.id.hbots_dot4, R.id.hbots_dot5)
+class NeedsYouWidgetProvider : BaseWidgetProvider(WidgetPictures.NEEDS)
+class TileGridWidgetProvider : BaseWidgetProvider(WidgetPictures.TILES)
+class QuickAskWidgetProvider : BaseWidgetProvider(WidgetPictures.ASK)
+class UsageWidgetProvider : BaseWidgetProvider(WidgetPictures.USAGE)
+class OneBotWidgetProvider : BaseWidgetProvider(WidgetPictures.BOT)
+class MachinesWidgetProvider : BaseWidgetProvider(WidgetPictures.MACHINES)
+class TodayWidgetProvider : BaseWidgetProvider(WidgetPictures.TODAY)
 
-    /** Redraws every placed widget from the stored feed. */
-    fun refresh(context: Context) {
-      val manager = AppWidgetManager.getInstance(context)
-      val ids = manager.getAppWidgetIds(ComponentName(context, HbotsWidgetProvider::class.java))
-      if (ids.isEmpty()) return
-      val feed = WidgetStore.read(context)
-      val now = System.currentTimeMillis()
-      val views = render(context, WidgetModel.build(feed, now))
-      for (id in ids) manager.updateAppWidget(id, views)
-      scheduleRefresh(context, WidgetModel.nextRefreshAt(feed, now))
-    }
+/** Draws the placed widgets, and only the ones whose picture changed. */
+object HbotsWidgets {
+  private const val PREFS = "hbots_widgets_drawn"
 
-    /**
-     * One non-waking alarm for the moment a lit dot goes stale, or none when no dot is lit. Not exact (no
-     * permission needed): a late alarm is a few seconds of a stale dot, not a wrong one for minutes.
-     */
-    private fun scheduleRefresh(context: Context, at: Long?) {
-      val alarms = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-      val intent = Intent(context, HbotsWidgetProvider::class.java).setAction(ACTION_REFRESH)
-      val pending = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-      if (at == null) alarms.cancel(pending) else alarms.set(AlarmManager.RTC, at, pending)
-    }
+  private val providers: Map<String, Class<out AppWidgetProvider>> = mapOf(
+    WidgetPictures.BOARD to HbotsWidgetProvider::class.java,
+    WidgetPictures.NEEDS to NeedsYouWidgetProvider::class.java,
+    WidgetPictures.TILES to TileGridWidgetProvider::class.java,
+    WidgetPictures.ASK to QuickAskWidgetProvider::class.java,
+    WidgetPictures.USAGE to UsageWidgetProvider::class.java,
+    WidgetPictures.BOT to OneBotWidgetProvider::class.java,
+    WidgetPictures.MACHINES to MachinesWidgetProvider::class.java,
+    WidgetPictures.TODAY to TodayWidgetProvider::class.java,
+  )
 
-    private fun render(context: Context, state: WidgetState): RemoteViews {
-      val views = RemoteViews(context.packageName, R.layout.hbots_widget)
-      views.setTextViewText(R.id.hbots_title, WidgetModel.TITLE)
-      views.setOnClickPendingIntent(R.id.hbots_root, openApp(context))
-      for (index in rowIds.indices) views.setViewVisibility(rowIds[index], View.GONE)
-      views.setViewVisibility(R.id.hbots_message, View.GONE)
-      views.setViewVisibility(R.id.hbots_more, View.GONE)
-      when (state) {
-        WidgetState.SignedOut -> message(views, WidgetModel.SIGNED_OUT_TEXT)
-        WidgetState.Empty -> message(views, WidgetModel.EMPTY_TEXT)
-        is WidgetState.Bots -> {
-          state.rows.forEachIndexed { index, row ->
-            views.setViewVisibility(rowIds[index], View.VISIBLE)
-            views.setTextViewText(nameIds[index], row.name)
-            views.setImageViewResource(dotIds[index], if (row.working) R.drawable.hbots_dot_working else R.drawable.hbots_dot_idle)
-            views.setContentDescription(rowIds[index], row.description)
-            views.setOnClickPendingIntent(rowIds[index], openLink(context, row.link, index + 1))
-          }
-          if (state.more > 0) {
-            views.setViewVisibility(R.id.hbots_more, View.VISIBLE)
-            views.setTextViewText(R.id.hbots_more, "+${state.more} more")
-          }
-        }
+  /**
+   * Redraws from the stored feed. Without `force` a widget is redrawn only when its picture
+   * differs from the one last drawn, so the 15 s heartbeat costs nothing. `only` names one kind.
+   */
+  fun refresh(context: Context, only: String? = null, force: Boolean = false) {
+    val manager = AppWidgetManager.getInstance(context) ?: return
+    val feed = WidgetStore.read(context)
+    val now = System.currentTimeMillis()
+    val drawn = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    val edit = drawn.edit()
+    var placed = false
+    for ((key, model) in WidgetPictures.all(feed, now)) {
+      val provider = providers[key] ?: continue
+      val ids = manager.getAppWidgetIds(ComponentName(context, provider)) ?: continue
+      if (ids.isEmpty()) {
+        edit.remove(key)
+        continue
       }
-      return views
+      placed = true
+      if (only != null && only != key) continue
+      val signature = WidgetPictures.signature(model)
+      if (!force && drawn.getString(key, null) == signature) continue
+      for (id in ids) manager.updateAppWidget(id, WidgetRenderer.render(context, model, manager.getAppWidgetOptions(id)))
+      edit.putString(key, signature)
     }
+    edit.apply()
+    schedule(context, if (placed) WidgetCommon.nextRefreshAt(feed, now) else null)
+  }
 
-    private fun message(views: RemoteViews, text: String) {
-      views.setViewVisibility(R.id.hbots_message, View.VISIBLE)
-      views.setTextViewText(R.id.hbots_message, text)
-    }
-
-    private fun openApp(context: Context): PendingIntent {
-      val intent = (context.packageManager.getLaunchIntentForPackage(context.packageName) ?: Intent())
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-      return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    }
-
-    /** The link goes to the app's own activity, so the app lock decides who sees the bot. */
-    private fun openLink(context: Context, link: String, requestCode: Int): PendingIntent {
-      val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
-        .setPackage(context.packageName)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-      return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    }
+  /**
+   * One non-waking alarm for the moment the feed goes stale, or none. Not exact (no permission
+   * needed): a late alarm is a few seconds of an old picture, not a wrong one for minutes.
+   */
+  private fun schedule(context: Context, at: Long?) {
+    val alarms = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+    val intent = Intent(context, HbotsWidgetProvider::class.java).setAction(HbotsWidgetProvider.ACTION_REFRESH)
+    val pending = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    if (at == null) alarms.cancel(pending) else alarms.set(AlarmManager.RTC, at, pending)
   }
 }

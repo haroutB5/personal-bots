@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/hbots_item"
+  android:layout_width="0dp"
+  android:layout_height="36dp"
+  android:layout_marginEnd="6dp"
+  android:layout_weight="1"
+  android:background="@drawable/hbots_btn"
+  android:ellipsize="end"
+  android:gravity="center"
+  android:maxLines="1"
+  android:paddingStart="8dp"
+  android:paddingEnd="8dp"
+  android:textColor="#FFFFFFFF"
+  android:textSize="13sp"
+  android:textStyle="bold"/>

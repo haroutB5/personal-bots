@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/hbots_item"
+  android:layout_width="36dp"
+  android:layout_height="36dp"
+  android:padding="4dp">
+  <ImageView
+    android:id="@+id/hbots_face_bg"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:importantForAccessibility="no"
+    android:src="@drawable/hbots_avatar"/>
+  <TextView
+    android:id="@+id/hbots_face_text"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:importantForAccessibility="no"
+    android:textColor="#FFFFFFFF"
+    android:textSize="12sp"
+    android:textStyle="bold"/>
+</FrameLayout>

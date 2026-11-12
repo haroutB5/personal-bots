@@ -20,5 +20,82 @@
         android:name="android.appwidget.provider"
         android:resource="@xml/hbots_widget_info"/>
     </receiver>
+    <receiver
+      android:name="expo.modules.hbotslauncher.NeedsYouWidgetProvider"
+      android:exported="true"
+      android:label="@string/hbots_needs_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/hbots_needs_info"/>
+    </receiver>
+    <receiver
+      android:name="expo.modules.hbotslauncher.TileGridWidgetProvider"
+      android:exported="true"
+      android:label="@string/hbots_tiles_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/hbots_tiles_info"/>
+    </receiver>
+    <receiver
+      android:name="expo.modules.hbotslauncher.QuickAskWidgetProvider"
+      android:exported="true"
+      android:label="@string/hbots_ask_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/hbots_ask_info"/>
+    </receiver>
+    <receiver
+      android:name="expo.modules.hbotslauncher.UsageWidgetProvider"
+      android:exported="true"
+      android:label="@string/hbots_usage_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/hbots_usage_info"/>
+    </receiver>
+    <receiver
+      android:name="expo.modules.hbotslauncher.OneBotWidgetProvider"
+      android:exported="true"
+      android:label="@string/hbots_bot_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/hbots_bot_info"/>
+    </receiver>
+    <receiver
+      android:name="expo.modules.hbotslauncher.MachinesWidgetProvider"
+      android:exported="true"
+      android:label="@string/hbots_machines_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/hbots_machines_info"/>
+    </receiver>
+    <receiver
+      android:name="expo.modules.hbotslauncher.TodayWidgetProvider"
+      android:exported="true"
+      android:label="@string/hbots_today_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/hbots_today_info"/>
+    </receiver>
   </application>
 </manifest>
