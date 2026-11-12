@@ -373,6 +373,13 @@ describe("the PC link state machine", () => {
     expect(h.reader.current(h.at())).toBeNull();
   });
 
+  it("never reports a negative age when the route clock is a moment behind the reading", () => {
+    const h = harness();
+    h.reader.touch(h.at());
+    h.links[0]!.emit(IDLE_LINE);
+    expect(h.reader.current(h.at() - 13)).toMatchObject({ state: "on", ageMs: 0 });
+  });
+
   it("stops: 31 s with no touch kills the child once and shows nothing", () => {
     const h = harness();
     h.reader.touch(h.at());

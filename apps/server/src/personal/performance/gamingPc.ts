@@ -555,7 +555,7 @@ export function makeGamingPcReader(
       if (reading !== null && nowMs - reading.at <= GAMING_PC_STALE_MS) {
         refreshRig(nowMs);
         const bot = rig !== null && nowMs - rig.at <= GAMING_PC_STALE_MS ? rig.value : null;
-        return wireFrom(reading.line, nowMs - reading.at, bot);
+        return wireFrom(reading.line, Math.max(0, nowMs - reading.at), bot);
       }
       return link.tag === "connecting" ? { state: "starting" } : null;
     },
