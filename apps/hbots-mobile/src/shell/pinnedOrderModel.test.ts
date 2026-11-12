@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { dropIndex, moveTo, PINNED_TILE_STEP, reorderByDrag } from "./pinnedOrderModel.ts";
+import {
+  classifyRelease,
+  DRAG_SLOP_DP,
+  dropIndex,
+  moveTo,
+  PINNED_TILE_STEP,
+  reorderByDrag,
+} from "./pinnedOrderModel.ts";
 
 describe("dropIndex", () => {
   it("moves right by whole tiles", () => {
@@ -15,6 +22,22 @@ describe("dropIndex", () => {
 
   it("stays put for a small drag", () => {
     expect(dropIndex(20, 82, 1, 4)).toBe(1);
+  });
+});
+
+describe("classifyRelease", () => {
+  it("opens the actions sheet when a lift did not move", () => {
+    expect(classifyRelease(0, false)).toBe("sheet");
+    expect(classifyRelease(6, false)).toBe("sheet");
+  });
+
+  it("reorders after a real drag", () => {
+    expect(classifyRelease(DRAG_SLOP_DP + 1, true)).toBe("reorder");
+    expect(classifyRelease(-DRAG_SLOP_DP - 1, true)).toBe("reorder");
+  });
+
+  it("does nothing when a drag comes back to the start", () => {
+    expect(classifyRelease(2, true)).toBe("none");
   });
 });
 

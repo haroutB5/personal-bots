@@ -3,6 +3,15 @@
 /** One tile plus the strip's gap, in dp. */
 export const PINNED_TILE_STEP = 82;
 
+/** A lift that moves less than this is a long press, not a drag. */
+export const DRAG_SLOP_DP = 8;
+
+/** What a released lift does: open the actions sheet, reorder, or nothing. */
+export function classifyRelease(dx: number, moved: boolean): "sheet" | "reorder" | "none" {
+  if (!moved) return "sheet";
+  return Math.abs(dx) > DRAG_SLOP_DP ? "reorder" : "none";
+}
+
 /** Where a drag that started at `from` should land, clamped to the strip. */
 export function dropIndex(dx: number, tileWidth: number, from: number, count: number): number {
   if (count <= 0) return 0;

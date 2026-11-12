@@ -59,7 +59,7 @@ import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
 import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
-import { moveTo, reorderByDrag } from "./pinnedOrderModel";
+import { classifyRelease, DRAG_SLOP_DP, moveTo, reorderByDrag } from "./pinnedOrderModel";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
@@ -79,6 +79,7 @@ function PinnedTile({
   onLift,
   onDrop,
   onMove,
+  onOpenActions,
 }: {
   readonly summary: BotSummary;
   readonly now: number;
@@ -86,43 +87,68 @@ function PinnedTile({
   readonly onLift: (active: boolean) => void;
   readonly onDrop: (botId: string, dx: number) => void;
   readonly onMove: (delta: -1 | 1) => void;
+  readonly onOpenActions: () => void;
 }) {
   const status = botStatus(summary, now);
   const badge = status.tone === "review" ? "attention" : summary.live ? "working" : null;
   const unread = summary.unreadChats ?? 0;
   const botId = summary.bot.botId as string;
   // The responder is created once, so it reads the current callbacks from here.
-  const latest = useRef({ onDrop, onLift });
+  const latest = useRef({ onDrop, onLift, onOpenActions });
   useEffect(() => {
-    latest.current = { onDrop, onLift };
+    latest.current = { onDrop, onLift, onOpenActions };
   });
   // eslint-disable-next-line react/refs -- the animated value is created once
   const translateX = useRef(new Animated.Value(0)).current;
   const lifted = useRef(false);
-  const moved = useRef(false);
+  const dragging = useRef(false);
+  const suppressPress = useRef(false);
+  const releaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetLift = (openActions: boolean) => {
+    if (releaseTimer.current !== null) {
+      clearTimeout(releaseTimer.current);
+      releaseTimer.current = null;
+    }
+    translateX.setValue(0);
+    lifted.current = false;
+    dragging.current = false;
+    latest.current.onLift(false);
+    if (openActions) latest.current.onOpenActions();
+  };
+
+  const endPress = () => {
+    if (!lifted.current || dragging.current) return;
+    // A pan grant in this same gesture should win over the sheet.
+    if (releaseTimer.current !== null) clearTimeout(releaseTimer.current);
+    releaseTimer.current = setTimeout(() => {
+      releaseTimer.current = null;
+      if (!lifted.current || dragging.current) return;
+      resetLift(classifyRelease(0, false) === "sheet");
+    }, 0);
+  };
+
   const responder = useRef(
     // eslint-disable-next-line react/refs -- the responder is created once
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_event, gesture) => lifted.current && Math.abs(gesture.dx) > 4,
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        lifted.current && Math.abs(gesture.dx) > DRAG_SLOP_DP,
+      onPanResponderGrant: () => {
+        dragging.current = true;
+        if (releaseTimer.current !== null) {
+          clearTimeout(releaseTimer.current);
+          releaseTimer.current = null;
+        }
+      },
       onPanResponderMove: (_event, gesture) => {
         translateX.setValue(gesture.dx);
       },
       onPanResponderRelease: (_event, gesture) => {
         const dx = gesture.dx;
-        translateX.setValue(0);
-        lifted.current = false;
-        latest.current.onLift(false);
-        if (Math.abs(dx) > 4) moved.current = true;
-        setTimeout(() => {
-          moved.current = false;
-        }, 0);
-        latest.current.onDrop(botId, dx);
+        resetLift(false);
+        if (classifyRelease(dx, true) === "reorder") latest.current.onDrop(botId, dx);
       },
-      onPanResponderTerminate: () => {
-        translateX.setValue(0);
-        lifted.current = false;
-        latest.current.onLift(false);
-      },
+      onPanResponderTerminate: () => resetLift(false),
     }),
   ).current;
   return (
@@ -132,15 +158,20 @@ function PinnedTile({
       {...responder.panHandlers}
     >
       <Pressable
+        onPressIn={() => {
+          suppressPress.current = false;
+        }}
         onPress={() => {
-          if (moved.current) return;
+          if (suppressPress.current) return;
           onPress();
         }}
         onLongPress={() => {
+          suppressPress.current = true;
           lifted.current = true;
-          moved.current = true;
-          onLift(true);
+          dragging.current = false;
+          latest.current.onLift(true);
         }}
+        onPressOut={endPress}
         delayLongPress={300}
         accessibilityRole="button"
         accessibilityLabel={`${summary.bot.name}${badge === null ? "" : `, ${status.label}`}${unread > 0 ? `, ${unread} unread chats` : ""}`}
@@ -978,6 +1009,7 @@ export function BotsScreen({
                     onLift={setPinnedDragging}
                     onDrop={movePinnedByDrag}
                     onMove={(delta) => movePinnedBySlot(summary.bot.botId as string, delta)}
+                    onOpenActions={() => setActionBot(summary)}
                   />
                 ))}
               </ScrollView>
