@@ -386,6 +386,7 @@ vi.mock("./PersonalOfflineBanner", () => ({
   usePersonalConnectionPhase: () => "connected",
 }));
 vi.mock("./startBotChat", () => ({
+  wasChatStartedHere: () => false,
   useStartBotChat: () => ({ start: state.startNewChat, starting: false }),
 }));
 vi.mock("./usePersonalAutomation", () => ({
