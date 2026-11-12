@@ -191,7 +191,12 @@ export function NewItemsSheet({
 
   return (
     <Modal visible={motion.mounted} transparent animationType="none" onRequestClose={closeOrBack}>
-      <View ref={attachRoot} style={[styles.scrim, { paddingBottom: keyboardHeight }]}>
+      <View
+        ref={attachRoot}
+        collapsable={false}
+        pointerEvents={motion.closing ? "none" : "auto"}
+        style={[styles.scrim, { paddingBottom: keyboardHeight }]}
+      >
         <Animated.View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, styles.scrimFill, motion.backdropStyle]}
