@@ -10,6 +10,7 @@ export const motionDuration = {
   chipIn: 160,
   rise: 180,
   banner: 180,
+  bannerSnap: 150,
   sheet: 200,
   swipeSettle: 220,
   callIn: 280,

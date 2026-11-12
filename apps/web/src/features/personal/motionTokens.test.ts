@@ -14,6 +14,7 @@ const read = (relative: string) => NodeFS.readFileSync(new URL(relative, import.
 const css = read("./personal.css");
 const sheet = read("../../components/ui/sheet.tsx");
 const swipeBack = read("./useChatSwipeBack.tsx");
+const inAppBanner = read("./InAppNotifications.tsx");
 
 function match(source: string, pattern: RegExp): RegExpMatchArray {
   const found = source.match(pattern);
@@ -32,6 +33,7 @@ describe("motion tokens against the web CSS", () => {
     ["chipIn", match(css, /animation: personal-chip-in (\d+)ms/)[1]!, 1],
     ["rise", match(css, /animation: personal-chat-enter (\d+)ms/)[1]!, 1],
     ["banner", match(css, /animation: personal-in-app-in (\d+)ms/)[1]!, 1],
+    ["bannerSnap", match(inAppBanner, /touch-none[^"]*transition-transform duration-(\d+)/)[1]!, 1],
     ["sheet", match(sheet, /transition-\[opacity,translate\] duration-(\d+)/)[1]!, 1],
     ["swipeSettle", match(swipeBack, /SETTLE_MS = (\d+)/)[1]!, 1],
     ["callIn", match(css, /animation: voice-call-in (\d+)ms/)[1]!, 1],
