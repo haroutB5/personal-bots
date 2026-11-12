@@ -6,6 +6,7 @@ import {
   motionEase,
   motionPress,
   motionPulse,
+  motionRing,
   motionRise,
   motionSheet,
 } from "@hbots/personal-client/motion/motionTokens";
@@ -52,6 +53,8 @@ describe("motion tokens against the web CSS", () => {
     ["sheet", match(sheet, /transition-\[opacity,translate\] duration-(\d+)/)[1]!, 1],
     ["swipeSettle", match(swipeBack, /SETTLE_MS = (\d+)/)[1]!, 1],
     ["callIn", match(css, /animation: voice-call-in (\d+)ms/)[1]!, 1],
+    ["callRing", match(css, /animation: voice-call-ring ([\d.]+)s ease-in-out infinite/)[1]!, 1000],
+    ["callCard", match(css, /animation: voice-call-card (\d+)ms ease-out/)[1]!, 1],
     ["replyHighlight", match(css, /animation: personal-reply-highlight ([\d.]+)s/)[1]!, 1000],
   ];
 
@@ -98,6 +101,17 @@ describe("motion tokens against the web CSS", () => {
     expect(
       bezier(css, /transform 350ms cubic-bezier\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\) 150ms/),
     ).toEqual([...motionEase.in]);
+  });
+
+  it("the connecting ring breathes between the web keyframe scale and opacity", () => {
+    const frames = match(css, /@keyframes voice-call-ring \{([\s\S]*?)\n\}/)[1]!;
+    const low = match(frames, /0%,\s*100% \{\s*transform: scale\(1\);\s*opacity: ([\d.]+)/)[1];
+    const high = match(frames, /50% \{\s*transform: scale\(([\d.]+)\);\s*opacity: ([\d.]+)/);
+    expect(motionRing).toEqual({
+      scale: Number(high[1]),
+      opacityLow: Number(low),
+      opacityHigh: Number(high[2]),
+    });
   });
 
   it("pulse easing is the Tailwind animate-pulse curve", () => {

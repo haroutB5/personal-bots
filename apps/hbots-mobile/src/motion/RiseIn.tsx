@@ -13,10 +13,12 @@ import { useReducedMotion } from "./useReducedMotion";
  */
 export function RiseIn({
   enabled,
+  duration = motionDuration.rise,
   style,
   children,
 }: PropsWithChildren<{
   readonly enabled: boolean;
+  readonly duration?: number;
   readonly style?: StyleProp<ViewStyle>;
 }>) {
   const reduced = useReducedMotion();
@@ -33,7 +35,7 @@ export function RiseIn({
     const frame = requestAnimationFrame(() => {
       started = Animated.timing(progress, {
         toValue: 1,
-        duration: motionDuration.rise,
+        duration,
         easing: Easing.bezier(...motionEase.cssEaseOut),
         useNativeDriver: true,
       });
@@ -44,7 +46,7 @@ export function RiseIn({
       started?.stop();
       progress.setValue(1);
     };
-  }, [plays, progress]);
+  }, [plays, progress, duration]);
 
   return (
     <Animated.View

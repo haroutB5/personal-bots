@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { SlideUpIn } from "../motion/SlideUpIn";
 import { tokens } from "../shell/tokens";
 
 import { CallBar } from "./CallBar";
@@ -88,29 +89,31 @@ export function VoiceCallLayer({ navigation }: { readonly navigation: VoiceCallN
   }
 
   return (
-    <VoiceCallScreen
-      view={view}
-      error={error}
-      maxCallMinutes={view.snapshot.maxCallMinutes}
-      onMinimise={() => {
-        if (chevronAction(status) === "leave") {
-          session.end();
+    <SlideUpIn>
+      <VoiceCallScreen
+        view={view}
+        error={error}
+        maxCallMinutes={view.snapshot.maxCallMinutes}
+        onMinimise={() => {
+          if (chevronAction(status) === "leave") {
+            session.end();
+            navigation.openChat(call.botId, call.threadId);
+            return;
+          }
+          session.setMinimised(true);
+        }}
+        onToggleCaptions={() => session.setCaptionsOn(!view.captionsOn)}
+        onToggleMute={session.toggleMute}
+        onEnd={() => session.end("hung_up")}
+        onUndo={session.undoSend}
+        onOpenChat={() => {
+          session.setMinimised(true);
           navigation.openChat(call.botId, call.threadId);
-          return;
-        }
-        session.setMinimised(true);
-      }}
-      onToggleCaptions={() => session.setCaptionsOn(!view.captionsOn)}
-      onToggleMute={session.toggleMute}
-      onEnd={() => session.end("hung_up")}
-      onUndo={session.undoSend}
-      onOpenChat={() => {
-        session.setMinimised(true);
-        navigation.openChat(call.botId, call.threadId);
-      }}
-      onDismissRecovered={session.dismissRecovered}
-      readLevel={session.readLevel}
-    />
+        }}
+        onDismissRecovered={session.dismissRecovered}
+        readLevel={session.readLevel}
+      />
+    </SlideUpIn>
   );
 }
 

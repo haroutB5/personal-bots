@@ -17,6 +17,8 @@ export const motionDuration = {
   sheet: 200,
   swipeSettle: 220,
   callIn: 280,
+  callRing: 1400,
+  callCard: 200,
   replyHighlight: 1600,
   pulse: 2000,
   chevron: 150,
@@ -40,3 +42,5 @@ export const motionSheet = { translateY: 32 } as const;
 export const motionPress = { chip: 0.96, chipHold: 0.92, chipHeld: 1.04 } as const;
 
 export const motionPulse = { low: 0.5 } as const;
+
+export const motionRing = { scale: 1.05, opacityLow: 0.45, opacityHigh: 0.9 } as const;
