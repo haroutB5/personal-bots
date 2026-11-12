@@ -1213,6 +1213,7 @@ function ChatHeader({
   return (
     <View style={styles.header}>
       <Pressable
+        onPressIn={() => console.warn("DBG back pressIn " + Date.now())}
         onPress={onBack}
         accessibilityRole="button"
         accessibilityLabel="Back"
@@ -1242,6 +1243,7 @@ function ChatHeader({
       ) : null}
       {onMenu !== null ? (
         <Pressable
+          onPressIn={() => console.warn("DBG dots pressIn " + Date.now())}
           onPress={onMenu}
           accessibilityRole="button"
           accessibilityLabel="Chat options"
