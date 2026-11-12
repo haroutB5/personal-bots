@@ -1759,10 +1759,10 @@
       "id": "action:ConversationScreen.tsx#stop",
       "kind": "action",
       "title": "Stop",
-      "web": "ConversationScreen.tsx:1502",
+      "web": "ConversationScreen.tsx:1504",
       "via": "menu",
       "logic": {
-        "files": 136,
+        "files": 137,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1807,6 +1807,7 @@
           "botModelLabel.ts",
           "commandFeedback.ts",
           "resumeLastChat.ts",
+          "startBotChat.ts",
           "staleNotifications.ts",
           "computer/desktopState.ts",
           "computer/computerState.ts",
@@ -1853,16 +1854,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1502 does, checked on the web app."
+      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1504 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#switch-model",
       "kind": "action",
       "title": "Switch model...",
-      "web": "ConversationScreen.tsx:1505",
+      "web": "ConversationScreen.tsx:1507",
       "via": "menu",
       "logic": {
-        "files": 136,
+        "files": 137,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1907,6 +1908,7 @@
           "botModelLabel.ts",
           "commandFeedback.ts",
           "resumeLastChat.ts",
+          "startBotChat.ts",
           "staleNotifications.ts",
           "computer/desktopState.ts",
           "computer/computerState.ts",
@@ -1953,16 +1955,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Switch model...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1505 does, checked on the web app."
+      "check": "Tap \"Switch model...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1507 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#chat-settings",
       "kind": "action",
       "title": "Chat settings...",
-      "web": "ConversationScreen.tsx:1516",
+      "web": "ConversationScreen.tsx:1518",
       "via": "menu",
       "logic": {
-        "files": 136,
+        "files": 137,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2007,6 +2009,7 @@
           "botModelLabel.ts",
           "commandFeedback.ts",
           "resumeLastChat.ts",
+          "startBotChat.ts",
           "staleNotifications.ts",
           "computer/desktopState.ts",
           "computer/computerState.ts",
@@ -2053,16 +2056,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Chat settings...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1516 does, checked on the web app."
+      "check": "Tap \"Chat settings...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1518 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#call",
       "kind": "action",
       "title": "Call",
-      "web": "ConversationScreen.tsx:1528",
+      "web": "ConversationScreen.tsx:1530",
       "via": "menu",
       "logic": {
-        "files": 136,
+        "files": 137,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2107,6 +2110,7 @@
           "botModelLabel.ts",
           "commandFeedback.ts",
           "resumeLastChat.ts",
+          "startBotChat.ts",
           "staleNotifications.ts",
           "computer/desktopState.ts",
           "computer/computerState.ts",
@@ -2153,16 +2157,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"Call\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1528 does, checked on the web app."
+      "check": "Tap \"Call\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1530 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#new-chat",
       "kind": "action",
       "title": "New chat",
-      "web": "ConversationScreen.tsx:1537",
+      "web": "ConversationScreen.tsx:1539",
       "via": "menu",
       "logic": {
-        "files": 136,
+        "files": 137,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2207,6 +2211,7 @@
           "botModelLabel.ts",
           "commandFeedback.ts",
           "resumeLastChat.ts",
+          "startBotChat.ts",
           "staleNotifications.ts",
           "computer/desktopState.ts",
           "computer/computerState.ts",
@@ -2253,16 +2258,16 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"New chat\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1537 does, checked on the web app."
+      "check": "Tap \"New chat\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1539 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#all-chats",
       "kind": "action",
       "title": "All chats",
-      "web": "ConversationScreen.tsx:1551",
+      "web": "ConversationScreen.tsx:1553",
       "via": "menu",
       "logic": {
-        "files": 136,
+        "files": 137,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2307,6 +2312,7 @@
           "botModelLabel.ts",
           "commandFeedback.ts",
           "resumeLastChat.ts",
+          "startBotChat.ts",
           "staleNotifications.ts",
           "computer/desktopState.ts",
           "computer/computerState.ts",
@@ -2353,7 +2359,7 @@
       },
       "pr": "A4",
       "status": "done",
-      "check": "Tap \"All chats\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1551 does, checked on the web app."
+      "check": "Tap \"All chats\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1553 does, checked on the web app."
     },
     {
       "id": "action:DelegationCard.tsx#open-chat",
