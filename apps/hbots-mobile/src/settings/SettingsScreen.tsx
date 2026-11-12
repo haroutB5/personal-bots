@@ -302,9 +302,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
           </Section>
         ),
       )}
-      {sections.length === 0 ? (
-        <Text style={styles.empty}>{`Nothing in settings matches "${query.trim()}".`}</Text>
-      ) : null}
+      {sections.length === 0 ? <Text style={styles.empty}>No settings match</Text> : null}
       <NameSheet native={props.native} visible={nameOpen} onClose={() => setNameOpen(false)} />
     </SettingsPage>
   );
