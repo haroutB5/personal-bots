@@ -49,6 +49,7 @@ import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroup
 import { GroupAvatarCluster } from "../groups/GroupAvatarCluster";
 import { groupChatsSections } from "../groups/groupScreenModel";
 import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
+import { touchOutsideSwipeRows } from "../components/swipeDeleteRows";
 import { BotActionsSheet } from "../sheets/BotActionsSheet";
 import { NewChatSheet } from "../sheets/NewChatSheet";
 import { RenameChatSheet } from "../sheets/RenameChatSheet";
@@ -810,6 +811,7 @@ export function BotsScreen({
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.screen}
+      onTouchStart={touchOutsideSwipeRows}
     >
       <PersonalOfflineBanner native={native} />
       <UpdatePermissionBanner update={update} onPress={onOpenInstallPermission} />

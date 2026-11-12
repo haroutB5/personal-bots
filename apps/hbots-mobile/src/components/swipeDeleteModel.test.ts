@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ARMED, CLOSED, nextSwipeDelete } from "./swipeDeleteModel.ts";
+import {
+  ARMED,
+  armedRowsAfterArm,
+  armedRowsAfterTouch,
+  CLOSED,
+  nextSwipeDelete,
+} from "./swipeDeleteModel.ts";
 
 const swipe = (distance: number) => ({ kind: "swipe" as const, distance, threshold: 40 });
 
@@ -27,5 +33,19 @@ describe("nextSwipeDelete", () => {
       state: CLOSED,
       effect: "none",
     });
+  });
+});
+
+describe("armed rows", () => {
+  it("closes an armed row when another row is touched", () => {
+    expect([...armedRowsAfterTouch(new Set(["a"]), "b")]).toEqual([]);
+  });
+
+  it("keeps the armed row when its own row is touched", () => {
+    expect([...armedRowsAfterTouch(new Set(["a"]), "a")]).toEqual(["a"]);
+  });
+
+  it("closes the old row when another row arms", () => {
+    expect([...armedRowsAfterArm(new Set(["a"]), "b")]).toEqual(["b"]);
   });
 });

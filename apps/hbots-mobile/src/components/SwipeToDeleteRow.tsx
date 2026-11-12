@@ -1,10 +1,13 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "../shell/tokens";
 import { CLOSED, nextSwipeDelete, type SwipeDelete } from "./swipeDeleteModel";
+import { armSwipeRow, disarmSwipeRow, registerSwipeRow, touchSwipeRow } from "./swipeDeleteRows";
 
 const ACTION_WIDTH = 136;
+
+let nextRowId = 1;
 
 /**
  * Swipe left once to arm Delete, again to commit. A tap on Delete always
@@ -26,11 +29,19 @@ export function SwipeToDeleteRow({
   const translateX = useRef(new Animated.Value(0)).current;
   const stateRef = useRef<SwipeDelete>(CLOSED);
   const [armed, setArmed] = useState(false);
+  const [id] = useState(() => `swipe-row-${nextRowId++}`);
+  // The responder is created once, so it reads the current callbacks from here.
+  const latest = useRef({ onDelete, onSwipeConfirm });
+  useEffect(() => {
+    latest.current = { onDelete, onSwipeConfirm };
+  });
 
   const settle = (next: SwipeDelete) => {
     stateRef.current = next;
     const open = next.kind === "armed";
     setArmed(open);
+    if (open) armSwipeRow(id);
+    else disarmSwipeRow(id);
     Animated.spring(translateX, {
       toValue: open ? -ACTION_WIDTH : 0,
       useNativeDriver: true,
@@ -38,6 +49,12 @@ export function SwipeToDeleteRow({
       speed: 24,
     }).start();
   };
+
+  const settleRef = useRef(settle);
+  useEffect(() => {
+    settleRef.current = settle;
+  });
+  useEffect(() => registerSwipeRow(id, () => settleRef.current(CLOSED)), [id]);
 
   const responder = useRef(
     // eslint-disable-next-line react/refs -- the responder is created once
@@ -57,8 +74,8 @@ export function SwipeToDeleteRow({
         });
         settle(outcome.state);
         if (outcome.effect === "commit") {
-          if (onSwipeConfirm !== undefined) onSwipeConfirm();
-          else onDelete();
+          const callback = latest.current.onSwipeConfirm ?? latest.current.onDelete;
+          callback();
         }
       },
       onPanResponderTerminate: () => settle(stateRef.current),
@@ -66,7 +83,7 @@ export function SwipeToDeleteRow({
   ).current;
 
   return (
-    <View style={styles.root}>
+    <View style={styles.root} onTouchStart={() => touchSwipeRow(id)}>
       <View style={styles.actionLayer}>
         <Pressable
           onPress={() => {

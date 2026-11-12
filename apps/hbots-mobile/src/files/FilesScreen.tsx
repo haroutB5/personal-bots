@@ -41,6 +41,7 @@ import {
 
 import { confirmDestructive } from "../components/confirmDestructive";
 import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
+import { touchOutsideSwipeRows } from "../components/swipeDeleteRows";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { useSecureScreen } from "../platform/secureScreen";
 import { PersonalFilePreviewSheet } from "../sheets/PersonalFilePreviewSheet";
@@ -235,7 +236,7 @@ export function FilesScreen({ native }: { readonly native: NativePersonal }) {
   const previewUrl = previewing === null ? null : resolve(previewing.url);
 
   return (
-    <View style={styles.screen}>
+    <View style={styles.screen} onTouchStart={touchOutsideSwipeRows}>
       {selecting ? (
         <View style={styles.header}>
           <Pressable onPress={exitSelect} accessibilityRole="button" style={styles.headerButton}>
