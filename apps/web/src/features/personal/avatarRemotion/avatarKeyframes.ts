@@ -98,7 +98,7 @@ export function avatarKeyframesName(state: AvatarMotion, layer: string): string 
   return `bot-avatar-${state}-${layer}`;
 }
 
-function num(value: number): string {
+export function num(value: number): string {
   const rounded = Math.round(value * 1000) / 1000;
   return String(rounded === 0 ? 0 : rounded);
 }
@@ -113,7 +113,10 @@ function seconds(value: number): string {
 }
 
 /** Indices of the samples to keep: the ends, plus every corner a line would miss. */
-function simplify(samples: readonly (readonly number[])[], tolerance: readonly number[]): number[] {
+export function simplify(
+  samples: readonly (readonly number[])[],
+  tolerance: readonly number[],
+): number[] {
   const last = samples.length - 1;
   const kept = [0];
   let anchor = 0;
@@ -144,7 +147,7 @@ function simplify(samples: readonly (readonly number[])[], tolerance: readonly n
  * exact holds: an unchanged animated value lets the browser skip repainting
  * the avatar, a value creeping by a thousandth does not.
  */
-function holdStill(
+export function holdStill(
   samples: readonly (readonly number[])[],
   tolerance: readonly number[],
 ): (readonly number[])[] {
@@ -164,7 +167,7 @@ function holdStill(
   return out;
 }
 
-function differsFromRest(
+export function differsFromRest(
   samples: readonly (readonly number[])[],
   rest: readonly number[],
 ): boolean {
@@ -174,9 +177,9 @@ function differsFromRest(
 }
 
 /** Samples of `layer` over `[from, from + span]`, about 30 per second. */
-function sampleLayer(
+export function sampleLayer(
   state: AvatarMotion,
-  layer: AvatarLayer,
+  layer: Pick<AvatarLayer, "channels">,
   from: number,
   span: number,
 ): (readonly number[])[] {

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { IconChevronDown, IconChevronRight } from "@tabler/icons-react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { IconChevronRight } from "@tabler/icons-react-native";
 import {
   workStepLabel,
   type RunWork,
@@ -9,6 +9,8 @@ import {
 } from "@hbots/personal-client/conversation/liveWork";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
+import { PulseDot } from "../motion/PulseDot";
+import { TurnIcon } from "../motion/TurnIcon";
 import { tokens } from "../shell/tokens";
 
 function statusColor(status: WorkStepStatus): string {
@@ -74,7 +76,7 @@ export function LiveWorkRow({ work }: { readonly work: RunWork }) {
         accessibilityRole="progressbar"
         accessibilityLabel={`Working: ${line}`}
       >
-        <ActivityIndicator size="small" color={tokens.working} style={styles.spinner} />
+        <PulseDot style={styles.pulseDot} />
         <Text style={styles.liveText} numberOfLines={1} ellipsizeMode="tail">
           {line}
         </Text>
@@ -106,11 +108,9 @@ export function LiveWorkRow({ work }: { readonly work: RunWork }) {
         >
           {summary}
         </Text>
-        {expanded ? (
-          <IconChevronDown size={14} color={tokens.textTertiary} strokeWidth={2} />
-        ) : (
+        <TurnIcon turned={expanded} degrees={90}>
           <IconChevronRight size={14} color={tokens.textTertiary} strokeWidth={2} />
-        )}
+        </TurnIcon>
       </Pressable>
       {expanded ? (
         <View style={styles.steps}>
@@ -141,7 +141,14 @@ const styles = StyleSheet.create({
     minHeight: 20,
     paddingVertical: 2,
   },
-  spinner: { flexShrink: 0 },
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    marginHorizontal: 7,
+    backgroundColor: tokens.working,
+    flexShrink: 0,
+  },
   liveText: {
     color: tokens.textSecondary,
     fontSize: 13,

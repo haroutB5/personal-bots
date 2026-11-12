@@ -77,6 +77,14 @@
       "types": "./src/bots/botModelLabel.ts",
       "import": "./src/bots/botModelLabel.ts"
     },
+    "./bots/avatarMotionState": {
+      "types": "./src/bots/avatarMotionState.ts",
+      "import": "./src/bots/avatarMotionState.ts"
+    },
+    "./bots/avatarMotionTable.generated": {
+      "types": "./src/bots/avatarMotionTable.generated.ts",
+      "import": "./src/bots/avatarMotionTable.generated.ts"
+    },
     "./bots/botSummaries": {
       "types": "./src/bots/botSummaries.ts",
       "import": "./src/bots/botSummaries.ts"
@@ -304,6 +312,10 @@
     "./conversation/timeline": {
       "types": "./src/conversation/timeline.ts",
       "import": "./src/conversation/timeline.ts"
+    },
+    "./motion/motionTokens": {
+      "types": "./src/motion/motionTokens.ts",
+      "import": "./src/motion/motionTokens.ts"
     },
     "./bots/botAvatarShapes": {
       "types": "./src/bots/botAvatarShapes.ts",

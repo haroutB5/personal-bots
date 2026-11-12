@@ -49,6 +49,7 @@ import {
   type ChatSettingsTarget,
 } from "@hbots/personal-client/bots/chatSettingsModel";
 import { DEFAULT_TOKEN_USAGE_WINDOW } from "@hbots/personal-client/usage/tokenUsagePresentation";
+import { motionForConversationState } from "@hbots/personal-client/bots/avatarMotionState";
 import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
@@ -68,6 +69,8 @@ import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
 import { chipScrollX } from "../chat/chipScroll";
+import { ChipPill } from "../chat/ChipPill";
+import { useFreshChipIds } from "../chat/useFreshChipIds";
 import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
@@ -81,6 +84,8 @@ import { useNow } from "../chat/useNow";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
 import type { PendingSend } from "../chat/composerSendModel";
+import { RiseIn } from "../motion/RiseIn";
+import type { ChatEntry } from "../nav/chatEntry";
 import { BotAvatar } from "../shell/BotAvatar";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
@@ -112,6 +117,7 @@ export function ChatScreen({
   chat,
   botId,
   threadId,
+  entry,
   onBack,
   onOpenChat,
   onOpenChats,
@@ -123,6 +129,7 @@ export function ChatScreen({
   readonly chat: ChatEnvironment;
   readonly botId: string;
   readonly threadId: string;
+  readonly entry: ChatEntry | undefined;
   readonly onBack: () => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
@@ -162,6 +169,7 @@ export function ChatScreen({
   >([]);
   const [searchBusy, setSearchBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [enteredVia] = useState(entry);
   const prewarmed = useRef(false);
   // eslint-disable-next-line react/purity -- open latency starts once per mount
   const openedAt = useRef(performance.now());
@@ -333,6 +341,7 @@ export function ChatScreen({
       }),
     [botId, links, shells, threadId],
   );
+  const freshChips = useFreshChipIds(chips.map((chip) => chip.threadId));
   const chipScrollRef = useRef<ScrollView | null>(null);
   const chipLayouts = useRef(new Map<string, { x: number; width: number }>());
   const chipOffset = useRef(0);
@@ -721,6 +730,7 @@ export function ChatScreen({
                 color={record?.bot?.avatarColor ?? cachedBot?.avatarColor ?? tokens.primary}
                 size={32}
                 label={header.botName}
+                motion={motionForConversationState(header.state, header.thinking)}
               />
               <View style={styles.headerText}>
                 <View style={styles.headerTitleRow}>
@@ -830,8 +840,12 @@ export function ChatScreen({
           style={styles.chipScroll}
         >
           {chips.map((chip) => (
-            <Pressable
+            <ChipPill
               key={chip.threadId}
+              current={chip.current}
+              fresh={freshChips.has(chip.threadId)}
+              style={styles.chip}
+              currentStyle={styles.chipCurrent}
               onLayout={(event) => {
                 const { x, width } = event.nativeEvent.layout;
                 chipLayouts.current.set(chip.threadId, { x, width });
@@ -846,10 +860,6 @@ export function ChatScreen({
                 if (!chip.current) onOpenChat(botId, chip.threadId);
               }}
               onLongPress={() => setSettingsThreadId(chip.threadId)}
-              delayLongPress={350}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: chip.current }}
-              style={[styles.chip, chip.current ? styles.chipCurrent : null]}
             >
               {chip.unread && !chip.current ? (
                 <View style={[styles.chipDot, styles.chipUnreadDot]} />
@@ -864,7 +874,7 @@ export function ChatScreen({
               >
                 {chip.text}
               </Text>
-            </Pressable>
+            </ChipPill>
           ))}
         </ScrollView>
       ) : null}
@@ -930,39 +940,43 @@ export function ChatScreen({
         ) : (
           <>
             {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
-            <MessageList
-              native={native}
-              chat={chat}
-              cardContext={cards.context}
-              items={cards.items}
-              pending={pending}
-              queued={queued}
-              botName={header.botName}
-              currentUserId="You"
-              work={work}
-              busy={running || archived}
-              latestMessageStatus={latestMessageStatus}
-              onReply={(quote) => setReplyTo(quote)}
-              onMessageMenu={setMessageMenu}
-              onOpenFile={(request) => setFileRequest(request)}
-              onOpenLink={(url) => {
-                void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
-              }}
-              onChoose={(text) => composerControl.current?.sendText(text) ?? Promise.resolve(false)}
-              onCancelQueued={(id) => removeOutboxEntry(id)}
-              onRetryQueued={(id) => {
-                retryOutboxEntry(id);
-                // Retry means now. A socket waiting out its backoff would
-                // otherwise turn the tap into another 20 s of "Sending…".
-                if (!native.readConnection().connected) native.retry();
-              }}
-              onRetryPending={(id) => void composerControl.current?.retry(id)}
-              onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
-              loadEarlierBusy={history.loading}
-              listControl={messageListControl}
-              onHeightChange={setListHeight}
-              keyboardInset={keyboard.padding}
-            />
+            <RiseIn enabled={enteredVia === "chip"} style={styles.riseHost}>
+              <MessageList
+                native={native}
+                chat={chat}
+                cardContext={cards.context}
+                items={cards.items}
+                pending={pending}
+                queued={queued}
+                botName={header.botName}
+                currentUserId="You"
+                work={work}
+                busy={running || archived}
+                latestMessageStatus={latestMessageStatus}
+                onReply={(quote) => setReplyTo(quote)}
+                onMessageMenu={setMessageMenu}
+                onOpenFile={(request) => setFileRequest(request)}
+                onOpenLink={(url) => {
+                  void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
+                }}
+                onChoose={(text) =>
+                  composerControl.current?.sendText(text) ?? Promise.resolve(false)
+                }
+                onCancelQueued={(id) => removeOutboxEntry(id)}
+                onRetryQueued={(id) => {
+                  retryOutboxEntry(id);
+                  // Retry means now. A socket waiting out its backoff would
+                  // otherwise turn the tap into another 20 s of "Sending…".
+                  if (!native.readConnection().connected) native.retry();
+                }}
+                onRetryPending={(id) => void composerControl.current?.retry(id)}
+                onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
+                loadEarlierBusy={history.loading}
+                listControl={messageListControl}
+                onHeightChange={setListHeight}
+                keyboardInset={keyboard.padding}
+              />
+            </RiseIn>
             {archived ? (
               <View style={[styles.archiveBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
                 <Text style={styles.archiveText}>Archived · Unarchive to send messages again.</Text>
@@ -1245,6 +1259,7 @@ function ChatHeader({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.bg },
   body: { flex: 1 },
+  riseHost: { flex: 1 },
   header: {
     minHeight: 52,
     flexDirection: "row",

@@ -2,10 +2,12 @@ import {
   VOICE_UNDO_MS,
   type VoiceWorkCard,
 } from "@hbots/personal-client/conversation/voice/callState";
+import { motionDuration } from "@hbots/personal-client/motion/motionTokens";
 import type { BotAvatarShape } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { RiseIn } from "../motion/RiseIn";
 import { BotAvatar } from "../shell/BotAvatar";
 import { tokens } from "../shell/tokens";
 import { workCardTitle } from "./callViewModel";
@@ -44,71 +46,73 @@ export function CallWorkCard({
   const title = workCardTitle(card, botName);
 
   return (
-    <View
-      accessibilityLiveRegion="polite"
-      style={[styles.card, review ? styles.review : styles.plain]}
-    >
-      {sending ? (
-        <View style={styles.row}>
-          <View style={styles.flex}>
-            <Text style={styles.title} maxFontSizeMultiplier={1.4}>
-              {title}
-            </Text>
-            <Text style={styles.detail} numberOfLines={2} maxFontSizeMultiplier={1.4}>
-              {card.detail}
-            </Text>
-          </View>
-          <Pressable
-            onPress={onUndo}
-            accessibilityRole="button"
-            accessibilityLabel="Undo the message"
-            style={styles.undo}
-          >
-            <Text style={styles.undoText} maxFontSizeMultiplier={1.4}>
-              Undo
-            </Text>
-          </Pressable>
-        </View>
-      ) : (
-        <Pressable
-          onPress={onOpenChat}
-          accessibilityRole="button"
-          accessibilityLabel={`${title}. Open the chat`}
-          style={styles.row}
-        >
-          <BotAvatar shape={shape} color={color} size={32} label="" />
-          <View style={styles.flex}>
-            <View style={styles.titleRow}>
-              {card.kind === "working" ? <View style={styles.dot} /> : null}
-              <Text
-                style={[styles.title, styles.flex]}
-                numberOfLines={1}
-                maxFontSizeMultiplier={1.4}
-              >
+    <RiseIn enabled duration={motionDuration.callCard}>
+      <View
+        accessibilityLiveRegion="polite"
+        style={[styles.card, review ? styles.review : styles.plain]}
+      >
+        {sending ? (
+          <View style={styles.row}>
+            <View style={styles.flex}>
+              <Text style={styles.title} maxFontSizeMultiplier={1.4}>
                 {title}
               </Text>
-            </View>
-            {card.detail.length > 0 ? (
-              <Text
-                style={[styles.detail, review ? styles.detailReview : null]}
-                numberOfLines={card.kind === "replied" || card.kind === "asking" ? 2 : 1}
-                maxFontSizeMultiplier={1.4}
-              >
+              <Text style={styles.detail} numberOfLines={2} maxFontSizeMultiplier={1.4}>
                 {card.detail}
               </Text>
-            ) : null}
+            </View>
+            <Pressable
+              onPress={onUndo}
+              accessibilityRole="button"
+              accessibilityLabel="Undo the message"
+              style={styles.undo}
+            >
+              <Text style={styles.undoText} maxFontSizeMultiplier={1.4}>
+                Undo
+              </Text>
+            </Pressable>
           </View>
-        </Pressable>
-      )}
-      {sending ? (
-        <View style={styles.trackBed} accessibilityElementsHidden>
-          <Animated.View
-            style={[styles.trackFill, { transform: [{ scaleX: track }] }]}
-            testID="voice-undo-track"
-          />
-        </View>
-      ) : null}
-    </View>
+        ) : (
+          <Pressable
+            onPress={onOpenChat}
+            accessibilityRole="button"
+            accessibilityLabel={`${title}. Open the chat`}
+            style={styles.row}
+          >
+            <BotAvatar shape={shape} color={color} size={32} label="" />
+            <View style={styles.flex}>
+              <View style={styles.titleRow}>
+                {card.kind === "working" ? <View style={styles.dot} /> : null}
+                <Text
+                  style={[styles.title, styles.flex]}
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={1.4}
+                >
+                  {title}
+                </Text>
+              </View>
+              {card.detail.length > 0 ? (
+                <Text
+                  style={[styles.detail, review ? styles.detailReview : null]}
+                  numberOfLines={card.kind === "replied" || card.kind === "asking" ? 2 : 1}
+                  maxFontSizeMultiplier={1.4}
+                >
+                  {card.detail}
+                </Text>
+              ) : null}
+            </View>
+          </Pressable>
+        )}
+        {sending ? (
+          <View style={styles.trackBed} accessibilityElementsHidden>
+            <Animated.View
+              style={[styles.trackFill, { transform: [{ scaleX: track }] }]}
+              testID="voice-undo-track"
+            />
+          </View>
+        ) : null}
+      </View>
+    </RiseIn>
   );
 }
 

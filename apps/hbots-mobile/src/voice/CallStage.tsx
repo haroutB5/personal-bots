@@ -1,8 +1,10 @@
+import { motionDuration, motionRing } from "@hbots/personal-client/motion/motionTokens";
 import { liftForContrast } from "@hbots/personal-client/conversation/voice/callState";
 import type { BotAvatarShape } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
-import { AccessibilityInfo, Animated, Easing, StyleSheet, View } from "react-native";
+import { Animated, Easing, StyleSheet, View } from "react-native";
 
+import { useReducedMotion } from "../motion/useReducedMotion";
 import { BotAvatar } from "../shell/BotAvatar";
 import { tokens } from "../shell/tokens";
 
@@ -25,19 +27,7 @@ export function CallStage({
 }) {
   const [ring] = useState(() => new Animated.Value(0));
   const [pulse] = useState(() => new Animated.Value(0));
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    void AccessibilityInfo.isReduceMotionEnabled().then((value) => {
-      if (active) setReduced(value);
-    });
-    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduced);
-    return () => {
-      active = false;
-      subscription.remove();
-    };
-  }, []);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     if (!live || reduced) {
@@ -65,13 +55,13 @@ export function CallStage({
       Animated.sequence([
         Animated.timing(pulse, {
           toValue: 1,
-          duration: 900,
+          duration: motionDuration.callRing / 2,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
         Animated.timing(pulse, {
           toValue: 0,
-          duration: 900,
+          duration: motionDuration.callRing / 2,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
@@ -84,7 +74,11 @@ export function CallStage({
   const ringColour = speaking ? liftForContrast(color, tokens.bg, 3) : tokens.textSecondary;
   const ringScale = live
     ? ring.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] })
-    : pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] });
+    : pulse.interpolate({ inputRange: [0, 1], outputRange: [1, motionRing.scale] });
+  const pulseOpacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [motionRing.opacityLow, motionRing.opacityHigh],
+  });
   const glowOpacity = live
     ? ring.interpolate({ inputRange: [0, 1], outputRange: [0.08, 0.4] })
     : 0.08;
@@ -103,7 +97,7 @@ export function CallStage({
           styles.ring,
           {
             borderColor: ringColour,
-            opacity: live ? 1 : 0.7,
+            opacity: live ? 1 : pulseOpacity,
             transform: [{ scale: ringScale }],
           },
         ]}

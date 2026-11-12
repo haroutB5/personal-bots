@@ -1,30 +1,14 @@
-import type { ConversationState } from "./conversationModel";
+import {
+  isContinuousMotion,
+  type AvatarMotion,
+} from "@hbots/personal-client/bots/avatarMotionState";
 
-/**
- * How a bot avatar carries its state.
- *
- * Only `thinking` and `working` are continuous loops; everything else is a
- * one-shot transition into a held pose, and `idle` is the plain rest pose. The
- * poses are authored in `avatarRemotion/avatarStates.ts` and shipped as the
- * generated keyframes in `avatarMotion.generated.css`. The status dots stay the
- * accessible channel; motion is decoration on top of them.
- */
-export type AvatarMotion = "idle" | "thinking" | "working" | "waiting" | "blocked" | "done";
-
-/** Every motion, in preview order (the Studio and the keyframe generator use it). */
-export const AVATAR_MOTIONS: readonly AvatarMotion[] = [
-  "idle",
-  "thinking",
-  "working",
-  "waiting",
-  "blocked",
-  "done",
-];
-
-/** Motions that loop for as long as they last (and pause while off screen). */
-export function isContinuousMotion(motion: AvatarMotion): boolean {
-  return motion === "thinking" || motion === "working";
-}
+export {
+  AVATAR_MOTIONS,
+  isContinuousMotion,
+  motionForConversationState,
+  type AvatarMotion,
+} from "@hbots/personal-client/bots/avatarMotionState";
 
 /** The shape of {@link import("./botSummaries").BotSummary} the mapping reads. */
 export interface BotMotionInput {
@@ -51,31 +35,6 @@ export function motionForSummary(summary: BotMotionInput): AvatarMotion {
   if (summary.erroredThread != null) return "blocked";
   if (summary.waitingFor !== null) return "waiting";
   return "idle";
-}
-
-/**
- * Conversation-header motion, mirroring the header dot's grouping. `thinking`
- * refines a working turn that has not produced anything yet
- * (`isTurnThinking`).
- */
-export function motionForConversationState(
-  state: ConversationState,
-  thinking = false,
-): AvatarMotion {
-  switch (state) {
-    case "working":
-      return thinking ? "thinking" : "working";
-    case "waiting":
-    case "needs_help":
-    case "delegating":
-      return "waiting";
-    case "rate_limited":
-    case "retrying":
-    case "error":
-      return "blocked";
-    case "idle":
-      return "idle";
-  }
 }
 
 /**

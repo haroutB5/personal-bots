@@ -26,6 +26,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } fr
 import { botMuteState, mutedUntilLabel } from "@hbots/personal-client/bots/botMuteModel";
 import type { ChatSettingsRowId } from "@hbots/personal-client/bots/chatSettingsModel";
 
+import { StepFade } from "../motion/StepFade";
 import { tokens } from "../shell/tokens";
 import { type ChatMenuSection } from "./chatMenuRows";
 import { SheetShell } from "./SheetShell";
@@ -224,21 +225,23 @@ export function ChatMenuSheet({
           )}
         </View>
         {muteOpen && !mute.muted ? (
-          <View style={styles.muteChoices}>
-            {MUTE_CHOICES.map((choice) => (
-              <Pressable
-                key={choice.label}
-                onPress={() => onMute(choice.mute)}
-                accessibilityRole="button"
-                accessibilityLabel={`Mute notifications, ${choice.label}`}
-                style={({ pressed }) => [styles.muteChoice, pressed ? styles.pressed : null]}
-              >
-                <Text style={styles.muteChoiceText} maxFontSizeMultiplier={1.3}>
-                  {choice.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <StepFade>
+            <View style={styles.muteChoices}>
+              {MUTE_CHOICES.map((choice) => (
+                <Pressable
+                  key={choice.label}
+                  onPress={() => onMute(choice.mute)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Mute notifications, ${choice.label}`}
+                  style={({ pressed }) => [styles.muteChoice, pressed ? styles.pressed : null]}
+                >
+                  <Text style={styles.muteChoiceText} maxFontSizeMultiplier={1.3}>
+                    {choice.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </StepFade>
         ) : null}
 
         <Text style={styles.section} maxFontSizeMultiplier={1.3}>

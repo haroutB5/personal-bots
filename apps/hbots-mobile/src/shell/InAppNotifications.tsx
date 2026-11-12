@@ -1,17 +1,15 @@
 import type { PersonalPushInAppNotification } from "@t3tools/contracts";
 import {
   FOREGROUND_HEARTBEAT_MS,
-  IN_APP_BANNER_MS,
   planInAppNotifications,
 } from "@hbots/personal-client/bots/inAppNotifications";
-import { IconX } from "@tabler/icons-react-native";
-import { useEffect, useRef, useState } from "react";
-import { AppState, Pressable, StyleSheet, Text, View, type AppStateStatus } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useEffect, useReducer, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 
+import { autoHideDelay, bannerReducer } from "../motion/bannerPresence";
+import { useReducedMotion } from "../motion/useReducedMotion";
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { BotAvatar } from "./BotAvatar";
-import { tokens } from "./tokens";
+import { InAppBanner } from "./InAppBanner";
 
 /**
  * Tells the server the app is on screen, so notifications arrive in-app
@@ -27,7 +25,6 @@ export function InAppNotifications({
   readonly currentPath: string;
   readonly onOpen: (url: string) => void;
 }) {
-  const insets = useSafeAreaInsets();
   const feed = native.bots.usePersonalPushInApp(native.environmentId).data;
   const ack = native.client.useAtomCommand(native.bots.personalPushAckInApp, {
     reportFailure: false,
@@ -36,7 +33,10 @@ export function InAppNotifications({
     reportFailure: false,
   });
   const seen = useRef(new Set<string>());
-  const [banner, setBanner] = useState<PersonalPushInAppNotification | null>(null);
+  const [banner, dispatch] = useReducer(bannerReducer<PersonalPushInAppNotification>, {
+    phase: "hidden",
+  });
+  const reduced = useReducedMotion();
   const [appState, setAppState] = useState<AppStateStatus>(() => AppState.currentState);
 
   useEffect(() => {
@@ -63,88 +63,29 @@ export function InAppNotifications({
     for (const id of plan.ack) {
       void ack({ environmentId: native.environmentId, input: { id } });
     }
-    if (plan.show !== null) setBanner(plan.show);
+    if (plan.show !== null) dispatch({ kind: "arrive", notification: plan.show });
   }, [feed, appState, currentPath, ack, native.environmentId]);
 
+  const shownId = banner.phase === "shown" ? banner.notification.id : null;
   useEffect(() => {
-    if (banner === null) return;
-    const timer = setTimeout(() => setBanner(null), IN_APP_BANNER_MS);
+    if (shownId === null) return;
+    const timer = setTimeout(() => dispatch({ kind: "dismiss" }), autoHideDelay(reduced));
     return () => clearTimeout(timer);
-  }, [banner]);
+  }, [shownId, reduced]);
 
-  if (banner === null) return null;
-  const line = banner.preview ?? banner.body;
-  const name = banner.title.replace(/ replied$/u, "");
+  if (banner.phase === "hidden") return null;
+  const { notification } = banner;
   return (
-    <View style={[styles.host, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
-      <View style={styles.banner} accessibilityRole="alert" accessibilityLiveRegion="polite">
-        <Pressable
-          onPress={() => {
-            setBanner(null);
-            onOpen(banner.url);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={`${banner.title}. ${line}`}
-          style={styles.body}
-        >
-          {banner.avatarShape !== undefined && banner.avatarColor !== undefined ? (
-            <BotAvatar shape={banner.avatarShape} color={banner.avatarColor} size={32} label="" />
-          ) : null}
-          <View style={styles.copy}>
-            <Text style={styles.title} numberOfLines={1}>
-              {name}
-            </Text>
-            <Text style={styles.preview} numberOfLines={1}>
-              {line}
-            </Text>
-          </View>
-        </Pressable>
-        <Pressable
-          onPress={() => setBanner(null)}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss notification"
-          style={styles.close}
-          hitSlop={8}
-        >
-          <IconX size={18} color={tokens.textSecondary} strokeWidth={2} />
-        </Pressable>
-      </View>
-    </View>
+    <InAppBanner
+      key={notification.id}
+      notification={notification}
+      leaving={banner.phase === "leaving"}
+      onOpen={() => {
+        dispatch({ kind: "close" });
+        onOpen(notification.url);
+      }}
+      onDismiss={() => dispatch({ kind: "dismiss" })}
+      onExited={() => dispatch({ kind: "exited", id: notification.id })}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  host: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 50,
-    alignItems: "center",
-    paddingHorizontal: 12,
-  },
-  banner: {
-    width: "100%",
-    maxWidth: 480,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: tokens.border,
-    backgroundColor: tokens.surface,
-    paddingVertical: 10,
-    paddingLeft: 12,
-    paddingRight: 4,
-    shadowColor: "#000000",
-    shadowOpacity: 0.6,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  body: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
-  copy: { flex: 1, minWidth: 0 },
-  title: { color: tokens.text, fontSize: 15, fontWeight: "600" },
-  preview: { color: tokens.textSecondary, fontSize: 13 },
-  close: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
-});

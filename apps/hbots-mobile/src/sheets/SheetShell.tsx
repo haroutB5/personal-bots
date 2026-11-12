@@ -10,11 +10,22 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconX } from "@tabler/icons-react-native";
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { PropsWithChildren } from "react";
 
+import { useSheetMotion } from "../motion/useSheetMotion";
+import { useWindowTouch } from "../motion/useWindowTouch";
 import { tokens } from "../shell/tokens";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
+
+function settleBack(translateY: Animated.Value) {
+  Animated.spring(translateY, {
+    toValue: 0,
+    useNativeDriver: true,
+    bounciness: 0,
+    speed: 24,
+  }).start();
+}
 
 export function SheetShell({
   visible,
@@ -32,6 +43,9 @@ export function SheetShell({
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const keyboard = useKeyboardInset(inline && visible);
+  const motion = useSheetMotion(visible);
+  const attachRoot = useWindowTouch(motion.closing, motion.mounted);
+  const visibleRef = useRef(visible);
   // eslint-disable-next-line react/refs -- the animated value is created once
   const translateY = useRef(new Animated.Value(0)).current;
   const responder = useRef(
@@ -45,33 +59,35 @@ export function SheetShell({
       onPanResponderRelease: (_event, gesture) => {
         if (gesture.dy > 80) {
           onClose();
-          translateY.setValue(0);
+          requestAnimationFrame(() => {
+            if (visibleRef.current) settleBack(translateY);
+          });
           return;
         }
-        Animated.spring(translateY, {
-          toValue: 0,
-          useNativeDriver: true,
-          bounciness: 0,
-          speed: 24,
-        }).start();
+        settleBack(translateY);
       },
       onPanResponderTerminate: () => {
-        Animated.spring(translateY, {
-          toValue: 0,
-          useNativeDriver: true,
-          bounciness: 0,
-          speed: 24,
-        }).start();
+        settleBack(translateY);
       },
     }),
   ).current;
+  useLayoutEffect(() => {
+    visibleRef.current = visible;
+    if (visible) translateY.setValue(0);
+  }, [visible, translateY]);
   const content = (
     <>
-      <View style={styles.root}>
+      <View
+        ref={inline ? undefined : attachRoot}
+        collapsable={false}
+        pointerEvents={motion.closing ? "none" : "auto"}
+        style={styles.root}
+      >
+        <Animated.View pointerEvents="none" style={[styles.backdrop, motion.backdropStyle]} />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close"
-          style={styles.backdrop}
+          style={styles.backdropHit}
           onPress={onClose}
         />
         <Animated.View
@@ -80,7 +96,8 @@ export function SheetShell({
             {
               paddingBottom: Math.max(insets.bottom, 12) + keyboard.padding,
               maxHeight: Math.round(height * 0.9),
-              transform: [{ translateY }],
+              opacity: motion.panelStyle.opacity,
+              transform: [{ translateY }, ...motion.panelStyle.transform],
             },
           ]}
         >
@@ -107,18 +124,22 @@ export function SheetShell({
     </>
   );
   if (inline) {
-    if (!visible) return null;
+    if (!motion.mounted) return null;
     return (
-      <View style={styles.inlineRoot} onLayout={keyboard.onLayout}>
+      <View
+        style={styles.inlineRoot}
+        pointerEvents={motion.closing ? "none" : "auto"}
+        onLayout={keyboard.onLayout}
+      >
         {content}
       </View>
     );
   }
   return (
     <Modal
-      visible={visible}
+      visible={motion.mounted}
       transparent
-      animationType="slide"
+      animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={onClose}
@@ -207,6 +228,13 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: tokens.scrim,
+  },
+  backdropHit: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   sheet: {
     zIndex: 10,
