@@ -62,6 +62,20 @@ class HbotsComposerHostView(context: Context, appContext: AppContext) :
     onContent(if (id == null) emptyMap() else mapOf("id" to id))
   }
 
+  /**
+   * React Native lays out this view's child itself. ExpoView is a LinearLayout, which would
+   * re-lay the TextInput at wrap-content size after every host layout and leave it narrower
+   * than the frame Yoga measured, so a wrapping message grew the field but not the box.
+   */
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    setMeasuredDimension(
+      MeasureSpec.getSize(widthMeasureSpec),
+      MeasureSpec.getSize(heightMeasureSpec),
+    )
+  }
+
+  override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) = Unit
+
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     val decision = EnterKeyPolicy.decide(event.keyCode, event.flags, event.metaState)
     if (EnterKeyPolicy.sendsNow(decision, event.action, event.repeatCount)) {
