@@ -21,7 +21,7 @@ None. The diff against 1.67.9 touches no file under `apps/server/src/persistence
 
 - Animations, device PASS at `e30dfc6ae3` on the gaming PC emulator rig, 10 gates exit 0, parity clean: `/home/harout/Claude/AI/dev-team/qa/hbots-animations/verify/VERIFY-2.md`.
 - Gaming PC stats, server PASS at `064688ebc2`: `/home/harout/Claude/AI/dev-team/qa/hbots-gamingpc-stats/verify/VERIFY-2.md`.
-- The version bump is the only change after `e30dfc6ae3`. The 9 release gates run again at the release commit. The table is below.
+- Two commits sit on top of `e30dfc6ae3`. The version bump `4d957bc7cf`, and `6ff88a7d1e`, which regenerates the generated matrix `scripts/personal/parity/parity.json` with the gate's `HEAD` refs (data only, file lists and counts). The first gate run at `4d957bc7cf` passed 8 of 9 and failed parity on that stale matrix. All 9 gates passed at `6ff88a7d1e`, the release commit. The table is below.
 
 ## Rollback
 
