@@ -371,7 +371,7 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
   if (update?.status === "failed") {
     return row("updateFailed", "review", "Update failed", {
       tone: "review",
-      detail: firstLine(update.message),
+      detail: "Try again.",
       action: { kind: "tryAgain", label: "Try again" },
     });
   }
@@ -416,7 +416,7 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
       const next = nextAttemptText(automatic, now);
       return row("updateAvailable", "review", "Update rolled back", {
         tone: "review",
-        detail: detailWithNextAttempt(next, automatic.message),
+        detail: detailWithNextAttempt(next, "Try again."),
         action: oneClick ? { kind: "update", label: "Update" } : null,
       });
     }
@@ -424,7 +424,7 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
       const next = nextAttemptText(automatic, now);
       return row("updateFailed", "review", "Update failed", {
         tone: "review",
-        detail: detailWithNextAttempt(next, automatic.message),
+        detail: detailWithNextAttempt(next, "Try again."),
         action: oneClick ? { kind: "tryAgain", label: "Try again" } : null,
       });
     }
