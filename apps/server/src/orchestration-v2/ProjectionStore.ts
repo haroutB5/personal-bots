@@ -3164,9 +3164,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
+                  -- Without the hint the planner scans in ordinal order to skip the sort.
+                  ${filter?.turnItemTypes === undefined ? sql`` : sql`INDEXED BY orchestration_v2_projection_turn_items_thread_type_ordinal_idx`}
                 WHERE thread_id = ${threadId}
                   ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
-                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN ${sql.in(filter.turnItemTypes)}`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
                   ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
@@ -3419,25 +3421,38 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (window === undefined && matchesNothing(filter?.nodeIds))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? filter?.omitSettledLeafNodes === true
+                ? sql<PayloadRow>`
+            SELECT payload_json FROM (
+              SELECT node.payload_json, node.started_at, node.node_id
+              FROM orchestration_v2_projection_nodes AS node
+              WHERE node.thread_id = ${threadId}
+                ${filter?.nodeIds === undefined ? sql`` : sql`AND node.node_id IN (SELECT value FROM json_each(${encodeIdList(filter.nodeIds)}))`}
+                AND NOT (
+                  node.kind IN ('tool_call', 'assistant_message', 'reasoning')
+                  AND node.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                  AND node.run_id IS NOT NULL
+                )
+              UNION ALL
+              SELECT node.payload_json, node.started_at, node.node_id
+              FROM orchestration_v2_projection_nodes AS node
+              WHERE node.thread_id = ${threadId}
+                ${filter?.nodeIds === undefined ? sql`` : sql`AND node.node_id IN (SELECT value FROM json_each(${encodeIdList(filter.nodeIds)}))`}
+                AND node.run_id IN (
+                  SELECT run.run_id FROM orchestration_v2_projection_runs AS run
+                  WHERE run.thread_id = ${threadId}
+                    AND run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                )
+                AND node.kind IN ('tool_call', 'assistant_message', 'reasoning')
+                AND node.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+            )
+            ORDER BY COALESCE(started_at, ''), node_id ASC
+              `
+                : sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_nodes AS node
             WHERE node.thread_id = ${threadId}
               ${filter?.nodeIds === undefined ? sql`` : sql`AND node.node_id IN (SELECT value FROM json_each(${encodeIdList(filter.nodeIds)}))`}
-              ${
-                filter?.omitSettledLeafNodes === true
-                  ? sql`AND NOT (
-                      node.kind IN ('tool_call', 'assistant_message', 'reasoning')
-                      AND node.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                      AND node.run_id IS NOT NULL
-                      AND NOT EXISTS (
-                        SELECT 1 FROM orchestration_v2_projection_runs AS run
-                        WHERE run.run_id = node.run_id
-                          AND run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
-                      )
-                    )`
-                  : sql``
-              }
             ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
               `
               : sql<PayloadRow & { readonly position: number }>`
@@ -3602,7 +3617,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json FROM orchestration_v2_projection_messages
                 WHERE thread_id = ${threadId}
                   ${filter?.messageIds === undefined ? sql`` : sql`AND message_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageIds)}))`}
-                  ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
+                  ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN ${sql.in(filter.messageRoles)}`}
                   ${filter?.monitorNotificationsOnly === true ? sql`AND json_extract(payload_json, '$.notification.source.kind') = 'monitor'` : sql``}
                   ${filter?.messageRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageRunIds)}))`}
                 ORDER BY created_at ASC, message_id ASC
