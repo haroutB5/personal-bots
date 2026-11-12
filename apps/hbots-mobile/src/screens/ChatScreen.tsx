@@ -981,7 +981,6 @@ export function ChatScreen({
                     onLayout={(event) => setDockHeight(event.nativeEvent.layout.height)}
                     accessibilityRole="button"
                     accessibilityLabel="Computer"
-                    hitSlop={{ top: 4, bottom: 4 }}
                     style={styles.computerDock}
                   >
                     <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
@@ -1359,7 +1358,7 @@ const styles = StyleSheet.create({
   },
   composerPlaceholderText: { color: tokens.textSecondary, fontSize: 15, paddingVertical: 10 },
   computerDock: {
-    minHeight: 36,
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

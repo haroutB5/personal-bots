@@ -70,6 +70,22 @@ describe("classifySendFailure", () => {
     });
     expect(refused.kind).toBe("rejected");
     expect(refused.kind === "rejected" ? refused.message : "").toMatch(/^Couldn't send: /);
+    const refusedV2 = classifySendFailure({
+      _tag: "OrchestrationV2DispatchCommandError",
+      commandId: "cmd_1",
+      commandType: "message.dispatch",
+      message: "Thread 't1' is deleted and cannot start a turn.",
+    });
+    expect(refusedV2.kind).toBe("rejected");
+    expect(refusedV2.kind === "rejected" ? refusedV2.message : "").toMatch(/^Couldn't send: /);
+    expect(
+      classifySendFailure({
+        _tag: "OrchestrationV2ThreadLaunchError",
+        commandId: "cmd_1",
+        projectId: "proj_1",
+        message: "The project folder is gone.",
+      }).kind,
+    ).toBe("rejected");
     expect(classifySendFailure({ _tag: "PersonalGroupsError", message: "No members." }).kind).toBe(
       "rejected",
     );

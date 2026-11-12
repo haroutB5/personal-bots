@@ -18,11 +18,14 @@ export function SettingsPage({
   title,
   onBack,
   right,
+  sheet,
   children,
 }: {
   readonly title: string;
   readonly onBack?: (() => void) | undefined;
   readonly right?: ReactNode;
+  /** A sheet rendered over the page, outside the scrolling list so its field and buttons stay above the IME. */
+  readonly sheet?: ReactNode;
   readonly children: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
@@ -35,6 +38,7 @@ export function SettingsPage({
       >
         {children}
       </ScrollView>
+      {sheet}
     </View>
   );
 }

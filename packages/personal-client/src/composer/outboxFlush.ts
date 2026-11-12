@@ -42,7 +42,12 @@ const NOT_SENT_TAGS: ReadonlySet<string> = new Set([
 
 /** Errors the laptop itself answered with: it saw the message and said no. */
 const ANSWERED_TAGS: ReadonlySet<string> = new Set([
+  // v1 dispatch and the project/bootstrap RPCs that share its error.
   "OrchestrationDispatchCommandError",
+  // v2 dispatch, which the live server answers a rejected turn with.
+  "OrchestrationV2DispatchCommandError",
+  // A send that creates its thread is refused by launchThread before dispatch.
+  "OrchestrationV2ThreadLaunchError",
   "PersonalGroupsError",
   "EnvironmentAuthorizationError",
 ]);

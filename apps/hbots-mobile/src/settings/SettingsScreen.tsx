@@ -282,7 +282,13 @@ export function SettingsScreen(props: SettingsScreenProps) {
   };
 
   return (
-    <SettingsPage title="Settings" onBack={props.onBack}>
+    <SettingsPage
+      title="Settings"
+      onBack={props.onBack}
+      sheet={
+        <NameSheet native={props.native} visible={nameOpen} onClose={() => setNameOpen(false)} />
+      }
+    >
       <TextInput
         value={query}
         onChangeText={setQuery}
@@ -303,7 +309,6 @@ export function SettingsScreen(props: SettingsScreenProps) {
         ),
       )}
       {sections.length === 0 ? <Text style={styles.empty}>No settings match</Text> : null}
-      <NameSheet native={props.native} visible={nameOpen} onClose={() => setNameOpen(false)} />
     </SettingsPage>
   );
 }

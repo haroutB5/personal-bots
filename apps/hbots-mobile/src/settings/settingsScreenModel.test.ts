@@ -10,6 +10,8 @@ import {
   notificationDeviceDetail,
   notificationDevicesLine,
   nameRowValue,
+  nameSaveAction,
+  nameSaveEnabled,
   parseAutoArchiveDraft,
   SETTINGS_SECTIONS,
   settingsRowMatches,
@@ -44,6 +46,20 @@ describe("the name row", () => {
   });
 });
 
+describe("the name sheet", () => {
+  it("submits the trimmed name from Save and from the keyboard's Done key", () => {
+    expect(nameSaveAction("  Harout  ", "Old")).toEqual({ kind: "save", name: "Harout" });
+    expect(nameSaveEnabled("Harout", false)).toBe(true);
+  });
+
+  it("closes an unchanged name and blocks an empty one", () => {
+    expect(nameSaveAction("Harout", "Harout")).toEqual({ kind: "close" });
+    expect(nameSaveAction("   ", "Harout")).toEqual({ kind: "blocked" });
+    expect(nameSaveEnabled("   ", false)).toBe(false);
+    expect(nameSaveEnabled("Harout", true)).toBe(false);
+  });
+});
+
 describe("settings registry", () => {
   it("gives every row a unique id", () => {
     const rows = SETTINGS_SECTIONS.flatMap((section) => section.rows);
@@ -59,6 +75,32 @@ describe("settings registry", () => {
     const visible = visibleSettingsSections("memory");
     expect(visible.map((entry) => entry.section.id)).toEqual(["bots"]);
     expect(visible.flatMap((entry) => entry.rows.map((row) => row.title))).toEqual(["Memory"]);
+  });
+
+  it("finds App lock under This phone from lock, pin, fingerprint and password", () => {
+    for (const query of ["lock", "pin", "fingerprint", "password"]) {
+      const rows = visibleSettingsSections(query).flatMap((entry) =>
+        entry.rows.map((row) => row.id),
+      );
+      expect(rows).toContain("you.phone");
+    }
+  });
+
+  it("matches the obvious words for each setting", () => {
+    const expected: ReadonlyArray<readonly [string, string]> = [
+      ["memory", "bots.memory"],
+      ["voice", "voice.calls"],
+      ["call", "voice.calls"],
+      ["provider", "providers.versions"],
+      ["update", "providers.versions"],
+      ["name", "you.name"],
+    ];
+    for (const [query, rowId] of expected) {
+      const rows = visibleSettingsSections(query).flatMap((entry) =>
+        entry.rows.map((row) => row.id),
+      );
+      expect(rows, query).toContain(rowId);
+    }
   });
 
   it("hides a section whose only row is hidden", () => {

@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
+import { nameSaveAction, nameSaveEnabled } from "./settingsScreenModel";
 import { Notice } from "./SettingsUi";
 
 /** The name form, in a sheet so Settings itself stays a list of rows. */
@@ -37,13 +38,15 @@ export function NameSheet({
   }, [visible, profile.data?.displayName]);
 
   const save = async () => {
-    const next = draft.trim();
-    if (next.length === 0 || next === profile.data?.displayName) {
+    if (saving) return;
+    const action = nameSaveAction(draft, profile.data?.displayName);
+    if (action.kind === "blocked") return;
+    if (action.kind === "close") {
       onClose();
       return;
     }
     setSaving(true);
-    const result = await setProfile({ environmentId, input: { displayName: next } });
+    const result = await setProfile({ environmentId, input: { displayName: action.name } });
     setSaving(false);
     const failure = commandFailureMessage(result, "Couldn't save your name. Try again.");
     if (failure !== null) {
@@ -52,6 +55,8 @@ export function NameSheet({
     }
     onClose();
   };
+
+  const canSave = nameSaveEnabled(draft, saving);
 
   return (
     <SheetShell visible={visible} title="Your name" onClose={onClose} inline>
@@ -65,17 +70,20 @@ export function NameSheet({
           autoComplete="given-name"
           autoFocus
           maxLength={80}
+          returnKeyType="done"
+          onSubmitEditing={() => void save()}
           style={styles.input}
         />
         <Pressable
           onPress={() => void save()}
-          disabled={saving}
+          disabled={!canSave}
           accessibilityRole="button"
           accessibilityLabel="Save"
+          accessibilityState={{ disabled: !canSave }}
           style={({ pressed }) => [
             styles.save,
             pressed ? styles.pressed : null,
-            saving ? styles.disabled : null,
+            !canSave ? styles.disabled : null,
           ]}
         >
           <Text style={styles.saveLabel} maxFontSizeMultiplier={1.3}>

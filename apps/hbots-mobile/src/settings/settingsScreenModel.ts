@@ -27,6 +27,24 @@ export function nameRowValue(profile: PersonalProfile | null): string | undefine
   return name.length === 0 ? "Not set" : name;
 }
 
+/** What the name sheet does when Save is pressed or the keyboard's Done key is. */
+export type NameSaveAction =
+  | { readonly kind: "save"; readonly name: string }
+  | { readonly kind: "close" }
+  | { readonly kind: "blocked" };
+
+export function nameSaveAction(draft: string, currentName: string | undefined): NameSaveAction {
+  const name = draft.trim();
+  if (name.length === 0) return { kind: "blocked" };
+  if (name === currentName) return { kind: "close" };
+  return { kind: "save", name };
+}
+
+/** Save is tappable whenever there is a name to submit and no save is in flight. */
+export function nameSaveEnabled(draft: string, saving: boolean): boolean {
+  return !saving && draft.trim().length > 0;
+}
+
 /** The root screen's search keeps a row when its title, hint or keywords contain the words typed. */
 export function settingsRowMatches(row: SettingsSearchRow, query: string): boolean {
   const needle = query.trim().toLowerCase();
@@ -62,13 +80,13 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
         id: "you.name",
         title: "Your name",
         hint: "How your bots address you, and your name on the Team screen",
-        keywords: "profile display name",
+        keywords: "profile display name name",
       },
       {
         id: "you.phone",
         title: "This phone",
         hint: "Update, permissions and this device",
-        keywords: "version app install device",
+        keywords: "version app install device update lock pin fingerprint password",
       },
       {
         id: "you.notifications",
@@ -99,7 +117,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
         id: "bots.memory",
         title: "Memory",
         hint: "What bots remember, and deleting it",
-        keywords: "remember tidy",
+        keywords: "remember memory tidy",
       },
       {
         id: "bots.removed",
@@ -147,7 +165,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
         id: "voice.calls",
         title: "Voice calls",
         hint: "Gemini key, voice, languages and hang-up timing",
-        keywords: "gemini key language hang up quiet",
+        keywords: "gemini key language hang up quiet voice call",
       },
     ],
   },
@@ -159,7 +177,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
         id: "providers.versions",
         title: "Providers",
         hint: "Versions, updates and adding a provider",
-        keywords: "version update install",
+        keywords: "version update install provider",
       },
     ],
   },
