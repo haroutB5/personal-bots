@@ -19,8 +19,8 @@
       "rpc": 131
     },
     "byStatus": {
-      "done": 381,
-      "planned": 2,
+      "done": 383,
+      "planned": 0,
       "n/a": 53,
       "unassigned": 0
     },
@@ -847,7 +847,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open /work on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -1276,7 +1276,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"DetailSheet\" from its screen on Android. Same fields, buttons and confirm wording as WorkScreen.tsx:238. Back closes only the sheet."
     },
     {
