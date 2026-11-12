@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import {
   motionDuration,
   motionEase,
+  motionPress,
   motionPulse,
   motionRise,
   motionSheet,
@@ -62,6 +63,29 @@ describe("motion tokens against the web CSS", () => {
     expect(durations.map(([name]) => name).toSorted()).toEqual(
       Object.keys(motionDuration).toSorted(),
     );
+  });
+
+  it("the reduced-motion chip fade lasts as long as the step fade", () => {
+    expect(
+      Number(match(css, /\.personal-chip-in \{\s*animation: personal-chip-fade (\d+)ms/)[1]),
+    ).toBe(motionDuration.stepFade);
+  });
+
+  it("the chip press, hold cue and held pop scale to the web values", () => {
+    const scaleOf = (selector: RegExp) => Number(match(css, selector)[1]);
+    expect(
+      scaleOf(/\.personal-chip-hit:active \.personal-chip \{\s*transform: scale\(([\d.]+)\)/),
+    ).toBe(motionPress.chip);
+    expect(
+      scaleOf(
+        /\.personal-chip-hit\[data-holding="true"\] \.personal-chip \{\s*transform: scale\(([\d.]+)\)/,
+      ),
+    ).toBe(motionPress.chipHold);
+    expect(
+      scaleOf(
+        /\.personal-chip-hit\[data-held="true"\] \.personal-chip \{\s*transform: scale\(([\d.]+)\)/,
+      ),
+    ).toBe(motionPress.chipHeld);
   });
 
   it("push easing is the voice call curve", () => {
