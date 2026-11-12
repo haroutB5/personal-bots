@@ -346,4 +346,36 @@ describe("PersonalResetCredits", () => {
       renderer!.root.findAll((node) => node.props["aria-label"] === "Redeem a banked Claude reset"),
     ).toHaveLength(0);
   });
+
+  it("keeps a failure on screen when a refresh drops the last credit", async () => {
+    state.consume.mockResolvedValue(
+      AsyncResult.failure(
+        Cause.fail(
+          new ProviderSetupError({
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            operation: "consume-reset-credit",
+            detail: "Claude is rate limiting resets. Try again soon.",
+          }),
+        ),
+      ),
+    );
+    await mount(credits(1));
+    await openConfirm();
+    await act(async () => confirmButton().props.onClick());
+    await act(async () =>
+      renderer!.update(
+        <PersonalResetCredits
+          environmentId={ENV}
+          title="Claude"
+          resetCredits={credits(0)}
+          now={NOW}
+          onRedeemed={onRedeemed}
+        />,
+      ),
+    );
+    expect(text()).toContain("Claude is rate limiting resets. Try again soon.");
+    expect(
+      renderer!.root.findAll((node) => node.props["aria-label"] === "Redeem a banked Claude reset"),
+    ).toHaveLength(0);
+  });
 });
