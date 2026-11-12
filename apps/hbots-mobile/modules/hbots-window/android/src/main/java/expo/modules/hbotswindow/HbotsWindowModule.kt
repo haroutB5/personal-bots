@@ -2,21 +2,23 @@ package expo.modules.hbotswindow
 
 import android.content.Context
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import com.facebook.react.views.modal.ReactModalHostView
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
 /**
- * A Modal is its own window. While a sheet plays its close motion that window still covers the
- * screen and eats taps meant for the screen beneath. This switches the window's touchable flag so
- * the taps fall through, then back if the sheet reopens. The flag lives on the window, so it ends
- * with it.
+ * A Modal is its own window, and its host view still covers the screen while a sheet plays its
+ * close motion. Both swallow taps meant for the screen beneath. This turns the window touchable
+ * flag and the host view's enabled flag off together so the taps fall through, and back on if the
+ * sheet reopens. Both die with the Modal.
  */
 class HbotsWindowModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("HbotsWindow")
 
-    /** Sets whether the window holding the view takes touches. */
+    /** Sets whether the Modal holding the view takes touches. */
     Function("setTouchable") { viewTag: Int, touchable: Boolean ->
       val activity = appContext.currentActivity
       activity?.runOnUiThread {
@@ -24,6 +26,7 @@ class HbotsWindowModule : Module() {
         val decor = view?.rootView
         val params = decor?.layoutParams as? WindowManager.LayoutParams
         if (decor != null && params != null && decor.isAttachedToWindow && decor !== activity.window.decorView) {
+          findHost(activity.window.decorView, decor)?.isEnabled = touchable
           val flags =
             if (touchable) params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             else params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -35,5 +38,18 @@ class HbotsWindowModule : Module() {
         }
       }
     }
+  }
+
+  private fun findHost(root: View, dialogDecor: View): ReactModalHostView? {
+    if (root is ReactModalHostView) {
+      return if (root.dialog?.window?.decorView === dialogDecor) root else null
+    }
+    if (root is ViewGroup) {
+      for (index in 0 until root.childCount) {
+        val found = findHost(root.getChildAt(index), dialogDecor)
+        if (found != null) return found
+      }
+    }
+    return null
   }
 }
