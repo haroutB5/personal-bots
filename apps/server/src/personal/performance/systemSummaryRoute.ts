@@ -9,18 +9,24 @@
  * HostResources (two `os.cpus()` readings 200 ms apart, cached 5 s for every
  * caller), and the disk from one `statfs` of the drive the server's data lives
  * on, cached a minute. A phone and a desktop polling together cost one reading.
+ *
+ * The optional `gamingPc` key (gamingPc.ts) is present only when
+ * T3CODE_PERSONAL_GAMINGPC_HOST is set. The route only reads the last reading
+ * from memory and never waits on ssh.
  */
 import * as NodeFSP from "node:fs/promises";
 
 import { AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { ServerConfig } from "../../config.ts";
 import { HostResources } from "../../resourceTelemetry/HostResources.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
+import { makeLiveGamingPcReader, type GamingPcReader, type GamingPcWire } from "./gamingPc.ts";
 import { makeHostSensorReader, type HostSensors } from "./hostSensors.ts";
 
 export const PERSONAL_SYSTEM_SUMMARY_PATH = "/api/personal/performance/summary";
@@ -46,6 +52,9 @@ export interface SystemSummary {
   readonly diskTempC: number | null;
   readonly fans: ReadonlyArray<{ readonly label: string; readonly rpm: number }>;
 }
+
+/** The answer body: absent `gamingPc` means the feature is not configured. */
+export type SystemSummaryBody = SystemSummary & { readonly gamingPc?: GamingPcWire | null };
 
 interface DiskReading {
   readonly label: string;
@@ -101,7 +110,12 @@ const HEADERS = {
 } as const;
 
 export const makePersonalSystemSummaryRouteLayer = (
-  options: { readonly diskCacheMs?: number; readonly sensorCacheMs?: number } = {},
+  options: {
+    readonly diskCacheMs?: number;
+    readonly sensorCacheMs?: number;
+    /** Tests pass a fake; the server builds the real one from the environment. */
+    readonly gamingPc?: GamingPcReader;
+  } = {},
 ) => {
   const diskCacheMs = options.diskCacheMs ?? DISK_CACHE_MS;
   const sensorCacheMs = options.sensorCacheMs ?? SENSOR_CACHE_MS;
@@ -110,8 +124,11 @@ export const makePersonalSystemSummaryRouteLayer = (
   const sensorReader = makeHostSensorReader({ staleAfterMs: sensorCacheMs });
   // Warm the cache at startup so the first phone poll already has a reading.
   sensorReader.revalidate(0);
+  const gamingPc =
+    options.gamingPc ??
+    makeLiveGamingPcReader(process.env, (line) => console.log(`[performance] ${line}`));
 
-  return HttpRouter.add(
+  const route = HttpRouter.add(
     "GET",
     PERSONAL_SYSTEM_SUMMARY_PATH,
     Effect.gen(function* () {
@@ -129,22 +146,30 @@ export const makePersonalSystemSummaryRouteLayer = (
       // a request never waits on `/sys`.
       sensorReader.revalidate(nowMs);
       const sensors: HostSensors = sensorReader.current();
+      // Both calls are synchronous and read memory: the ssh link lives apart.
+      gamingPc.touch(nowMs);
       const host = yield* (yield* HostResources).read;
-      return yield* HttpServerResponse.json(
-        systemSummaryFrom({
-          cpuUtilization: host.cpuUtilization,
-          availableMemoryBytes: host.availableMemoryBytes,
-          totalMemoryBytes: host.totalMemoryBytes,
-          disk,
-          sensors,
-        }),
-        { headers: HEADERS },
-      ).pipe(
+      const summary = systemSummaryFrom({
+        cpuUtilization: host.cpuUtilization,
+        availableMemoryBytes: host.availableMemoryBytes,
+        totalMemoryBytes: host.totalMemoryBytes,
+        disk,
+        sensors,
+      });
+      const body: SystemSummaryBody = gamingPc.enabled
+        ? { ...summary, gamingPc: gamingPc.current(nowMs) }
+        : summary;
+      return yield* HttpServerResponse.json(body, { headers: HEADERS }).pipe(
         Effect.orElseSucceed(() =>
           HttpServerResponse.text("Internal Server Error", { status: 500 }),
         ),
       );
     }).pipe(Effect.catchTags(personalRouteAuthResponses)),
+  );
+  // The ssh child ends with the server's scope, not only with the 30 s idle rule.
+  return Layer.merge(
+    route,
+    Layer.effectDiscard(Effect.addFinalizer(() => Effect.sync(() => gamingPc.stop()))),
   );
 };
 

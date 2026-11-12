@@ -17,6 +17,12 @@ import { EnvironmentAuth, ServerAuthMissingCredentialError } from "../../auth/En
 import * as ServerConfig from "../../config.ts";
 import { HostResources } from "../../resourceTelemetry/HostResources.ts";
 import {
+  makeGamingPcReader,
+  makeLiveGamingPcReader,
+  type GamingPcReader,
+  type LinkHandle,
+} from "./gamingPc.ts";
+import {
   PERSONAL_SYSTEM_SUMMARY_PATH,
   diskLabelOf,
   makePersonalSystemSummaryRouteLayer,
@@ -24,6 +30,9 @@ import {
 } from "./systemSummaryRoute.ts";
 
 const GB = 1024 ** 3;
+const neverLink = (): LinkHandle => {
+  throw new Error("no ssh in this test");
+};
 const disposers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -33,9 +42,14 @@ afterEach(async () => {
 const fixture = (options: {
   auth: "missing" | ReadonlyArray<AuthEnvironmentScope>;
   onRead?: () => void;
+  gamingPc?: GamingPcReader;
 }) => {
   const { handler, dispose } = HttpRouter.toWebHandler(
-    makePersonalSystemSummaryRouteLayer().pipe(
+    makePersonalSystemSummaryRouteLayer({
+      gamingPc:
+        options.gamingPc ??
+        makeGamingPcReader({ config: null, spawnLink: neverLink, readRigHolder: async () => null }),
+    }).pipe(
       Layer.provideMerge(
         Layer.succeed(ServerConfig.ServerConfig, {
           baseDir: NodeOS.tmpdir(),
@@ -105,6 +119,146 @@ describe("the PC summary under the Bots header", () => {
     const response = await handler(get());
     expect(response.status).toBe(401);
     expect(reads).toBe(0);
+  });
+});
+
+const BODY_KEYS = [
+  "cpuPct",
+  "cpuTempC",
+  "diskFreeGB",
+  "diskLabel",
+  "diskTempC",
+  "diskTotalGB",
+  "fans",
+  "memTotalGB",
+  "memUsedGB",
+  "memUsedPct",
+];
+
+describe("the gaming PC key in the summary", () => {
+  it("is absent, not null, when the feature is not configured, and nothing is spawned", async () => {
+    const handler = fixture({ auth: [AuthOrchestrationReadScope] });
+    const body = (await (await handler(get())).json()) as Record<string, unknown>;
+    expect(Object.keys(body).toSorted()).toEqual(BODY_KEYS);
+  });
+
+  it("is absent when the environment has no host", async () => {
+    const reader = makeLiveGamingPcReader({}, () => undefined);
+    expect(reader.enabled).toBe(false);
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: reader });
+    const body = (await (await handler(get())).json()) as Record<string, unknown>;
+    expect(Object.keys(body).toSorted()).toEqual(BODY_KEYS);
+  });
+
+  it("is absent and logs once when the host is not a plain alias", async () => {
+    const logs: string[] = [];
+    const reader = makeLiveGamingPcReader(
+      { T3CODE_PERSONAL_GAMINGPC_HOST: "-oProxyCommand=x" },
+      (l) => logs.push(l),
+    );
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: reader });
+    const body = (await (await handler(get())).json()) as Record<string, unknown>;
+    expect(Object.keys(body).toSorted()).toEqual(BODY_KEYS);
+    expect(logs).toEqual([
+      "gaming PC stats off: T3CODE_PERSONAL_GAMINGPC_HOST is not a plain ssh host alias",
+    ]);
+  });
+
+  it("carries the reader's answer when configured", async () => {
+    const view = {
+      state: "on",
+      cpuPct: 32,
+      gpuPct: 4,
+      memUsedGB: 12,
+      memTotalGB: 16,
+      memUsedPct: 75,
+      ageMs: 1200,
+      users: [{ kind: "game", game: "league-match", label: "League of Legends" }],
+    } as const;
+    const fake: GamingPcReader = {
+      enabled: true,
+      touch: () => undefined,
+      current: () => view,
+      tick: () => undefined,
+      stop: () => undefined,
+    };
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: fake });
+    const body = (await (await handler(get())).json()) as Record<string, unknown>;
+    expect(body.gamingPc).toEqual(view);
+    expect(body.cpuPct).toBe(12);
+  });
+
+  it("is null, with the laptop line intact, when the PC has nothing fresh", async () => {
+    const fake: GamingPcReader = {
+      enabled: true,
+      touch: () => undefined,
+      current: () => null,
+      tick: () => undefined,
+      stop: () => undefined,
+    };
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: fake });
+    const body = (await (await handler(get())).json()) as Record<string, unknown>;
+    expect(body.gamingPc).toBeNull();
+    expect(body.memTotalGB).toBe(16);
+  });
+
+  it("answers at once while the link never answers, and spawns one child for many requests", async () => {
+    const hosts: string[] = [];
+    let kills = 0;
+    const link: LinkHandle = {
+      onLine: () => undefined,
+      onExit: () => undefined,
+      kill: () => (kills += 1),
+    };
+    const reader = makeGamingPcReader({
+      config: { host: "gamingpc", rigDir: null },
+      spawnLink: (host) => {
+        hosts.push(host);
+        return link;
+      },
+      readRigHolder: async () => null,
+      startTimer: () => () => undefined,
+    });
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: reader });
+    const first = await handler(get());
+    expect(((await first.json()) as Record<string, unknown>).gamingPc).toEqual({
+      state: "starting",
+    });
+    const t0 = performance.now();
+    for (let i = 0; i < 5; i += 1) await (await handler(get())).json();
+    expect((performance.now() - t0) / 5).toBeLessThan(100);
+    expect(hosts).toEqual(["gamingpc"]);
+    expect(kills).toBe(0);
+  });
+
+  it("does not touch the link for a caller with no session", async () => {
+    let touches = 0;
+    const fake: GamingPcReader = {
+      enabled: true,
+      touch: () => (touches += 1),
+      current: () => null,
+      tick: () => undefined,
+      stop: () => undefined,
+    };
+    const handler = fixture({ auth: "missing", gamingPc: fake });
+    expect((await handler(get())).status).toBe(401);
+    expect(touches).toBe(0);
+  });
+
+  it("stops the link when the server scope ends", async () => {
+    let stops = 0;
+    const fake: GamingPcReader = {
+      enabled: true,
+      touch: () => undefined,
+      current: () => null,
+      tick: () => undefined,
+      stop: () => (stops += 1),
+    };
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: fake });
+    await handler(get());
+    expect(stops).toBe(0);
+    await disposers.splice(0).reduce((p, d) => p.then(d), Promise.resolve());
+    expect(stops).toBe(1);
   });
 });
 

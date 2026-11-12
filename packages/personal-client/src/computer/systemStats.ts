@@ -10,6 +10,9 @@
 export const SYSTEM_SUMMARY_URL = "/api/personal/performance/summary";
 export const SYSTEM_SUMMARY_TIMEOUT_MS = 5_000;
 
+/** While the gaming PC link is starting, ask again this soon so the line appears quickly. */
+export const GAMING_PC_STARTING_POLL_MS = 3_000;
+
 /** A figure at or above this is inked amber. */
 export const BUSY_PERCENT = 90;
 /** Free disk below this share of the drive is inked amber. */
@@ -29,7 +32,38 @@ export interface SystemSummary {
   readonly diskTempC: number | null;
   /** Labelled case and CPU fans, empty when the host reports none. */
   readonly fans: ReadonlyArray<SystemFan>;
+  /**
+   * The gaming PC, when the server is set up for it. Null when the server is
+   * an older build, has no PC configured, or has no fresh reading.
+   */
+  readonly gamingPc: GamingPc | null;
 }
+
+export type GamingPcUser =
+  | {
+      readonly kind: "game";
+      readonly game: "league-match" | "league-open" | "other";
+      readonly label: string;
+    }
+  | {
+      readonly kind: "bot";
+      readonly bot: string;
+      readonly job: "build" | "emulator" | null;
+      readonly purpose: string | null;
+    };
+
+export type GamingPc =
+  | { readonly state: "starting" }
+  | {
+      readonly state: "on";
+      readonly cpuPct: number;
+      readonly gpuPct: number | null;
+      readonly memUsedGB: number;
+      readonly memTotalGB: number;
+      readonly memUsedPct: number;
+      readonly ageMs: number;
+      readonly users: ReadonlyArray<GamingPcUser>;
+    };
 
 export interface SystemFan {
   readonly label: string;
@@ -59,6 +93,72 @@ function fansOrEmpty(value: unknown): ReadonlyArray<SystemFan> {
   });
 }
 
+/** Text from the PC: control characters out, runs of space folded, cut to `max`. Empty is null. */
+function cleanText(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  let text = "";
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    text += code < 0x20 || code === 0x7f ? " " : char;
+  }
+  const folded = text.replace(/\s+/g, " ").trim().slice(0, max).trim();
+  return folded.length === 0 ? null : folded;
+}
+
+const GAMES = new Set(["league-match", "league-open", "other"]);
+
+function gamingPcUserOrNull(entry: unknown): GamingPcUser | null {
+  if (typeof entry !== "object" || entry === null) return null;
+  const record = entry as Record<string, unknown>;
+  if (record.kind === "game") {
+    const label = cleanText(record.label, 40);
+    if (label === null || typeof record.game !== "string" || !GAMES.has(record.game)) return null;
+    return { kind: "game", game: record.game as "league-match" | "league-open" | "other", label };
+  }
+  if (record.kind === "bot") {
+    const bot = cleanText(record.bot, 24);
+    if (bot === null) return null;
+    const job = record.job === "build" || record.job === "emulator" ? record.job : null;
+    return { kind: "bot", bot, job, purpose: cleanText(record.purpose, 80) };
+  }
+  return null;
+}
+
+/**
+ * The gaming PC part of the summary. Anything that is not a clean "starting"
+ * or "on" reading is null, so the line is hidden and never half drawn.
+ */
+export function parseGamingPc(raw: unknown): GamingPc | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (record.state === "starting") return { state: "starting" };
+  if (record.state !== "on") return null;
+  const cpuPct = numberOrNull(record.cpuPct);
+  const memUsedGB = numberOrNull(record.memUsedGB);
+  const memTotalGB = numberOrNull(record.memTotalGB);
+  const memUsedPct = numberOrNull(record.memUsedPct);
+  if (cpuPct === null || memUsedGB === null || memTotalGB === null || memUsedPct === null) {
+    return null;
+  }
+  if (memTotalGB <= 0) return null;
+  const gpuPct = numberOrNull(record.gpuPct);
+  return {
+    state: "on",
+    cpuPct: clampPercent(cpuPct),
+    gpuPct: gpuPct === null ? null : clampPercent(gpuPct),
+    memUsedGB,
+    memTotalGB,
+    memUsedPct: clampPercent(memUsedPct),
+    ageMs: numberOrNull(record.ageMs) ?? 0,
+    users: Array.isArray(record.users)
+      ? record.users.flatMap((entry) => {
+          const user = gamingPcUserOrNull(entry);
+          return user === null ? [] : [user];
+        })
+      : [],
+  };
+}
+
 export function parseSystemSummary(raw: unknown): SystemSummary | null {
   if (typeof raw !== "object" || raw === null) return null;
   const record = raw as Record<string, unknown>;
@@ -73,6 +173,7 @@ export function parseSystemSummary(raw: unknown): SystemSummary | null {
     cpuTempC: numberOrNull(record.cpuTempC),
     diskTempC: numberOrNull(record.diskTempC),
     fans: fansOrEmpty(record.fans),
+    gamingPc: parseGamingPc(record.gamingPc),
   };
 }
 
@@ -190,4 +291,88 @@ export function machineStatRows(summary: SystemSummary): ReadonlyArray<MachineSt
     rows.push({ key: `fan:${index}`, label: fan.label, value: formatRpm(fan.rpm) });
   });
   return rows;
+}
+
+export interface GamingPcPart {
+  readonly key: "label" | "cpu" | "ram" | "gpu";
+  readonly text: string;
+  readonly busy: boolean;
+}
+
+/**
+ * "Gaming PC · CPU 32% · RAM 12/16 GB · GPU 4%". Nothing while the link is
+ * starting or the PC is off. A GPU the PC could not read is left out.
+ */
+export function gamingPcParts(pc: GamingPc | null): ReadonlyArray<GamingPcPart> {
+  if (pc === null || pc.state !== "on") return [];
+  const parts: GamingPcPart[] = [
+    { key: "label", text: "Gaming PC", busy: false },
+    { key: "cpu", text: `CPU ${pc.cpuPct}%`, busy: pc.cpuPct >= BUSY_PERCENT },
+    {
+      key: "ram",
+      text: `RAM ${Math.round(pc.memUsedGB)}/${Math.round(pc.memTotalGB)} GB`,
+      busy: pc.memUsedPct >= BUSY_PERCENT,
+    },
+  ];
+  if (pc.gpuPct !== null) {
+    parts.push({ key: "gpu", text: `GPU ${pc.gpuPct}%`, busy: pc.gpuPct >= BUSY_PERCENT });
+  }
+  return parts;
+}
+
+const GAME_WORDS = { "league-match": "League match", "league-open": "League open" } as const;
+const JOB_WORDS = { build: "APK build", emulator: "emulator" } as const;
+
+const gameText = (user: Extract<GamingPcUser, { kind: "game" }>) =>
+  user.game === "other" ? user.label : GAME_WORDS[user.game];
+
+/**
+ * "In use: League match, Builder (APK build)". The bot's purpose is left out
+ * on purpose: it belongs in the accessibility label and the web tooltip.
+ */
+export function gamingPcUsersText(pc: GamingPc | null): string | null {
+  if (pc === null || pc.state !== "on" || pc.users.length === 0) return null;
+  const words = pc.users.map((user) =>
+    user.kind === "game"
+      ? gameText(user)
+      : user.job === null
+        ? user.bot
+        : `${user.bot} (${JOB_WORDS[user.job]})`,
+  );
+  return `In use: ${words.join(", ")}`;
+}
+
+/** The gaming PC line in words, with who is using it and for what. */
+export function gamingPcAriaLabel(pc: GamingPc | null): string | null {
+  if (pc === null || pc.state !== "on") return null;
+  const words = [
+    `CPU ${pc.cpuPct} percent`,
+    `memory ${Math.round(pc.memUsedGB)} of ${Math.round(pc.memTotalGB)} GB used`,
+  ];
+  if (pc.gpuPct !== null) words.push(`GPU ${pc.gpuPct} percent`);
+  const games = pc.users.flatMap((user) => (user.kind === "game" ? [gameText(user)] : []));
+  const bots = pc.users.flatMap((user) => {
+    if (user.kind !== "bot") return [];
+    const purpose = user.purpose === null ? "" : ` for ${user.purpose}`;
+    const job = user.job === null ? "" : `, ${JOB_WORDS[user.job]}`;
+    return [`${user.bot}${purpose}${job}`];
+  });
+  // "In use" is said once, however many users there are.
+  const use =
+    games.length > 0
+      ? ` In use: ${games.join(", ")}${bots.length > 0 ? `, and by ${bots.join("; ")}` : ""}.`
+      : bots.length > 0
+        ? ` In use by ${bots.join("; ")}.`
+        : "";
+  return `Gaming PC: ${words.join(", ")}.${use}`;
+}
+
+/**
+ * How long to wait before the next summary request: the normal delay, or 3 s
+ * while the gaming PC link is still starting (never longer than the normal one).
+ */
+export function systemPollDelayMs(summary: SystemSummary | null, normalMs: number): number {
+  return summary?.gamingPc?.state === "starting"
+    ? Math.min(normalMs, GAMING_PC_STARTING_POLL_MS)
+    : normalMs;
 }

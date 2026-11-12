@@ -21,6 +21,7 @@ const summary = (overrides: Partial<SystemSummary> = {}): SystemSummary => ({
   cpuTempC: null,
   diskTempC: null,
   fans: [],
+  gamingPc: null,
   ...overrides,
 });
 
