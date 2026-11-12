@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/hbots_item"
+  android:layout_width="0dp"
+  android:layout_height="match_parent"
+  android:layout_margin="3dp"
+  android:layout_weight="1"
+  android:background="@drawable/hbots_card"
+  android:orientation="vertical"
+  android:padding="8dp">
+  <TextView
+    android:id="@+id/hbots_name"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:textColor="#FFF2F2EF"
+    android:textSize="13sp"
+    android:textStyle="bold"/>
+  <TextView
+    android:id="@+id/hbots_sub"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:textColor="#FF8C8C88"
+    android:textSize="11sp"
+    android:layout_marginBottom="2dp"/>
+  <LinearLayout
+    android:id="@+id/hbots_gauges"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"/>
+</LinearLayout>

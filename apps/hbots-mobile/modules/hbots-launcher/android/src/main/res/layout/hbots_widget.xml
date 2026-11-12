@@ -5,157 +5,64 @@
   android:layout_height="match_parent"
   android:background="@drawable/hbots_widget_bg"
   android:orientation="vertical"
-  android:padding="14dp">
-
+  android:padding="12dp">
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingBottom="4dp">
   <TextView
     android:id="@+id/hbots_title"
-    android:layout_width="match_parent"
+    android:layout_width="0dp"
     android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:maxLines="1"
     android:textColor="#FFC9C9C5"
     android:textSize="13sp"
+    android:layout_weight="1"
     android:textStyle="bold"/>
-
   <TextView
-    android:id="@+id/hbots_message"
-    android:layout_width="match_parent"
+    android:id="@+id/hbots_side"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:minHeight="44dp"
-    android:gravity="center_vertical"
-    android:textColor="#FFF2F2EF"
-    android:textSize="16sp"
-    android:visibility="gone"/>
-
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:textColor="#FF8C8C88"
+    android:textSize="12sp"
+    android:layout_marginStart="8dp"/>
+  </LinearLayout>
   <LinearLayout
-    android:id="@+id/hbots_row1"
+    android:id="@+id/hbots_rows"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:minHeight="44dp"
+    android:orientation="vertical"/>
+  <LinearLayout
+    android:id="@+id/hbots_strip_row"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:visibility="gone">
-    <ImageView
-      android:id="@+id/hbots_dot1"
-      android:layout_width="10dp"
-      android:layout_height="10dp"
-      android:importantForAccessibility="no"
-      android:src="@drawable/hbots_dot_idle"/>
-    <TextView
-      android:id="@+id/hbots_name1"
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
-      android:layout_marginStart="10dp"
-      android:layout_weight="1"
-      android:ellipsize="end"
-      android:maxLines="1"
-      android:textColor="#FFF2F2EF"
-      android:textSize="15sp"/>
-  </LinearLayout>
   <LinearLayout
-    android:id="@+id/hbots_row2"
-    android:layout_width="match_parent"
+    android:id="@+id/hbots_strip"
+    android:layout_width="0dp"
     android:layout_height="wrap_content"
-    android:minHeight="44dp"
-    android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:visibility="gone">
-    <ImageView
-      android:id="@+id/hbots_dot2"
-      android:layout_width="10dp"
-      android:layout_height="10dp"
-      android:importantForAccessibility="no"
-      android:src="@drawable/hbots_dot_idle"/>
-    <TextView
-      android:id="@+id/hbots_name2"
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
-      android:layout_marginStart="10dp"
-      android:layout_weight="1"
-      android:ellipsize="end"
-      android:maxLines="1"
-      android:textColor="#FFF2F2EF"
-      android:textSize="15sp"/>
-  </LinearLayout>
-  <LinearLayout
-    android:id="@+id/hbots_row3"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:minHeight="44dp"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:visibility="gone">
-    <ImageView
-      android:id="@+id/hbots_dot3"
-      android:layout_width="10dp"
-      android:layout_height="10dp"
-      android:importantForAccessibility="no"
-      android:src="@drawable/hbots_dot_idle"/>
-    <TextView
-      android:id="@+id/hbots_name3"
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
-      android:layout_marginStart="10dp"
-      android:layout_weight="1"
-      android:ellipsize="end"
-      android:maxLines="1"
-      android:textColor="#FFF2F2EF"
-      android:textSize="15sp"/>
-  </LinearLayout>
-  <LinearLayout
-    android:id="@+id/hbots_row4"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:minHeight="44dp"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:visibility="gone">
-    <ImageView
-      android:id="@+id/hbots_dot4"
-      android:layout_width="10dp"
-      android:layout_height="10dp"
-      android:importantForAccessibility="no"
-      android:src="@drawable/hbots_dot_idle"/>
-    <TextView
-      android:id="@+id/hbots_name4"
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
-      android:layout_marginStart="10dp"
-      android:layout_weight="1"
-      android:ellipsize="end"
-      android:maxLines="1"
-      android:textColor="#FFF2F2EF"
-      android:textSize="15sp"/>
-  </LinearLayout>
-  <LinearLayout
-    android:id="@+id/hbots_row5"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:minHeight="44dp"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:visibility="gone">
-    <ImageView
-      android:id="@+id/hbots_dot5"
-      android:layout_width="10dp"
-      android:layout_height="10dp"
-      android:importantForAccessibility="no"
-      android:src="@drawable/hbots_dot_idle"/>
-    <TextView
-      android:id="@+id/hbots_name5"
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
-      android:layout_marginStart="10dp"
-      android:layout_weight="1"
-      android:ellipsize="end"
-      android:maxLines="1"
-      android:textColor="#FFF2F2EF"
-      android:textSize="15sp"/>
-  </LinearLayout>
-
+    android:layout_weight="1"/>
   <TextView
     android:id="@+id/hbots_more"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:textColor="#FF8C8C88"
+    android:textSize="12sp"/>
+  </LinearLayout>
+  <LinearLayout
+    android:id="@+id/hbots_gauges"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:textColor="#FFC9C9C5"
-    android:textSize="12sp"
-    android:visibility="gone"/>
+    android:orientation="vertical"
+    android:layout_marginTop="2dp"/>
 </LinearLayout>

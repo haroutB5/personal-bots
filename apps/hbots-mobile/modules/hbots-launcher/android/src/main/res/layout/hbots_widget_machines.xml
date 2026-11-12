@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/hbots_root"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@drawable/hbots_widget_bg"
+  android:orientation="vertical"
+  android:padding="8dp">
+  <LinearLayout
+    android:id="@+id/hbots_panels"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:orientation="horizontal"/>
+  <TextView
+    android:id="@+id/hbots_side"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:textColor="#FF8C8C88"
+    android:textSize="11sp"
+    android:layout_marginStart="4dp"
+    android:visibility="gone"/>
+</LinearLayout>
