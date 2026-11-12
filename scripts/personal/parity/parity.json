@@ -945,7 +945,7 @@
       "scope": "personal",
       "layout": false,
       "logic": {
-        "files": 7,
+        "files": 8,
         "inPackage": [],
         "direct": ["offlineBanner.ts", "outbox.ts"]
       },
@@ -1762,7 +1762,7 @@
       "web": "ConversationScreen.tsx:1504",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 138,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1863,7 +1863,7 @@
       "web": "ConversationScreen.tsx:1507",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 138,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1964,7 +1964,7 @@
       "web": "ConversationScreen.tsx:1518",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 138,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2065,7 +2065,7 @@
       "web": "ConversationScreen.tsx:1530",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 138,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2166,7 +2166,7 @@
       "web": "ConversationScreen.tsx:1539",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 138,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2267,7 +2267,7 @@
       "web": "ConversationScreen.tsx:1553",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 138,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2413,7 +2413,7 @@
       "web": "GroupConversationScreen.tsx:546",
       "via": "menu",
       "logic": {
-        "files": 69,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2453,7 +2453,7 @@
       "web": "GroupConversationScreen.tsx:548",
       "via": "menu",
       "logic": {
-        "files": 69,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2493,7 +2493,7 @@
       "web": "GroupConversationScreen.tsx:559",
       "via": "menu",
       "logic": {
-        "files": 69,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2533,7 +2533,7 @@
       "web": "GroupConversationScreen.tsx:562",
       "via": "menu",
       "logic": {
-        "files": 69,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2573,7 +2573,7 @@
       "web": "GroupConversationScreen.tsx:566",
       "via": "menu",
       "logic": {
-        "files": 69,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2613,7 +2613,7 @@
       "web": "GroupConversationScreen.tsx:570",
       "via": "menu",
       "logic": {
-        "files": 69,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2653,7 +2653,7 @@
       "web": "GroupConversationScreen.tsx:572",
       "via": "menu",
       "logic": {
-        "files": 69,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -3898,7 +3898,7 @@
       "title": "PersonalOfflineBanner",
       "web": "PersonalOfflineBanner.tsx:1",
       "logic": {
-        "files": 28,
+        "files": 29,
         "inPackage": ["usePersonalBots.ts"],
         "direct": ["offlineBanner.ts", "outbox.ts", "usePersonalBots.ts", "updateStatus.ts"]
       },
