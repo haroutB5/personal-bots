@@ -10,7 +10,7 @@
  * caller), and the disk from one `statfs` of the drive the server's data lives
  * on, cached a minute. A phone and a desktop polling together cost one reading.
  */
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 
 import { AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -21,11 +21,14 @@ import { HttpRouter, HttpServerResponse } from "effect/http";
 import { ServerConfig } from "../../config.ts";
 import { HostResources } from "../../resourceTelemetry/HostResources.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
+import { readHostSensors, type HostSensors } from "./hostSensors.ts";
 
 export const PERSONAL_SYSTEM_SUMMARY_PATH = "/api/personal/performance/summary";
 
 /** Free space moves slowly; one statfs a minute is plenty. */
 export const DISK_CACHE_MS = 60_000;
+/** `/sys` sensor files are cheap but not free; the card does not need them fresher. */
+export const SENSOR_CACHE_MS = 5_000;
 
 const GB = 1024 ** 3;
 
@@ -39,6 +42,9 @@ export interface SystemSummary {
   readonly diskLabel: string | null;
   readonly diskFreeGB: number | null;
   readonly diskTotalGB: number | null;
+  readonly cpuTempC: number | null;
+  readonly diskTempC: number | null;
+  readonly fans: ReadonlyArray<{ readonly label: string; readonly rpm: number }>;
 }
 
 interface DiskReading {
@@ -60,6 +66,7 @@ export function systemSummaryFrom(input: {
   readonly availableMemoryBytes: number;
   readonly totalMemoryBytes: number;
   readonly disk: DiskReading | null;
+  readonly sensors: HostSensors;
 }): SystemSummary {
   const total = input.totalMemoryBytes;
   const used = Math.max(0, total - input.availableMemoryBytes);
@@ -71,11 +78,14 @@ export function systemSummaryFrom(input: {
     diskLabel: input.disk?.label ?? null,
     diskFreeGB: input.disk?.freeGB ?? null,
     diskTotalGB: input.disk?.totalGB ?? null,
+    cpuTempC: input.sensors.cpuTempC,
+    diskTempC: input.sensors.diskTempC,
+    fans: input.sensors.fans,
   };
 }
 
 const readDisk = (root: string) =>
-  Effect.tryPromise(() => NodeFs.statfs(root)).pipe(
+  Effect.tryPromise(() => NodeFSP.statfs(root)).pipe(
     Effect.map((stats): DiskReading => ({
       label: diskLabelOf(root),
       freeGB: round1((stats.bavail * stats.bsize) / GB),
@@ -91,11 +101,14 @@ const HEADERS = {
 } as const;
 
 export const makePersonalSystemSummaryRouteLayer = (
-  options: { readonly diskCacheMs?: number } = {},
+  options: { readonly diskCacheMs?: number; readonly sensorCacheMs?: number } = {},
 ) => {
   const diskCacheMs = options.diskCacheMs ?? DISK_CACHE_MS;
+  const sensorCacheMs = options.sensorCacheMs ?? SENSOR_CACHE_MS;
   let diskAt: number | null = null;
   let disk: DiskReading | null = null;
+  let sensorsAt: number | null = null;
+  let sensors: HostSensors = { cpuTempC: null, diskTempC: null, fans: [] };
 
   return HttpRouter.add(
     "GET",
@@ -111,6 +124,10 @@ export const makePersonalSystemSummaryRouteLayer = (
         disk = yield* readDisk(path.parse(path.resolve(baseDir)).root);
         diskAt = nowMs;
       }
+      if (sensorsAt === null || nowMs - sensorsAt >= sensorCacheMs) {
+        sensors = yield* Effect.sync(() => readHostSensors());
+        sensorsAt = nowMs;
+      }
       const host = yield* (yield* HostResources).read;
       return yield* HttpServerResponse.json(
         systemSummaryFrom({
@@ -118,6 +135,7 @@ export const makePersonalSystemSummaryRouteLayer = (
           availableMemoryBytes: host.availableMemoryBytes,
           totalMemoryBytes: host.totalMemoryBytes,
           disk,
+          sensors,
         }),
         { headers: HEADERS },
       ).pipe(
