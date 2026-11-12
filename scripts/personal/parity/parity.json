@@ -1257,7 +1257,7 @@
       "id": "sheet:WorkScreen.tsx#detailsheet",
       "kind": "sheet",
       "title": "DetailSheet",
-      "web": "WorkScreen.tsx:238",
+      "web": "WorkScreen.tsx:239",
       "component": "DetailSheet",
       "logic": {
         "files": 54,
@@ -1277,7 +1277,7 @@
       },
       "pr": "A12",
       "status": "done",
-      "check": "Open \"DetailSheet\" from its screen on Android. Same fields, buttons and confirm wording as WorkScreen.tsx:238. Back closes only the sheet."
+      "check": "Open \"DetailSheet\" from its screen on Android. Same fields, buttons and confirm wording as WorkScreen.tsx:239. Back closes only the sheet."
     },
     {
       "id": "sheet:computer/ComputerActivityCard.tsx#computeractivitysheet",
