@@ -528,6 +528,27 @@ describe("EnvironmentThreads", () => {
       }),
   );
 
+  it.effect("loads the server thread when the cache read never finishes", () =>
+    Effect.gen(function* () {
+      const fiber = yield* makeHarness({
+        loadCached: Effect.never,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
+        },
+      }).pipe(Effect.forkScoped);
+      yield* TestClock.adjust("2900 millis");
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("200 millis");
+      const h = yield* Fiber.join(fiber);
+
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(1);
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(1);
+    }),
+  );
+
   it.effect("flushes newer data after an older background write completes", () =>
     Effect.gen(function* () {
       const writing = yield* Deferred.make<void>();
