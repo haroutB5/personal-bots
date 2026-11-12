@@ -10,8 +10,10 @@ import {
   notificationDeviceDetail,
   notificationDevicesLine,
   parseAutoArchiveDraft,
+  SETTINGS_SECTIONS,
   settingsRowMatches,
   sharedPreferencesOf,
+  visibleSettingsSections,
 } from "./settingsScreenModel";
 import { notificationEventRows } from "./notificationsScreenModel";
 
@@ -28,6 +30,28 @@ describe("settings search", () => {
       true,
     );
     expect(settingsRowMatches({ title: "Memory" }, "providers")).toBe(false);
+  });
+});
+
+describe("settings registry", () => {
+  it("gives every row a unique id", () => {
+    const rows = SETTINGS_SECTIONS.flatMap((section) => section.rows);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+  });
+
+  it("gives every row a unique title", () => {
+    const rows = SETTINGS_SECTIONS.flatMap((section) => section.rows);
+    expect(new Set(rows.map((row) => row.title)).size).toBe(rows.length);
+  });
+
+  it("finds memory in exactly one row and one section", () => {
+    const visible = visibleSettingsSections("memory");
+    expect(visible.map((entry) => entry.section.id)).toEqual(["bots"]);
+    expect(visible.flatMap((entry) => entry.rows.map((row) => row.title))).toEqual(["Memory"]);
+  });
+
+  it("hides a section whose only row is hidden", () => {
+    expect(visibleSettingsSections("restore", new Set(["bots.removed"]))).toEqual([]);
   });
 });
 

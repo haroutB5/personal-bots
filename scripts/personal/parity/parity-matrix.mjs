@@ -618,6 +618,8 @@ const RPC_RULES = [
   [/^personalBots(CreateThread|ArchiveThreads?|DeleteThreads?|UpdateThreads)$/, { pr: "A3" }],
   [/^personalBots(ThreadFullText|SearchMessages|PrewarmThread)$/, { pr: "A4" }],
   [/^personalBots(Create|Update|Delete|RecheckProvider)$/, { pr: "A9" }],
+  // The pinned strip lives on the Bots home: drag order saves from there.
+  [/^personalBotsReorderPinned$/, { pr: "A2" }],
   [/^personalBots(ListRemoved|Restore)$/, { pr: "A11" }],
   [/^personalBotsSetProfile$/, { pr: "A14" }],
   [/^personalBotsListFiles$|^personalFiles/, { pr: "A13" }],

@@ -596,9 +596,10 @@ export function filterBotSummaries(
 }
 
 /**
- * Splits the chats list into the pinned box and the list under it. A working
- * pin comes first, newest activity first among working pins, so the avatar
- * strip at the top of the home follows the same rule as the rows under it
+ * Splits the chats list into the pinned box and the list under it. Pins follow
+ * the owner's saved order (`pinOrder`, then bot id), never activity, so a
+ * reply never reshuffles the strip. A pin from an older server has no
+ * `pinOrder`; those go last, in the order the list already had.
  */
 export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): {
   readonly pinned: ReadonlyArray<BotSummary>;
@@ -610,15 +611,17 @@ export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): 
     return index < 0 ? PERSONAL_BOT_TEAM_ORDER.length : index;
   };
   return {
-    // toSorted is stable, so equal ranks keep the incoming order.
     pinned: summaries
       .filter((summary) => isBotPinned(summary.bot))
       .toSorted((left, right) => {
-        if (left.live !== right.live) return left.live ? -1 : 1;
-        if (left.live) {
-          const byActivity = compareActivity(left, right);
-          if (byActivity !== 0) return byActivity;
+        const leftOrder = left.bot.pinOrder;
+        const rightOrder = right.bot.pinOrder;
+        if (leftOrder !== undefined && rightOrder !== undefined) {
+          if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+          return left.bot.botId < right.bot.botId ? -1 : left.bot.botId > right.bot.botId ? 1 : 0;
         }
+        if (leftOrder !== undefined) return -1;
+        if (rightOrder !== undefined) return 1;
         return rank(left) - rank(right);
       }),
     rest: summaries.filter((summary) => !isBotPinned(summary.bot)),

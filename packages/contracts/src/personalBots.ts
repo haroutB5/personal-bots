@@ -217,6 +217,12 @@ export const PersonalBot = Schema.Struct({
   lead: Schema.optionalKey(Schema.Boolean),
   pinned: Schema.optionalKey(Schema.Boolean),
   /**
+   * The bot's slot in the pinned strip, ascending, present only while pinned.
+   * Optional on the wire so an older server still decodes; absent on an old
+   * server, where the client sorts such pins last by team rank.
+   */
+  pinOrder: Schema.optionalKey(Schema.Number),
+  /**
    * Standing permission to save memories without the user asking each time:
    * save_memory then skips its explicit-ask check for this bot. Optional on the
    * wire for the same reason as the team fields; read it through
@@ -535,6 +541,12 @@ export const PersonalBotUpdateInput = Schema.Struct({
   allowVoiceCalls: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;
+
+/** The pinned strip's order, first id first. Pinned bots left out keep their order after. */
+export const PersonalBotReorderPinnedInput = Schema.Struct({
+  botIds: Schema.NonEmptyArray(PersonalBotId),
+});
+export type PersonalBotReorderPinnedInput = typeof PersonalBotReorderPinnedInput.Type;
 
 export const PersonalBotDeleteInput = Schema.Struct({
   botId: PersonalBotId,

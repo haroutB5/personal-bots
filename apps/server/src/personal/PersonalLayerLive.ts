@@ -26,6 +26,7 @@ import * as PersonalMemoryService from "./memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "./memory/PersonalMemoryTidyService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import * as PersonalProviderUpdates from "./providerUpdates/PersonalProviderUpdates.ts";
+import * as ProviderMaintenanceRunner from "../provider/providerMaintenanceRunner.ts";
 import * as FcmSender from "./push/fcmSender.ts";
 import * as NotificationActions from "./push/notificationActions.ts";
 import * as PersonalPushService from "./push/PersonalPushService.ts";
@@ -220,10 +221,16 @@ export const PersonalRuntimeLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),
   Layer.provideMerge(PersonalLayerWithCallSummaryLive),
-  // The provider port sits below every personal consumer.
+  // The provider port sits below every personal consumer. The server-lifetime
+  // provider runner rides with it: one instance is shared by the updates
+  // service, every socket and the provider screens, so its per-provider lock
+  // covers them all.
   Layer.provideMerge(
-    PersonalProvidersV2Live.pipe(
-      Layer.provideMerge(Layer.merge(PersonalPrewarmSessionLayer, PersonalProviderSessionsLayer)),
+    Layer.mergeAll(
+      PersonalProvidersV2Live.pipe(
+        Layer.provideMerge(Layer.merge(PersonalPrewarmSessionLayer, PersonalProviderSessionsLayer)),
+      ),
+      ProviderMaintenanceRunner.layer,
     ),
   ),
 );

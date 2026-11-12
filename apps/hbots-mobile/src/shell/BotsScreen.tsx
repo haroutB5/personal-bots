@@ -22,6 +22,7 @@ import {
 } from "@hbots/personal-client/bots/workingProgress";
 import {
   isBotPinned,
+  PersonalBotId,
   ThreadId,
   type PersonalBot,
   type PersonalBotNotificationMute,
@@ -30,7 +31,9 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   KeyboardAvoidingView,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -56,6 +59,7 @@ import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
 import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
+import { dropIndex, moveTo, PINNED_TILE_STEP } from "./pinnedOrderModel";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
@@ -72,49 +76,104 @@ function PinnedTile({
   summary,
   now,
   onPress,
-  onLongPress,
+  onLift,
+  onDrop,
+  onMove,
 }: {
   readonly summary: BotSummary;
   readonly now: number;
   readonly onPress: () => void;
-  readonly onLongPress: () => void;
+  readonly onLift: (active: boolean) => void;
+  readonly onDrop: (dx: number) => void;
+  readonly onMove: (delta: -1 | 1) => void;
 }) {
   const status = botStatus(summary, now);
   const badge = status.tone === "review" ? "attention" : summary.live ? "working" : null;
   const unread = summary.unreadChats ?? 0;
+  // eslint-disable-next-line react/refs -- the animated value is created once
+  const translateX = useRef(new Animated.Value(0)).current;
+  const lifted = useRef(false);
+  const moved = useRef(false);
+  const responder = useRef(
+    // eslint-disable-next-line react/refs -- the responder is created once
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) => lifted.current && Math.abs(gesture.dx) > 4,
+      onPanResponderMove: (_event, gesture) => {
+        translateX.setValue(gesture.dx);
+      },
+      onPanResponderRelease: (_event, gesture) => {
+        const dx = gesture.dx;
+        translateX.setValue(0);
+        lifted.current = false;
+        onLift(false);
+        if (Math.abs(dx) > 4) moved.current = true;
+        setTimeout(() => {
+          moved.current = false;
+        }, 0);
+        onDrop(dx);
+      },
+      onPanResponderTerminate: () => {
+        translateX.setValue(0);
+        lifted.current = false;
+        onLift(false);
+      },
+    }),
+  ).current;
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={350}
-      accessibilityRole="button"
-      accessibilityLabel={`${summary.bot.name}${badge === null ? "" : `, ${status.label}`}${unread > 0 ? `, ${unread} unread chats` : ""}`}
-      style={styles.tile}
+    <Animated.View
+      style={[styles.pinnedTileWrap, { transform: [{ translateX }] }]}
+      // eslint-disable-next-line react/refs -- pan handlers are stable for the component lifetime
+      {...responder.panHandlers}
     >
-      <View style={styles.tileAvatarBox}>
-        <BotAvatar
-          shape={summary.bot.avatarShape}
-          color={summary.bot.avatarColor}
-          size={56}
-          label={summary.bot.name}
-        />
-        {badge !== null ? (
-          <View
-            style={[
-              styles.tileBadge,
-              badge === "attention" ? styles.tileBadgeAttention : styles.tileBadgeWorking,
-            ]}
+      <Pressable
+        onPress={() => {
+          if (moved.current) return;
+          onPress();
+        }}
+        onLongPress={() => {
+          lifted.current = true;
+          moved.current = true;
+          onLift(true);
+        }}
+        delayLongPress={300}
+        accessibilityRole="button"
+        accessibilityLabel={`${summary.bot.name}${badge === null ? "" : `, ${status.label}`}${unread > 0 ? `, ${unread} unread chats` : ""}`}
+        accessibilityHint="Long press and drag to reorder"
+        accessibilityActions={[
+          { name: "moveLeft", label: "Move left" },
+          { name: "moveRight", label: "Move right" },
+        ]}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === "moveLeft") onMove(-1);
+          if (event.nativeEvent.actionName === "moveRight") onMove(1);
+        }}
+        style={styles.tile}
+      >
+        <View style={styles.tileAvatarBox}>
+          <BotAvatar
+            shape={summary.bot.avatarShape}
+            color={summary.bot.avatarColor}
+            size={56}
+            label={summary.bot.name}
           />
-        ) : null}
-        {unread > 0 ? <View style={styles.tileUnread} /> : null}
-      </View>
-      <Text style={styles.tileName} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-        {summary.bot.name}
-      </Text>
-      <Text style={styles.tileModel} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-        {summary.modelShortLabel ?? " "}
-      </Text>
-    </Pressable>
+          {badge !== null ? (
+            <View
+              style={[
+                styles.tileBadge,
+                badge === "attention" ? styles.tileBadgeAttention : styles.tileBadgeWorking,
+              ]}
+            />
+          ) : null}
+          {unread > 0 ? <View style={styles.tileUnread} /> : null}
+        </View>
+        <Text style={styles.tileName} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          {summary.bot.name}
+        </Text>
+        <Text style={styles.tileModel} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          {summary.modelShortLabel ?? " "}
+        </Text>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -379,6 +438,11 @@ export function BotsScreen({
   const deleteBot = native.client.useAtomCommand(native.bots.personalBotDelete, {
     reportFailure: false,
   });
+  const reorderPinned = native.client.useAtomCommand(native.bots.personalBotsReorderPinned, {
+    reportFailure: false,
+  });
+  const [pinnedOrderIds, setPinnedOrderIds] = useState<ReadonlyArray<string> | null>(null);
+  const [pinnedDragging, setPinnedDragging] = useState(false);
   const persistedKey = useRef<string | null>(null);
   const refreshedGeneration = useRef<number | null>(null);
 
@@ -499,6 +563,61 @@ export function BotsScreen({
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
   const split = useMemo(() => partitionPinnedSummaries(visible), [visible]);
 
+  // The strip draws the dragged order at once; the server list clears it once
+  // its saved pinOrder matches, so a refresh never snaps the order back.
+  const pinnedSummaries = useMemo(() => {
+    if (pinnedOrderIds === null) return split.pinned;
+    const byId = new Map(split.pinned.map((summary) => [summary.bot.botId as string, summary]));
+    const ordered = pinnedOrderIds.flatMap((botId) => {
+      const summary = byId.get(botId);
+      return summary === undefined ? [] : [summary];
+    });
+    return [
+      ...ordered,
+      ...split.pinned.filter((summary) => !pinnedOrderIds.includes(summary.bot.botId)),
+    ];
+  }, [pinnedOrderIds, split.pinned]);
+
+  useEffect(() => {
+    if (pinnedOrderIds === null) return;
+    const serverIds = split.pinned.map((summary) => summary.bot.botId as string);
+    if (
+      serverIds.length === pinnedOrderIds.length &&
+      serverIds.every((botId, index) => botId === pinnedOrderIds[index])
+    ) {
+      // eslint-disable-next-line react/set-state-in-effect -- the refetched list is the acknowledgment
+      setPinnedOrderIds(null);
+    }
+  }, [pinnedOrderIds, split.pinned]);
+
+  const savePinnedOrder = async (
+    nextIds: ReadonlyArray<string>,
+    previousIds: ReadonlyArray<string>,
+  ) => {
+    const [first, ...rest] = nextIds;
+    if (first === undefined) return;
+    setPinnedOrderIds(nextIds);
+    const result = await reorderPinned({
+      environmentId,
+      input: {
+        botIds: [PersonalBotId.make(first), ...rest.map((botId) => PersonalBotId.make(botId))],
+      },
+    });
+    if (result._tag !== "Success") {
+      setPinnedOrderIds(previousIds);
+      setActionError("Couldn't save the order.");
+      return;
+    }
+    setActionError(null);
+  };
+
+  const movePinned = (from: number, to: number) => {
+    const currentIds = pinnedSummaries.map((summary) => summary.bot.botId as string);
+    const nextIds = moveTo(currentIds, from, to);
+    if (nextIds === currentIds || nextIds.every((id, index) => id === currentIds[index])) return;
+    void savePinnedOrder(nextIds, currentIds);
+  };
+
   useEffect(() => {
     if (list.data === null) return;
     const stored = [...split.pinned, ...split.rest].map((summary) => ({
@@ -603,19 +722,23 @@ export function BotsScreen({
     setActionError(failureText(result, "Couldn't change notifications for that bot."));
   };
 
-  const removeBot = async (summary: BotSummary) => {
-    const ok = await native.client.ports.confirm.confirm({
-      title: `Delete ${summary.bot.name}?`,
-      body: "This deletes the bot and every chat you had with it.",
-      confirmLabel: "Delete",
-      destructive: true,
-    });
-    if (!ok) return;
+  const deleteBotNow = async (summary: BotSummary) => {
     const result = await deleteBot({
       environmentId,
       input: { botId: summary.bot.botId },
     });
     setActionError(failureText(result, "Couldn't delete that bot."));
+  };
+
+  const removeBot = async (summary: BotSummary) => {
+    const ok = await native.client.ports.confirm.confirm({
+      title: `Delete ${summary.bot.name}?`,
+      body: `Moves ${summary.bot.name} to Removed bots. Its chats stay.`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    await deleteBotNow(summary);
   };
 
   const snapshotSplit = snapshot === null ? null : partitionPinnedSnapshotRows(snapshot.rows);
@@ -815,20 +938,28 @@ export function BotsScreen({
           </View>
         ) : (
           <>
-            {split.pinned.length > 0 ? (
+            {pinnedSummaries.length > 0 ? (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
+                scrollEnabled={!pinnedDragging}
                 contentContainerStyle={styles.pinnedStrip}
                 style={styles.pinnedScroller}
               >
-                {split.pinned.map((summary) => (
+                {pinnedSummaries.map((summary, index) => (
                   <PinnedTile
                     key={summary.bot.botId}
                     summary={summary}
                     now={now}
                     onPress={() => openSummary(summary)}
-                    onLongPress={() => setActionBot(summary)}
+                    onLift={setPinnedDragging}
+                    onDrop={(dx) =>
+                      movePinned(
+                        index,
+                        dropIndex(dx, PINNED_TILE_STEP, index, pinnedSummaries.length),
+                      )
+                    }
+                    onMove={(delta) => movePinned(index, index + delta)}
                   />
                 ))}
               </ScrollView>
@@ -840,6 +971,7 @@ export function BotsScreen({
                     key={summary.bot.botId}
                     label={`Delete ${summary.bot.name}`}
                     onDelete={() => void removeBot(summary)}
+                    onSwipeConfirm={() => void deleteBotNow(summary)}
                   >
                     <BotRow
                       summary={summary}
@@ -1013,6 +1145,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   tile: { width: 72, alignItems: "center", gap: 6 },
+  pinnedTileWrap: { zIndex: 2 },
   tileAvatarBox: { height: 56, justifyContent: "center" },
   tileBadge: {
     position: "absolute",

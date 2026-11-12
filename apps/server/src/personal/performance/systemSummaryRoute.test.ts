@@ -95,6 +95,8 @@ describe("the PC summary under the Bots header", () => {
     expect(typeof body.diskTotalGB).toBe("number");
     expect(Number(body.diskFreeGB)).toBeLessThanOrEqual(Number(body.diskTotalGB));
     expect(typeof body.diskLabel).toBe("string");
+    expect(Array.isArray(body.fans)).toBe(true);
+    expect(body.cpuTempC === null || typeof body.cpuTempC === "number").toBe(true);
   });
 
   it("refuses a caller with no session and reads nothing", async () => {
@@ -114,6 +116,11 @@ describe("systemSummaryFrom", () => {
         availableMemoryBytes: 1.5 * GB,
         totalMemoryBytes: 16 * GB,
         disk: { label: "C:", freeGB: 120.4, totalGB: 951.6 },
+        sensors: {
+          cpuTempC: 94,
+          diskTempC: 39,
+          fans: [{ label: "CPU Fan", rpm: 2812 }],
+        },
       }),
     ).toEqual({
       cpuPct: 100,
@@ -123,6 +130,9 @@ describe("systemSummaryFrom", () => {
       diskLabel: "C:",
       diskFreeGB: 120.4,
       diskTotalGB: 951.6,
+      cpuTempC: 94,
+      diskTempC: 39,
+      fans: [{ label: "CPU Fan", rpm: 2812 }],
     });
   });
 
@@ -133,6 +143,7 @@ describe("systemSummaryFrom", () => {
         availableMemoryBytes: 0,
         totalMemoryBytes: 0,
         disk: null,
+        sensors: { cpuTempC: null, diskTempC: null, fans: [] },
       }),
     ).toEqual({
       cpuPct: null,
@@ -142,6 +153,9 @@ describe("systemSummaryFrom", () => {
       diskLabel: null,
       diskFreeGB: null,
       diskTotalGB: null,
+      cpuTempC: null,
+      diskTempC: null,
+      fans: [],
     });
   });
 

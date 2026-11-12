@@ -211,6 +211,7 @@ export const DONE_ITEMS: readonly string[] = [
   "setting:BotScheduleSection.tsx#to",
   "rpc:personalBotsCreate",
   "rpc:personalBotsUpdate",
+  "rpc:personalBotsReorderPinned",
   "rpc:personalBotsRecheckProvider",
   "rpc:personalBotsDelete",
   "screen:routes/_personal.bots_.groups.$groupId.tsx#bots-groups-groupid",

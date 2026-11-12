@@ -194,6 +194,10 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
         observeRpcEffect(WS_METHODS.personalBotsUpdate, personalBots.update(input), {
           "rpc.aggregate": "server",
         }),
+      [WS_METHODS.personalBotsReorderPinned]: (input) =>
+        observeRpcEffect(WS_METHODS.personalBotsReorderPinned, personalBots.reorderPinned(input), {
+          "rpc.aggregate": "server",
+        }),
       [WS_METHODS.personalBotsDelete]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalBotsDelete,

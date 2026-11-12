@@ -5,7 +5,7 @@ import { partitionPinnedSummaries, type BotSummary } from "./botSummaries.ts";
 /** `partitionPinnedSummaries` only reads the bot and the working flags, the rest of the summary is noise. */
 const summary = (
   botId: string,
-  bot: { team?: "dev" | "assistant"; lead?: boolean; pinned?: boolean } = {},
+  bot: { team?: "dev" | "assistant"; lead?: boolean; pinned?: boolean; pinOrder?: number } = {},
   state: { live?: boolean; lastActivityMs?: number | null } = {},
 ) =>
   ({
@@ -18,32 +18,51 @@ const idsOf = (summaries: ReadonlyArray<BotSummary>) =>
   summaries.map((entry) => entry.bot.botId as string);
 
 describe("partitionPinnedSummaries", () => {
-  it("puts the two leads first, CTO before Assistant", () => {
+  it("follows the saved pin order, not who worked last", () => {
     const { pinned } = partitionPinnedSummaries([
-      summary("assistant", { lead: true, pinned: true }),
-      summary("musey", { pinned: true }),
-      summary("cto", { team: "dev", lead: true, pinned: true }),
+      summary("third", { pinned: true, pinOrder: 2 }, { live: true, lastActivityMs: 90 }),
+      summary("first", { pinned: true, pinOrder: 0 }),
+      summary("second", { pinned: true, pinOrder: 1 }, { lastActivityMs: 50 }),
     ]);
 
-    // Leads by team order, then the rest in the order the list already had.
-    expect(idsOf(pinned)).toEqual(["cto", "assistant", "musey"]);
+    expect(idsOf(pinned)).toEqual(["first", "second", "third"]);
   });
 
-  it("puts a working pin above an idle lead, newest working first", () => {
+  it("breaks an equal pin order by bot id", () => {
     const { pinned } = partitionPinnedSummaries([
-      summary("assistant", { lead: true, pinned: true }),
-      summary("musey", { pinned: true }, { live: true, lastActivityMs: 30 }),
-      summary("cto", { team: "dev", lead: true, pinned: true }),
-      summary("optimizer", { pinned: true }, { live: true, lastActivityMs: 50 }),
+      summary("zeta", { pinned: true, pinOrder: 1 }),
+      summary("alpha", { pinned: true, pinOrder: 1 }),
     ]);
 
-    // Working pins first (newest activity first), then the idle pins by rank.
-    expect(idsOf(pinned)).toEqual(["optimizer", "musey", "cto", "assistant"]);
+    expect(idsOf(pinned)).toEqual(["alpha", "zeta"]);
+  });
+
+  it("does not move when activity changes", () => {
+    const before = partitionPinnedSummaries([
+      summary("first", { pinned: true, pinOrder: 0 }),
+      summary("second", { pinned: true, pinOrder: 1 }),
+    ]);
+    const after = partitionPinnedSummaries([
+      summary("first", { pinned: true, pinOrder: 0 }),
+      summary("second", { pinned: true, pinOrder: 1 }, { live: true, lastActivityMs: 100 }),
+    ]);
+
+    expect(idsOf(after.pinned)).toEqual(idsOf(before.pinned));
+  });
+
+  it("puts an old server's pins with no order last, by team rank", () => {
+    const { pinned } = partitionPinnedSummaries([
+      summary("assistant", { lead: true, pinned: true }),
+      summary("ordered", { pinned: true, pinOrder: 4 }),
+      summary("cto", { team: "dev", lead: true, pinned: true }),
+    ]);
+
+    expect(idsOf(pinned)).toEqual(["ordered", "cto", "assistant"]);
   });
 
   it("lists each bot on exactly one side of the split", () => {
     const summaries = [
-      summary("cto", { team: "dev", lead: true, pinned: true }),
+      summary("cto", { team: "dev", lead: true, pinned: true, pinOrder: 0 }),
       summary("frontend", { team: "dev" }),
       summary("scout"),
     ];

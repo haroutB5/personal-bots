@@ -54,6 +54,7 @@ import {
   SensitiveCard,
 } from "./ComputerCards";
 import { ComputerLiveView, type ComputerLiveViewHandle } from "./ComputerLiveView";
+import { MachineStatsCard } from "./MachineStatsCard";
 import { fullScreenVisible, inlinePaused, pipEnabled } from "./pipModel";
 import type { FrameSize } from "./pipModel";
 import { useInPip, usePipRequest } from "./usePictureInPicture";
@@ -447,6 +448,7 @@ export function ComputerScreen({
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]}
         keyboardShouldPersistTaps="handled"
       >
+        <MachineStatsCard native={native} />
         <View style={styles.sourceRow} accessibilityRole="tablist">
           {(["browser", "desktop"] as const).map((source) => {
             const selected = shown === source;

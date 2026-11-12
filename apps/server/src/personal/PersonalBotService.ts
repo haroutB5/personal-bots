@@ -253,6 +253,10 @@ export class PersonalBotService extends Context.Service<
     readonly update: (
       input: PersonalBotUpdateInput,
     ) => Effect.Effect<PersonalBot, PersonalBotsError>;
+    /** Saves the pinned strip's order and returns the list as it now stands. */
+    readonly reorderPinned: (input: {
+      readonly botIds: ReadonlyArray<PersonalBotId>;
+    }) => Effect.Effect<PersonalBotsListResult, PersonalBotsError>;
     readonly remove: (input: {
       readonly botId: PersonalBotId;
     }) => Effect.Effect<void, PersonalBotsError>;
@@ -780,6 +784,14 @@ export const make = Effect.gen(function* () {
           return updated.value;
         }),
       );
+    });
+
+  const reorderPinned: PersonalBotService["Service"]["reorderPinned"] = (input) =>
+    Effect.gen(function* () {
+      yield* repository
+        .reorderPinned({ botIds: input.botIds })
+        .pipe(Effect.mapError(repositoryError("reorder pinned")));
+      return yield* list({});
     });
 
   const remove: PersonalBotService["Service"]["remove"] = (input) =>
@@ -1363,6 +1375,7 @@ export const make = Effect.gen(function* () {
     list,
     create,
     update,
+    reorderPinned,
     remove,
     createThread,
     createSharedThread,
