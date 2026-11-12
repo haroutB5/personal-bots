@@ -253,6 +253,14 @@ export class PersonalBotRepository extends Context.Service<
     readonly updateBot: (
       input: UpdatePersonalBotInput,
     ) => Effect.Effect<Option.Option<PersonalBot>, PersonalBotRepositoryError>;
+    /**
+     * Saves the pinned strip's order. Listed pinned live bots take slots 0..n-1;
+     * pinned bots left out keep their relative order after them. Unknown and
+     * unpinned ids are ignored, so a stale list still converges.
+     */
+    readonly reorderPinned: (input: {
+      readonly botIds: ReadonlyArray<PersonalBotId>;
+    }) => Effect.Effect<void, PersonalBotRepositoryError>;
     readonly softDeleteBot: (
       input: SoftDeletePersonalBotInput,
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
@@ -480,6 +488,7 @@ const PersonalBotDbRow = Schema.Struct({
   team: PersonalBotTeam,
   lead: Schema.Number,
   pinned: Schema.Number,
+  pinOrder: Schema.NullOr(Schema.Number),
   memoryAutoSave: Schema.Number,
   hidePreviews: Schema.Number,
   fallbackEnabled: Schema.Number,
@@ -507,6 +516,7 @@ const PersonalBotRawDbRow = Schema.Struct({
   team: Schema.Unknown,
   lead: Schema.Unknown,
   pinned: Schema.Unknown,
+  pinOrder: Schema.Unknown,
   memoryAutoSave: Schema.Unknown,
   hidePreviews: Schema.Unknown,
   fallbackEnabled: Schema.Unknown,
@@ -713,6 +723,7 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): {
       team: row.team,
       lead: row.lead === 1,
       pinned: row.pinned === 1,
+      ...(row.pinOrder === null ? {} : { pinOrder: row.pinOrder }),
       memoryAutoSave: row.memoryAutoSave === 1,
       hidePreviews: row.hidePreviews === 1,
       fallback: {
@@ -883,6 +894,7 @@ export const make = Effect.gen(function* () {
           team,
           is_lead,
           pinned,
+          pin_order,
           memory_auto_save,
           fallback_enabled,
           fallback_model_json,
@@ -906,6 +918,7 @@ export const make = Effect.gen(function* () {
           ${input.team},
           ${input.lead ? 1 : 0},
           ${input.pinned ? 1 : 0},
+          ${input.pinned ? sql`(SELECT COALESCE(MAX(pin_order), -1) + 1 FROM personal_bots)` : sql`NULL`},
           ${input.memoryAutoSave === false ? 0 : 1},
           ${input.fallbackEnabled === false ? 0 : 1},
           ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
@@ -937,6 +950,7 @@ export const make = Effect.gen(function* () {
           team AS "team",
           is_lead AS "lead",
           pinned AS "pinned",
+          pin_order AS "pinOrder",
           memory_auto_save AS "memoryAutoSave",
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
@@ -971,6 +985,7 @@ export const make = Effect.gen(function* () {
           team AS "team",
           is_lead AS "lead",
           pinned AS "pinned",
+          pin_order AS "pinOrder",
           memory_auto_save AS "memoryAutoSave",
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
@@ -1008,6 +1023,12 @@ export const make = Effect.gen(function* () {
             team = COALESCE(${input.team ?? null}, team),
             is_lead = COALESCE(${input.lead === undefined ? null : input.lead ? 1 : 0}, is_lead),
             pinned = COALESCE(${input.pinned === undefined ? null : input.pinned ? 1 : 0}, pinned),
+            pin_order = CASE
+              WHEN ${input.pinned === undefined ? 0 : 1} = 0 THEN pin_order
+              WHEN ${input.pinned === true ? 1 : 0} = 1
+                THEN COALESCE(pin_order, (SELECT COALESCE(MAX(pin_order), -1) + 1 FROM personal_bots))
+              ELSE NULL
+            END,
             memory_auto_save = COALESCE(
               ${input.memoryAutoSave === undefined ? null : input.memoryAutoSave ? 1 : 0},
               memory_auto_save
@@ -1053,6 +1074,7 @@ export const make = Effect.gen(function* () {
           team AS "team",
           is_lead AS "lead",
           pinned AS "pinned",
+          pin_order AS "pinOrder",
           memory_auto_save AS "memoryAutoSave",
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
@@ -1525,6 +1547,31 @@ export const make = Effect.gen(function* () {
         withActiveFallback(decodeBotRow("PersonalBotRepository.updateBot:decodeRow", rowOption)),
       ),
     );
+
+  const reorderPinned: PersonalBotRepository["Service"]["reorderPinned"] = (input) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<{ readonly botId: string }>`
+            SELECT bot_id AS "botId"
+            FROM personal_bots
+            WHERE pinned = 1 AND deleted_at IS NULL
+            ORDER BY pin_order IS NULL, pin_order ASC, bot_id ASC
+          `;
+          const pinnedIds = rows.map((row) => row.botId);
+          const wanted = [...new Set(input.botIds.map(String))].filter((botId) =>
+            pinnedIds.includes(botId),
+          );
+          const order = [...wanted, ...pinnedIds.filter((botId) => !wanted.includes(botId))];
+          yield* Effect.forEach(
+            order,
+            (botId, index) =>
+              sql`UPDATE personal_bots SET pin_order = ${index} WHERE bot_id = ${botId}`,
+            { discard: true },
+          );
+        }),
+      )
+      .pipe(Effect.mapError(toPersistenceSqlError("PersonalBotRepository.reorderPinned")));
 
   const softDeleteBot: PersonalBotRepository["Service"]["softDeleteBot"] = (input) =>
     softDeleteBotRow(input).pipe(
@@ -2225,6 +2272,7 @@ export const make = Effect.gen(function* () {
     getBotById: asRead(getBotById),
     listBots: asRead(listBots),
     updateBot,
+    reorderPinned,
     softDeleteBot,
     clearTeamLead,
     insertThreadLink,
