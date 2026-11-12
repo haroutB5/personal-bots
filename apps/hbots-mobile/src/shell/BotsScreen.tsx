@@ -28,6 +28,7 @@ import {
   type PersonalBotNotificationMute,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useIsFocused } from "@react-navigation/native";
 import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -49,7 +50,7 @@ import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroup
 import { GroupAvatarCluster } from "../groups/GroupAvatarCluster";
 import { groupChatsSections } from "../groups/groupScreenModel";
 import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
-import { touchOutsideSwipeRows } from "../components/swipeDeleteRows";
+import { closeAllSwipeRows, touchOutsideSwipeRows } from "../components/swipeDeleteRows";
 import { BotActionsSheet } from "../sheets/BotActionsSheet";
 import { NewChatSheet } from "../sheets/NewChatSheet";
 import { RenameChatSheet } from "../sheets/RenameChatSheet";
@@ -481,6 +482,21 @@ export function BotsScreen({
   });
   const [pinnedOrderIds, setPinnedOrderIds] = useState<ReadonlyArray<string> | null>(null);
   const [pinnedDragging, setPinnedDragging] = useState(false);
+
+  const focused = useIsFocused();
+  useEffect(() => {
+    if (!focused) closeAllSwipeRows();
+  }, [focused]);
+
+  const sheetOpen =
+    actionBot !== null ||
+    creating ||
+    newChatBot !== null ||
+    renameTarget !== null ||
+    snoozeTarget !== null;
+  useEffect(() => {
+    if (sheetOpen) closeAllSwipeRows();
+  }, [sheetOpen]);
   const persistedKey = useRef<string | null>(null);
   const refreshedGeneration = useRef<number | null>(null);
 
@@ -701,6 +717,7 @@ export function BotsScreen({
   }, [environmentId, list.data, native, split]);
 
   const openBot = (target: NewChatTarget, newestThreadId: string | null) => {
+    closeAllSwipeRows();
     const tap = botTapTarget(newestThreadId);
     if (tap.kind === "chat") onOpenChat(target.botId, tap.threadId);
     else setNewChatBot(target);
@@ -858,6 +875,7 @@ export function BotsScreen({
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        onScrollBeginDrag={closeAllSwipeRows}
       >
         <PersonalUsageStrip native={native} now={now} />
 
@@ -1001,6 +1019,7 @@ export function BotsScreen({
                 scrollEnabled={!pinnedDragging}
                 contentContainerStyle={styles.pinnedStrip}
                 style={styles.pinnedScroller}
+                onScrollBeginDrag={closeAllSwipeRows}
               >
                 {pinnedSummaries.map((summary) => (
                   <PinnedTile

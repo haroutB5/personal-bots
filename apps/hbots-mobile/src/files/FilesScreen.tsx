@@ -17,6 +17,7 @@ import {
 } from "@hbots/personal-client/files/filesModel";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { PERSONAL_FILES_BATCH_MAX, type PersonalFile } from "@t3tools/contracts";
+import { useIsFocused } from "@react-navigation/native";
 import {
   IconDots,
   IconDownload,
@@ -41,7 +42,7 @@ import {
 
 import { confirmDestructive } from "../components/confirmDestructive";
 import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
-import { touchOutsideSwipeRows } from "../components/swipeDeleteRows";
+import { closeAllSwipeRows, touchOutsideSwipeRows } from "../components/swipeDeleteRows";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { useSecureScreen } from "../platform/secureScreen";
 import { PersonalFilePreviewSheet } from "../sheets/PersonalFilePreviewSheet";
@@ -129,6 +130,16 @@ export function FilesScreen({ native }: { readonly native: NativePersonal }) {
   const [notice, setNotice] = useState<{ text: string; failed: boolean } | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const focused = useIsFocused();
+  useEffect(() => {
+    if (!focused) closeAllSwipeRows();
+  }, [focused]);
+
+  const sheetOpen = previewing !== null || menuOpen || selection !== null;
+  useEffect(() => {
+    if (sheetOpen) closeAllSwipeRows();
+  }, [sheetOpen]);
   const now = useMinuteNow();
 
   const files = filesList.data?.files ?? [];
@@ -179,6 +190,7 @@ export function FilesScreen({ native }: { readonly native: NativePersonal }) {
   };
 
   const openFile = (file: PersonalFile) => {
+    closeAllSwipeRows();
     const kind = filePreviewKind(file);
     if (kind === "download") {
       const url = resolve(file.url);
@@ -350,6 +362,10 @@ export function FilesScreen({ native }: { readonly native: NativePersonal }) {
             style={styles.scroll}
             contentContainerStyle={styles.scrollBody}
             {...highRefresh}
+            onScrollBeginDrag={() => {
+              closeAllSwipeRows();
+              highRefresh.onScrollBeginDrag();
+            }}
           >
             {groups.length === 0 ? (
               <Text style={styles.stateText} maxFontSizeMultiplier={1.6}>

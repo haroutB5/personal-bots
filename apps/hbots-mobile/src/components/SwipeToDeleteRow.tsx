@@ -2,7 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "../shell/tokens";
-import { CLOSED, nextSwipeDelete, type SwipeDelete } from "./swipeDeleteModel";
+import {
+  armTimedOut,
+  CLOSED,
+  nextSwipeDelete,
+  SWIPE_ARM_TIMEOUT_MS,
+  type SwipeDelete,
+} from "./swipeDeleteModel";
 import { armSwipeRow, disarmSwipeRow, registerSwipeRow, touchSwipeRow } from "./swipeDeleteRows";
 
 const ACTION_WIDTH = 136;
@@ -30,18 +36,43 @@ export function SwipeToDeleteRow({
   const stateRef = useRef<SwipeDelete>(CLOSED);
   const [armed, setArmed] = useState(false);
   const [id] = useState(() => `swipe-row-${nextRowId++}`);
+  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const armedAt = useRef(0);
   // The responder is created once, so it reads the current callbacks from here.
   const latest = useRef({ onDelete, onSwipeConfirm });
   useEffect(() => {
     latest.current = { onDelete, onSwipeConfirm };
   });
 
+  const clearArmTimer = () => {
+    if (armTimer.current !== null) {
+      clearTimeout(armTimer.current);
+      armTimer.current = null;
+    }
+  };
+
+  const restartArmTimer = () => {
+    clearArmTimer();
+    armedAt.current = Date.now();
+    armTimer.current = setTimeout(() => {
+      armTimer.current = null;
+      if (stateRef.current.kind === "armed" && armTimedOut(armedAt.current, Date.now())) {
+        settleRef.current(CLOSED);
+      }
+    }, SWIPE_ARM_TIMEOUT_MS);
+  };
+
   const settle = (next: SwipeDelete) => {
     stateRef.current = next;
     const open = next.kind === "armed";
     setArmed(open);
-    if (open) armSwipeRow(id);
-    else disarmSwipeRow(id);
+    if (open) {
+      armSwipeRow(id);
+      restartArmTimer();
+    } else {
+      clearArmTimer();
+      disarmSwipeRow(id);
+    }
     Animated.spring(translateX, {
       toValue: open ? -ACTION_WIDTH : 0,
       useNativeDriver: true,
@@ -55,6 +86,12 @@ export function SwipeToDeleteRow({
     settleRef.current = settle;
   });
   useEffect(() => registerSwipeRow(id, () => settleRef.current(CLOSED)), [id]);
+  useEffect(
+    () => () => {
+      if (armTimer.current !== null) clearTimeout(armTimer.current);
+    },
+    [],
+  );
 
   const responder = useRef(
     // eslint-disable-next-line react/refs -- the responder is created once
@@ -83,7 +120,13 @@ export function SwipeToDeleteRow({
   ).current;
 
   return (
-    <View style={styles.root} onTouchStart={() => touchSwipeRow(id)}>
+    <View
+      style={styles.root}
+      onTouchStart={() => {
+        touchSwipeRow(id);
+        if (stateRef.current.kind === "armed") restartArmTimer();
+      }}
+    >
       <View style={styles.actionLayer}>
         <Pressable
           onPress={() => {

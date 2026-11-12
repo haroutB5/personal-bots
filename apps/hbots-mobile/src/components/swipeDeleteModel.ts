@@ -22,6 +22,14 @@ export interface SwipeDeleteResult {
 export const CLOSED: SwipeDelete = { kind: "closed" };
 export const ARMED: SwipeDelete = { kind: "armed" };
 
+/** An armed row closes after this long without a touch. */
+export const SWIPE_ARM_TIMEOUT_MS = 5_000;
+
+/** True once an arm is older than the timeout. */
+export function armTimedOut(armedAtMs: number, nowMs: number): boolean {
+  return nowMs - armedAtMs >= SWIPE_ARM_TIMEOUT_MS;
+}
+
 /** The armed rows after a touch: only the row that was touched stays armed. */
 export function armedRowsAfterTouch(
   armedRowIds: ReadonlySet<string>,
