@@ -315,12 +315,14 @@ describe("PersonalResetCredits", () => {
     expect(onRedeemed).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to a plain sentence for an opaque failure", async () => {
+  it("says the outcome is unknown for an opaque failure", async () => {
     state.consume.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
     await mount(credits(1));
     await openConfirm();
     await act(async () => confirmButton().props.onClick());
-    expect(text()).toContain("Could not use the reset credit.");
+    expect(text()).toContain(
+      "The reset may not have gone through. Check your limit before trying again.",
+    );
   });
 
   it("keeps the outcome on screen after the last credit is spent", async () => {

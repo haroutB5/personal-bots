@@ -8,6 +8,7 @@ import {
   deepSeekSpendText,
   formatBalanceAmount,
   resetCreditConfirm,
+  resetCreditFailureText,
   resetCreditRedeemLabel,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
@@ -65,12 +66,6 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   noCredit: "No reset credit left.",
   alreadyRedeemed: "That credit was already redeemed.",
 };
-
-function failureText(cause: unknown): string {
-  return cause instanceof Error && cause.message.trim().length > 0
-    ? cause.message
-    : "Could not use the reset credit.";
-}
 
 function usageProviderOfDriver(driver: UsageCard["driver"]): UsageProviderKind {
   return driver === "claudeAgent" ? "claude" : driver;
@@ -253,7 +248,7 @@ function RedeemBlock({
       if (result._tag === "Success") {
         setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       } else {
-        setStatus(failureText(result.cause));
+        setStatus(resetCreditFailureText(result.cause));
       }
     } finally {
       inFlight.current = false;

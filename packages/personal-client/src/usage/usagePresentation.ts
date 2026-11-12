@@ -1,11 +1,14 @@
-import type {
-  PersonalBotTokenUsageResult,
-  ProviderConsumeResetCreditInput,
-  ResetCreditKind,
-  ServerProvider,
-  ServerProviderResetCredits,
-  ServerProviderUsageWindow,
+import {
+  AuthProvidersManageScope,
+  EnvironmentAuthorizationError,
+  type PersonalBotTokenUsageResult,
+  type ProviderConsumeResetCreditInput,
+  type ResetCreditKind,
+  type ServerProvider,
+  type ServerProviderResetCredits,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import {
   formatDuration,
   limitsNotice,
@@ -262,6 +265,37 @@ export function resetCreditsExpiresIn(
   if (credits.nextExpiresAt === undefined) return null;
   const at = Date.parse(credits.nextExpiresAt);
   return Number.isFinite(at) ? formatDuration(at - now) : null;
+}
+
+/** What the card says instead of offering a Redeem this device cannot authorize. */
+export const RESET_CREDIT_PAIR_AGAIN_TEXT = "Pair this device again to redeem resets.";
+
+/** A server scope refusal on the redeem call itself; nothing was spent. */
+export const RESET_CREDIT_NO_SCOPE_TEXT =
+  "This device is not allowed to redeem resets. Pair it again to allow it. No credit was used.";
+
+/** The claim was sent, but its outcome cannot be known from the answer. */
+export const RESET_CREDIT_UNCONFIRMED_TEXT =
+  "The reset may not have gone through. Check your limit before trying again.";
+
+const RESET_CREDIT_REFUSED_TEXT = "Could not use the reset credit. No credit was used.";
+const RESET_CREDIT_UNKNOWN_OUTCOME = /could not (?:confirm|redeem) the reset/i;
+
+/**
+ * What to say when a redeem fails. The server's typed error sits inside the
+ * command's `Cause`, not on it. A scope refusal and an unreadable answer are
+ * different promises: one means nothing was spent, the other cannot say.
+ */
+export function resetCreditFailureText(cause: Cause.Cause<unknown>): string {
+  const error = Cause.hasInterruptsOnly(cause) ? undefined : Cause.squash(cause);
+  if (error instanceof EnvironmentAuthorizationError) {
+    return error.requiredPermission === AuthProvidersManageScope
+      ? RESET_CREDIT_NO_SCOPE_TEXT
+      : RESET_CREDIT_REFUSED_TEXT;
+  }
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (message.length === 0) return RESET_CREDIT_UNCONFIRMED_TEXT;
+  return RESET_CREDIT_UNKNOWN_OUTCOME.test(message) ? RESET_CREDIT_UNCONFIRMED_TEXT : message;
 }
 
 /** "Resets 14:30" today, or "Resets Mon 09:00" on another local day. */

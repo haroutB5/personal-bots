@@ -11,7 +11,9 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { act } from "../../../test/rendererAct";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { resetCreditFailureText, useResetCredit } from "./UsageLimits";
+import { resetCreditFailureText } from "~/features/personal/usagePresentation";
+
+import { useResetCredit } from "./UsageLimits";
 
 const state = vi.hoisted(() => ({ consume: vi.fn() }));
 
@@ -28,7 +30,7 @@ vi.mock("../../state/use-atom-command", () => ({
 
 const ENV = "env-1" as EnvironmentId;
 const INPUT = { instanceId: ProviderInstanceId.make("claudeAgent") };
-const GENERIC = "Could not use the reset credit.";
+const UNCONFIRMED = "The reset may not have gone through. Check your limit before trying again.";
 
 function setupError(detail: string) {
   return new ProviderSetupError({
@@ -52,10 +54,10 @@ describe("resetCreditFailureText", () => {
     expect(resetCreditFailureText(Cause.die(new Error("socket closed")))).toBe("socket closed");
   });
 
-  it("falls back to the generic sentence when there is no message", () => {
-    expect(resetCreditFailureText(Cause.interrupt())).toBe(GENERIC);
-    expect(resetCreditFailureText(Cause.fail(setupError("  ")))).toBe(GENERIC);
-    expect(resetCreditFailureText(Cause.die("not an error"))).toBe(GENERIC);
+  it("says the outcome is unknown when there is no message", () => {
+    expect(resetCreditFailureText(Cause.interrupt())).toBe(UNCONFIRMED);
+    expect(resetCreditFailureText(Cause.fail(setupError("  ")))).toBe(UNCONFIRMED);
+    expect(resetCreditFailureText(Cause.die("not an error"))).toBe(UNCONFIRMED);
   });
 });
 
@@ -95,10 +97,10 @@ describe("useResetCredit", () => {
     expect(probe.hook!.busy).toBe(false);
   });
 
-  it("keeps the generic status when the failure has no message", async () => {
+  it("says the outcome is unknown when the failure has no message", async () => {
     state.consume.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
     await act(async () => probe.hook!.redeem());
-    expect(probe.hook!.status).toBe(GENERIC);
+    expect(probe.hook!.status).toBe(UNCONFIRMED);
   });
 
   it("still reports a successful outcome", async () => {
