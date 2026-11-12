@@ -113,7 +113,7 @@ export function ChatScreen({
   onBack,
   onOpenChat,
   onOpenChats,
-  onOpenBot,
+  onEditBot,
   onOpenRoutine,
   onOpenComputer,
 }: {
@@ -124,7 +124,7 @@ export function ChatScreen({
   readonly onBack: () => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
-  readonly onOpenBot: (botId: string) => void;
+  readonly onEditBot: (botId: string) => void;
   readonly onOpenRoutine: (routineId: string) => void;
   readonly onOpenComputer: () => void;
 }) {
@@ -671,7 +671,7 @@ export function ChatScreen({
           </Pressable>
           {record?.bot != null || cachedBot !== null ? (
             <Pressable
-              onPress={() => onOpenBot(botId)}
+              onPress={() => onEditBot(botId)}
               accessibilityRole="button"
               accessibilityLabel={`Edit ${header.botName}`}
               style={styles.headerIdentity}
@@ -978,7 +978,7 @@ export function ChatScreen({
         onStop={() => void stop()}
         onSwitchModel={() => {
           setMenuOpen(false);
-          onOpenBot(botId);
+          onEditBot(botId);
         }}
         onChatRow={(id) => {
           const target = menuSettings?.target ?? null;
