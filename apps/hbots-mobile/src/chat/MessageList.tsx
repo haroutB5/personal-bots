@@ -872,6 +872,27 @@ function UserBubble({
   );
 }
 
+function PendingBubble({ message }: { readonly message: PendingOutgoingMessage }) {
+  const createdAtMs = Date.parse(message.createdAt);
+  const [sending, setSending] = useState(
+    () => !Number.isFinite(createdAtMs) || Date.now() - createdAtMs >= 2_000,
+  );
+  useEffect(() => {
+    if (sending || !Number.isFinite(createdAtMs)) return;
+    const remaining = Math.max(0, 2_000 - (Date.now() - createdAtMs));
+    const timer = setTimeout(() => setSending(true), remaining);
+    return () => clearTimeout(timer);
+  }, [createdAtMs, sending]);
+  return (
+    <View style={styles.messageRowEnd}>
+      <View style={[styles.userBubble, styles.pendingBubble]}>
+        <Text style={styles.userText}>{message.text}</Text>
+        {sending ? <Text style={styles.pendingState}>Sending…</Text> : null}
+      </View>
+    </View>
+  );
+}
+
 export function MessageList({
   native,
   chat,
@@ -1058,13 +1079,7 @@ export function MessageList({
             return <LiveWorkRow work={row.work} />;
           }
           if (row.kind === "pending") {
-            return (
-              <View style={styles.messageRowEnd}>
-                <View style={[styles.userBubble, styles.pendingBubble]}>
-                  <Text style={styles.userText}>{row.message.text}</Text>
-                </View>
-              </View>
-            );
+            return <PendingBubble message={row.message} />;
           }
           if (row.kind === "queued") {
             return (
@@ -1405,6 +1420,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   pendingBubble: { opacity: 0.82 },
+  pendingState: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 6 },
   userText: { color: tokens.text, fontSize: 15, lineHeight: 21 },
   assistantPress: { alignSelf: "flex-start", maxWidth: "90%", gap: 6 },
   speakerRow: { flexDirection: "row", alignItems: "center", gap: 6 },
