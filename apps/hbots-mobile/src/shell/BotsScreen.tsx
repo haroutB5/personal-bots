@@ -805,7 +805,7 @@ export function BotsScreen({
   const removeBot = async (summary: BotSummary) => {
     const ok = await native.client.ports.confirm.confirm({
       title: `Delete ${summary.bot.name}?`,
-      body: `Moves ${summary.bot.name} to Removed bots. Its chats stay.`,
+      body: `Deletes ${summary.bot.name}, its chats, routines and memory for good. This can't be undone.`,
       confirmLabel: "Delete",
       destructive: true,
     });
@@ -1042,7 +1042,6 @@ export function BotsScreen({
                     key={summary.bot.botId}
                     label={`Delete ${summary.bot.name}`}
                     onDelete={() => void removeBot(summary)}
-                    onSwipeConfirm={() => void deleteBotNow(summary)}
                   >
                     <BotRow
                       summary={summary}
