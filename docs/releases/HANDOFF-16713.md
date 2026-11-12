@@ -41,3 +41,19 @@ Binary only. The previous release is `fbd4e3e31908` (1.67.12), schema 148, so th
 - Bot chats now compact at the number you set in provider settings, task chats included.
 - Updating a provider from a device paired before the permissions change works again.
 - A chat you just started shows its tab at once.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=4fdc14a78c6610679d23e58735faf6ec0f185574 release=4fdc14a78c66 json-sha256=90495e771e4431414483f537cb7ae9cb4a06084f2b288c9fc182070fae644d69 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
