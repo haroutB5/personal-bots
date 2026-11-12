@@ -116,14 +116,24 @@ const exported = components
   .map((component) => component.name);
 // ProfileInstallReceiver comes from the baseline-profile dependency the scaffold already shipped.
 // ShareActivity is the share target and CtoTileService the Quick Settings tile; both must be exported.
-// HbotsWidgetProvider is the home screen widget; the launcher must be able to reach it, checked below.
+// The widget providers are the home screen widgets; the launcher must be able to reach them, checked below.
 // DebugPushReceiver is the no-Firebase test hook. It must be guarded by the DUMP permission, checked below.
+const widgetProviders = [
+  "HbotsWidgetProvider",
+  "NeedsYouWidgetProvider",
+  "TileGridWidgetProvider",
+  "QuickAskWidgetProvider",
+  "UsageWidgetProvider",
+  "OneBotWidgetProvider",
+  "MachinesWidgetProvider",
+  "TodayWidgetProvider",
+];
 const expectedExported = [
   "com.haroutb5.hbots.MainActivity",
   "expo.modules.hbotsshare.ShareActivity",
   "expo.modules.hbotstile.CtoTileService",
   "expo.modules.hbotsnotify.DebugPushReceiver",
-  "expo.modules.hbotslauncher.HbotsWidgetProvider",
+  ...widgetProviders.map((name) => `expo.modules.hbotslauncher.${name}`),
   "expo.modules.hbotslauncher.ShortcutTrampolineActivity", // forwards hbots:// links only
   "androidx.profileinstaller.ProfileInstallReceiver",
 ];
@@ -152,26 +162,31 @@ const debugGuarded = debugReceiverTag.includes('android:permission="android.perm
 failed ||= !debugGuarded;
 console.log(`${debugGuarded ? "ok  " : "FAIL"} DebugPushReceiver guarded by DUMP`);
 
-// The widget receiver is exported for the launcher, takes no permission, and answers only the
+// Each widget receiver is exported for the launcher, takes no permission, and answers only the
 // widget update broadcast. Anything else in its filter would let other apps drive it.
-const widgetBlock =
-  manifest.match(
-    /<receiver\b[^>]*expo\.modules\.hbotslauncher\.HbotsWidgetProvider[\s\S]*?<\/receiver>/u,
-  )?.[0] ?? "";
-const widgetActions = [...widgetBlock.matchAll(/<action\b[^>]*android:name="([^"]*)"/gu)].map(
-  ([, name]) => name,
-);
-const widgetTag = widgetBlock.match(/^<receiver\b[^>]*>/u)?.[0] ?? "";
-const widgetOk =
-  widgetTag.includes('android:exported="true"') &&
-  !widgetTag.includes("android:permission=") &&
-  widgetActions.length === 1 &&
-  widgetActions[0] === "android.appwidget.action.APPWIDGET_UPDATE" &&
-  widgetBlock.includes("android.appwidget.provider");
-failed ||= !widgetOk;
-console.log(
-  `${widgetOk ? "ok  " : "FAIL"} HbotsWidgetProvider exported, no permission, actions=${widgetActions.join(",") || "none"} (expected APPWIDGET_UPDATE only)`,
-);
+for (const provider of widgetProviders) {
+  const widgetBlock =
+    manifest.match(
+      new RegExp(
+        `<receiver\\b[^>]*expo\\.modules\\.hbotslauncher\\.${provider}"[\\s\\S]*?</receiver>`,
+        "u",
+      ),
+    )?.[0] ?? "";
+  const widgetActions = [...widgetBlock.matchAll(/<action\b[^>]*android:name="([^"]*)"/gu)].map(
+    ([, name]) => name,
+  );
+  const widgetTag = widgetBlock.match(/^<receiver\b[^>]*>/u)?.[0] ?? "";
+  const widgetOk =
+    widgetTag.includes('android:exported="true"') &&
+    !widgetTag.includes("android:permission=") &&
+    widgetActions.length === 1 &&
+    widgetActions[0] === "android.appwidget.action.APPWIDGET_UPDATE" &&
+    widgetBlock.includes("android.appwidget.provider");
+  failed ||= !widgetOk;
+  console.log(
+    `${widgetOk ? "ok  " : "FAIL"} ${provider} exported, no permission, actions=${widgetActions.join(",") || "none"} (expected APPWIDGET_UPDATE only)`,
+  );
+}
 
 const receiver = components.find(
   (component) => component.name === "expo.modules.hbotsupdater.UpdateInstallReceiver",
