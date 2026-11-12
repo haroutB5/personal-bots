@@ -44,3 +44,19 @@ Binary only. The previous release is `5a1d157f6007` (1.67.11), schema 148, so th
 - A new Work tab shows what every bot works on, how long it took, and who started it.
 - It is the second tab, on web and on Android.
 - Each widget now shows an example picture in the widget picker.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=fbd4e3e31908513da4c69e392e35034178bbae6a release=fbd4e3e31908 json-sha256=0145fe64160e95d51755a73840c2f3bdd5d536e3b7f66f59579adaad5200ea67 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
