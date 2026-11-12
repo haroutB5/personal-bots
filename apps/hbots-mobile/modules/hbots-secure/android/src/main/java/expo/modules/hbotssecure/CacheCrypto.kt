@@ -71,6 +71,9 @@ class FileCrypto(private val keys: CacheKeys) {
     val MAGIC = byteArrayOf('v'.code.toByte(), '1'.code.toByte())
     const val IV_BYTES = 12
     const val TAG_BITS = 128
+
+    /** Header (2) + IV + GCM tag: what a file holds beyond its text. */
+    const val FILE_OVERHEAD_BYTES = 2 + IV_BYTES + TAG_BITS / 8
   }
 
   fun deleteKey() = keys.delete()
@@ -156,6 +159,12 @@ class FileCrypto(private val keys: CacheKeys) {
   fun readText(path: String): String? {
     val file = File(path)
     if (!file.exists()) return null
+    // Decrypting buffers the whole file. A copy over the cap (one saved before the cap existed)
+    // is dropped by its size alone: it must never tie up the shared native thread or the heap.
+    if (file.length() > MAX_CACHED_TEXT_BYTES + FILE_OVERHEAD_BYTES) {
+      file.delete()
+      return null
+    }
     return try {
       file.inputStream().use { raw ->
         val buffer = ByteArrayOutputStream()
@@ -163,6 +172,9 @@ class FileCrypto(private val keys: CacheKeys) {
         buffer.toString(Charsets.UTF_8.name())
       }
     } catch (_: Exception) {
+      file.delete()
+      null
+    } catch (_: OutOfMemoryError) {
       file.delete()
       null
     }
