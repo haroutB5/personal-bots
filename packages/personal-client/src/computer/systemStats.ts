@@ -23,6 +23,17 @@ export interface SystemSummary {
   readonly diskLabel: string | null;
   readonly diskFreeGB: number | null;
   readonly diskTotalGB: number | null;
+  /** Package temperature, C. Null when the host has no readable sensor. */
+  readonly cpuTempC: number | null;
+  /** The data drive's temperature, C. Null when it has none. */
+  readonly diskTempC: number | null;
+  /** Labelled case and CPU fans, empty when the host reports none. */
+  readonly fans: ReadonlyArray<SystemFan>;
+}
+
+export interface SystemFan {
+  readonly label: string;
+  readonly rpm: number;
 }
 
 const numberOrNull = (value: unknown): number | null =>
@@ -36,6 +47,18 @@ function diskLabelOrNull(value: unknown): string | null {
   return label;
 }
 
+/** Fans from a new server; an old one sends nothing, a bad entry is skipped. */
+function fansOrEmpty(value: unknown): ReadonlyArray<SystemFan> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const record = entry as Record<string, unknown>;
+    const label = typeof record.label === "string" ? record.label.trim() : "";
+    const rpm = numberOrNull(record.rpm);
+    return label.length === 0 || rpm === null || rpm <= 0 ? [] : [{ label, rpm }];
+  });
+}
+
 export function parseSystemSummary(raw: unknown): SystemSummary | null {
   if (typeof raw !== "object" || raw === null) return null;
   const record = raw as Record<string, unknown>;
@@ -47,6 +70,9 @@ export function parseSystemSummary(raw: unknown): SystemSummary | null {
     diskLabel: diskLabelOrNull(record.diskLabel),
     diskFreeGB: numberOrNull(record.diskFreeGB),
     diskTotalGB: numberOrNull(record.diskTotalGB),
+    cpuTempC: numberOrNull(record.cpuTempC),
+    diskTempC: numberOrNull(record.diskTempC),
+    fans: fansOrEmpty(record.fans),
   };
 }
 
@@ -120,4 +146,48 @@ export function systemStatsAriaLabel(summary: SystemSummary): string {
     words.push(`${summary.diskLabel ?? "disk"} ${formatGB(summary.diskFreeGB)} free${total}`);
   }
   return `PC: ${words.join(", ")}. Open Performance`;
+}
+
+export interface MachineStatRow {
+  readonly key: string;
+  readonly label: string;
+  readonly value: string;
+}
+
+const formatTempC = (value: number) => `${Math.round(value)} °C`;
+const formatRpm = (value: number) => `${Math.round(value).toLocaleString("en-GB")} rpm`;
+
+/**
+ * The Computer card's rows. A row exists only when the host reported that
+ * sensor: a missing fan or temperature is hidden, never drawn as zero.
+ */
+export function machineStatRows(summary: SystemSummary): ReadonlyArray<MachineStatRow> {
+  const rows: MachineStatRow[] = [];
+  if (summary.cpuPct !== null) {
+    rows.push({ key: "cpu", label: "CPU", value: `${clampPercent(summary.cpuPct)}%` });
+  }
+  if (summary.memUsedGB !== null && summary.memTotalGB !== null) {
+    rows.push({
+      key: "memory",
+      label: "Memory",
+      value: `${summary.memUsedGB.toFixed(1)} of ${summary.memTotalGB.toFixed(1)} GB`,
+    });
+  }
+  if (summary.diskFreeGB !== null) {
+    rows.push({ key: "disk", label: "Disk", value: `${formatGB(summary.diskFreeGB)} free` });
+  }
+  if (summary.cpuTempC !== null) {
+    rows.push({ key: "cpuTemp", label: "CPU temperature", value: formatTempC(summary.cpuTempC) });
+  }
+  if (summary.diskTempC !== null) {
+    rows.push({
+      key: "diskTemp",
+      label: "Disk temperature",
+      value: formatTempC(summary.diskTempC),
+    });
+  }
+  summary.fans.forEach((fan, index) => {
+    rows.push({ key: `fan:${index}`, label: fan.label, value: formatRpm(fan.rpm) });
+  });
+  return rows;
 }

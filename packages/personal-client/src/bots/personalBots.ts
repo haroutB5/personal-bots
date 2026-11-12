@@ -221,6 +221,13 @@ export function createPersonalBotsClient<R, ER, P>(
     onSuccess: refreshBotsList,
   });
 
+  /** Saves the pinned strip's order after a drag; the refreshed list carries the new slots. */
+  const personalBotsReorderPinned = createEnvironmentRpcCommand(runtime, {
+    label: "personal-bots:reorder-pinned",
+    tag: WS_METHODS.personalBotsReorderPinned,
+    onSuccess: refreshBotsList,
+  });
+
   /** "Check again" on a Settings provider row; the verdict arrives on the provider snapshot. */
   const personalProviderRecheck = createEnvironmentRpcCommand(runtime, {
     label: "personal-bots:recheck-provider",
@@ -817,6 +824,7 @@ export function createPersonalBotsClient<R, ER, P>(
     personalBotsTokenUsage,
     personalBotCreate,
     personalBotUpdate,
+    personalBotsReorderPinned,
     personalProviderRecheck,
     personalBotDelete,
     personalBotRestore,

@@ -189,6 +189,7 @@ export const WS_METHODS = {
   personalBotsSetProfile: "personalBots.setProfile",
   personalBotsListFiles: "personalBots.listFiles",
   personalBotsRecheckProvider: "personalBots.recheckProvider",
+  personalBotsReorderPinned: "personalBots.reorderPinned",
   personalBotsListRemoved: "personalBots.listRemoved",
   personalBotsRestore: "personalBots.restore",
 

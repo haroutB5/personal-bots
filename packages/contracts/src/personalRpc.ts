@@ -45,6 +45,7 @@ import {
   PersonalFilesDeleteManyInput,
   PersonalFilesListResult,
   PersonalBotUpdateInput,
+  PersonalBotReorderPinnedInput,
   PersonalProfile,
   PersonalProfileSetInput,
 } from "./personalBots.ts";
@@ -286,6 +287,11 @@ const WsPersonalBotsCreateRpc = Rpc.make(WS_METHODS.personalBotsCreate, {
 const WsPersonalBotsUpdateRpc = Rpc.make(WS_METHODS.personalBotsUpdate, {
   payload: PersonalBotUpdateInput,
   success: PersonalBot,
+  error: PersonalBotsRpcError,
+});
+const WsPersonalBotsReorderPinnedRpc = Rpc.make(WS_METHODS.personalBotsReorderPinned, {
+  payload: PersonalBotReorderPinnedInput,
+  success: PersonalBotsListResult,
   error: PersonalBotsRpcError,
 });
 const WsPersonalBotsDeleteRpc = Rpc.make(WS_METHODS.personalBotsDelete, {
@@ -1077,6 +1083,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsThreadFullTextRpc,
   WsPersonalBotsCreateRpc,
   WsPersonalBotsUpdateRpc,
+  WsPersonalBotsReorderPinnedRpc,
   WsPersonalBotsDeleteRpc,
   WsPersonalBotsCreateThreadRpc,
   WsPersonalBotsArchiveThreadRpc,
