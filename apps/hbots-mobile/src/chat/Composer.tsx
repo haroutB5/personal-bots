@@ -1019,7 +1019,7 @@ const styles = StyleSheet.create({
   fieldHost: { flex: 1 },
   fieldInHost: { flex: 0, alignSelf: "stretch" },
   field: { flex: 1, color: tokens.text, fontSize: 16, lineHeight: 22, paddingVertical: 10 },
-  fieldIconButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  fieldIconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   sendButton: {
     width: 44,
     height: 44,
