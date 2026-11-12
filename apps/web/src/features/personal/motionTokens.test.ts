@@ -31,6 +31,16 @@ describe("motion tokens against the web CSS", () => {
     ["press", match(css, /transform (\d+)ms ease-out,\s*opacity \1ms ease-out/)[1]!, 1],
     ["stepFade", match(css, /animation: personal-sheet-step (\d+)ms/)[1]!, 1],
     ["chipIn", match(css, /animation: personal-chip-in (\d+)ms/)[1]!, 1],
+    ["chipHoldDelay", match(css, /transform (\d+)ms cubic-bezier\([\d., ]+\) (\d+)ms/)[2]!, 1],
+    ["chipHold", match(css, /transform (\d+)ms cubic-bezier\([\d., ]+\) (\d+)ms/)[1]!, 1],
+    [
+      "chipHeld",
+      match(
+        css,
+        /data-held="true"\] \.personal-chip \{\s*transform: scale\(1\.04\);\s*transition: transform (\d+)ms ease-out/,
+      )[1]!,
+      1,
+    ],
     ["rise", match(css, /animation: personal-chat-enter (\d+)ms/)[1]!, 1],
     ["banner", match(css, /animation: personal-in-app-in (\d+)ms/)[1]!, 1],
     ["bannerSnap", match(inAppBanner, /touch-none[^"]*transition-transform duration-(\d+)/)[1]!, 1],

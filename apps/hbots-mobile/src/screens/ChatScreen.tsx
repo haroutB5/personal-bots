@@ -68,6 +68,8 @@ import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
 import { chipScrollX } from "../chat/chipScroll";
+import { ChipPill } from "../chat/ChipPill";
+import { useFreshChipIds } from "../chat/useFreshChipIds";
 import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
@@ -338,6 +340,7 @@ export function ChatScreen({
       }),
     [botId, links, shells, threadId],
   );
+  const freshChips = useFreshChipIds(chips.map((chip) => chip.threadId));
   const chipScrollRef = useRef<ScrollView | null>(null);
   const chipLayouts = useRef(new Map<string, { x: number; width: number }>());
   const chipOffset = useRef(0);
@@ -835,8 +838,12 @@ export function ChatScreen({
           style={styles.chipScroll}
         >
           {chips.map((chip) => (
-            <Pressable
+            <ChipPill
               key={chip.threadId}
+              current={chip.current}
+              fresh={freshChips.has(chip.threadId)}
+              style={styles.chip}
+              currentStyle={styles.chipCurrent}
               onLayout={(event) => {
                 const { x, width } = event.nativeEvent.layout;
                 chipLayouts.current.set(chip.threadId, { x, width });
@@ -851,10 +858,6 @@ export function ChatScreen({
                 if (!chip.current) onOpenChat(botId, chip.threadId);
               }}
               onLongPress={() => setSettingsThreadId(chip.threadId)}
-              delayLongPress={350}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: chip.current }}
-              style={[styles.chip, chip.current ? styles.chipCurrent : null]}
             >
               {chip.unread && !chip.current ? (
                 <View style={[styles.chipDot, styles.chipUnreadDot]} />
@@ -869,7 +872,7 @@ export function ChatScreen({
               >
                 {chip.text}
               </Text>
-            </Pressable>
+            </ChipPill>
           ))}
         </ScrollView>
       ) : null}
