@@ -2505,6 +2505,255 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     "command reads skip finished leaf nodes of finished runs",
     () => commandReadsSkipSettledLeafNodes,
   );
+  it.effect("command reads use the typed indexes", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("command-read-indexes");
+      const { tracer, statements } = traceSqlStatements();
+      yield* store
+        .getThreadRecords(threadId, ["turnItems", "nodes", "messages"], {
+          turnItemTypes: ["user_message", "error"],
+          messageRoles: ["user"],
+          omitSettledLeafNodes: true,
+          omitSettledSubagents: true,
+        })
+        .pipe(Effect.withTracer(tracer));
+      const sql = yield* SqlClient.SqlClient;
+      const planFor = Effect.fnUntraced(function* (fragment: string) {
+        const query = statements.find((statement) => statement.includes(fragment));
+        assert.isDefined(query, `no captured statement for ${fragment}`);
+        return (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+          .map((row) => row.detail)
+          .join("\n");
+      });
+
+      assert.include(
+        yield* planFor("FROM orchestration_v2_projection_turn_items"),
+        "USING INDEX orchestration_v2_projection_turn_items_thread_type_ordinal_idx",
+      );
+      assert.include(
+        yield* planFor("FROM orchestration_v2_projection_nodes"),
+        "USING INDEX orchestration_v2_projection_nodes_thread_open_idx",
+      );
+      assert.include(
+        yield* planFor("FROM orchestration_v2_projection_messages"),
+        "USING INDEX orchestration_v2_projection_messages_thread_role_created_idx",
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+  it.effect("command reads keep record order while skipping settled leaves", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* addRolledBackRecoveryCandidate("command-read-records");
+      const settledRun = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const activeRun = {
+        ...settledRun,
+        id: RunId.make("run:command-read-records:active"),
+        ordinal: 2,
+        userMessageId: MessageId.make("message:command-read-records:active"),
+        rootNodeId: NodeId.make("node:command-read-records:active-root"),
+        status: "running" as const,
+        completedAt: null,
+      };
+      yield* store.apply({
+        id: EventId.make("event:command-read-records:active-run"),
+        type: "run.created",
+        threadId,
+        runId: activeRun.id,
+        nodeId: activeRun.rootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: activeRun,
+      });
+
+      const nodeRows = [
+        ["settled-root", settledRun, "root_turn", "completed", 1],
+        ["settled-leaf-tool", settledRun, "tool_call", "completed", 2],
+        ["settled-subagent", settledRun, "subagent", "completed", 3],
+        ["active-root", activeRun, "root_turn", "completed", 4],
+        ["active-leaf-tool", activeRun, "tool_call", "completed", 5],
+        ["active-leaf-message", activeRun, "assistant_message", "interrupted", 6],
+        ["settled-leaf-message", settledRun, "assistant_message", "failed", 7],
+      ] as const;
+      for (const [name, run, kind, status, seconds] of nodeRows) {
+        const id = NodeId.make(`node:command-read-records:${name}`);
+        yield* store.apply({
+          id: EventId.make(`event:command-read-records:node:${name}`),
+          type: "node.updated",
+          threadId,
+          runId: run.id,
+          nodeId: id,
+          driver,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId,
+            runId: run.id,
+            rootNodeId: kind === "root_turn" ? id : run.rootNodeId!,
+            parentNodeId: kind === "root_turn" ? null : run.rootNodeId,
+            kind,
+            status,
+            countsForRun: kind === "root_turn",
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: DateTime.add(now, { seconds }),
+            completedAt: now,
+          },
+        });
+      }
+
+      const itemBase = (suffix: string, ordinal: number) => ({
+        id: TurnItemId.make(`item:command-read-records:${suffix}`),
+        threadId,
+        runId: settledRun.id,
+        nodeId: settledRun.rootNodeId ?? null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      });
+      const turnItems: ReadonlyArray<OrchestrationV2TurnItem> = [
+        {
+          ...itemBase("user-1", 10),
+          status: "completed",
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message:command-read-records:user-1"),
+          inputIntent: "turn_start",
+          text: "First",
+          attachments: [],
+        },
+        {
+          ...itemBase("user-2", 20),
+          status: "completed",
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message:command-read-records:user-2"),
+          inputIntent: "turn_start",
+          text: "Second",
+          attachments: [],
+        },
+        {
+          ...itemBase("error-1", 30),
+          status: "failed",
+          type: "error",
+          failure: {
+            class: "usage_limit",
+            message: "Plan limit reached.",
+            resetAt: "2099-01-01T00:00:00.000Z",
+            code: "usageLimitExceeded",
+            retryable: null,
+          },
+        },
+        {
+          ...itemBase("user-3", 40),
+          status: "completed",
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message:command-read-records:user-3"),
+          inputIntent: "turn_start",
+          text: "Third",
+          attachments: [],
+        },
+        ...Array.from({ length: 50 }, (_, index): OrchestrationV2TurnItem => ({
+          ...itemBase(`assistant-${index}`, 100 + index),
+          status: "completed",
+          type: "assistant_message",
+          messageId: MessageId.make(`message:command-read-records:assistant-${index}`),
+          text: `Assistant ${index}`,
+          streaming: false,
+        })),
+      ];
+      for (const item of turnItems) {
+        yield* store.apply({
+          id: EventId.make(`event:command-read-records:item:${item.id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: settledRun.id,
+          nodeId: settledRun.rootNodeId ?? undefined,
+          driver,
+          occurredAt: now,
+          payload: item,
+        });
+      }
+
+      for (const [index, role, seconds] of [
+        ["assistant-0", "assistant", 0],
+        ["user-1", "user", 1],
+        ["assistant-1", "assistant", 2],
+        ["user-2", "user", 3],
+        ["assistant-2", "assistant", 4],
+        ["assistant-3", "assistant", 5],
+        ["assistant-4", "assistant", 6],
+      ] as const) {
+        const createdAt = DateTime.add(now, { seconds });
+        yield* store.apply({
+          id: EventId.make(`event:command-read-records:message:${index}`),
+          type: "message.updated",
+          threadId,
+          occurredAt: createdAt,
+          payload: {
+            id: MessageId.make(`message:command-read-records:${index}`),
+            threadId,
+            runId: null,
+            nodeId: null,
+            role,
+            text: `${role} ${index}`,
+            attachments: [],
+            streaming: false,
+            createdBy: "agent",
+            creationSource: "server",
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+      }
+
+      const records = yield* store.getThreadRecords(threadId, ["nodes", "messages", "turnItems"], {
+        turnItemTypes: ["user_message", "error"],
+        messageRoles: ["user"],
+        omitSettledLeafNodes: true,
+        omitSettledSubagents: true,
+      });
+
+      assert.deepEqual(
+        records.nodes.map((node) => node.id),
+        [
+          "node:command-read-records:settled-root",
+          "node:command-read-records:settled-subagent",
+          "node:command-read-records:active-root",
+          "node:command-read-records:active-leaf-tool",
+          "node:command-read-records:active-leaf-message",
+        ],
+      );
+      assert.deepEqual(
+        records.turnItems.map((item) => item.id),
+        [
+          "item:command-read-records:user-1",
+          "item:command-read-records:user-2",
+          "item:command-read-records:error-1",
+          "item:command-read-records:user-3",
+        ],
+      );
+      assert.deepEqual(
+        records.messages.map((message) => message.id),
+        ["message:command-read-records:user-1", "message:command-read-records:user-2"],
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
   it.effect("limits turn-start history to the requested runs, including an empty selection", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
