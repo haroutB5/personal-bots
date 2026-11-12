@@ -386,7 +386,7 @@ export function ChatScreen({
       }),
     [hidePreviews, menuOpen, now, running, sheetLinks, shells, thread, threadId],
   );
-  const menuChatGroups = useMemo(() => chatMenuRows(menuSettings?.groups ?? []), [menuSettings]);
+  const menuSections = useMemo(() => chatMenuRows(menuSettings?.groups ?? []), [menuSettings]);
   const settings = useMemo(
     () =>
       chatSettingsSheet({
@@ -1022,7 +1022,7 @@ export function ChatScreen({
         running={running}
         providerWait={providerWait}
         nowMs={now}
-        chatGroups={menuChatGroups}
+        sections={menuSections}
         onClose={() => setMenuOpen(false)}
         onStop={() => void stop()}
         onSwitchModel={() => {
