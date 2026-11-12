@@ -17,6 +17,10 @@
       "types": "./src/bots/personalMode.ts",
       "import": "./src/bots/personalMode.ts"
     },
+    "./bots/instructionsField": {
+      "types": "./src/bots/instructionsField.ts",
+      "import": "./src/bots/instructionsField.ts"
+    },
     "./bots/chatsSnapshot": {
       "types": "./src/bots/chatsSnapshot.ts",
       "import": "./src/bots/chatsSnapshot.ts"

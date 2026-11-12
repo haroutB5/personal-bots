@@ -1,5 +1,5 @@
 import type { FormEvent, JSX, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -21,7 +21,7 @@ import {
   hidesBotPreviews,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { Link, useBlocker, useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -30,10 +30,10 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
-import { botVoiceCallsEnabled } from "./voice/botVoiceCalls";
 import { BotFallbackSection } from "./BotFallbackSection";
 import { BotRoutinesSection } from "./BotRoutinesSection";
 import { BotScheduleSection } from "./BotScheduleSection";
+import { BotInstructionsField } from "./BotInstructionsField";
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
 import {
   agentModeOfSelection,
@@ -245,7 +245,7 @@ function PersonalPageHeader({
           params={{ groupId: backToGroupId }}
           search={{ settings: "members" }}
           aria-label="Back to group settings"
-          className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
@@ -254,7 +254,7 @@ function PersonalPageHeader({
           to={backTarget.to}
           activeOptions={{ exact: true }}
           aria-label={backTarget.label}
-          className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
         >
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
@@ -317,7 +317,7 @@ function BotForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  const selectableProviders = useMemo(() => providers.filter(isBotProviderSelectable), [providers]);
+  const selectableProviders = providers.filter(isBotProviderSelectable);
   const [rawDraft, setDraft] = useState<BotDraft>(() => {
     if (bot !== null) return draftFromBot(bot);
     const first =
@@ -391,12 +391,13 @@ function BotForm({
 
   // The bot's current instance stays listed even when it went unavailable, so
   // the select never silently shows a different provider than the saved one.
-  const providerOptions = useMemo(() => {
+  const providerOptionsKeeping = (instanceId: string | null | undefined) => {
     const options = [...selectableProviders];
-    const current = providers.find((provider) => provider.instanceId === draft.instanceId);
+    const current = providers.find((provider) => provider.instanceId === instanceId);
     if (current !== undefined && !options.includes(current)) options.unshift(current);
     return options;
-  }, [draft.instanceId, providers, selectableProviders]);
+  };
+  const providerOptions = providerOptionsKeeping(draft.instanceId);
   const selectedProvider = providers.find((provider) => provider.instanceId === draft.instanceId);
   const providerStatus =
     draft.instanceId === "" ? null : resolveBotProvider(draft.instanceId, providers);
@@ -408,19 +409,9 @@ function BotForm({
   );
   const models = selectedProvider?.models ?? [];
   // The fallback's provider: the saved one stays listed even when it went unavailable.
-  const fallbackProviderOptions = useMemo(() => {
-    const options = [...selectableProviders];
-    const current = providers.find((provider) => provider.instanceId === draft.fallbackInstanceId);
-    if (current !== undefined && !options.includes(current)) options.unshift(current);
-    return options;
-  }, [draft.fallbackInstanceId, providers, selectableProviders]);
+  const fallbackProviderOptions = providerOptionsKeeping(draft.fallbackInstanceId);
   // The schedule's provider: the saved one stays listed even when it went unavailable.
-  const scheduleProviderOptions = useMemo(() => {
-    const options = [...selectableProviders];
-    const current = providers.find((provider) => provider.instanceId === draft.scheduleInstanceId);
-    if (current !== undefined && !options.includes(current)) options.unshift(current);
-    return options;
-  }, [draft.scheduleInstanceId, providers, selectableProviders]);
+  const scheduleProviderOptions = providerOptionsKeeping(draft.scheduleInstanceId);
   const mainModelSelection = buildModelSelection(
     draft,
     selectedProvider,
@@ -664,19 +655,10 @@ function BotForm({
         />
       </div>
 
-      <div>
-        <label htmlFor="bot-instructions" className={LABEL_CLASS}>
-          Instructions
-        </label>
-        <textarea
-          id="bot-instructions"
-          value={draft.instructions}
-          onChange={(event) => update({ instructions: event.target.value })}
-          rows={5}
-          placeholder="How the bot should work and respond"
-          className={`${FIELD_CLASS} min-h-[120px] resize-y py-2.5 leading-snug`}
-        />
-      </div>
+      <BotInstructionsField
+        value={draft.instructions}
+        onChange={(instructions) => update({ instructions })}
+      />
 
       <div>
         <label htmlFor="bot-provider" className={LABEL_CLASS}>
@@ -719,7 +701,7 @@ function BotForm({
           <Link
             to="/bots/settings/providers/add"
             search={{ return: "botform" }}
-            className="inline-flex min-h-[44px] items-center font-semibold text-[var(--personal-text)] underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            className="inline-flex min-h-[44px] items-center font-semibold text-[var(--personal-text)] underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
           >
             Add a provider
           </Link>
@@ -1045,7 +1027,7 @@ function BotForm({
         type="submit"
         disabled={!canSave}
         aria-busy={busy}
-        className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
+        className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
       >
         {bot === null ? "Create bot" : "Save changes"}
       </button>
@@ -1055,7 +1037,7 @@ function BotForm({
           type="button"
           onClick={() => void onDelete()}
           disabled={busy}
-          className="h-11 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+          className="h-11 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
         >
           Delete bot
         </button>
