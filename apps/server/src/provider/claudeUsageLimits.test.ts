@@ -1,3 +1,4 @@
+import type { SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vite-plus/test";
 
 import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
@@ -246,6 +247,69 @@ describe("claudeRateLimitEventToUpdate", () => {
           usedPercent: 85,
           windowDurationMins: 10080,
           resetsAt: "2026-07-14T03:33:20.000Z",
+        },
+      ],
+    });
+  });
+
+  it("reads both windows from the event after a reset, where only unifiedWindows carries usage", () => {
+    // Real 2026-11-12T07:28:16.205Z payload from the provider stream.
+    const event = {
+      status: "allowed",
+      resetsAt: 1_794_486_000,
+      rateLimitType: "five_hour",
+      overageStatus: "rejected",
+      overageDisabledReason: "org_level_disabled",
+      isUsingOverage: false,
+      unifiedWindows: {
+        five_hour: { utilization: 0, resetsAt: 1_794_486_000, status: "allowed" },
+        seven_day: { utilization: 0, resetsAt: 1_794_740_400, status: "allowed" },
+        seven_day_overage_included: { utilization: 0, resetsAt: 1_794_740_400, status: "allowed" },
+      },
+    } as unknown as SDKRateLimitInfo;
+
+    expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 0,
+          windowDurationMins: 300,
+          resetsAt: "2026-11-12T12:20:00.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 0,
+          windowDurationMins: 10080,
+          resetsAt: "2026-11-15T11:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("falls back to the top-level utilization when unifiedWindows is absent", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          rateLimitType: "five_hour",
+          utilization: 0.42,
+          resetsAt: 1_794_480_000,
+        },
+        noNames,
+      ),
+    ).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 42,
+          windowDurationMins: 300,
+          resetsAt: "2026-11-12T10:40:00.000Z",
         },
       ],
     });

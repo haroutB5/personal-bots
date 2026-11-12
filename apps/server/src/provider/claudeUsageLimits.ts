@@ -152,11 +152,43 @@ function makeWindow(
   };
 }
 
+/**
+ * `unifiedWindows` shipped in the CLI after the SDK typings we pin, so it is
+ * read structurally until the `.d.ts` catches up. Events after a reset carry
+ * both rolling windows there and omit the top-level `utilization`.
+ */
+function readUnifiedWindows(info: SDKRateLimitInfo): ReadonlyArray<ServerProviderUsageWindow> {
+  const raw = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof raw !== "object" || raw === null) return [];
+  const windows: ServerProviderUsageWindow[] = [];
+  for (const id of ["five_hour", "seven_day"] as const) {
+    const entry = (raw as Record<string, unknown>)[id];
+    if (typeof entry !== "object" || entry === null) continue;
+    const { utilization, resetsAt } = entry as {
+      readonly utilization?: unknown;
+      readonly resetsAt?: unknown;
+    };
+    if (typeof utilization !== "number" || !Number.isFinite(utilization)) continue;
+    windows.push(
+      makeWindow(
+        id,
+        utilization * 100,
+        isoFromEpochSeconds(typeof resetsAt === "number" ? resetsAt : undefined),
+      ),
+    );
+  }
+  return windows;
+}
+
 /** Stream utilization is 0-1. Drop unnamed overage buckets until probed to avoid unreconcilable rows. */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  const unifiedWindows = readUnifiedWindows(info);
+  if (unifiedWindows.length > 0) {
+    return { windows: unifiedWindows };
+  }
   const type: string | undefined = info.rateLimitType;
   if (!type || typeof info.utilization !== "number") {
     return undefined;
