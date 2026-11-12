@@ -204,18 +204,19 @@ export type AckEnd =
   | { readonly kind: "not-sent" }
   | { readonly kind: "timeout" }
   | { readonly kind: "disconnected" }
-  | { readonly kind: "unknown" };
+  | { readonly kind: "unknown" }
+  | { readonly kind: "cancelled" };
 
 /**
  * Races one send against its 45 s ack deadline and the connection it started
- * on. A dropped socket and a server that never answers both end the wait, so
- * the composer can keep the text and offer Try again instead of leaving the
- * bubble "Sending…" forever.
+ * on. A dropped socket, a server that never answers and the screen going all
+ * end the wait, so the composer keeps the text and offers Try again.
  */
 export function awaitAck<T>(
   attempt: Promise<T>,
   classify: (result: T) => AckEnd,
   connectionLost: () => boolean,
+  signal?: AbortSignal,
   timeoutMs: number = ACK_TIMEOUT_MS,
   checkMs: number = ACK_CONNECTION_CHECK_MS,
 ): Promise<AckEnd> {
@@ -223,13 +224,21 @@ export function awaitAck<T>(
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let watch: ReturnType<typeof setInterval> | null = null;
+    let abortListener: (() => void) | null = null;
     const finish = (end: AckEnd) => {
       if (settled) return;
       settled = true;
       if (timer !== null) clearTimeout(timer);
       if (watch !== null) clearInterval(watch);
+      if (abortListener !== null) signal?.removeEventListener("abort", abortListener);
       resolve(end);
     };
+    abortListener = () => finish({ kind: "cancelled" });
+    if (signal?.aborted) {
+      finish({ kind: "cancelled" });
+      return;
+    }
+    signal?.addEventListener("abort", abortListener, { once: true });
     timer = setTimeout(() => finish({ kind: "timeout" }), timeoutMs);
     watch = setInterval(() => {
       if (connectionLost()) finish({ kind: "disconnected" });

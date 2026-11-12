@@ -154,6 +154,7 @@ export function Composer({
   }));
   const draftRef = useRef<ComposerDraft>(draft);
   const activeSends = useRef(new Map<string, ActiveSend>());
+  const sendAborts = useRef(new Map<string, AbortController>());
   const setDraft = (update: ComposerDraft | ((current: ComposerDraft) => ComposerDraft)) => {
     const next = typeof update === "function" ? update(draftRef.current) : update;
     draftRef.current = next;
@@ -227,6 +228,14 @@ export function Composer({
     return () => {
       for (const intakeId of new Set(held.values())) discardShare(intakeId);
       held.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const aborts = sendAborts.current;
+    return () => {
+      for (const abort of aborts.values()) abort.abort();
+      aborts.clear();
     };
   }, []);
 
@@ -518,6 +527,8 @@ export function Composer({
     if (active === undefined) return true;
     const { outgoing, meta } = active;
     const snapshot = outgoing.attachments;
+    const abort = new AbortController();
+    sendAborts.current.set(messageId, abort);
     let uploaded: ReadonlyArray<ChatAttachment> = [];
     if (snapshot.length > 0) {
       setPreparing(true);
@@ -527,10 +538,15 @@ export function Composer({
         setPreparing(false);
       }
       if (uploaded.length !== snapshot.length) {
+        sendAborts.current.delete(messageId);
         markFailed(outgoing);
         setError("An attachment didn't upload. Try again.");
         return false;
       }
+    }
+    if (abort.signal.aborted) {
+      sendAborts.current.delete(messageId);
+      return false;
     }
     const turn = {
       modelSelection: bot === null ? thread.modelSelection : botEffectiveModelSelection(bot),
@@ -585,7 +601,9 @@ export function Composer({
         const current = native.readConnection();
         return !current.connected || current.generation !== generation;
       },
+      abort.signal,
     );
+    if (sendAborts.current.get(messageId) === abort) sendAborts.current.delete(messageId);
     if (!activeSends.current.has(messageId)) return true;
     switch (end.kind) {
       case "sent":
@@ -613,6 +631,8 @@ export function Composer({
       case "disconnected":
       case "unknown":
         markFailed(outgoing);
+        return false;
+      case "cancelled":
         return false;
     }
   };

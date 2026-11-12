@@ -135,6 +135,24 @@ describe("awaitAck", () => {
     expect(await end).toEqual({ kind: "disconnected" });
     expect(settle(outgoingOf(), { ok: false }).state).toBe("failed");
   });
+
+  it("clears the ack timer when the chat screen goes away", async () => {
+    const abort = new AbortController();
+    const end = awaitAck(
+      new Promise<never>(() => undefined),
+      () => ({ kind: "sent" }),
+      () => false,
+      abort.signal,
+    );
+    expect(vi.getTimerCount()).toBe(2);
+
+    abort.abort();
+
+    expect(await end).toEqual({ kind: "cancelled" });
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(ACK_TIMEOUT_MS);
+    expect(await end).toEqual({ kind: "cancelled" });
+  });
 });
 
 describe("retry and persistence", () => {
