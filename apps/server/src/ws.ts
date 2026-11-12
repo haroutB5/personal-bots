@@ -3558,6 +3558,7 @@ export const layer = Layer.unwrap(
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const npmRelease = yield* NpmRelease.NpmRelease;
     const personalPush = yield* PersonalPushService.PersonalPushService;
+    const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
@@ -3642,7 +3643,13 @@ export const layer = Layer.unwrap(
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
-              Layer.provide(ProviderMaintenanceRunner.layer),
+              // The server-lifetime runner, not a second instance per socket.
+              Layer.provide(
+                Layer.succeed(
+                  ProviderMaintenanceRunner.ProviderMaintenanceRunner,
+                  providerMaintenanceRunner,
+                ),
+              ),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.

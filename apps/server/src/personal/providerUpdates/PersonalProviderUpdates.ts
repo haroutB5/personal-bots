@@ -1404,7 +1404,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* PersonalEngine;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const push = yield* PersonalPushService.PersonalPushService;
-  const maintenance = yield* Effect.serviceOption(ProviderMaintenanceRunner);
+  const maintenance = yield* ProviderMaintenanceRunner;
   return yield* makeWith({
     getProviders: providers.listProviders().pipe(Effect.orElseSucceed(() => [])),
     providerChanges: providers.streamChanges,
@@ -1413,22 +1413,17 @@ export const make = Effect.gen(function* () {
     setSmokeCheck: (instanceId, state) =>
       providers.setSmokeCheck(instanceId, state).pipe(Effect.orElseSucceed(() => undefined)),
     updateProvider: (input) =>
-      Option.isNone(maintenance)
-        ? Effect.fail({
-            _tag: "ProviderUpdateError",
-            reason: "Provider updates are not available on this server.",
-          })
-        : maintenance.value
-            .updateProvider({
-              provider: input.provider.driver,
-              instanceId: input.provider.instanceId,
-              ...(input.targetVersion === undefined ? {} : { targetVersion: input.targetVersion }),
-              ...(input.rollback === true ? { rollback: true } : {}),
-            })
-            .pipe(
-              Effect.map((payload) => payload.providers),
-              Effect.mapError((error) => ({ _tag: "ProviderUpdateError", reason: error.reason })),
-            ),
+      maintenance
+        .updateProvider({
+          provider: input.provider.driver,
+          instanceId: input.provider.instanceId,
+          ...(input.targetVersion === undefined ? {} : { targetVersion: input.targetVersion }),
+          ...(input.rollback === true ? { rollback: true } : {}),
+        })
+        .pipe(
+          Effect.map((payload) => payload.providers),
+          Effect.mapError((error) => ({ _tag: "ProviderUpdateError", reason: error.reason })),
+        ),
     setAutoUpdate: (instanceId, state) =>
       providers.setAutoUpdate(instanceId, state).pipe(Effect.orElseSucceed(() => undefined)),
     runtimeEvents: providers.sessionEvents,
