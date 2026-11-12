@@ -6,6 +6,7 @@ import {
   barGeometry,
   buildWorkTimeline,
   timelineTicks,
+  workTickLabel,
   WORK_RANGES,
   workBarsById,
   workBarTimeLabel,
@@ -440,7 +441,7 @@ export function WorkTimelineView(props: WorkTimelineViewProps): JSX.Element {
                 transform: index === 0 ? undefined : "translateX(-50%)",
               }}
             >
-              {index === TICK_COUNT ? "now" : clock(tick)}
+              {index === TICK_COUNT ? "now" : workTickLabel(tick)}
             </span>
           ))}
         </div>

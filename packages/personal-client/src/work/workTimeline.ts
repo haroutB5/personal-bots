@@ -435,3 +435,13 @@ export function workBarsById(timeline: WorkTimeline): ReadonlyMap<string, WorkBa
   }
   return bars;
 }
+
+/**
+ * Axis label for a tick: local hour and minute on a 12 hour clock, without the
+ * AM or PM. Five labels share a phone's width, and the full clock makes them collide.
+ */
+export function workTickLabel(ms: number): string {
+  const date = new Date(ms);
+  const hour = date.getHours() % 12 === 0 ? 12 : date.getHours() % 12;
+  return `${hour}:${String(date.getMinutes()).padStart(2, "0")}`;
+}

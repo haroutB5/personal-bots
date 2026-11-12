@@ -8,6 +8,7 @@ import {
   timelineTicks,
   workInitiatorLabel,
   workRangeMs,
+  workTickLabel,
   type WorkChatTurn,
 } from "./workTimeline.ts";
 
@@ -231,5 +232,10 @@ describe("ranges and ticks", () => {
     const midnight = new Date(NOW);
     midnight.setHours(0, 0, 0, 0);
     expect(workRangeMs("today", midnight.getTime() + 60_000)).toBe(HOUR);
+  });
+
+  it("labels a tick with a short local clock", () => {
+    expect(workTickLabel(new Date(2026, 10, 12, 17, 5).getTime())).toBe("5:05");
+    expect(workTickLabel(new Date(2026, 10, 12, 0, 30).getTime())).toBe("12:30");
   });
 });

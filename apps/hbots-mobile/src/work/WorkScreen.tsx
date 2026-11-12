@@ -7,6 +7,7 @@ import {
   barGeometry,
   buildWorkTimeline,
   timelineTicks,
+  workTickLabel,
   WORK_RANGES,
   workBarsById,
   workBarTimeLabel,
@@ -364,7 +365,7 @@ export function WorkScreen({
                 ]}
                 maxFontSizeMultiplier={1.2}
               >
-                {index === TICK_COUNT ? "now" : clock(tick)}
+                {index === TICK_COUNT ? "now" : workTickLabel(tick)}
               </Text>
             ))}
           </View>
