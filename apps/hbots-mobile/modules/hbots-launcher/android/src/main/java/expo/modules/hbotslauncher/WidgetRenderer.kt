@@ -14,6 +14,8 @@ object WidgetRenderer {
   private const val AMBER = 0xFFF5B14A.toInt()
   private const val GREEN = 0xFF4ADE80.toInt()
   private const val MUTED = 0xFF8C8C88.toInt()
+  private const val TITLE = 0xFFC9C9C5.toInt()
+  private const val TEXT = 0xFFF2F2EF.toInt()
   private const val PAD = 24
   private const val HEADER = 24
   private const val ROW = 48
@@ -51,6 +53,8 @@ object WidgetRenderer {
   private fun board(context: Context, model: WidgetState.Board, height: Int): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget)
     header(context, views, model.title, "", model.asOf)
+    clear(views, R.id.hbots_rows, R.id.hbots_strip, R.id.hbots_gauges)
+    views.setViewVisibility(R.id.hbots_strip_row, if (model.idle.isEmpty()) View.GONE else View.VISIBLE)
     val gauges = listOfNotNull(model.usage?.session, model.usage?.week)
     val reserved = PAD + HEADER + (if (model.idle.isEmpty()) 0 else 36) + gauges.size * 22
     for (line in model.rows.take(WidgetFit.rows(height, reserved, ROW, model.rows.size))) {
@@ -74,8 +78,10 @@ object WidgetRenderer {
   private fun needs(context: Context, model: NeedsYouState.Data, height: Int): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget_needs)
     header(context, views, model.headline, model.side, model.asOf)
-    if (model.question != null) views.setTextColor(R.id.hbots_title, AMBER)
+    clear(views, R.id.hbots_rows, R.id.hbots_choices)
+    views.setTextColor(R.id.hbots_title, if (model.question != null) AMBER else TITLE)
     val card = model.question
+    views.setViewVisibility(R.id.hbots_card, if (card == null) View.GONE else View.VISIBLE)
     if (card != null) {
       views.setViewVisibility(R.id.hbots_card, View.VISIBLE)
       views.setTextViewText(R.id.hbots_meta, card.meta)
@@ -100,6 +106,7 @@ object WidgetRenderer {
   private fun tiles(context: Context, model: TileGridState.Data, height: Int): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget_tiles)
     header(context, views, model.title, model.side, model.asOf)
+    clear(views, R.id.hbots_tiles1, R.id.hbots_tiles2)
     val lines = listOf(model.laptop, model.gaming, model.usage).count { it.isNotEmpty() }
     val wanted = (model.tiles.size + 2) / 3
     val bands = WidgetFit.rows(height, PAD + HEADER + lines * 18, 80, wanted)
@@ -116,7 +123,7 @@ object WidgetRenderer {
     line(views, R.id.hbots_laptop, "Laptop", model.laptop)
     line(views, R.id.hbots_gaming, "Gaming PC", model.gaming)
     line(views, R.id.hbots_usage, "Usage", model.usage)
-    if (model.usageHot) views.setTextColor(R.id.hbots_usage, AMBER)
+    views.setTextColor(R.id.hbots_usage, if (model.usageHot) AMBER else MUTED)
     return views
   }
 
@@ -133,13 +140,15 @@ object WidgetRenderer {
 
   private fun usage(context: Context, model: UsageState.Data): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget_usage)
-    header(context, views, model.title, "", model.asOf)
+    // The label sits in the header: beside the big number it was cut off on a 2x2 cell.
+    header(context, views, model.title, model.bigLabel, "")
+    clear(views, R.id.hbots_gauges)
     views.setTextViewText(R.id.hbots_big, model.big)
-    if (model.hot) views.setTextColor(R.id.hbots_big, AMBER)
-    views.setTextViewText(R.id.hbots_big_label, model.bigLabel)
+    views.setTextColor(R.id.hbots_big, if (model.hot) AMBER else TEXT)
+    views.setViewVisibility(R.id.hbots_big_label, View.GONE)
     views.addView(R.id.hbots_gauges, gauge(context, WidgetGauge("", "", model.bigPct, model.hot)))
     model.week?.let { views.addView(R.id.hbots_gauges, gauge(context, it)) }
-    line(views, R.id.hbots_resets, "", model.resets)
+    line(views, R.id.hbots_resets, "", model.asOf.ifEmpty { model.resets })
     views.setContentDescription(R.id.hbots_root, model.description)
     return views
   }
@@ -160,6 +169,7 @@ object WidgetRenderer {
 
   private fun machines(context: Context, model: MachinesState.Data): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget_machines)
+    clear(views, R.id.hbots_panels)
     for (panel in listOf(model.laptop, model.gaming)) {
       val item = RemoteViews(context.packageName, R.layout.hbots_w_panel)
       item.setTextViewText(R.id.hbots_name, panel.title)
@@ -177,6 +187,7 @@ object WidgetRenderer {
   private fun today(context: Context, model: TodayState.Data, height: Int): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget_today)
     header(context, views, TodayModel.TITLE, model.side, model.asOf)
+    clear(views, R.id.hbots_rows)
     val reserved = PAD + HEADER + (if (model.nextTitle.isEmpty()) 0 else 20)
     val rows = model.rows.take(WidgetFit.rows(height, reserved, 24, model.rows.size))
     for (row in rows) views.addView(R.id.hbots_rows, event(context, row.title, row.meta, if (row.failed) R.drawable.hbots_dot_failed else R.drawable.hbots_dot_working))
@@ -191,10 +202,19 @@ object WidgetRenderer {
     views.setOnClickPendingIntent(R.id.hbots_root, openApp(context))
   }
 
+  /**
+   * The launcher applies a refresh on top of the view it already shows, so rows
+   * added last time are still there. Every list is emptied before it is filled.
+   */
+  private fun clear(views: RemoteViews, vararg ids: Int) {
+    for (id in ids) views.removeAllViews(id)
+  }
+
   /** A line that is hidden when it has nothing to say. */
   private fun line(views: RemoteViews, id: Int, label: String, text: String) {
+    // The launcher reuses the old view on a refresh, so an empty line has to be hidden again.
+    views.setViewVisibility(id, if (text.isEmpty()) View.GONE else View.VISIBLE)
     if (text.isEmpty()) return
-    views.setViewVisibility(id, View.VISIBLE)
     views.setTextViewText(id, if (label.isEmpty()) text else "$label  $text")
   }
 
