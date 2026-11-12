@@ -4508,6 +4508,8 @@ interface ClaudeLiveQueryContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
   readonly settingsCwd: string | null;
+  /** The window a personal bot session was opened with, when it has its own. */
+  readonly personalAutoCompactWindow?: number;
   readonly launchArgSettings: ClaudeSdkSettings | undefined;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
@@ -11148,6 +11150,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             settingsCwd: turnInput.runtimePolicy.cwd,
             launchArgSettings,
+            ...(personalQueryOptions?.settings.autoCompactWindow === undefined
+              ? {}
+              : { personalAutoCompactWindow: personalQueryOptions.settings.autoCompactWindow }),
             query: querySession,
             queryPolicyKey,
             selection: compiledSelection,
@@ -11335,11 +11340,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(Path.Path, path),
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
-            const autoCompactWindow = yield* resolveAutoCompactWindow(
-              querySession.settingsCwd,
-              turnInput.modelSelection,
-              querySession.launchArgSettings,
-            );
+            // A bot session runs with its own window, so the meter reads that one.
+            const autoCompactWindow =
+              querySession.personalAutoCompactWindow === undefined
+                ? yield* resolveAutoCompactWindow(
+                    querySession.settingsCwd,
+                    turnInput.modelSelection,
+                    querySession.launchArgSettings,
+                  )
+                : String(querySession.personalAutoCompactWindow);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               autoCompactWindow,

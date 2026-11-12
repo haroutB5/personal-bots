@@ -109,6 +109,23 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
   [AuthTerminalReadScope]: AuthTerminalOperateScope,
 };
 
+/**
+ * A credential from before the permission split still carries the retired review scope,
+ * which no new grant can hold. It keeps what its broad scopes covered then, so an old
+ * pairing can still update a provider. Any other credential is returned unchanged.
+ */
+export function authScopesWithPreSplitGrants(
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): ReadonlyArray<AuthEnvironmentScope> {
+  if (!scopes.includes(AuthReviewWriteScope)) return scopes;
+  const granted = new Set(scopes);
+  for (const scope of AuthEnvironmentScope.literals) {
+    const parent = legacyParents[scope];
+    if (parent !== undefined && scopes.includes(parent)) granted.add(scope);
+  }
+  return [...granted];
+}
+
 /** Keep permission denials decodable by clients with the original scope enum. */
 export function authScopeRequiredResponse(requiredPermission: AuthEnvironmentScope) {
   return {

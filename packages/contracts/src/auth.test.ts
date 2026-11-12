@@ -9,6 +9,7 @@ import {
   AuthStandardClientScopes,
   authScopeResponse,
   AuthSessionState,
+  authScopesWithPreSplitGrants,
   sessionGrantsScope,
 } from "./auth.ts";
 
@@ -128,5 +129,36 @@ describe("authorization grants", () => {
     },
   ] as const)("sessionGrantsScope accepts $label", ({ session, scope, expected }) => {
     expect(sessionGrantsScope(session, scope)).toBe(expected);
+  });
+
+  it("keeps what a credential from before the permission split covered", () => {
+    const paired = authScopesWithPreSplitGrants([
+      "orchestration:read",
+      "orchestration:operate",
+      "terminal:operate",
+      "review:write",
+      "relay:read",
+    ]);
+    for (const scope of [
+      "providers:manage",
+      "settings:write",
+      "environment:maintain",
+      "filesystem:read",
+      "terminal:read",
+    ] as const) {
+      expect(paired).toContain(scope);
+    }
+    // Scopes that were never part of a broad one stay out.
+    expect(paired).not.toContain("access:write");
+    expect(paired).not.toContain("relay:write");
+
+    const readOnly = authScopesWithPreSplitGrants(["orchestration:read", "review:write"]);
+    expect(readOnly).toContain("filesystem:read");
+    expect(readOnly).not.toContain("providers:manage");
+  });
+
+  it("adds nothing to a grant made after the split", () => {
+    const narrow = ["orchestration:read", "orchestration:operate"] as const;
+    expect(authScopesWithPreSplitGrants(narrow)).toEqual(narrow);
   });
 });

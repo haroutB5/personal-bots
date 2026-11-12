@@ -1,21 +1,7 @@
 /**
- * Context caps for personal-bot sessions (1.66.80, token audit 21 Oct 2026).
- * Every step of a session re-reads all of it, so a long task chat is what
- * burns the usage limits. Each cap has its own kill switch, read from the
- * server environment when a session starts.
- *
- * - Auto-compaction for chats made for a delegated task or a routine run
- *   (`personalTaskChat` on the start input), never for the owner's own chats:
- *   Claude compacts with a 200k window, Codex at 150k tokens.
- *   `PERSONAL_TASK_AUTO_COMPACT=off` restores the provider defaults.
- * - Shell output in every bot session: what a command prints past about 12k
- *   characters stays out of the context. Claude saves the whole output to a
- *   file and hands the model a short preview plus its path
- *   (`bashOutputMaxChars`, Bash and PowerShell); Codex cuts the middle of a
- *   tool output with a "tokens truncated" marker (`tool_output_token_limit`,
- *   counted in tokens). `PERSONAL_BOT_SHELL_OUTPUT_CAP=off` restores the
- *   defaults (Claude 30000 chars, Codex the model's own); a number of
- *   characters (4000 to 128000) sets another cap.
+ * Context caps for personal-bot sessions. Task and routine chats auto-compact (Claude 200k window,
+ * Codex 150k tokens; `PERSONAL_TASK_AUTO_COMPACT=off` restores provider defaults). Shell output past
+ * about 12k characters stays out of context (`PERSONAL_BOT_SHELL_OUTPUT_CAP=off` or a number 4000 to 128000).
  */
 export const PERSONAL_TASK_AUTO_COMPACT_ENV = "PERSONAL_TASK_AUTO_COMPACT";
 /** Claude's `autoCompactWindow` for task chats; it compacts a little below it. */
@@ -35,11 +21,15 @@ export function taskAutoCompactEnabled(env: Env = process.env): boolean {
   return !isOff(env[PERSONAL_TASK_AUTO_COMPACT_ENV]);
 }
 
+/** Claude compacts this far below its window (measured on Claude Code 2.1.305). */
+const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
+/** The largest window Claude accepts. */
+const CLAUDE_AUTO_COMPACT_WINDOW_MAX = 1_000_000;
+
 /**
- * The Claude `autoCompactWindow` a session runs with, or undefined for the
- * CLI's own. The owner's provider setting (`configured`, "" when unset)
- * applies everywhere as before; a task chat compacts at 200k, or sooner when
- * the owner's setting is smaller.
+ * The Claude `autoCompactWindow` a session runs with, or undefined for the CLI's own.
+ * In a bot chat the owner's "Auto-compact after" number always wins, raised by Claude's
+ * reserve so compaction lands on it. A task chat uses 200k only when the owner set nothing.
  */
 export function claudeAutoCompactWindow(input: {
   readonly configured: string | undefined;
@@ -52,11 +42,14 @@ export function claudeAutoCompactWindow(input: {
       ? Number(input.configured)
       : undefined;
   const owner = configured !== undefined && Number.isFinite(configured) ? configured : undefined;
-  if (!input.personalBot || !input.personalTaskChat) return owner;
-  if (!taskAutoCompactEnabled(input.env ?? process.env)) return owner;
-  return owner === undefined
+  if (!input.personalBot) return owner;
+  if (owner !== undefined) {
+    return Math.min(owner + CLAUDE_AUTO_COMPACT_RESERVE_TOKENS, CLAUDE_AUTO_COMPACT_WINDOW_MAX);
+  }
+  if (!input.personalTaskChat) return undefined;
+  return taskAutoCompactEnabled(input.env ?? process.env)
     ? CLAUDE_TASK_AUTO_COMPACT_WINDOW
-    : Math.min(owner, CLAUDE_TASK_AUTO_COMPACT_WINDOW);
+    : undefined;
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
+  authScopesWithPreSplitGrants,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -173,7 +174,8 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
   return {
     sessionId: row.sessionId,
     subject: row.subject,
-    scopes: row.scopes,
+    // A session paired before the permission split keeps what its scopes covered then.
+    scopes: authScopesWithPreSplitGrants(row.scopes),
     method: row.method,
     client: {
       label: row.clientLabel,
