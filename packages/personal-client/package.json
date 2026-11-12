@@ -305,6 +305,10 @@
       "types": "./src/conversation/timeline.ts",
       "import": "./src/conversation/timeline.ts"
     },
+    "./motion/motionTokens": {
+      "types": "./src/motion/motionTokens.ts",
+      "import": "./src/motion/motionTokens.ts"
+    },
     "./bots/botAvatarShapes": {
       "types": "./src/bots/botAvatarShapes.ts",
       "import": "./src/bots/botAvatarShapes.ts"

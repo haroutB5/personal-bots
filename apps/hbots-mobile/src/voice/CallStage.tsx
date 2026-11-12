@@ -1,8 +1,9 @@
 import { liftForContrast } from "@hbots/personal-client/conversation/voice/callState";
 import type { BotAvatarShape } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
-import { AccessibilityInfo, Animated, Easing, StyleSheet, View } from "react-native";
+import { Animated, Easing, StyleSheet, View } from "react-native";
 
+import { useReducedMotion } from "../motion/useReducedMotion";
 import { BotAvatar } from "../shell/BotAvatar";
 import { tokens } from "../shell/tokens";
 
@@ -25,19 +26,7 @@ export function CallStage({
 }) {
   const [ring] = useState(() => new Animated.Value(0));
   const [pulse] = useState(() => new Animated.Value(0));
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    void AccessibilityInfo.isReduceMotionEnabled().then((value) => {
-      if (active) setReduced(value);
-    });
-    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduced);
-    return () => {
-      active = false;
-      subscription.remove();
-    };
-  }, []);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     if (!live || reduced) {
