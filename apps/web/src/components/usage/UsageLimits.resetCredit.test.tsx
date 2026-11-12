@@ -15,13 +15,13 @@ import { resetCreditFailureText } from "~/features/personal/usagePresentation";
 
 import { useResetCredit } from "./UsageLimits";
 
-const state = vi.hoisted(() => ({ consume: vi.fn() }));
+const state = vi.hoisted(() => ({ consume: vi.fn(), allowed: true }));
 
 // Upstream gates consume behind AuthProvidersManageScope; the owner holds it.
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => state.allowed,
+  readEnvironmentScope: () => state.allowed,
 }));
 // Never the real RPC: a redeem spends a real banked reset.
 vi.mock("../../state/use-atom-command", () => ({
@@ -76,6 +76,7 @@ describe("useResetCredit", () => {
 
   beforeEach(async () => {
     state.consume = vi.fn();
+    state.allowed = true;
     await act(async () => {
       renderer = create(<Probe />);
     });
@@ -95,6 +96,13 @@ describe("useResetCredit", () => {
     expect(state.consume).toHaveBeenCalledWith({ environmentId: ENV, input: INPUT });
     expect(probe.hook!.status).toBe("401 Incorrect API key provided");
     expect(probe.hook!.busy).toBe(false);
+  });
+
+  it("shows the pairing line instead of trying without providers:manage", async () => {
+    state.allowed = false;
+    await act(async () => probe.hook!.redeem());
+    expect(state.consume).not.toHaveBeenCalled();
+    expect(probe.hook!.status).toBe("Pair this device again to redeem resets.");
   });
 
   it("says the outcome is unknown when the failure has no message", async () => {

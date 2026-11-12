@@ -12,8 +12,11 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthProvidersManageScope,
+  AuthRelayReadScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -268,6 +271,48 @@ describe("command permissions", () => {
           _tag: "EnvironmentAuthorizationError",
           requiredPermission: AuthOrchestrationReadScope,
         });
+      }),
+    ),
+  );
+
+  it.effect("denies the reset redeem to a phone paired with the legacy scope set", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const consume = createCommandPermissions(runtime, WS_METHODS.providerConsumeResetCredit);
+        const phone = EnvironmentId.make("legacy-phone");
+        const legacyScopes = [
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+          AuthTerminalOperateScope,
+          "review:write",
+          AuthRelayReadScope,
+        ] as const;
+        // nativePersonalClient passes the token scopes as permissions too, so
+        // the client cannot lend providers:manage the legacy orchestration parent.
+        registry.set(sessions(phone), AsyncResult.failure(Cause.fail("no HttpClient")));
+        const denied = yield* consume.authorize(registry, phone).pipe(
+          Effect.provideService(KnownSessionGrants, {
+            authenticated: true,
+            scopes: [...legacyScopes],
+            permissions: [...legacyScopes],
+          }),
+          Effect.flip,
+        );
+        expect(denied).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: AuthProvidersManageScope,
+        });
+
+        const allowed = yield* consume.authorize(registry, phone).pipe(
+          Effect.provideService(KnownSessionGrants, {
+            authenticated: true,
+            scopes: [AuthProvidersManageScope],
+            permissions: [AuthProvidersManageScope],
+          }),
+          Effect.result,
+        );
+        expect(allowed._tag).toBe("Success");
       }),
     ),
   );

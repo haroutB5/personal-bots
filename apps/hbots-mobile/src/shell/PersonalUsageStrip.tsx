@@ -12,6 +12,7 @@ import {
   resetCreditRedeemLabel,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
+  RESET_CREDIT_PAIR_AGAIN_TEXT,
   selectOpenCodeSpendLine,
   selectUsageCards,
   usageAutoProbeDue,
@@ -31,6 +32,7 @@ import {
   type UsageStripCell,
 } from "@hbots/personal-client/usage/usageStrip";
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
+import { useAtomValue } from "@effect/atom-react";
 import { IconRefresh, IconX } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -230,6 +232,9 @@ function RedeemBlock({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const canRedeem = useAtomValue(
+    native.bots.providerConsumeResetCredit.permissionAtom(environmentId),
+  );
   const resetCredits = card.resetCredits;
   if (resetCredits === null) return null;
   if (resetCredits.credits.availableCount === 0 && status === null) return null;
@@ -239,6 +244,11 @@ function RedeemBlock({
 
   const redeem = async () => {
     if (inFlight.current) return;
+    if (!canRedeem) {
+      setConfirming(false);
+      setStatus(RESET_CREDIT_PAIR_AGAIN_TEXT);
+      return;
+    }
     inFlight.current = true;
     setConfirming(false);
     setBusy(true);
@@ -269,17 +279,22 @@ function RedeemBlock({
               </Text>
             ) : null}
           </View>
-          <Pressable
-            onPress={() => setConfirming(true)}
-            disabled={busy}
-            accessibilityRole="button"
-            accessibilityLabel={confirm.title.replace(/\?$/, "")}
-            accessibilityState={{ disabled: busy, busy }}
-            style={[styles.outlineButton, busy ? styles.disabled : null]}
-          >
-            <Text style={styles.outlineButtonText}>{busy ? "Redeeming…" : redeemLabel}</Text>
-          </Pressable>
+          {canRedeem ? (
+            <Pressable
+              onPress={() => setConfirming(true)}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel={confirm.title.replace(/\?$/, "")}
+              accessibilityState={{ disabled: busy, busy }}
+              style={[styles.outlineButton, busy ? styles.disabled : null]}
+            >
+              <Text style={styles.outlineButtonText}>{busy ? "Redeeming…" : redeemLabel}</Text>
+            </Pressable>
+          ) : null}
         </View>
+      ) : null}
+      {!canRedeem && resetCredits.credits.availableCount > 0 ? (
+        <Text style={styles.redeemStatus}>{RESET_CREDIT_PAIR_AGAIN_TEXT}</Text>
       ) : null}
       {status !== null ? (
         <Text style={styles.redeemStatus} accessibilityLiveRegion="polite">
