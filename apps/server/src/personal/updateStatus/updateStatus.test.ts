@@ -20,8 +20,10 @@ const view = (input: {
   updatedAtMs: number;
   version?: string | null;
   liveVersion?: string | null;
+  waiting?: Parameters<typeof updateStatusView>[0]["waiting"];
 }) =>
   updateStatusView({
+    waiting: input.waiting,
     status: input.status,
     version: input.version ?? "1.66.34",
     liveVersion: input.liveVersion ?? "1.66.33",
@@ -59,7 +61,11 @@ describe("which files are a run's result", () => {
       version: "1.66.33",
       release: "970a9683d1aa",
     })}`;
-    expect(readRestartResult(text)).toEqual({ status: "live_verified", version: "1.66.33" });
+    expect(readRestartResult(text)).toEqual({
+      status: "live_verified",
+      version: "1.66.33",
+      waiting: null,
+    });
   });
 
   it("keeps a version from a file the runner did not sign, and drops a malformed one", () => {
@@ -67,10 +73,11 @@ describe("which files are a run's result", () => {
     expect(readRestartResult(JSON.stringify({ status: "rolled_back" }))).toEqual({
       status: "rolled_back",
       version: null,
+      waiting: null,
     });
     expect(
       readRestartResult(JSON.stringify({ status: "rolled_back", version: "not a version" })),
-    ).toEqual({ status: "rolled_back", version: null });
+    ).toEqual({ status: "rolled_back", version: null, waiting: null });
   });
 
   it("shows nothing for bytes that are not a result at all", () => {
@@ -148,6 +155,42 @@ describe("which phases reach the page", () => {
       version: "1.66.34",
       previousVersion: "1.66.33",
       updatedAt: DateTime.formatIso(DateTime.makeUnsafe(ago(1_000))),
+      waiting: null,
     });
+  });
+
+  it("says who the update waits for, from the runner's newest look only", () => {
+    const thread = "e5c358fe-c812-4726-ab78-4a66a2303b56";
+    const result = readRestartResult(
+      JSON.stringify({
+        status: "waiting_for_idle",
+        version: "1.66.34",
+        armedAt: "2026-10-12T20:00:00.000Z",
+        idleLooks: [
+          { quiet: 0, heavyLock: true, blockers: [] },
+          {
+            quiet: 0,
+            heavyLock: false,
+            blockers: [
+              { cmd: `events.${thread}.log`, reason: "events log", ignored: false },
+              { cmd: "events.11111111-1111-1111-1111-111111111111.log", ignored: true },
+              { cmd: "adb -L tcp:5061 fork-server", reason: "tool process", ignored: false },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(result?.waiting).toEqual({
+      since: "2026-10-12T20:00:00.000Z",
+      busyThreadIds: [thread],
+      buildRunning: false,
+      quietLooks: 0,
+    });
+    const waiting = result?.waiting ?? null;
+    expect(view({ status: "waiting_for_idle", updatedAtMs: ago(1_000), waiting })?.waiting).toEqual(
+      waiting,
+    );
+    // Once the restart begins nobody is waited for.
+    expect(view({ status: "activating", updatedAtMs: ago(1_000), waiting })?.waiting).toBeNull();
   });
 });

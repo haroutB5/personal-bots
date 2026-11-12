@@ -32,6 +32,7 @@ import { confirmDestructive } from "../components/confirmDestructive";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { useBotShells } from "../personal/useBotShells";
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
+import { ServerUpdateBanner } from "../shell/ServerUpdateBanner";
 import { tokens } from "../shell/tokens";
 import { EmptyText, ScreenScroll, SmallBotAvatar } from "../tasks/TaskUi";
 import { useWorkingThreads } from "../working/useWorkingThreads";
@@ -342,6 +343,7 @@ export function WorkScreen({
 
   return (
     <View style={styles.screen}>
+      <ServerUpdateBanner native={native} />
       <View style={styles.header}>
         <Text style={styles.title} maxFontSizeMultiplier={1.3}>
           Work

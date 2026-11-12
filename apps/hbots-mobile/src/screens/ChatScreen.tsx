@@ -69,6 +69,7 @@ import { Composer } from "../chat/Composer";
 import type { ComposerControl } from "../chat/Composer";
 import { buildChatChips, chatContextUsage, chatHeaderModel, findChatBot } from "../chat/chatModel";
 import { wasChatStartedHere } from "../chat/useStartChat";
+import { ServerUpdateBanner } from "../shell/ServerUpdateBanner";
 import { chipScrollX } from "../chat/chipScroll";
 import { ChipPill } from "../chat/ChipPill";
 import { useFreshChipIds } from "../chat/useFreshChipIds";
@@ -686,6 +687,7 @@ export function ChatScreen({
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <ServerUpdateBanner native={native} />
       {searchOpen ? (
         <View style={styles.searchHeader}>
           <View style={styles.searchBox}>

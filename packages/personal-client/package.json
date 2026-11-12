@@ -233,6 +233,10 @@
       "types": "./src/work/workTimeline.ts",
       "import": "./src/work/workTimeline.ts"
     },
+    "./update/serverUpdate": {
+      "types": "./src/update/serverUpdate.ts",
+      "import": "./src/update/serverUpdate.ts"
+    },
     "./teams/teamWorkingNow": {
       "types": "./src/teams/teamWorkingNow.ts",
       "import": "./src/teams/teamWorkingNow.ts"

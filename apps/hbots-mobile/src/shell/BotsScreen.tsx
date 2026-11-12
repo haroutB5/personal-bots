@@ -63,6 +63,7 @@ import { NewItemsSheet } from "./NewItemsSheet";
 import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
 import { classifyRelease, DRAG_SLOP_DP, moveTo, reorderByDrag } from "./pinnedOrderModel";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
+import { ServerUpdateBanner } from "./ServerUpdateBanner";
 import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { SystemStatsLine } from "./SystemStatsLine";
@@ -831,6 +832,7 @@ export function BotsScreen({
       onTouchStart={touchOutsideSwipeRows}
     >
       <PersonalOfflineBanner native={native} />
+      <ServerUpdateBanner native={native} />
       <UpdatePermissionBanner update={update} onPress={onOpenInstallPermission} />
       <View style={styles.header}>
         <View style={styles.titleRow}>

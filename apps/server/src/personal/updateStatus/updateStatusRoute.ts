@@ -39,8 +39,8 @@ export const PERSONAL_UPDATE_STATUS_PATH = "/api/personal/update/status";
 /** How long one filesystem answer is reused across requests. */
 export const UPDATE_STATUS_CACHE_MS = 5_000;
 
-/** A restart result file is a handful of KB; anything larger is not one. */
-const MAX_RESULT_BYTES = 64n * 1024n;
+/** A result file keeps up to 60 idle looks, so a long wait reaches tens of KB. */
+const MAX_RESULT_BYTES = 512n * 1024n;
 /** Live result files per run folder are few; statting them concurrently is bounded. */
 const STAT_CONCURRENCY = 8;
 
@@ -51,7 +51,7 @@ const HEADERS = {
 
 const answerJson = (view: UpdateStatusView | null) =>
   HttpServerResponse.json(
-    view ?? { phase: null, version: null, previousVersion: null, updatedAt: null },
+    view ?? { phase: null, version: null, previousVersion: null, updatedAt: null, waiting: null },
     {
       headers: HEADERS,
     },
@@ -135,6 +135,7 @@ const readUpdateStatus = Effect.fn("readUpdateStatus")(function* (input: {
     liveVersion,
     updatedAtMs: newest.mtimeMs,
     nowMs: input.nowMs,
+    waiting: result.waiting,
   });
 });
 

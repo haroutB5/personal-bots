@@ -105,10 +105,55 @@ export function restartStatusOf(value: unknown): RestartStatus | null {
   return typeof value === "string" && KNOWN_STATUSES.has(value) ? (value as RestartStatus) : null;
 }
 
+/** What the idle gate last saw, for the line that says who the update waits for. */
+export interface RestartWaiting {
+  /** When the runner was armed. */
+  readonly since: string | null;
+  /** Chats that wrote events in the last look. */
+  readonly busyThreadIds: ReadonlyArray<string>;
+  /** A build or test run holds the machine. */
+  readonly buildRunning: boolean;
+  /** Quiet looks in a row so far; the restart follows a few of them. */
+  readonly quietLooks: number;
+}
+
 /** What one restart result file says: its status and the version it is about. */
 export interface RestartResult {
   readonly status: RestartStatus | null;
   readonly version: string | null;
+  readonly waiting: RestartWaiting | null;
+}
+
+const EVENTS_LOG = /^events\.([0-9a-f-]{36})\.log$/;
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]{8,12}Z$/;
+const MAX_BUSY_THREADS = 8;
+
+/** The newest idle look of a result file, reduced to what a person can be told. */
+function readWaiting(record: Record<string, unknown>): RestartWaiting | null {
+  const looks = record.idleLooks;
+  const armedAt = record.armedAt;
+  const since = typeof armedAt === "string" && ISO_TIME.test(armedAt) ? armedAt : null;
+  const last: unknown = Array.isArray(looks) ? looks.at(-1) : undefined;
+  if (typeof last !== "object" || last === null) {
+    return since === null ? null : { since, busyThreadIds: [], buildRunning: false, quietLooks: 0 };
+  }
+  const look = last as Record<string, unknown>;
+  const blockers = Array.isArray(look.blockers) ? look.blockers : [];
+  const busy = new Set<string>();
+  for (const blocker of blockers) {
+    if (typeof blocker !== "object" || blocker === null) continue;
+    const entry = blocker as Record<string, unknown>;
+    if (entry.ignored === true || typeof entry.cmd !== "string") continue;
+    const threadId = EVENTS_LOG.exec(entry.cmd)?.[1];
+    if (threadId !== undefined && busy.size < MAX_BUSY_THREADS) busy.add(threadId);
+  }
+  return {
+    since,
+    busyThreadIds: [...busy],
+    buildRunning: look.heavyLock === true,
+    quietLooks:
+      typeof look.quiet === "number" && Number.isFinite(look.quiet) ? Math.max(0, look.quiet) : 0,
+  };
 }
 
 /**
@@ -129,6 +174,7 @@ export function readRestartResult(text: string): RestartResult | null {
   return {
     status: restartStatusOf(record.status),
     version: typeof version === "string" && VERSION.test(version) ? version : null,
+    waiting: readWaiting(record),
   };
 }
 
@@ -142,6 +188,8 @@ export interface UpdateStatusView {
   readonly version: string | null;
   readonly previousVersion: string | null;
   readonly updatedAt: string;
+  /** Only while the update waits for the bots to go idle. */
+  readonly waiting: RestartWaiting | null;
 }
 
 /**
@@ -155,6 +203,7 @@ export function updateStatusView(input: {
   readonly liveVersion: string | null;
   readonly updatedAtMs: number;
   readonly nowMs: number;
+  readonly waiting?: RestartWaiting | null;
 }): UpdateStatusView | null {
   const { status } = input;
   if (status === null || status === "superseded_before_activation") return null;
@@ -172,5 +221,6 @@ export function updateStatusView(input: {
     version: input.version,
     previousVersion: input.liveVersion,
     updatedAt: DateTime.formatIso(DateTime.makeUnsafe(input.updatedAtMs)),
+    waiting: status === "waiting_for_idle" ? (input.waiting ?? null) : null,
   };
 }

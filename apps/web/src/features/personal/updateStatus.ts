@@ -20,6 +20,11 @@
  * signal the offline banner reads, so every rule here is unit-testable
  * without a server.
  */
+import {
+  parseServerUpdate,
+  serverUpdateLines,
+  type ServerUpdateWaiting,
+} from "@hbots/personal-client/update/serverUpdate";
 import { useSyncExternalStore } from "react";
 
 /** Must match PERSONAL_UPDATE_STATUS_PATH in apps/server updateStatusRoute.ts. */
@@ -34,6 +39,8 @@ export interface UpdateStatusAnswer {
   readonly version: string | null;
   readonly previousVersion: string | null;
   readonly updatedAt: string | null;
+  /** Who the update waits for, while it waits for the bots. */
+  readonly waiting?: ServerUpdateWaiting | null;
 }
 
 export const NO_UPDATE: UpdateStatusAnswer = {
@@ -56,6 +63,7 @@ export function parseUpdateStatusAnswer(value: unknown): UpdateStatusAnswer | nu
   const record = value as Record<string, unknown>;
   const version = (candidate: unknown): string | null =>
     typeof candidate === "string" && VERSION.test(candidate) ? candidate : null;
+  const waiting = parseServerUpdate(value)?.waiting ?? null;
   return {
     phase: typeof record.phase === "string" && PHASE_TOKEN.test(record.phase) ? record.phase : null,
     version: version(record.version),
@@ -64,6 +72,7 @@ export function parseUpdateStatusAnswer(value: unknown): UpdateStatusAnswer | nu
       typeof record.updatedAt === "string" && record.updatedAt.length <= 40
         ? record.updatedAt
         : null,
+    ...(waiting === null ? {} : { waiting }),
   };
 }
 
@@ -91,6 +100,12 @@ export async function fetchUpdateStatus(
 }
 
 export type UpdateTone = "plain" | "notice" | "problem";
+
+/** What the waiting line needs beyond the answer: the time, and chat names. */
+export interface UpdateWaitingContext {
+  readonly nowMs: number;
+  readonly nameOfThread: (threadId: string) => string | null;
+}
 
 export interface UpdateLine {
   /** The line itself. Always one line; the page truncates rather than wraps. */
@@ -132,6 +147,7 @@ export const UPDATED_LINE_MS = 10_000;
 export function updateLineFor(
   answer: UpdateStatusAnswer,
   fallbackVersion: string | null = null,
+  waitingContext: UpdateWaitingContext | null = null,
 ): UpdateLine | null {
   const { phase } = answer;
   if (phase === null) return null;
@@ -150,13 +166,35 @@ export function updateLineFor(
     case "evidence_check":
     case "preflight":
       return line(version === null ? "Preparing update" : `Preparing update ${version}`, "plain");
-    case "waiting_for_idle":
+    case "waiting_for_idle": {
+      // With the runner's look in hand, say who is busy and for how long.
+      const told =
+        answer.waiting == null || waitingContext === null
+          ? null
+          : serverUpdateLines({
+              update: {
+                phase,
+                version,
+                previousVersion: answer.previousVersion,
+                updatedAtMs: null,
+                waiting: answer.waiting,
+              },
+              nowMs: waitingContext.nowMs,
+              nameOfThread: waitingContext.nameOfThread,
+            });
+      if (told !== null && told.detail !== null) {
+        return line(
+          `${version === null ? "Update waiting for bots" : `Update ${version} waiting for bots`} · ${told.detail}`,
+          "notice",
+        );
+      }
       return line(
         version === null
           ? "Update ready, installs when the bots are idle"
           : `Update ${version} ready, installs when the bots are idle`,
         "notice",
       );
+    }
     case "backing_up":
       return line("Backing up before update", "plain");
     case "activating":
@@ -232,6 +270,7 @@ export function visibleUpdateLine(input: {
   readonly seenUpdated: SeenUpdated | null;
   readonly fallbackVersion: string | null;
   readonly nowMs: number;
+  readonly nameOfThread?: ((threadId: string) => string | null) | undefined;
 }): UpdateLine | null {
   if (input.offline) {
     // The server is not answering. If a restart was on its way, say so
@@ -253,7 +292,10 @@ export function visibleUpdateLine(input: {
     return null;
   }
   if (input.answer === null) return null;
-  const line = updateLineFor(input.answer, input.fallbackVersion);
+  const line = updateLineFor(input.answer, input.fallbackVersion, {
+    nowMs: input.nowMs,
+    nameOfThread: input.nameOfThread ?? (() => null),
+  });
   if (line === null) return null;
   // "Updated to x" is a one-time note per version: this device has shown it
   // (ten seconds ago, or on an earlier launch), so the header's version

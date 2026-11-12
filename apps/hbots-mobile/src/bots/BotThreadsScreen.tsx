@@ -27,6 +27,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { useBotShells } from "../personal/useBotShells";
 import { BotAvatar } from "../shell/BotAvatar";
+import { ServerUpdateBanner } from "../shell/ServerUpdateBanner";
 import { PersonalOfflineBanner } from "../shell/PersonalOfflineBanner";
 import { tokens } from "../shell/tokens";
 import { ChatActionsSheet, type ChatActionRow } from "../sheets/ChatActionsSheet";
@@ -281,6 +282,7 @@ export function BotThreadsScreen({
       style={[styles.screen, { paddingTop: insets.top }]}
     >
       <PersonalOfflineBanner native={native} />
+      <ServerUpdateBanner native={native} />
       {selection !== null && view !== null ? (
         <View style={styles.header}>
           <Pressable

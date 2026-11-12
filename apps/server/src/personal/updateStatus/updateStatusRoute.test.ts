@@ -226,6 +226,7 @@ describe("the update status the phone polls", () => {
       version: null,
       previousVersion: null,
       updatedAt: null,
+      waiting: null,
     });
     await writeResult(dropDir, "restart-1.66.34-result.json", {
       mode: "run",

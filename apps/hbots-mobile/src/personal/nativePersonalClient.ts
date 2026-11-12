@@ -45,6 +45,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
+import {
+  parseServerUpdate,
+  SERVER_UPDATE_PATH,
+  type ServerUpdate,
+} from "@hbots/personal-client/update/serverUpdate";
+
 import { authorizedFetch } from "../authorizedRequest";
 import { wipeOutgoingThread } from "../chat/composerSendModel";
 import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
@@ -155,6 +161,8 @@ export interface NativePersonal {
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
   readonly readSystemSummary: () => Promise<SystemSummary | null>;
+  /** Where a server update is; null when the server did not answer. */
+  readonly readServerUpdate: () => Promise<ServerUpdate | null>;
   /** Freshly ticketed browser and desktop live-view sockets. */
   readonly liveViews: () => Promise<LiveViewURLs>;
   readonly useConnectionState: () => SupervisorConnectionState;
@@ -546,6 +554,23 @@ export function createNativePersonal(
         );
         if (!response.ok) return null;
         return parseSystemSummary(await response.json());
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    readServerUpdate: async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), SYSTEM_SUMMARY_TIMEOUT_MS);
+      try {
+        const response = await authorizedFetch(
+          stored,
+          new URL(SERVER_UPDATE_PATH, stored.httpBaseUrl),
+          { method: "GET", cache: "no-store", signal: controller.signal },
+        );
+        if (!response.ok) return null;
+        return parseServerUpdate(await response.json());
       } catch {
         return null;
       } finally {

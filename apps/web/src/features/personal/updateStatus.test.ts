@@ -364,3 +364,30 @@ describe("the restart signal the offline banner reads", () => {
     expect(getUpdateRestartSignal().restartingSinceMs).toBe(3_000);
   });
 });
+
+describe("the waiting line with the runner's look", () => {
+  it("says who the update waits for and for how long", () => {
+    const thread = "e5c358fe-c812-4726-ab78-4a66a2303b56";
+    const parsed = parseUpdateStatusAnswer({
+      phase: "waiting_for_idle",
+      version: "1.67.14",
+      previousVersion: "1.67.13",
+      updatedAt: "2026-11-12T23:29:50.000Z",
+      waiting: {
+        since: "2026-11-12T23:26:00.000Z",
+        busyThreadIds: [thread],
+        buildRunning: false,
+        quietLooks: 0,
+      },
+    });
+    expect(parsed).not.toBeNull();
+    if (parsed === null) return;
+    const line = updateLineFor(parsed, null, {
+      nowMs: Date.parse("2026-11-12T23:30:00.000Z"),
+      nameOfThread: (threadId) => (threadId === thread ? "Poteto in Hbots" : null),
+    });
+    expect(line?.text).toBe(
+      "Update 1.67.14 waiting for bots · Busy now: Poteto in Hbots. Waiting 4 min.",
+    );
+  });
+});
