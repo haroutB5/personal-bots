@@ -106,12 +106,10 @@ function PinnedTile({
         translateX.setValue(0);
         lifted.current = false;
         onLift(false);
-        if (Math.abs(dx) > 4) {
-          moved.current = true;
-          setTimeout(() => {
-            moved.current = false;
-          }, 0);
-        }
+        if (Math.abs(dx) > 4) moved.current = true;
+        setTimeout(() => {
+          moved.current = false;
+        }, 0);
         onDrop(dx);
       },
       onPanResponderTerminate: () => {
@@ -134,6 +132,7 @@ function PinnedTile({
         }}
         onLongPress={() => {
           lifted.current = true;
+          moved.current = true;
           onLift(true);
         }}
         delayLongPress={300}
