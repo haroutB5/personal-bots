@@ -20,6 +20,13 @@ export interface SettingsSearchRow {
   readonly keywords?: string;
 }
 
+/** The name row stays blank until the profile loads; "Not set" means a loaded, empty name. */
+export function nameRowValue(profile: PersonalProfile | null): string | undefined {
+  if (profile === null) return undefined;
+  const name = profile.displayName.trim();
+  return name.length === 0 ? "Not set" : name;
+}
+
 /** The root screen's search keeps a row when its title, hint or keywords contain the words typed. */
 export function settingsRowMatches(row: SettingsSearchRow, query: string): boolean {
   const needle = query.trim().toLowerCase();

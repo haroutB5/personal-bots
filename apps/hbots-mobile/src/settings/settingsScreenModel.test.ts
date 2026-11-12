@@ -9,6 +9,7 @@ import {
   autoArchiveMinutes,
   notificationDeviceDetail,
   notificationDevicesLine,
+  nameRowValue,
   parseAutoArchiveDraft,
   SETTINGS_SECTIONS,
   settingsRowMatches,
@@ -24,12 +25,22 @@ describe("settings search", () => {
   it("keeps every row for an empty query", () => {
     expect(settingsRowMatches({ title: "Memory" }, "  ")).toBe(true);
   });
-
   it("matches the title and the hint, case-insensitively", () => {
     expect(settingsRowMatches({ title: "Memory", hint: "What bots remember" }, "REMEMBER")).toBe(
       true,
     );
     expect(settingsRowMatches({ title: "Memory" }, "providers")).toBe(false);
+  });
+});
+
+describe("the name row", () => {
+  it("shows nothing until the profile loads", () => {
+    expect(nameRowValue(null)).toBeUndefined();
+  });
+
+  it("shows the loaded name, or Not set for an empty one", () => {
+    expect(nameRowValue(profile({ displayName: "  Harout  " }))).toBe("Harout");
+    expect(nameRowValue(profile({ displayName: "   " }))).toBe("Not set");
   });
 });
 

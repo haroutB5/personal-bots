@@ -14,6 +14,7 @@ import {
   autoArchiveFieldValue,
   autoArchiveHint,
   autoArchiveMinutes,
+  nameRowValue,
   parseAutoArchiveDraft,
   settingsVersionValue,
   sharedPreferencesOf,
@@ -99,7 +100,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
             key={id}
             title="Your name"
             hint="How your bots address you, and your name on the Team screen"
-            value={profile.data?.displayName.trim() || "Not set"}
+            value={nameRowValue(profile.data)}
             onPress={() => setNameOpen(true)}
           />
         );
