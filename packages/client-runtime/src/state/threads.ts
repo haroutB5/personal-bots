@@ -90,6 +90,8 @@ function historyMetaFromCachedSnapshot(
   };
 }
 
+const CACHE_LOAD_DEADLINE = "3 seconds";
+
 function snapshotToPersist(
   snapshotSequence: number,
   projection: OrchestrationV2ThreadProjection,
@@ -231,6 +233,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const loaded =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
+          // A cached copy only speeds an open up. A read that stalls must not hold the chat on
+          // "Loading chat": past the deadline the thread loads from the server instead.
+          Effect.timeout(CACHE_LOAD_DEADLINE),
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached thread.").pipe(
               Effect.annotateLogs({
