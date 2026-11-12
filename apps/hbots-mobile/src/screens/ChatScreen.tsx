@@ -81,6 +81,8 @@ import { useNow } from "../chat/useNow";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
 import { providerWaitState } from "@hbots/personal-client/conversation/conversationModel";
 import type { PendingSend } from "../chat/composerSendModel";
+import { RiseIn } from "../motion/RiseIn";
+import type { ChatEntry } from "../nav/chatEntry";
 import { BotAvatar } from "../shell/BotAvatar";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
@@ -112,6 +114,7 @@ export function ChatScreen({
   chat,
   botId,
   threadId,
+  entry,
   onBack,
   onOpenChat,
   onOpenChats,
@@ -123,6 +126,7 @@ export function ChatScreen({
   readonly chat: ChatEnvironment;
   readonly botId: string;
   readonly threadId: string;
+  readonly entry: ChatEntry | undefined;
   readonly onBack: () => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
@@ -930,39 +934,43 @@ export function ChatScreen({
         ) : (
           <>
             {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
-            <MessageList
-              native={native}
-              chat={chat}
-              cardContext={cards.context}
-              items={cards.items}
-              pending={pending}
-              queued={queued}
-              botName={header.botName}
-              currentUserId="You"
-              work={work}
-              busy={running || archived}
-              latestMessageStatus={latestMessageStatus}
-              onReply={(quote) => setReplyTo(quote)}
-              onMessageMenu={setMessageMenu}
-              onOpenFile={(request) => setFileRequest(request)}
-              onOpenLink={(url) => {
-                void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
-              }}
-              onChoose={(text) => composerControl.current?.sendText(text) ?? Promise.resolve(false)}
-              onCancelQueued={(id) => removeOutboxEntry(id)}
-              onRetryQueued={(id) => {
-                retryOutboxEntry(id);
-                // Retry means now. A socket waiting out its backoff would
-                // otherwise turn the tap into another 20 s of "Sending…".
-                if (!native.readConnection().connected) native.retry();
-              }}
-              onRetryPending={(id) => void composerControl.current?.retry(id)}
-              onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
-              loadEarlierBusy={history.loading}
-              listControl={messageListControl}
-              onHeightChange={setListHeight}
-              keyboardInset={keyboard.padding}
-            />
+            <RiseIn enabled={entry === "chip"} style={styles.riseHost}>
+              <MessageList
+                native={native}
+                chat={chat}
+                cardContext={cards.context}
+                items={cards.items}
+                pending={pending}
+                queued={queued}
+                botName={header.botName}
+                currentUserId="You"
+                work={work}
+                busy={running || archived}
+                latestMessageStatus={latestMessageStatus}
+                onReply={(quote) => setReplyTo(quote)}
+                onMessageMenu={setMessageMenu}
+                onOpenFile={(request) => setFileRequest(request)}
+                onOpenLink={(url) => {
+                  void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
+                }}
+                onChoose={(text) =>
+                  composerControl.current?.sendText(text) ?? Promise.resolve(false)
+                }
+                onCancelQueued={(id) => removeOutboxEntry(id)}
+                onRetryQueued={(id) => {
+                  retryOutboxEntry(id);
+                  // Retry means now. A socket waiting out its backoff would
+                  // otherwise turn the tap into another 20 s of "Sending…".
+                  if (!native.readConnection().connected) native.retry();
+                }}
+                onRetryPending={(id) => void composerControl.current?.retry(id)}
+                onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
+                loadEarlierBusy={history.loading}
+                listControl={messageListControl}
+                onHeightChange={setListHeight}
+                keyboardInset={keyboard.padding}
+              />
+            </RiseIn>
             {archived ? (
               <View style={[styles.archiveBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
                 <Text style={styles.archiveText}>Archived · Unarchive to send messages again.</Text>
@@ -1245,6 +1253,7 @@ function ChatHeader({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.bg },
   body: { flex: 1 },
+  riseHost: { flex: 1 },
   header: {
     minHeight: 52,
     flexDirection: "row",

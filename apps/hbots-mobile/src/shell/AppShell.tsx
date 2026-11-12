@@ -21,6 +21,7 @@ import { storeLinkDraft } from "../chat/linkDraft";
 import { clearChatNotifications } from "../notifications/clearChatNotifications";
 import { nativeNotify } from "../notifications/nativeNotify";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
+import { chatStackAnimation, type ChatEntry } from "../nav/chatEntry";
 import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
 import { BotNewChatScreen } from "../screens/BotNewChatScreen";
@@ -73,7 +74,12 @@ export interface AppShellProps {
 
 export type RootStackParamList = {
   Tabs: { readonly tab?: TabName } | undefined;
-  Chat: { readonly botId: string; readonly threadId: string; readonly requestId?: string };
+  Chat: {
+    readonly botId: string;
+    readonly threadId: string;
+    readonly requestId?: string;
+    readonly via?: ChatEntry;
+  };
   Chats: { readonly botId: string };
   Bot: { readonly botId: string };
   BotNew: undefined;
@@ -320,7 +326,12 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               />
             )}
           </Stack.Screen>
-          <Stack.Screen name="Chat">
+          <Stack.Screen
+            name="Chat"
+            options={({ route }) => ({
+              animation: chatStackAnimation(route.params.via),
+            })}
+          >
             {({ navigation, route }) => (
               <>
                 <ChatRead threadId={route.params.threadId} />
@@ -329,8 +340,11 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                   chat={chat}
                   botId={route.params.botId}
                   threadId={route.params.threadId}
+                  entry={route.params.via}
                   onBack={() => navigation.goBack()}
-                  onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                  onOpenChat={(botId, threadId) =>
+                    navigation.replace("Chat", { botId, threadId, via: "chip" })
+                  }
                   onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
                   onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
                   onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
