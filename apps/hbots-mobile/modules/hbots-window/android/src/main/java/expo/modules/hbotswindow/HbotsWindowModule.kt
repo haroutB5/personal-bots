@@ -2,7 +2,9 @@ package expo.modules.hbotswindow
 
 import android.content.Context
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
+import android.view.Window
 import android.view.ViewGroup
 import android.view.WindowManager
 import expo.modules.kotlin.modules.Module
@@ -15,6 +17,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * with it.
  */
 class HbotsWindowModule : Module() {
+  private var probed = false
   override fun definition() = ModuleDefinition {
     Name("HbotsWindow")
 
@@ -23,6 +26,17 @@ class HbotsWindowModule : Module() {
       Log.i("HbotsWin", "call tag=$viewTag touchable=$touchable")
       val activity = appContext.currentActivity
       activity?.runOnUiThread {
+        if (!probed) {
+          probed = true
+          val inner = activity.window.callback
+          activity.window.callback = object : Window.Callback by inner {
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+              val handled = inner.dispatchTouchEvent(event)
+              Log.i("HbotsWin", "activity touch action=${event.actionMasked} x=${event.x} y=${event.y} focus=${activity.window.decorView.hasWindowFocus()} handled=$handled")
+              return handled
+            }
+          }
+        }
         val byManager = appContext.findView<View>(viewTag)
         val view = byManager ?: findInTree(activity.window.decorView, viewTag)
         Log.i("HbotsWin", "manager=${byManager != null} tree=${view != null}")
