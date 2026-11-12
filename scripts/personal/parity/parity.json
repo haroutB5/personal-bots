@@ -19,14 +19,14 @@
       "rpc": 131
     },
     "byStatus": {
-      "done": 380,
+      "done": 381,
       "planned": 0,
       "n/a": 53,
-      "unassigned": 1
+      "unassigned": 0
     },
     "userActions": 158,
     "byPr": {
-      "A2": 17,
+      "A2": 18,
       "A4": 13,
       "A9": 37,
       "A10": 30,
@@ -11036,7 +11036,8 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "userAction": true,
-      "status": "unassigned",
+      "pr": "A2",
+      "status": "done",
       "check": "Android calls personalBotsReorderPinned (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
