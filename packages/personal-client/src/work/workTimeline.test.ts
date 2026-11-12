@@ -4,9 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   barGeometry,
+  buildWorkNow,
   buildWorkTimeline,
   timelineTicks,
   workInitiatorLabel,
+  workNeedLabel,
+  workRoutinesLabel,
   workRangeMs,
   workTickLabel,
   type WorkChatTurn,
@@ -237,5 +240,84 @@ describe("ranges and ticks", () => {
   it("labels a tick with a short local clock", () => {
     expect(workTickLabel(new Date(2026, 10, 12, 17, 5).getTime())).toBe("5:05");
     expect(workTickLabel(new Date(2026, 10, 12, 0, 30).getTime())).toBe("12:30");
+  });
+});
+
+describe("the plain Work view", () => {
+  const turn = (threadId: string, started: string, ended: string | null): WorkChatTurn => ({
+    threadId,
+    turnId: `turn-${threadId}-${started}`,
+    botId: "lead",
+    title: "Hbots",
+    startedMs: msAt(started),
+    endedMs: ended === null ? null : msAt(ended),
+    needsYou: false,
+  });
+  const view = (
+    tasks: ReadonlyArray<PersonalTask>,
+    chats: ReadonlyArray<WorkChatTurn> = [],
+    chatTitles: ReadonlyMap<string, string> = new Map(),
+  ) =>
+    buildWorkNow(
+      buildWorkTimeline({
+        tasks,
+        chats,
+        botIds: ["lead"],
+        nowMs: NOW,
+        rangeMs: 4 * HOUR,
+        chatTitles,
+      }),
+    );
+
+  it("drops a request for the owner once its chat has run another turn", () => {
+    const waiting = task({
+      taskId: "old",
+      status: "waiting_for_browser",
+      started: "09:00",
+      updated: "09:10",
+      threadId: "chat",
+    });
+    const open = view([waiting], [turn("chat", "09:05", "09:10")]);
+    expect(open.needs.map((bar) => [bar.id, workNeedLabel(bar)])).toEqual([
+      ["task:old", "Needs you in the browser"],
+    ]);
+    const movedOn = view([waiting], [turn("chat", "11:30", "11:40")]);
+    expect(movedOn.needs).toEqual([]);
+    expect(movedOn.running).toEqual([]);
+  });
+
+  it("names a turn the owner started after its chat, and a delegated task by its own title", () => {
+    const now = view(
+      [
+        task({ taskId: "root", title: "Background command ran", threadId: "chat" }),
+        task({
+          taskId: "ship",
+          rootTaskId: "root",
+          parentTaskId: "root",
+          botId: "shipper",
+          source: "delegation",
+          depth: 1,
+          title: "Ship 1.67.14",
+        }),
+      ],
+      [],
+      new Map([["chat", "Hbots"]]),
+    );
+    expect(now.running).toHaveLength(1);
+    expect(now.running[0]?.lead.title).toBe("Hbots");
+    expect(now.running[0]?.helpers.map((bar) => bar.title)).toEqual(["Ship 1.67.14"]);
+  });
+
+  it("keeps finished routine runs apart from the owner's finished work", () => {
+    const now = view([
+      task({ taskId: "mine", status: "completed", completed: "11:20" }),
+      task({ taskId: "sweep-1", source: "routine", status: "completed", completed: "11:30" }),
+      task({ taskId: "sweep-2", source: "routine", status: "failed", completed: "11:40" }),
+    ]);
+    expect(now.earlier.map((group) => group.key)).toEqual(["task:mine"]);
+    expect(now.routines).toHaveLength(2);
+    expect(workRoutinesLabel(now.routines.length, now.routinesFailed)).toBe(
+      "2 routine runs · 1 failed",
+    );
   });
 });

@@ -5,6 +5,7 @@ import {
 } from "@hbots/personal-client/conversation/taskPresentation";
 import {
   barGeometry,
+  buildWorkNow,
   buildWorkTimeline,
   timelineTicks,
   workTickLabel,
@@ -14,7 +15,9 @@ import {
   workChatTurns,
   workElapsedLabel,
   workInitiatorLabel,
+  workNeedLabel,
   workRangeMs,
+  workRoutinesLabel,
   type WorkBar,
   type WorkGroup,
   type WorkRangeId,
@@ -199,10 +202,54 @@ function Group({
   );
 }
 
+/** One bot's work in plain words: who, on what, and its state. Two lines, so nothing is cut short. */
+function NowRow({
+  bar,
+  bot,
+  status,
+  helper,
+  onSelect,
+}: {
+  readonly bar: WorkBar;
+  readonly bot: PersonalBot | undefined;
+  readonly status: string;
+  readonly helper: boolean;
+  readonly onSelect: (barId: string) => void;
+}) {
+  const name = bot?.name ?? "Removed bot";
+  return (
+    <Pressable
+      onPress={() => onSelect(bar.id)}
+      accessibilityRole="button"
+      accessibilityLabel={`${name}, ${bar.title}, ${status}`}
+      android_ripple={{ color: "rgba(255,255,255,0.08)" }}
+      testID={`work-now-${bar.id}`}
+      style={[styles.nowRow, helper ? styles.nowRowHelper : null]}
+    >
+      <SmallBotAvatar bot={bot} size={helper ? 20 : 26} />
+      <View style={styles.nowText}>
+        <View style={styles.nowTop}>
+          <Text style={styles.nowBot} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+            {name}
+          </Text>
+          <Text
+            style={[styles.nowStatus, { color: TONE_COLOR[bar.tone] }]}
+            maxFontSizeMultiplier={1.3}
+          >
+            {status}
+          </Text>
+        </View>
+        <Text style={styles.nowTitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          {bar.title}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 /**
- * The Work tab: who is working, for how long, on what, and who started it.
- * One group per request, a lane per bot, a bar per piece of work, all from
- * the task feed and the chat shells. Only recorded times and steps are shown.
+ * The Work tab. First what needs the owner, then what runs now, one bot per
+ * line. Finished work and the timeline sit under Earlier, closed until asked.
  */
 export function WorkScreen({
   native,
@@ -224,6 +271,8 @@ export function WorkScreen({
   const now = useMinuteNow();
   const [range, setRange] = useState<WorkRangeId>("4h");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [earlierOpen, setEarlierOpen] = useState(false);
+  const [routinesOpen, setRoutinesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -258,8 +307,10 @@ export function WorkScreen({
       botIds: (bots ?? []).map((bot) => bot.botId),
       nowMs: now,
       rangeMs: workRangeMs(range, now),
+      chatTitles: new Map(shells.map((shell) => [shell.id as string, shell.title])),
     });
   }, [tasks, shells, links, bots, now, range]);
+  const view = useMemo(() => buildWorkNow(timeline), [timeline]);
 
   const bar = selectedId === null ? undefined : workBarsById(timeline).get(selectedId);
   const group =
@@ -296,94 +347,63 @@ export function WorkScreen({
           Work
         </Text>
       </View>
-      <View style={styles.segments} accessibilityRole="tablist">
-        {WORK_RANGES.map((entry) => {
-          const active = entry.id === range;
-          return (
-            <Pressable
-              key={entry.id}
-              onPress={() => setRange(entry.id)}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={`Last ${entry.label}`}
-              style={[styles.segment, active ? styles.segmentActive : null]}
-            >
-              <Text
-                style={[styles.segmentLabel, active ? styles.segmentLabelActive : null]}
-                maxFontSizeMultiplier={1.3}
-              >
-                {entry.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
       {error !== null ? (
         <EmptyText>{error}</EmptyText>
       ) : tasks === null ? (
         <EmptyText>Loading…</EmptyText>
       ) : (
         <ScreenScroll contentStyle={styles.body}>
-          {timeline.needs.length === 0 ? null : (
+          {view.needs.length === 0 ? null : (
             <View style={styles.needs} testID="work-needs">
               <Text style={styles.needsTitle} maxFontSizeMultiplier={1.3}>
-                {timeline.needs.length === 1
-                  ? "1 bot is waiting for you"
-                  : `${timeline.needs.length} bots are waiting for you`}
+                Needs you
               </Text>
-              {timeline.needs.map((entry) => (
-                <Pressable
+              {view.needs.map((entry) => (
+                <NowRow
                   key={entry.id}
-                  onPress={() => setSelectedId(entry.id)}
-                  accessibilityRole="button"
-                  android_ripple={{ color: "rgba(255,255,255,0.08)" }}
-                  style={styles.needsRow}
-                >
-                  <Text style={styles.needsText} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-                    <Text style={styles.laneBot}>
-                      {botMap.get(entry.botId)?.name ?? "Removed bot"}
-                    </Text>
-                    {` · ${entry.title}`}
-                  </Text>
-                  <Text style={styles.needsTime} maxFontSizeMultiplier={1.3}>
-                    {workElapsedLabel(timeline.nowMs - (entry.waitSinceMs ?? entry.startMs))}
-                  </Text>
-                </Pressable>
+                  bar={entry}
+                  bot={botMap.get(entry.botId)}
+                  status={workElapsedLabel(timeline.nowMs - (entry.waitSinceMs ?? entry.startMs))}
+                  helper={false}
+                  onSelect={setSelectedId}
+                />
               ))}
+              <Text style={styles.needsHint} maxFontSizeMultiplier={1.3}>
+                {view.needs.length === 1 && view.needs[0] !== undefined
+                  ? `${workNeedLabel(view.needs[0])}. Tap to open.`
+                  : "Tap one to open it."}
+              </Text>
             </View>
           )}
 
-          <View style={styles.axis}>
-            {ticks.map((tick, index) => (
-              <Text
-                key={tick}
-                style={[
-                  styles.tick,
-                  { left: `${(index / TICK_COUNT) * NOW_AT * 100}%` },
-                  index === 0 ? null : styles.tickCentered,
-                ]}
-                maxFontSizeMultiplier={1.2}
-              >
-                {index === TICK_COUNT ? "now" : workTickLabel(tick)}
-              </Text>
-            ))}
-          </View>
-
-          {timeline.groups.length === 0 ? (
-            <Text style={styles.empty} maxFontSizeMultiplier={1.6}>
-              No bot has worked in this time range.
+          <Text style={styles.section} maxFontSizeMultiplier={1.3}>
+            Running now
+          </Text>
+          {view.running.length === 0 ? (
+            <Text style={styles.empty} testID="work-none-running" maxFontSizeMultiplier={1.6}>
+              No bot is working right now.
             </Text>
           ) : (
-            timeline.groups.map((entry) => (
-              <Group
-                key={entry.key}
-                group={entry}
-                timeline={timeline}
-                botMap={botMap}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-              />
+            view.running.map((row) => (
+              <View key={row.key} style={styles.group} testID={`work-running-${row.key}`}>
+                <NowRow
+                  bar={row.lead}
+                  bot={botMap.get(row.lead.botId)}
+                  status={workBarTimeLabel(row.lead, timeline.nowMs)}
+                  helper={false}
+                  onSelect={setSelectedId}
+                />
+                {row.helpers.map((helper) => (
+                  <NowRow
+                    key={helper.id}
+                    bar={helper}
+                    bot={botMap.get(helper.botId)}
+                    status={workBarTimeLabel(helper, timeline.nowMs)}
+                    helper
+                    onSelect={setSelectedId}
+                  />
+                ))}
+              </View>
             ))
           )}
 
@@ -391,6 +411,115 @@ export function WorkScreen({
             <Text style={styles.idle} testID="work-idle" maxFontSizeMultiplier={1.6}>
               Idle: {idleNames.join(", ")}
             </Text>
+          )}
+
+          <Pressable
+            onPress={() => setEarlierOpen((open) => !open)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: earlierOpen }}
+            android_ripple={{ color: "rgba(255,255,255,0.08)" }}
+            testID="work-earlier"
+            style={styles.fold}
+          >
+            <Text style={styles.section} maxFontSizeMultiplier={1.3}>
+              Earlier
+            </Text>
+            <Text style={styles.foldHint} maxFontSizeMultiplier={1.3}>
+              {earlierOpen ? "Hide" : "Show"}
+            </Text>
+          </Pressable>
+
+          {!earlierOpen ? null : (
+            <>
+              <View style={styles.segments} accessibilityRole="tablist">
+                {WORK_RANGES.map((entry) => {
+                  const active = entry.id === range;
+                  return (
+                    <Pressable
+                      key={entry.id}
+                      onPress={() => setRange(entry.id)}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={`Last ${entry.label}`}
+                      style={[styles.segment, active ? styles.segmentActive : null]}
+                    >
+                      <Text
+                        style={[styles.segmentLabel, active ? styles.segmentLabelActive : null]}
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        {entry.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View style={styles.axis}>
+                {ticks.map((tick, index) => (
+                  <Text
+                    key={tick}
+                    style={[
+                      styles.tick,
+                      { left: `${(index / TICK_COUNT) * NOW_AT * 100}%` },
+                      index === 0 ? null : styles.tickCentered,
+                    ]}
+                    maxFontSizeMultiplier={1.2}
+                  >
+                    {index === TICK_COUNT ? "now" : workTickLabel(tick)}
+                  </Text>
+                ))}
+              </View>
+              {view.earlier.length === 0 ? (
+                <Text style={styles.empty} maxFontSizeMultiplier={1.6}>
+                  Nothing finished in this time range.
+                </Text>
+              ) : (
+                view.earlier.map((entry) => (
+                  <Group
+                    key={entry.key}
+                    group={entry}
+                    timeline={timeline}
+                    botMap={botMap}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                  />
+                ))
+              )}
+              {view.routines.length === 0 ? null : (
+                <Pressable
+                  onPress={() => setRoutinesOpen((open) => !open)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: routinesOpen }}
+                  android_ripple={{ color: "rgba(255,255,255,0.08)" }}
+                  testID="work-routines"
+                  style={styles.fold}
+                >
+                  <Text
+                    style={[
+                      styles.routines,
+                      view.routinesFailed > 0 ? styles.routinesFailed : null,
+                    ]}
+                    maxFontSizeMultiplier={1.3}
+                  >
+                    {workRoutinesLabel(view.routines.length, view.routinesFailed)}
+                  </Text>
+                  <Text style={styles.foldHint} maxFontSizeMultiplier={1.3}>
+                    {routinesOpen ? "Hide" : "Show"}
+                  </Text>
+                </Pressable>
+              )}
+              {!routinesOpen
+                ? null
+                : view.routines.map((entry) => (
+                    <Group
+                      key={entry.key}
+                      group={entry}
+                      timeline={timeline}
+                      botMap={botMap}
+                      selectedId={selectedId}
+                      onSelect={setSelectedId}
+                    />
+                  ))}
+            </>
           )}
         </ScreenScroll>
       )}
@@ -465,8 +594,6 @@ const styles = StyleSheet.create({
   segments: {
     flexDirection: "row",
     height: 44,
-    marginHorizontal: 16,
-    marginTop: 8,
     borderRadius: 8,
     backgroundColor: tokens.fillMuted,
     padding: 2,
@@ -483,12 +610,31 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.reviewBg,
     paddingHorizontal: 12,
     paddingTop: 10,
-    paddingBottom: 2,
   },
   needsTitle: { color: tokens.reviewText, fontSize: 13, fontWeight: "600" },
-  needsRow: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8 },
-  needsText: { flex: 1, color: tokens.text, fontSize: 13 },
-  needsTime: { color: tokens.reviewText, fontSize: 11, fontVariant: ["tabular-nums"] },
+  needsHint: { color: tokens.reviewText, fontSize: 12, paddingBottom: 10 },
+  section: { color: tokens.text, fontSize: 15, fontWeight: "600", marginTop: 8 },
+  nowRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10 },
+  nowRowHelper: {
+    marginLeft: 12,
+    paddingLeft: 12,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: tokens.borderStrong,
+  },
+  nowText: { flex: 1, gap: 2 },
+  nowTop: { flexDirection: "row", alignItems: "center", gap: 8 },
+  nowBot: { flex: 1, color: tokens.text, fontSize: 15, fontWeight: "600" },
+  nowStatus: { fontSize: 12, fontWeight: "500", fontVariant: ["tabular-nums"] },
+  nowTitle: { color: tokens.textSecondary, fontSize: 13 },
+  fold: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  foldHint: { color: tokens.textSecondary, fontSize: 13 },
+  routines: { color: tokens.textSecondary, fontSize: 13 },
+  routinesFailed: { color: tokens.error },
   axis: { height: 16, marginHorizontal: 12, marginTop: 4 },
   tick: {
     position: "absolute",
@@ -504,8 +650,7 @@ const styles = StyleSheet.create({
     borderColor: tokens.border,
     backgroundColor: tokens.surface,
     paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 12,
+    paddingVertical: 6,
   },
   groupTitle: { color: tokens.textSecondary, fontSize: 12, fontWeight: "500" },
   lane: { marginTop: 4 },
@@ -557,7 +702,7 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.working,
     transform: [{ skewX: "-30deg" }],
   },
-  empty: { color: tokens.textSecondary, fontSize: 15, marginTop: 12 },
+  empty: { color: tokens.textSecondary, fontSize: 14 },
   idle: { color: tokens.textTertiary, fontSize: 12, marginTop: 4 },
   detail: { paddingHorizontal: 20, paddingBottom: 8, gap: 4 },
   detailLine: { color: tokens.textSecondary, fontSize: 13 },

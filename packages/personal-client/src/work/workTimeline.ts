@@ -45,7 +45,12 @@ export interface WorkBar {
    * latest the wait can have begun, never a guess at an earlier time.
    */
   readonly waitSinceMs: number | null;
+  /** What the owner is asked for, on a bar that waits for them. */
+  readonly need: WorkNeed | null;
 }
+
+/** browser: act in the shared browser. answer: reply or approve in the chat. */
+export type WorkNeed = "browser" | "answer";
 
 export interface WorkLane {
   readonly botId: string;
@@ -89,6 +94,8 @@ export interface WorkTimelineInput {
   readonly botIds: ReadonlyArray<string>;
   readonly nowMs: number;
   readonly rangeMs: number;
+  /** Chat titles by thread, so a chat turn's work is named after its chat. */
+  readonly chatTitles?: ReadonlyMap<string, string> | undefined;
 }
 
 const ms = DateTime.toEpochMillis;
@@ -125,20 +132,48 @@ function taskWaitSince(task: PersonalTask, tone: WorkTone, startMs: number): num
   return Math.max(startMs, since);
 }
 
-function taskBar(task: PersonalTask): WorkBar {
-  const tone = taskTone(task);
+/**
+ * A turn the owner started carries the message as its title, which reads as
+ * noise in a list. Its chat's name says what the work is about.
+ */
+function taskTitle(task: PersonalTask, chatTitles: ReadonlyMap<string, string>): string {
+  if (task.source !== "user" || task.threadId === null) return task.title;
+  const chat = chatTitles.get(task.threadId)?.trim() ?? "";
+  return chat.length > 0 ? chat : task.title;
+}
+
+interface TaskBarContext {
+  readonly chatTitles: ReadonlyMap<string, string>;
+  /** When each chat's latest turn began. */
+  readonly latestTurnMs: ReadonlyMap<string, number>;
+}
+
+function taskBar(task: PersonalTask, context: TaskBarContext): WorkBar {
   const startMs = ms(task.startedAt ?? task.createdAt);
-  const endMs = isTerminal(task) ? Math.max(startMs, ms(task.completedAt ?? task.updatedAt)) : null;
+  const recorded = taskTone(task);
+  const waitSinceMs = taskWaitSince(task, recorded, startMs);
+  // The chat ran another turn after this wait began: the request is no longer open.
+  const movedOn =
+    recorded === "needsYou" &&
+    task.threadId !== null &&
+    (context.latestTurnMs.get(task.threadId) ?? 0) > (waitSinceMs ?? startMs);
+  const tone: WorkTone = movedOn ? "stopped" : recorded;
+  const endMs = movedOn
+    ? (waitSinceMs ?? startMs)
+    : isTerminal(task)
+      ? Math.max(startMs, ms(task.completedAt ?? task.updatedAt))
+      : null;
   return {
     id: `task:${task.taskId as string}`,
     taskId: task.taskId as string,
     threadId: task.threadId === null ? null : (task.threadId as string),
     botId: task.botId as string,
-    title: task.title,
+    title: taskTitle(task, context.chatTitles),
     tone,
     startMs,
     endMs,
-    waitSinceMs: taskWaitSince(task, tone, startMs),
+    waitSinceMs: movedOn ? null : waitSinceMs,
+    need: tone !== "needsYou" ? null : task.status === "waiting_for_browser" ? "browser" : "answer",
   };
 }
 
@@ -156,6 +191,7 @@ function chatBar(chat: WorkChatTurn): WorkBar {
     endMs: chat.needsYou ? null : chat.endedMs,
     // A waiting chat has no recorded time for when the wait began.
     waitSinceMs: chat.needsYou ? (chat.endedMs ?? null) : null,
+    need: chat.needsYou ? "answer" : null,
   };
 }
 
@@ -170,14 +206,19 @@ function chatCoveredByTask(chat: WorkChatTurn, tasks: ReadonlyArray<PersonalTask
   const turnKey = chat.turnId === null ? null : `thread-turn:${chat.threadId}:${chat.turnId}`;
   return tasks.some((task) => {
     if (turnKey !== null && task.idempotencyKey === turnKey) return true;
-    return task.threadId === chat.threadId && !isTerminal(task) && chat.endedMs === null;
+    if (task.threadId !== chat.threadId || isTerminal(task) || chat.endedMs !== null) return false;
+    // A task still marked as waiting for the owner from before this turn does not stand for it.
+    return taskTone(task) !== "needsYou" || ms(task.updatedAt) >= chat.startedMs;
   });
 }
 
-function initiatorOf(root: PersonalTask | undefined): WorkInitiator {
+function initiatorOf(
+  root: PersonalTask | undefined,
+  chatTitles: ReadonlyMap<string, string>,
+): WorkInitiator {
   if (root === undefined) return { kind: "unknown" };
   if (root.source === "routine") return { kind: "routine", title: root.title };
-  if (root.source === "user") return { kind: "you", title: root.title };
+  if (root.source === "user") return { kind: "you", title: taskTitle(root, chatTitles) };
   return { kind: "unknown" };
 }
 
@@ -215,11 +256,15 @@ export function buildWorkTimeline(input: WorkTimelineInput): WorkTimeline {
   const { tasks, chats, botIds, nowMs, rangeMs } = input;
   const startMs = nowMs - rangeMs;
   const tasksById = new Map(tasks.map((task) => [task.taskId as string, task] as const));
+  const context: TaskBarContext = {
+    chatTitles: input.chatTitles ?? new Map(),
+    latestTurnMs: new Map(chats.map((chat) => [chat.threadId, chat.startedMs] as const)),
+  };
 
   const grouped = new Map<string, { bar: WorkBar; depth: number }[]>();
   const missingRoots = new Set<string>();
   for (const task of tasks) {
-    const bar = taskBar(task);
+    const bar = taskBar(task, context);
     if (!inWindow(bar, startMs)) continue;
     const rootId = task.rootTaskId as string;
     const root = tasksById.get(rootId);
@@ -235,7 +280,7 @@ export function buildWorkTimeline(input: WorkTimelineInput): WorkTimeline {
     const bars = entries.map((entry) => entry.bar);
     groups.push({
       key: `task:${rootId}`,
-      initiator: initiatorOf(tasksById.get(rootId)),
+      initiator: initiatorOf(tasksById.get(rootId), context.chatTitles),
       lanes: buildLanes(entries),
       needsYou: bars.some((bar) => bar.tone === "needsYou"),
       active: bars.some((bar) => isActiveTone(bar.tone)),
@@ -444,4 +489,59 @@ export function workTickLabel(ms: number): string {
   const date = new Date(ms);
   const hour = date.getHours() % 12 === 0 ? 12 : date.getHours() % 12;
   return `${hour}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** One line of "Running now": the bot that took the request and the helpers it asked. */
+export interface WorkNowRow {
+  readonly key: string;
+  readonly lead: WorkBar;
+  readonly helpers: ReadonlyArray<WorkBar>;
+}
+
+/** The Work tab's plain view: what needs the owner, what runs, and what is over. */
+export interface WorkNow {
+  readonly needs: ReadonlyArray<WorkBar>;
+  readonly running: ReadonlyArray<WorkNowRow>;
+  /** Finished requests the owner started, newest first. */
+  readonly earlier: ReadonlyArray<WorkGroup>;
+  /** Finished routine runs, kept apart so they never crowd the owner's own work. */
+  readonly routines: ReadonlyArray<WorkGroup>;
+  readonly routinesFailed: number;
+}
+
+export function buildWorkNow(timeline: WorkTimeline): WorkNow {
+  const running: WorkNowRow[] = [];
+  const earlier: WorkGroup[] = [];
+  const routines: WorkGroup[] = [];
+  for (const group of timeline.groups) {
+    if (!group.active) {
+      (group.initiator.kind === "routine" ? routines : earlier).push(group);
+      continue;
+    }
+    const live = group.lanes.flatMap((lane) =>
+      lane.bars.filter((bar) => isActiveTone(bar.tone) && bar.tone !== "needsYou"),
+    );
+    const [lead, ...helpers] = live;
+    if (lead !== undefined) running.push({ key: group.key, lead, helpers });
+  }
+  return {
+    needs: timeline.needs,
+    running,
+    earlier,
+    routines,
+    routinesFailed: routines.filter((group) =>
+      group.lanes.some((lane) => lane.bars.some((bar) => bar.tone === "failed")),
+    ).length,
+  };
+}
+
+/** What the owner is asked to do, in one short line. */
+export function workNeedLabel(bar: WorkBar): string {
+  return bar.need === "browser" ? "Needs you in the browser" : "Waiting for your answer";
+}
+
+/** "3 routine runs", "3 routine runs · 1 failed". */
+export function workRoutinesLabel(count: number, failed: number): string {
+  const runs = count === 1 ? "1 routine run" : `${count} routine runs`;
+  return failed === 0 ? runs : `${runs} · ${failed} failed`;
 }

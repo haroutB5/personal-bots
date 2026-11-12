@@ -534,6 +534,7 @@ export function WorkScreen(): JSX.Element {
     botIds: (bots ?? []).map((bot) => bot.botId),
     nowMs: now,
     rangeMs: workRangeMs(range, now),
+    chatTitles: new Map(shells.map((shell) => [shell.id as string, shell.title])),
   });
 
   const liveShells = shells.filter(isThreadLive);
