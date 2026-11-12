@@ -1,12 +1,9 @@
-import { systemStatParts, type SystemSummary } from "@hbots/personal-client/computer/systemStats";
-import { useEffect, useRef, useState } from "react";
+import { systemStatParts } from "@hbots/personal-client/computer/systemStats";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { useSystemSummary } from "../computer/useSystemSummary";
 import { tokens } from "./tokens";
-
-const POLL_MS = 10_000;
-const RETRY_MS = 30_000;
 
 /**
  * The PC at a glance under the Bots header: CPU, RAM and free disk, a busy
@@ -14,40 +11,7 @@ const RETRY_MS = 30_000;
  * never jumps, exactly as the web line does.
  */
 export function SystemStatsLine({ native }: { readonly native: NativePersonal }) {
-  const [summary, setSummary] = useState<SystemSummary | null>(null);
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let inFlight = false;
-
-    const schedule = (delay: number) => {
-      if (!mounted.current) return;
-      timer = setTimeout(() => void ask(), delay);
-    };
-
-    const ask = async () => {
-      if (!mounted.current || inFlight) return;
-      inFlight = true;
-      const next = await native.readSystemSummary();
-      inFlight = false;
-      if (!mounted.current) return;
-      if (next === null) {
-        schedule(RETRY_MS);
-        return;
-      }
-      setSummary(next);
-      schedule(POLL_MS);
-    };
-
-    void ask();
-    return () => {
-      mounted.current = false;
-      if (timer !== null) clearTimeout(timer);
-    };
-  }, [native]);
-
+  const summary = useSystemSummary(native);
   const parts = summary === null ? [] : systemStatParts(summary);
   return (
     <View style={styles.line}>
