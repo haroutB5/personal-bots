@@ -59,7 +59,7 @@ import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
 import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
-import { dropIndex, moveTo, PINNED_TILE_STEP } from "./pinnedOrderModel";
+import { moveTo, reorderByDrag } from "./pinnedOrderModel";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
@@ -84,12 +84,18 @@ function PinnedTile({
   readonly now: number;
   readonly onPress: () => void;
   readonly onLift: (active: boolean) => void;
-  readonly onDrop: (dx: number) => void;
+  readonly onDrop: (botId: string, dx: number) => void;
   readonly onMove: (delta: -1 | 1) => void;
 }) {
   const status = botStatus(summary, now);
   const badge = status.tone === "review" ? "attention" : summary.live ? "working" : null;
   const unread = summary.unreadChats ?? 0;
+  const botId = summary.bot.botId as string;
+  // The responder is created once, so it reads the current callbacks from here.
+  const latest = useRef({ onDrop, onLift });
+  useEffect(() => {
+    latest.current = { onDrop, onLift };
+  });
   // eslint-disable-next-line react/refs -- the animated value is created once
   const translateX = useRef(new Animated.Value(0)).current;
   const lifted = useRef(false);
@@ -105,17 +111,17 @@ function PinnedTile({
         const dx = gesture.dx;
         translateX.setValue(0);
         lifted.current = false;
-        onLift(false);
+        latest.current.onLift(false);
         if (Math.abs(dx) > 4) moved.current = true;
         setTimeout(() => {
           moved.current = false;
         }, 0);
-        onDrop(dx);
+        latest.current.onDrop(botId, dx);
       },
       onPanResponderTerminate: () => {
         translateX.setValue(0);
         lifted.current = false;
-        onLift(false);
+        latest.current.onLift(false);
       },
     }),
   ).current;
@@ -611,11 +617,28 @@ export function BotsScreen({
     setActionError(null);
   };
 
-  const movePinned = (from: number, to: number) => {
-    const currentIds = pinnedSummaries.map((summary) => summary.bot.botId as string);
-    const nextIds = moveTo(currentIds, from, to);
-    if (nextIds === currentIds || nextIds.every((id, index) => id === currentIds[index])) return;
+  // The gesture reads this ref when it ends, so a reorder always starts from
+  // the order on screen, not the one from when the tile first mounted.
+  const pinnedIdsRef = useRef<ReadonlyArray<string>>([]);
+  useEffect(() => {
+    pinnedIdsRef.current = pinnedSummaries.map((summary) => summary.bot.botId as string);
+  }, [pinnedSummaries]);
+
+  const movePinned = (nextIds: ReadonlyArray<string>, currentIds: ReadonlyArray<string>) => {
+    if (nextIds.every((id, index) => id === currentIds[index])) return;
     void savePinnedOrder(nextIds, currentIds);
+  };
+
+  const movePinnedByDrag = (botId: string, dx: number) => {
+    const currentIds = pinnedIdsRef.current;
+    movePinned(reorderByDrag(currentIds, botId, dx), currentIds);
+  };
+
+  const movePinnedBySlot = (botId: string, delta: -1 | 1) => {
+    const currentIds = pinnedIdsRef.current;
+    const from = currentIds.indexOf(botId);
+    if (from < 0) return;
+    movePinned(moveTo(currentIds, from, from + delta), currentIds);
   };
 
   useEffect(() => {
@@ -946,20 +969,15 @@ export function BotsScreen({
                 contentContainerStyle={styles.pinnedStrip}
                 style={styles.pinnedScroller}
               >
-                {pinnedSummaries.map((summary, index) => (
+                {pinnedSummaries.map((summary) => (
                   <PinnedTile
                     key={summary.bot.botId}
                     summary={summary}
                     now={now}
                     onPress={() => openSummary(summary)}
                     onLift={setPinnedDragging}
-                    onDrop={(dx) =>
-                      movePinned(
-                        index,
-                        dropIndex(dx, PINNED_TILE_STEP, index, pinnedSummaries.length),
-                      )
-                    }
-                    onMove={(delta) => movePinned(index, index + delta)}
+                    onDrop={movePinnedByDrag}
+                    onMove={(delta) => movePinnedBySlot(summary.bot.botId as string, delta)}
                   />
                 ))}
               </ScrollView>

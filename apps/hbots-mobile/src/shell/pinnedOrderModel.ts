@@ -10,6 +10,21 @@ export function dropIndex(dx: number, tileWidth: number, from: number, count: nu
   return Math.max(0, Math.min(count - 1, target));
 }
 
+/**
+ * The list after dragging `botId` by `dx`. The index is looked up in the list
+ * handed in, so a second drag uses the order the first one saved.
+ */
+export function reorderByDrag(
+  ids: ReadonlyArray<string>,
+  botId: string,
+  dx: number,
+  tileWidth = PINNED_TILE_STEP,
+): ReadonlyArray<string> {
+  const from = ids.indexOf(botId);
+  if (from < 0) return [...ids];
+  return moveTo(ids, from, dropIndex(dx, tileWidth, from, ids.length));
+}
+
 /** The list with the entry at `from` moved to `to`; everything else keeps its order. */
 export function moveTo<T>(ids: ReadonlyArray<T>, from: number, to: number): ReadonlyArray<T> {
   if (from < 0 || from >= ids.length) return [...ids];
