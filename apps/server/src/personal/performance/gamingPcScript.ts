@@ -7,8 +7,10 @@
  * `S:\hbots\light-games.txt` if present (the lists the rig's game check
  * uses), reads three performance counters and the process names, and writes one
  * JSON line to stdout. It writes nothing, installs nothing and kills nothing.
- * It ends by itself after `$MaxLines` readings (24 lines, about 2 minutes), so
- * a dropped laptop link cannot leave it running.
+ * It ends by itself after `$MaxLines` readings (24 lines, about 2 minutes) and
+ * a watchdog runspace exits the process after 170 s whatever the main thread is
+ * doing, so neither a dropped laptop link nor a stalled counter call can leave
+ * it running.
  *
  * Source of truth for review: qa/hbots-gamingpc-stats/pcstats-final.ps1.
  *
@@ -19,6 +21,10 @@
  */
 export const PC_STATS_SCRIPT = String.raw`$ErrorActionPreference = 'SilentlyContinue'
 $MaxLines = 24
+# Hard deadline for the whole run, even if a counter call stalls before the first line.
+$wd = [powershell]::Create()
+[void]$wd.AddScript('Start-Sleep -Seconds 170; [Environment]::Exit(0)')
+[void]$wd.BeginInvoke()
 $heavy = @(); $light = @()
 if (Test-Path -LiteralPath 'S:\hbots\games.txt') {
   $heavy = @(Get-Content -LiteralPath 'S:\hbots\games.txt' | ForEach-Object { $_.Trim() } |

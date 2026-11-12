@@ -93,6 +93,7 @@ describe("the fixed ssh command", () => {
   it("sends a script that only reads on the PC and ends by itself", () => {
     expect(PC_STATS_SCRIPT).toContain("$MaxLines = 24");
     expect(PC_STATS_SCRIPT).toContain("if ($n -ge $MaxLines) { exit 0 }");
+    expect(PC_STATS_SCRIPT).toContain("Start-Sleep -Seconds 170; [Environment]::Exit(0)");
     for (const writer of [
       "Set-Content",
       "Add-Content",
@@ -208,11 +209,11 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 class FakeLink implements LinkHandle {
   killed = 0;
   private lineListener: (line: string) => void = () => undefined;
-  private exitListener: (detail: string, forceFail?: boolean) => void = () => undefined;
+  private exitListener: (detail: string, forceFail: boolean) => void = () => undefined;
   onLine(listener: (line: string) => void) {
     this.lineListener = listener;
   }
-  onExit(listener: (detail: string, forceFail?: boolean) => void) {
+  onExit(listener: (detail: string, forceFail: boolean) => void) {
     this.exitListener = listener;
   }
   kill() {

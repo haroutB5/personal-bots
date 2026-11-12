@@ -319,6 +319,21 @@ describe("gamingPcAriaLabel", () => {
     );
   });
 
+  it("says In use once when a game and a bot are both on the PC", () => {
+    const label = gamingPcAriaLabel(
+      onPc({
+        users: [
+          { kind: "game", game: "league-match", label: "League of Legends" },
+          { kind: "bot", bot: "Builder", job: "build", purpose: "hbots motion throwaway APKs" },
+        ],
+      }),
+    );
+    expect(label).toContain(
+      "In use: League match, and by Builder for hbots motion throwaway APKs, APK build.",
+    );
+    expect(label?.match(/In use/g)).toHaveLength(1);
+  });
+
   it("is short with nobody using it and no GPU reading", () => {
     expect(gamingPcAriaLabel(onPc({ gpuPct: null }))).toBe(
       "Gaming PC: CPU 32 percent, memory 12 of 16 GB used.",

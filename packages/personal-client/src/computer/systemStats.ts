@@ -350,13 +350,21 @@ export function gamingPcAriaLabel(pc: GamingPc | null): string | null {
     `memory ${Math.round(pc.memUsedGB)} of ${Math.round(pc.memTotalGB)} GB used`,
   ];
   if (pc.gpuPct !== null) words.push(`GPU ${pc.gpuPct} percent`);
-  const use = pc.users.map((user) => {
-    if (user.kind === "game") return ` In use: ${gameText(user)}.`;
+  const games = pc.users.flatMap((user) => (user.kind === "game" ? [gameText(user)] : []));
+  const bots = pc.users.flatMap((user) => {
+    if (user.kind !== "bot") return [];
     const purpose = user.purpose === null ? "" : ` for ${user.purpose}`;
     const job = user.job === null ? "" : `, ${JOB_WORDS[user.job]}`;
-    return ` In use by ${user.bot}${purpose}${job}.`;
+    return [`${user.bot}${purpose}${job}`];
   });
-  return `Gaming PC: ${words.join(", ")}.${use.join("")}`;
+  // "In use" is said once, however many users there are.
+  const use =
+    games.length > 0
+      ? ` In use: ${games.join(", ")}${bots.length > 0 ? `, and by ${bots.join("; ")}` : ""}.`
+      : bots.length > 0
+        ? ` In use by ${bots.join("; ")}.`
+        : "";
+  return `Gaming PC: ${words.join(", ")}.${use}`;
 }
 
 /**

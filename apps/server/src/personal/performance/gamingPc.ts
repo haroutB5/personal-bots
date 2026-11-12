@@ -18,8 +18,10 @@
  * - The app stores no credential. ssh uses the server user's key and
  *   `~/.ssh/config` entry, with BatchMode so it never prompts.
  *
- * On the PC the script only reads, and ends itself after 24 lines. A dropped
- * link leaves it running for at most that long.
+ * On the PC the script only reads, ends itself after 24 lines and has a hard
+ * total-runtime deadline. On the laptop the ssh child is started under
+ * `setpriv --pdeathsig KILL`, so the kernel kills it the moment the server
+ * dies by any signal (SIGKILL included); no ssh of ours outlives the server.
  *
  * Optional T3CODE_PERSONAL_GAMINGPC_RIG_DIR names the laptop rig's state
  * directory (`~/.cache/hbots-rig`). hbots then reads `who` and `holder.pid`
@@ -29,7 +31,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeReadline from "node:readline";
 
 import { PC_STATS_SCRIPT } from "./gamingPcScript.ts";
 
@@ -183,13 +184,39 @@ export interface RigHolderIo {
   readonly procRoot?: string;
 }
 
-const readSmall = async (file: string): Promise<string | null> => {
+/** The rig files are one short line each. Nothing past this is ever read. */
+const RIG_READ_BYTES = 4096;
+/** A rig read that has not answered by now is "nobody"; the line never waits on it. */
+const RIG_READ_TIMEOUT_MS = 2_000;
+
+/**
+ * Opens without following a symlink and without blocking on a pipe, requires a
+ * regular file on the open descriptor, and reads at most RIG_READ_BYTES from it.
+ */
+const readBounded = async (file: string): Promise<string | null> => {
+  let handle: NodeFSP.FileHandle | null = null;
   try {
-    return (await NodeFSP.readFile(file, "utf8")).slice(0, 4096);
+    const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = NodeFSP.constants;
+    handle = await NodeFSP.open(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (!(await handle.stat()).isFile()) return null;
+    const buffer = Buffer.alloc(RIG_READ_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, RIG_READ_BYTES, 0);
+    return buffer.toString("utf8", 0, bytesRead);
   } catch {
     return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 };
+
+const readSmall = (file: string): Promise<string | null> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), RIG_READ_TIMEOUT_MS);
+    void readBounded(file).then((text) => {
+      clearTimeout(timer);
+      resolve(text);
+    });
+  });
 
 const BOT_MAX = 24;
 const PURPOSE_MAX = 80;
@@ -275,8 +302,12 @@ export const PC_REMOTE_COMMAND = "$s = [Console]::In.ReadToEnd(); Invoke-Express
 /** The one ssh child. `kill` is by the captured handle only. */
 export interface LinkHandle {
   onLine: (listener: (line: string) => void) => void;
-  /** `detail` is the tail of the child's stderr, for one log line. */
-  onExit: (listener: (detail: string) => void) => void;
+  /**
+   * `detail` is the tail of the child's stderr, for one log line. `forceFail` is
+   * true when the link itself was dropped for misbehaving (an over-long line):
+   * the run counts as failed however long it had streamed.
+   */
+  onExit: (listener: (detail: string, forceFail: boolean) => void) => void;
   kill: () => void;
 }
 
@@ -294,24 +325,59 @@ function sshEnvironment(): NodeJS.ProcessEnv {
 
 /** SIGKILL follows a SIGTERM that did not end the child within this long. */
 const KILL_ESCALATE_MS = 3_000;
+/** A stdout line longer than this means a broken or hostile PC: the link is dropped. */
+export const PC_LINE_MAX_CHARS = 64 * 1024;
+
+/**
+ * The argv for the ssh child. On Linux ssh runs under `setpriv --pdeathsig KILL`:
+ * the kernel then sends it SIGKILL when the server (its parent) dies, however it
+ * dies, in every state (connecting, silent, streaming). Elsewhere it runs bare.
+ */
+export function pcLinkCommand(host: string): { file: string; args: ReadonlyArray<string> } {
+  const ssh = ["ssh", ...PC_SSH_ARGS, host, PC_REMOTE_COMMAND];
+  return process.platform === "linux"
+    ? { file: "setpriv", args: ["--pdeathsig", "KILL", ...ssh] }
+    : { file: "ssh", args: ssh.slice(1) };
+}
 
 export function spawnPcLink(host: string): LinkHandle {
   let onLine: (line: string) => void = () => undefined;
-  let onExit: (detail: string) => void = () => undefined;
+  let onExit: (detail: string, forceFail: boolean) => void = () => undefined;
   let killed = false;
+  let overflowed = false;
   const stderrTail: string[] = [];
-  const child = NodeChildProcess.spawn("ssh", [...PC_SSH_ARGS, host, PC_REMOTE_COMMAND], {
+  const command = pcLinkCommand(host);
+  const child = NodeChildProcess.spawn(command.file, [...command.args], {
     stdio: ["pipe", "pipe", "pipe"],
     env: sshEnvironment(),
   });
   child.stdin?.on("error", () => undefined);
   child.stdin?.end(PC_STATS_SCRIPT);
   child.stdout?.setEncoding("utf8");
-  if (child.stdout !== null) {
-    NodeReadline.createInterface({ input: child.stdout }).on("line", (line) => {
+  let pending = "";
+  const dropForOverflow = () => {
+    overflowed = true;
+    pending = "";
+    child.stdout?.destroy();
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  };
+  child.stdout?.on("data", (chunk: string) => {
+    if (overflowed) return;
+    pending += chunk;
+    let newline = pending.indexOf("\n");
+    while (newline !== -1) {
+      const line = pending.slice(0, newline).replace(/\r$/, "");
+      pending = pending.slice(newline + 1);
+      if (line.length > PC_LINE_MAX_CHARS) return dropForOverflow();
       if (!killed) onLine(line);
-    });
-  }
+      newline = pending.indexOf("\n");
+    }
+    if (pending.length > PC_LINE_MAX_CHARS) dropForOverflow();
+  });
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => {
     stderrTail.push(chunk.trim());
@@ -321,7 +387,13 @@ export function spawnPcLink(host: string): LinkHandle {
   const finish = () => {
     if (ended) return;
     ended = true;
-    if (!killed) onExit(stderrTail.join(" | ").replace(/\s+/g, " ").slice(0, 200));
+    if (killed) return;
+    onExit(
+      overflowed
+        ? "stdout line over 64 KB"
+        : stderrTail.join(" | ").replace(/\s+/g, " ").slice(0, 200),
+      overflowed,
+    );
   };
   child.on("error", (error) => {
     stderrTail.push(error.message);
@@ -503,10 +575,10 @@ export function makeGamingPcReader(
       };
       refreshRig(at);
     });
-    child.onExit((detail) => {
+    child.onExit((detail, forceFail) => {
       if (link.tag !== "connecting" && link.tag !== "streaming") return;
       if (link.child !== child) return;
-      onChildExit(now(), detail);
+      onChildExit(now(), detail, forceFail);
     });
   };
 
@@ -520,7 +592,11 @@ export function makeGamingPcReader(
     }
   };
 
-  const onChildExit = (nowMs: number, detail: string) => {
+  const onChildExit = (nowMs: number, detail: string, forceFail: boolean) => {
+    if (forceFail && (link.tag === "connecting" || link.tag === "streaming")) {
+      fail(nowMs, link.failures, detail);
+      return;
+    }
     if (link.tag === "streaming") {
       const healthy =
         nowMs - link.startedAt >= GAMING_PC_HEALTHY_RUN_MS &&
