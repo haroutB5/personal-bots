@@ -25,7 +25,12 @@ class HbotsWindowModule : Module() {
         val decor = view?.rootView
         val params = decor?.layoutParams as? WindowManager.LayoutParams
         if (decor != null && params != null && decor.isAttachedToWindow && decor !== activity.window.decorView) {
-          findHost(activity.window.decorView, decor)?.isEnabled = touchable
+          val host = findHost(activity.window.decorView, decor)
+          host?.isEnabled = touchable
+          (host as? ViewGroup)?.let { group ->
+            for (index in 0 until group.childCount) group.getChildAt(index).isEnabled = touchable
+          }
+          android.util.Log.d("HbotsWindow", "setTouchable=$touchable host=${host?.javaClass?.simpleName} children=${(host as? ViewGroup)?.childCount}")
           val flags =
             if (touchable) params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             else params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
