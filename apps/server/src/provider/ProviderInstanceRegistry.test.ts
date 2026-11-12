@@ -34,6 +34,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -601,6 +602,75 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       );
       expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live.skipIf(windowsHost)(
+    "keeps the last known Claude reset credit when the usage read is rate limited",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixtures = yield* makeTildeProviderFixtures();
+        yield* fs.writeFileString(
+          path.join(fixtures.claudeHomePath, ".credentials.json"),
+          '{"claudeAiOauth":{"accessToken":"fake-token"}}',
+        );
+        yield* fs.writeFileString(
+          path.join(fixtures.claudeHomePath, ".claude.json"),
+          '{"oauthAccount":{"organizationUuid":"fake-org"}}',
+        );
+        const rateLimited = yield* Ref.make(false);
+        const client = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            if (request.url.endsWith("/api/oauth/usage")) {
+              if (yield* Ref.get(rateLimited)) {
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ error: "rate limited" }, { status: 429 }),
+                );
+              }
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  cedar_ember: {
+                    eligible: true,
+                    next_grant_id: "grant_a",
+                    grants: [{ id: "grant_a", resets_left: 1, usable_now: true }],
+                  },
+                }),
+              );
+            }
+            return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
+          }),
+        );
+        const instanceId = ProviderInstanceId.make("claude_reset_unreadable");
+        const { registry } = yield* makeProviderInstanceRegistry({
+          drivers: [ClaudeDriver],
+          configMap: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              enabled: true,
+              config: makeClaudeConfig({
+                enabled: true,
+                binaryPath: fixtures.claudeBinaryPath,
+                homePath: fixtures.claudeHomePath,
+              }),
+            },
+          },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+        const instance = yield* registry.getInstance(instanceId);
+        expect(instance).toBeDefined();
+        const known = yield* instance!.snapshot.refresh;
+        expect(known.usageLimits?.resetCredits?.availableCount).toBe(1);
+
+        yield* Ref.set(rateLimited, true);
+        const unreadable = yield* instance!.snapshot.refresh;
+        expect(unreadable.usageLimits?.resetCredits?.availableCount).toBe(1);
+      }).pipe(
+        // macOS logins live in the Keychain, where resets are never read.
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provide(layerTest),
+      ),
   );
 
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>

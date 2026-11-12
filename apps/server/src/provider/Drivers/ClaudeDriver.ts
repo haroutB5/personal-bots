@@ -1,4 +1,8 @@
-import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  ProviderDriverKind,
+  type ServerProviderResetCredits,
+} from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -221,6 +225,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
+    // A rate-limited usage read must not hide a credit the last read found.
+    const lastResetCredits = yield* Ref.make<ServerProviderResetCredits | undefined>(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
@@ -303,6 +309,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               scopedLimitNames,
               (version) =>
                 ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                  Effect.flatMap((read) =>
+                    read._tag === "Read"
+                      ? Ref.set(lastResetCredits, read.credits).pipe(Effect.as(read.credits))
+                      : Ref.get(lastResetCredits),
+                  ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),

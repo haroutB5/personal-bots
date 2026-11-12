@@ -88,6 +88,14 @@ class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>(
 
 const isClaudeResetCreditError = Schema.is(ClaudeResetCreditError);
 
+/**
+ * A usage read either answers (with credits, or none) or fails. A failed read
+ * must not read as "no credits": the driver keeps the last answer it got.
+ */
+export type ClaudeResetCreditsRead =
+  | { readonly _tag: "Read"; readonly credits: ServerProviderResetCredits | undefined }
+  | { readonly _tag: "Unreadable" };
+
 /** Retry unanswered or unconfirmed claims with the same request ID. */
 export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
@@ -197,7 +205,7 @@ const withClaudeHeaders = (token: string, version: string) =>
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   function* (configDir: string, version: string) {
     const token = yield* readAccessToken(configDir);
-    if (!token) return undefined;
+    if (!token) return { _tag: "Read", credits: undefined } as const;
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
@@ -207,13 +215,16 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
-    );
+    return {
+      _tag: "Read",
+      credits: claudeResetCreditsToContract(
+        body.cedar_ember,
+        DateTime.toEpochMillis(yield* DateTime.now),
+      ),
+    } as const;
   },
   Effect.timeout("10 seconds"),
-  Effect.orElseSucceed(() => undefined),
+  Effect.orElseSucceed(() => ({ _tag: "Unreadable" }) as const),
 );
 
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
