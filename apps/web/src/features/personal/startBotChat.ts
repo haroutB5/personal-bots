@@ -33,10 +33,16 @@ export type StartBotChatOutcome =
   | { readonly ok: true }
   | { readonly ok: false; readonly message: string; readonly nameTaken: boolean };
 
-// Chats started in this tab: the chat screen draws their chip before the list knows them.
+// Chats started in this tab that the list does not know yet: the chat screen draws their chip
+// before the list does. Once listed, the chip is the list's, so an archived or deleted chat
+// leaves no untitled chip behind.
 const startedChats = new Set<string>();
 
-export function wasChatStartedHere(threadId: string): boolean {
+export function wasChatStartedHere(
+  threadId: string,
+  links: ReadonlyArray<{ readonly threadId: string }>,
+): boolean {
+  if (links.some((link) => link.threadId === threadId)) startedChats.delete(threadId);
   return startedChats.has(threadId);
 }
 

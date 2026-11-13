@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { act, create } from "react-test-renderer";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { useStartBotChat } from "./startBotChat";
+import { useStartBotChat, wasChatStartedHere } from "./startBotChat";
 
 const calls = vi.hoisted(() => ({
   created: [] as unknown[],
@@ -62,6 +62,25 @@ describe("useStartBotChat", () => {
     });
     expect(calls.created).toHaveLength(1);
     expect(calls.navigated).toHaveLength(1);
+  });
+
+  it("forgets a started chat once the list knows it, so archiving it leaves no chip", async () => {
+    act(() => {
+      create(<Harness />);
+    });
+    let started!: Promise<unknown>;
+    act(() => {
+      started = hook.latest.start();
+    });
+    await act(async () => {
+      calls.release?.();
+      await started;
+    });
+    const { threadId } = (calls.created[0] as { input: { threadId: string } }).input;
+    expect(wasChatStartedHere(threadId, [])).toBe(true);
+    expect(wasChatStartedHere(threadId, [{ threadId }])).toBe(false);
+    // Archived: the refreshed list no longer carries its link.
+    expect(wasChatStartedHere(threadId, [])).toBe(false);
   });
 
   it("creates the chat with the name the owner typed", async () => {

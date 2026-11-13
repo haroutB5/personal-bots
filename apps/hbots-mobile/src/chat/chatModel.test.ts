@@ -10,6 +10,7 @@ import {
   chatHeaderModel,
   contextUsageLabel,
 } from "./chatModel";
+import { markChatStarted, wasChatStartedHere } from "./useStartChat";
 
 describe("chatHeaderModel", () => {
   it("keeps the bot name from the cached list when the live list is offline", () => {
@@ -71,6 +72,33 @@ describe("buildChatChips", () => {
     ]);
     // A chat opened cold has no chip until its shell arrives.
     expect(buildChatChips(input).map((chip) => chip.threadId)).toEqual(["thread-old"]);
+  });
+
+  it("leaves no chip behind when the open chat started here is archived", () => {
+    const base = { botId: "bot-1", currentThreadId: "thread-started" } as const;
+    const listed = [
+      {
+        botId: "bot-1",
+        threadId: "thread-started",
+        createdAt: at("2026-11-13T09:00:00.000Z"),
+        archivedAt: null,
+      },
+    ] as never;
+    const chipTexts = (links: never, shells: never) =>
+      buildChatChips({
+        ...base,
+        links,
+        shells,
+        startedHere: wasChatStartedHere("thread-started", links),
+      }).map((chip) => [chip.threadId, chip.text]);
+
+    markChatStarted("thread-started");
+    expect(chipTexts([] as never, [] as never)).toEqual([["thread-started", "New chat"]]);
+    expect(chipTexts(listed, [{ id: "thread-started", title: "Plan the trip" }] as never)).toEqual([
+      ["thread-started", "Plan the trip"],
+    ]);
+    // Archived: the refreshed list drops its link and the shell stream removes its shell.
+    expect(chipTexts([] as never, [] as never)).toEqual([]);
   });
 
   it("puts pinned chats first and then newest activity, current chip included", () => {

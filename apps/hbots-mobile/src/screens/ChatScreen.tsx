@@ -354,7 +354,7 @@ export function ChatScreen({
         currentThreadId: threadId,
         links,
         shells,
-        startedHere: wasChatStartedHere(threadId),
+        startedHere: wasChatStartedHere(threadId, links),
       }),
     [botId, links, shells, threadId],
   );
