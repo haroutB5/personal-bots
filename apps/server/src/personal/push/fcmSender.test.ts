@@ -267,3 +267,52 @@ it.effect(
     );
   },
 );
+
+it.effect("reads the key file when no saved secret holds the key", () => {
+  const posts: Array<FcmSender.FcmHttpRequest> = [];
+  return Effect.gen(function* () {
+    const sender = yield* FcmSender.FcmSender;
+    yield* sender.send(["tok"], {
+      kind: "test",
+      notificationId: "n",
+      botId: "",
+      threadId: "",
+      v: "1",
+    });
+    expect(posts.some((post) => post.url.includes("messages:send"))).toBe(true);
+  }).pipe(
+    Effect.provide(
+      FcmSender.layer.pipe(
+        Layer.provide(
+          Layer.succeed(FcmSender.FcmHttp, {
+            post: (request: FcmSender.FcmHttpRequest) =>
+              Effect.sync(() => {
+                posts.push(request);
+                return request.url.includes("oauth2")
+                  ? {
+                      status: 200,
+                      body: JSON.stringify({ access_token: "ya29.fake", expires_in: 3600 }),
+                    }
+                  : { status: 200, body: "{}" };
+              }),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(FcmSender.FcmKeyFile, {
+            read: Effect.succeed(Option.some(accountJson())),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(ServerSecretStore.ServerSecretStore, {
+            get: () => Effect.succeed(Option.none()),
+            set: () => Effect.void,
+            create: () => Effect.void,
+            getOrCreateRandom: () => Effect.die("not used"),
+            remove: () => Effect.void,
+          }),
+        ),
+        Layer.provide(noSecretRows),
+      ),
+    ),
+  );
+});

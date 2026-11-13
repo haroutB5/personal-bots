@@ -181,6 +181,15 @@ export interface FcmHttpRequest {
   readonly body: string;
 }
 
+/**
+ * The key as a file in the server's own data folder, for an owner who cannot
+ * paste it into the secure card. Read only when no saved secret holds the key.
+ */
+export class FcmKeyFile extends Context.Service<
+  FcmKeyFile,
+  { readonly read: Effect.Effect<Option.Option<Uint8Array>> }
+>()("t3/personal/push/FcmKeyFile") {}
+
 export class FcmHttp extends Context.Service<
   FcmHttp,
   {
@@ -257,6 +266,7 @@ export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const http = yield* FcmHttp;
   const secretRows = yield* PersonalSecretRepository.PersonalSecretRepository;
+  const keyFile = yield* Effect.serviceOption(FcmKeyFile);
 
   let cached: { readonly config: FcmConfig; readonly loadedAtMs: number } | null = null;
   const loggedDisabled = new Set<string>();
@@ -288,6 +298,12 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(found)) {
         stored = { bytes: found.value, slot };
         break;
+      }
+    }
+    if (stored === null && Option.isSome(keyFile)) {
+      const fromFile = yield* keyFile.value.read;
+      if (Option.isSome(fromFile)) {
+        stored = { bytes: fromFile.value, slot: { storeKey: "", label: "file" } };
       }
     }
     if (stored !== null && loggedSlot !== stored.slot.label) {

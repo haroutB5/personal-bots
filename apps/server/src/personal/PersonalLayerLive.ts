@@ -27,6 +27,7 @@ import * as PersonalMemoryTidy from "./memory/PersonalMemoryTidyService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import * as PersonalProviderUpdates from "./providerUpdates/PersonalProviderUpdates.ts";
 import * as ProviderMaintenanceRunner from "../provider/providerMaintenanceRunner.ts";
+import { fcmKeyFileLive } from "./push/fcmKeyFile.ts";
 import * as FcmSender from "./push/fcmSender.ts";
 import * as NotificationActions from "./push/notificationActions.ts";
 import * as PersonalPushService from "./push/PersonalPushService.ts";
@@ -157,6 +158,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
         Layer.provide(
           FcmSender.layer.pipe(
             Layer.provide(FcmSender.fcmHttpLive),
+            Layer.provide(fcmKeyFileLive),
             Layer.provide(PersonalSecretRepository.layer),
             Layer.provide(ServerSecretStore.layer),
           ),
