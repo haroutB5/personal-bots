@@ -61,6 +61,8 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
+import { takeChatOpenReport } from "../personal/chatOpenPerf";
+import { reportPerf } from "../crash/crashReporter";
 import { chatLoadRetryDelayMs } from "./chatLoadRetry";
 import {
   botVoiceCallColour,
@@ -453,9 +455,11 @@ export function ChatScreen({
     if (thread === null || openLogged.current) return;
     openLogged.current = true;
     requestAnimationFrame(() => {
-      console.info(`[perf] chat-open-ms ${Math.round(performance.now() - openedAt.current)}`);
+      const report = takeChatOpenReport(threadId, openedAt.current, performance.now());
+      console.info(report.line);
+      reportPerf(report.body);
     });
-  }, [thread]);
+  }, [thread, threadId]);
 
   useEffect(() => {
     if (prewarmed.current || thread !== null) return;

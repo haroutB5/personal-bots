@@ -88,6 +88,12 @@ export async function reportAnrForTest(): Promise<void> {
   );
 }
 
+/** One timing line (chatOpenPerf.ts): durations and sizes only. Dropped before pairing. */
+export function reportPerf(body: Record<string, number | string>): void {
+  if (baseUrl === null) return;
+  void post(baseUrl, body).catch(() => undefined);
+}
+
 /**
  * A stalled updater leaves no other trace on the server. Nothing is sent until
  * a session gives the base URL, so a state seen before pairing is still

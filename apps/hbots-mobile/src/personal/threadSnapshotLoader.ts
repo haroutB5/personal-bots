@@ -8,12 +8,14 @@ import * as Effect from "effect/Effect";
 
 import { authorizedFetch } from "../authorizedRequest";
 import type { StoredSession } from "../session";
+import { noteRequestStart } from "./chatOpenPerf";
 import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 
 export async function loadThreadSnapshot(
   stored: StoredSession,
   threadId: ThreadId,
 ): Promise<ThreadSnapshotLoadResult> {
+  noteRequestStart(threadId, performance.now());
   try {
     const response = await authorizedFetch(
       stored,
