@@ -131,6 +131,7 @@ export const DONE_ITEMS: readonly string[] = [
   "screen:routes/_personal.tasks_.routines_.$routineId_.edit.tsx#tasks-routines-routineid-edit",
   "screen:routes/_personal.tasks_.routines_.new.tsx#tasks-routines-new",
   "screen:routes/_personal.work.tsx#work",
+  "screen:WorkScreen.tsx#workscreen",
   "sheet:WorkScreen.tsx#detailsheet",
   "action:TasksScreen.tsx#select-routines",
   "action:TasksScreen.tsx#long-press",
