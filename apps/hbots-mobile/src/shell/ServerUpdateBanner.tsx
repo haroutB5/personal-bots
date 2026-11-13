@@ -10,6 +10,8 @@ import { StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { useBotShells } from "../personal/useBotShells";
+import { readUpdateSnapshot, subscribeUpdate } from "../updater";
+import { finishedNoteForApp } from "./serverUpdateBannerModel";
 import { tokens } from "./tokens";
 
 interface Polled {
@@ -55,6 +57,19 @@ export function ServerUpdateBanner({ native }: { readonly native: NativePersonal
   const [polled, setPolled] = useState<Polled>(START);
   const list = native.bots.usePersonalBotsList(native.environmentId);
   const { shells } = useBotShells(native, native.environmentId);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    let stopped = false;
+    void readUpdateSnapshot().then((snapshot) => {
+      if (!stopped && snapshot !== null) setAppVersion(snapshot.installedVersion);
+    });
+    const unsubscribe = subscribeUpdate((snapshot) => setAppVersion(snapshot.installedVersion));
+    return () => {
+      stopped = true;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let stopped = false;
@@ -105,7 +120,7 @@ export function ServerUpdateBanner({ native }: { readonly native: NativePersonal
     return () => clearTimeout(timer);
   }, [shownAt]);
 
-  const lines = visibleServerUpdate({
+  const serverLines = visibleServerUpdate({
     update: polled.update,
     updatedFirstShownMs: shownAt,
     answeredAtMs: polled.answeredAtMs,
@@ -113,6 +128,14 @@ export function ServerUpdateBanner({ native }: { readonly native: NativePersonal
     nowMs: polled.nowMs,
     nameOfThread: (threadId) => names.get(threadId) ?? null,
   });
+  const lines =
+    serverLines === null
+      ? null
+      : finishedNoteForApp(serverLines, {
+          finished: isServerUpdateFinished(polled.update),
+          serverVersion: polled.update?.version ?? null,
+          appVersion,
+        });
   const statusAt = statusShownAt(
     lines === null || lines.tone === "problem" ? null : lines.title,
     polled.nowMs,
