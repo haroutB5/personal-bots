@@ -39,3 +39,19 @@ Binary only. The previous release is `6fe945fc8694` (1.67.15), schema 148. The p
 ## Release notes for users
 
 - Conversations and search load faster after the upstream speed work.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=5f3c636f3bfa86e76629a3a2b344bf135d6cab4d release=5f3c636f3bfa json-sha256=751a61b9fc11e0441125bde6b0d95dd04f063dcdc2cdc49f12b671a37558903d result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
