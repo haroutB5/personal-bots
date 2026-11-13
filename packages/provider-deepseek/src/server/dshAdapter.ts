@@ -374,13 +374,12 @@ function makeDshFlavor(input: {
       }
       return undefined;
     }),
-    buildPrompt: Effect.fn("DeepSeekDshAdapter.buildPrompt")(function* ({
+    buildAttachmentPrompt: Effect.fn("DeepSeekDshAdapter.buildAttachmentPrompt")(function* ({
       text,
       attachments,
       resolveAttachmentPath,
     }) {
       const blocks: Array<EffectAcpSchema.ContentBlock> = [];
-      if (text.trim().length > 0) blocks.push({ type: "text", text });
       const overCap = yield* findDshImageOverCap({
         attachments,
         resolveAttachmentPath,
@@ -410,7 +409,7 @@ function makeDshFlavor(input: {
         if (bytes === undefined) continue;
         blocks.push({ type: "image", data: Buffer.from(bytes).toString("base64"), mimeType });
       }
-      if (blocks.length === 0) {
+      if (blocks.length === 0 && text.trim().length === 0) {
         return yield* EffectAcpErrors.AcpRequestError.invalidParams(
           "A turn requires text or a supported attachment.",
         );

@@ -14,6 +14,7 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as GuestRouteImport } from './routes/guest'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
+import { Route as ApproveAgentRouteImport } from './routes/approve-agent'
 import { Route as PersonalRouteImport } from './routes/_personal'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
@@ -103,6 +104,11 @@ const ConnectAgentRoute = ConnectAgentRouteImport.update({
 const ConnectRoute = ConnectRouteImport.update({
   id: '/connect',
   path: '/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApproveAgentRoute = ApproveAgentRouteImport.update({
+  id: '/approve-agent',
+  path: '/approve-agent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PersonalRoute = PersonalRouteImport.update({
@@ -451,6 +457,7 @@ const PersonalBotsSettingsProvidersCatalogCatalogIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
+  '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
@@ -521,6 +528,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
+  '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
@@ -593,6 +601,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
   '/_personal': typeof PersonalRouteWithChildren
+  '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
@@ -666,6 +675,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/approve-agent'
     | '/connect'
     | '/connect-agent'
     | '/guest'
@@ -736,6 +746,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/approve-agent'
     | '/connect'
     | '/connect-agent'
     | '/guest'
@@ -807,6 +818,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_chat'
     | '/_personal'
+    | '/approve-agent'
     | '/connect'
     | '/connect-agent'
     | '/guest'
@@ -880,6 +892,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   PersonalRoute: typeof PersonalRouteWithChildren
+  ApproveAgentRoute: typeof ApproveAgentRoute
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
   GuestRoute: typeof GuestRoute
@@ -924,6 +937,13 @@ declare module '@tanstack/react-router' {
       path: '/connect'
       fullPath: '/connect'
       preLoaderRoute: typeof ConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/approve-agent': {
+      id: '/approve-agent'
+      path: '/approve-agent'
+      fullPath: '/approve-agent'
+      preLoaderRoute: typeof ApproveAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_personal': {
@@ -1541,6 +1561,7 @@ const PersonalRouteWithChildren = PersonalRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   PersonalRoute: PersonalRouteWithChildren,
+  ApproveAgentRoute: ApproveAgentRoute,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
   GuestRoute: GuestRoute,

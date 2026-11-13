@@ -586,14 +586,15 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         {label}
       </h2>
       {windows.map((window) => {
-        const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+        const details =
+          pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
         return (
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
             pool={window}
             color={color}
             now={now}
-            label={details?.label}
+            label={details?.label ?? undefined}
             description={details?.description}
           />
         );

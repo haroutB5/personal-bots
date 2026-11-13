@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 // One OpenCode 2 process serves all directories; share it across instance threads.
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Context from "effect/Context";
@@ -19,7 +20,7 @@ import {
 } from "../opencodeBotIsolation.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
-const INFO_TIMEOUT = "5 seconds";
+const INFO_TIMEOUT_MS = 5_000;
 
 export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly url: string;
@@ -27,6 +28,8 @@ export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly external: boolean;
   /** Whether the process behind this connection is still running. External servers report true. */
   readonly alive: Effect.Effect<boolean>;
+  /** Only owned processes have an authoritative lifetime signal. */
+  readonly processExit?: Effect.Effect<void>;
 }
 
 export interface OpenCode2BotEnvironment {
@@ -46,6 +49,8 @@ export class OpenCode2Server extends Context.Service<
       input: OpenCode2BotEnvironment,
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R | Scope.Scope>;
+    /** Drops a configured server's verified connection, so the next use reads its version again. */
+    readonly forget: Effect.Effect<void>;
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
@@ -68,7 +73,7 @@ export const serverEnvironment = (
   return { ...rest, OPENCODE_PASSWORD: Redacted.value(password) };
 };
 
-const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
+export const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
   if (HttpClientError.isHttpClientError(cause)) return cause;
   if (
     P.isTagged(cause, "ClientError") &&
@@ -95,10 +100,10 @@ const describeInfoFailure = (cause: unknown) => {
 };
 
 /** Only server info proves readiness; keep credential-bearing failure details out of client text. */
-export const verifyServer = (client: OpenCodeClient) =>
+export const verifyServer = (client: OpenCodeClient, environment?: NodeJS.ProcessEnv) =>
   client.server.info().pipe(
     Effect.timeoutOrElse({
-      duration: INFO_TIMEOUT,
+      duration: resolveProviderProbeTimeoutMs("opencode", INFO_TIMEOUT_MS, environment),
       orElse: () =>
         Effect.fail(
           new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -147,7 +152,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     alive: Effect.Effect<boolean> = Effect.succeed(true),
   ) {
     const api = yield* opencode.connect({ baseUrl: url, password });
-    const version = yield* verifyServer(api.client);
+    const version = yield* verifyServer(api.client, input.environment);
     return { ...api, url, version, external, alive } satisfies OpenCode2Connection;
   });
   let latest: OpenCode2Connection | undefined;
@@ -176,6 +181,9 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
         );
       }),
       withBotConnection: () => refuseBotOnExternalServer,
+      forget: Effect.sync(() => {
+        latest = undefined;
+      }),
     });
   }
 
@@ -220,17 +228,28 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
         connectTo(url, botPassword, false).pipe(Effect.map((connection) => connection.version)),
     }).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
     return yield* botOwner.withServer((server) =>
-      connectTo(server.url, botPassword, false, server.isRunning).pipe(Effect.flatMap(use)),
+      connectTo(server.url, botPassword, false, server.isRunning).pipe(
+        Effect.map((connection) => ({
+          ...connection,
+          processExit: server.exitCode.pipe(Effect.asVoid),
+        })),
+        Effect.flatMap(use),
+      ),
     );
   });
   return OpenCode2Server.of({
     withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
       return owner.withServer((server) =>
         latest?.url === server.url
-          ? use({ ...latest, alive: server.isRunning })
+          ? use({
+              ...latest,
+              alive: server.isRunning,
+              processExit: server.exitCode.pipe(Effect.asVoid),
+            })
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
       );
     }),
     withBotConnection,
+    forget: Effect.void,
   });
 });

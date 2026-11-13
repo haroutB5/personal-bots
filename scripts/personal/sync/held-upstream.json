@@ -30,6 +30,48 @@
       "revertCommit": null,
       "heldAt": "2026-11-05",
       "upstream": "024d49520e"
+    },
+    {
+      "id": "playwright-core-1-64",
+      "shas": [],
+      "area": "runtime-external package (playwright-core)",
+      "whatChanged": "Upstream moves playwright-core from 1.60.0 to 1.64.1. The bots' shared browser runs on the Chromium installed for 1.60.0 and each release copies playwright-core, so apps/server keeps 1.60.0.",
+      "options": [
+        "Keep playwright-core 1.60.0 (the installed browser matches it)",
+        "Take 1.64.1 together with a browser install and a staged check of the shared browser"
+      ],
+      "recommendation": "Keep 1.60.0 until a release plans the browser install and checks the shared browser on a stage.",
+      "holdBy": "keep_ours",
+      "revertCommit": null,
+      "heldAt": "2026-11-13",
+      "upstream": "7bf2a43c09"
+    },
+    {
+      "id": "fork-mise-updates",
+      "shas": [],
+      "area": "provider maintenance (packages/provider-core maintenanceResolver.ts)",
+      "whatChanged": "Upstream added its own mise ownership (resolveMiseProviderMaintenance, `mise upgrade`). The fork's mise ownership (install @latest, latest link, rollback list) still decides for every mise path; upstream's resolver only sees non-mise paths.",
+      "options": [
+        "Keep the fork's mise updates",
+        "Move to upstream's mise resolver after a staged provider update and rollback"
+      ],
+      "recommendation": "Keep the fork's until a release tests upstream's resolver on a stage with a real update and rollback.",
+      "holdBy": "keep_ours",
+      "revertCommit": null,
+      "heldAt": "2026-11-13",
+      "upstream": "7bf2a43c09"
+    },
+    {
+      "id": "claude-reset-credit-options",
+      "shas": [],
+      "area": "reset credits (claudeResetCredits.ts, ClaudeDriver.ts, UsageLimits.tsx)",
+      "whatChanged": "Upstream lists each kind of banked reset as a redeemable option. The fork keeps its own kinds summary and single Use reset flow; the contract carries both shapes.",
+      "options": ["Keep the fork's reset credit flow", "Take upstream's per-kind redeem options"],
+      "recommendation": "Keep the fork's flow; a redeem spends a real credit, so a change here needs the owner.",
+      "holdBy": "keep_ours",
+      "revertCommit": null,
+      "heldAt": "2026-11-13",
+      "upstream": "7bf2a43c09"
     }
   ],
   "$acceptedComment": "Decisions the owner has already answered. A key listed here is settled: ship that upstream change like any other improvement, never hold it and never ask again. Remove an entry only if the owner changes his mind.",

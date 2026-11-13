@@ -15,6 +15,9 @@ export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: Schema.Literals(["session", "weekly", "monthly", "other"]),
   label: TrimmedNonEmptyString,
+  /** When present, this limit applies only to these provider model IDs. */
+  modelIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  providerIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
@@ -24,6 +27,15 @@ export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 /** What a banked reset clears: Claude's grant kinds, and Codex's one general kind. */
 export const ResetCreditKind = Schema.Literals(["fable", "full", "weekly", "session"]);
 export type ResetCreditKind = typeof ResetCreditKind.Type;
+/** One kind of banked reset, such as Claude's weekly reset or its Fable-only reset. */
+export const ServerProviderResetCreditOption = Schema.Struct({
+  creditId: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  availableCount: NonNegativeInt,
+  expiresAt: Schema.optional(IsoDateTime),
+});
+export type ServerProviderResetCreditOption = typeof ServerProviderResetCreditOption.Type;
 
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
@@ -38,6 +50,8 @@ export const ServerProviderResetCredits = Schema.Struct({
       Schema.Struct({ kind: ResetCreditKind, availableCount: NonNegativeInt }),
     ),
   ),
+  /** Present when resets differ in what they refill; redeem one by its `creditId`. */
+  options: Schema.optional(ForwardCompatibleArray(ServerProviderResetCreditOption)),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
@@ -189,7 +203,10 @@ export type UsageLimitSourceConsumeResetCreditInput =
   typeof UsageLimitSourceConsumeResetCreditInput.Type;
 
 export const ProviderConsumeResetCreditInput = Schema.Union([
-  Schema.Struct({ instanceId: ProviderInstanceId }),
+  Schema.Struct({
+    instanceId: ProviderInstanceId,
+    creditId: Schema.optional(TrimmedNonEmptyString),
+  }),
   UsageLimitSourceConsumeResetCreditInput,
 ]);
 export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditInput.Type;

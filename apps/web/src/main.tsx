@@ -11,8 +11,8 @@ import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
 import { checkStaleReleaseAtBoot } from "./features/personal/staleRelease";
 import { chunkRecovery } from "./lib/chunkLoadRecovery";
-import { clearChunkReloadGuard } from "./lib/chunkReloadGuard";
 import { installRouterChunkReloadGuard } from "./lib/routerChunkReloadGuard";
+import { whenLocaleReady } from "./i18n/runtime";
 
 const router = startAppServices();
 
@@ -29,10 +29,8 @@ if (!isElectron) {
 }
 
 // A failed chunk usually means a deploy went stale; reload only while the server answers (lib/chunkLoadRecovery).
-let chunkLoadFailed = false;
 let reloadStarted = false;
 window.addEventListener("vite:preloadError", () => {
-  chunkLoadFailed = true;
   const outcome = chunkRecovery().onPreloadError();
   if (outcome.kind !== "check") return;
   reloadScheduled = true;
@@ -57,14 +55,14 @@ const managedAuthShellModule =
 
 export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
-  router.load(),
+  // Chained so settings have usually hydrated; English resolves without a chunk load.
+  router.load().then(whenLocaleReady),
 ])
   .then(async ([ManagedAuthShell]) => {
     // A chunk that failed during load is still being judged: paint once it is known whether a reload is coming.
     await chunkRecovery().idle();
     // Route chunk failures resolve router.load() and surface later through the error boundary.
     if (reloadScheduled) return;
-    if (!chunkLoadFailed) clearChunkReloadGuard();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         {ManagedAuthShell && clerkPublishableKey ? (

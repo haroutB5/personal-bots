@@ -10,7 +10,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { lazy, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
@@ -19,6 +19,7 @@ import { isPersonalPath } from "@hbots/personal-client/bots/personalMode";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
@@ -32,11 +33,9 @@ import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoo
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
-import { cn } from "../lib/utils";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -183,7 +182,12 @@ function RootRouteBranch() {
 
   if (pathname === GUEST_PAGE_PATH) return <Outlet />;
 
-  if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect-agent") {
+  if (
+    pathname === "/pair" ||
+    pathname === "/connect" ||
+    pathname === "/connect-agent" ||
+    pathname === "/approve-agent"
+  ) {
     return <Outlet />;
   }
 
@@ -192,24 +196,36 @@ function RootRouteBranch() {
     return hostedPromptLinkLanding;
   }
 
-  if (pathname === "/welcome") {
-    return (
-      <>
-        <CustomSnoozeDialogHost />
-        <GuestShareDialogHost />
-        <CommandPalette>
-          <AppSidebarLayout>
-            <Outlet />
-          </AppSidebarLayout>
-        </CommandPalette>
-      </>
-    );
-  }
-
+  const isWelcome = pathname === "/welcome";
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return <Outlet />;
   }
 
+  // Settings can reopen /welcome mid-session, so it mounts everything the app does except the
+  // first-run gate and the event router, whose first navigation would leave the page.
+  const appHosts = (
+    <>
+      {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
+      {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
+        <DesktopWebLinkCoordinator />
+      ) : null}
+      {isElectron ? <RunningThreadKeepAlive /> : null}
+      <DeferredMount>
+        <RelayClientInstallDialog />
+        {MANAGED_AUTH_SKIPPED ? null : <ConnectOnboardingDialog />}
+        <SshPasswordPromptDialog />
+      </DeferredMount>
+      <SnapShotCoordinator />
+      <ReopenClosedViewShortcut />
+      <ConfirmDialogHost />
+      <CustomSnoozeDialogHost />
+      <GuestShareDialogHost />
+      <ProjectCloneToastCoordinator />
+      <AddProjectToMachineDialogHost />
+      <UseInAnotherAppDialogHost />
+      {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
+    </>
+  );
   // The personal Bots shell brings its own full-screen layout and tab bar, so it
   // skips the upstream thread sidebar, whose fixed toggle would cover its header.
   const appShell = isPersonalPath(pathname) ? (
@@ -218,7 +234,8 @@ function RootRouteBranch() {
     </CommandPalette>
   ) : (
     <CommandPalette>
-      <AppSidebarLayout>
+      {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
+      <AppSidebarLayout showSidebar={!isWelcome}>
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>
@@ -227,37 +244,27 @@ function RootRouteBranch() {
   return (
     <>
       <ChatGptWelcomeCoordinator />
-      <FirstRunGate
-        enabled={primaryEnvironmentAuthenticated}
-        hostedStatic={authGateState.status === "hosted-static"}
-      >
-        {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
-        {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
-          <DesktopWebLinkCoordinator />
-        ) : null}
-        {isElectron ? <RunningThreadKeepAlive /> : null}
-        <DeferredMount>
-          <RelayClientInstallDialog />
-          {MANAGED_AUTH_SKIPPED ? null : <ConnectOnboardingDialog />}
-          <SshPasswordPromptDialog />
-        </DeferredMount>
-        <SnapShotCoordinator />
-        <ReopenClosedViewShortcut />
-        <ConfirmDialogHost />
-        <CustomSnoozeDialogHost />
-        <GuestShareDialogHost />
-        <ProjectCloneToastCoordinator />
-        <AddProjectToMachineDialogHost />
-        {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
-        {primaryEnvironmentAuthenticated ? (
-          <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
-        ) : null}
-        {appShell}
-        {/* Keep the theme editor above the router so drafts survive navigation. */}
-        <DeferredMount>
-          <ThemeEditorHost />
-        </DeferredMount>
-      </FirstRunGate>
+      {isWelcome ? (
+        <>
+          {appHosts}
+          {appShell}
+        </>
+      ) : (
+        <FirstRunGate
+          enabled={primaryEnvironmentAuthenticated}
+          hostedStatic={authGateState.status === "hosted-static"}
+        >
+          {appHosts}
+          {primaryEnvironmentAuthenticated ? (
+            <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
+          ) : null}
+          {appShell}
+        </FirstRunGate>
+      )}
+      {/* Above both shells and the router, so drafts survive navigation, including to /welcome. */}
+      <DeferredMount>
+        <ThemeEditorHost />
+      </DeferredMount>
     </>
   );
 }
@@ -319,7 +326,7 @@ function CopyErrorButton({ report }: { report: string }) {
 
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
-      <MorphIcon className={cn(isCopied && "text-success")} icon={isCopied ? Check : Copy} />
+      {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
       {isCopied ? "Copied" : "Copy error"}
     </Button>
   );

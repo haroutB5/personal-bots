@@ -9,7 +9,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -149,65 +148,60 @@ const layers = (
   counters: { http: number; urls?: string[] },
   document: unknown = {},
 ) =>
-  CursorUsageAccounts.layer
-    .pipe(
-      Layer.fresh,
-      Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
-    )
-    .pipe(
-      Layer.provideMerge(AntigravityUsage.layer),
-      Layer.provideMerge(MuseUsageHome.layer),
-      Layer.provideMerge(ProviderHostLive.layer),
-      Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
-      Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
-      Layer.provideMerge(
-        Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
-      ),
-      Layer.provideMerge(
-        ServerConfig.layerTest(process.cwd(), NodePath.join(home, "usage-session-test")),
-      ),
-      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
-      Layer.provideMerge(Layer.succeed(HostProcess.Hostname, "usage-test-host")),
-      Layer.provideMerge(
-        ServerSettings.layerTest({
-          providerInstances: {
-            [ProviderInstanceId.make("claudeAgent")]: {
-              driver: ProviderDriverKind.make("claudeAgent"),
-              config: { homePath: NodePath.join(home, "claude") },
-            },
-            [ProviderInstanceId.make("codex")]: {
-              driver: ProviderDriverKind.make("codex"),
-              config: { homePath: NodePath.join(home, "codex") },
-            },
+  CursorUsageAccounts.layer.pipe(Layer.fresh, Layer.provide(CursorAccountReader.layer)).pipe(
+    Layer.provideMerge(AntigravityUsage.layer),
+    Layer.provideMerge(MuseUsageHome.layer),
+    Layer.provideMerge(ProviderHostLive.layer),
+    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+    Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+    Layer.provideMerge(
+      Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
+    ),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), NodePath.join(home, "usage-session-test")),
+    ),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Hostname, "usage-test-host")),
+    Layer.provideMerge(
+      ServerSettings.layerTest({
+        providerInstances: {
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            config: { homePath: NodePath.join(home, "claude") },
           },
-        }),
-      ),
-      Layer.provideMerge(
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make((request) =>
-            Effect.sync(() => {
-              counters.http += 1;
-              counters.urls?.push(request.url);
-              return HttpClientResponse.fromWeb(request, Response.json(document));
-            }),
-          ),
+          [ProviderInstanceId.make("codex")]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { homePath: NodePath.join(home, "codex") },
+          },
+        },
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            counters.http += 1;
+            counters.urls?.push(request.url);
+            return HttpClientResponse.fromWeb(request, Response.json(document));
+          }),
         ),
       ),
-      Layer.provideMerge(
-        Layer.succeed(HostProcess.Environment, {
-          HOME: home,
-          GROK_HOME: NodePath.join(home, "grok"),
-          PI_CODING_AGENT_DIR: NodePath.join(home, "pi"),
-          OPENCODE_DATA_DIR: NodePath.join(home, "opencode"),
-          ANTIGRAVITY_DATA_DIR: NodePath.join(home, "antigravity"),
-          XDG_CONFIG_HOME: NodePath.join(home, "config"),
-          APPDATA: NodePath.join(home, "config"),
-          CURSOR_API_KEY: "a-key-that-must-not-be-used",
-        }),
-      ),
-    );
+    ),
+    Layer.provideMerge(
+      Layer.succeed(HostProcess.Environment, {
+        HOME: home,
+        GROK_HOME: NodePath.join(home, "grok"),
+        PI_CODING_AGENT_DIR: NodePath.join(home, "pi"),
+        OPENCODE_DATA_DIR: NodePath.join(home, "opencode"),
+        ANTIGRAVITY_DATA_DIR: NodePath.join(home, "antigravity"),
+        XDG_CONFIG_HOME: NodePath.join(home, "config"),
+        APPDATA: NodePath.join(home, "config"),
+        CURSOR_API_KEY: "a-key-that-must-not-be-used",
+      }),
+    ),
+  );
 
 describe("UsageService.readSessionUsage", () => {
   it.live("returns tokens per day, session and model, counting a repeated message once", () =>

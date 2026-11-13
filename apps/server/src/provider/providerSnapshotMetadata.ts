@@ -63,6 +63,8 @@ export function enrichProviderSnapshotMetadata(provider: ServerProvider): Server
 
 export interface ProviderMaintenanceActionStates {
   update?: ServerProviderUpdateState | undefined;
+  /** The version the running or last update was asked to install. */
+  targetVersion?: string | undefined;
   smokeCheck?: ServerProviderSmokeCheck | undefined;
   autoUpdate?: ServerProviderAutoUpdate | undefined;
 }

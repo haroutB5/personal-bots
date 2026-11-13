@@ -20,6 +20,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import * as ServerConfig from "../config.ts";
 import { forgetBotProviderProcess, registerBotProviderProcess } from "./botProviderProcesses.ts";
 import { resolveClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
+import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ClaudeAdapterV2 from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { makeClaudeTextGeneration } from "../textGeneration/ClaudeTextGeneration.ts";
 
@@ -35,6 +36,7 @@ export const layer = Layer.effect(
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
 
     return DeepSeekEngineHost.of({
       createClaudeAdapter: (input) =>
@@ -54,6 +56,10 @@ export const layer = Layer.effect(
           ),
           Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(
+            ProviderInstallationGate.ProviderInstallationGate,
+            installationGate,
+          ),
         ),
       createTextGeneration: (input) =>
         makeClaudeTextGeneration(
