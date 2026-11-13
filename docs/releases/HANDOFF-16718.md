@@ -38,3 +38,19 @@ Binary only. The previous release is `f27c799467b2` (1.67.17), schema 155. The p
 
 - Notifications now arrive on the phone.
 - Archived chats leave the chat row.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=bb57508a84fa5c03ffd0e3689ed53854f95efc0c release=bb57508a84fa json-sha256=900dfeba17fbd7e95ca9c34d74d2aa2de14d9bf3a8b36f1d5a5248ddd5df1585 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
