@@ -37,3 +37,19 @@ Binary only. The previous release is `3354279c591c` (1.67.14), schema 148, so th
 
 - The "Updated to" note now disappears after 10 seconds.
 - Releases land a little sooner: the server checks for a quiet moment twice as often.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=6fe945fc8694114b3ae8bfe928e74d3655a4d0cb release=6fe945fc8694 json-sha256=8faf8d3e561b1aba500e74480803f924ac2ddd51eae67476d6503e5b4aae15e7 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
