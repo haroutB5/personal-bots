@@ -32,11 +32,24 @@ function updatedShownAt(update: ServerUpdate | null, nowMs: number): number | nu
   return nowMs;
 }
 
+// When this app run first showed each status line, by its title. A status says its piece for ten
+// seconds and then leaves; only a problem stays up.
+const statusFirstShown = new Map<string, number>();
+
+function statusShownAt(title: string | null, nowMs: number): number | null {
+  if (title === null || nowMs === 0) return null;
+  const known = statusFirstShown.get(title);
+  if (known !== undefined) return known;
+  statusFirstShown.set(title, nowMs);
+  return nowMs;
+}
+
 const START: Polled = { update: null, answeredAtMs: null, reachable: true, nowMs: 0 };
 
 /**
  * Two lines about a server update while one is under way: what stage it is at,
- * and who it waits for or how long is left. Nothing when no update runs.
+ * and who it waits for or how long is left. Each stage shows for ten seconds, then
+ * leaves. Nothing when no update runs.
  */
 export function ServerUpdateBanner({ native }: { readonly native: NativePersonal }) {
   const [polled, setPolled] = useState<Polled>(START);
@@ -100,7 +113,23 @@ export function ServerUpdateBanner({ native }: { readonly native: NativePersonal
     nowMs: polled.nowMs,
     nameOfThread: (threadId) => names.get(threadId) ?? null,
   });
+  const statusAt = statusShownAt(
+    lines === null || lines.tone === "problem" ? null : lines.title,
+    polled.nowMs,
+  );
+  // The status leaves on time, not at the next poll.
+  useEffect(() => {
+    if (statusAt === null) return;
+    const left = statusAt + UPDATED_SHOWN_MS - Date.now();
+    if (left <= 0) return;
+    const timer = setTimeout(
+      () => setPolled((previous) => ({ ...previous, nowMs: Date.now() })),
+      left + 50,
+    );
+    return () => clearTimeout(timer);
+  }, [statusAt]);
   if (lines === null) return null;
+  if (statusAt !== null && polled.nowMs >= statusAt + UPDATED_SHOWN_MS) return null;
   return (
     <View
       style={[styles.banner, lines.tone === "problem" ? styles.problem : null]}
