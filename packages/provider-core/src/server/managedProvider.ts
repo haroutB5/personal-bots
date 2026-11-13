@@ -33,6 +33,8 @@ interface ProviderSnapshotState {
   // null preserves an explicitly cleared plan across probes and enrichment.
   readonly usageAuthLabel: string | null | undefined;
   readonly checked: boolean;
+  /** When each usage window last took a live tick, so a full read is not mistaken for older news. */
+  readonly usageTickedAt?: ReadonlyMap<string, string> | undefined;
 }
 
 function withUsageLimits(
@@ -221,6 +223,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             : resolveUsageLimitsAfterProbe({
                 published: state.snapshot.usageLimits,
                 probed: probedSnapshot.usageLimits,
+                tickedAt: state.usageTickedAt ?? new Map(),
                 context: {
                   checkedAt: probedSnapshot.checkedAt,
                   message: probedSnapshot.message,
@@ -249,7 +252,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
+          {
+            snapshot,
+            enrichmentGeneration: generation,
+            usageAuthLabel,
+            checked: true,
+            usageTickedAt: state.usageTickedAt,
+          },
         ] as const;
       },
     );
@@ -306,6 +315,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             ...state,
             snapshot,
             usageAuthLabel: label ?? (complete ? null : state.usageAuthLabel),
+            usageTickedAt: new Map([
+              ...(state.usageTickedAt ?? []),
+              ...update.windows.map((window) => [window.id, update.checkedAt] as const),
+            ]),
           },
         ] as const;
       });
@@ -382,6 +395,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       const usageLimits = resolveUsageLimitsAfterProbe({
         published: state.snapshot.usageLimits,
         probed,
+        tickedAt: state.usageTickedAt ?? new Map(),
       });
       const snapshot = withUsageLimits(state.snapshot, usageLimits);
       return [snapshot, { ...state, snapshot }] as const;

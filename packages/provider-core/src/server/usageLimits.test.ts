@@ -363,3 +363,50 @@ describe("seedUsageLimits", () => {
     });
   });
 });
+
+describe("a full read that is older than the last live tick", () => {
+  const fableWeekly = {
+    id: "seven_day_fable",
+    kind: "weekly" as const,
+    label: "Weekly · Fable",
+    usedPercent: 91,
+    windowDurationMins: 10_080,
+    resetsAt: "2026-11-15T11:00:00.000Z",
+  };
+  // The session window took a live tick at 14:55:10; the full read was taken at 14:55:00.
+  const ticked = {
+    checkedAt: "2026-11-13T14:55:10.000Z",
+    windows: [{ ...session, usedPercent: 2 }, weekly, fableWeekly],
+  };
+  const fullRead = {
+    checkedAt: "2026-11-13T14:55:00.000Z",
+    fullReadAt: "2026-11-13T14:55:00.000Z",
+    windows: [{ ...session, usedPercent: 1 }, weekly, { ...fableWeekly, usedPercent: 0 }],
+  };
+
+  it("takes the model's weekly figure from the full read and keeps the newer tick", () => {
+    const resolved = resolveUsageLimitsAfterProbe({
+      published: ticked,
+      probed: fullRead,
+      tickedAt: new Map([[session.id, "2026-11-13T14:55:10.000Z"]]),
+    });
+    expect(resolved?.checkedAt).toBe(ticked.checkedAt);
+    expect(resolved?.fullReadAt).toBe(fullRead.checkedAt);
+    const used = new Map(resolved?.windows.map((window) => [window.id, window.usedPercent]));
+    expect(used.get(fableWeekly.id)).toBe(0);
+    expect(used.get(session.id)).toBe(2);
+  });
+
+  it("takes every window from the full read when the ticks are older than it", () => {
+    const resolved = resolveUsageLimitsAfterProbe({
+      published: ticked,
+      probed: fullRead,
+      tickedAt: new Map([[session.id, "2026-11-13T14:54:00.000Z"]]),
+    });
+    expect(resolved?.windows.map((window) => window.usedPercent).toSorted()).toEqual([
+      0,
+      1,
+      weekly.usedPercent,
+    ]);
+  });
+});

@@ -181,6 +181,20 @@ function probeDescribesOlderWindow(
   });
 }
 
+function mergeNewerTicks(
+  published: ServerProviderUsageLimits,
+  probed: ServerProviderUsageLimits,
+  tickedAt: ReadonlyMap<string, string>,
+): ReadonlyArray<ServerProviderUsageWindow> {
+  const readAtMs = Date.parse(probed.checkedAt);
+  const merged = new Map(probed.windows.map((window) => [window.id, window] as const));
+  for (const window of published.windows) {
+    const tick = tickedAt.get(window.id);
+    if (tick !== undefined && Date.parse(tick) > readAtMs) merged.set(window.id, window);
+  }
+  return sortWindows(merged.values());
+}
+
 /**
  * A probe that read no usage keeps the last good windows and marks them
  * `refreshFailed`; a read replaces them. `unsupported`, a disabled provider and
@@ -190,19 +204,33 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
   readonly context?: UsageProbeContext | undefined;
+  /** When each window last took a live tick (window id to ISO time). */
+  readonly tickedAt?: ReadonlyMap<string, string> | undefined;
 }): ServerProviderUsageLimits | undefined {
-  const { published, probed, context } = input;
+  const { published, probed, context, tickedAt } = input;
   if (probed?.unavailable?.reason === "unsupported") return probed;
   if (context?.enabled === false || context?.installed === false) return probed;
   const read =
     probed !== undefined && probed.unavailable === undefined && probed.windows.length > 0;
   if (read) {
     if (published !== undefined && published.unavailable === undefined) {
-      const olderRead =
-        Date.parse(published.checkedAt) > Date.parse(probed.checkedAt) ||
-        probeDescribesOlderWindow(published, probed);
-      if (olderRead) {
+      if (probeDescribesOlderWindow(published, probed)) {
         return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+      }
+      if (Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)) {
+        if (tickedAt === undefined) {
+          return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+        }
+        // Live ticks carry only some windows (the session and the week). They stamp the whole
+        // reading as newer, so a full read taken just before one used to be thrown away, and a
+        // window only the full read carries (a model's weekly limit) kept its old number, for
+        // example 91% after a reset to 0%. Each window now takes whichever source read it last.
+        return {
+          ...probed,
+          checkedAt: published.checkedAt,
+          fullReadAt: probed.checkedAt,
+          windows: mergeNewerTicks(published, probed, tickedAt),
+        };
       }
     }
     return probed.fullReadAt === probed.checkedAt
