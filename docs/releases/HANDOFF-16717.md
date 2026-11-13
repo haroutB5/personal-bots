@@ -26,7 +26,8 @@ None. No file under `apps/server/src/persistence` changed (lead, inferred from t
 - Emulator test on the gaming PC rig (lead, measured). The Restart tap at 15:18:43 started the install and the 1.67.93 test build was in front at 15:18:46. With the overlay permission denied the "hbots updated" notification posted.
 - Kotlin `:hbots-updater` unit tests pass, `hbots-mobile` typecheck 0, `provider-core` typecheck 0 with 44 usage tests passing, parity done 384 planned 0 (lead, measured). Evidence `dev-team/qa/hbots-restart-update/RESULT.md`.
 - Not device-tested. Restart tapped after the token expired (about an hour in the background). The code path skips the check, defers the install and asks to open the app.
-- The release gates run once on the release commit. The table is below.
+- The release gates ran on the release commit. The table is below. All nine gates ran once at 16:00 GMT. `server-tests` failed that run (exit 1) on two tests in `src/preview/ServerBrowserPage.test.ts`, which could not launch Chromium.
+- `server-tests` was rerun alone with `--gates server-tests --merge` and passed (shipper, measured). The cause of the first failure was the environment, not the code. The server pins `playwright-core` 1.60.0, which needs `chromium_headless_shell` revision 1223. The shared cache `~/.cache/ms-playwright` held only revision 1234, installed by a newer Playwright. Revision 1223 was installed with the pinned 1.60.0 into the isolated path `dev-team/qa/hbots-16717/pw-browsers`, and the rerun used `PLAYWRIGHT_BROWSERS_PATH` pointing there. The shared cache and revision 1234 were not touched. No code changed between the two runs. The first run's evidence is kept at `dev-team/qa/hbots-16717/ship/gate-evidence-run1-failed.json`.
 
 ## Rollback
 
@@ -43,3 +44,19 @@ Binary only. The previous release is `5f3c636f3bfa` (1.67.16), schema 155. The p
 - Work now lives inside Tasks.
 - A chat that fails to load tries again by itself.
 - The weekly usage figure per model updates after a reset.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=f27c799467b297616d864aafd6e8e5f40feefa9e release=f27c799467b2 json-sha256=eaebeb2c06f6047c15af6c893d30c3bf2674e9f80adfec811e20c1b0b384dfd6 result=PASS -->
+
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+- server-tests: PASS, exit 0
+
+<!-- gate-evidence:end -->
