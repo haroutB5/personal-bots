@@ -102,7 +102,17 @@ describe("updateBannerModel", () => {
   it("asks for the permission while the install is blocked", () => {
     expect(updateBannerModel(snapshot({ state: "needsPermission", target }))).toEqual({
       text: "Update to 1.66.118 is waiting. Allow hbots to install updates.",
+      action: "permission",
     });
+  });
+
+  it("offers a restart once the update is downloaded", () => {
+    for (const state of ["ready", "needsTap"] as const) {
+      expect(updateBannerModel(snapshot({ state, target }))).toEqual({
+        text: "hbots 1.66.118 is ready.",
+        action: "restart",
+      });
+    }
   });
 
   it("clears once the permission is granted and the download starts", () => {
@@ -110,7 +120,7 @@ describe("updateBannerModel", () => {
   });
 
   it("stays hidden in every other state and without a snapshot", () => {
-    for (const state of ["idle", "downloading", "ready", "installing", "needsTap"] as const) {
+    for (const state of ["idle", "downloading", "installing"] as const) {
       expect(updateBannerModel(snapshot({ state, target }))).toBeNull();
     }
     expect(updateBannerModel(snapshot({ state: "needsPermission", target: null }))).toBeNull();

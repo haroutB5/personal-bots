@@ -25,6 +25,8 @@ export interface UpdateSnapshot {
   readonly lastCheckAt: number | null;
   readonly sessionGeneration: number;
   readonly testPin: boolean;
+  /** Whether Android lets the app reopen itself after an update. Absent on builds before 1.67.17. */
+  readonly canReopen?: boolean;
 }
 
 export interface UpdateAuth {
@@ -43,6 +45,7 @@ interface NativeUpdater {
   confirmInstall(): Promise<void>;
   reset(generation: number): Promise<void>;
   openInstallPermission(): Promise<void>;
+  openReopenPermission?(): Promise<void>;
   addListener(
     event: "state",
     listener: (snapshot: UpdateSnapshot) => void,
@@ -105,6 +108,13 @@ export async function openInstallPermission(): Promise<void> {
     return;
   }
   await native.openInstallPermission();
+}
+
+export async function openReopenPermission(): Promise<void> {
+  if (native === null || typeof native.openReopenPermission !== "function") {
+    return;
+  }
+  await native.openReopenPermission();
 }
 
 export function subscribeUpdate(listener: (snapshot: UpdateSnapshot) => void): () => void {

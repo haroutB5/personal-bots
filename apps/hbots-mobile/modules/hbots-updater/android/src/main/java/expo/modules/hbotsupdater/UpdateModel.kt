@@ -67,6 +67,7 @@ sealed interface UpdateEffect {
   data object DeleteAllFiles : UpdateEffect
   data object PostUpdated : UpdateEffect
   data object PostUpdateReady : UpdateEffect
+  data class PostRestartReady(val version: String) : UpdateEffect
   data class PostNeedsPermission(val version: String) : UpdateEffect
   data object ClearNotification : UpdateEffect
 }

@@ -52,6 +52,10 @@ class HbotsUpdaterModule : Module() {
     AsyncFunction("openInstallPermission") {
       app()?.let(UpdateInstaller::openInstallPermission)
     }
+
+    AsyncFunction("openReopenPermission") {
+      app()?.let(UpdateInstaller::openReopenPermission)
+    }
   }
 
   private fun parseRelease(raw: Map<String, Any?>?): Release? {

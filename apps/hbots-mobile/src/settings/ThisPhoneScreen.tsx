@@ -11,7 +11,7 @@ import { ChoiceSheet } from "../sheets/ChoiceSheet";
 import { tokens } from "../shell/tokens";
 import { sanitizeUpdateNotes } from "../updateNotes";
 import { describeLastCheck, describeUpdate } from "../updateView";
-import type { UpdateSnapshot } from "../updater";
+import { openReopenPermission, type UpdateSnapshot } from "../updater";
 import {
   BodyText,
   PrimaryButton,
@@ -81,7 +81,7 @@ export function ThisPhoneScreen({
           : null;
   const actionLabel =
     description.action === "install"
-      ? "Update now"
+      ? "Restart"
       : description.action === "permission"
         ? "Allow app installs"
         : "Check now";
@@ -123,6 +123,18 @@ export function ThisPhoneScreen({
           </Text>
           {action === null ? null : <PrimaryButton label={actionLabel} onPress={action} />}
           <TextButton label="Check now" onPress={onCheckNow} />
+          {snapshot?.canReopen === false ? (
+            <>
+              <BodyText>
+                Allow "Display over other apps" once so hbots reopens by itself after Restart. hbots
+                never draws over other apps.
+              </BodyText>
+              <TextButton
+                label="Let hbots reopen itself"
+                onPress={() => void openReopenPermission()}
+              />
+            </>
+          ) : null}
         </View>
       </Section>
 
@@ -142,8 +154,8 @@ export function ThisPhoneScreen({
 
       <PrimaryButton label="Sign out this phone" onPress={onSignOut} destructive />
       <SectionNote>
-        hbots checks for updates when it opens and every six hours while open. An update installs
-        only after ten minutes in the background.
+        hbots checks for updates when it opens and every six hours while open. It tells you when one
+        is ready and updates only when you tap Restart.
       </SectionNote>
       <ChoiceSheet
         visible={choosingLock}

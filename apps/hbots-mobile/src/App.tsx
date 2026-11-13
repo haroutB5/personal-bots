@@ -581,7 +581,7 @@ function App() {
                       accessibilityRole="button"
                       style={styles.primaryButton}
                     >
-                      <Text style={styles.primaryText}>Update now</Text>
+                      <Text style={styles.primaryText}>Restart</Text>
                     </Pressable>
                   ) : update?.state === "downloading" || update?.state === "installing" ? (
                     <View style={styles.status}>

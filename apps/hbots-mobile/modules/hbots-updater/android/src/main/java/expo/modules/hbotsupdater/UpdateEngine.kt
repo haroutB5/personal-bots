@@ -79,10 +79,18 @@ object UpdateEngine {
     dispatch(UpdateEvent.UserConfirmed)
   }
 
+  /** The Restart button on the notification: the app process may have been gone. */
+  fun confirmFromNotification(context: Context) = work.execute {
+    ensure(context.applicationContext)
+    Log.i(TAG, "restart requested from the notification")
+    dispatch(UpdateEvent.UserConfirmed)
+  }
+
   fun onForeground() {
     foreground.set(true)
     work.execute {
       val app = context ?: return@execute
+      UpdateNotifier.clearUpdated(app)
       dispatch(UpdateEvent.WentForeground)
       dispatch(UpdateEvent.PermissionChanged(UpdateInstaller.canInstall(app)))
     }
@@ -110,6 +118,8 @@ object UpdateEngine {
   fun onInstallSucceeded(context: Context) = work.execute {
     ensure(context.applicationContext)
     dispatch(UpdateEvent.InstallSucceeded)
+    // Android may refuse a start from the background; the "updated" notification then opens the app.
+    UpdateNotifier.reopenApp(context.applicationContext)
   }
 
   fun onInstallNeedsTap(context: Context, confirm: Intent?) = work.execute {
@@ -137,6 +147,7 @@ object UpdateEngine {
       "lastCheckAt" to record.lastCheckAt,
       "sessionGeneration" to record.sessionGeneration,
       "testPin" to BuildConfig.UPDATE_TEST_PIN,
+      "canReopen" to (context?.let(UpdateInstaller::canReopen) ?: false),
     )
   }
 
@@ -213,6 +224,7 @@ object UpdateEngine {
       UpdateEffect.PostUpdated ->
         UpdateNotifier.postUpdated(app, targetOf(before.state)?.version ?: installedVersionName())
       UpdateEffect.PostUpdateReady -> UpdateNotifier.postConfirmation(app, pendingTapIntent)
+      is UpdateEffect.PostRestartReady -> UpdateNotifier.postRestartReady(app, effect.version)
       is UpdateEffect.PostNeedsPermission -> UpdateNotifier.postNeedsPermission(app, effect.version)
       UpdateEffect.ClearNotification -> UpdateNotifier.clear(app)
     }

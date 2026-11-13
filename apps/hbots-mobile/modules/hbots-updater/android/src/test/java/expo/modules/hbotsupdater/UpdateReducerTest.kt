@@ -332,22 +332,22 @@ class UpdateReducerTest {
   }
 
   @Test
-  fun `a completed download in the background schedules the idle install`() {
+  fun `a completed download in the background announces itself and waits for the owner`() {
     reduced(
       record(Downloading(next), lastOffer = next),
       UpdateEvent.Downloaded(apk, inBackground = true),
       record(Ready(next, apk), lastOffer = next),
-      listOf(ScheduleIdleInstall()),
+      listOf(UpdateEffect.PostRestartReady(next.version)),
     )
   }
 
   @Test
-  fun `a completed download in the foreground does not schedule`() {
+  fun `a completed download in the foreground announces itself too`() {
     reduced(
       record(Downloading(next), lastOffer = next),
       UpdateEvent.Downloaded(apk, inBackground = false),
       record(Ready(next, apk), lastOffer = next),
-      emptyList(),
+      listOf(UpdateEffect.PostRestartReady(next.version)),
     )
   }
 
@@ -502,12 +502,12 @@ class UpdateReducerTest {
   }
 
   @Test
-  fun `going to the background schedules a ready install`() {
+  fun `going to the background leaves a ready install waiting for the owner`() {
     reduced(
       record(Ready(next, apk), lastOffer = next),
       UpdateEvent.WentBackground,
       record(Ready(next, apk), lastOffer = next),
-      listOf(ScheduleIdleInstall()),
+      emptyList(),
     )
   }
 

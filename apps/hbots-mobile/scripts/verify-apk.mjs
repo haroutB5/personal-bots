@@ -21,7 +21,6 @@ const EXPECTED = {
 
 // The template adds these for a dev client. The app never uses them.
 const FORBIDDEN_PERMISSIONS = [
-  "android.permission.SYSTEM_ALERT_WINDOW",
   "android.permission.READ_EXTERNAL_STORAGE",
   "android.permission.WRITE_EXTERNAL_STORAGE",
 ];

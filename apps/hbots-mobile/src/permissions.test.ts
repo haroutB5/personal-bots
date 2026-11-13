@@ -7,9 +7,13 @@ describe("Android permissions", () => {
     expect(BLOCKED_PERMISSIONS).not.toContain("android.permission.RECORD_AUDIO");
   });
 
-  it("still blocks the storage and overlay permissions no feature uses", () => {
-    expect(BLOCKED_PERMISSIONS).toContain("android.permission.SYSTEM_ALERT_WINDOW");
+  it("still blocks the storage permissions no feature uses", () => {
     expect(BLOCKED_PERMISSIONS).toContain("android.permission.READ_EXTERNAL_STORAGE");
+    expect(BLOCKED_PERMISSIONS).toContain("android.permission.WRITE_EXTERNAL_STORAGE");
+  });
+
+  it("lets the overlay permission through, because its grant reopens the app after an update", () => {
+    expect(BLOCKED_PERMISSIONS).not.toContain("android.permission.SYSTEM_ALERT_WINDOW");
   });
 
   it("keeps the permissions the app does use out of the block list", () => {

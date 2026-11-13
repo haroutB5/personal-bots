@@ -1,14 +1,13 @@
 import { IconDownload } from "@tabler/icons-react-native";
 import { Pressable, StyleSheet, Text } from "react-native";
 
-import type { UpdateSnapshot } from "../updater";
+import { confirmUpdateInstall, type UpdateSnapshot } from "../updater";
 import { updateBannerModel } from "../updateView";
 import { tokens } from "./tokens";
 
 /**
- * "Update to X is waiting. Allow hbots to install updates." Tapping it opens
- * the system page for the permission. It disappears when the snapshot leaves
- * the needsPermission state, which the updater does on the next foreground.
+ * "hbots X is ready." with a Restart button, or "Update to X is waiting. Allow hbots to install
+ * updates.", which opens the system page for the permission. It follows the updater's snapshot.
  */
 export function UpdatePermissionBanner({
   update,
@@ -19,9 +18,10 @@ export function UpdatePermissionBanner({
 }) {
   const model = updateBannerModel(update);
   if (model === null) return null;
+  const restart = model.action === "restart";
   return (
     <Pressable
-      onPress={onPress}
+      onPress={restart ? () => void confirmUpdateInstall() : onPress}
       accessibilityRole="button"
       accessibilityLabel={model.text}
       style={styles.banner}
@@ -30,6 +30,7 @@ export function UpdatePermissionBanner({
       <Text style={styles.text} numberOfLines={2}>
         {model.text}
       </Text>
+      {restart ? <Text style={styles.restart}>Restart</Text> : null}
     </Pressable>
   );
 }
@@ -45,6 +46,16 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.reviewBg,
     paddingHorizontal: 20,
     paddingVertical: 6,
+  },
+  restart: {
+    overflow: "hidden",
+    borderRadius: 14,
+    backgroundColor: tokens.text,
+    color: tokens.reviewBg,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    fontSize: 14,
+    fontWeight: "600",
   },
   text: { flex: 1, minWidth: 0, color: tokens.text, fontSize: 14, fontWeight: "500" },
 });

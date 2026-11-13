@@ -187,8 +187,9 @@ object UpdateReducer {
         record to listOf(UpdateEffect.DeleteLateFile(event.apk))
       }
     }
-    val effects = if (event.inBackground) listOf(UpdateEffect.ScheduleIdleInstall()) else emptyList()
-    return record.copy(state = UpdateState.Ready(state.target, event.apk), deferrals = 0) to effects
+    // The owner decides when the app restarts: a ready update only announces itself.
+    return record.copy(state = UpdateState.Ready(state.target, event.apk), deferrals = 0) to
+      listOf(UpdateEffect.PostRestartReady(state.target.version))
   }
 
   private fun rejected(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
@@ -302,11 +303,7 @@ object UpdateReducer {
     )
 
   private fun wentBackground(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
-    if (record.state is UpdateState.Ready) {
-      record to listOf(UpdateEffect.ScheduleIdleInstall())
-    } else {
-      record to emptyList()
-    }
+    record to emptyList()
 
   private fun permissionChanged(
     record: UpdateRecord,

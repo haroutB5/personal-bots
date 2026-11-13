@@ -6,6 +6,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -13,6 +14,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+
+internal const val UPDATE_RESTART_ACTION = "expo.modules.hbotsupdater.RESTART_TO_UPDATE"
 
 object UpdateNotifier {
   private const val UPDATED_ID = 7201
@@ -75,8 +78,39 @@ object UpdateNotifier {
   fun postUpdated(context: Context, versionName: String?) {
     if (!canPost(context)) return
     ensureChannel(context)
-    val text = if (versionName.isNullOrBlank()) "hbots is up to date." else "hbots updated to $versionName."
-    post(context, UpdateChannels.receipt.id, UPDATED_ID, "hbots updated", text, openApp(context))
+    val text =
+      if (versionName.isNullOrBlank()) "Tap to open hbots." else "Now on $versionName. Tap to open hbots."
+    post(context, UpdateChannels.action.id, UPDATED_ID, "hbots updated", text, openApp(context))
+  }
+
+  /** "hbots X is ready" with a Restart button: one tap installs it and brings the app back. */
+  fun postRestartReady(context: Context, versionName: String) {
+    if (!canPost(context)) return
+    ensureChannel(context)
+    val restart = PendingIntent.getBroadcast(
+      context,
+      READY_ID,
+      Intent(context, UpdateRestartReceiver::class.java).setAction(UPDATE_RESTART_ACTION),
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    post(
+      context,
+      UpdateChannels.action.id,
+      READY_ID,
+      "hbots $versionName is ready",
+      "Tap Restart to update. It takes a few seconds.",
+      openApp(context),
+      Notification.Action.Builder(null, "Restart", restart).build(),
+    )
+  }
+
+  fun reopenApp(context: Context) {
+    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+    runCatching { context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+  }
+
+  fun clearUpdated(context: Context) {
+    runCatching { context.getSystemService(NotificationManager::class.java)?.cancel(UPDATED_ID) }
   }
 
   fun postConfirmation(context: Context, confirm: Intent?) {
@@ -133,6 +167,7 @@ object UpdateNotifier {
     title: String,
     text: String,
     content: PendingIntent,
+    action: Notification.Action? = null,
   ) {
     val manager = context.getSystemService(NotificationManager::class.java) ?: return
     val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -141,6 +176,7 @@ object UpdateNotifier {
       @Suppress("DEPRECATION")
       Notification.Builder(context)
     }
+    if (action != null) builder.addAction(action)
     val notification = builder
       .setSmallIcon(android.R.drawable.stat_sys_download_done)
       .setContentTitle(title)
@@ -159,5 +195,13 @@ object UpdateNotifier {
       manager?.cancel(READY_ID)
       manager?.cancel(NEEDS_PERMISSION_ID)
     }
+  }
+}
+
+class UpdateRestartReceiver : BroadcastReceiver() {
+  override fun onReceive(context: Context, intent: Intent) {
+    if (intent.action != UPDATE_RESTART_ACTION) return
+    UpdateNotifier.clear(context.applicationContext)
+    UpdateEngine.confirmFromNotification(context.applicationContext)
   }
 }

@@ -36,6 +36,19 @@ object UpdateInstaller {
   fun installPermissionIntent(context: Context): Intent =
     Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
 
+  /** The one-time grant that lets the replaced app start its own activity. hbots never draws an overlay. */
+  fun canReopen(context: Context): Boolean =
+    runCatching { Settings.canDrawOverlays(context) }.getOrDefault(false)
+
+  fun openReopenPermission(context: Context) {
+    val uri = Uri.parse("package:${context.packageName}")
+    runCatching {
+      context.startActivity(
+        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+      )
+    }
+  }
+
   fun openInstallPermission(context: Context) {
     val uri = Uri.parse("package:${context.packageName}")
     val opened = runCatching {

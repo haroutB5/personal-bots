@@ -26,13 +26,13 @@ export function describeUpdate(
     case "downloading":
       return {
         title: `Downloading hbots ${target?.version ?? ""}`.trim(),
-        detail: "It installs after 10 minutes in the background, never while you use the app.",
+        detail: "hbots tells you when it is ready. It never restarts by itself.",
         action: "none",
       };
     case "ready":
       return {
         title: `hbots ${target?.version ?? ""} is ready`.trim(),
-        detail: "It installs after 10 minutes in the background. You can install it now instead.",
+        detail: "Tap Restart to update. It takes a few seconds.",
         action: "install",
       };
     case "installing":
@@ -116,14 +116,23 @@ export function describeLastCheck(lastCheckAt: number | null, now: number): stri
 
 export interface UpdateBannerModel {
   readonly text: string;
+  /** What a tap does: open the install permission page, or restart into the update. */
+  readonly action: "permission" | "restart";
 }
 
-/** The Bots home banner: shown only while the install permission is missing. */
+/** The Bots home banner: an update that is ready to restart into, or one blocked on the install permission. */
 export function updateBannerModel(snapshot: UpdateSnapshot | null): UpdateBannerModel | null {
-  if (snapshot === null || snapshot.state !== "needsPermission" || snapshot.target === null) {
+  if (snapshot === null || snapshot.target === null) {
     return null;
   }
-  return {
-    text: `Update to ${snapshot.target.version} is waiting. Allow hbots to install updates.`,
-  };
+  if (snapshot.state === "needsPermission") {
+    return {
+      text: `Update to ${snapshot.target.version} is waiting. Allow hbots to install updates.`,
+      action: "permission",
+    };
+  }
+  if (snapshot.state === "ready" || snapshot.state === "needsTap") {
+    return { text: `hbots ${snapshot.target.version} is ready.`, action: "restart" };
+  }
+  return null;
 }
