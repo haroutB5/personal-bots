@@ -297,7 +297,9 @@ it.effect("keeps SQLite's default page cache (-2000) when the kill switch is set
     assert.strictEqual(yield* readCacheSize("off"), -2000);
   }),
 );
-it.effect("upgrades an existing database on a read-write worker connection", () => {
+// Fork: the writer already runs on its own worker, so upstream's separate migration worker is
+// not used and only the upgrade itself is checked. 149 is upstream's 081 (upstreamMigrationIds.ts).
+it.effect("upgrades an existing database on the writer connection", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-upgrade-"));
   const dbPath = NodePath.join(tempDir, "state.sqlite");
 
@@ -305,9 +307,8 @@ it.effect("upgrades an existing database on a read-write worker connection", () 
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA journal_mode = WAL;`;
-      yield* runMigrations({ toMigrationInclusive: 81 });
+      yield* runMigrations({ toMigrationInclusive: 149 });
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
-    const startedBefore = workerData.length;
 
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -323,12 +324,6 @@ it.effect("upgrades an existing database on a read-write worker connection", () 
         SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
       ),
     );
-    assert.deepInclude(workerData.slice(startedBefore), {
-      filename: dbPath,
-      readOnly: false,
-      allowExtension: false,
-      prepareCacheSize: 200,
-    });
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );

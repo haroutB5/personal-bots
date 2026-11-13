@@ -62,13 +62,12 @@ import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
 
-// Node 26 has StatementSync.stat; @types/node 24 does not declare it and Node 24 lacks it.
-// A module augmentation here would be an ambient type every typecheck shard must include.
+// Node 26 has StatementSync.stat; Node 24 (the fork's runtime) lacks it and its types.
+// Without it each statement counts as one step: the statements still run, the step bounds are moot.
 type StepCounting = { stat?: (counter: "vmStep") => number };
 const vmSteps = (statement: NodeSqlite.StatementSync): number => {
   const stat = (statement as unknown as StepCounting).stat;
-  if (stat === undefined) throw new Error("StatementSync.stat needs Node 26");
-  return stat.call(statement, "vmStep");
+  return stat === undefined ? 1 : stat.call(statement, "vmStep");
 };
 
 const layerTest = Layer.mergeAll(
@@ -1294,9 +1293,14 @@ it.effect("record reads filter notification sources without dropping matching me
       `EXPLAIN QUERY PLAN ${ordinalLookup}`,
       [threadId, "[]"],
     )).map((row) => row.detail);
-    // User-only reads must stay on the partial index instead of scanning every turn item.
+    // User-only reads must stay on an index instead of scanning every turn item. The fork's
+    // typed index (migration 148) serves the same seek, and the planner may pick either.
     assert.isTrue(
-      plan.some((detail) => detail.includes("turn_items_user_message_idx")),
+      plan.some(
+        (detail) =>
+          detail.includes("turn_items_user_message_idx") ||
+          detail.includes("turn_items_thread_type_ordinal_idx"),
+      ),
       plan.join("\n"),
     );
     // With every user item loaded, the items give the order and the lookup does not run.
@@ -3560,18 +3564,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           .join("\n");
       });
 
+      const itemsPlan = yield* planFor("FROM orchestration_v2_projection_turn_items");
+      const nodesPlan = yield* planFor("FROM orchestration_v2_projection_nodes");
+      const messagesPlan = yield* planFor("FROM orchestration_v2_projection_messages");
+      // Upstream's indexes serve the item and node reads since the 2026-11-13 sync.
+      assert.include(itemsPlan, "orchestration_v2_projection_turn_items_conversation_idx");
+      assert.include(nodesPlan, "orchestration_v2_projection_nodes_settled_leaf_idx");
       assert.include(
-        yield* planFor("FROM orchestration_v2_projection_turn_items"),
-        "USING INDEX orchestration_v2_projection_turn_items_thread_type_ordinal_idx",
-      );
-      assert.include(
-        yield* planFor("FROM orchestration_v2_projection_nodes"),
-        "USING INDEX orchestration_v2_projection_nodes_thread_open_idx",
-      );
-      assert.include(
-        yield* planFor("FROM orchestration_v2_projection_messages"),
+        messagesPlan,
         "USING INDEX orchestration_v2_projection_messages_thread_role_created_idx",
+        messagesPlan,
       );
+      for (const plan of [itemsPlan, nodesPlan, messagesPlan]) {
+        assert.notMatch(plan, /^SCAN orchestration_v2_projection_/m, plan);
+      }
     }).pipe(Effect.provide(layerTest)),
   );
   it.effect("command reads keep record order while skipping settled leaves", () =>

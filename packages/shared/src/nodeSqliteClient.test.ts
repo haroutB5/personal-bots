@@ -434,9 +434,10 @@ it.effect("fails with a typed SqlError when the database file is not SQLite", ()
     const filename = path.join(directory, "state.sqlite");
     yield* fs.writeFileString(filename, "not a db\n");
 
-    const exit = yield* Layer.build(SqliteClient.layer({ filename, checkpointWorker: true })).pipe(
-      Effect.exit,
-    );
+    // In-thread writer: the fork's worker writer opens the file on its first statement.
+    const exit = yield* Layer.build(
+      SqliteClient.layer({ filename, checkpointWorker: true, worker: false }),
+    ).pipe(Effect.exit);
 
     assert.isTrue(Exit.isFailure(exit));
     if (Exit.isFailure(exit)) assert.isTrue(SqlError.isSqlError(Cause.squash(exit.cause)));
@@ -588,7 +589,10 @@ const withOutsideConnection = <A, E>(
       const sql = yield* SqlClient.SqlClient;
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT}`);
       return yield* use({ sql, worker: startedWorkers.at(-1)!, outside, walSize });
-    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+    }).pipe(
+      // In-thread writer: these tests read the checkpoint worker as the last started worker.
+      Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true, worker: false })),
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 const openReadTransaction = (db: NodeSqlite.DatabaseSync) => {

@@ -44,6 +44,16 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const driver = (value: string) => ProviderDriverKind.make(value);
 // Shell stubs use POSIX paths; Windows temp paths cannot split on colon.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+// The fork's mise ownership decides for mise paths while this hold stands, so upstream's
+// resolver tests run again the day the hold is lifted.
+const forkMiseHeld = (
+  JSON.parse(
+    NodeFS.readFileSync(
+      new URL("../../../../scripts/personal/sync/held-upstream.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { readonly held: ReadonlyArray<{ readonly id: string }> }
+).held.some((hold) => hold.id === "fork-mise-updates");
 const makeTempDir = (name: string) =>
   SecureRandom.SecureRandom.pipe(
     Effect.flatMap((random) => random.uuidV4()),
@@ -1109,40 +1119,43 @@ it.layer(
     }),
   );
 
-  it.effect.skipIf(windowsHost)("upgrades a mise tool through a shim of a Nix-installed mise", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-nix-mise-shim");
-      const mise = miseFixture(tempDir, { misePresent: false });
-      const nixMise = "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-mise-2026.1.0/bin/mise";
-      const spawned: Array<ReadonlyArray<string>> = [];
+  // Held: fork-mise-updates (scripts/personal/sync/held-upstream.json). The fork's mise ownership decides.
+  it.effect.skipIf(forkMiseHeld)(
+    "upgrades a mise tool through a shim of a Nix-installed mise",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-nix-mise-shim");
+        const mise = miseFixture(tempDir, { misePresent: false });
+        const nixMise = "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-mise-2026.1.0/bin/mise";
+        const spawned: Array<ReadonlyArray<string>> = [];
 
-      const capabilities = yield* resolvePackageManagedProviderMaintenance(
-        {
-          provider: driver("packageTool"),
-          npmPackageName: "@example/package-tool",
-          mise: { tool: "package-tool" },
-          nativeUpdate: null,
-        },
-        {
-          binaryPath: "package-tool",
-          resolvedCommandPath: NodePath.join(tempDir, "mise", "shims", "package-tool"),
-          realCommandPath: nixMise,
-          env: { PATH: "" },
-          platform: "linux",
-        },
-      ).pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, spawned),
-        ),
-      );
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(
+          {
+            provider: driver("packageTool"),
+            npmPackageName: "@example/package-tool",
+            mise: { tool: "package-tool" },
+            nativeUpdate: null,
+          },
+          {
+            binaryPath: "package-tool",
+            resolvedCommandPath: NodePath.join(tempDir, "mise", "shims", "package-tool"),
+            realCommandPath: nixMise,
+            env: { PATH: "" },
+            platform: "linux",
+          },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, spawned),
+          ),
+        );
 
-      expect(capabilities.update).toMatchObject({
-        executable: nixMise,
-        args: ["upgrade", "package-tool"],
-      });
-    }),
+        expect(capabilities.update).toMatchObject({
+          executable: nixMise,
+          args: ["upgrade", "package-tool"],
+        });
+      }),
   );
 
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
@@ -1895,7 +1908,8 @@ it.layer(
         // Resolution proves ownership but never asks mise for releases.
         expect(spawned.some((args) => args[1] === "latest")).toBe(false);
       }),
-    { skip: !symlinksSupported || windowsHost },
+    // Held: fork-mise-updates (scripts/personal/sync/held-upstream.json).
+    { skip: forkMiseHeld },
   );
 
   it.effect.each([
@@ -2085,7 +2099,8 @@ it.layer(
       }),
   );
 
-  it.effect.skipIf(!symlinksSupported || windowsHost)(
+  // Held: fork-mise-updates (scripts/personal/sync/held-upstream.json). The fork's mise ownership decides.
+  it.effect.skipIf(forkMiseHeld)(
     "asks mise for its latest release only while update checks are enabled",
     () =>
       Effect.gen(function* () {
@@ -2133,43 +2148,38 @@ it.layer(
       ),
   );
 
-  it.effect.skipIf(!symlinksSupported || windowsHost)(
-    "keeps each mise environment's latest release apart",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-mise-latest-env");
-        const mise = miseFixture(tempDir);
-        const advise = (env: NodeJS.ProcessEnv, latest: string) =>
-          resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
-            binaryPath: mise.latestBinaryPath,
-            env: { PATH: mise.miseBinDir, ...env },
-          }).pipe(
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              miseSpawner({ which: mise.binaryPath, latest, installed: mise.installed() }, []),
-            ),
-            Effect.flatMap((capabilities) =>
-              enrichProviderSnapshotWithVersionAdvisory(
-                installedPackageToolProvider,
-                capabilities,
-                {
-                  enableProviderUpdateChecks: true,
-                },
-              ),
-            ),
-            Effect.map((snapshot) => snapshot.versionAdvisory?.latestVersion),
-          );
+  // Held: fork-mise-updates (scripts/personal/sync/held-upstream.json). The fork's mise ownership decides.
+  it.effect.skipIf(forkMiseHeld)("keeps each mise environment's latest release apart", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-mise-latest-env");
+      const mise = miseFixture(tempDir);
+      const advise = (env: NodeJS.ProcessEnv, latest: string) =>
+        resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+          binaryPath: mise.latestBinaryPath,
+          env: { PATH: mise.miseBinDir, ...env },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner({ which: mise.binaryPath, latest, installed: mise.installed() }, []),
+          ),
+          Effect.flatMap((capabilities) =>
+            enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, capabilities, {
+              enableProviderUpdateChecks: true,
+            }),
+          ),
+          Effect.map((snapshot) => snapshot.versionAdvisory?.latestVersion),
+        );
 
-        expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.1.0")).toBe("1.1.0");
-        expect(yield* advise({}, "1.2.0")).toBe("1.2.0");
-        expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.2.0")).toBe("1.1.0");
-      }).pipe(
-        Effect.provide(ProviderLatestVersions.layer),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("mise answers for its own installs")),
-        ),
+      expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.1.0")).toBe("1.1.0");
+      expect(yield* advise({}, "1.2.0")).toBe("1.2.0");
+      expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.2.0")).toBe("1.1.0");
+    }).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("mise answers for its own installs")),
       ),
+    ),
   );
 
   it.effect.each([
@@ -2214,7 +2224,8 @@ it.layer(
           HttpClient.make(() => Effect.die("an offline mise must not fall back to npm")),
         ),
       ),
-    { skip: !symlinksSupported || windowsHost },
+    // Held: fork-mise-updates (scripts/personal/sync/held-upstream.json).
+    { skip: forkMiseHeld },
   );
 
   it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>

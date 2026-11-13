@@ -38,6 +38,13 @@ export const UPSTREAM_MIGRATION_IDS: Readonly<Record<string, number>> = {
   "078_DropOrchestrationEventCorrelationIndex": 137,
   "079_DelegatedRecoveryIndexes": 138,
   "080_ScheduledTaskThreadMode": 139,
+  "081_ProjectionMessageSearchText": 149,
+  "082_TurnItemConversationIndex": 150,
+  "083_CommandReadIndexes": 151,
+  "084_LastExecutedRunIndex": 152,
+  "085_TurnItemCounts": 153,
+  "086_QueuedTurnInputIndex": 154,
+  "087_ProjectionProjectsCustomTitle": 155,
 };
 
 /**

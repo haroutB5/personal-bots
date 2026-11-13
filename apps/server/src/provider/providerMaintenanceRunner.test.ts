@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -169,6 +170,10 @@ function layerMockSpawner(
   );
 }
 
+/** The first update status that is not queued or running, once the detached update writes it. */
+const settledStatus = (settled: Queue.Queue<ServerProviderUpdateState["status"]>) =>
+  Queue.take(settled);
+
 function makeRegistry(
   initialProviders: ServerProvider | ReadonlyArray<ServerProvider> = baseProvider,
   options?: {
@@ -180,6 +185,7 @@ function makeRegistry(
       Array.isArray(initialProviders) ? initialProviders : [initialProviders],
     );
     const updateStatesRef = yield* Ref.make<ReadonlyArray<ServerProviderUpdateState>>([]);
+    const settledStatuses = yield* Queue.unbounded<ServerProviderUpdateState["status"]>();
 
     const setProviderMaintenanceActionState = Effect.fn(
       "providerMaintenanceRunner.test.setProviderMaintenanceActionState",
@@ -187,6 +193,9 @@ function makeRegistry(
       const updateState = input.action === "update" ? input.state : null;
       if (updateState) {
         yield* Ref.update(updateStatesRef, (states) => [...states, updateState]);
+        if (updateState.status !== "running" && updateState.status !== "queued") {
+          yield* Queue.offer(settledStatuses, updateState.status);
+        }
       }
       return yield* Ref.updateAndGet(providersRef, (providers) =>
         providers.map((candidate) => {
@@ -236,6 +245,7 @@ function makeRegistry(
       registry,
       providersRef,
       updateStatesRef,
+      settledStatuses,
     };
   });
 }
@@ -908,26 +918,30 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect("an interrupted update ends failed instead of running forever", () => {
+  it.effect("a dropped request leaves the update running to its end", () => {
+    // Fork: the update runs detached, so a dropped request cannot stop it (upstream marks it failed).
     const started = Deferred.makeUnsafe<void>();
+    const installed = Deferred.makeUnsafe<void>();
     return Effect.gen(function* () {
-      const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
+      const { registry, updateStatesRef, settledStatuses } =
+        yield* makeRegistry(baseNativeCliProvider);
       const updater = yield* makeTestRunner(registry);
       const update = yield* updater.updateProvider(NATIVE_CLI_DRIVER).pipe(Effect.forkScoped);
       yield* Deferred.await(started);
       yield* Fiber.interrupt(update);
-      const last = (yield* Ref.get(updateStatesRef)).at(-1);
-      assert.deepStrictEqual(
-        [last?.status, last?.message],
-        ["failed", "Update stopped before it finished."],
-      );
+      assert.strictEqual((yield* Ref.get(updateStatesRef)).at(-1)?.status, "running");
+      yield* Deferred.succeed(installed, undefined);
+      assert.strictEqual(yield* settledStatus(settledStatuses), "succeeded");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
           layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner(() => ({
-            exitCode: Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+            exitCode: Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(installed)),
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+            ),
           })),
         ),
       ),
@@ -938,7 +952,7 @@ describe("providerMaintenanceRunner", () => {
     const writing = Deferred.makeUnsafe<void>();
     const release = Deferred.makeUnsafe<void>();
     return Effect.gen(function* () {
-      const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
+      const { registry, settledStatuses } = yield* makeRegistry(baseNativeCliProvider);
       const updater = yield* makeTestRunner({
         ...registry,
         setProviderMaintenanceActionState: (input) =>
@@ -956,7 +970,8 @@ describe("providerMaintenanceRunner", () => {
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.await(update);
 
-      assert.strictEqual((yield* Ref.get(updateStatesRef)).at(-1)?.status, "succeeded");
+      // Fork: the detached update writes its final state after the request is gone.
+      assert.strictEqual(yield* settledStatus(settledStatuses), "succeeded");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -1677,16 +1692,16 @@ it.effect("updates a single provider instance without touching sibling instances
     const updater = yield* makeTestRunner({
       ...registry,
       getProviderMaintenanceCapabilitiesForInstance: (instanceId, provider) =>
+        // The sibling has its own installation; instances sharing one are refreshed together.
         Effect.succeed(
           makeProviderMaintenanceCapabilities({
             provider,
             packageName: "@openai/codex-instance-test",
             updateExecutable: "vp",
             updateArgs: ["i", "-g", "@openai/codex"],
-            updateLockKey: "vite-plus-global",
+            updateLockKey:
+              instanceId === personalInstanceId ? "vite-plus-global" : "vite-plus-global:work",
           }),
-        ).pipe(
-          Effect.tap(() => Effect.sync(() => assert.strictEqual(instanceId, personalInstanceId))),
         ),
       refreshAfterUpdate: (_provider, instanceId) =>
         registry.refreshAfterUpdate(_provider, instanceId).pipe(

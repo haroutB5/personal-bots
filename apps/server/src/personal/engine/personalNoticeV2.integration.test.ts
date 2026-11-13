@@ -100,7 +100,8 @@ const testLayer = PersonalEngineV2Live.pipe(
 describe("v2 assistant notice", () => {
   it.effect("writes, reads back and reaches the thread shell with no run", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 142 });
+      // Message writes need the current schema (search text, item counts).
+      yield* runMigrations();
       const projection = yield* ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
       const engine = yield* PersonalEngine;

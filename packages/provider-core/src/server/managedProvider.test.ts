@@ -924,7 +924,11 @@ describe("makeManagedServerProvider", () => {
         assert.strictEqual((yield* provider.getSnapshot).auth.label, undefined);
         const refreshed = yield* provider.refresh;
         assert.strictEqual(refreshed.auth.label, undefined);
-        assert.deepStrictEqual(refreshed.usageLimits, usageLimits);
+        // The fork stamps a complete reading with `fullReadAt`.
+        assert.deepStrictEqual(refreshed.usageLimits, {
+          ...usageLimits,
+          fullReadAt: usageLimits.checkedAt,
+        });
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

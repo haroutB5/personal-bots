@@ -856,7 +856,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   if (
     nativeUpdate?.isCommandPath &&
     commandPaths.some(nativeUpdate.isCommandPath) &&
-    !npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName)
+    !npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName) &&
+    !forkMise
   ) {
     return native;
   }

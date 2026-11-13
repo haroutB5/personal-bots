@@ -26,3 +26,7 @@ ProviderInstanceRegistryLive.test.ts > ProviderInstanceRegistryLive — multi-in
 bootService.test.ts > boot service install >
 # The fake ACP server fixture does not launch on Windows, so initialize never arrives.
 AntigravityInstallation.test.ts > Antigravity installation > validates
+# Environment-dependent (sync of upstream 7bf2a43c09, 2026-11-13): these read the host's own OpenCode
+# sign-in and then probe usage over HTTP. Both pass with an empty HOME.
+driver.test.ts > OpenCodeDriver on OpenCode 1 > lists a project's own opencode.jsonc models in that project's snapshot
+driver.test.ts > OpenCodeDriver updates > opens sessions through OpenCode 2 after the binary is upgraded in place from 1.x

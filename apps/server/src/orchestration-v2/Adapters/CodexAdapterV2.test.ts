@@ -4416,9 +4416,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, "usage_limit");
         assert.equal(terminal.failure.code, "responseStreamDisconnected");
+        // Fork: a usage-limit failure carries the fork's own wording, not the provider's raw text.
         assert.equal(
           terminal.failure.message,
-          "exceeded retry limit, last status: 429 Too Many Requests",
+          "Codex usage limit reached. Send the message again once the limit resets.",
         );
         assert.equal(terminal.retry?.attempt, 1);
         assert.equal(terminal.threadDisposition, "reusable");

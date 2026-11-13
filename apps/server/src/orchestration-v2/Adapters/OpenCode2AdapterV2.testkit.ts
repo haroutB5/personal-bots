@@ -256,7 +256,8 @@ export const replayServer = (
       external: options?.external ?? false,
       alive:
         options?.alive === undefined
-          ? Effect.succeed(true)
+          ? // Upstream's recovery tests expect a replaced server; the fork's resubscribe tests pass `alive`.
+            Effect.succeed(false)
           : Effect.sync(() => options.alive?.current ?? true),
       ...(options?.external ? {} : { processExit: options?.processExit ?? Effect.never }),
     };

@@ -34,6 +34,7 @@ vi.mock("~/state/server", async () => {
   return {
     primaryServerProvidersAtom: {},
     primaryServerEnvironmentThemesAtom: Atom.make([]),
+    themeServerEnvironmentThemesAtom: Atom.make([]),
     serverEnvironment: { updateProvider: {} },
   };
 });

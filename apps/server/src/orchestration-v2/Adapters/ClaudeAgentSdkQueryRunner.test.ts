@@ -311,6 +311,7 @@ it.effect("treats a setMcpServers answer without an errors map as no failed serv
         () =>
           ({
             setMcpServers: async () => ({}),
+            initializationResult: async () => ({}),
             close,
             [Symbol.asyncDispose]: async () => close(),
           }) as unknown as ClaudeSdk.Query,

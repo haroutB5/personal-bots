@@ -124,7 +124,7 @@ describe("a tool call the bot got wrong in the server log", () => {
       expect(badField).toHaveLength(1);
       expect(badField[0]).toMatchObject({ level: "Warn", hasCause: false });
       expect(badField[0]?.text).toBe(
-        'tool call refused: update_work_record: Expected array | undefined at ["evidence"]',
+        'tool call refused: update_work_record: Expected array | null at ["evidence"]',
       );
     }),
   );

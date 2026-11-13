@@ -8,9 +8,9 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 436,
+    "items": 437,
     "byKind": {
-      "screen": 73,
+      "screen": 74,
       "sheet": 25,
       "action": 64,
       "card": 24,
@@ -21,7 +21,7 @@
     "byStatus": {
       "done": 383,
       "planned": 0,
-      "n/a": 53,
+      "n/a": 54,
       "unassigned": 0
     },
     "userActions": 158,
@@ -428,7 +428,7 @@
       "id": "screen:routes/_chat.settings.tsx#settings",
       "kind": "screen",
       "title": "/settings",
-      "web": "routes/_chat.settings.tsx:173",
+      "web": "routes/_chat.settings.tsx:174",
       "route": "/settings",
       "component": "SettingsRouteLayout",
       "layout": true,
@@ -464,7 +464,7 @@
       "id": "screen:routes/_chat.tsx#chat",
       "kind": "screen",
       "title": "chat",
-      "web": "routes/_chat.tsx:48",
+      "web": "routes/_chat.tsx:31",
       "route": "/",
       "component": "ChatRouteLayout",
       "layout": true,
@@ -851,6 +851,18 @@
       "check": "Open /work on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
+      "id": "screen:routes/approve-agent.tsx#approve-agent",
+      "kind": "screen",
+      "title": "/approve-agent",
+      "web": "routes/approve-agent.tsx:7",
+      "route": "/approve-agent",
+      "component": "ApproveAgentSurface",
+      "layout": false,
+      "scope": "developer-view",
+      "status": "n/a",
+      "reason": "Upstream T3 developer view (Settings > Developer view). Plan section 2 leaves terminal, diff, review and upstream settings out of the phone app."
+    },
+    {
       "id": "screen:routes/connect-agent.tsx#connect-agent",
       "kind": "screen",
       "title": "/connect-agent",
@@ -928,7 +940,7 @@
       "id": "screen:routes/welcome.tsx#welcome",
       "kind": "screen",
       "title": "/welcome",
-      "web": "routes/welcome.tsx:13",
+      "web": "routes/welcome.tsx:14",
       "route": "/welcome",
       "component": "WelcomeRouteView",
       "layout": false,
