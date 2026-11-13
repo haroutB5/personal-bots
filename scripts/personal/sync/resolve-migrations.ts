@@ -120,7 +120,11 @@ for (const file of appendedFiles) {
   const lastEntry = entries.at(-1)!;
   const entryEnd = lastEntry.index! + lastEntry[0].length;
   registry = `${registry.slice(0, entryEnd)}\n  // Upstream ${file}, renumbered (see upstreamMigrationIds.ts).\n  [${id}, "${name}", ${alias}],${registry.slice(entryEnd)}`;
-  mapSource = mapSource.replace(/\n};\s*$/, `\n  "${file}": ${id},\n};\n`);
+  const mapEnd = mapSource.indexOf("\n};", mapSource.indexOf("UPSTREAM_MIGRATION_IDS"));
+  if (!mapSource.includes("UPSTREAM_MIGRATION_IDS") || mapEnd < 0) {
+    finish(1, { status: "error", reason: `no UPSTREAM_MIGRATION_IDS object in ${MAP_TS}` });
+  }
+  mapSource = `${mapSource.slice(0, mapEnd)}\n  "${file}": ${id},${mapSource.slice(mapEnd)}`;
   appended.push({ file, id });
 }
 
