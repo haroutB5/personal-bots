@@ -8,9 +8,9 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 437,
+    "items": 438,
     "byKind": {
-      "screen": 74,
+      "screen": 75,
       "sheet": 25,
       "action": 64,
       "card": 24,
@@ -20,7 +20,7 @@
     },
     "byStatus": {
       "done": 383,
-      "planned": 0,
+      "planned": 1,
       "n/a": 54,
       "unassigned": 0
     },
@@ -35,7 +35,7 @@
       "A11": 17,
       "A16": 22,
       "A13": 9,
-      "A12": 40,
+      "A12": 41,
       "A1": 4,
       "A17": 1,
       "X4": 20,
@@ -841,9 +841,9 @@
       "id": "screen:routes/_personal.work.tsx#work",
       "kind": "screen",
       "title": "/work",
-      "web": "routes/_personal.work.tsx:5",
+      "web": "routes/_personal.work.tsx:4",
       "route": "/work",
-      "component": "WorkScreen",
+      "component": null,
       "layout": false,
       "scope": "personal",
       "pr": "A12",
@@ -964,6 +964,34 @@
       "pr": "A1",
       "status": "done",
       "check": "Open PersonalUnreachableScreen on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
+    },
+    {
+      "id": "screen:WorkScreen.tsx#workscreen",
+      "kind": "screen",
+      "title": "WorkScreen",
+      "web": "WorkScreen.tsx:1",
+      "route": null,
+      "scope": "personal",
+      "layout": false,
+      "logic": {
+        "files": 54,
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
+        "direct": [
+          "packages/personal-client/src/bots/botSummaries.ts",
+          "packages/personal-client/src/bots/workingProgress.ts",
+          "packages/personal-client/src/work/workTimeline.ts",
+          "commandFeedback.ts",
+          "taskPresentation.ts",
+          "useBotShells.ts",
+          "useMinuteNow.ts",
+          "usePersonalAutomation.ts",
+          "usePersonalBots.ts",
+          "useWorkingProgress.ts"
+        ]
+      },
+      "pr": "A12",
+      "status": "planned",
+      "check": "Open WorkScreen on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
       "id": "screen:voice/VoiceCallScreen.tsx#voicecallscreen",
@@ -3025,7 +3053,7 @@
       "id": "action:TasksScreen.tsx#select-routines",
       "kind": "action",
       "title": "Select routines",
-      "web": "TasksScreen.tsx:390",
+      "web": "TasksScreen.tsx:389",
       "via": "menu",
       "logic": {
         "files": 35,
@@ -3045,7 +3073,7 @@
       },
       "pr": "A12",
       "status": "done",
-      "check": "Tap \"Select routines\" on Android. The server state changes exactly as the web action at TasksScreen.tsx:390 does, checked on the web app."
+      "check": "Tap \"Select routines\" on Android. The server state changes exactly as the web action at TasksScreen.tsx:389 does, checked on the web app."
     },
     {
       "id": "action:TeamConstellationCard.tsx#remove-team-remove-team-move-its-bots-first",
@@ -3651,7 +3679,7 @@
       "id": "action:TasksScreen.tsx#long-press",
       "kind": "action",
       "title": "long press",
-      "web": "TasksScreen.tsx:169",
+      "web": "TasksScreen.tsx:171",
       "via": "gesture",
       "logic": {
         "files": 35,
@@ -3671,7 +3699,7 @@
       },
       "pr": "A12",
       "status": "done",
-      "check": "Perform \"long press\" on Android where TasksScreen.tsx:169 offers it. The same result appears on the web app after a refresh."
+      "check": "Perform \"long press\" on Android where TasksScreen.tsx:171 offers it. The same result appears on the web app after a refresh."
     },
     {
       "id": "action:TeamScreen.tsx#drag-a-bot-between-teams",
