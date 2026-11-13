@@ -49,7 +49,8 @@ export interface SqliteClientConfig {
   /**
    * Run the writer on one serialized worker thread (the default) when
    * `writerWorker` is off. `false` keeps every writer statement on the calling
-   * thread. Unset reads `T3CODE_SQLITE_WORKER` once, at construction.
+   * thread. Unset reads `T3CODE_SQLITE_WORKER` once, at construction. Ignored
+   * for in-memory databases.
    */
   readonly worker?: boolean | undefined;
 }
@@ -1006,7 +1007,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
   // worker owns the writer unless the kill switch is set, and `off` restores the
   // in-thread bridge exactly.
   const useThreadWorker =
-    !writerWorker && (options.worker ?? sqliteWorkerEnabled(process.env[SQLITE_WORKER_ENV]));
+    isFileDatabase &&
+    !writerWorker &&
+    (options.worker ?? sqliteWorkerEnabled(process.env[SQLITE_WORKER_ENV]));
   let checkpointAfterWrite: (() => void) | undefined;
   const writerConnection: Effect.Effect<Connection, SqlError> = writerWorker
     ? yield* makeWorkerConnection({
