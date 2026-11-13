@@ -19,8 +19,8 @@
       "rpc": 131
     },
     "byStatus": {
-      "done": 383,
-      "planned": 1,
+      "done": 384,
+      "planned": 0,
       "n/a": 54,
       "unassigned": 0
     },
@@ -990,7 +990,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open WorkScreen on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
