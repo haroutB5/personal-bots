@@ -9,7 +9,14 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONObject
 
-data class NativeSession(val httpBaseUrl: String, val accessToken: String) {
+data class NativeSession(
+  val httpBaseUrl: String,
+  val accessToken: String,
+  /** "dpop" when the token is bound to this phone's key and needs a proof on every request. */
+  val authMethod: String = "bearer",
+  /** Epoch milliseconds, or null when the stored session does not say. */
+  val expiresAt: Long? = null,
+) {
   companion object {
     fun parse(json: String): NativeSession? {
       val session = runCatching { JSONObject(json) }.getOrNull() ?: return null
@@ -17,7 +24,9 @@ data class NativeSession(val httpBaseUrl: String, val accessToken: String) {
       if (!base.startsWith("https://")) return null
       val token = session.optString("accessToken")
       if (token.isBlank()) return null
-      return NativeSession(base, token)
+      val method = if (session.optString("authMethod") == "dpop") "dpop" else "bearer"
+      val expiresAt = session.optLong("expiresAt", 0L).takeIf { it > 0L }
+      return NativeSession(base, token, method, expiresAt)
     }
   }
 }

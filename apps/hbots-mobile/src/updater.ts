@@ -27,6 +27,8 @@ export interface UpdateSnapshot {
   readonly testPin: boolean;
   /** Whether Android lets the app reopen itself after an update. Absent on builds before 1.67.17. */
   readonly canReopen?: boolean;
+  /** Restart was tapped in the notification and the install is waiting for the app to be open. */
+  readonly restartWanted?: boolean;
 }
 
 export interface UpdateAuth {

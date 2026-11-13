@@ -109,6 +109,20 @@ object UpdateNotifier {
     runCatching { context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
   }
 
+  /** Restart was tapped but the sign-in must be renewed first: opening the app finishes it. */
+  fun postOpenToFinish(context: Context) {
+    if (!canPost(context)) return
+    ensureChannel(context)
+    post(
+      context,
+      UpdateChannels.action.id,
+      READY_ID,
+      "Open hbots to finish the update",
+      "Tap here. The update installs as soon as hbots opens.",
+      openApp(context),
+    )
+  }
+
   fun clearUpdated(context: Context) {
     runCatching { context.getSystemService(NotificationManager::class.java)?.cancel(UPDATED_ID) }
   }

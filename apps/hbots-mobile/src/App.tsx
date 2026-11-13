@@ -303,6 +303,17 @@ function App() {
 
   useEffect(() => subscribeUpdate(setSnapshot), [setSnapshot]);
 
+  // Restart was tapped in the notification while the sign-in needed renewing: finish it now the
+  // app is open. The renewed token can land a moment later, so it is tried a few times.
+  const restartWanted = update?.restartWanted === true && update.state === "ready";
+  useEffect(() => {
+    if (!restartWanted) return;
+    const timers = [1_000, 5_000, 12_000].map((ms) =>
+      setTimeout(() => void confirmUpdateInstall().catch(() => undefined), ms),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [restartWanted]);
+
   useEffect(() => {
     let live = true;
     // A launch step that throws or never answers is tried again, so "Starting" does not last.

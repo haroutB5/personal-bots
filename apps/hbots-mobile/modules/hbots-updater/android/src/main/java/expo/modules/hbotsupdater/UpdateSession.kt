@@ -12,6 +12,7 @@ object UpdateSession {
   private const val TAG = "HbotsUpdate"
   private const val SESSION_PATH = "/api/auth/session"
   internal const val MAX_BODY_BYTES = 16 * 1024
+  private const val EXPIRY_MARGIN_MS = 30_000L
 
   private val http by lazy {
     OkHttpClient.Builder()
@@ -37,7 +38,25 @@ object UpdateSession {
       Log.i(TAG, "session check skipped no stored session")
       return SessionVerdict.Unknown
     }
-    val probe = probe(session.httpBaseUrl, session.accessToken)
+    // An expired token says nothing about a revoked phone: the app renews it when it next opens.
+    // Asking the server with it would read as "signed out" and throw the update away.
+    val expiresAt = session.expiresAt
+    if (expiresAt != null && System.currentTimeMillis() >= expiresAt - EXPIRY_MARGIN_MS) {
+      Log.i(TAG, "session check skipped token expired")
+      return SessionVerdict.Unknown
+    }
+    val proofFor: ((String) -> String?)? =
+      if (session.authMethod == "dpop") {
+        val key = DpopKeySource.read(context)
+        if (key == null) {
+          Log.i(TAG, "session check skipped no dpop key")
+          return SessionVerdict.Unknown
+        }
+        { url -> DpopProof.create(key, "GET", url, session.accessToken) }
+      } else {
+        null
+      }
+    val probe = probe(session.httpBaseUrl, session.accessToken, proofFor = proofFor)
     Log.i(
       TAG,
       "session check status=${probe.status ?: "none"} verdict=${name(probe.verdict)}" +
@@ -50,14 +69,19 @@ object UpdateSession {
     httpBaseUrl: String,
     accessToken: String,
     now: () -> Long = System::currentTimeMillis,
+    proofFor: ((String) -> String?)? = null,
   ): Probe {
     val url = runCatching { URL(URL(httpBaseUrl), SESSION_PATH).toString() }
       .getOrElse { return Probe(SessionVerdict.Unknown, null, 0, "bad url") }
-    val request = Request.Builder()
-      .url(url)
-      .header("Authorization", "Bearer $accessToken")
-      .header("Accept", "application/json")
-      .build()
+    val builder = Request.Builder().url(url).header("Accept", "application/json")
+    if (proofFor == null) {
+      builder.header("Authorization", "Bearer $accessToken")
+    } else {
+      // A token bound to this phone's key is refused without its proof, which read as "signed out".
+      val proof = proofFor(url) ?: return Probe(SessionVerdict.Unknown, null, 0, "no dpop proof")
+      builder.header("Authorization", "DPoP $accessToken").header("DPoP", proof)
+    }
+    val request = builder.build()
     val started = now()
     return try {
       http.newCall(request).execute().use { response ->

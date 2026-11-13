@@ -26,6 +26,9 @@ object UpdateEngine {
   @Volatile private var emit: ((Map<String, Any?>) -> Unit)? = null
   private val foreground = AtomicBoolean(false)
   private val processObserved = AtomicBoolean(false)
+  // Restart was tapped in the notification but the install could not start from the background
+  // (the sign-in needs renewing). The app finishes it the moment it is open.
+  private val restartWanted = AtomicBoolean(false)
   @Volatile private var pendingTapIntent: Intent? = null
   @Volatile private var started = false
 
@@ -83,6 +86,7 @@ object UpdateEngine {
   fun confirmFromNotification(context: Context) = work.execute {
     ensure(context.applicationContext)
     Log.i(TAG, "restart requested from the notification")
+    restartWanted.set(true)
     dispatch(UpdateEvent.UserConfirmed)
   }
 
@@ -117,6 +121,7 @@ object UpdateEngine {
 
   fun onInstallSucceeded(context: Context) = work.execute {
     ensure(context.applicationContext)
+    restartWanted.set(false)
     dispatch(UpdateEvent.InstallSucceeded)
     // Android may refuse a start from the background; the "updated" notification then opens the app.
     UpdateNotifier.reopenApp(context.applicationContext)
@@ -148,6 +153,7 @@ object UpdateEngine {
       "sessionGeneration" to record.sessionGeneration,
       "testPin" to BuildConfig.UPDATE_TEST_PIN,
       "canReopen" to (context?.let(UpdateInstaller::canReopen) ?: false),
+      "restartWanted" to (restartWanted.get() && state is UpdateState.Ready),
     )
   }
 
@@ -269,6 +275,7 @@ object UpdateEngine {
     }
     when (UpdateSession.verify(app)) {
       SessionVerdict.Invalid -> {
+        restartWanted.set(false)
         Log.i(TAG, "install cleared by an invalid session")
         dispatch(UpdateEvent.SessionInvalid)
         return
@@ -276,6 +283,15 @@ object UpdateEngine {
       SessionVerdict.Unknown -> {
         Log.i(TAG, "install deferred while the session is unchecked")
         dispatch(UpdateEvent.InstallDeferred)
+        if (restartWanted.get() && !isForeground()) {
+          // Open the app so it renews the sign-in and finishes the restart; when Android will
+          // not let a background app open itself, a notification does it on one tap.
+          if (UpdateInstaller.canReopen(app)) {
+            UpdateNotifier.reopenApp(app)
+          } else {
+            UpdateNotifier.postOpenToFinish(app)
+          }
+        }
         return
       }
       SessionVerdict.Valid -> Unit
