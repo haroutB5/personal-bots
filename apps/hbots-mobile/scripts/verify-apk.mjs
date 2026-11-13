@@ -136,6 +136,11 @@ const expectedExported = [
   "expo.modules.hbotslauncher.ShortcutTrampolineActivity", // forwards hbots:// links only
   "androidx.profileinstaller.ProfileInstallReceiver",
 ];
+// A build with Firebase on adds Google's message receiver. It is exported so Play services can
+// deliver a push, and it must stay behind Google's own SEND permission, checked below. A build
+// without Firebase has no such receiver, so it is allowed, not required.
+const FCM_RECEIVER = "com.google.firebase.iid.FirebaseInstanceIdReceiver";
+if (exported.includes(FCM_RECEIVER)) expectedExported.push(FCM_RECEIVER);
 const exportedOk =
   exported.length === expectedExported.length &&
   expectedExported.every((name) => exported.includes(name));
@@ -154,6 +159,18 @@ failed ||= !pipOk;
 console.log(
   `${pipOk ? "ok  " : "FAIL"} supportsPictureInPicture on ${pipComponents.join(",") || "none"} (expected MainActivity only)`,
 );
+
+if (exported.includes(FCM_RECEIVER)) {
+  const fcmReceiverTag =
+    manifest.match(
+      /<receiver\b[^>]*com\.google\.firebase\.iid\.FirebaseInstanceIdReceiver[^>]*>/u,
+    )?.[0] ?? "";
+  const fcmGuarded = fcmReceiverTag.includes(
+    'android:permission="com.google.android.c2dm.permission.SEND"',
+  );
+  failed ||= !fcmGuarded;
+  console.log(`${fcmGuarded ? "ok  " : "FAIL"} FirebaseInstanceIdReceiver guarded by c2dm SEND`);
+}
 
 const debugReceiverTag =
   manifest.match(/<receiver\b[^>]*expo\.modules\.hbotsnotify\.DebugPushReceiver[^>]*>/u)?.[0] ?? "";
