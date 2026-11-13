@@ -1,24 +1,32 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { OrchestrationV2ThreadBoundedSnapshot, type ThreadId } from "@t3tools/contracts";
 import { withOrchestrationProtocolHeader } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import {
   ThreadSnapshotLoader,
   type ThreadSnapshotLoadResult,
 } from "@t3tools/client-runtime/state/threads";
+import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { authorizedFetch } from "../authorizedRequest";
 import type { StoredSession } from "../session";
-import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
+import { noteRequestStart } from "./chatOpenPerf";
+
+const decodeBoundedSnapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadBoundedSnapshot);
+
+/** The opt-ins the web loader sends (boundedThreadSnapshotHttp.ts): the body is about 58% smaller. */
+const COMPACT_QUERY = "compactTurnItems=1&dedupeBodies=1&compactIds=1&deferWork=1";
 
 export async function loadThreadSnapshot(
   stored: StoredSession,
   threadId: ThreadId,
 ): Promise<ThreadSnapshotLoadResult> {
+  noteRequestStart(threadId, performance.now());
   try {
     const response = await authorizedFetch(
       stored,
       new URL(
-        `/api/orchestration/threads/${encodeURIComponent(threadId)}/bounded`,
+        `/api/orchestration/threads/${encodeURIComponent(threadId)}/bounded?${COMPACT_QUERY}`,
         stored.httpBaseUrl,
       ),
       {
@@ -28,14 +36,21 @@ export async function loadThreadSnapshot(
     );
     if (response.status === 404) return { _tag: "missing" };
     if (!response.ok) return { _tag: "unavailable" };
-    const snapshot = decodeThreadSnapshotJson((await response.json()) as unknown);
+    const {
+      turnItemsOmitLocalVisible,
+      idTable: _idTable,
+      ...bounded
+    } = decodeBoundedSnapshot((await response.json()) as unknown);
     return {
       _tag: "present",
-      snapshot,
+      snapshot: {
+        ...bounded,
+        projection: boundedSnapshotProjection({ ...bounded, turnItemsOmitLocalVisible }),
+      },
       history: {
-        historyCursor: snapshot.historyCursor ?? null,
-        hasMoreHistory: snapshot.hasMoreHistory ?? false,
-        latestLocalTurnOrdinal: snapshot.latestLocalTurnOrdinal ?? null,
+        historyCursor: bounded.historyCursor,
+        hasMoreHistory: bounded.hasMoreHistory,
+        latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
       },
     };
   } catch {

@@ -2,18 +2,21 @@ import { OrchestrationV2ThreadDetailSnapshot, ThreadId } from "@t3tools/contract
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const files = vi.hoisted(() => new Map<string, string>());
+const writer = vi.hoisted(() => ({ failure: null as Error | null }));
 
 vi.mock("../platform/secureStorage", () => ({
-  writeEncryptedText: (path: string, text: string) => {
-    files.set(path, `v1:${Buffer.from(text).toString("base64")}`);
+  writeEncryptedText: async (path: string, text: string) => {
+    await Promise.resolve();
+    if (writer.failure !== null) throw writer.failure;
+    files.set(path, `v2:${Buffer.from(text).toString("base64")}`);
   },
   readDecryptedText: async (path: string) => {
     const raw = files.get(path);
     if (raw === undefined) return null;
-    if (!raw.startsWith("v1:")) {
+    if (!raw.startsWith("v2:")) {
       files.delete(path);
       return null;
     }
@@ -57,7 +60,7 @@ vi.mock("expo-file-system", () => {
 });
 
 import serverBody from "./fixtures/boundedThreadSnapshot.json";
-import { MAX_CACHED_THREAD_BYTES, readCachedThread, writeCachedThread } from "./nativeCache";
+import { readCachedThread, writeCachedThread } from "./nativeCache";
 
 const FILE =
   "file:///documents/hbots-thread-cache/thread-environment-phone-f37b73c4-f46d-4da7-8d7b-32007f18562b.json";
@@ -67,8 +70,13 @@ const snapshot = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2Thre
 );
 
 describe("thread cache file", () => {
+  beforeEach(() => {
+    files.clear();
+    writer.failure = null;
+  });
+
   it("reads back a written thread snapshot", async () => {
-    writeCachedThread("environment-phone", snapshot);
+    await writeCachedThread("environment-phone", snapshot);
 
     const loaded = await readCachedThread(
       "environment-phone",
@@ -83,8 +91,8 @@ describe("thread cache file", () => {
     ]);
   });
 
-  it("stores the snapshot as ciphertext, not JSON", () => {
-    writeCachedThread("environment-phone", snapshot);
+  it("stores the snapshot as ciphertext, not JSON", async () => {
+    await writeCachedThread("environment-phone", snapshot);
 
     const stored = files.get(FILE) ?? "";
     expect(stored.length).toBeGreaterThan(0);
@@ -102,31 +110,48 @@ describe("thread cache file", () => {
     },
   });
 
-  it("does not write a copy over 1 MB and removes the one already on the phone", () => {
-    writeCachedThread("environment-phone", snapshot);
+  it("does not write a copy over 2 MB and removes the one already on the phone", async () => {
+    await writeCachedThread("environment-phone", snapshot);
     expect(files.has(FILE)).toBe(true);
 
-    writeCachedThread("environment-phone", withMessageText("x".repeat(MAX_CACHED_THREAD_BYTES)));
+    await writeCachedThread("environment-phone", withMessageText("x".repeat(2_097_152)));
 
     expect(files.has(FILE)).toBe(false);
   });
 
-  it("counts bytes, not characters, against the cap", () => {
-    writeCachedThread(
-      "environment-phone",
-      withMessageText("é".repeat(MAX_CACHED_THREAD_BYTES / 2)),
-    );
+  it("counts bytes, not characters, against the cap", async () => {
+    await writeCachedThread("environment-phone", withMessageText("é".repeat(1_048_576)));
 
     expect(files.has(FILE)).toBe(false);
   });
 
-  it("still writes a copy just under 1 MB", () => {
-    writeCachedThread(
+  it("writes the long chat's 1.08 MB copy that the old 1 MB cap refused", async () => {
+    await writeCachedThread("environment-phone", withMessageText("x".repeat(1_084_678)));
+
+    const loaded = await readCachedThread(
       "environment-phone",
-      withMessageText("x".repeat(MAX_CACHED_THREAD_BYTES - 200_000)),
+      ThreadId.make("f37b73c4-f46d-4da7-8d7b-32007f18562b"),
+    );
+    expect(Option.getOrThrow(loaded).projection.messages[0]?.text.length).toBe(1_084_678);
+  });
+
+  it("fails the save when the native writer fails, so the save waits for it", async () => {
+    writer.failure = new Error("disk full");
+
+    await expect(writeCachedThread("environment-phone", snapshot)).rejects.toThrow("disk full");
+    expect(files.has(FILE)).toBe(false);
+  });
+
+  it("deletes a copy saved in the old v1 format and treats it as a miss", async () => {
+    files.set(FILE, `v1:${Buffer.from(JSON.stringify(serverBody)).toString("base64")}`);
+
+    const loaded = await readCachedThread(
+      "environment-phone",
+      ThreadId.make("f37b73c4-f46d-4da7-8d7b-32007f18562b"),
     );
 
-    expect(files.has(FILE)).toBe(true);
+    expect(Option.isNone(loaded)).toBe(true);
+    expect(files.has(FILE)).toBe(false);
   });
 
   it("deletes an old plaintext file and treats it as a miss", async () => {
@@ -142,7 +167,7 @@ describe("thread cache file", () => {
   });
 
   it("deletes a file that decrypts to something that is not a snapshot", async () => {
-    files.set(FILE, `v1:${Buffer.from("not json").toString("base64")}`);
+    files.set(FILE, `v2:${Buffer.from("not json").toString("base64")}`);
 
     const loaded = await readCachedThread(
       "environment-phone",

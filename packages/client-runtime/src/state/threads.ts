@@ -108,7 +108,8 @@ function historyMetaFromCachedSnapshot(
   };
 }
 
-const CACHE_LOAD_DEADLINE = "3 seconds";
+// A saved copy only speeds an open up, so it gets the time a network open would take at best.
+const CACHE_LOAD_DEADLINE = "500 millis";
 
 function snapshotToPersist(
   snapshotSequence: number,

@@ -212,6 +212,35 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "perf", journey: "j2", ms: 842, warm: true, via: "relay", snapshot: false });
   });
 
+  it("accepts the phone's chat-open timings as numbers only", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 412,
+          store: "cache",
+          requestAtMs: 95,
+          readMs: 38,
+          readBytes: 1_084_708,
+          writeMs: "slow",
+          writeBytes: -1,
+          writes: 2,
+          text: "chat words are never kept",
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 412,
+      store: "cache",
+      requestAtMs: 95,
+      readMs: 38,
+      readBytes: 1_084_708,
+      writes: 2,
+    });
+  });
+
   it("accepts the stale-notification cleanup line: how many, and why", () => {
     expect(
       sanitizeClientDiag(

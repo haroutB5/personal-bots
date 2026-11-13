@@ -12,11 +12,18 @@ const fs = vi.hoisted(() => ({
   purgeCalls: 0,
   voiceWipes: 0,
   launcherWipes: 0,
+  /** While set, the native writer waits for it, as a large write does on its own thread. */
+  writeGate: null as Promise<void> | null,
 }));
 
 vi.mock("./secureStorage", () => ({
-  writeEncryptedText: (path: string, text: string) => {
-    fs.files.set(path, `v1:${Buffer.from(text).toString("base64")}`);
+  /** Like the native writer: makes the folder and its wrapped data key, then the chat file. */
+  writeEncryptedText: async (path: string, text: string) => {
+    if (fs.writeGate !== null) await fs.writeGate;
+    const folder = path.slice(0, path.lastIndexOf("/"));
+    fs.dirs.add(folder);
+    fs.files.set(`${folder}/key.v2`, "k2:wrapped");
+    fs.files.set(path, `v2:${Buffer.from(text).toString("base64")}`);
   },
   readDecryptedText: async () => null,
   encryptFile: async (source: string, destination: string) => {
@@ -30,14 +37,14 @@ vi.mock("./secureStorage", () => ({
   deleteCacheKey: () => {
     fs.keyDeletes += 1;
   },
-  /** Like the native one: every file under the folders that is not in the v1 format goes. */
+  /** Like the native one: every file under the folders that is not in an encrypted format goes. */
   purgeLegacyPlaintext: (directories: readonly string[]) => {
     fs.purgeCalls += 1;
     if (fs.nativeMissing) return false;
     const doomed = Array.from(fs.files.keys()).filter(
       (key) =>
         directories.some((directory) => key.startsWith(`${directory}/`)) &&
-        !(fs.files.get(key) ?? "").startsWith("v1:"),
+        !/^(v1|v2|k2):/.test(fs.files.get(key) ?? ""),
     );
     for (const key of doomed) fs.files.delete(key);
     return true;
@@ -200,14 +207,18 @@ beforeEach(() => {
   fs.dirs.add("file:///documents");
   fs.voiceWipes = 0;
   fs.launcherWipes = 0;
+  fs.writeGate = null;
   createNativeEnvironmentCache();
 });
 
 describe("wipe on sign-out and revoke", () => {
-  it("leaves no chat file and no attachment behind", async () => {
-    writeCachedThread("environment-phone", snapshot);
+  it("leaves no chat file, data key or attachment behind", async () => {
+    await writeCachedThread("environment-phone", snapshot);
     await createFileBlobStore().put("entry/photo", payload);
-    expect(filesUnder(CACHE)).toHaveLength(1);
+    expect(filesUnder(CACHE).sort()).toEqual([
+      `${CACHE}/key.v2`,
+      `${CACHE}/thread-environment-phone-${THREAD_ID}.json`,
+    ]);
     expect(filesUnder(BLOBS)).toHaveLength(1);
 
     await wipeLocalData();
@@ -263,7 +274,7 @@ describe("wipe on sign-out and revoke", () => {
     const blobs = createFileBlobStore();
     await wipeLocalData();
 
-    writeCachedThread("environment-phone", snapshot);
+    await writeCachedThread("environment-phone", snapshot);
     await expect(blobs.put("entry/photo", payload)).rejects.toThrow();
 
     expect(filesUnder(CACHE)).toEqual([]);
@@ -272,14 +283,30 @@ describe("wipe on sign-out and revoke", () => {
     expect(fs.dirs.has(BLOBS)).toBe(false);
   });
 
+  it("removes what a save still running on the native writer wrote after the wipe", async () => {
+    let release = () => {};
+    fs.writeGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const saving = writeCachedThread("environment-phone", snapshot);
+
+    await wipeLocalData();
+    release();
+    await saving;
+
+    expect(filesUnder(CACHE)).toEqual([]);
+    expect(fs.dirs.has(CACHE)).toBe(false);
+    expect(fs.keyDeletes).toBe(1);
+  });
+
   it("reads nothing after the wipe, and caches again for the next session", async () => {
-    writeCachedThread("environment-phone", snapshot);
+    await writeCachedThread("environment-phone", snapshot);
     await wipeLocalData();
     expect((await readCachedThread("environment-phone", THREAD_ID))._tag).toBe("None");
 
     createNativeEnvironmentCache();
-    writeCachedThread("environment-phone", snapshot);
-    expect(filesUnder(CACHE)).toHaveLength(1);
+    await writeCachedThread("environment-phone", snapshot);
+    expect(filesUnder(CACHE)).toContain(`${CACHE}/thread-environment-phone-${THREAD_ID}.json`);
   });
 
   it("clears the whole app cache folder, including HTTP, image and share intake files", async () => {
@@ -304,7 +331,7 @@ describe("wipe on sign-out and revoke", () => {
   });
 
   it("leaves nothing under the cache root, blobs, thread cache, intake and the queue", async () => {
-    writeCachedThread("environment-phone", snapshot);
+    await writeCachedThread("environment-phone", snapshot);
     await createFileBlobStore().put("entry/photo", payload);
     fs.files.set("file:///cache-dir/share-intake/share-2/note.txt", "shared text");
     configureOutbox({
@@ -369,16 +396,19 @@ describe("the first start after the cache became encrypted", () => {
     fs.dirs.add("file:///cache-dir/http-cache");
   }
 
-  it("deletes every plaintext cache file and keeps the encrypted ones", () => {
+  it("deletes every plaintext cache file and keeps the encrypted ones and their key", async () => {
     legacyFiles();
-    writeCachedThread("environment-phone", snapshot);
+    await writeCachedThread("environment-phone", snapshot);
 
     purgeLegacyCache();
 
     expect(fs.files.has(OLD_THREAD)).toBe(false);
     expect(fs.files.has(OLD_BLOB)).toBe(false);
     expect(fs.files.has(OLD_HTTP)).toBe(false);
-    expect(filesUnder(CACHE)).toHaveLength(1);
+    expect(filesUnder(CACHE).sort()).toEqual([
+      `${CACHE}/key.v2`,
+      `${CACHE}/thread-environment-phone-${THREAD_ID}.json`,
+    ]);
   });
 
   it("scans once, then leaves the cache alone on later starts", () => {

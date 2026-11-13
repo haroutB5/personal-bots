@@ -54,7 +54,88 @@ class CacheCryptoTest {
     val raw = File(path("t")).readBytes()
     assertFalse(String(raw, Charsets.ISO_8859_1).contains("private reply"))
     assertEquals('v'.code.toByte(), raw[0])
-    assertEquals('1'.code.toByte(), raw[1])
+    assertEquals('2'.code.toByte(), raw[1])
+  }
+
+  @Test fun theDataKeyIsStoredOnlyWrappedBesideTheChats() {
+    val crypto = FileCrypto(MemoryKeys())
+    crypto.writeText(path("t"), "text")
+
+    val stored = File(dir, DATA_KEY_FILE).readBytes()
+    assertEquals(2 + 12 + 32 + 16, stored.size)
+    assertEquals('k'.code.toByte(), stored[0])
+    assertEquals('2'.code.toByte(), stored[1])
+  }
+
+  @Test fun attachmentsKeepTheV1FormatSoQueuedOnesSurviveTheUpdate() {
+    val crypto = FileCrypto(MemoryKeys())
+    crypto.encryptFile("queued photo".toByteArray().inputStream(), path("blob"))
+
+    assertEquals('1'.code.toByte(), File(path("blob")).readBytes()[1])
+    assertTrue(crypto.decryptFile(path("blob"), path("plain")))
+    assertEquals("queued photo", File(path("plain")).readText())
+  }
+
+  @Test fun aChatCopyInTheOldV1FormatIsDeletedWithoutAskingTheKeystore() {
+    val keys = CountingKeys()
+    FileCrypto(keys).encryptFile("{\"old\":\"v1 chat\"}".toByteArray().inputStream(), path("t"))
+    val requestsBefore = keys.requests
+
+    assertNull(FileCrypto(keys).readText(path("t")))
+
+    assertEquals(requestsBefore, keys.requests)
+    assertFalse(File(path("t")).exists())
+  }
+
+  @Test fun aProcessUnwrapsTheDataKeyFromTheKeystoreOnce() {
+    val keys = CountingKeys()
+    FileCrypto(keys).writeText(path("first"), "written by the last run")
+    val afterFirstRun = keys.requests
+
+    val crypto = FileCrypto(keys)
+    repeat(10) { assertEquals("written by the last run", crypto.readText(path("first"))) }
+    repeat(5) { crypto.writeText(path("w$it"), "more $it") }
+    repeat(5) { assertEquals("more $it", crypto.readText(path("w$it"))) }
+
+    assertEquals(1, keys.requests - afterFirstRun)
+  }
+
+  @Test fun aLostKeyFileMakesOldCopiesMissesAndANewKeyForNewOnes() {
+    val crypto = FileCrypto(MemoryKeys())
+    crypto.writeText(path("old"), "under the lost key")
+    File(dir, DATA_KEY_FILE).delete()
+
+    assertNull(crypto.readText(path("old")))
+    assertFalse(File(path("old")).exists())
+
+    crypto.writeText(path("new"), "under a new key")
+    assertEquals("under a new key", crypto.readText(path("new")))
+  }
+
+  @Test fun aDamagedKeyFileIsDroppedAndItsCopiesAreMisses() {
+    val keys = MemoryKeys()
+    FileCrypto(keys).writeText(path("t"), "sealed")
+    val stored = File(dir, DATA_KEY_FILE).readBytes()
+    stored[20] = (stored[20].toInt() xor 0x01).toByte()
+    File(dir, DATA_KEY_FILE).writeBytes(stored)
+
+    assertNull(FileCrypto(keys).readText(path("t")))
+    assertFalse(File(path("t")).exists())
+    assertFalse(File(dir, DATA_KEY_FILE).exists())
+  }
+
+  @Test fun deletingTheKeyOnSignOutForgetsTheInMemoryDataKey() {
+    val keys = MemoryKeys()
+    val crypto = FileCrypto(keys)
+    crypto.writeText(path("t"), "before sign-out")
+    val oldKeyFile = File(dir, DATA_KEY_FILE).readBytes()
+
+    crypto.deleteKey()
+
+    assertNull(crypto.readText(path("t")))
+    crypto.writeText(path("next"), "next session")
+    assertFalse(oldKeyFile.contentEquals(File(dir, DATA_KEY_FILE).readBytes()))
+    assertEquals("next session", crypto.readText(path("next")))
   }
 
   @Test fun filesRoundTripByteForByte() {
@@ -186,6 +267,20 @@ class CacheCryptoTest {
     crypto.writeText(path("edge"), text)
 
     assertEquals(text, crypto.readText(path("edge")))
+  }
+
+  @Test fun aTwoMegabyteChatReadsAndOneByteMoreIsRefused() {
+    val keys = CountingKeys()
+    val crypto = FileCrypto(keys)
+    val fits = "x".repeat(2 * 1024 * 1024)
+    crypto.writeText(path("fits"), fits)
+    crypto.writeText(path("over"), fits + "y")
+    val requestsBefore = keys.requests
+
+    assertEquals(fits, crypto.readText(path("fits")))
+    assertNull(crypto.readText(path("over")))
+    assertFalse(File(path("over")).exists())
+    assertEquals(requestsBefore, keys.requests)
   }
 
   @Test fun anOutOfMemoryErrorBecomesNoCacheAndTheFileIsDeleted() {

@@ -558,9 +558,9 @@ describe("EnvironmentThreads", () => {
           snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
         },
       }).pipe(Effect.forkScoped);
-      yield* TestClock.adjust("2900 millis");
+      yield* TestClock.adjust("450 millis");
       expect(fiber.pollUnsafe()).toBeUndefined();
-      yield* TestClock.adjust("200 millis");
+      yield* TestClock.adjust("50 millis");
       const h = yield* Fiber.join(fiber);
 
       const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");

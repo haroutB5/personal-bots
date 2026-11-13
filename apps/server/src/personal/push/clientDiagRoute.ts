@@ -176,6 +176,14 @@ const FIELDS: Record<string, Read> = {
   server: token(32),
   // How long the server took to answer the page's lost-tap question.
   requestMs: count,
+  // perf a-chat-open (hbots-mobile chatOpenPerf.ts): when the snapshot request left after
+  // the open, the saved-copy read, and the slowest saved-copy write since the last line.
+  requestAtMs: count,
+  readMs: count,
+  readBytes: count,
+  writeMs: count,
+  writeBytes: count,
+  writes: count,
   clients: (value) =>
     Array.isArray(value)
       ? value
