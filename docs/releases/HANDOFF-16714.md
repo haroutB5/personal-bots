@@ -41,3 +41,19 @@ Binary only. The previous release is `4fdc14a78c66` (1.67.13), schema 148, so th
 - Work tab is simpler: what needs you, what is running now, and earlier work folded away.
 - Server updates now say what stage they are at and who they are waiting for, on the phone too.
 - Plus opens your photos at once again. Camera has its own button in the message field.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=3354279c591c5e95692eb45471a0f78e26737975 release=3354279c591c json-sha256=2ee6fff88d5506ab2cd78eadee383a6b48c52112d3e0e120e3df6561d2cc4377 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
