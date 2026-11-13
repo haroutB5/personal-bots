@@ -25,7 +25,8 @@ const tempHome = (withOwnerConfig: boolean) => {
 };
 
 const run = (home: string, configured?: string) => {
-  const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: home };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+  delete env.HBOTS_GOOGLE_SERVICES_JSON;
   if (configured !== undefined) env.HBOTS_GOOGLE_SERVICES_JSON = configured;
   const out = NodeChildProcess.execFileSync(
     "bash",
