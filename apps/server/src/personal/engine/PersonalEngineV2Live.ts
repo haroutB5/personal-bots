@@ -265,7 +265,6 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => EMPTY_SHELL_EXTRAS));
 
   const eventContext: PersonalEventContext = { readShell, readExtras };
-  const eventState = makePersonalEventState();
   const notices = yield* EventSinkV2;
 
   const now = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1189,12 +1188,17 @@ const make = Effect.gen(function* () {
     liveTaskIds,
     shellSnapshot,
     threadShells,
-    events: threads.streamDomainEvents.pipe(
-      Stream.flatMap((event) =>
-        Stream.fromIterableEffect(toPersonalEvents(event, eventState, eventContext)),
-      ),
-      Stream.orDie,
-    ),
+    // Each subscriber keeps its own state: a shared one let the first reader of a
+    // finished run take its TurnEnded, and every other reader missed it.
+    events: Stream.suspend(() => {
+      const eventState = makePersonalEventState();
+      return threads.streamDomainEvents.pipe(
+        Stream.flatMap((event) =>
+          Stream.fromIterableEffect(toPersonalEvents(event, eventState, eventContext)),
+        ),
+        Stream.orDie,
+      );
+    }),
   };
 
   return PersonalEngine.of(shape);

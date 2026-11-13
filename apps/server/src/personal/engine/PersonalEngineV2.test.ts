@@ -1008,6 +1008,57 @@ describe("PersonalEngineV2 events", () => {
     );
   });
 
+  it.effect("every subscriber sees the turn end once, even when the run reports twice", () => {
+    const harness = makeHarness();
+    return withEngine(harness, (engine) =>
+      Effect.gen(function* () {
+        yield* seedThread(harness);
+        yield* seedRun(harness, "thread-1", "run-1", "completed");
+        const turnEnds = Stream.filter(engine.events, (event) => event._tag === "TurnEnded");
+        const first = yield* Effect.forkChild(Stream.runCollect(Stream.take(turnEnds, 1)));
+        const second = yield* Effect.forkChild(Stream.runCollect(Stream.take(turnEnds, 1)));
+        const all = yield* Effect.forkChild(
+          Stream.runCollect(
+            engine.events.pipe(
+              Stream.takeUntil((event) => event._tag === "ThreadArchived"),
+              Stream.filter((event) => event._tag === "TurnEnded"),
+            ),
+          ),
+        );
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        const completed = (id: string) =>
+          ({
+            id: EventId.make(id),
+            threadId: ThreadId.make("thread-1"),
+            occurredAt: AT,
+            type: "run.updated",
+            payload: runFor({
+              threadId: ThreadId.make("thread-1"),
+              runId: RunId.make("run-1"),
+              status: "completed",
+              ordinal: 1,
+            }),
+          }) as OrchestrationV2DomainEvent;
+        yield* PubSub.publish(harness.pubsub, completed("event-2"));
+        yield* PubSub.publish(harness.pubsub, completed("event-3"));
+        yield* PubSub.publish(harness.pubsub, {
+          id: EventId.make("event-4"),
+          threadId: ThreadId.make("thread-1"),
+          occurredAt: AT,
+          type: "thread.archived",
+        } as OrchestrationV2DomainEvent);
+
+        const seen: Array<Array<string>> = [];
+        for (const fiber of [first, second, all]) {
+          seen.push(Array.from(yield* Fiber.join(fiber), (event) => event.threadId));
+        }
+        expect(seen).toEqual([["thread-1"], ["thread-1"], ["thread-1"]]);
+      }),
+    );
+  });
+
   it.effect("a failed run carries the thread error and retry marker", () => {
     const harness = makeHarness();
     return withEngine(harness, (engine) =>
