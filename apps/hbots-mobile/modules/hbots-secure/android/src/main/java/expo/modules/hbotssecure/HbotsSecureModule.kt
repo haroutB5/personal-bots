@@ -7,11 +7,32 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.InputStream
+import java.util.concurrent.Executors
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+
+/**
+ * One thread each for chat-copy reads and writes, for the whole process. A save of a large
+ * chat can then never hold up the read of the chat being opened, or any other module call
+ * on the shared async queue. Writes stay in order on theirs.
+ */
+private object CacheQueues {
+  private fun single(name: String) =
+    CoroutineScope(
+      SupervisorJob() +
+        Executors.newSingleThreadExecutor { task -> Thread(task, name).apply { isDaemon = true } }
+          .asCoroutineDispatcher(),
+    )
+
+  val read = single("hbots-cache-read")
+  val write = single("hbots-cache-write")
+}
 
 /**
  * FLAG_SECURE while a secret or sign-in card is on screen, and for the whole
  * life of the activity while the app lock is on (see [shieldFor]). It also
- * holds the Keystore key that encrypts the offline cache.
+ * encrypts the offline cache (see [CacheCrypto]).
  */
 class HbotsSecureModule : Module() {
   private var secure = false
@@ -61,11 +82,12 @@ class HbotsSecureModule : Module() {
       apply()
     }
 
-    Function("writeEncryptedText") { path: String, text: String ->
+    AsyncFunction("writeEncryptedTextAsync") { path: String, text: String ->
       CacheCrypto.writeText(pathOf(path), text)
-    }
+    }.runOnQueue(CacheQueues.write)
 
     AsyncFunction("readDecryptedText") { path: String -> CacheCrypto.readText(pathOf(path)) }
+      .runOnQueue(CacheQueues.read)
 
     AsyncFunction("encryptFile") { sourceUri: String, destination: String ->
       try {

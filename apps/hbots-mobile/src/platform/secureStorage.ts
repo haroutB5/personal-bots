@@ -1,7 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 
 interface SecureStorageModule {
-  writeEncryptedText(path: string, text: string): void;
+  writeEncryptedTextAsync(path: string, text: string): Promise<void>;
   readDecryptedText(path: string): Promise<string | null>;
   encryptFile(sourceUri: string, destinationPath: string): Promise<boolean>;
   decryptFile(sourcePath: string, destinationPath: string): Promise<boolean>;
@@ -15,10 +15,13 @@ const native = requireOptionalNativeModule<SecureStorageModule>("HbotsSecure");
 /** Whether the Keystore helper is linked. Without it nothing is cached: no plaintext fallback. */
 export const secureStorageAvailable = native !== null;
 
-/** Writes `text` as `v1 | iv | ciphertext` under the Keystore key. Throws when it cannot. */
-export function writeEncryptedText(path: string, text: string): void {
+/**
+ * Writes `text` as `v2 | iv | ciphertext` under the cache's data key, off the JS thread.
+ * Rejects when it cannot.
+ */
+export async function writeEncryptedText(path: string, text: string): Promise<void> {
   if (native === null) throw new Error("Secure storage is not available.");
-  native.writeEncryptedText(path, text);
+  await native.writeEncryptedTextAsync(path, text);
 }
 
 /** The text, or null when the file is unreadable or in an old format (the native side deletes it). */
@@ -34,7 +37,7 @@ export async function decryptFile(sourcePath: string, destinationPath: string): 
   return native === null ? false : native.decryptFile(sourcePath, destinationPath);
 }
 
-/** Removes the Keystore key. Files written under it become unreadable. */
+/** Removes the Keystore key and the data key held in memory. Files written under them become unreadable. */
 export function deleteCacheKey(): void {
   native?.deleteCacheKey();
 }

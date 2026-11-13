@@ -17,11 +17,12 @@ import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
 export const CACHE_DIRECTORY = "hbots-thread-cache";
 
 /**
- * The largest chat copy kept on the phone, in UTF-8 bytes. It is the server's own page limit
- * (`maxEncodedBytes`). A bigger copy is not saved: that chat opens from the server's bounded
- * window instead. The Kotlin `CacheCrypto.MAX_PLAIN_BYTES` refuses to read anything larger.
+ * The largest chat copy kept on the phone, in UTF-8 bytes: twice the server's page limit
+ * (`maxEncodedBytes`), because control state rides on top of the window and a cap equal to
+ * the limit left out exactly the largest chats. A bigger copy is not saved: that chat opens
+ * from the server instead. The Kotlin `MAX_CACHED_TEXT_BYTES` refuses to read anything larger.
  */
-export const MAX_CACHED_THREAD_BYTES = 1_048_576;
+export const MAX_CACHED_THREAD_BYTES = 2_097_152;
 
 /** The UTF-8 length of `text`, or any number over `limit` once it passes it: counting stops there. */
 function utf8Bytes(text: string, limit: number): number {
@@ -47,11 +48,15 @@ function utf8Bytes(text: string, limit: number): number {
 /** Set by a wipe: a save that was already running cannot recreate the folder after it. */
 let sealed = false;
 
-/** Deletes every cached chat and the folder itself. Nothing is written again until a new session starts. */
-export function wipeThreadCache(): void {
-  sealed = true;
+function removeCacheRoot(): void {
   const root = new Directory(Paths.document, CACHE_DIRECTORY);
   if (root.exists) root.delete();
+}
+
+/** Deletes every cached chat, the wrapped data key and the folder itself. Nothing is written again until a new session starts. */
+export function wipeThreadCache(): void {
+  sealed = true;
+  removeCacheRoot();
 }
 
 function cacheRoot(): Directory {
@@ -122,8 +127,14 @@ export async function readCachedThread(
   return finish(Option.none(), decodedFrom);
 }
 
-/** Writes the snapshot encrypted unless it is over the cap. Throws when the Keystore helper is missing: nothing is cached in the clear. */
-export function writeCachedThread(environmentId: string, snapshot: ThreadSnapshot): void {
+/**
+ * Writes the snapshot encrypted unless it is over the cap. The encryption and the file write
+ * run off the JS thread. Rejects when the Keystore helper is missing: nothing is cached in the clear.
+ */
+export async function writeCachedThread(
+  environmentId: string,
+  snapshot: ThreadSnapshot,
+): Promise<void> {
   if (sealed) return;
   const file = threadFile(environmentId, snapshot.projection.thread.id);
   const startedAt = performance.now();
@@ -134,8 +145,16 @@ export function writeCachedThread(environmentId: string, snapshot: ThreadSnapsho
     if (file.exists) file.delete();
     return;
   }
-  writeEncryptedText(file.uri, text);
-  console.info(noteCacheWrite({ ms: performance.now() - startedAt, bytes }));
+  const handedOffAt = performance.now();
+  await writeEncryptedText(file.uri, text);
+  // A sign-out that ran while the native side was writing already deleted the folder.
+  if (sealed) {
+    removeCacheRoot();
+    return;
+  }
+  console.info(
+    noteCacheWrite({ ms: performance.now() - startedAt, jsMs: handedOffAt - startedAt, bytes }),
+  );
 }
 
 /**
@@ -156,7 +175,7 @@ export function createNativeEnvironmentCache(
         catch: (cause) => persistenceError("load-thread", cause),
       }),
     saveThread: (environmentId, snapshot) =>
-      Effect.try({
+      Effect.tryPromise({
         try: () => writeCachedThread(environmentId, snapshot),
         catch: (cause) => persistenceError("save-thread", cause),
       }),

@@ -17,6 +17,8 @@ interface CacheRead {
 
 interface CacheWrite {
   readonly ms: number;
+  /** The part of `ms` that held the JS thread (stringify and size check). */
+  readonly jsMs: number;
   readonly bytes: number;
 }
 
@@ -38,7 +40,7 @@ export function noteRequestStart(threadId: string, at: number): void {
 export function noteCacheWrite(write: CacheWrite): string {
   writeCount += 1;
   if (slowestWrite === null || write.ms > slowestWrite.ms) slowestWrite = write;
-  return `[perf] cache-write-ms ${Math.round(write.ms)} bytes ${write.bytes}`;
+  return `[perf] cache-write-ms ${Math.round(write.ms)} bytes ${write.bytes} js-ms ${Math.round(write.jsMs)}`;
 }
 
 export interface ChatOpenReport {

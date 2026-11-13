@@ -58,11 +58,11 @@ describe("chat open timings", () => {
   });
 
   it("carries the slowest write since the last report on the next one only", () => {
-    expect(noteCacheWrite({ ms: 12.4, bytes: 400_000 })).toBe(
-      "[perf] cache-write-ms 12 bytes 400000",
+    expect(noteCacheWrite({ ms: 12.4, jsMs: 4.2, bytes: 400_000 })).toBe(
+      "[perf] cache-write-ms 12 bytes 400000 js-ms 4",
     );
-    noteCacheWrite({ ms: 3100, bytes: 1_000_000 });
-    noteCacheWrite({ ms: 40, bytes: 900_000 });
+    noteCacheWrite({ ms: 3100, jsMs: 60, bytes: 1_000_000 });
+    noteCacheWrite({ ms: 40, jsMs: 30, bytes: 900_000 });
     noteRequestStart("t-write", 7100);
 
     expect(takeChatOpenReport("t-write", 7000, 7400).body).toEqual({
