@@ -87,12 +87,16 @@ if (args.includes("--version") || args.includes("-v")) {
 }
 const sessionIndex = args.findIndex((a) => a === "--session-id");
 const resumeArg = args.find((a) => a.startsWith("--resume="));
+// The SDK writes value flags as one `--flag=value` argument.
+const sessionArg = args.find((a) => a.startsWith("--session-id="));
 const sessionId =
   sessionIndex >= 0
     ? args[sessionIndex + 1]
-    : resumeArg
-      ? resumeArg.slice(9)
-      : NodeCrypto.randomUUID();
+    : sessionArg
+      ? sessionArg.slice(13)
+      : resumeArg
+        ? resumeArg.slice(9)
+        : NodeCrypto.randomUUID();
 log(`start session=${sessionId}`);
 
 // The settings the server handed this session (`--settings`, JSON text or a file path).

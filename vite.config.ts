@@ -512,6 +512,21 @@ export default defineConfig({
         },
       },
       {
+        // The Bots Android app does not ship LegendList, so React Native's own list stays allowed.
+        files: ["apps/hbots-mobile/**"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                ...RESTRICTED_IMPORT_PATHS.filter((path) => path.name !== "react-native"),
+                RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS,
+              ],
+            },
+          ],
+        },
+      },
+      {
         files: ["apps/mobile/src/**"],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": "error",
