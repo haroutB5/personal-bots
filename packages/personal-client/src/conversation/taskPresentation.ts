@@ -10,36 +10,38 @@ import * as DateTime from "effect/DateTime";
 
 import { PERSONAL_TIME_ZONE } from "./greeting.ts";
 
-export type TaskListFilter = "active" | "waiting" | "scheduled" | "completed";
+/** The Tasks tabs. Work covers everything running and everything waiting on someone. */
+export type TaskListFilter = "work" | "scheduled" | "completed";
+
+/** Which list a task falls in. Work shows the first two together. */
+export type TaskBucket = "active" | "waiting" | "completed";
 
 export const TASK_LIST_FILTERS: ReadonlyArray<{
   readonly id: TaskListFilter;
   readonly label: string;
 }> = [
-  { id: "active", label: "Active" },
-  { id: "waiting", label: "Waiting" },
+  { id: "work", label: "Work" },
   { id: "scheduled", label: "Scheduled" },
-  // "Done", not "Completed": four segments share a 350px phone row, and the
-  // long word truncated to "Complet…" beside its count.
+  // "Done", not "Completed": the short word reads at a glance beside its count.
   { id: "completed", label: "Done" },
 ];
 
 /**
  * Every tab shows its count (owner's call: the row should read at a glance,
- * zero included). Only work in flight and work waiting on someone is drawn
- * at full strength when non-zero; Done (100+) and Scheduled stay muted so a
+ * zero included). Only Work, which counts work in flight and work waiting on
+ * someone, is drawn at full strength when non-zero; Done (100+) and Scheduled stay muted so a
  * big number there doesn't read as something needing attention.
  */
 export function taskListCountNeedsAttention(filter: TaskListFilter): boolean {
-  return filter === "active" || filter === "waiting";
+  return filter === "work";
 }
 
 export function parseTaskListFilter(value: unknown): TaskListFilter {
-  return value === "waiting" || value === "scheduled" || value === "completed" ? value : "active";
+  return value === "scheduled" || value === "completed" ? value : "work";
 }
 
 /** Which list a task belongs to (Scheduled holds routines, not tasks). */
-export function taskListFor(status: PersonalTaskStatus): Exclude<TaskListFilter, "scheduled"> {
+export function taskListFor(status: PersonalTaskStatus): TaskBucket {
   switch (status) {
     case "queued":
     case "running":

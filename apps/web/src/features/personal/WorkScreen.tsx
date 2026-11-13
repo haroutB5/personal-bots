@@ -493,7 +493,7 @@ export function WorkTimelineView(props: WorkTimelineViewProps): JSX.Element {
 const NO_TASKS: ReadonlyArray<PersonalTask> = [];
 
 /**
- * /work: who is working, for how long, on what, and who started it. One group
+ * The Work tab inside /tasks: who is working, for how long, on what, and who started it. One group
  * per request, a lane per bot, a bar per piece of work, all from the task feed
  * and the chat shells. It shows only times and steps the server recorded.
  */
@@ -580,10 +580,7 @@ export function WorkScreen(): JSX.Element {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1024px] px-4 pt-4">
-      <header className="flex min-h-11 items-center">
-        <h1 className="text-[28px] leading-8 font-bold text-[var(--personal-text)]">Work</h1>
-      </header>
+    <div className="w-full pt-2" data-testid="tasks-work">
       {error !== null ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">{error}</p>
       ) : tasks === null ? (

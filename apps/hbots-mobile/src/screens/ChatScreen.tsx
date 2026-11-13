@@ -61,6 +61,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
+import { chatLoadRetryDelayMs } from "./chatLoadRetry";
 import {
   botVoiceCallColour,
   botVoiceCallsEnabled,
@@ -230,6 +231,19 @@ export function ChatScreen({
     [botId, links, list.data?.bots, shells, threadId],
   );
   const thread = view.thread;
+  // A failed load is retried by itself a few times; the error shows only after that.
+  const loadFailed = thread === null && view.status === "empty" && view.error !== null;
+  const [loadRetries, setLoadRetries] = useState({ threadId, count: 0 });
+  const loadRetryCount = loadRetries.threadId === threadId ? loadRetries.count : 0;
+  const loadRetryDelayMs = chatLoadRetryDelayMs(loadRetryCount);
+  useEffect(() => {
+    if (!loadFailed || loadRetryDelayMs === null) return;
+    const timer = setTimeout(() => {
+      setLoadRetries({ threadId, count: loadRetryCount + 1 });
+      retryThread();
+    }, loadRetryDelayMs);
+    return () => clearTimeout(timer);
+  }, [loadFailed, loadRetryDelayMs, loadRetryCount, threadId, retryThread]);
   const shell = record?.shell ?? null;
   const archived = shell?.archivedAt != null;
   const link = links.find((candidate) => candidate.threadId === threadId) ?? null;
@@ -927,7 +941,7 @@ export function ChatScreen({
 
         {thread === null ? (
           <View style={styles.center}>
-            {view.status === "empty" && view.error !== null ? (
+            {loadFailed && loadRetryDelayMs === null ? (
               <>
                 <Text style={styles.centerText}>Couldn't load this chat.</Text>
                 <Pressable onPress={retryThread} accessibilityRole="button" style={styles.retry}>

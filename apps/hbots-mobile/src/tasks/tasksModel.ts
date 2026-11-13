@@ -1,16 +1,17 @@
 import {
   taskListFor,
   taskStatusLabel,
+  type TaskBucket,
   type TaskListFilter,
 } from "@hbots/personal-client/conversation/taskPresentation";
 import * as DateTime from "effect/DateTime";
 import type { PersonalBot, PersonalRoutine, PersonalTask } from "@t3tools/contracts";
 
-export type TaskBuckets = Record<Exclude<TaskListFilter, "scheduled">, Array<PersonalTask>>;
+export type TaskBuckets = Record<TaskBucket, Array<PersonalTask>>;
 
 const EMPTY_BUCKETS = (): TaskBuckets => ({ active: [], waiting: [], completed: [] });
 
-/** Tasks grouped into the three task tabs, newest update first inside each. */
+/** Tasks grouped into running, waiting and finished, newest update first inside each. */
 export function taskBuckets(tasks: ReadonlyMap<string, PersonalTask> | null): TaskBuckets {
   const grouped = EMPTY_BUCKETS();
   for (const task of tasks?.values() ?? []) grouped[taskListFor(task.status)].push(task);
@@ -28,8 +29,7 @@ export function taskListCounts(
   routines: ReadonlyArray<PersonalRoutine>,
 ): Record<TaskListFilter, number> {
   return {
-    active: buckets.active.length,
-    waiting: buckets.waiting.length,
+    work: buckets.active.length + buckets.waiting.length,
     scheduled: routines.filter((routine) => routine.enabled).length,
     completed: buckets.completed.length,
   };
@@ -57,8 +57,7 @@ export function tasksScreenState(input: {
 }
 
 export const TASK_EMPTY_TEXT: Record<TaskListFilter, string> = {
-  active: "Nothing is running right now.",
-  waiting: "Nothing is waiting on you or another bot.",
+  work: "No bot is working right now.",
   scheduled:
     "No routines yet. A routine gives a bot the same task on a schedule, or whenever an event fires.",
   completed: "Finished tasks will show up here.",

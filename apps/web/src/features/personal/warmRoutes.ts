@@ -14,7 +14,6 @@ export const WARM_ROUTES = [
   "/bots/settings/memory",
   "/files",
   "/tasks",
-  "/work",
   "/computer",
 ] as const;
 

@@ -6,7 +6,7 @@
 
 import { cleanLinkDraft } from "../chat/linkDraft";
 
-export type TabName = "bots" | "work" | "tasks" | "computer" | "files";
+export type TabName = "bots" | "tasks" | "computer" | "files";
 
 export type Origin = "bots" | "team" | "notification" | "share" | "deeplink" | "tab-root";
 

@@ -7,7 +7,6 @@ import {
   IconFileFilled,
   IconMessageCircle,
   IconMessageCircleFilled,
-  IconTimeline,
 } from "@tabler/icons-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -24,12 +23,6 @@ const TABS = [
     label: LABELS.get("bots") ?? "Chats",
     Icon: IconMessageCircle,
     ActiveIcon: IconMessageCircleFilled,
-  },
-  {
-    tab: "work",
-    label: LABELS.get("work") ?? "Work",
-    Icon: IconTimeline,
-    ActiveIcon: IconTimeline,
   },
   {
     tab: "tasks",
@@ -78,8 +71,7 @@ export function BottomBar({
               <Glyph
                 size={24}
                 color={selected ? tokens.text : tokens.textSecondary}
-                // Work has no filled glyph, so a heavier stroke marks it as selected.
-                strokeWidth={selected && tab === "work" ? 2.5 : 1.75}
+                strokeWidth={1.75}
               />
               <Text
                 style={[styles.label, selected ? styles.labelActive : null]}

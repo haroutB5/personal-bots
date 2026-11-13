@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { WorkScreen } from "~/features/personal/WorkScreen";
-
+// Work lives inside Tasks now. Old links and saved tabs still land on it.
 export const Route = createFileRoute("/_personal/work")({
-  component: WorkScreen,
+  beforeLoad: () => {
+    throw redirect({ to: "/tasks", search: {}, replace: true });
+  },
 });

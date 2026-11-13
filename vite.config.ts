@@ -818,6 +818,19 @@ export default defineConfig({
           "t3code/prefer-catch-tags": "off",
         },
       },
+      {
+        // personal-bots fork: the Bots web screens predate the React Compiler rules that came
+        // with the 13 Nov upstream sync. They are adopted file by file in the ratchet PR; U
+        // code keeps every rule.
+        files: ["apps/web/src/features/personal/**", "apps/web/src/routes/_personal*.tsx"],
+        rules: {
+          "react/purity": "off",
+          "react/set-state-in-effect": "off",
+          "t3code/no-manual-memo": "off",
+          "t3code/no-outset-state-indicators": "off",
+          "t3code/no-unreasoned-state-sync": "off",
+        },
+      },
     ],
     options: {
       reportUnusedDisableDirectives: "error",

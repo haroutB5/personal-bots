@@ -19,17 +19,11 @@ import {
 
 describe("task list tabs", () => {
   it("fit a phone row: no label longer than the widest that fits beside a count", () => {
-    expect(TASK_LIST_FILTERS.map((filter) => filter.label)).toEqual([
-      "Active",
-      "Waiting",
-      "Scheduled",
-      "Done",
-    ]);
+    expect(TASK_LIST_FILTERS.map((filter) => filter.label)).toEqual(["Work", "Scheduled", "Done"]);
   });
 
   it("emphasise only the counts that need attention", () => {
-    expect(taskListCountNeedsAttention("active")).toBe(true);
-    expect(taskListCountNeedsAttention("waiting")).toBe(true);
+    expect(taskListCountNeedsAttention("work")).toBe(true);
     expect(taskListCountNeedsAttention("scheduled")).toBe(false);
     expect(taskListCountNeedsAttention("completed")).toBe(false);
   });
@@ -45,10 +39,11 @@ describe("task lists", () => {
     expect(taskListFor("failed")).toBe("completed");
   });
 
-  it("parses the view search param, defaulting to Active", () => {
+  it("parses the view search param, defaulting to Work, old Active and Waiting links included", () => {
     expect(parseTaskListFilter("scheduled")).toBe("scheduled");
-    expect(parseTaskListFilter("bogus")).toBe("active");
-    expect(parseTaskListFilter(undefined)).toBe("active");
+    expect(parseTaskListFilter("bogus")).toBe("work");
+    expect(parseTaskListFilter("waiting")).toBe("work");
+    expect(parseTaskListFilter(undefined)).toBe("work");
   });
 
   it("offers Cancel only for live tasks and Retry only for retryable ones", () => {

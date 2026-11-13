@@ -199,7 +199,27 @@ export function useUpdateStatusLine(versionLabel: string | null): {
     setState((prev) => ({ ...prev, dismissed: record }));
   };
 
-  return { line, dismiss };
+  // Every stage says its piece for ten seconds and leaves. A problem stays up, and so does
+  // "Restarting for update", which stands in for the offline banner while the server is away.
+  const stageKey =
+    line === null || line.tone === "problem" || restartingLine || UPDATED_PHASES.has(line.phase)
+      ? null
+      : `${line.phase}|${line.version ?? ""}`;
+  const [stage, setStage] = useState<{ key: string; sinceMs: number; over: boolean } | null>(null);
+  if (stageKey !== null && stage?.key !== stageKey) {
+    setStage({ key: stageKey, sinceMs: Date.now(), over: false });
+  }
+  useEffect(() => {
+    if (stageKey === null) return;
+    const timer = window.setTimeout(
+      () => setStage((prev) => (prev?.key === stageKey ? { ...prev, over: true } : prev)),
+      UPDATED_LINE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [stageKey]);
+  const stageOver = stageKey !== null && stage?.key === stageKey && stage.over;
+
+  return { line: stageOver ? null : line, dismiss };
 }
 
 /** Two lines render the same words the same way. */

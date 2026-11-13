@@ -15,8 +15,6 @@ function TasksRouteView() {
 export const Route = createFileRoute("/_personal/tasks")({
   // Optional, so the tab bar can link to /tasks without a search param.
   validateSearch: (raw: Record<string, unknown>): TasksSearch =>
-    raw.view === "waiting" || raw.view === "scheduled" || raw.view === "completed"
-      ? { view: raw.view }
-      : {},
+    raw.view === "scheduled" || raw.view === "completed" ? { view: raw.view } : {},
   component: TasksRouteView,
 });

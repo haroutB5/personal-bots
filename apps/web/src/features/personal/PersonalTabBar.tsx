@@ -1,14 +1,7 @@
 import type { JSX } from "react";
 
 import { Link } from "@tanstack/react-router";
-import {
-  ChartGantt,
-  CircleCheck,
-  File,
-  Laptop,
-  MessageCircle,
-  type LucideIcon,
-} from "lucide-react";
+import { CircleCheck, File, Laptop, MessageCircle, type LucideIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -17,7 +10,6 @@ import { PERSONAL_TABS, type PersonalTab } from "@hbots/personal-client/bots/per
 
 const TAB_ICONS: Record<PersonalTab, LucideIcon> = {
   chats: MessageCircle,
-  work: ChartGantt,
   tasks: CircleCheck,
   computer: Laptop,
   files: File,
@@ -25,7 +17,7 @@ const TAB_ICONS: Record<PersonalTab, LucideIcon> = {
 
 /**
  * Bottom tab bar (ui-spec "Tab bar"): top hairline, 56px + safe-area bottom,
- * five equal columns with a 24px outline icon over a 12px label. The active
+ * four equal columns with a 24px outline icon over a 12px label. The active
  * tab is `#171717`, label 600, with a filled icon (inner strokes such as the
  * check mark are knocked out in the surface colour).
  */
@@ -36,7 +28,7 @@ export function PersonalTabBar({ active }: { active: PersonalTab }): JSX.Element
       aria-label="Primary"
       className="shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-surface)] pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="grid h-14 grid-cols-5">
+      <ul className="grid h-14 grid-cols-4">
         {PERSONAL_TABS.map(({ tab, label, to }) => {
           const Icon = TAB_ICONS[tab];
           const isActive = tab === active;
@@ -66,9 +58,8 @@ export function PersonalTabBar({ active }: { active: PersonalTab }): JSX.Element
                         tab === "tasks" &&
                         "[&>path]:stroke-[var(--personal-surface)] [&>path]:[stroke-width:2.25]",
                     )}
-                    strokeWidth={isActive && tab === "work" ? 2.5 : 1.75}
-                    // The Work icon is bare strokes: filling it would draw nothing new.
-                    fill={isActive && tab !== "work" ? "currentColor" : "none"}
+                    strokeWidth={1.75}
+                    fill={isActive ? "currentColor" : "none"}
                   />
                   {dotted ? (
                     <span

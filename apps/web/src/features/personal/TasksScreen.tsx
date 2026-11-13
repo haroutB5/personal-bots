@@ -44,6 +44,7 @@ import {
   taskListFor,
   taskStatusLabel,
   taskStatusTone,
+  type TaskBucket,
   type TaskListFilter,
 } from "./taskPresentation";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -56,6 +57,7 @@ import {
 } from "./usePersonalAutomation";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useMinuteNow } from "./useMinuteNow";
+import { WorkScreen } from "./WorkScreen";
 
 const DOT_CLASS = {
   live: "bg-[var(--personal-live)]",
@@ -225,9 +227,7 @@ interface OlderTasks {
 
 const NO_OLDER_TASKS: OlderTasks = { tasks: [], hasMore: true, loading: false, error: null };
 
-const EMPTY_TEXT: Record<TaskListFilter, string> = {
-  active: "Nothing is running right now.",
-  waiting: "Nothing is waiting on you or another bot.",
+const EMPTY_TEXT: Record<Exclude<TaskListFilter, "work">, string> = {
   scheduled:
     "No routines yet. A routine gives a bot the same task on a schedule, or whenever an event fires.",
   completed: "Finished tasks will show up here.",
@@ -280,7 +280,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
     [botsQuery.data],
   );
   const lists = useMemo(() => {
-    const grouped: Record<Exclude<TaskListFilter, "scheduled">, Array<PersonalTask>> = {
+    const grouped: Record<TaskBucket, Array<PersonalTask>> = {
       active: [],
       waiting: [],
       completed: [],
@@ -296,8 +296,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
   }, [tasks]);
   const routines = routinesQuery.data?.routines ?? [];
   const counts: Record<TaskListFilter, number> = {
-    active: lists.active.length,
-    waiting: lists.waiting.length,
+    work: lists.active.length + lists.waiting.length,
     scheduled: routines.filter((routine) => routine.enabled).length,
     completed: lists.completed.length,
   };
@@ -407,7 +406,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
           aria-label="Task lists"
           // No padding on the track: each tab is the full 44 px high, and its
           // own 2 px padding draws the inset pill (was 40 px targets).
-          className="mt-3 grid h-11 grid-cols-4 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)]"
+          className="mt-3 grid h-11 grid-cols-3 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)]"
         >
           {TASK_LIST_FILTERS.map((filter) => {
             const active = filter.id === view;
@@ -449,7 +448,9 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
 
       {view === "scheduled" ? <BulkNoticeLine notice={notice} /> : null}
 
-      {loadError !== null ? (
+      {view === "work" ? (
+        <WorkScreen />
+      ) : loadError !== null ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">{loadError}</p>
       ) : loading ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">Loading…</p>

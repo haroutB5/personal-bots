@@ -62,8 +62,7 @@ describe("taskListCounts", () => {
   it("counts only enabled routines under Scheduled", () => {
     const buckets = taskBuckets(new Map([["a", task("a", "running", "2026-11-05T09:00:00Z")]]));
     expect(taskListCounts(buckets, routines)).toEqual({
-      active: 1,
-      waiting: 0,
+      work: 1,
       scheduled: 1,
       completed: 0,
     });
@@ -72,12 +71,12 @@ describe("taskListCounts", () => {
 
 describe("tasksScreenState", () => {
   it("shows loading until the active view has data", () => {
-    expect(tasksScreenState({ ...noTasks, view: "active" })).toEqual({ kind: "loading" });
+    expect(tasksScreenState({ ...noTasks, view: "work" })).toEqual({ kind: "loading" });
   });
 
   it("shows the error instead of stale rows", () => {
     expect(
-      tasksScreenState({ ...noTasks, view: "waiting", taskError: "Can't reach your laptop." }),
+      tasksScreenState({ ...noTasks, view: "work", taskError: "Can't reach your laptop." }),
     ).toEqual({ kind: "error", message: "Can't reach your laptop." });
   });
 

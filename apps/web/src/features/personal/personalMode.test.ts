@@ -42,7 +42,7 @@ describe("sidebarSelectionKey", () => {
 });
 
 describe("isPersonalPath", () => {
-  it("claims the five tabs and everything under /bots and /tasks", () => {
+  it("claims the four tabs, the old /work link and everything under /bots and /tasks", () => {
     for (const path of [
       "/bots",
       "/bots/",

@@ -46,6 +46,7 @@ import {
   taskRowMeta,
   tasksScreenState,
 } from "./tasksModel";
+import { WorkScreen } from "../work/WorkScreen";
 import { EmptyText, ScreenScroll, SmallBotAvatar, StatusDot, TaskButton } from "./TaskUi";
 
 const OLDER_PAGE_SIZE = 30;
@@ -204,11 +205,13 @@ function Check({ checked }: { readonly checked: boolean }) {
 export function TasksScreen({
   native,
   onOpenTask,
+  onOpenChat,
   onOpenRoutine,
   onNewRoutine,
 }: {
   readonly native: NativePersonal;
   readonly onOpenTask: (taskId: string) => void;
+  readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenRoutine: (routineId: string) => void;
   readonly onNewRoutine: () => void;
 }) {
@@ -226,7 +229,7 @@ export function TasksScreen({
     native.automation.personalRoutinesSetEnabledMany,
     { reportFailure: false },
   );
-  const [view, setView] = useState<TaskListFilter>("active");
+  const [view, setView] = useState<TaskListFilter>("work");
   const [older, setOlder] = useState<OlderTasks>(NO_OLDER_TASKS);
   const [selection, setSelection] = useState<ReadonlySet<string> | null>(null);
   const [notice, setNotice] = useState<{ text: string; failed: boolean } | null>(null);
@@ -337,7 +340,7 @@ export function TasksScreen({
     setSelection(failed.length === 0 ? null : new Set(failed.map((entry) => entry.id)));
   };
 
-  const list = view === "scheduled" ? null : buckets[view];
+  const list = view === "completed" ? buckets.completed : null;
 
   return (
     <View style={styles.screen}>
@@ -427,69 +430,73 @@ export function TasksScreen({
         </Text>
       ) : null}
 
-      <ScreenScroll contentStyle={selecting ? styles.scrollSelecting : undefined}>
-        {loadState.kind === "error" ? (
-          <EmptyText>{loadState.message}</EmptyText>
-        ) : loadState.kind === "loading" ? (
-          <EmptyText>Loading…</EmptyText>
-        ) : view === "scheduled" ? (
-          routines.length === 0 ? (
-            <View style={styles.emptyBlock}>
-              <EmptyText>{TASK_EMPTY_TEXT.scheduled}</EmptyText>
-              <View style={styles.emptyButton}>
-                <TaskButton label="New routine" variant="primary" onPress={onNewRoutine} />
+      {view === "work" ? (
+        <WorkScreen native={native} onOpenTask={onOpenTask} onOpenChat={onOpenChat} />
+      ) : (
+        <ScreenScroll contentStyle={selecting ? styles.scrollSelecting : undefined}>
+          {loadState.kind === "error" ? (
+            <EmptyText>{loadState.message}</EmptyText>
+          ) : loadState.kind === "loading" ? (
+            <EmptyText>Loading…</EmptyText>
+          ) : view === "scheduled" ? (
+            routines.length === 0 ? (
+              <View style={styles.emptyBlock}>
+                <EmptyText>{TASK_EMPTY_TEXT.scheduled}</EmptyText>
+                <View style={styles.emptyButton}>
+                  <TaskButton label="New routine" variant="primary" onPress={onNewRoutine} />
+                </View>
               </View>
-            </View>
-          ) : (
-            routines.map((routine) => (
-              <RoutineRow
-                key={routine.routineId}
-                routine={routine}
-                bot={botMap.get(routine.botId)}
-                selected={selection?.has(routine.routineId) ?? false}
-                selecting={selecting}
-                onPress={() =>
-                  selecting ? toggle(routine.routineId) : onOpenRoutine(routine.routineId)
-                }
-                onLongPress={() => enterSelect(routine.routineId)}
-              />
-            ))
-          )
-        ) : list !== null && list.length === 0 ? (
-          <EmptyText>{TASK_EMPTY_TEXT[view]}</EmptyText>
-        ) : (
-          <>
-            {list?.map((task) => (
-              <TaskRow
-                key={task.taskId}
-                task={task}
-                bot={botMap.get(task.botId)}
-                parentTitle={
-                  task.parentTaskId === null
-                    ? null
-                    : (merged?.get(task.parentTaskId)?.title ?? null)
-                }
-                now={now}
-                onPress={() => onOpenTask(task.taskId)}
-              />
-            ))}
-            {view === "completed" && older.hasMore ? (
-              <View style={styles.olderBlock}>
-                <TaskButton
-                  label={older.loading ? "Loading" : "Show older tasks"}
-                  busy={older.loading}
-                  onPress={() => void loadOlder()}
+            ) : (
+              routines.map((routine) => (
+                <RoutineRow
+                  key={routine.routineId}
+                  routine={routine}
+                  bot={botMap.get(routine.botId)}
+                  selected={selection?.has(routine.routineId) ?? false}
+                  selecting={selecting}
+                  onPress={() =>
+                    selecting ? toggle(routine.routineId) : onOpenRoutine(routine.routineId)
+                  }
+                  onLongPress={() => enterSelect(routine.routineId)}
                 />
-                {older.error !== null ? (
-                  <Text style={styles.noticeFailed} accessibilityRole="alert">
-                    {older.error}
-                  </Text>
-                ) : null}
-              </View>
-            ) : null}
-          </>
-        )}
-      </ScreenScroll>
+              ))
+            )
+          ) : list !== null && list.length === 0 ? (
+            <EmptyText>{TASK_EMPTY_TEXT[view]}</EmptyText>
+          ) : (
+            <>
+              {list?.map((task) => (
+                <TaskRow
+                  key={task.taskId}
+                  task={task}
+                  bot={botMap.get(task.botId)}
+                  parentTitle={
+                    task.parentTaskId === null
+                      ? null
+                      : (merged?.get(task.parentTaskId)?.title ?? null)
+                  }
+                  now={now}
+                  onPress={() => onOpenTask(task.taskId)}
+                />
+              ))}
+              {view === "completed" && older.hasMore ? (
+                <View style={styles.olderBlock}>
+                  <TaskButton
+                    label={older.loading ? "Loading" : "Show older tasks"}
+                    busy={older.loading}
+                    onPress={() => void loadOlder()}
+                  />
+                  {older.error !== null ? (
+                    <Text style={styles.noticeFailed} accessibilityRole="alert">
+                      {older.error}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+            </>
+          )}
+        </ScreenScroll>
+      )}
 
       {selecting ? (
         <View style={styles.actions}>

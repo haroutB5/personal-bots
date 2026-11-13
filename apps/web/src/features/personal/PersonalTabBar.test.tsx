@@ -45,29 +45,21 @@ describe("PersonalTabBar", () => {
     vi.clearAllMocks();
   });
 
-  it("routes all five tabs, Work and Computer among them, in five equal columns", () => {
+  it("routes all four tabs, Computer among them, in four equal columns", () => {
     const nodes = renderBar("chats");
     const links = nodes.filter((node) => node.type === "a");
-    expect(links.map((link) => link.props.to)).toEqual([
-      "/bots",
-      "/work",
-      "/tasks",
-      "/computer",
-      "/files",
-    ]);
-    expect(JSON.stringify(nodes.map((node) => node.props.className))).toContain("grid-cols-5");
+    expect(links.map((link) => link.props.to)).toEqual(["/bots", "/tasks", "/computer", "/files"]);
+    expect(JSON.stringify(nodes.map((node) => node.props.className))).toContain("grid-cols-4");
     // The label is what the user reads on the bar; the icon is aria-hidden.
-    expect(JSON.stringify(links[1])).toContain("Work");
-    expect(JSON.stringify(links[3])).toContain("Computer");
+    expect(JSON.stringify(links[2])).toContain("Computer");
     // A tab-bar tap is an origin-less visit: /computer must not inherit a
     // `fromBot` from an earlier trip in through a chat's link.
-    expect(links.map((link) => link.props.search)).toEqual([{}, {}, {}, {}, {}]);
+    expect(links.map((link) => link.props.search)).toEqual([{}, {}, {}, {}]);
   });
 
   it("marks only the Computer tab as the current page on /computer", () => {
     const links = renderBar("computer").filter((node) => node.type === "a");
     expect(links.map((link) => link.props["aria-current"])).toEqual([
-      undefined,
       undefined,
       undefined,
       "page",
@@ -82,10 +74,8 @@ describe("PersonalTabBar", () => {
     ask.open = true;
     const nodes = renderBar("chats");
     const links = nodes.filter((node) => node.type === "a");
-    expect(JSON.stringify(links[3])).toContain("computer-ask-dot");
-    expect(JSON.stringify(links[3])).toContain("a bot needs you");
-    expect(JSON.stringify([links[0], links[1], links[2], links[4]])).not.toContain(
-      "computer-ask-dot",
-    );
+    expect(JSON.stringify(links[2])).toContain("computer-ask-dot");
+    expect(JSON.stringify(links[2])).toContain("a bot needs you");
+    expect(JSON.stringify([links[0], links[1], links[3]])).not.toContain("computer-ask-dot");
   });
 });
