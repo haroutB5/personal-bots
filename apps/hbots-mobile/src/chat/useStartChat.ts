@@ -18,14 +18,20 @@ export type StartChatResult =
   | { readonly kind: "unreachable" }
   | { readonly kind: "rejected" };
 
-// Chats started in this app run: the chat screen draws their chip before the list knows them.
+// Chats started in this app run that the list does not know yet: the chat screen draws their
+// chip before the list does. Once listed, the chip is the list's, so an archived or deleted
+// chat leaves no untitled chip behind.
 const startedChats = new Set<string>();
 
 export function markChatStarted(threadId: string): void {
   startedChats.add(threadId);
 }
 
-export function wasChatStartedHere(threadId: string): boolean {
+export function wasChatStartedHere(
+  threadId: string,
+  links: ReadonlyArray<{ readonly threadId: string }>,
+): boolean {
+  if (links.some((link) => link.threadId === threadId)) startedChats.delete(threadId);
   return startedChats.has(threadId);
 }
 

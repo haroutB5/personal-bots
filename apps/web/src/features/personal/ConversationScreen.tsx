@@ -228,7 +228,6 @@ const EMPTY_PLANS: ReadonlyArray<never> = [];
 /** Minute clock for "Today, 21:38" dividers. */
 function useMinuteNow(): Date {
   const [now, setNow] = useState(() => new Date());
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the minute timer for the dividers while the chat is open
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
@@ -306,7 +305,6 @@ export function ConversationScreen({
     environmentId !== null && !list.isPending && (list.data === null || bot === null);
   const listRefreshKey = `${environmentId}|${botId}|${list.data === null ? "none" : "stale"}|${list.error ?? ""}`;
   const lastListRefreshKey = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the bots list query again once per failure or missing bot, which the query cannot tell on its own
   useEffect(() => {
     if (!listNeedsRefresh || lastListRefreshKey.current === listRefreshKey) return;
     lastListRefreshKey.current = listRefreshKey;
@@ -390,12 +388,10 @@ export function ConversationScreen({
   const messages = thread?.messages ?? EMPTY_MESSAGES;
   // Real-user timings (perfRum.ts): chat usable, then send -> echo -> first reply text.
   const usableThreadId = thread !== null ? threadId : null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the chat-usable mark to the real-user timing probe
   useEffect(() => {
     if (usableThreadId === null) return;
     reportChatUsable(window.location.pathname);
   }, [usableThreadId]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds the send-to-reply timing probe the messages it watches
   useEffect(() => {
     observeChatMessages(threadId, messages);
   }, [threadId, messages]);
@@ -407,7 +403,6 @@ export function ConversationScreen({
   const taskChatIds = taskChatThreadIds(list.data?.threads ?? [], tasks);
   const ownerWriteKey = ownerWriteRefreshKey({ link, taskChatIds, messages });
   const lastOwnerWriteKey = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the bots list after the owner writes in a task chat, and holds the retry timer until unmount
   useEffect(() => {
     if (ownerWriteKey === null || lastOwnerWriteKey.current === ownerWriteKey) return;
     lastOwnerWriteKey.current = ownerWriteKey;
@@ -416,7 +411,6 @@ export function ConversationScreen({
     return () => window.clearTimeout(retry);
   }, [lastOwnerWriteKey, ownerWriteKey, refreshBotsList]);
   const pendingCount = useRef(0);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- marks a new send for the timing probe and warms the highlighter while the reply is written
   useEffect(() => {
     if (pending.length > pendingCount.current) {
       markMessageSent(threadId, messages);
@@ -588,7 +582,6 @@ export function ConversationScreen({
   // re-check R4).
   const voiceCallSummaryPendingNow = voiceCallSummaryPending(voiceCallCards, now.getTime());
   const refreshVoiceCalls = useStableCallback(voiceCalls.refresh);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the voice call list while a recent call's summary is still being written
   useEffect(() => {
     if (!voiceCallSummaryPendingNow) return;
     const timer = window.setInterval(refreshVoiceCalls, 15_000);
@@ -679,7 +672,6 @@ export function ConversationScreen({
     latestReplyMessageId: null as string | null,
     latestReplyAtMs: null as number | null,
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the status the voice call reads (a ref outside render) current
   useEffect(() => {
     const latestReply = messages.findLast(
       (message) => message.role === "assistant" && message.text.trim().length > 0,
@@ -696,7 +688,6 @@ export function ConversationScreen({
       latestReplyAtMs: Number.isFinite(repliedAtMs) ? repliedAtMs : null,
     };
   }, [conversationState, progressNote, messages, voiceBotStatus]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this chat's status reader with the voice call until unmount
   useEffect(() => {
     if (voice === null) return;
     return voice.registerBotStatus(threadId, () => voiceBotStatus.current);
@@ -928,8 +919,7 @@ export function ConversationScreen({
           action,
           target.title,
           action === "snooze" && options !== undefined
-            ? // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
-              whenWords(options.snoozeUntilMs, Date.now())
+            ? whenWords(options.snoozeUntilMs, Date.now())
             : undefined,
         ),
       );
@@ -1044,7 +1034,7 @@ export function ConversationScreen({
           waitingLabels,
           seen: chatSeen,
           nowMs: wakeClock,
-          startedHere: wasChatStartedHere(threadIdParam),
+          startedHere: wasChatStartedHere(threadIdParam, list.data.threads),
         });
   // The order holds still while the owner stays in this bot's chats (chatChipOrder.ts).
   const frozenOwner = useFrozenChipOrder(botId, chipModel?.ownerChips ?? null);
@@ -1059,7 +1049,6 @@ export function ConversationScreen({
           ...(frozenOwner.chips ?? chipModel.ownerChips),
         ];
   const chipsShown = bot !== null && chipModel !== null && chipModel.visible;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records in the chip handoff store whether chips show, which the next chat's first paint reads
   useEffect(() => {
     rememberChipsShown(botId, chipsShown);
   }, [botId, chipsShown]);
@@ -1136,7 +1125,6 @@ export function ConversationScreen({
 
   // A wrapup started from another chat's settings arrives here as a mark: send it once this
   // chat's thread has loaded, or say it could not start.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a wrapup mark from the module store once this chat's thread loads
   useEffect(() => {
     if (!pendingWrapupFor(threadIdParam)) return;
     const step = pendingWrapupStep({
@@ -1147,7 +1135,6 @@ export function ConversationScreen({
     if (step === "wait") return;
     clearPendingWrapup();
     if (step === "start") {
-      // oxlint-disable-next-line react/set-state-in-effect -- the mark only becomes sendable once the thread has loaded
       void onWrapup();
       return;
     }
