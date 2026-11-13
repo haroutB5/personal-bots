@@ -205,3 +205,20 @@ class UpdateRestartReceiver : BroadcastReceiver() {
     UpdateEngine.confirmFromNotification(context.applicationContext)
   }
 }
+
+/**
+ * Runs in the new version right after Android replaces the app. The install-success broadcast
+ * can die with the old process, so the reopen is done here: straight back into the app when
+ * "Display over other apps" is allowed, otherwise a notification that opens it.
+ */
+class UpdateReplacedReceiver : BroadcastReceiver() {
+  override fun onReceive(context: Context, intent: Intent) {
+    if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+    val app = context.applicationContext
+    if (UpdateInstaller.canReopen(app)) {
+      UpdateNotifier.reopenApp(app)
+    } else {
+      UpdateNotifier.postUpdated(app, InstalledAppReader.read(app)?.name)
+    }
+  }
+}
