@@ -203,7 +203,7 @@ export function updateStatusView(input: {
   readonly liveVersion: string | null;
   readonly updatedAtMs: number;
   readonly nowMs: number;
-  readonly waiting?: RestartWaiting | null;
+  readonly waiting?: RestartWaiting | null | undefined;
 }): UpdateStatusView | null {
   const { status } = input;
   if (status === null || status === "superseded_before_activation") return null;
