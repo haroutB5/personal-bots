@@ -76,6 +76,11 @@ builds `assembleRelease`, then checks the signer against `release-cert.sha256`,
 runs `scripts/verify-apk.mjs` and refuses any ABI other than `arm64-v8a`. It
 prints the APK path, size, SHA-256 and signer digest.
 
+Push needs Firebase. When `HBOTS_GOOGLE_SERVICES_JSON` is unset and
+`~/.config/hbots/google-services.json` exists, the script uses that file. It prints one line
+saying whether Firebase is on and which file it read. Without the file the app builds with push
+state "unconfigured".
+
 Set `HBOTS_KEYSTORE_PATH`, `HBOTS_SIGNING_PROPERTIES` or `HBOTS_KEY_ALIAS` to use
 another key. A debug build on an x86_64 emulator passes
 `-PreactNativeArchitectures=x86_64` to Gradle, because the app's own ABI list is

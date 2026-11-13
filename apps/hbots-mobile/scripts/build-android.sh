@@ -38,6 +38,8 @@ export HBOTS_KEYSTORE_PASSWORD=$store_password
 export HBOTS_KEY_PASSWORD=$key_password
 unset store_password key_password
 
+source "$app_dir/scripts/firebase-env.sh"
+
 cd "$app_dir"
 EXPO_NO_GIT_STATUS=1 npx expo prebuild --clean --platform android
 (cd android && ./gradlew assembleRelease --no-daemon --console=plain)
