@@ -507,7 +507,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("never sends a saved variant the catalog model does not list", () =>
@@ -522,7 +522,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         turnInput(thread, { ...bigPickle, options: [{ id: "variant", value: "medium" }] }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("renames the session before the first turn after the thread was renamed", () =>
@@ -551,7 +551,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
       });
       assert.equal((yield* Fiber.join(second))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("ends a turn on the provider thread it started on", () =>
@@ -568,7 +568,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(forkedRow));
       assert.equal((yield* Fiber.join(terminal))?.providerThreadId, forkedRow.id);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // regression: #18315 OpenCode Go quota stops were not shown as usage limits
@@ -596,7 +596,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         message: "Provider rejected the request",
         retryable: null,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // OpenCode types an empty balance as provider.quota too, but answers it with
@@ -677,7 +677,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         message: error.message,
         retryable: null,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // regression: #29289 Claude weekly limits through claude-agent lost their usage-limit reset
@@ -706,7 +706,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           retryable: null,
           resetAt: "2026-11-02T20:00:00.000Z",
         });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
@@ -719,7 +719,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a turn running through a start event this build cannot decode", () =>
@@ -773,7 +773,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             event.turnItem.text === "DONE",
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops running turns on an external server when the session closes", () =>
@@ -849,7 +849,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* Fiber.join(started);
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
       assert.lengthOf(prompts, 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   const childCreated = (child: string) => ({
@@ -1071,7 +1071,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           output: stop === "burst" ? "x".repeat(262127) + "FINAL DIAGNOSTIC\n" : "retained\n",
         });
         assert.isFalse(items.some((i) => i.type === "subagent"));
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each([
@@ -1240,7 +1240,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           output: "retained",
         });
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["remove", "lookup", "output", "timeout"] as const)(
@@ -1372,7 +1372,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         if (failure === "remove")
           yield* runtime.stopTask!({ providerThread: thread, taskId: ids[0]! });
         assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("keeps background subagents running when a turn is interrupted to restart it", () =>
@@ -1392,7 +1392,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       assert.equal((yield* watch.terminal)?.status, "interrupted");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops background subagents on a user Stop", () =>
@@ -1415,7 +1415,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       assert.equal((yield* watch.terminal)?.status, "interrupted");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("gives a background subagent the rules of a mode changed while it runs", () =>
@@ -1463,7 +1463,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
         ["completed", "completed"],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -1544,7 +1544,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.isAbove(timeline.indexOf(false), timeline.indexOf("completed"));
         assert.strictEqual(timeline.at(-1), false);
         assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      }).pipe(Effect.scoped),
+      }),
   );
 
   const returnedRunning = (id: string): ProviderReplayEntry => ({
@@ -1774,7 +1774,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         );
         assert.deepEqual(watch.state.roster, []);
         assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      }).pipe(Effect.scoped),
+      }),
   );
 
   // regression: #21979 a failed background subagent pinned its thread as busy
@@ -1816,7 +1816,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.deepEqual(watch.state.roster, []);
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("settles every call that joined a running subagent with its one report", () =>
@@ -1840,7 +1840,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Sleep: { status: "completed", result: "CHILD_OK" },
         Again: { status: "completed", result: "CHILD_OK" },
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a call to a finished subagent for its own run's report", () =>
@@ -1864,7 +1864,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* watch.until(() => watch.calls.get("Again")?.status === "completed");
       assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "SECOND_OK" });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   const MIDDLE = "ses_middle0000000000000000000";
@@ -2054,7 +2054,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.rootVariant === "none");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       assert.strictEqual(watch.pendingSnapshots.get(MIDDLE), false);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("clears the caller's pending work when a called session's held wake runs", () =>
@@ -2136,7 +2136,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.variants.get(OTHER) === "none");
       assert.isFalse(watch.pendingSnapshots.get(OTHER));
       assert.isFalse(watch.pendingSnapshots.get(SESSION));
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops a foreground subagent's background subagent after the turn ended", () =>
@@ -2173,7 +2173,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* Deferred.await(offered);
       assert.equal(watch.deep.at(-1), "interrupted");
       assert.deepEqual([...watch.middleTurns.keys()], [`${MIDDLE}:turn:1`]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops the turn a foreground subagent runs to answer its background subagent", () =>
@@ -2205,7 +2205,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* watch.until(() => watch.middleTurns.get(`${MIDDLE}:turn:2`) === "interrupted");
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }).pipe(Effect.scoped),
+    }),
   );
 
   const stopTimedOut: ReadonlyArray<ProviderReplayEntry> = [
@@ -2598,7 +2598,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         .pipe(Effect.flip);
       assert.equal(failed._tag, "ProviderAdapterInterruptError");
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("gives a resumed session T3's rules when it was made with others", () =>
@@ -2625,7 +2625,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         modelSelection: bigPickle,
         runtimePolicy: policy(),
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("moves the session when the thread's worktree changed", () =>
@@ -2645,7 +2645,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         modelSelection: bigPickle,
         runtimePolicy: { ...policy(), cwd: "/work/opencode2-feature" },
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("breaks the thread and forgets it when the session was deleted outside T3", () =>
@@ -2669,7 +2669,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const again = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.flip);
       assert.equal(again._tag, "ProviderAdapterProtocolError");
       assert.include(again.message, "not registered");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops the requests a session still waits on when a restarted T3 loads it", () =>
@@ -2710,7 +2710,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("ends the turn when an answer to its request cannot be delivered", () =>
@@ -2749,7 +2749,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ended?.status === "failed" ? ended.failure.message : undefined,
         "OpenCode is waiting on a request T3 Code couldn't answer.",
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("counts an answer to a request OpenCode already dropped as delivered", () =>
@@ -2782,7 +2782,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const request = yield* Fiber.join(requested);
       yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("declines a form T3 cannot show with the reason, instead of leaving it open", () =>
@@ -2820,7 +2820,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ended?.status === "failed" ? ended.failure.message : "",
         "asked for a link to open",
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("asks a subagent's permission request on the parent thread's turn", () =>
@@ -2866,7 +2866,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal(request?.nativeRequestRef?.nativeId, shellAsk.data.id);
       yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps 'allow this session' in the session's rules, not OpenCode's saved grants", () =>
@@ -2904,7 +2904,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         decision: "acceptForSession",
       });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reads the agents again while a fresh server still lists none", () =>
@@ -2932,7 +2932,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         .pipe(Effect.forkScoped);
       yield* TestClock.adjust("250 millis");
       assert.equal((yield* Fiber.join(created)).nativeThreadRef?.nativeId, SESSION);
-    }).pipe(Effect.scoped),
+    }),
   );
   const reconnected = (
     active: Record<string, unknown>,
@@ -3085,7 +3085,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 e.turnItem.text === "Steer processed",
             ),
           );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("does not end a turn from an earlier turn's history when its prompt is not there", () =>
@@ -3131,7 +3131,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "An earlier turn's answer.",
       );
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "interrupted" });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("ends a turn that finished while the stream was down with the server's outcome", () =>
@@ -3176,7 +3176,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
       assert.deepInclude(usage, { usageStatus: "partial", inputTokens: 100, outputTokens: 10 });
       assert.notProperty(usage, "models");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("finishes a workspace command whose stream dropped before its inbox event", () =>
@@ -3239,7 +3239,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.include(texts, "HELLO WORLD");
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("sends a $skill that appears once OpenCode finishes scanning the directory", () =>
@@ -3275,7 +3275,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepInclude(prompts[0], { skills: [{ id: "greet" }] });
       assert.isTrue(Exit.isSuccess(started));
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps owned work through a stalled reconciliation without releasing its server", () =>
@@ -3314,7 +3314,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* Deferred.succeed(resume, undefined);
       yield* Fiber.join(ended);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reconciles a session deleted after the active snapshot", () =>
@@ -3407,7 +3407,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ended.map((event) => event.providerThreadId),
         [thread.id, other.id],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([503, 429])(
@@ -3451,7 +3451,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* Queue.take(attempts);
         yield* Deferred.succeed(allowRecovery, undefined);
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -3485,7 +3485,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         });
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
         assert.deepInclude(prompts[0], { skills: [{ id: "greet" }] });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each([
@@ -3526,7 +3526,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }
       yield* Queue.take(attempts);
       assert.equal((yield* Fiber.join(terminal))?.status, "failed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["lists", "stream"] as const)(
@@ -3612,7 +3612,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           answers: { q0: "Red" },
         });
         assert.equal(yield* Deferred.await(ended), "completed");
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -3661,7 +3661,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* Deferred.await(cancelled);
         assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
         assert.equal(runtime.providerSession.status, "ready");
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("releases a recovering session on shutdown without waiting for its HTTP read", () =>
@@ -3695,7 +3695,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* Scope.close(sessionScope, Exit.void);
       yield* Deferred.await(cancelled);
       assert.equal(borrowers.current, 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("honors a confirmed Stop during recovery and ignores its late backfill", () =>
@@ -3764,7 +3764,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a background child's requests when its parent stops during reconciliation", () =>
@@ -3843,7 +3843,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         requestId: requests.get(form.id)!.id,
         answers: { q0: "Red" },
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
@@ -3878,7 +3878,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "Arrived on the new stream.",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   const lostTurn = (alive: boolean) =>
@@ -4069,7 +4069,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "Sent before the stream dropped and after it came back.",
         "Sent before the stream dropped and after it came back.",
       ]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("shows a permission asked while the stream was down, and answers it", () =>
@@ -4097,7 +4097,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal(request?.nativeRequestRef?.nativeId, shellAsk.data.id);
       yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("settles a request OpenCode no longer lists after the stream came back", () =>
@@ -4125,7 +4125,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.deepEqual(statuses, ["pending", "cancelled"]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["delegate_task", "html_preview", "mcp__acme__edit_document"])(
@@ -4188,7 +4188,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           toolOutputImages(last?.type === "dynamic_tool" ? last.output : null),
           toolName !== "delegate_task" ? [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] : [],
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each(["completed", "error", "cancelled"] as const)(
@@ -4297,7 +4297,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         );
         assert.isTrue(rosters.some((tasks) => tasks.some((task) => task.taskId === "image_test")));
         assert.deepEqual(rosters.at(-1), []);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each(["history", "list", "late-preview"] as const)(
@@ -4437,7 +4437,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               e.providerThread.pendingBackgroundTasks?.some((task) => task.taskId === "image_gap"),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("settles a recovered image outcome when preview I/O is interrupted", () =>
@@ -4611,7 +4611,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             e.providerThread.pendingBackgroundTasks?.some((task) => task.taskId === "image_lost"),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("projects successful native todo updates into one checklist", () =>
@@ -4736,7 +4736,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         items.find((item) => item.nativeItemRef?.nativeId === "call-malformed"),
         { type: "dynamic_tool", status: "completed" },
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("recovers native todo updates missed during reconnect", () =>
@@ -4779,7 +4779,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [["Saved during disconnect", "running"]],
       );
       assert.include(turnItems(collected), "todo_list:completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stores a shell command that exits non-zero as failed", () =>
@@ -4829,7 +4829,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           .findLast((node) => node.id === item?.nodeId)?.status,
         "failed",
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
@@ -4894,7 +4894,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* Fiber.join(started);
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
@@ -4959,7 +4959,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* Fiber.join(started);
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       yield* runtime.unloadThread!({ providerThread: thread });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // regression: #16142 OpenCode 2 threads were missing T3 Code's MCP tools
@@ -5287,7 +5287,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         snapshot.providerThread.nativeConversationHeadRef?.nativeId,
         history.data[0]!.id,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("ends a turn before re-reading a model list that never answers", () =>
@@ -5315,7 +5315,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("leaves models unknown when a step ends without a seen start", () =>
@@ -5349,7 +5349,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
       assert.deepInclude(usage, { usageStatus: "complete", inputTokens: 20, outputTokens: 2 });
       assert.notProperty(usage, "models");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reports cache writes as cache creation, not only as input", () =>
@@ -5385,7 +5385,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           outputTokens: 40,
         },
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   const ASSISTANT = "msg_0eb735d5b001oAFVeY5jz3WD4Z";
@@ -5489,7 +5489,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ],
       );
       assert.deepInclude(seen.at(-1), { type: "turn.terminal", status: ended, failure: null });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // regression: #15672 OpenCode 2 provider retries ran silently instead of showing
@@ -5559,7 +5559,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ),
         );
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("replaces a provider retry with the error that failed the turn", () =>
@@ -5642,7 +5642,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         retry: lastRetry,
         retryStartedAt: startedAt,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reports each directory's own limit for a model its project config changed", () =>
@@ -5701,7 +5701,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         turn?.type === "provider_turn.updated" ? turn.providerTurn.tokenUsage?.maxTokens : null,
         48000,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("rejects unreadable rollback history before cutting the native session", () =>
@@ -5751,7 +5751,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         .pipe(Effect.flip);
       assert.equal(failure._tag, "ProviderAdapterRollbackThreadError");
       assert.include(Cause.pretty(Cause.fail(failure)), '["recent"]');
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("clears a staged revert whose commit failed, before the next prompt too", () =>
@@ -5819,7 +5819,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.isTrue(Exit.isFailure(rollback));
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* terminalOf(runtime))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("offers no follow-up for the execution a cleared revert starts", () =>
@@ -5886,7 +5886,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.isTrue(Exit.isFailure(rollback));
       assert.lengthOf(offers, 0);
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("prompts under ids no other session on the server can hold", () =>
@@ -6043,7 +6043,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ),
         ["running", "ready"],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -6202,7 +6202,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         attemptId: RunAttemptId.make("attempt:opencode2-adapter:3"),
       });
       yield* Deferred.await(thirdEnded);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("drops the turns a rollback cut from the snapshot it returns", () =>
@@ -6271,7 +6271,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         snapshot.providerTurns.map((turn) => turn.id),
         [first!.id],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("starts a turn sent during a rollback only once the cut is made", () =>
@@ -6322,7 +6322,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn({ ...turnInput(thread), providerTurnOrdinal: 1 });
       yield* Fiber.join(rollback);
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -6406,7 +6406,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           [kept.id],
         );
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("refuses to fork a session while OpenCode runs a follow-up on it", () =>
@@ -6428,7 +6428,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(refused._tag, "ProviderAdapterProtocolError");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // regression: #24549 a Stop whose interrupted event never arrives blocked the next fork
@@ -6474,7 +6474,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const [first, second] = yield* Fiber.join(ended);
       assert.equal(first?.status, "interrupted");
       assert.equal(second?.failure?.message, "second turn failed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("refuses to fork a stopped session OpenCode still runs", () =>
@@ -6500,7 +6500,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(refused._tag, "ProviderAdapterProtocolError");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("moves a fork into its target thread's worktree before the first prompt", () =>
@@ -6529,7 +6529,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         runtimePolicy: { ...policy(), cwd: target },
       });
       assert.equal(forked.nativeThreadRef?.nativeId, FORK);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   const continued = (after: ReadonlyArray<ProviderReplayEntry>, external?: string) =>
@@ -6653,7 +6653,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         sourceProviderTurns: [first, second],
       });
       assert.equal(forked.nativeThreadRef?.nativeId, FORK);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -6706,7 +6706,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           snapshot.providerTurns.map((turn) => turn.id),
           [first.id],
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("keeps a subagent a stopped background reply started off the next turn", () =>
@@ -6893,7 +6893,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ),
         [],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // regression: #14752 continuations replayed background replies that were not theirs
@@ -6982,7 +6982,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
         ["completed", "completed"],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("replays only its own background reply into a continuation turn", () =>
@@ -7218,7 +7218,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           snapshot.providerTurns.map((turn) => turn.id),
           [first!.id],
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -7340,7 +7340,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           snapshot.providerTurns.map((turn) => turn.id),
           [first!.id],
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("shows a second prompt another client sent while its continuation was pending", () =>
@@ -7423,7 +7423,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ],
         ["user: first?", "user: second?", "assistant: Both!"],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("shows a question asked while OpenCode wakes for a background reply", () =>
@@ -7531,7 +7531,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* Deferred.await(ended);
       const last = collected.findLast((event) => event.type === "turn.terminal");
       assert.equal(last?.type === "turn.terminal" ? last.status : undefined, "completed");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("ends a follow-up turn a steer joined exactly once", () =>
@@ -7677,7 +7677,31 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ),
         );
         assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-      }).pipe(Effect.scoped),
+      }),
+  );
+
+  // regression: #35872
+  it.effect("completes /goal clear when OpenCode has no goal to clear", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("command.list", "<any>"),
+          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+          reply("message.list", { data: [], cursor: {} }),
+          out("session.command", { sessionID: SESSION, name: "goal", text: "clear" }),
+          reply("session.command", {
+            status: 500,
+            body: { _tag: "CommandExecutionError", command: "goal", message: "No goal is set." },
+          }),
+        ],
+        { version: "2.2.5" },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime.startTurn({ ...input, message: { ...input.message, text: "/goal clear" } });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
   );
 
   it.effect("reads an existing OpenCode 2.2.5 goal when resuming a session", () =>
@@ -7712,7 +7736,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         checks: 2,
         lastCheck: "Checked proof.txt",
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -7801,7 +7825,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ),
           );
         assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("does not replace a newer goal event with an older goal RPC response", () =>
@@ -7846,7 +7870,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           : undefined,
         "paused",
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["unreadable", "stalled"] as const)(
@@ -7890,7 +7914,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }
         const collected = yield* Fiber.join(events);
         assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each([
@@ -7956,7 +7980,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ),
           );
         assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each(["show", "pause", "clear"] as const)(
@@ -8026,7 +8050,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               e.turnItem.text === "Replacement still tracked",
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each(["show", "pause", "clear"] as const)(
@@ -8067,7 +8091,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           goal?.status ?? null,
         );
         assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-      }).pipe(Effect.scoped),
+      }),
   );
 });
 

@@ -72,6 +72,21 @@
       "revertCommit": null,
       "heldAt": "2026-11-13",
       "upstream": "7bf2a43c09"
+    },
+    {
+      "id": "sqlite-writer-worker",
+      "shas": ["ce268642cc", "daed91f264"],
+      "area": "SQLite writer connection (packages/shared nodeSqliteClient.ts, apps/server persistence/Sqlite.ts)",
+      "whatChanged": "Upstream moves the server's SQLite writer and its WAL checkpoints onto a worker thread (writerWorker) and drops the in-thread checkpoint option. The fork has run its own serialized writer worker (nodeSqliteWorker.ts, kill switch T3CODE_SQLITE_WORKER) and its own checkpoint worker (persistence/sqliteCheckpointWorker.ts) since 1.66.70, which keep writes, migrations and checkpoints off the event loop. Upstream's writer worker is merged but not switched on; the fork's checkpoint worker now also covers the inline kill-switch path. Reader workers use upstream's code, including the batched result transfers.",
+      "options": [
+        "Keep the fork's writer worker and checkpoint worker",
+        "Switch the server to upstream's writerWorker and delete the fork's writer and checkpoint workers after a staged stall measurement"
+      ],
+      "recommendation": "Keep the fork's until a release measures main-thread stalls with upstream's writer on a stage; then switch and delete the fork's copy in one change.",
+      "holdBy": "keep_ours",
+      "revertCommit": null,
+      "heldAt": "2026-11-13",
+      "upstream": "7bd9134824"
     }
   ],
   "$acceptedComment": "Decisions the owner has already answered. A key listed here is settled: ship that upstream change like any other improvement, never hold it and never ask again. Remove an entry only if the owner changes his mind.",

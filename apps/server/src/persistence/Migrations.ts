@@ -175,6 +175,8 @@ import MigrationUpstream0084 from "./Migrations/084_LastExecutedRunIndex.ts";
 import MigrationUpstream0085 from "./Migrations/085_TurnItemCounts.ts";
 import MigrationUpstream0086 from "./Migrations/086_QueuedTurnInputIndex.ts";
 import MigrationUpstream0087 from "./Migrations/087_ProjectionProjectsCustomTitle.ts";
+import MigrationUpstream0088 from "./Migrations/088_TurnItemTypeStatusIndex.ts";
+import MigrationUpstream0089 from "./Migrations/089_ShellThreadReadIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -377,6 +379,10 @@ const migrationEntries = [
   [154, "QueuedTurnInputIndex", MigrationUpstream0086],
   // Upstream 087_ProjectionProjectsCustomTitle, renumbered (see upstreamMigrationIds.ts).
   [155, "ProjectionProjectsCustomTitle", MigrationUpstream0087],
+  // Upstream 088_TurnItemTypeStatusIndex, renumbered (see upstreamMigrationIds.ts).
+  [156, "TurnItemTypeStatusIndex", MigrationUpstream0088],
+  // Upstream 089_ShellThreadReadIndexes, renumbered (see upstreamMigrationIds.ts).
+  [157, "ShellThreadReadIndexes", MigrationUpstream0089],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

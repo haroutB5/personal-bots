@@ -90,7 +90,6 @@ const runMigrationsAsOwner = Effect.fn("SqlitePersistence.runMigrationsAsOwner")
 }, Effect.scoped);
 
 const layerSetup = <E = never, R = never>(
-  worker: boolean,
   dbPath?: string,
   migrate?: Effect.Effect<unknown, E, R>,
 ) =>
@@ -106,14 +105,14 @@ const layerSetup = <E = never, R = never>(
       }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table'`;
       if (tables[0]?.count === 0) yield* sql`PRAGMA auto_vacuum = INCREMENTAL;`;
       yield* sql`PRAGMA journal_mode = WAL;`;
-      // FULL fsyncs every event commit on the main thread; NORMAL syncs only at WAL checkpoints.
+      // FULL fsyncs every event commit; NORMAL syncs only at WAL checkpoints.
       // App crashes lose nothing; OS crashes or power loss can roll back post-checkpoint commits without corruption.
       yield* sql.unsafe(
         `PRAGMA synchronous = ${sqliteSynchronousFromEnv(process.env.T3CODE_SQLITE_SYNCHRONOUS)};`,
       );
       // macOS fsync misses drive caches; F_FULLFSYNC flushes them at checkpoints and is ignored elsewhere.
       yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
-      // Keep statement journals and sort spills off the main thread's disk path.
+      // Keep statement journals and sort spills off the disk.
       // Large statements and open savepoints can increase peak memory use.
       yield* sql`PRAGMA temp_store = MEMORY;`;
       const cacheMb = sqliteCacheMbFromEnv(process.env.T3CODE_SQLITE_CACHE_MB);
@@ -124,7 +123,10 @@ const layerSetup = <E = never, R = never>(
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* migrate ?? runMigrations();
-      if (worker && sqliteCheckpointWorkerEnabled(process.env.T3CODE_SQLITE_CHECKPOINT_WORKER)) {
+      if (
+        dbPath !== undefined &&
+        sqliteCheckpointWorkerEnabled(process.env.T3CODE_SQLITE_CHECKPOINT_WORKER)
+      ) {
         const restore = sql`PRAGMA wal_autocheckpoint = 1000`.pipe(
           Effect.tap(() =>
             Effect.logWarning(
@@ -138,7 +140,7 @@ const layerSetup = <E = never, R = never>(
         const checkpoint = yield* Effect.acquireRelease(
           Effect.promise(() =>
             startSqliteCheckpointWorker({
-              filename: dbPath!,
+              filename: dbPath,
               synchronous: sqliteSynchronousFromEnv(process.env.T3CODE_SQLITE_SYNCHRONOUS),
               onFailure: () => {
                 Effect.runFork(restore);
@@ -183,14 +185,11 @@ const makeLayerFromPath = <E = never, R = never>(migrate?: Effect.Effect<unknown
     );
 
     return Layer.provideMerge(
-      layerSetup(worker, dbPath, migrate),
+      layerSetup(dbPath, migrate),
       NodeSqliteClient.layer({
         filename: dbPath,
         worker,
         readerWorker: true,
-        // The worker path starts persistence/sqliteCheckpointWorker.ts after
-        // migrations; the inline path keeps its own admission-aware worker.
-        checkpointWorker: !worker,
         spanAttributes: {
           "db.name": path.basename(dbPath),
           "service.name": "t3code-server",
@@ -214,7 +213,7 @@ const makeLayerFromPath = <E = never, R = never>(migrate?: Effect.Effect<unknown
 export const layerFromPath = makeLayerFromPath();
 
 export const layerMemory = Layer.provideMerge(
-  layerSetup(false),
+  layerSetup(),
   NodeSqliteClient.layer({ filename: ":memory:", worker: false }),
 );
 

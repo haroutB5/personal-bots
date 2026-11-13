@@ -89,6 +89,7 @@ export function applyUsageLimitsUpdate(input: {
     checkedAt: input.checkedAt,
     windows: sortWindows(merged.values()),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(previous?.zeroSpendCap ? { zeroSpendCap: true } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }

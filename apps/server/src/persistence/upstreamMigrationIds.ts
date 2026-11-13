@@ -45,6 +45,8 @@ export const UPSTREAM_MIGRATION_IDS: Readonly<Record<string, number>> = {
   "085_TurnItemCounts": 153,
   "086_QueuedTurnInputIndex": 154,
   "087_ProjectionProjectsCustomTitle": 155,
+  "088_TurnItemTypeStatusIndex": 156,
+  "089_ShellThreadReadIndexes": 157,
 };
 
 /**
