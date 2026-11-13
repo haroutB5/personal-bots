@@ -1,5 +1,7 @@
 import {
+  isServerUpdateFinished,
   serverUpdatePollMs,
+  UPDATED_SHOWN_MS,
   visibleServerUpdate,
   type ServerUpdate,
 } from "@hbots/personal-client/update/serverUpdate";
@@ -15,6 +17,19 @@ interface Polled {
   readonly answeredAtMs: number | null;
   readonly reachable: boolean;
   readonly nowMs: number;
+}
+
+// When this app run first showed "Updated to x", by version. The banner sits on several
+// screens, so the ten seconds are counted once for all of them.
+const updatedFirstShown = new Map<string, number>();
+
+function updatedShownAt(update: ServerUpdate | null, nowMs: number): number | null {
+  if (!isServerUpdateFinished(update) || nowMs === 0) return null;
+  const version = update?.version ?? "";
+  const known = updatedFirstShown.get(version);
+  if (known !== undefined) return known;
+  updatedFirstShown.set(version, nowMs);
+  return nowMs;
 }
 
 const START: Polled = { update: null, answeredAtMs: null, reachable: true, nowMs: 0 };
@@ -64,8 +79,22 @@ export function ServerUpdateBanner({ native }: { readonly native: NativePersonal
     return byThread;
   }, [list.data, shells]);
 
+  const shownAt = updatedShownAt(polled.update, polled.nowMs);
+  // The note leaves on time, not at the next poll a minute later.
+  useEffect(() => {
+    if (shownAt === null) return;
+    const left = shownAt + UPDATED_SHOWN_MS - Date.now();
+    if (left <= 0) return;
+    const timer = setTimeout(
+      () => setPolled((previous) => ({ ...previous, nowMs: Date.now() })),
+      left + 50,
+    );
+    return () => clearTimeout(timer);
+  }, [shownAt]);
+
   const lines = visibleServerUpdate({
     update: polled.update,
+    updatedFirstShownMs: shownAt,
     answeredAtMs: polled.answeredAtMs,
     reachable: polled.reachable,
     nowMs: polled.nowMs,

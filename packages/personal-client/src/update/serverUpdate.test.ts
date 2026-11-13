@@ -79,10 +79,19 @@ describe("the server update status", () => {
     expect(shown(answer("live_verified"), false)).toBeNull();
   });
 
-  it("says checking, then updated for a minute, then nothing", () => {
+  it("says checking, then updated for ten seconds on this device, then nothing", () => {
     expect(shown(answer("smoking"))?.title).toBe("Checking update 1.67.14");
-    expect(shown(answer("live_verified"))?.title).toBe("Updated to 1.67.14");
-    expect(shown(answer("live_verified", { updatedAt: "2026-11-12T23:20:00.000Z" }))).toBeNull();
+    const updated = (updatedFirstShownMs: number | null) =>
+      visibleServerUpdate({
+        update: answer("live_verified"),
+        answeredAtMs: NOW,
+        reachable: true,
+        nowMs: NOW,
+        updatedFirstShownMs,
+      });
+    expect(updated(null)?.title).toBe("Updated to 1.67.14");
+    expect(updated(NOW - 9_000)?.title).toBe("Updated to 1.67.14");
+    expect(updated(NOW - 10_000)).toBeNull();
   });
 
   it("names the version still running after a rollback", () => {

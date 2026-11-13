@@ -186,8 +186,8 @@ const RESTART_EXPECTED_WINDOW_MS = 30 * 60_000;
 const RESTART_GRACE_MS = 5 * 60_000;
 
 const FINISHED: ReadonlySet<string> = new Set(["live_verified", "live_verified_doc_update_failed"]);
-/** How long "Updated to x" is worth a line. */
-const UPDATED_SHOWN_MS = 60_000;
+/** How long "Updated to x" stands once this device has shown it (Harout, 13 Nov: 10 s is enough). */
+export const UPDATED_SHOWN_MS = 10_000;
 
 /**
  * What to show now. `update` is the last answer, `answeredAtMs` when it came,
@@ -200,6 +200,8 @@ export function visibleServerUpdate(input: {
   readonly nowMs: number;
   readonly nameOfThread?: ((threadId: string) => string | null) | undefined;
   readonly stillOn?: string | null | undefined;
+  /** When this device first showed the finished line for this version; null if it has not. */
+  readonly updatedFirstShownMs?: number | null | undefined;
 }): ServerUpdateLines | null {
   const { update } = input;
   if (update === null || update.phase === null) return null;
@@ -211,9 +213,11 @@ export function visibleServerUpdate(input: {
       input.nowMs - update.updatedAtMs <= RESTART_EXPECTED_WINDOW_MS;
     return expected && age <= RESTART_GRACE_MS ? SERVER_RESTARTING_LINES : null;
   }
+  const firstShown = input.updatedFirstShownMs ?? null;
   if (
     FINISHED.has(update.phase) &&
-    (update.updatedAtMs === null || input.nowMs - update.updatedAtMs > UPDATED_SHOWN_MS)
+    firstShown !== null &&
+    input.nowMs - firstShown >= UPDATED_SHOWN_MS
   ) {
     return null;
   }
@@ -231,3 +235,7 @@ export function serverUpdatePollMs(update: ServerUpdate | null, reachable: boole
   if (update === null || update.phase === null || FINISHED.has(update.phase)) return 60_000;
   return 10_000;
 }
+
+/** True for the phases whose line is the short "Updated to x" note. */
+export const isServerUpdateFinished = (update: ServerUpdate | null): boolean =>
+  update !== null && update.phase !== null && FINISHED.has(update.phase);

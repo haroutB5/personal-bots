@@ -1,8 +1,8 @@
 // Paths, constants and the test overrides of the Linux release runner.
 // Overrides exist only with HBOTS_RELEASE_TEST=1 plus HBOTS_RELEASE_TEST_*; the launcher never sets them and a
 // run that used them says so in its result.
-import fs from "node:fs";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 export const PINNED_NODE = "/home/harout/.local/share/mise/installs/node/24.22.1/bin/node";
 export const DEFAULT_HOME = "/home/harout/.personal-bots";
@@ -21,21 +21,35 @@ export const PORT = 38472;
  * tool sends as exactly that. Plain notify-send stays as the fallback.
  */
 const DEFAULT_NOTIFIER = "/usr/bin/omarchy-notification-send";
-const notifier = () => (fs.existsSync(DEFAULT_NOTIFIER) ? DEFAULT_NOTIFIER : "notify-send");
+const notifier = () => (NodeFS.existsSync(DEFAULT_NOTIFIER) ? DEFAULT_NOTIFIER : "notify-send");
 
 export const STANDING_COLUMNS = [
-  "personal_bot_threads.pinned_at", "personal_bot_threads.snoozed_until", "personal_bot_threads.marked_unread_at",
-  "personal_groups.pinned_at", "personal_groups.snoozed_until", "personal_bots.fallback_enabled",
-  "personal_bots.fallback_model_json", "personal_bot_fallbacks.bot_id", "personal_bot_fallbacks.reset_at",
-  "personal_chat_resumes.fallback", "personal_secret_requests.mode", "personal_secret_requests.origins_json",
-  "personal_secret_requests.placement_json", "personal_memory.temporal_kind", "personal_memory.observed_at",
-  "personal_memory.verified_at", "personal_memory.evidence_json", "personal_memory.origin_thread_id",
-  "personal_memory.origin_message_id", "personal_memory.conflict",
+  "personal_bot_threads.pinned_at",
+  "personal_bot_threads.snoozed_until",
+  "personal_bot_threads.marked_unread_at",
+  "personal_groups.pinned_at",
+  "personal_groups.snoozed_until",
+  "personal_bots.fallback_enabled",
+  "personal_bots.fallback_model_json",
+  "personal_bot_fallbacks.bot_id",
+  "personal_bot_fallbacks.reset_at",
+  "personal_chat_resumes.fallback",
+  "personal_secret_requests.mode",
+  "personal_secret_requests.origins_json",
+  "personal_secret_requests.placement_json",
+  "personal_memory.temporal_kind",
+  "personal_memory.observed_at",
+  "personal_memory.verified_at",
+  "personal_memory.evidence_json",
+  "personal_memory.origin_thread_id",
+  "personal_memory.origin_message_id",
+  "personal_memory.conflict",
 ];
 
 export function loadConfig(env = process.env) {
   const test = env.HBOTS_RELEASE_TEST === "1";
-  const t = (key, fallback) => (test && env[`HBOTS_RELEASE_TEST_${key}`] ? env[`HBOTS_RELEASE_TEST_${key}`] : fallback);
+  const t = (key, fallback) =>
+    test && env[`HBOTS_RELEASE_TEST_${key}`] ? env[`HBOTS_RELEASE_TEST_${key}`] : fallback;
   const n = (key, fallback) => Number(t(key, fallback));
   const home = t("HOME", DEFAULT_HOME);
   const here = new URL(".", import.meta.url).pathname.replace(/\/lib\/$/, "");
@@ -43,26 +57,26 @@ export function loadConfig(env = process.env) {
     test,
     here,
     home,
-    run: path.join(home, "run"),
-    releases: path.join(home, "releases"),
-    backups: path.join(home, "backups"),
-    logs: path.join(home, "logs"),
-    baseDir: path.join(home, "dev"),
-    stateDir: path.join(home, "dev", "userdata"),
-    providerLogs: path.join(home, "dev", "userdata", "logs", "provider"),
-    runtimeDir: path.join(home, "dev", "runtime"),
-    serverJson: path.join(home, "run", "server.json"),
-    currentTxt: path.join(home, "releases", "current.txt"),
+    run: NodePath.join(home, "run"),
+    releases: NodePath.join(home, "releases"),
+    backups: NodePath.join(home, "backups"),
+    logs: NodePath.join(home, "logs"),
+    baseDir: NodePath.join(home, "dev"),
+    stateDir: NodePath.join(home, "dev", "userdata"),
+    providerLogs: NodePath.join(home, "dev", "userdata", "logs", "provider"),
+    runtimeDir: NodePath.join(home, "dev", "runtime"),
+    serverJson: NodePath.join(home, "run", "server.json"),
+    currentTxt: NodePath.join(home, "releases", "current.txt"),
     node: t("NODE", PINNED_NODE),
     unit: t("UNIT", UNIT),
     heavyLock: t("LOCK", HEAVY_LOCK),
     toolsDir: t("TOOLS", DEFAULT_TOOLS),
     cli: t("CLI", ""),
     port: n("PORT", PORT),
-    lookMs: n("LOOK_MS", 30_000),
+    lookMs: n("LOOK_MS", 15_000),
     quietLooks: n("QUIET_LOOKS", 4),
     eventsQuietMs: n("EVENTS_QUIET_MS", 90_000),
-    cpuBudgetS: Number(t("CPU_BUDGET_S", 0.6)),
+    cpuBudgetS: Number(t("CPU_BUDGET_S", 0.3)),
     marathonMs: n("MARATHON_MS", 4 * 60 * 60_000),
     // Minutes after the idle wait starts at which the desktop and chat alerts fire once each.
     waitingAlertMinutes: String(t("WAITING_ALERT_MINUTES", "20,60"))
@@ -75,7 +89,7 @@ export function loadConfig(env = process.env) {
     /** --compact-db: hard limit for the VACUUM child, and a test-only free-space override. */
     compactTimeoutMs: n("COMPACT_TIMEOUT_MS", 15 * 60_000),
     compactFreeBytes: n("COMPACT_FREE_BYTES", 0),
-    pinsFile: t("PINS", path.join(here, "PINS.json")),
+    pinsFile: t("PINS", NodePath.join(here, "PINS.json")),
     scope: t("CGROUP", ""),
     /** Desktop notifier. Tests point this at a recorder so they never toast the owner. */
     notifySend: t("NOTIFY_SEND", notifier()),
@@ -95,10 +109,10 @@ export function artifactNames(cfg, a) {
   const suffix = { run: "", dryrun: "-dryrun", prepare: "-prepare", guards: "-guards" }[mode];
   return {
     mode,
-    log: path.join(cfg.logs, `restart-${a.version}${suffix}.log`),
-    result: path.join(cfg.run, `restart-${a.version}${suffix}-result.json`),
-    pid: path.join(cfg.run, `restart-${a.version}${suffix}.pid`),
-    seal: path.join(cfg.run, `hbots-${a.version}-seal.json`),
-    tools: path.join(cfg.run, `release-tools-${a.version}`),
+    log: NodePath.join(cfg.logs, `restart-${a.version}${suffix}.log`),
+    result: NodePath.join(cfg.run, `restart-${a.version}${suffix}-result.json`),
+    pid: NodePath.join(cfg.run, `restart-${a.version}${suffix}.pid`),
+    seal: NodePath.join(cfg.run, `hbots-${a.version}-seal.json`),
+    tools: NodePath.join(cfg.run, `release-tools-${a.version}`),
   };
 }
