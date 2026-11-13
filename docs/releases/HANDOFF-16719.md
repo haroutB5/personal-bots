@@ -36,9 +36,26 @@ Binary only. The previous release is `bb57508a84fa` (1.67.18). The 1.67.18 code 
 
 - Not verified, accepted by the lead: a real provider turn on the rc, a live browser recording, and a cold chat open slightly over its 1 s target (p95 1,274 ms on the emulator; reopening a saved chat measured p95 279 ms).
 - No QA recheck after live (Harout, 27 Oct).
+- Gate run 1 failed server-tests on 7 workspace tests (`WorkspaceEntries.test.ts`, `WorkspaceSearchIndex.test.ts`). Cause: the shipper set `TMPDIR` to the worktree's `.tmp/`, which this repo excludes from git, so the test folders were marked ignored. Rerun with `TMPDIR` outside any repo: the two files 42 of 42, then server-tests PASS with `--gates server-tests --merge` on the same artifact (shipper, measured). Run 1 is kept in `dev-team/qa/hbots-16719/ship/run1-failed/`. No code changed.
 
 ## Release notes for users
 
 - Chats reopen much faster.
 - The update note now says when only the server has updated.
 - Latest upstream improvements merged.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=d8a0c8f571267663ea5995d82240699ee6e557d9 release=d8a0c8f57126 json-sha256=61e4e847be683952a1321f9d099d8f8f718dcf40a05ead1b4d5cf344139e83ea result=PASS -->
+
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+- server-tests: PASS, exit 0
+
+<!-- gate-evidence:end -->
