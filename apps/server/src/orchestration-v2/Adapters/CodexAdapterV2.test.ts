@@ -7071,7 +7071,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       if (scenario.name === "newer-reset-during-read")
         assert.equal(terminal.failure.resetAt, "2033-05-20T11:06:40.000Z");
       if (scenario.name === "matching-details")
-        assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
+        assert.equal(
+          terminal.failure.message,
+          "Codex usage limit reached. Send the message again once the limit resets.",
+        );
       if ("resetAfter" in scenario) {
         yield* Deferred.await(snapshotReceipt);
         assert.isFalse(
@@ -7209,9 +7212,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal.failure.code, "responseTooManyFailedAttempts");
         assert.equal(terminal.threadDisposition, "reusable");
         const notificationClass = notificationStatus === 429 ? "usage_limit" : "provider_error";
+        // A usage-limit stop always names the limit and its reset, not the provider sentence.
+        const usageLimitMessage =
+          "Codex usage limit reached. Send the message again once the limit resets.";
         assert.equal(
           terminal.failure.message,
-          expectedClass === notificationClass ? additionalDetails : message,
+          expectedClass === "usage_limit"
+            ? usageLimitMessage
+            : expectedClass === notificationClass
+              ? additionalDetails
+              : message,
         );
         if (willRetry) assert.equal(terminal.retry?.attempt, 1);
       }).pipe(

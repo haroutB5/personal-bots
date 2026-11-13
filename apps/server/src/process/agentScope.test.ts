@@ -498,37 +498,34 @@ describe("AgentScope service", () => {
 
   it.effect("refuses to stop live agents from a test process on the live state dir", () =>
     withFakeSystemd(
-      ({ scope, units, calls, stateDir }) =>
+      ({ scope, calls }) =>
         Effect.gen(function* () {
-          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
           yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
           expect(stopsOf(calls)).toEqual([]);
         }),
-      { liveStateDir: true, env: { VITEST: "1" } },
+      { leftovers: true, liveStateDir: true, env: { VITEST: "1" } },
     ),
   );
 
   it.effect("does not touch leftover agents outside hbots.service", () =>
     withFakeSystemd(
-      ({ scope, units, calls, stateDir }) =>
+      ({ scope, calls }) =>
         Effect.gen(function* () {
-          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
           yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
           expect(stopsOf(calls)).toEqual([]);
         }),
-      { serviceIdentity: false },
+      { leftovers: true, serviceIdentity: false },
     ),
   );
 
   it.effect("still stops leftovers for a test process on a throwaway state dir", () =>
     withFakeSystemd(
-      ({ scope, units, calls, stateDir }) =>
+      ({ scope, calls, stateDir }) =>
         Effect.gen(function* () {
-          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
           yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
           expect(stopsOf(calls)).toEqual([["--user", "stop", ownedAgentSlice(stateDir)]]);
         }),
-      { env: { VITEST: "1" } },
+      { leftovers: true, env: { VITEST: "1" } },
     ),
   );
 });

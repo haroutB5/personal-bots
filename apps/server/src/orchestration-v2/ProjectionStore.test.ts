@@ -3579,8 +3579,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const itemsPlan = yield* planFor("FROM orchestration_v2_projection_turn_items");
       const nodesPlan = yield* planFor("FROM orchestration_v2_projection_nodes");
       const messagesPlan = yield* planFor("FROM orchestration_v2_projection_messages");
-      // Upstream's indexes serve the item and node reads since the 2026-11-13 sync.
-      assert.include(itemsPlan, "orchestration_v2_projection_turn_items_conversation_idx");
+      // Upstream's indexes serve the item and node reads since the 2026-11-13 sync. Since the
+      // 7bd9134824 sync a typed item read seeks a type index (upstream's or the fork's).
+      assert.match(
+        itemsPlan,
+        /orchestration_v2_projection_turn_items_thread_type(_ordinal)?_idx/,
+        itemsPlan,
+      );
       assert.include(nodesPlan, "orchestration_v2_projection_nodes_settled_leaf_idx");
       assert.include(
         messagesPlan,
