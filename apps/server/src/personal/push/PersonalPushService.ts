@@ -85,9 +85,11 @@ export const IN_APP_ACK_TIMEOUT_MS = 5_000;
 /** In-app ids remembered so a replayed event does not show a second banner. */
 const IN_APP_RECENT_IDS = 200;
 const IN_APP_PREVIEW_CHARS = 140;
+/** The phone fetches its reply text from this server over its own session; it never rides in the push. */
+const PHONE_PREVIEW_CHARS = 500;
 
-/** One line of a reply for the in-app banner: markdown marks and runs of space folded away. */
-export function inAppPreview(text: string): string | undefined {
+/** One line of a reply for a notification: markdown marks and runs of space folded away. */
+export function replyPreview(text: string, maxChars: number): string | undefined {
   const line = text
     .replace(/```[\s\S]*?(```|$)/g, " ")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
@@ -96,7 +98,7 @@ export function inAppPreview(text: string): string | undefined {
     .replace(/\s+/g, " ")
     .trim();
   if (line.length === 0) return undefined;
-  return line.length > IN_APP_PREVIEW_CHARS ? `${line.slice(0, IN_APP_PREVIEW_CHARS - 1)}…` : line;
+  return line.length > maxChars ? `${line.slice(0, maxChars - 1)}…` : line;
 }
 
 export const PERSONAL_PUSH_VAPID_SECRET = "personal-push-vapid";
@@ -201,6 +203,8 @@ export interface PhoneTarget {
   readonly botId: string;
   readonly threadId: string;
   readonly requestId: string | null;
+  /** What the phone shows in place of the payload's body: a reply's own text. */
+  readonly text?: string | undefined;
 }
 
 const phoneKindForTask = (kind: PersonalPushEventKind): PhonePushKind =>
@@ -1361,7 +1365,11 @@ export const make = Effect.gen(function* () {
             yield* kick;
           }
           if (options.phone !== undefined) {
-            yield* viaPhone(eventId, options.phone, hideText ? null : requested.body);
+            yield* viaPhone(
+              eventId,
+              options.phone,
+              hideText ? null : (options.phone.text ?? requested.body),
+            );
           }
         });
       if (targets.length === 0) return yield* viaPush(confirming ? "push-after-viewing" : "push");
@@ -1407,13 +1415,11 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  /** The newest assistant text in a chat, for the in-app banner only. */
-  const latestReplyPreview = (threadId: string) =>
+  /** The newest assistant text in a chat, for the in-app banner and the phone's fetch. */
+  const latestReplyText = (threadId: string) =>
     Option.isSome(engine)
       ? engine.value.latestAssistantMessage({ threadId: ThreadId.make(threadId) }).pipe(
-          Effect.map((message) =>
-            Option.isNone(message) ? undefined : inAppPreview(message.value.text),
-          ),
+          Effect.map((message) => (Option.isNone(message) ? undefined : message.value.text)),
           Effect.orElseSucceed(() => undefined),
         )
       : Effect.succeed(undefined);
@@ -1728,6 +1734,8 @@ export const make = Effect.gen(function* () {
       if (!preferences[PREFERENCE_FOR.chat_reply]) return;
       const bot = yield* botRepository.getBotById({ botId: link.value.botId });
       const eventId = `chat-reply:${input.threadId}:${input.turnEndedAt}`;
+      // A hidden bot's reply text is not even read.
+      const replyText = botHidesPreviews(bot) ? undefined : yield* latestReplyText(input.threadId);
       yield* deliver(
         eventId,
         chatReplyPushPayload({
@@ -1737,8 +1745,8 @@ export const make = Effect.gen(function* () {
         }),
         {
           bot,
-          // A hidden bot's reply text is not even read for the banner.
-          preview: botHidesPreviews(bot) ? undefined : yield* latestReplyPreview(input.threadId),
+          preview:
+            replyText === undefined ? undefined : replyPreview(replyText, IN_APP_PREVIEW_CHARS),
           viewing: {
             threadId: input.threadId,
             quietPath: chatPath(link.value.botId, input.threadId),
@@ -1748,6 +1756,8 @@ export const make = Effect.gen(function* () {
             botId: link.value.botId,
             threadId: input.threadId,
             requestId: null,
+            text:
+              replyText === undefined ? undefined : replyPreview(replyText, PHONE_PREVIEW_CHARS),
           },
         },
       );
