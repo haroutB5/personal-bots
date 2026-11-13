@@ -156,7 +156,7 @@ it.effect(
     ),
 );
 
-it.effect("re-registers after an unanswered request disconnects it from the broker", () =>
+it.effect("stays registered when a request the host never answers times out", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const connects = { count: 0 };
@@ -191,11 +191,11 @@ it.effect("re-registers after an unanswered request disconnects it from the brok
       yield* TestClock.adjust("16 seconds");
       expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
 
-      // Before the fix every later call failed with NoAvailableHost until the
-      // whole server was restarted.
-      expect(yield* awaitHostReady(broker)).toMatchObject({ available: true });
-      expect(connects.count).toBe(2);
+      // The broker no longer evicts the shared server browser on a timeout
+      // (upstream #36241), so the next call is served on the same registration.
       yield* Deferred.succeed(stall, undefined);
+      expect(yield* awaitHostReady(broker)).toMatchObject({ available: true });
+      expect(connects.count).toBe(1);
     }),
   ),
 );

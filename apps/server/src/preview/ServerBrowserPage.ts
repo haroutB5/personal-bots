@@ -1136,7 +1136,10 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
     async frame(base64, cssWidth) {
       if (tooLarge) return false;
       // A per-character atob copy costs ~30 ms on a 3200x1800 frame and throttles recordings.
-      const bytes = Uint8Array.fromBase64(base64);
+      // The fork's Chromium (playwright-core 1.60, held-upstream playwright-core-1-64) has no fromBase64.
+      const bytes = typeof Uint8Array.fromBase64 === "function"
+        ? Uint8Array.fromBase64(base64)
+        : Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
       const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
       if (tooLarge) { bitmap.close(); return false; }
       if (!recorder) {

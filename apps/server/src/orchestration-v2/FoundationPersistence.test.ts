@@ -208,11 +208,8 @@ const seedCompaction = Effect.fnUntraced(function* () {
   ) SELECT n * 2, 'command-' || n, 'thread', 'imported', '2026-10-17', 0, 'accepted', 'legacy' FROM history`;
 });
 
-it.effect("discovers on the reader worker and deletes on the writer", () => {
-  // The statements below are observed on this thread; the default writer worker executes them elsewhere.
-  const previousWorker = process.env.T3CODE_SQLITE_WORKER;
-  process.env.T3CODE_SQLITE_WORKER = "off";
-  return Effect.gen(function* () {
+it.effect("discovers on the reader worker and deletes on the writer", () =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const filename = path.join(yield* fs.makeTempDirectoryScoped(), "fixture.sqlite");
@@ -242,17 +239,8 @@ it.effect("discovers on the reader worker and deletes on the writer", () => {
         ),
       ),
     );
-  }).pipe(
-    Effect.scoped,
-    Effect.ensuring(
-      Effect.sync(() => {
-        if (previousWorker === undefined) delete process.env.T3CODE_SQLITE_WORKER;
-        else process.env.T3CODE_SQLITE_WORKER = previousWorker;
-      }),
-    ),
-    Effect.provide(NodeServices.layer),
-  );
-});
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("paces scheduled compaction while preserving retention state and fixed scan bounds", () =>
   Effect.gen(function* () {

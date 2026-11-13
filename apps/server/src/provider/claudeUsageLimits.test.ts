@@ -213,6 +213,7 @@ describe("claudeUsageResponseToLimits", () => {
     };
     expect(claudeUsageResponseToLimits({ checkedAt, response }).limits).toEqual({
       checkedAt,
+      fullReadAt: checkedAt,
       windows: [],
       zeroSpendCap: true,
     });
