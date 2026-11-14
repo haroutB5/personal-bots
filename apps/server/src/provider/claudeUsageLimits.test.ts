@@ -1,4 +1,5 @@
 import type { SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyUsageLimitsUpdate } from "@t3tools/provider-core/server/usageLimits";
@@ -315,6 +316,7 @@ describe("claudeRateLimitEventToUpdate", () => {
       claudeRateLimitEventToUpdate(
         {
           status: "allowed",
+          rateLimitType: "five_hour",
           unifiedWindows: { five_hour: { utilization: 0.3, resetsAt } },
         } as never,
         noNames,
@@ -433,5 +435,130 @@ describe("claudeRateLimitEventToUpdate", () => {
         },
       ],
     });
+  });
+});
+
+describe("a rate-limit event the CLI replays from its cache", () => {
+  const probed = claudeUsageResponseToLimits({
+    checkedAt: "2026-11-14T09:45:00.000Z",
+    response: {
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 5, resets_at: "2026-11-14T16:00:00.358Z" },
+        seven_day: { utilization: 52, resets_at: "2026-11-15T11:00:00.358Z" },
+        model_scoped: [
+          { display_name: "Fable", utilization: 62, resets_at: "2026-11-15T11:00:00.358Z" },
+        ],
+      } as never,
+    },
+  });
+  // Real 2026-11-14T13:44:58.102Z payload: the request that hit the Fable limit.
+  const fableRejected = {
+    status: "rejected",
+    resetsAt: 1_794_740_400,
+    rateLimitType: "seven_day_overage_included",
+    overageStatus: "rejected",
+    overageDisabledReason: "org_level_disabled",
+    isUsingOverage: false,
+    unifiedWindows: {
+      five_hour: { utilization: 0.73, resetsAt: 1_794_672_000, status: "allowed" },
+      seven_day: { utilization: 0.73, resetsAt: 1_794_740_400, status: "allowed" },
+      seven_day_overage_included: {
+        utilization: 1,
+        resetsAt: 1_794_740_400,
+        status: "rejected",
+        surpassedThreshold: 1,
+      },
+    },
+  } as unknown as SDKRateLimitInfo;
+  // Real 2026-11-14T13:45:31.317Z payload: a later request in the same turn.
+  const sessionAt73 = {
+    status: "allowed",
+    resetsAt: 1_794_672_000,
+    rateLimitType: "five_hour",
+    overageStatus: "rejected",
+    overageDisabledReason: "org_level_disabled",
+    isUsingOverage: false,
+    unifiedWindows: {
+      five_hour: { utilization: 0.73, resetsAt: 1_794_672_000, status: "allowed" },
+      seven_day: { utilization: 0.73, resetsAt: 1_794_740_400, status: "allowed" },
+    },
+  } as unknown as SDKRateLimitInfo;
+  // Real 2026-11-14T13:46:36.739Z payload, sent before the next turn's init. It repeats this
+  // CLI's last event of 12:45:02.667Z byte for byte.
+  const replayFrom1245 = {
+    status: "allowed",
+    overageStatus: "rejected",
+    overageDisabledReason: "org_level_disabled",
+    isUsingOverage: false,
+    unifiedWindows: {
+      five_hour: { utilization: 0.43, resetsAt: 1_794_672_000, status: "allowed" },
+      seven_day: { utilization: 0.69, resetsAt: 1_794_740_400, status: "allowed" },
+      seven_day_overage_included: { utilization: 0.94, resetsAt: 1_794_740_400 },
+    },
+  } as unknown as SDKRateLimitInfo;
+
+  const stream = (
+    previous: ServerProviderUsageLimits | undefined,
+    events: ReadonlyArray<readonly [string, SDKRateLimitInfo]>,
+  ) =>
+    events.reduce(
+      (limits, [at, event]) =>
+        applyUsageLimitsUpdate({
+          previous: limits,
+          update: claudeRateLimitEventToUpdate(event, probed.names) ?? { windows: [] },
+          checkedAt: at,
+        }),
+      previous,
+    );
+  const used = (limits: ServerProviderUsageLimits | undefined) =>
+    Object.fromEntries(limits?.windows.map((window) => [window.id, window.usedPercent]) ?? []);
+
+  it("does not roll the spent Fable allowance back to the older 94", () => {
+    const limits = stream(probed.limits, [
+      ["2026-11-14T13:44:58.102Z", fableRejected],
+      ["2026-11-14T13:46:36.739Z", replayFrom1245],
+    ]);
+
+    expect(used(limits)).toEqual({ five_hour: 73, seven_day: 73, seven_day_fable: 100 });
+    expect(usageRoom(limits, "claude-fable-5-2", Date.parse("2026-11-14T13:46:37.000Z"))).toEqual({
+      room: false,
+      known: true,
+      resetsAtMs: Date.parse("2026-11-15T11:00:00.000Z"),
+    });
+  });
+
+  it("does not roll the session back from 73 to the older 43", () => {
+    const limits = stream(probed.limits, [
+      ["2026-11-14T13:45:31.317Z", sessionAt73],
+      ["2026-11-14T13:46:36.739Z", replayFrom1245],
+    ]);
+
+    expect(used(limits).five_hour).toBe(73);
+  });
+});
+
+describe("a bucket named like an Object.prototype member", () => {
+  it("makes no row", () => {
+    const unifiedWindows = JSON.parse(
+      '{"constructor":{"utilization":0.5,"resetsAt":1794740400},' +
+        '"__proto__":{"utilization":0.5,"resetsAt":1794740400},' +
+        '"toString":{"utilization":0.5,"resetsAt":1794740400},' +
+        '"five_hour":{"utilization":0.2,"resetsAt":1794672000}}',
+    );
+    const update = claudeRateLimitEventToUpdate(
+      { status: "allowed", rateLimitType: "five_hour", unifiedWindows } as never,
+      { overageIncluded: "Fable" },
+    );
+    expect(update?.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["five_hour", 20],
+    ]);
+
+    expect(
+      claudeRateLimitEventToUpdate(
+        { status: "allowed", rateLimitType: "constructor", utilization: 0.5 } as never,
+        { overageIncluded: "Fable" },
+      ),
+    ).toBeUndefined();
   });
 });
