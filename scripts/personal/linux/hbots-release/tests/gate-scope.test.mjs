@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeChildProcess from "node:child_process";
-import { classifyGateScope, verifySkippedGates } from "../lib/gateScope.mjs";
+import { classifyGateScope, verifySkippedGates, GATE_INPUTS } from "../lib/gateScope.mjs";
 import { skipEvidenceProblems } from "../lib/seal.mjs";
 import { gateScopeOf } from "../../dev-team-tools/gate-common.mjs";
 
@@ -78,65 +78,126 @@ const withFixture = (body) => {
   }
 };
 
-NodeTest.test("a mobile-only diff skips server-tests and e2e", () => {
-  NodeAssert.deepEqual(classifyGateScope(["apps/hbots-mobile/app.json"]), {
-    action: "skip",
-    reason:
-      "every changed path is under apps/hbots-mobile/, under docs/, or a markdown file outside the code trees",
-    changedPaths: ["apps/hbots-mobile/app.json"],
-  });
+const ALL = ["server-tests", "e2e", "hbots-mobile-kotlin"];
+const skipOf = (paths) => classifyGateScope(paths).skip;
+const GATES_JSON = NodePath.join(ROOT, "../../node/gates-linux.json");
+
+NodeTest.test("a mobile-only diff skips server-tests and e2e and runs kotlin", () => {
+  const scope = classifyGateScope(["apps/hbots-mobile/app.json"]);
+  NodeAssert.deepEqual(scope.skip, ["server-tests", "e2e"]);
+  NodeAssert.deepEqual(scope.changedPaths, ["apps/hbots-mobile/app.json"]);
+  NodeAssert.match(scope.reasons["server-tests"], /^no changed path is an input of server-tests: /);
+  NodeAssert.match(
+    scope.reasons["hbots-mobile-kotlin"],
+    /hbots-mobile-kotlin inputs changed: apps\/hbots-mobile\/app\.json/,
+  );
 });
 
-NodeTest.test("a docs-only diff skips", () => {
-  NodeAssert.equal(classifyGateScope(["docs/releases/HANDOFF-1672.md"]).action, "skip");
+NodeTest.test("a docs-only diff skips every skippable gate", () => {
+  NodeAssert.deepEqual(skipOf(["docs/releases/HANDOFF-1672.md"]), ALL);
 });
 
-NodeTest.test("markdown outside docs and code trees skips", () => {
-  NodeAssert.equal(classifyGateScope(["README.md", "apps/hbots-mobile/README.md"]).action, "skip");
+NodeTest.test("markdown outside docs and code trees is not an input", () => {
+  NodeAssert.deepEqual(skipOf(["README.md", "scripts/personal/README.md"]), ALL);
+  NodeAssert.deepEqual(skipOf(["README.md", "apps/hbots-mobile/README.md"]), [
+    "server-tests",
+    "e2e",
+  ]);
 });
 
-NodeTest.test("markdown inside a code tree runs", () => {
-  for (const file of ["apps/server/README.md", "apps/web/src/x.md", "packages/shared/y.md"]) {
-    NodeAssert.equal(classifyGateScope([file]).action, "run", file);
-  }
+NodeTest.test("markdown inside a code tree is a code input", () => {
+  NodeAssert.equal(skipOf(["apps/server/README.md"]).includes("server-tests"), false);
+  NodeAssert.equal(skipOf(["apps/web/src/x.md"]).includes("e2e"), false);
+  NodeAssert.equal(skipOf(["packages/shared/y.md"]).includes("server-tests"), false);
 });
 
-NodeTest.test("mobile and doc files a server gate reads run", () => {
+NodeTest.test("mobile and doc files a server gate reads run server-tests and e2e", () => {
   for (const file of [
     "apps/hbots-mobile/src/pairing.ts",
     "apps/hbots-mobile/src/dpop.ts",
     "docs/user/t3-connect-troubleshooting.md",
   ]) {
-    NodeAssert.equal(
-      classifyGateScope(["apps/hbots-mobile/src/App.tsx", file]).action,
-      "run",
-      file,
-    );
+    const scope = classifyGateScope(["apps/hbots-mobile/src/App.tsx", file]);
+    NodeAssert.deepEqual(scope.skip, [], file);
+    NodeAssert.match(scope.reasons["server-tests"], new RegExp(file.replaceAll(".", "\\.")));
   }
 });
 
-NodeTest.test("mobile plus packages/shared runs", () => {
+NodeTest.test("mobile plus packages/shared runs server-tests and e2e", () => {
   const scope = classifyGateScope([
     "apps/hbots-mobile/app.json",
     "packages/shared/src/testing/providerEnv.ts",
   ]);
-  NodeAssert.equal(scope.action, "run");
-  NodeAssert.match(scope.reason, /packages\/shared\/src\/testing\/providerEnv\.ts/);
+  NodeAssert.deepEqual(scope.skip, []);
+  NodeAssert.match(
+    scope.reasons["server-tests"],
+    /packages\/shared\/src\/testing\/providerEnv\.ts/,
+  );
 });
 
-NodeTest.test("scripts runs", () => {
-  NodeAssert.equal(classifyGateScope(["scripts/personal/node/gates-linux.json"]).action, "run");
+NodeTest.test("a server diff runs every skippable gate except kotlin", () => {
+  NodeAssert.deepEqual(skipOf(["apps/server/src/index.ts"]), ["hbots-mobile-kotlin"]);
+});
+
+NodeTest.test("a web-only diff runs e2e only", () => {
+  NodeAssert.deepEqual(skipOf(["apps/web/src/main.tsx"]), ["server-tests", "hbots-mobile-kotlin"]);
+});
+
+NodeTest.test("personal-client is not a server-tests input but is an e2e input", () => {
+  NodeAssert.deepEqual(skipOf(["packages/personal-client/src/index.ts"]), [
+    "server-tests",
+    "hbots-mobile-kotlin",
+  ]);
+});
+
+NodeTest.test("a release bump with mobile changes skips server-tests only", () => {
+  const scope = classifyGateScope([
+    "apps/hbots-mobile/package.json",
+    "apps/hbots-mobile/src/shell/ServerUpdateBanner.tsx",
+    "docs/releases/HANDOFF-16719.md",
+    "scripts/personal/app-version.txt",
+  ]);
+  NodeAssert.deepEqual(scope.skip, ["server-tests"]);
+  NodeAssert.match(scope.reasons.e2e, /scripts\/personal\/app-version\.txt/);
+});
+
+NodeTest.test("the parity matrix is no skippable gate's input", () => {
+  NodeAssert.deepEqual(skipOf(["scripts/personal/parity/parity.json", "docs/x.md"]), ALL);
+  NodeAssert.deepEqual(skipOf(["scripts/personal/parity/parity-matrix.mjs"]), []);
+});
+
+NodeTest.test("root config and patches run every skippable gate", () => {
+  for (const file of ["package.json", "pnpm-lock.yaml", "tsconfig.base.json", "patches/x.patch"]) {
+    NodeAssert.deepEqual(skipOf([file]), [], file);
+  }
+});
+
+NodeTest.test("a path outside every known area runs every gate", () => {
+  for (const file of [
+    "scripts/personal/node/gates-linux.json",
+    "infra/main.tf",
+    "native/resource-monitor/src/main.rs",
+    "apps/desktop/src/main.ts",
+    ".github/workflows/ci.yml",
+    "brand-new-area/file.ts",
+  ]) {
+    const scope = classifyGateScope(["docs/releases/HANDOFF-1672.md", file]);
+    NodeAssert.deepEqual(scope.skip, [], file);
+    for (const id of ALL) NodeAssert.match(scope.reasons[id], /outside every known area/, file);
+  }
 });
 
 NodeTest.test("an empty diff runs", () => {
-  NodeAssert.equal(classifyGateScope([]).action, "run");
+  NodeAssert.deepEqual(skipOf([]), []);
 });
 
 NodeTest.test("an unsafe path runs", () => {
-  NodeAssert.equal(
-    classifyGateScope(["apps/hbots-mobile/../apps/server/src/index.ts"]).action,
-    "run",
-  );
+  NodeAssert.deepEqual(skipOf(["apps/hbots-mobile/../apps/server/src/index.ts"]), []);
+});
+
+NodeTest.test("every table row names a gate the Linux gate list defines", () => {
+  const ids = JSON.parse(NodeFS.readFileSync(GATES_JSON, "utf8")).map((gate) => gate.id);
+  for (const id of Object.keys(GATE_INPUTS)) NodeAssert.ok(ids.includes(id), id);
 });
 
 NodeTest.test("the seal accepts a matching mobile-only skip", () => {
@@ -175,7 +236,7 @@ NodeTest.test("the seal refuses a skip on a server-touching diff", () => {
     NodeAssert.equal(problems.length > 0, true);
     NodeAssert.match(
       problems.join(" "),
-      /must run: paths outside the mobile\/docs allowlist: apps\/server\/src\/index\.ts/,
+      /must run it: server-tests inputs changed: apps\/server\/src\/index\.ts/,
     );
   });
 });
@@ -198,8 +259,8 @@ NodeTest.test("an unknown base runs and cannot justify a skip", () => {
     NodeFS.writeFileSync(NodePath.join(f.releases, "current.txt"), `${"f".repeat(40)}\n`);
     const v = { repo: f.repo, dir: NodePath.join(f.releases, "abcdefabcdef") };
     const scope = gateScopeOf(v, f.mobile);
-    NodeAssert.equal(scope.action, "run");
-    NodeAssert.match(scope.reason, /is not a commit/);
+    NodeAssert.deepEqual(scope.skip, []);
+    NodeAssert.match(scope.summary, /is not a commit/);
     const cfg = { currentTxt: NodePath.join(f.releases, "current.txt") };
     const problems = skipEvidenceProblems(
       cfg,
@@ -214,8 +275,36 @@ NodeTest.test("the collector classifies a real mobile-only range", () => {
   withFixture((f) => {
     const v = { repo: f.repo, dir: NodePath.join(f.releases, "abcdefabcdef") };
     const scope = gateScopeOf(v, f.mobile);
-    NodeAssert.equal(scope.action, "skip");
+    NodeAssert.deepEqual(scope.skip, ["server-tests", "e2e"]);
     NodeAssert.equal(scope.baseSha, f.base);
     NodeAssert.deepEqual(scope.changedPaths, ["apps/hbots-mobile/app.json"]);
   });
 });
+
+NodeTest.test(
+  "the seal refuses a kotlin skip on a mobile diff and accepts one on a server diff",
+  () => {
+    withFixture((f) => {
+      const mobilePaths = ["apps/hbots-mobile/app.json"];
+      NodeAssert.match(
+        verifySkippedGates({
+          evidence: skipEvidence(f.base, mobilePaths, ["hbots-mobile-kotlin"]),
+          liveSha: f.base,
+          releaseSha: f.mobile,
+          changedPaths: mobilePaths,
+        }).join(" "),
+        /evidence skips hbots-mobile-kotlin but the live-to-release diff must run it/,
+      );
+      const serverPaths = ["apps/server/src/index.ts"];
+      NodeAssert.deepEqual(
+        verifySkippedGates({
+          evidence: skipEvidence(f.mobile, serverPaths, ["hbots-mobile-kotlin"]),
+          liveSha: f.mobile,
+          releaseSha: f.server,
+          changedPaths: serverPaths,
+        }),
+        [],
+      );
+    });
+  },
+);

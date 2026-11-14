@@ -3,10 +3,41 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
-import {options,git,hash,gatePass,validate,gateScopeOf,treeState,treeChange} from './gate-common.mjs';
+import {options,git,hash,gatePass,validate,gateScopeOf,treeState,treeChange,resolveCommit} from './gate-common.mjs';
 let v;
 try {v=options()} catch(e){console.error(e.message);process.exit(2)}
 const here=path.dirname(fileURLToPath(import.meta.url));
+// The phone harness must be supplied until its PowerShell server control is ported.
+// No evidence can pass by silently omitting this gate.
+const loadGates=()=>{
+  if(!v['gates-json'])throw new Error('--gates-json FILE required: supply Linux gate commands including phone e2e; the legacy default harness requires PowerShell');
+  const defs=JSON.parse(fs.readFileSync(v['gates-json'],'utf8'));
+  const validCommands=(commands)=>Array.isArray(commands)&&commands.length>0&&commands.every(c=>typeof c==='string'&&c.trim());
+  if(!Array.isArray(defs)||defs.some(d=>!/^[-a-z0-9]+$/.test(d.id)||!(validCommands(d.commands)||(Array.isArray(d.concurrent)&&d.concurrent.length>0&&d.concurrent.every(validCommands)))||new Set(defs.map(d=>d.id)).size!==defs.length))throw new Error('Invalid gate definitions');
+  const wanted=v.gates?v.gates.split(','):defs.map(d=>d.id);
+  if(wanted.some(id=>!defs.some(d=>d.id===id)))throw new Error('Unknown gate selection');
+  return {defs,wanted};
+};
+// One line per selected gate: skipped with the table's reason, or run.
+const planOf=(defs,wanted,scope)=>defs.filter(d=>wanted.includes(d.id)).map(d=>({def:d,skip:scope.skip.includes(d.id),reason:scope.reasons[d.id]}));
+const printPlan=(scope,plan)=>{
+  console.log(`gate scope: ${scope.summary}`);
+  for(const p of plan) console.log(`${p.def.id}: ${p.skip?'SKIPPED':'RUN'}${p.reason?` (${p.reason})`:''}`);
+};
+// --dry-run prints what the gate would run for the release against the live one,
+// without the heavy-job lock, a staged release or running anything.
+if(v['dry-run']){
+  try {
+    const head=resolveCommit(v.repo,v.release);
+    if(!head)throw new Error(`release ${v.release} is not a commit in ${v.repo}`);
+    const {defs,wanted}=loadGates();
+    const scope=gateScopeOf(v,head);
+    const plan=planOf(defs,wanted,scope);
+    printPlan(scope,plan);
+    console.log(`dry run: ${plan.filter(p=>!p.skip).length} of ${wanted.length} gates would run (base ${scope.baseSha?.slice(0,12)??'none'}, head ${head.slice(0,12)})`);
+    process.exit(0);
+  } catch(e){console.error(`FAIL: ${e.message}`);process.exit(2)}
+}
 const MAIN_LOCK=`${process.env.HEAVY_JOB_BASE||'/home/harout/.personal-bots/run/omarchy-heavy'}.lock`;
 const linkOf=(fd)=>{try{return fs.readlinkSync(`/proc/self/fd/${fd}`)}catch{return null}};
 const holdsGate=()=>linkOf(8)===MAIN_LOCK||linkOf(9)===MAIN_LOCK;
@@ -14,14 +45,22 @@ if(process.env.HBOTS_HEAVY_JOB_HELD!=='1' || !holdsGate()) {
   const r=spawnSync('bash',[path.join(here,'heavy-job.sh'),'--label',`gate evidence ${v.release}`,'--',process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit'});
   process.exit(r.status??1);
 }
+// The browser revision the server's pinned playwright-core needs. The shared
+// ~/.cache/ms-playwright holds a newer one and fails server-tests (1.67.17).
+const GATE_BROWSERS='/home/harout/Claude/AI/dev-team/tools/pw-browsers';
 // Gate commands must not see the live app environment the bot shell carries.
-const gateEnv=(cwd)=>{
+// Each gate gets its own TMPDIR on /tmp (tmpfs, not on the server tests' deny
+// list, not a git-ignored worktree folder: 1.67.5 and 1.67.19), removed after it.
+const gateEnv=(cwd,tmp)=>{
   const env={};
   for(const [key,value] of Object.entries(process.env)) if(!/^(?:T3CODE_|PERSONAL_|DSH_)/.test(key)) env[key]=value;
   env.PATH=`${cwd}/node_modules/.bin:${v.repo}/node_modules/.bin:${process.env.PATH}`;
   env.NO_COLOR='1';
+  env.TMPDIR=tmp;
+  env.PLAYWRIGHT_BROWSERS_PATH=process.env.PLAYWRIGHT_BROWSERS_PATH||GATE_BROWSERS;
   return env;
 };
+if(!process.env.PLAYWRIGHT_BROWSERS_PATH&&!fs.existsSync(GATE_BROWSERS)) console.warn(`warning: the pinned test browser folder ${GATE_BROWSERS} is missing`);
 const lanesOf=(d)=>d.concurrent??[d.commands];
 const commandsOf=(d)=>lanesOf(d).flat();
 try {
@@ -39,16 +78,10 @@ try {
   if(!sha.startsWith(v.release)||staged.version!==v.version||!sha.startsWith(staged.sha)||staged.dirty!=='false')throw new Error('Stage a clean matching commit/version first');
   const binHash=hash(path.join(v.dir,'dist/bin.mjs'));
   const scope=gateScopeOf(v,sha);
-  const skipIds=new Set(scope.action==='skip'?['server-tests','e2e']:[]);
-  console.log(`gate scope: ${scope.action==='skip'?'SKIP server-tests and e2e':'RUN the full gate'} (${scope.reason})`);
-  // The phone harness must be supplied until its PowerShell server control is ported.
-  // No evidence can pass by silently omitting this gate.
-  if(!v['gates-json'])throw new Error('--gates-json FILE required: supply Linux gate commands including phone e2e; the legacy default harness requires PowerShell');
-  const defs=JSON.parse(fs.readFileSync(v['gates-json'],'utf8'));
-  const validCommands=(commands)=>Array.isArray(commands)&&commands.length>0&&commands.every(c=>typeof c==='string'&&c.trim());
-  if(!Array.isArray(defs)||defs.some(d=>!/^[-a-z0-9]+$/.test(d.id)||!(validCommands(d.commands)||(Array.isArray(d.concurrent)&&d.concurrent.length>0&&d.concurrent.every(validCommands)))||new Set(defs.map(d=>d.id)).size!==defs.length))throw new Error('Invalid gate definitions');
-  const wanted=v.gates?v.gates.split(','):defs.map(d=>d.id);
-  if(wanted.some(id=>!defs.some(d=>d.id===id)))throw new Error('Unknown gate selection');
+  const {defs,wanted}=loadGates();
+  const plan=planOf(defs,wanted,scope);
+  printPlan(scope,plan);
+  const skipIds=new Set(plan.filter(p=>p.skip).map(p=>p.def.id));
   let kept=[];
   if(v.merge){const old=JSON.parse(fs.readFileSync(v.file,'utf8'));if(old.sha!==sha||old.treeClean!==true||old.binSha256!==binHash)throw new Error('Cannot merge evidence from different/dirty tree or artifact');kept=old.gates.filter(g=>!wanted.includes(g.id))}
   const logDir=path.join(v.dir,'gate-evidence-logs');fs.mkdirSync(logDir,{recursive:true});
@@ -72,7 +105,8 @@ try {
     if(linkOf(8)!==null) stdio[8]=8;
     if(linkOf(9)!==null) stdio[9]=9;
     const cwd=path.resolve(v.repo,(d.cwd??'.').replaceAll('\\','/'));
-    const env=gateEnv(cwd);
+    const tmp=fs.mkdtempSync('/tmp/hbots-gate-');
+    const env=gateEnv(cwd,tmp);
     try {
       // The repo root holds another vite-plus copy; letting it win mixes two vitest instances in one run.
       const ownVp=path.join(cwd,'node_modules/.bin/vp');
@@ -93,11 +127,13 @@ try {
         g.journeys=summary.journeys??[];g.counts={journeys:g.journeys.length,passed:g.journeys.filter(j=>j.ok===true).length,failed:summary.failed??1};
       }
       results.set(d.id,g);console.log(`${g.id}: ${gatePass(g)?'PASS':'FAIL'} (exit ${g.exit})`);
-    } finally{fs.closeSync(fd)}
+    } finally{
+      fs.closeSync(fd);
+      try{fs.rmSync(tmp,{recursive:true,force:true})}catch(err){console.warn(`warning: could not remove ${tmp}: ${err.message}`)}
+    }
   };
   const selected=defs.filter(d=>wanted.includes(d.id));
-  const skipped=new Map(selected.filter(d=>skipIds.has(d.id)).map(d=>[d.id,{id:d.id,kind:d.kind,title:d.title??d.id,cwd:d.cwd??'.',skipped:true,reason:scope.reason,baseSha:scope.baseSha,changedPaths:scope.changedPaths,seconds:0,commands:[]}]));
-  for(const g of skipped.values()) console.log(`${g.id}: SKIPPED (${g.reason})`);
+  const skipped=new Map(selected.filter(d=>skipIds.has(d.id)).map(d=>[d.id,{id:d.id,kind:d.kind,title:d.title??d.id,cwd:d.cwd??'.',skipped:true,reason:scope.reasons[d.id],baseSha:scope.baseSha,changedPaths:scope.changedPaths,seconds:0,commands:[]}]));
   const toRun=selected.filter(d=>!skipIds.has(d.id));
   const serverTests=toRun.find(d=>d.id==='server-tests');
   const e2eGate=toRun.find(d=>d.id==='e2e');
@@ -111,7 +147,7 @@ try {
   for(const d of toRun) if(!(together&&(d===serverTests||d===e2eGate))){checkStable(`before ${d.id}`);await runGate(d);checkStable(`after ${d.id}`)}
   gates.push(...selected.map(d=>results.get(d.id)??skipped.get(d.id)).filter(Boolean));
   const endDirty=dirty();
-  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{action:scope.action,reason:scope.reason,baseSha:scope.baseSha,changedPaths:scope.changedPaths},gates};
+  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{summary:scope.summary,skip:[...skipIds],reasons:scope.reasons,baseSha:scope.baseSha,changedPaths:scope.changedPaths},gates};
   e.ok=validate(e,{...v,commit:undefined}).length===0;
   fs.writeFileSync(v.file,JSON.stringify(e,null,2)+'\n');
   if(!v['skip-notes']){

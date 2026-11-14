@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 export const required = {'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'};
 export const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 export function options() {
-  const {values:v} = parseArgs({options:Object.fromEntries(['version','release','repo-root','releases-dir','commit','gates-json','gates'].map(x=>[x,{type:'string'}]).concat(['skip-notes','merge'].map(x=>[x,{type:'boolean'}])))});
+  const {values:v} = parseArgs({options:Object.fromEntries(['version','release','repo-root','releases-dir','commit','gates-json','gates'].map(x=>[x,{type:'string'}]).concat(['skip-notes','merge','dry-run'].map(x=>[x,{type:'boolean'}])))});
   if (!/^\d+\.\d+\.\d+$/.test(v.version??'') || !/^[a-f0-9]{12}$/.test(v.release??'')) throw new Error('Required: --version x.y.z --release sha12 [--repo-root DIR] [--releases-dir DIR]');
   v.repo = path.resolve(v['repo-root']??process.cwd());
   v.dir = path.join(v['releases-dir']??path.join(os.homedir(),'.personal-bots/releases'),v.release);
@@ -51,17 +51,20 @@ export function treeChange(repo,expected) {
 export function diffPaths(repo,base,head) {
   return git(repo,'diff','--no-renames','--name-only',base,head).split('\n').filter(Boolean);
 }
+// A scope that skips nothing: every gate runs, for the one reason given.
+const runAll=(reason,baseSha=null)=>({skip:[],reasons:{},changedPaths:[],summary:`RUN the full gate (${reason})`,baseSha});
 export function gateScopeOf(v,headSha) {
   const scope=gateScopeModule(v.repo);
-  if(!scope) return {action:'run',reason:'gate scope classifier missing; running the full gate',baseSha:null,changedPaths:[]};
+  if(!scope) return runAll('gate scope classifier missing; running the full gate');
   const live=liveReleaseSha(path.dirname(v.dir));
   const baseSha=resolveCommit(v.repo,live);
-  if(!baseSha) return {action:'run',reason:`live release ${live||'(missing)'} is not a commit in the repo; running the full gate`,baseSha:null,changedPaths:[]};
-  try {
-    return {...scope.classifyGateScope(diffPaths(v.repo,baseSha,headSha)),baseSha};
-  } catch {
-    return {action:'run',reason:'cannot diff the release against the live one; running the full gate',baseSha,changedPaths:[]};
-  }
+  if(!baseSha) return runAll(`live release ${live||'(missing)'} is not a commit in the repo; running the full gate`);
+  let result;
+  try { result=scope.classifyGateScope(diffPaths(v.repo,baseSha,headSha)) }
+  catch { return runAll('cannot diff the release against the live one; running the full gate',baseSha) }
+  // An older classifier answers in another shape; it cannot justify a skip here.
+  if(!Array.isArray(result?.skip)||typeof result.reasons!=='object'||!Array.isArray(result.changedPaths)) return runAll('gate scope classifier gave no per-gate answer; running the full gate',baseSha);
+  return {...result,baseSha};
 }
 // Recompute the live-to-release diff; never trust the evidence's own skip claim.
 export function skippedGateProblems(e,v) {

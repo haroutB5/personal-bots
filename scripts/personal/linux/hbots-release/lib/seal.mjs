@@ -239,8 +239,10 @@ export async function writeSeal(cfg, a, names, note) {
   if (problems.length) throw new Error(`Cannot seal: ${problems.join(" ")}`);
   atomicWrite(names.seal, `${JSON.stringify(seal, null, 2)}\n`);
   note(
-    `Seal written: ${names.seal} (dist ${facts.dist.files} files, externals ${facts.externals.files}, tools ${facts.tools.files}, e2e ${e2eSkipped ? "skipped for a mobile/docs-only diff" : `${seal.evidence.e2ePassed}/${seal.evidence.e2eJourneys}`} in the evidence).`,
+    `Seal written: ${names.seal} (dist ${facts.dist.files} files, externals ${facts.externals.files}, tools ${facts.tools.files}, e2e ${e2eSkipped ? "skipped by the gate-inputs table" : `${seal.evidence.e2ePassed}/${seal.evidence.e2eJourneys}`} in the evidence).`,
   );
+  for (const gate of (evidence.gates ?? []).filter((g) => g?.skipped === true))
+    note(`Gate ${gate.id} skipped: ${gate.reason}`);
   return seal;
 }
 
