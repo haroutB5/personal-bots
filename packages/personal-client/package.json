@@ -233,6 +233,10 @@
       "types": "./src/work/workTimeline.ts",
       "import": "./src/work/workTimeline.ts"
     },
+    "./work/projectCards": {
+      "types": "./src/work/projectCards.ts",
+      "import": "./src/work/projectCards.ts"
+    },
     "./update/serverUpdate": {
       "types": "./src/update/serverUpdate.ts",
       "import": "./src/update/serverUpdate.ts"
