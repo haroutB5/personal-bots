@@ -16,10 +16,10 @@ Fleet dependency audit, 14 Nov (Harout: "make sure they are all up to date ... m
 
 ## Audit
 
-| | Critical | High | Moderate | Low |
-|---|---|---|---|---|
-| 1.67.21 | 3 | 25 | 32 | 12 |
-| 1.67.22 | 0 | 0 | 5 | 3 |
+|         | Critical | High | Moderate | Low |
+| ------- | -------- | ---- | -------- | --- |
+| 1.67.21 | 3        | 25   | 32       | 12  |
+| 1.67.22 | 0        | 0    | 5        | 3   |
 
 Open, none critical or high: minimatch (build-time, every parent pins ^10 or ^9), xml2js (desktop Linux, dbus-next has no fixed release), uuid (build-time, needs xcode 4), glob (build-time, Expo 58 tooling), astro (marketing site, not shipped).
 
@@ -30,9 +30,26 @@ None. Schema stays 157. The runner skips the backup (no migration).
 ## Verification
 
 - Builder (measured): server `vp test run src/personal` 3280 pass, web personal unit 3052 pass, server and web typecheck, hbots-mobile typecheck, and lint identical to base (three packages carry the same pre-existing lint errors on base and head). Evidence: `dev-team/qa/dep-audit-1114/hbots-phaseA/`.
-- Verifier: pending, recorded in `dev-team/qa/dep-audit-1114/verify-hbots-16722/`.
-- Full gates run on the release commit.
+- Verifier 2 (measured, Node 24.22.1): PASS. Server personal 3280 pass, server src/mcp 536 pass, web personal 3052 pass, both typechecks exit 0. Audit 0 critical, 0 high, 5 moderate, 3 low. 21 of 21 browser steps match 1.67.21 at 360x785 with 0 page or console errors and server ERROR/WARN 0/0. The server bundle changes only zod 4.6.5 to 4.6.7; the web client has the same 241 package versions. Evidence: `dev-team/qa/dep-audit-1114/verify-hbots-16722/REPORT.md`.
+- Full gates (measured, Shipper, Node 24.22.1): 9 of 9 PASS on `1b545881d3d1`, 17:43 to 18:03 GMT. Evidence: `releases/1b545881d3d1/gate-evidence.json`, log `dev-team/qa/dep-audit-1114/ship-hbots-16722/gate.log`.
+- Android APK 1.67.22 (measured): versionCode 1067022, 55316688 bytes, sha256 `4abe7711d3272688c812e2b61b7ad0961b290197dd2bf3ab59c3002877441892`, signer `bf2aaabe...af76f` (same key as 1.67.21), verify-apk 29 ok 0 failed.
 
 ## Rollback
 
 Binary only. The previous release is `2d2b07cb93c6` (1.67.21). No schema change, so 1.67.21 boots on the same database. The previous APK (1.67.21) stays in `android-updates/`.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=1b545881d3d1dedef0de8a973d889cbfdbf1e716 release=1b545881d3d1 json-sha256=3604115e2d816e0c3481b40bf5123943e7f07700849453c95d66e33463e68ecd result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
