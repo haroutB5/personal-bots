@@ -14,6 +14,9 @@ export const ROOT_CONFIG = "(root config)";
 // Bumped on every release. The staged client and the Android prebuild read it;
 // the server tests only check that it exists.
 export const APP_VERSION = "scripts/personal/app-version.txt";
+// Regenerated in most releases. Only the parity gate reads it, and that gate
+// always runs.
+export const PARITY_MATRIX = "scripts/personal/parity/parity.json";
 
 // Paths a gate reads although their area is not one of its inputs: server code
 // imports these mobile modules, and a server test checks this doc.
@@ -35,6 +38,7 @@ export const KNOWN_AREAS = [
   "patches/",
   "docs/",
   APP_VERSION,
+  PARITY_MATRIX,
   ROOT_CONFIG,
 ];
 
@@ -74,8 +78,10 @@ const isInput = (file, row) =>
   !(row.except ?? []).some((pattern) => matches(file, pattern));
 
 const describe = (row) =>
-  row.inputs.filter((pattern) => !GATED_PATHS.includes(pattern)).join(", ") +
-  (row.except ? ` (except ${row.except.join(", ")})` : "");
+  row.inputs
+    .filter((pattern) => !GATED_PATHS.includes(pattern))
+    .map((pattern) => (pattern === ROOT_CONFIG ? "top-level config files" : pattern))
+    .join(", ") + (row.except ? "; not " + row.except.join(", ") : "");
 
 const runAll = (reason, changedPaths = []) => ({
   skip: [],
@@ -117,7 +123,7 @@ export function classifyGateScope(paths) {
       reasons[id] = `${id} inputs changed: ${listed(hits)}`;
     } else {
       skip.push(id);
-      reasons[id] = `no changed path is a ${id} input (${describe(row)})`;
+      reasons[id] = `no changed path is an input of ${id}: ${describe(row)}`;
     }
   }
   const ran = SKIPPABLE_GATES.filter((id) => !skip.includes(id));

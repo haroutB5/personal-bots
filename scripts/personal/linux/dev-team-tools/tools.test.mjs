@@ -334,7 +334,7 @@ test('a dry run prints each gate with the table reason and runs nothing',()=>{
   const dry=(sha)=>node('gate-evidence.mjs',['--version','1.2.3','--release',sha.slice(0,12),'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile,'--dry-run'],{env:{...process.env,HBOTS_HEAVY_JOB_HELD:''}});
   let r=dry(docs);
   assert.equal(r.status,0,r.stdout+r.stderr);
-  for(const id of ['server-tests','e2e','hbots-mobile-kotlin']) assert.match(r.stdout,new RegExp(`^${id}: SKIPPED \\(no changed path is a ${id} input`,'m'));
+  for(const id of ['server-tests','e2e','hbots-mobile-kotlin']) assert.match(r.stdout,new RegExp(`^${id}: SKIPPED \\(no changed path is an input of ${id}: `,'m'));
   assert.match(r.stdout,/^parity: RUN$/m);
   assert.match(r.stdout,/dry run: 6 of 9 gates would run/);
   r=dry(server);

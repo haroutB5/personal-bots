@@ -86,7 +86,7 @@ NodeTest.test("a mobile-only diff skips server-tests and e2e and runs kotlin", (
   const scope = classifyGateScope(["apps/hbots-mobile/app.json"]);
   NodeAssert.deepEqual(scope.skip, ["server-tests", "e2e"]);
   NodeAssert.deepEqual(scope.changedPaths, ["apps/hbots-mobile/app.json"]);
-  NodeAssert.match(scope.reasons["server-tests"], /^no changed path is a server-tests input/);
+  NodeAssert.match(scope.reasons["server-tests"], /^no changed path is an input of server-tests: /);
   NodeAssert.match(
     scope.reasons["hbots-mobile-kotlin"],
     /hbots-mobile-kotlin inputs changed: apps\/hbots-mobile\/app\.json/,
@@ -159,6 +159,11 @@ NodeTest.test("a release bump with mobile changes skips server-tests only", () =
   ]);
   NodeAssert.deepEqual(scope.skip, ["server-tests"]);
   NodeAssert.match(scope.reasons.e2e, /scripts\/personal\/app-version\.txt/);
+});
+
+NodeTest.test("the parity matrix is no skippable gate's input", () => {
+  NodeAssert.deepEqual(skipOf(["scripts/personal/parity/parity.json", "docs/x.md"]), ALL);
+  NodeAssert.deepEqual(skipOf(["scripts/personal/parity/parity-matrix.mjs"]), []);
 });
 
 NodeTest.test("root config and patches run every skippable gate", () => {
