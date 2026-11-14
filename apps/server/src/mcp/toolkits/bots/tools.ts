@@ -107,7 +107,7 @@ export const DelegateTaskInput = Schema.Struct({
   project: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Team leads: the name of one of your open projects (update_project). The task and this request join it. Left out, the task joins this request's project, if any.",
+        "Leads only: one of your open projects (update_project). Left out, the task joins this request's project, if any.",
     }),
   ),
 });
@@ -231,14 +231,13 @@ export type UpdateWorkRecordInput = typeof UpdateWorkRecordInput.Type;
 
 export const UpdateProjectInput = Schema.Struct({
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)).annotate({
-    description:
-      "The project's name, at most 48 characters, e.g. 'Matchday optimisation'. Finds your open project by name (case does not matter) or creates it.",
+    description: "At most 48 characters. Matches your open project in any case, else creates one.",
   }),
   steps: Schema.optional(
     Schema.Array(
       Schema.Struct({
         label: TrimmedNonEmptyString.check(Schema.isMaxLength(40)).annotate({
-          description: "What the step is, at most 40 characters, e.g. 'Verify on emulator'.",
+          description: "At most 40 characters, e.g. 'Verify on emulator'.",
         }),
         state: Schema.Literals(["done", "doing", "todo"]),
       }),
@@ -246,19 +245,18 @@ export const UpdateProjectInput = Schema.Struct({
       .check(Schema.isMinLength(1), Schema.isMaxLength(8))
       .annotate({
         description:
-          "1 to 8 named steps in order. Replaces the whole list. Required when creating. Mark the step under way 'doing'.",
+          "1 to 8 steps in order; replaces the list. Required to create. Mark the current one 'doing'.",
       }),
   ),
   minutesLeft: Schema.optional(
     Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10_080 }))).annotate({
       description:
-        "Your estimate of minutes until it ships, 1 to 10080. null clears it; left out keeps the last one.",
+        "Your estimate of minutes until it ships, 1 to 10080. null clears; left out keeps.",
     }),
   ),
   close: Schema.optional(
     Schema.Literals(["done", "dropped"]).annotate({
-      description:
-        "'done' when it shipped, 'dropped' when it stopped. Removes it from the summary.",
+      description: "'done' when it shipped, 'dropped' when it stopped.",
     }),
   ),
 });
@@ -773,7 +771,7 @@ const UpdateWorkRecordTool = Tool.make("update_work_record", {
   .annotate(Tool.OpenWorld, false);
 
 const UpdateProjectTool = Tool.make("update_project", {
-  description: `${LEAD_ONLY} Keep a project: work that spans more than one task, shown to the user as a card with its steps, your time estimate and who works on it now. Call it with a name and steps to create one, again whenever a step moves or your estimate changes, and with close 'done' when it ships or 'dropped' when it stops. Same name, same project: a repeat call updates, never duplicates. Steps replace the whole list. Who works on it and when it last moved come from its tasks: pass project on delegate_task. Also puts the task you are running into the project when it has none.`,
+  description: `${LEAD_ONLY} Keep a project that spans more than one task. The user sees its steps, your estimate and who works on it. Call again when a step moves or the estimate changes, and close it when it ships or stops. The same name updates, never duplicates. Link tasks with project on delegate_task; this call also links the task you are running.`,
   parameters: UpdateProjectInput,
   success: UpdateProjectResult,
   failure: BotsToolFailure,

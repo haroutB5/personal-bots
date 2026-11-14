@@ -21,6 +21,7 @@ import * as PersonalLoginRequestService from "../secrets/PersonalLoginRequestSer
 import * as PersonalLoginService from "../secrets/PersonalLoginService.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "../memory/PersonalMemoryTidyService.ts";
+import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
 import * as PersonalProviderUpdates from "../providerUpdates/PersonalProviderUpdates.ts";
 import * as NotificationActions from "../push/notificationActions.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
@@ -45,6 +46,7 @@ export const layerUnusedPersonalWsServices = Layer.mergeAll(
   Layer.mock(PersonalLoginRequestService.PersonalLoginRequestService)({}),
   Layer.mock(PersonalLoginService.PersonalLoginService)({}),
   Layer.mock(PersonalMemoryService.PersonalMemoryService)({}),
+  Layer.mock(PersonalProjectRepository.PersonalProjectRepository)({}),
   Layer.mock(PersonalMemoryTidy.PersonalMemoryTidy)({}),
   Layer.mock(PersonalProviderUpdates.PersonalProviderUpdates)({}),
   Layer.mock(NotificationActions.NotificationActions)({}),

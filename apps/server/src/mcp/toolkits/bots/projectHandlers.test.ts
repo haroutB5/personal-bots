@@ -40,7 +40,7 @@ const STEPS = [
 function harness(input: { readonly lead: boolean }) {
   const delegated: Array<PersonalTaskDelegateInput> = [];
   const bot = (botId: PersonalBotId, name: string, lead: boolean) =>
-    ({ botId, name, lead, team: "pstack", deletedAt: null }) as never;
+    ({ botId, name, lead, enabled: true, team: "pstack", deletedAt: null }) as never;
   const layer = BotsToolkitHandlersLive.pipe(
     Layer.provide(
       Layer.mock(PersonalTaskService)({
@@ -89,11 +89,7 @@ function harness(input: { readonly lead: boolean }) {
       return encode(results);
     });
   const run = <A, E>(
-    effect: Effect.Effect<
-      A,
-      E,
-      BotsToolkit | PersonalProjectRepository.PersonalProjectRepository | SqlClient.SqlClient
-    >,
+    effect: Effect.Effect<A, E, Layer.Success<typeof layer> | McpInvocationContext>,
   ) =>
     effect.pipe(
       Effect.provide(layer),
@@ -117,8 +113,10 @@ describe("update_project", () => {
     const { run, call } = harness({ lead: false });
     return run(
       Effect.gen(function* () {
-        const text = yield* call("update_project", { name: "Matchday optimisation", steps: STEPS });
-        expect(text).toContain("Only a team lead keeps projects.");
+        const refusal = yield* Effect.flip(
+          call("update_project", { name: "Matchday optimisation", steps: STEPS }),
+        );
+        expect(refusal).toMatchObject({ reason: "Only a team lead keeps projects." });
         const sql = yield* SqlClient.SqlClient;
         const rows = yield* sql`SELECT project_id FROM personal_projects`;
         expect(rows).toHaveLength(0);
@@ -172,14 +170,17 @@ describe("delegate_task with a project", () => {
       Effect.gen(function* () {
         yield* call("update_project", { name: "Matchday optimisation", steps: STEPS });
         yield* call("update_project", { name: "hbots changes", steps: STEPS });
-        const text = yield* call("delegate_task", {
-          targetBot: "Builder",
-          objective: "Port the settings screen.",
-          project: "Kino",
-        });
-        expect(text).toContain('No open project is named \\"Kino\\"');
-        expect(text).toContain("Matchday optimisation");
-        expect(text).toContain("hbots changes");
+        const refusal = yield* Effect.flip(
+          call("delegate_task", {
+            targetBot: "Builder",
+            objective: "Port the settings screen.",
+            project: "Kino",
+          }),
+        );
+        const reason = (refusal as { readonly reason: string }).reason;
+        expect(reason).toContain('No open project is named "Kino"');
+        expect(reason).toContain("Matchday optimisation");
+        expect(reason).toContain("hbots changes");
         expect(delegated).toHaveLength(0);
       }),
     );
