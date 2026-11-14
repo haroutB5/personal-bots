@@ -2,11 +2,11 @@
 
 Linux port of `run/hbots-release.ps1` and `run/hbots-release-launch.ps1`. One tested tool, one command line, every release.
 Installed to `~/.personal-bots/run/hbots-release-linux/` by `install.sh` (the folder `run/hbots-release` already exists, so the name differs).
-Needs the pinned Node 24: `/home/harout/.local/share/mise/installs/node/24.22.1/bin/node`.
+Needs the pinned Node 24: `/home/harout/.local/share/mise/installs/node/24.22.3/bin/node`.
 
 ## Commands
 
-Shorthand: `N=/home/harout/.local/share/mise/installs/node/24.22.1/bin/node`, `D=~/.personal-bots/run/hbots-release-linux`,
+Shorthand: `N=/home/harout/.local/share/mise/installs/node/24.22.3/bin/node`, `D=~/.personal-bots/run/hbots-release-linux`,
 `A=(--release <12 sha> --rollback <12 sha> --main-sha <40 sha> --version X.Y.Z --notify-thread <uuid> --migration-before N --migration-after N --summary '...')`.
 
 ```

@@ -4,7 +4,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-export const PINNED_NODE = "/home/harout/.local/share/mise/installs/node/24.22.1/bin/node";
+export const PINNED_NODE = "/home/harout/.local/share/mise/installs/node/24.22.3/bin/node";
 export const DEFAULT_HOME = "/home/harout/.personal-bots";
 export const DEFAULT_TOOLS = "/home/harout/Claude/AI/dev-team/tools";
 export const DEFAULT_APP_SHEET = "/home/harout/Claude/AI/dev-team/apps/personal-bots.md";

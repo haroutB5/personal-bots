@@ -8,7 +8,7 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 dest=/home/harout/.personal-bots/run/hbots-release-linux
 tools_dest=/home/harout/Claude/AI/dev-team/tools
 tools_src=$here/../dev-team-tools
-node=/home/harout/.local/share/mise/installs/node/24.22.1/bin/node
+node=/home/harout/.local/share/mise/installs/node/24.22.3/bin/node
 while (($#)); do
   case "$1" in
     --dest) dest=${2:?}; shift 2;;
