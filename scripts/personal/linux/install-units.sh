@@ -8,6 +8,8 @@
 #        [--repo DIR] [--ai-dir DIR] [--node PATH] [--python PATH]
 #        [--path-map "C:/Users/Ht=/home/harout;C:/Claude/AI=/home/harout/claude"]
 #        [--no-enable]
+#
+# Also writes the drop-ins listed in DROPINS under ~/.config/systemd/user/<unit>.d/.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,7 +43,7 @@ while [ $# -gt 0 ]; do
     --node) NODE_BIN="$2"; shift 2 ;;
     --python) PYTHON_BIN="$2"; shift 2 ;;
     --path-map) PATH_MAP="$2"; PATH_MAP_EXPLICIT=1; shift 2 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -111,6 +113,22 @@ for timer in "$SYSTEMD_DIR"/*.timer; do
     mkdir -p "$TARGET"
     cp "$timer" "$TARGET/$unit"
     echo "wrote $TARGET/$unit"
+  fi
+done
+# hbots-runtime-path.conf is not listed: it points at one machine's checkout and
+# DevOps places it by hand.
+DROPINS=(
+  "hbots-no-swap.conf:hbots.service.d/50-no-swap.conf"
+)
+for entry in "${DROPINS[@]}"; do
+  source="$SYSTEMD_DIR/${entry%%:*}"
+  dest="$TARGET/${entry#*:}"
+  if [ "$DRY_RUN" = 1 ]; then
+    echo "would write $dest"
+  else
+    mkdir -p "$(dirname "$dest")"
+    cp "$source" "$dest"
+    echo "wrote $dest"
   fi
 done
 

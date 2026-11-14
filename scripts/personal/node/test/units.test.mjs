@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..", "..", "linux");
@@ -54,4 +56,52 @@ test("hbots service is distinct from the optional tunnel unit", () => {
   assert.match(hbots, /Restart=on-failure/);
   const cloudflared = fs.readFileSync(path.join(systemd, "cloudflared.service.in"), "utf8");
   assert.match(cloudflared, /ConditionPathExists/);
+});
+
+const installInTempHome = (args) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hbots-units-"));
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  const calls = path.join(home, "systemctl.calls");
+  fs.writeFileSync(path.join(bin, "systemctl"), `#!/bin/sh\necho "$*" >> "${calls}"\n`, { mode: 0o755 });
+  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home };
+  const result = spawnSync(
+    "bash",
+    [path.join(root, "install-units.sh"), "--node", process.execPath, "--python", "/usr/bin/python3", ...args],
+    { env, encoding: "utf8" },
+  );
+  const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
+  return { home, result, calls: read(calls), read };
+};
+
+test("install places the no-swap drop-in for hbots.service", () => {
+  const { home, result, calls, read } = installInTempHome(["--no-enable"]);
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    const dropIn = path.join(home, ".config/systemd/user/hbots.service.d/50-no-swap.conf");
+    assert.equal(
+      read(dropIn),
+      "# The server must not be swapped out by heavy jobs. Measured 14 Nov 2026:\n" +
+        "# 769,575 pages out and 682,169 back in 2.7 h, 224 stall-seconds a day.\n" +
+        "[Service]\n" +
+        "MemorySwapMax=0\n",
+    );
+    assert.match(result.stdout, new RegExp(`wrote ${dropIn}`));
+    assert.equal(read(path.join(home, ".config/systemd/user/hbots.service.d/20-runtime-path.conf")), null);
+    assert.equal(calls, "--user daemon-reload\n");
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a dry run names the drop-in and writes nothing", () => {
+  const { home, result, calls } = installInTempHome(["--dry-run"]);
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /would write .*\/hbots\.service\.d\/50-no-swap\.conf/);
+    assert.equal(fs.existsSync(path.join(home, ".config")), false);
+    assert.equal(calls, null);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
