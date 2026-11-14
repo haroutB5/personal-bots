@@ -46,7 +46,15 @@ export const GATE_INPUTS = {
     except: ["packages/personal-client/"],
   },
   e2e: {
-    inputs: ["apps/server/", "apps/web/", "packages/", "patches/", ROOT_CONFIG, APP_VERSION, ...GATED_PATHS],
+    inputs: [
+      "apps/server/",
+      "apps/web/",
+      "packages/",
+      "patches/",
+      ROOT_CONFIG,
+      APP_VERSION,
+      ...GATED_PATHS,
+    ],
   },
   "hbots-mobile-kotlin": {
     inputs: ["apps/hbots-mobile/", "patches/", ROOT_CONFIG, APP_VERSION],
@@ -66,9 +74,8 @@ const isInput = (file, row) =>
   !(row.except ?? []).some((pattern) => matches(file, pattern));
 
 const describe = (row) =>
-  row.inputs
-    .filter((pattern) => !GATED_PATHS.includes(pattern))
-    .join(", ") + (row.except ? ` (except ${row.except.join(", ")})` : "");
+  row.inputs.filter((pattern) => !GATED_PATHS.includes(pattern)).join(", ") +
+  (row.except ? ` (except ${row.except.join(", ")})` : "");
 
 const runAll = (reason, changedPaths = []) => ({
   skip: [],

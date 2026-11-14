@@ -129,7 +129,10 @@ NodeTest.test("mobile plus packages/shared runs server-tests and e2e", () => {
     "packages/shared/src/testing/providerEnv.ts",
   ]);
   NodeAssert.deepEqual(scope.skip, []);
-  NodeAssert.match(scope.reasons["server-tests"], /packages\/shared\/src\/testing\/providerEnv\.ts/);
+  NodeAssert.match(
+    scope.reasons["server-tests"],
+    /packages\/shared\/src\/testing\/providerEnv\.ts/,
+  );
 });
 
 NodeTest.test("a server diff runs every skippable gate except kotlin", () => {
@@ -273,27 +276,30 @@ NodeTest.test("the collector classifies a real mobile-only range", () => {
   });
 });
 
-NodeTest.test("the seal refuses a kotlin skip on a mobile diff and accepts one on a server diff", () => {
-  withFixture((f) => {
-    const mobilePaths = ["apps/hbots-mobile/app.json"];
-    NodeAssert.match(
-      verifySkippedGates({
-        evidence: skipEvidence(f.base, mobilePaths, ["hbots-mobile-kotlin"]),
-        liveSha: f.base,
-        releaseSha: f.mobile,
-        changedPaths: mobilePaths,
-      }).join(" "),
-      /evidence skips hbots-mobile-kotlin but the live-to-release diff must run it/,
-    );
-    const serverPaths = ["apps/server/src/index.ts"];
-    NodeAssert.deepEqual(
-      verifySkippedGates({
-        evidence: skipEvidence(f.mobile, serverPaths, ["hbots-mobile-kotlin"]),
-        liveSha: f.mobile,
-        releaseSha: f.server,
-        changedPaths: serverPaths,
-      }),
-      [],
-    );
-  });
-});
+NodeTest.test(
+  "the seal refuses a kotlin skip on a mobile diff and accepts one on a server diff",
+  () => {
+    withFixture((f) => {
+      const mobilePaths = ["apps/hbots-mobile/app.json"];
+      NodeAssert.match(
+        verifySkippedGates({
+          evidence: skipEvidence(f.base, mobilePaths, ["hbots-mobile-kotlin"]),
+          liveSha: f.base,
+          releaseSha: f.mobile,
+          changedPaths: mobilePaths,
+        }).join(" "),
+        /evidence skips hbots-mobile-kotlin but the live-to-release diff must run it/,
+      );
+      const serverPaths = ["apps/server/src/index.ts"];
+      NodeAssert.deepEqual(
+        verifySkippedGates({
+          evidence: skipEvidence(f.mobile, serverPaths, ["hbots-mobile-kotlin"]),
+          liveSha: f.mobile,
+          releaseSha: f.server,
+          changedPaths: serverPaths,
+        }),
+        [],
+      );
+    });
+  },
+);
