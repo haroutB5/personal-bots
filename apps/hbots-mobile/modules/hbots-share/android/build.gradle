@@ -17,5 +17,7 @@ android {
 
 dependencies {
   implementation 'androidx.core:core-ktx:1.17.0'
+  // Alpha: the only published version of the view wrapper (14 Nov 2026). Pinned exactly.
+  implementation 'androidx.photopicker:photopicker-embedded:1.0.0-alpha03'
   testImplementation 'junit:junit:4.13.2'
 }

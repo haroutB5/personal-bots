@@ -34,5 +34,16 @@ class HbotsShareModule : Module() {
     View(HbotsComposerHostView::class) {
       Events("onEnterSend", "onContent")
     }
+
+    /** Whether the plus sheet can embed the system photo picker on this phone. */
+    Function("embeddedPickerAvailable") {
+      val context = app()
+      context != null && HbotsPhotoStripView.available(context)
+    }
+
+    View(HbotsPhotoStripView::class) {
+      Events("onPicked", "onUnavailable")
+      Prop("maxSelection") { view: HbotsPhotoStripView, max: Int -> view.maxSelection = max }
+    }
   }
 }

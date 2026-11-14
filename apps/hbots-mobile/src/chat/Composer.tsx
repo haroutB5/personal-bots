@@ -34,7 +34,7 @@ import {
   IconX,
 } from "@tabler/icons-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ChatEnvironment } from "./chatEnvironment";
 import {
@@ -68,7 +68,10 @@ import { discardOutgoingFiles, readableOutgoingFiles, retainOutgoingFiles } from
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
+import { AttachSheet } from "./AttachSheet";
+import { attachPhotos, cameraRefusal, plainNotice, type ComposerNotice } from "./attachSheetModel";
 import { ComposerHost } from "./ComposerHost";
+import { embeddedPickerAvailable } from "./PhotoStrip";
 import { keyboardImages, releasedIntakes } from "./composerInput";
 import { draftKey } from "./linkDraft";
 import { blockedMessage } from "../share/pickerModel";
@@ -164,7 +167,9 @@ export function Composer({
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ComposerNotice | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [embedded, setEmbedded] = useState(embeddedPickerAvailable);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachment | null>(null);
   const connection = native.useConnectionState();
   const startTurn = native.client.useAtomCommand(chat.thread.startTurn, {
@@ -253,7 +258,7 @@ export function Composer({
     const accepted = next.slice(0, Math.max(0, room));
     const tooBig = accepted.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
     if (tooBig.length > 0) {
-      setError(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`);
+      setNotice(plainNotice(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`));
       return;
     }
     setDraft((draft) => ({
@@ -265,7 +270,7 @@ export function Composer({
   /** An image from the keyboard: the share intake's caps and refusals, then a draft attachment. */
   const addKeyboardImages = (intakeId: string | null) => {
     if (intakeId === null) {
-      setError(blockedMessage("empty"));
+      setNotice(plainNotice(blockedMessage("empty")));
       return;
     }
     const result = keyboardImages(readShare(intakeId), (index) => {
@@ -273,16 +278,16 @@ export function Composer({
     });
     if (!result.ok) {
       discardShare(intakeId);
-      setError(result.message);
+      setNotice(plainNotice(result.message));
       return;
     }
     if (draftRef.current.attachments.length + result.drafts.length > MAX_ATTACHMENTS) {
       discardShare(intakeId);
-      setError(blockedMessage("too-many-items"));
+      setNotice(plainNotice(blockedMessage("too-many-items")));
       return;
     }
     for (const draft of result.drafts) intakeHeld.current.set(draft.id, intakeId);
-    setError(null);
+    setNotice(null);
     setDraft((current) => ({
       ...current,
       attachments: [...current.attachments, ...result.drafts],
@@ -318,7 +323,7 @@ export function Composer({
         }),
       );
     } catch {
-      setError("Couldn't open the photo picker.");
+      setNotice(plainNotice("Couldn't open the photo picker."));
     } finally {
       setPicking(false);
     }
@@ -327,9 +332,9 @@ export function Composer({
   const pickCamera = async () => {
     setPicking(true);
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        setError("Camera access is off for hbots.");
+      const refusal = cameraRefusal(await ImagePicker.requestCameraPermissionsAsync());
+      if (refusal !== null) {
+        setNotice(refusal);
         return;
       }
       const result = await ImagePicker.launchCameraAsync({ quality: 1 });
@@ -351,7 +356,7 @@ export function Composer({
         },
       ]);
     } catch {
-      setError("Couldn't open the camera.");
+      setNotice(plainNotice("Couldn't open the camera."));
     } finally {
       setPicking(false);
     }
@@ -380,7 +385,7 @@ export function Composer({
         }),
       );
     } catch {
-      setError("Couldn't open the file picker.");
+      setNotice(plainNotice("Couldn't open the file picker."));
     } finally {
       setPicking(false);
     }
@@ -447,13 +452,13 @@ export function Composer({
         })),
       });
       if (entry === null) {
-        setError("Couldn't save that message on this device. Your draft is still here.");
+        setNotice(plainNotice("Couldn't save that message on this device. Your draft is still here."));
         return false;
       }
       return true;
     } catch (cause) {
       console.warn("outbox queue failed", cause);
-      setError("Couldn't queue that message. Your draft is still here.");
+      setNotice(plainNotice("Couldn't queue that message. Your draft is still here."));
       return false;
     }
   };
@@ -514,7 +519,7 @@ export function Composer({
     activeSends.current.set(outgoing.id, { ...active, outgoing: failed });
     onPendingChange((pending) => setPendingState(pending, outgoing.id, "failed"));
     if (!keepStored(failed, active.meta)) {
-      setError("Couldn't keep this message on the device. Try again before leaving the chat.");
+      setNotice(plainNotice("Couldn't keep this message on the device. Try again before leaving the chat."));
     }
   };
 
@@ -553,7 +558,7 @@ export function Composer({
         if (readable === null) {
           sendAborts.current.delete(messageId);
           markFailed(outgoing);
-          setError("An attachment didn't upload. Try again.");
+          setNotice(plainNotice("An attachment didn't upload. Try again."));
           return false;
         }
         uploaded = (await uploadDraftAttachments(native, chat, readable)) ?? [];
@@ -563,7 +568,7 @@ export function Composer({
       if (uploaded.length !== snapshot.length) {
         sendAborts.current.delete(messageId);
         markFailed(outgoing);
-        setError("An attachment didn't upload. Try again.");
+        setNotice(plainNotice("An attachment didn't upload. Try again."));
         return false;
       }
     }
@@ -642,7 +647,7 @@ export function Composer({
           discardClaimedIntakes(messageId);
         }
         void discardOutgoingFiles(messageId);
-        setError(end.message);
+        setNotice(plainNotice(end.message));
         return false;
       }
       case "not-sent": {
@@ -683,7 +688,7 @@ export function Composer({
   }): Promise<boolean> => {
     const messageId = newOutboxId();
     const createdAt = new Date().toISOString();
-    setError(null);
+    setNotice(null);
     onSendError(null);
     const { draft: clearedDraft, outgoing } = beginSend(
       { text: textValue, attachments: snapshot },
@@ -703,7 +708,7 @@ export function Composer({
       pendingSend(outgoing, threadId, textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
     ]);
     if (!keepStored(outgoing, meta)) {
-      setError("Couldn't save that message on the device. Don't leave the chat until it sends.");
+      setNotice(plainNotice("Couldn't save that message on the device. Don't leave the chat until it sends."));
     }
     if (snapshot.length > 0) {
       setPreparing(true);
@@ -720,7 +725,7 @@ export function Composer({
         reholdClaimedIntakes(messageId);
         if (clearDraftAfter) restoreIntoComposer(outgoing);
         void discardOutgoingFiles(messageId);
-        setError("Couldn't save those photos on this device. Your draft is still here.");
+        setNotice(plainNotice("Couldn't save those photos on this device. Your draft is still here."));
         return false;
       }
     }
@@ -747,7 +752,7 @@ export function Composer({
     if (active === undefined) return false;
     activeSends.current.set(messageId, { ...active, outgoing: retrySend(active.outgoing) });
     onPendingChange((pending) => setPendingState(pending, messageId, "sending"));
-    setError(null);
+    setNotice(null);
     return await dispatch(messageId);
   };
 
@@ -808,10 +813,24 @@ export function Composer({
 
   return (
     <View style={styles.root}>
-      {error !== null ? (
-        <Pressable onPress={() => setError(null)} accessibilityRole="alert" style={styles.error}>
-          <Text style={styles.errorText}>{error}</Text>
-        </Pressable>
+      {notice !== null ? (
+        <View accessibilityRole="alert" style={styles.error}>
+          <Pressable onPress={() => setNotice(null)} style={styles.errorBody}>
+            <Text style={styles.errorText}>{notice.message}</Text>
+          </Pressable>
+          {notice.openSettings ? (
+            <Pressable
+              onPress={() => {
+                setNotice(null);
+                void Linking.openSettings();
+              }}
+              accessibilityRole="button"
+              hitSlop={8}
+            >
+              <Text style={styles.errorAction}>Open settings</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
       {replyTo !== null ? (
         <View style={styles.replyBar}>
@@ -868,10 +887,11 @@ export function Composer({
       ) : null}
       <View style={styles.row}>
         <Pressable
-          onPress={() => void pickPhotos()}
+          onPress={() => setAttachOpen(true)}
           disabled={picking || preparing}
           accessibilityRole="button"
           accessibilityLabel="Add photos"
+          testID="composer-plus"
           style={styles.roundButton}
         >
           <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
@@ -966,6 +986,28 @@ export function Composer({
           <Text style={styles.previewFile}>{previewAttachment?.name ?? ""}</Text>
         )}
       </SheetShell>
+      <AttachSheet
+        visible={attachOpen}
+        photos={attachPhotos({
+          embedded,
+          attached: attachmentCount,
+          maxAttachments: MAX_ATTACHMENTS,
+        })}
+        onClose={() => setAttachOpen(false)}
+        onCamera={() => {
+          setAttachOpen(false);
+          void pickCamera();
+        }}
+        onAllPhotos={() => {
+          setAttachOpen(false);
+          void pickPhotos();
+        }}
+        onPicked={(intakeId) => {
+          setAttachOpen(false);
+          addKeyboardImages(intakeId);
+        }}
+        onUnavailable={() => setEmbedded(false)}
+      />
       <SheetShell visible={sendMenuOpen} title="Send" onClose={() => setSendMenuOpen(false)}>
         <SheetAction
           label="Send now"
@@ -1036,8 +1078,13 @@ const styles = StyleSheet.create({
     borderColor: tokens.dangerBorder,
     backgroundColor: tokens.dangerBg,
     padding: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
+  errorBody: { flex: 1 },
   errorText: { color: tokens.danger, fontSize: 13, lineHeight: 18 },
+  errorAction: { color: tokens.text, fontSize: 13, lineHeight: 18, fontWeight: "600" },
   replyBar: {
     flexDirection: "row",
     alignItems: "center",
