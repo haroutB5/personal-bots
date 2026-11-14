@@ -1162,10 +1162,12 @@ it.effect("in the background, stale or not listening, it is a web push as before
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-it("inAppPreview folds a reply into one short line", () => {
-  expect(PersonalPushService.inAppPreview("```ts\nconst x = 1;\n```\nAll *set*.")).toBe("All set.");
-  expect(PersonalPushService.inAppPreview("   \n ")).toBeUndefined();
-  const long = PersonalPushService.inAppPreview("word ".repeat(60))!;
+it("replyPreview folds a reply into one short line", () => {
+  expect(PersonalPushService.replyPreview("```ts\nconst x = 1;\n```\nAll *set*.", 140)).toBe(
+    "All set.",
+  );
+  expect(PersonalPushService.replyPreview("   \n ", 140)).toBeUndefined();
+  const long = PersonalPushService.replyPreview("word ".repeat(60), 140)!;
   expect(long.length).toBe(140);
   expect(long.endsWith("…")).toBe(true);
 });
@@ -2957,3 +2959,94 @@ it.effect("a re-sync binds a row that has no session and keeps its id", () => {
     expect(sentEndpoints(harness)).toEqual([A_ENDPOINT]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+const phoneRows = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{
+    readonly notificationId: string;
+    readonly kind: string;
+    readonly body: string | null;
+  }>`
+    SELECT notification_id AS "notificationId", kind AS "kind", body AS "body"
+    FROM personal_phone_notifications ORDER BY created_at ASC, notification_id ASC
+  `;
+});
+
+const REPLY_TEXT = `## Booked\nThe **table** for four is at 8pm, [details](https://x.test).\n\n\`\`\`json\n{"id": 7}\n\`\`\`\nShall I add it to the calendar? ${"More words follow here. ".repeat(30)}`;
+
+it.effect(
+  "a chat reply's phone push carries ids only, and the phone's fetch gets the reply preview",
+  () => {
+    const calls = newFcmCalls();
+    return Effect.gen(function* () {
+      const push = yield* setupChat;
+      yield* storeServiceAccount();
+      yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+      yield* seedReply(CHAT, REPLY_TEXT, "2026-09-18T09:00:00.000Z");
+
+      yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+
+      const eventId = `chat-reply:${CHAT}:2026-09-18T09:00:00.000Z`;
+      expect(sendPosts(calls).map((post) => JSON.parse(post.body))).toEqual([
+        {
+          message: {
+            token: "tok-1",
+            data: {
+              kind: "chat-reply",
+              notificationId: eventId,
+              botId: BOT,
+              threadId: CHAT,
+              v: "1",
+            },
+            android: { priority: "HIGH" },
+          },
+        },
+      ]);
+      expect(sendPosts(calls)[0]!.body).not.toContain("table");
+      const rows = yield* phoneRows;
+      expect(rows.map(({ notificationId, kind }) => ({ notificationId, kind }))).toEqual([
+        { notificationId: eventId, kind: "chat-reply" },
+      ]);
+      const body = rows[0]!.body!;
+      expect(
+        body.startsWith(
+          "Booked The table for four is at 8pm, details. Shall I add it to the calendar? More words",
+        ),
+      ).toBe(true);
+      expect(body.length).toBe(500);
+      expect(body.endsWith("…")).toBe(true);
+      expect(yield* outbox).toEqual([]);
+    }).pipe(Effect.provide(phoneLayer(calls)));
+  },
+);
+
+it.effect(
+  "a chat reply with no text, or from a bot that hides previews, stores no reply text",
+  () => {
+    const calls = newFcmCalls();
+    return Effect.gen(function* () {
+      const push = yield* setupChat;
+      yield* storeServiceAccount();
+      yield* push.registerFcm({ token: "tok-1", appVersion: "1", sessionId: "session-a" });
+
+      yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+      yield* seedReply(CHAT, "Portfolio £27,636 at 21:06 (Kraken)", "2026-09-18T09:01:00.000Z");
+      yield* hideBotPreviews(true);
+      yield* runTurn(CHAT, "2026-09-18T09:01:00.000Z");
+
+      expect(sendPosts(calls).length).toBe(2);
+      expect(yield* phoneRows).toEqual([
+        {
+          notificationId: `chat-reply:${CHAT}:2026-09-18T09:00:00.000Z`,
+          kind: "chat-reply",
+          body: "Open the chat to read it.",
+        },
+        {
+          notificationId: `chat-reply:${CHAT}:2026-09-18T09:01:00.000Z`,
+          kind: "chat-reply",
+          body: null,
+        },
+      ]);
+    }).pipe(Effect.provide(phoneLayer(calls)));
+  },
+);
