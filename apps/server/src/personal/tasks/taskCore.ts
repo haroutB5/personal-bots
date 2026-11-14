@@ -21,6 +21,7 @@ import {
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { secretRedactor } from "../secrets/secretRedaction.ts";
@@ -47,6 +48,9 @@ export const makeTaskCore = () =>
     const sqlOption = yield* Effect.serviceOption(SqlClient.SqlClient);
     // Optional so the task service stays testable alone; the server always has it.
     const modelFallback = yield* Effect.serviceOption(PersonalModelFallback.PersonalModelFallback);
+    const projects = yield* Effect.serviceOption(
+      PersonalProjectRepository.PersonalProjectRepository,
+    );
     const workStore = Option.map(sqlOption, (sql) => ({
       sql,
       exposures: makeSensitiveExposureStore(sql),
@@ -623,6 +627,7 @@ export const makeTaskCore = () =>
       leaseOwner,
       lock,
       modelFallback,
+      projects,
       publish,
       readSession,
       readWorkRecord,

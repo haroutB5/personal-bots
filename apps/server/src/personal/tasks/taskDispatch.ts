@@ -17,6 +17,7 @@ import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import { rootExposureKey } from "../browser/sensitiveExposureStore.ts";
 import { personalTaskThreadTitle } from "../personalThreadTitles.ts";
+import { projectResultNudge } from "../projects/projectText.ts";
 import {
   estimateTokens,
   renderWorkRecord,
@@ -78,6 +79,7 @@ export const makeTaskDispatch = (
     latestRunInterruptReason,
     leaseOwner,
     modelFallback,
+    projects,
     publish,
     readSession,
     readWorkRecord,
@@ -244,12 +246,19 @@ export const makeTaskDispatch = (
           })),
         ),
       );
+      const project =
+        task.projectId == null || Option.isNone(projects)
+          ? null
+          : yield* projects.value.get(task.projectId).pipe(Effect.orElseSucceed(() => null));
+      const leadsOpenProject =
+        project !== null && project.state.kind === "open" && project.leadBotId === task.botId;
       return {
         text: delegationContinuationText({
           results: results.map((result) => result.text),
           stillRunningTitles: stillRunning.map((handoff) => handoff.brief.title),
           notes,
           sections: taskSections(task, null),
+          projectNudge: leadsOpenProject ? projectResultNudge(project.name) : null,
         }),
         marker: marker(
           "continuation",

@@ -386,11 +386,19 @@ export const makeTaskLifecycle = (
             updatedAt: now,
             startedAt: null,
             completedAt: null,
+            projectId: input.projectId ?? parent.projectId ?? null,
           };
           const inserted = yield* repository.transaction(
             Effect.gen(function* () {
               yield* requireLiveBotInTransaction(input.targetBotId);
               const insertedTask = yield* repository.insertTask(child);
+              if (insertedTask && input.projectId !== undefined) {
+                yield* repository.linkProject({
+                  taskId: parent.taskId,
+                  projectId: input.projectId,
+                  now,
+                });
+              }
               if (insertedTask) {
                 yield* repository.insertHandoff({
                   parentTaskId: parent.taskId,
@@ -411,7 +419,11 @@ export const makeTaskLifecycle = (
             return yield* fail("Delegated task could not be read after creation.");
           }
           if (inserted) {
-            yield* publish([stored.value]);
+            const relinked =
+              input.projectId !== undefined && parent.projectId == null
+                ? Option.toArray(yield* repository.getTask(parent.taskId))
+                : [];
+            yield* publish([...relinked, stored.value]);
             yield* worker.enqueue({ type: "pump" });
           }
           return stored.value;

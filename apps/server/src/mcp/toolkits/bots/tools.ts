@@ -104,6 +104,12 @@ export const DelegateTaskInput = Schema.Struct({
         "A chat id from list_bot_chats. Use it when the work follows up on something this bot discussed with the user in that chat: the task runs as a new turn there, with the earlier conversation in context.",
     }),
   ),
+  project: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Team leads: the name of one of your open projects (update_project). The task and this request join it. Left out, the task joins this request's project, if any.",
+    }),
+  ),
 });
 export type DelegateTaskInput = typeof DelegateTaskInput.Type;
 
@@ -222,6 +228,47 @@ export const UpdateWorkRecordInput = Schema.Struct({
   ),
 });
 export type UpdateWorkRecordInput = typeof UpdateWorkRecordInput.Type;
+
+export const UpdateProjectInput = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)).annotate({
+    description:
+      "The project's name, at most 48 characters, e.g. 'Matchday optimisation'. Finds your open project by name (case does not matter) or creates it.",
+  }),
+  steps: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        label: TrimmedNonEmptyString.check(Schema.isMaxLength(40)).annotate({
+          description: "What the step is, at most 40 characters, e.g. 'Verify on emulator'.",
+        }),
+        state: Schema.Literals(["done", "doing", "todo"]),
+      }),
+    )
+      .check(Schema.isMinLength(1), Schema.isMaxLength(8))
+      .annotate({
+        description:
+          "1 to 8 named steps in order. Replaces the whole list. Required when creating. Mark the step under way 'doing'.",
+      }),
+  ),
+  minutesLeft: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10_080 }))).annotate({
+      description:
+        "Your estimate of minutes until it ships, 1 to 10080. null clears it; left out keeps the last one.",
+    }),
+  ),
+  close: Schema.optional(
+    Schema.Literals(["done", "dropped"]).annotate({
+      description:
+        "'done' when it shipped, 'dropped' when it stopped. Removes it from the summary.",
+    }),
+  ),
+});
+export type UpdateProjectInput = typeof UpdateProjectInput.Type;
+
+export const UpdateProjectResult = Schema.Struct({
+  project: Schema.String,
+  openProjects: Schema.Array(Schema.String),
+});
+export type UpdateProjectResult = typeof UpdateProjectResult.Type;
 
 export const UpdateWorkRecordResult = Schema.Struct({
   /** The record as it now reads. */
@@ -725,6 +772,19 @@ const UpdateWorkRecordTool = Tool.make("update_work_record", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
+const UpdateProjectTool = Tool.make("update_project", {
+  description: `${LEAD_ONLY} Keep a project: work that spans more than one task, shown to the user as a card with its steps, your time estimate and who works on it now. Call it with a name and steps to create one, again whenever a step moves or your estimate changes, and with close 'done' when it ships or 'dropped' when it stops. Same name, same project: a repeat call updates, never duplicates. Steps replace the whole list. Who works on it and when it last moved come from its tasks: pass project on delegate_task. Also puts the task you are running into the project when it has none.`,
+  parameters: UpdateProjectInput,
+  success: UpdateProjectResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update project")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const NotifyUserTool = Tool.make("notify_user", {
   description:
     "Decide whether the user gets a push notification when THIS routine run or task finishes. Call it once, near the end, with notify true and a one-line message when the result deserves attention (something changed or needs a decision), or notify false when there is nothing to tell. A routine set to 'bot decides' notifies only if you called it with notify true; one that notifies every run uses your message as the text. The last call wins. A failed run, or one that needs the user (a secret, browser help), always notifies. Your reply lands in the chat either way. Only works inside a task or routine run; in a normal chat it does nothing.",
@@ -947,6 +1007,7 @@ export const BotsToolkit = Toolkit.make(
   DelegateTaskTool,
   GetTaskTool,
   UpdateWorkRecordTool,
+  UpdateProjectTool,
   NotifyUserTool,
   ReadChatHistoryTool,
   ListTasksTool,

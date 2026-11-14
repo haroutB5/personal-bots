@@ -12,6 +12,7 @@ import {
   PersonalBotId,
   PersonalDelegationBrief,
   PersonalHandoffStatus,
+  PersonalProjectId,
   PersonalRoutineNotifyMode,
   PersonalTaskId,
   PersonalTaskResult,
@@ -56,6 +57,7 @@ const TaskDbRow = Schema.Struct({
   updatedAt: Schema.DateTimeUtcFromString,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  projectId: Schema.NullOr(PersonalProjectId),
 });
 
 const AttemptDbRow = Schema.Struct({
@@ -138,7 +140,8 @@ const TASK_COLUMNS = `
   created_at AS "createdAt",
   updated_at AS "updatedAt",
   started_at AS "startedAt",
-  completed_at AS "completedAt"
+  completed_at AS "completedAt",
+  project_id AS "projectId"
 `;
 
 const ATTEMPT_COLUMNS = `
@@ -229,6 +232,12 @@ export class PersonalTaskRepository extends Context.Service<
      * Writes every mutable column of `task`, only while the row still has
      * `expectedStatus`. Returns whether the row was written.
      */
+    /** Puts a task without a project into `projectId`; false when it already had one. */
+    readonly linkProject: (input: {
+      readonly taskId: PersonalTaskId;
+      readonly projectId: PersonalProjectId;
+      readonly now: DateTime.Utc;
+    }) => Effect.Effect<boolean, PersonalTaskRepositoryError>;
     readonly writeTask: (
       task: PersonalTask,
       expectedStatus: PersonalTask["status"],
@@ -431,7 +440,7 @@ export const make = Effect.gen(function* () {
           task_id, root_task_id, parent_task_id, bot_id, thread_id, title, objective,
           acceptance_criteria, expected_output, status, source, idempotency_key, depth,
           max_depth, max_children, result_json, error_category, error_message, available_at,
-          created_at, updated_at, started_at, completed_at
+          created_at, updated_at, started_at, completed_at, project_id
         )
         VALUES (
           ${task.taskId}, ${task.rootTaskId}, ${task.parentTaskId}, ${task.botId},
@@ -441,7 +450,7 @@ export const make = Effect.gen(function* () {
           ${task.result === null ? null : JSON.stringify(task.result)},
           ${task.errorCategory}, ${task.errorMessage}, ${isoOrNull(task.availableAt)},
           ${iso(task.createdAt)}, ${iso(task.updatedAt)}, ${isoOrNull(task.startedAt)},
-          ${isoOrNull(task.completedAt)}
+          ${isoOrNull(task.completedAt)}, ${task.projectId ?? null}
         )
         ON CONFLICT(idempotency_key) DO NOTHING
         RETURNING task_id AS "taskId"
@@ -605,6 +614,17 @@ export const make = Effect.gen(function* () {
               THEN NULL ELSE notify_message END
         WHERE task_id = ${task.taskId}
           AND status = ${expectedStatus}
+        RETURNING task_id AS "taskId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length > 0));
+
+  const linkProject: PersonalTaskRepository["Service"]["linkProject"] = (input) =>
+    query(
+      "linkProject",
+      sql`
+        UPDATE personal_tasks
+        SET project_id = ${input.projectId}, updated_at = ${iso(input.now)}
+        WHERE task_id = ${input.taskId} AND project_id IS NULL
         RETURNING task_id AS "taskId"
       `,
     ).pipe(Effect.map((rows) => rows.length > 0));
@@ -942,6 +962,7 @@ export const make = Effect.gen(function* () {
     countTasksInRoot: asRead(countTasksInRoot),
     listRootDelegationsForBot: asRead(listRootDelegationsForBot),
     writeTask,
+    linkProject,
     listClaimable: asRead(listClaimable),
     insertAttempt,
     writeAttempt,

@@ -212,6 +212,7 @@ import { layer as PersonalTurnContextLayer } from "./personal/turnContext/Person
 import { layerLive as PersonalSessionAccessLayer } from "./personal/secrets/PersonalSessionAccess.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalVoiceCallRepository from "./personal/voiceCalls/PersonalVoiceCallRepository.ts";
+import * as PersonalProjectRepository from "./personal/projects/PersonalProjectRepository.ts";
 import { personalHttpRoutesLayer } from "./personal/http/routes.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -590,6 +591,7 @@ const layerPersonalTurnContext = PersonalTurnContextLayer.pipe(
   Layer.provide(PersonalSessionAccessLayer),
   Layer.provide(PersonalBotRepository.layer),
   Layer.provide(PersonalVoiceCallRepository.layer),
+  Layer.provide(PersonalProjectRepository.layer),
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(

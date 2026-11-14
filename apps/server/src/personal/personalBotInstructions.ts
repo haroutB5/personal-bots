@@ -49,7 +49,11 @@ export interface PersonalBotPersona {
   readonly effort?: string | undefined;
   /** The owner let this bot save memories without being asked each time. */
   readonly memoryAutoSave?: boolean | undefined;
+  readonly lead?: boolean | undefined;
 }
+
+export const LEAD_PROJECTS_RULE =
+  "As a team lead, make a project with update_project for work that spans more than one task, with named steps and your estimate of minutes left, and update it as steps move. Pass its name as project on delegate_task. Close it with done when it ships, or dropped when it stops.";
 
 /**
  * The bot-specific half of the memory rule. The app rules say to save when
@@ -93,6 +97,7 @@ export function personalBotSystemInstructions(persona: PersonalBotPersona): stri
     persona.instructions.trim(),
     PERSONAL_BOT_APP_RULES,
     persona.memoryAutoSave === true ? MEMORY_AUTO_SAVE_RULE : "",
+    persona.lead === true ? LEAD_PROJECTS_RULE : "",
   ]
     .filter((part) => part.length > 0)
     .join("\n\n");

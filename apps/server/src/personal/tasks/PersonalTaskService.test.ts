@@ -51,6 +51,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import {
   makeSensitiveExposureStore,
@@ -550,6 +551,7 @@ const makeLayer = (
           ),
     ),
     Layer.provideMerge(PersonalTaskRepository.layer),
+    Layer.provideMerge(PersonalProjectRepository.layer),
     Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(PersonalProjectionRelationsV2Live),
@@ -877,6 +879,61 @@ it.effect("depth and child limits are persisted on the root and survive a restar
     }).pipe(Effect.provide(makeLayer(makeHarness(), dbPath)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("a task delegated into a project links its parent, and later children inherit it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+    const project = yield* projects.update({
+      leadBotId: botId("assistant"),
+      threadId: null,
+      name: "Matchday optimisation",
+      steps: [{ label: "Build", state: "doing" }],
+    });
+    const root = yield* createRoot("project-root");
+    const unrelated = yield* createRoot("project-unrelated", "planner");
+    yield* TestClock.adjust("1 minute");
+    const child = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Build"),
+      projectId: project.projectId,
+    });
+    yield* TestClock.adjust("1 minute");
+    const grandchild = yield* service.delegate({
+      parentTaskId: child.taskId,
+      targetBotId: botId("researcher"),
+      brief: brief("Check"),
+    });
+    const sibling = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("planner"),
+      brief: brief("Plan"),
+    });
+
+    expect({
+      root: (yield* reload(root.taskId)).projectId,
+      child: child.projectId,
+      grandchild: grandchild.projectId,
+      sibling: sibling.projectId,
+      unrelated: (yield* reload(unrelated.taskId)).projectId,
+    }).toEqual({
+      root: project.projectId,
+      child: project.projectId,
+      grandchild: project.projectId,
+      sibling: project.projectId,
+      unrelated: null,
+    });
+
+    const listed = (yield* projects.list()).find((entry) => entry.projectId === project.projectId);
+    expect(listed?.lastActivityAt).toEqual(sibling.updatedAt);
+    expect(DateTime.toEpochMillis(sibling.updatedAt)).toBeGreaterThan(
+      DateTime.toEpochMillis(project.updatedAt),
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
 
 it.effect(
   "delegation rejects ancestry loops but lets a child hand work back to the root bot",

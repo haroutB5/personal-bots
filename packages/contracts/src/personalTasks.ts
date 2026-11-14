@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString, TurnId } from "./baseSchemas.ts";
 import { PersonalBotId } from "./personalBots.ts";
+import { PersonalProjectId } from "./personalProjects.ts";
 
 export const PersonalTaskId = TrimmedNonEmptyString.pipe(Schema.brand("PersonalTaskId"));
 export type PersonalTaskId = typeof PersonalTaskId.Type;
@@ -85,6 +86,8 @@ export const PersonalTask = Schema.Struct({
    * result.summary is a short preview. personalTasks.get has the full task.
    */
   detailOmitted: Schema.optional(Schema.Boolean),
+  /** The lead's project this task belongs to. Absent from servers before projects. */
+  projectId: Schema.optional(Schema.NullOr(PersonalProjectId)),
 });
 export type PersonalTask = typeof PersonalTask.Type;
 

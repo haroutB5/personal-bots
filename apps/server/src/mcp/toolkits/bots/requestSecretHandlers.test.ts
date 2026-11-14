@@ -11,6 +11,7 @@ import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.t
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalGroupService } from "../../../personal/groups/PersonalGroupService.ts";
 import { PersonalLeadBotService } from "../../../personal/leadBots/PersonalLeadBotService.ts";
+import { PersonalProjectRepository } from "../../../personal/projects/PersonalProjectRepository.ts";
 import { PersonalLoginRequestService } from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import { PersonalLoginService } from "../../../personal/secrets/PersonalLoginService.ts";
 import { PersonalSecretService } from "../../../personal/secrets/PersonalSecretService.ts";
@@ -71,6 +72,7 @@ function requestSecret(input: {
       }),
     ),
     Layer.provide(Layer.mock(PersonalLeadBotService)({})),
+    Layer.provide(Layer.mock(PersonalProjectRepository)({})),
   );
   return Effect.gen(function* () {
     const toolkit = yield* BotsToolkit;
