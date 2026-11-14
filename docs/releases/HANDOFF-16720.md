@@ -34,3 +34,19 @@ Binary only. The previous release is `d8a0c8f57126` (1.67.19). No schema change,
 
 - Notifications show a preview of the bot's reply.
 - The reply text is fetched from your own server and never sent through Google.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=a72547da6f6c7ecf7e1ee6a07aa68ac5430370aa release=a72547da6f6c json-sha256=23d21769dff956d5fdb3f8ad5b7aa008c2b491978d451e966fa6135972999a22 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
