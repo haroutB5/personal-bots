@@ -103,7 +103,7 @@ NodeTest.test("install places the no-swap drop-in for hbots.service", () => {
     );
     NodeAssert.match(result.stdout, new RegExp(`wrote ${dropIn}`));
     NodeAssert.equal(
-      read(NodePath.join(home, ".config/systemd/user/hbots.service.d/20-runtime-NodePath.conf")),
+      read(NodePath.join(home, ".config/systemd/user/hbots.service.d/20-runtime-path.conf")),
       null,
     );
     NodeAssert.equal(calls, "--user daemon-reload\n");
