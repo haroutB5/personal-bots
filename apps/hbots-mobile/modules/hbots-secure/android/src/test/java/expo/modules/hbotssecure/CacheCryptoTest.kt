@@ -357,8 +357,10 @@ class CacheCryptoTest {
       val decryptCalls = CountingGcm.updates
 
       if (encryptCalls == 0 || decryptCalls == 0) fail("the counting cipher was not used")
-      assertTrue("encrypt made $encryptCalls cipher calls", encryptCalls <= 100)
-      assertTrue("decrypt made $decryptCalls cipher calls", decryptCalls <= 100)
+      assertTrue(
+        "encrypt made $encryptCalls and decrypt made $decryptCalls cipher calls",
+        encryptCalls <= 100 && decryptCalls <= 100,
+      )
       assertArrayEquals(bytes, File(path("plain")).readBytes())
     } finally {
       Security.removeProvider(counting.name)
@@ -468,7 +470,7 @@ class CountingGcm : CipherSpi() {
     @Volatile var updates = 0
 
     fun provider(): Provider =
-      object : Provider("CountingGcm", "1", "counts AES/GCM update calls") {
+      object : Provider("CountingGcm", 1.0, "counts AES/GCM update calls") {
         init {
           put("Cipher.AES/GCM/NoPadding", CountingGcm::class.java.name)
         }
