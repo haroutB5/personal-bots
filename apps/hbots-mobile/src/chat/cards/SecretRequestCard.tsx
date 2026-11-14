@@ -13,6 +13,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import { useSecureScreen } from "../../platform/secureScreen";
 import { tokens } from "../../shell/tokens";
 import { cardStyles } from "./cardStyles";
+import { passwordFieldProps } from "./passwordField";
 import { SecretAccessFields } from "./SecretAccessFields";
 import type { CardContext } from "./types";
 
@@ -91,12 +92,8 @@ function Pending({
         <TextInput
           value={value}
           editable={!responding}
-          secureTextEntry
-          autoComplete="off"
-          autoCorrect={false}
+          {...passwordFieldProps(false)}
           autoCapitalize="none"
-          importantForAutofill="no"
-          contextMenuHidden
           onFocus={() => context.revealCard?.(secretCardItemId(card.requestId))}
           onChangeText={setValue}
           style={styles.input}
