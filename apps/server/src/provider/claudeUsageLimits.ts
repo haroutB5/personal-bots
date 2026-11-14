@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-import { windowHasReset } from "@t3tools/shared/usageLimits";
+import { scopedWeeklyWindowId, windowHasReset } from "@t3tools/shared/usageLimits";
 import {
   clampPercent,
   makeUnavailableUsageLimits,
@@ -51,29 +51,13 @@ export const makeClaudeScopedLimitNames = Ref.make<ClaudeScopedLimitNames>({
   overageIncluded: undefined,
 });
 
-const SCOPED_WINDOW_PREFIX = "seven_day_";
-const scopeToken = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
-
-function scopedWindowId(displayName: string): string {
-  return `${SCOPED_WINDOW_PREFIX}${scopeToken(displayName)}`;
-}
-
-/** A model-scoped weekly allowance blocks only its own model; an unknown model is not blocked. */
-export function windowLimitsModel(
-  window: Pick<ServerProviderUsageWindow, "id">,
-  model: string | null,
-): boolean {
-  if (!window.id.startsWith(SCOPED_WINDOW_PREFIX)) return true;
-  return model !== null && scopeToken(model).includes(window.id.slice(SCOPED_WINDOW_PREFIX.length));
-}
-
 function scopedWindow(
   displayName: string,
   usedPercent: number,
   resetsAt: string | undefined,
 ): ServerProviderUsageWindow {
   return {
-    id: scopedWindowId(displayName),
+    id: scopedWeeklyWindowId(displayName),
     kind: "weekly",
     label: `Weekly · ${displayName}`,
     windowDurationMins: WEEK_MINS,
@@ -167,17 +151,33 @@ function makeWindow(
   };
 }
 
+/** The row a streamed bucket updates; the overage-included bucket has no row until a probe names its model. */
+function streamedWindow(
+  type: string,
+  usedPercent: number,
+  resetsAt: string | undefined,
+  names: ClaudeScopedLimitNames,
+): ServerProviderUsageWindow | undefined {
+  if (type in WINDOWS) return makeWindow(type, usedPercent, resetsAt);
+  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+    return scopedWindow(names.overageIncluded, usedPercent, resetsAt);
+  }
+  return undefined;
+}
+
 /**
  * `unifiedWindows` shipped in the CLI after the SDK typings we pin, so it is
  * read structurally until the `.d.ts` catches up. Events after a reset carry
- * both rolling windows there and omit the top-level `utilization`.
+ * every window there and omit the top-level `utilization`.
  */
-function readUnifiedWindows(info: SDKRateLimitInfo): ReadonlyArray<ServerProviderUsageWindow> {
+function readUnifiedWindows(
+  info: SDKRateLimitInfo,
+  names: ClaudeScopedLimitNames,
+): ReadonlyArray<ServerProviderUsageWindow> {
   const raw = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
   if (typeof raw !== "object" || raw === null) return [];
   const windows: ServerProviderUsageWindow[] = [];
-  for (const id of ["five_hour", "seven_day"] as const) {
-    const entry = (raw as Record<string, unknown>)[id];
+  for (const [type, entry] of Object.entries(raw)) {
     if (typeof entry !== "object" || entry === null) continue;
     const { utilization, resetsAt } = entry as {
       readonly utilization?: unknown;
@@ -192,13 +192,13 @@ function readUnifiedWindows(info: SDKRateLimitInfo): ReadonlyArray<ServerProvide
     ) {
       continue;
     }
-    windows.push(
-      makeWindow(
-        id,
-        utilization * 100,
-        isoFromEpochSeconds(typeof resetsAt === "number" ? resetsAt : undefined),
-      ),
+    const window = streamedWindow(
+      type,
+      utilization * 100,
+      isoFromEpochSeconds(typeof resetsAt === "number" ? resetsAt : undefined),
+      names,
     );
+    if (window) windows.push(window);
   }
   return windows;
 }
@@ -208,7 +208,7 @@ export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
-  const unifiedWindows = readUnifiedWindows(info);
+  const unifiedWindows = readUnifiedWindows(info, names);
   if (unifiedWindows.length > 0) {
     return { windows: unifiedWindows };
   }
@@ -216,15 +216,13 @@ export function claudeRateLimitEventToUpdate(
   if (!type || typeof info.utilization !== "number") {
     return undefined;
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  const window = streamedWindow(
+    type,
+    info.utilization * 100,
+    isoFromEpochSeconds(info.resetsAt),
+    names,
+  );
+  return window ? { windows: [window] } : undefined;
 }
 
 /** get_usage percentages are already 0-100. */
