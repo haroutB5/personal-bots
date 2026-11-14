@@ -1,6 +1,9 @@
 import type { SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vite-plus/test";
 
+import { applyUsageLimitsUpdate } from "@t3tools/provider-core/server/usageLimits";
+
+import { usageRoom } from "../personal/personalModelFallbackPolicy.ts";
 import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
@@ -353,6 +356,62 @@ describe("claudeRateLimitEventToUpdate", () => {
           resetsAt: "2026-11-12T10:40:00.000Z",
         },
       ],
+    });
+  });
+
+  it("moves the model's weekly row from 62 to 100 on a later streamed reading, which blocks that model", () => {
+    const probed = claudeUsageResponseToLimits({
+      checkedAt: "2026-11-14T09:45:00.000Z",
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 5, resets_at: "2026-11-14T11:00:00.358Z" },
+          seven_day: { utilization: 52, resets_at: "2026-11-15T11:00:00.358Z" },
+          model_scoped: [
+            { display_name: "Fable", utilization: 62, resets_at: "2026-11-15T11:00:00.358Z" },
+          ],
+        } as never,
+      },
+    });
+    // Real 2026-11-14T13:44:58.102Z payload from the provider stream.
+    const event = {
+      status: "rejected",
+      resetsAt: 1_794_740_400,
+      rateLimitType: "seven_day_overage_included",
+      overageStatus: "rejected",
+      overageDisabledReason: "org_level_disabled",
+      isUsingOverage: false,
+      unifiedWindows: {
+        five_hour: { utilization: 0.73, resetsAt: 1_794_672_000, status: "allowed" },
+        seven_day: { utilization: 0.73, resetsAt: 1_794_740_400, status: "allowed" },
+        seven_day_overage_included: {
+          utilization: 1,
+          resetsAt: 1_794_740_400,
+          status: "rejected",
+          surpassedThreshold: 1,
+        },
+      },
+    } as unknown as SDKRateLimitInfo;
+
+    const update = claudeRateLimitEventToUpdate(event, probed.names);
+    const limits = applyUsageLimitsUpdate({
+      previous: probed.limits,
+      update: update ?? { windows: [] },
+      checkedAt: "2026-11-14T13:44:58.102Z",
+    });
+
+    expect(limits?.windows.find((window) => window.id === "seven_day_fable")).toEqual({
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 100,
+      windowDurationMins: 10080,
+      resetsAt: "2026-11-15T11:00:00.000Z",
+    });
+    expect(usageRoom(limits, "claude-fable-5-2", Date.parse("2026-11-14T13:45:00.000Z"))).toEqual({
+      room: false,
+      known: true,
+      resetsAtMs: Date.parse("2026-11-15T11:00:00.000Z"),
     });
   });
 

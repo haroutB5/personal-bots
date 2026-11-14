@@ -1,7 +1,11 @@
 import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { primaryUsageRecovered, type SwitchBackInput } from "./personalModelFallbackPolicy.ts";
+import {
+  primaryUsageRecovered,
+  type SwitchBackInput,
+  usageRoom,
+} from "./personalModelFallbackPolicy.ts";
 
 const home: ModelSelection = {
   instanceId: "claude" as ModelSelection["instanceId"],
@@ -45,5 +49,38 @@ describe("primaryUsageRecovered", () => {
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe("usageRoom", () => {
+  const fableSpent: NonNullable<ServerProvider["usageLimits"]> = {
+    checkedAt: "2026-11-14T13:44:58.102Z",
+    windows: [
+      { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 73 },
+      {
+        id: "seven_day_fable",
+        kind: "weekly",
+        label: "Weekly · Fable",
+        usedPercent: 100,
+        resetsAt: "2026-11-15T11:00:00.000Z",
+      },
+    ],
+  };
+  const nowMs = Date.parse("2026-11-14T13:45:00.000Z");
+
+  it("leaves room for another model when only one model's weekly allowance is spent", () => {
+    expect(usageRoom(fableSpent, "claude-opus-5-5", nowMs)).toEqual({
+      room: true,
+      known: true,
+      resetsAtMs: null,
+    });
+  });
+
+  it("finds no room for the model whose weekly allowance is spent", () => {
+    expect(usageRoom(fableSpent, "claude-fable-5-2", nowMs)).toEqual({
+      room: false,
+      known: true,
+      resetsAtMs: Date.parse("2026-11-15T11:00:00.000Z"),
+    });
   });
 });
