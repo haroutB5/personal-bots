@@ -145,6 +145,7 @@ export const layer = Layer.effectDiscard(
             cpuMs: report.cpu.userMs + report.cpu.systemMs,
             wallMs: report.cpu.wallMs,
             freeMemMb: report.memory.freeMemMb,
+            pressure: report.pressure,
             file,
           }).pipe(
             Effect.withSpan("server.eventLoop.stallCapture", {
@@ -153,6 +154,7 @@ export const layer = Layer.effectDiscard(
               attributes: {
                 durationMs: report.durationMs,
                 causeKind: report.cause.kind,
+                pauseCause: report.pressure.cause ?? "unknown",
                 cause: report.cause.detail,
                 jobCount: report.jobs.length,
                 slowCallCount: report.ops.length,

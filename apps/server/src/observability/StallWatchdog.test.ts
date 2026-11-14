@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 
 import type { WatchdogStall } from "./StallWatchdog.ts";
@@ -102,6 +103,10 @@ describe("StallWatchdog", () => {
     expect(stall!.summary!.topSelf[0]!.frame).toContain("spinInJavaScript");
     expect(stall!.cpuUserMs + stall!.cpuSystemMs).toBeGreaterThan(1500);
     expect(stall!.profilerError).toBeNull();
+    if (HostProcess.Platform.defaultValue() === "linux") {
+      expect(stall!.pressure.cause).toBe("running");
+      expect(stall!.pressure.mainUserMs).toBeGreaterThan(stall!.pressure.windowMs! / 2);
+    }
   }, 70_000);
 
   it("still profiles a stall when the profiler only starts once it is detected", async () => {
@@ -117,6 +122,12 @@ describe("StallWatchdog", () => {
     const { stalls } = await run("continuous", "native");
     expect(stalls).toHaveLength(1);
     expect(stalls[0]!.summary!.topSelf[0]!.frame).toContain("waitInNativeCode");
+    if (HostProcess.Platform.defaultValue() === "linux") {
+      const { pressure } = stalls[0]!;
+      expect(pressure.windowMs).toBeGreaterThan(500);
+      expect(pressure.mainUserMs).toBeLessThan(pressure.windowMs! / 4);
+      expect(pressure.cause).not.toBe("running");
+    }
   }, 70_000);
 
   it("sees inside a long synchronous SQLite statement with the continuous profiler", async () => {

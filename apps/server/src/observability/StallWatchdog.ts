@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - worker_threads has no Effect equivalent, and the heartbeat must run on the bare event loop it measures, outside the Effect runtime.
 import * as NodeWorkerThreads from "node:worker_threads";
 
+import { measureStallPressure, type PressureFiles, type StallPressure } from "./stallPressure.ts";
 import { STALL_WATCHDOG_WORKER_SOURCE, type ProfileSummary } from "./stallWatchdogWorker.ts";
 
 export type StallProfilerMode = "continuous" | "detect" | "off";
@@ -25,8 +26,14 @@ export interface WatchdogStall {
   readonly cpuWallMs: number;
   readonly freeMemMb: number;
   readonly rssMb: number;
+  readonly pressure: StallPressure;
   readonly summary: ProfileSummary | null;
 }
+
+type WatchdogStallMessage = Omit<WatchdogStall, "pressure"> & {
+  readonly pressureStart: PressureFiles;
+  readonly pressureEnd: PressureFiles;
+};
 
 export interface StallWatchdogOptions {
   readonly thresholdMs?: number;
@@ -96,8 +103,10 @@ export const startStallWatchdog = (options: StallWatchdogOptions): StallWatchdog
   });
   worker.unref();
   worker.on("message", (message: { type: string } & Record<string, unknown>) => {
-    if (message.type === "stall") options.onStall(message as unknown as WatchdogStall);
-    else if (message.type === "error") options.onError?.(String(message.message));
+    if (message.type === "stall") {
+      const { pressureStart, pressureEnd, ...stall } = message as unknown as WatchdogStallMessage;
+      options.onStall({ ...stall, pressure: measureStallPressure(pressureStart, pressureEnd) });
+    } else if (message.type === "error") options.onError?.(String(message.message));
   });
   worker.on("error", (error) => options.onError?.(String(error)));
 

@@ -28,6 +28,7 @@ export interface StallReport {
     readonly heapUsedMb: number;
     readonly heapLimitMb: number;
   };
+  readonly pressure: WatchdogStall["pressure"];
   readonly jobs: ReadonlyArray<{
     readonly name: string;
     /** Start and end as ms from the stall's start; null end = still running. */
@@ -179,6 +180,7 @@ export const buildStallReport = (input: {
       heapUsedMb: input.heapUsedMb,
       heapLimitMb: input.heapLimitMb,
     },
+    pressure: stall.pressure,
     jobs,
     ops: [...context.ops]
       .sort((a, b) => b.ms - a.ms)

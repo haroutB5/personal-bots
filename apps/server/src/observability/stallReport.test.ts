@@ -164,6 +164,23 @@ const watchdogStall: WatchdogStall = {
   profilerError: null,
   freeMemMb: 7000,
   rssMb: 350,
+  pressure: {
+    mainMajflt: 400,
+    mainMinflt: 536,
+    mainUserMs: 50,
+    mainSystemMs: 500,
+    mainRunqWaitMs: 100,
+    pswpin: 400,
+    pswpout: 0,
+    pgmajfault: 410,
+    workingsetRefaultAnon: 390,
+    workingsetRefaultFile: 0,
+    memorySomeMs: 1500,
+    ioSomeMs: 20,
+    cpuSomeMs: 3,
+    windowMs: 2000,
+    cause: "swap-in",
+  },
 };
 
 describe("buildStallReport", () => {
@@ -188,6 +205,7 @@ describe("buildStallReport", () => {
       { name: "job:short", startOffsetMs: 100, endOffsetMs: 900 },
     ]);
     expect(report.startedAt).toBe("1970-01-01T00:16:40.000Z");
+    expect([report.pressure.cause, report.pressure.pswpin]).toEqual(["swap-in", 400]);
   });
 });
 

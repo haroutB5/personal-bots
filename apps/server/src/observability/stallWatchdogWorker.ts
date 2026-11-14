@@ -121,6 +121,7 @@ const WORKER_BODY = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
 const inspector = require("node:inspector");
 const os = require("node:os");
+const fs = require("node:fs");
 
 const beat = new Int32Array(workerData.sab);
 const thresholdMs = workerData.thresholdMs;
@@ -178,6 +179,26 @@ const stopProfiler = async (timeoutMs) => {
   }
 };
 
+const readText = (file) => {
+  try { return fs.readFileSync(file, "utf8"); } catch (error) { return null; }
+};
+const taskDir = "/proc/self/task/" + process.pid;
+const unitDir = (() => {
+  const text = readText("/proc/self/cgroup");
+  const line = text === null ? undefined : text.split("\n").find((entry) => entry.startsWith("0::"));
+  return line === undefined ? null : "/sys/fs/cgroup" + line.slice(3).trim();
+})();
+const readUnit = (name) => (unitDir === null ? null : readText(unitDir + "/" + name));
+const readPressureFiles = () => ({
+  at: Date.now(),
+  taskStat: readText(taskDir + "/stat"),
+  taskSchedstat: readText(taskDir + "/schedstat"),
+  memoryStat: readUnit("memory.stat"),
+  memoryPressure: readUnit("memory.pressure"),
+  ioPressure: readUnit("io.pressure"),
+  cpuPressure: readUnit("cpu.pressure"),
+});
+
 const lagMs = () => (((Date.now() | 0) - Atomics.load(beat, 0)) | 0);
 
 let state = "healthy";
@@ -187,6 +208,7 @@ let healthyCpu = process.cpuUsage();
 let healthyAt = Date.now();
 
 const collect = async () => {
+  const pressureEnd = readPressureFiles();
   const endedAt = Date.now() - lagMs();
   const startedAt = stall.beatBeforeAt;
   const durationMs = Math.max(0, endedAt - startedAt - heartbeatMs);
@@ -219,6 +241,8 @@ const collect = async () => {
     cpuWallMs: wallMs,
     freeMemMb: Math.round(os.freemem() / 1048576),
     rssMb: Math.round(process.memoryUsage.rss() / 1048576),
+    pressureStart: stall.pressureStart,
+    pressureEnd,
     summary,
   });
   profilerError = null;
@@ -234,7 +258,13 @@ const poll = async () => {
     if (state === "healthy") {
       if (lag >= thresholdMs) {
         state = "stalled";
-        stall = { detectedAt: now, beatBeforeAt: now - lag, startPromise: null, startLatencyMs: null };
+        stall = {
+          detectedAt: now,
+          beatBeforeAt: now - lag,
+          startPromise: null,
+          startLatencyMs: null,
+          pressureStart: readPressureFiles(),
+        };
         if (profilerMode === "detect") {
           const begun = Date.now();
           stall.startPromise = startProfiler().then(() => { stall.startLatencyMs = Date.now() - begun; });
