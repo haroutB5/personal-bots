@@ -59,6 +59,8 @@ const end: PressureFiles = {
   cpuPressure: pressure(3_457_902),
 };
 
+const wholeStall = { endedAt: 1_002_000, durationMs: 2000 };
+
 const unread = (at: number): PressureFiles => ({
   at,
   taskStat: null,
@@ -87,7 +89,7 @@ const nothing: PressureCounts = {
 
 describe("measureStallPressure", () => {
   it("turns two readings into deltas in counts and ms, with a swap-in verdict", () => {
-    expect(measureStallPressure(start, end)).toEqual({
+    expect(measureStallPressure(start, end, wholeStall)).toEqual({
       mainMajflt: 400,
       mainMinflt: 536,
       mainUserMs: 50,
@@ -102,14 +104,16 @@ describe("measureStallPressure", () => {
       ioSomeMs: 20,
       cpuSomeMs: 3,
       windowMs: 2000,
+      coveredMs: 2000,
       cause: "swap-in",
     });
   });
 
   it("gives null fields and no verdict when no file could be read", () => {
-    expect(measureStallPressure(unread(1_000_000), unread(1_002_000))).toEqual({
+    expect(measureStallPressure(unread(1_000_000), unread(1_002_000), wholeStall)).toEqual({
       ...nothing,
       windowMs: 2000,
+      coveredMs: 2000,
       cause: null,
     });
   });
@@ -122,7 +126,7 @@ describe("measureStallPressure", () => {
       ioPressure: null,
       cpuPressure: null,
     });
-    expect(measureStallPressure(noUnit(start), noUnit(end))).toEqual({
+    expect(measureStallPressure(noUnit(start), noUnit(end), wholeStall)).toEqual({
       ...nothing,
       mainMajflt: 400,
       mainMinflt: 536,
@@ -130,6 +134,7 @@ describe("measureStallPressure", () => {
       mainSystemMs: 500,
       mainRunqWaitMs: 100,
       windowMs: 2000,
+      coveredMs: 2000,
       cause: null,
     });
   });
@@ -144,9 +149,10 @@ describe("measureStallPressure", () => {
       ioPressure: "some total=abc\n",
       cpuPressure: "",
     };
-    expect(measureStallPressure(start, garbled)).toEqual({
+    expect(measureStallPressure(start, garbled, wholeStall)).toEqual({
       ...nothing,
       windowMs: 2000,
+      coveredMs: 2000,
       cause: null,
     });
   });
@@ -156,13 +162,55 @@ describe("measureStallPressure", () => {
       ...files,
       taskStat: taskStat(minflt, majflt, 300, 40, "a) b (c"),
     });
-    const result = measureStallPressure(named(start, 100, 7), named(end, 160, 9));
+    const result = measureStallPressure(named(start, 100, 7), named(end, 160, 9), wholeStall);
     expect([result.mainMinflt, result.mainMajflt]).toEqual([60, 2]);
   });
 
   it("drops a counter that went backwards instead of reporting a negative delta", () => {
-    const result = measureStallPressure(end, { ...start, at: 1_004_000 });
+    const result = measureStallPressure(
+      end,
+      { ...start, at: 1_004_000 },
+      {
+        endedAt: 1_004_000,
+        durationMs: 2000,
+      },
+    );
     expect([result.pswpin, result.mainMajflt, result.windowMs]).toEqual([null, null, 2000]);
+  });
+});
+
+describe("a 1150 ms JavaScript spin (Verifier 2, 3b)", () => {
+  const reading = (at: number, utime: number): PressureFiles => ({
+    ...start,
+    at,
+    taskStat: taskStat(5364, 120, utime, 40),
+  });
+  const spin = { durationMs: 1150 };
+
+  it("gives no verdict when the first reading came after most of the stall", () => {
+    const result = measureStallPressure(reading(1_000_000, 300), reading(1_000_350, 310), {
+      ...spin,
+      endedAt: 1_000_100,
+    });
+    expect([result.mainUserMs, result.windowMs, result.coveredMs, result.cause]).toEqual([
+      100,
+      350,
+      100,
+      null,
+    ]);
+  });
+
+  it("says running when the first reading came early in the stall", () => {
+    const result = measureStallPressure(reading(1_000_000, 300), reading(1_000_950, 370), {
+      ...spin,
+      endedAt: 1_000_700,
+    });
+    expect([result.mainUserMs, result.windowMs, result.coveredMs, result.cause]).toEqual([
+      700,
+      950,
+      700,
+      "running",
+    ]);
   });
 });
 
@@ -187,26 +235,74 @@ describe("classifyPause", () => {
   it.each<[string, Partial<PressureCounts>, ReturnType<typeof classifyPause>]>([
     ["the thread ran user code most of the window", { mainUserMs: 1500 }, "running"],
     ["it waited on the run queue most of the window", { mainRunqWaitMs: 1200 }, "cpu"],
-    ["many major faults with swap-ins", { ...faulting, pswpin: 280 }, "swap-in"],
-    ["many major faults with file refaults", { ...faulting, workingsetRefaultFile: 90 }, "disk"],
-    ["many major faults under I/O pressure", { ...faulting, ioSomeMs: 400 }, "disk"],
-    ["many major faults with no swap or disk sign", faulting, "reclaim"],
     [
-      "few faults but kernel time most of the window",
-      { mainSystemMs: 1490, memorySomeMs: 421 },
-      "reclaim",
+      "many major faults, nearly all the unit's, each matched by a swap-in",
+      { ...faulting, pgmajfault: 310, pswpin: 300 },
+      "swap-in",
     ],
     [
-      "few faults but memory pressure over a quarter of the window",
-      { memorySomeMs: 900 },
-      "reclaim",
+      "many major faults while nothing in the unit came from swap",
+      { ...faulting, pgmajfault: 300 },
+      "disk",
     ],
-    ["few faults and no pressure: a wait of its own", {}, "blocked"],
-    ["main thread stat unreadable", { mainMajflt: null }, null],
+    [
+      "swap-ins in the unit, but other tasks made half its major faults",
+      { ...faulting, pgmajfault: 600, pswpin: 300 },
+      null,
+    ],
+    [
+      "memory.stat not yet flushed: fewer unit faults than main-thread faults",
+      { ...faulting, pgmajfault: 120 },
+      null,
+    ],
     ["many faults and memory.stat unreadable", { ...faulting, pswpin: null }, null],
-    ["few faults and memory.pressure unreadable", { memorySomeMs: null }, null],
+    [
+      "kernel time most of the window, the unit stalled on memory for most of it",
+      { mainSystemMs: 1200, memorySomeMs: 900 },
+      "reclaim",
+    ],
+    [
+      "kernel time most of the window, memory stall under half of it",
+      { mainSystemMs: 1490, memorySomeMs: 421 },
+      "kernel",
+    ],
+    [
+      "kernel time most of the window and memory.pressure unreadable",
+      { mainSystemMs: 1490, memorySomeMs: null },
+      null,
+    ],
+    ["off CPU most of the window: a wait of its own", {}, "blocked"],
+    ["off CPU most of the window, memory.pressure unreadable", { memorySomeMs: null }, "blocked"],
+    ["main thread stat unreadable", { mainMajflt: null }, null],
   ])("%s", (_label, change, cause) => {
     expect(classifyPause({ ...quiet, ...change }, 2000)).toBe(cause);
+  });
+
+  it.each<[string, Partial<PressureCounts>, ReturnType<typeof classifyPause>]>([
+    [
+      "3a, a readSync loop on /dev/zero",
+      { mainUserMs: 250, mainSystemMs: 1460, mainRunqWaitMs: 20 },
+      "kernel",
+    ],
+  ])("Verifier 2 %s, window 1752 ms", (_label, change, cause) => {
+    expect(classifyPause({ ...quiet, ...change }, 1752)).toBe(cause);
+  });
+
+  it.each<[string, Partial<PressureCounts>, ReturnType<typeof classifyPause>]>([
+    ["3c, user code and run-queue wait", { mainUserMs: 450, mainRunqWaitMs: 450 }, null],
+    ["3d, user and kernel time, no pressure", { mainUserMs: 400, mainSystemMs: 450 }, null],
+    [
+      "3e, file faults on the main thread, one swap-in elsewhere",
+      { mainMajflt: 60, pgmajfault: 61, pswpin: 1 },
+      null,
+    ],
+    [
+      "3f, main thread in fsync, a child stalled on memory",
+      { mainUserMs: 20, mainSystemMs: 10, mainRunqWaitMs: 30, memorySomeMs: 300 },
+      "blocked",
+    ],
+  ])("Verifier 2 %s, window 1000 ms", (_label, change, cause) => {
+    expect(classifyPause({ ...quiet, ...change }, 1000)).toBe(cause);
   });
 
   it("gives no verdict for an empty window", () => {

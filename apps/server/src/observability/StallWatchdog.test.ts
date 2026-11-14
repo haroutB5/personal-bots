@@ -25,7 +25,7 @@ const block = process.argv[4];
 const got = [];
 const watchdog = startStallWatchdog({
   profilerMode: stallProfilerModeFromEnv(process.argv[3]),
-  thresholdMs: 800,
+  thresholdMs: Number(process.argv[5]),
   onStall: (stall) => got.push(stall),
   onError: (message) => console.error("watchdog error", message),
 });
@@ -36,6 +36,14 @@ function spinInJavaScript(ms) {
   let sum = 0;
   while (Date.now() < end) sum += Math.sqrt(sum + 1);
   return sum;
+}
+function readDevZero(ms) {
+  const fs = globalThis.require("node:fs");
+  const fd = fs.openSync("/dev/zero", "r");
+  const buffer = Buffer.alloc(1 << 20);
+  const end = Date.now() + ms;
+  while (Date.now() < end) fs.readSync(fd, buffer, 0, buffer.length, null);
+  fs.closeSync(fd);
 }
 function waitInNativeCode(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -48,10 +56,13 @@ function runSlowQuery() {
 }
 
 await sleep(1500);
+globalThis.require = (await import("node:module")).createRequire(import.meta.url);
 const startedAt = Date.now();
 if (block === "js") spinInJavaScript(2500);
+else if (block === "js-1150") spinInJavaScript(1150);
+else if (block === "dev-zero") readDevZero(2500);
 else if (block === "native") waitInNativeCode(2500);
-else if (block === "sqlite") { globalThis.require = (await import("node:module")).createRequire(import.meta.url); runSlowQuery(); }
+else if (block === "sqlite") runSlowQuery();
 const blockedMs = Date.now() - startedAt;
 await sleep(2500);
 await watchdog.stop();
@@ -71,24 +82,23 @@ afterAll(async () => {
   await NodeFSP.rm(dir, { recursive: true, force: true });
 });
 
-const run = (mode: string, block: string) =>
+const run = (mode: string, block: string, thresholdMs = 800) =>
   new Promise<{ blockedMs: number; stalls: ReadonlyArray<WatchdogStall> }>((resolve, reject) => {
     const child = NodeChildProcess.spawn(
       process.execPath,
-      [harnessPath, watchdogUrl, mode, block],
-      { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, T3CODE_STALL_RECORDER: "on" } },
+      [harnessPath, watchdogUrl, mode, block, String(thresholdMs)],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, T3CODE_STALL_RECORDER: "on" },
+        timeout: 60_000,
+      },
     );
     let out = "";
     let err = "";
     child.stdout.on("data", (chunk) => (out += chunk));
     child.stderr.on("data", (chunk) => (err += chunk));
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error(`harness timed out: ${err}`));
-    }, 60_000);
-    child.on("exit", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) reject(new Error(`harness exit ${code}: ${err}`));
+    child.on("exit", (code, signal) => {
+      if (code !== 0) reject(new Error(`harness exit ${code ?? signal}: ${err}`));
       else resolve(JSON.parse(out.trim().split("\n").pop()!));
     });
   });
@@ -104,10 +114,10 @@ describe("StallWatchdog", () => {
     expect(stall!.cpuUserMs + stall!.cpuSystemMs).toBeGreaterThan(1500);
     expect(stall!.profilerError).toBeNull();
     if (HostProcess.Platform.defaultValue() === "linux") {
-      expect(stall!.pressure.cause).toBe("running");
-      expect(stall!.pressure.mainUserMs).toBeGreaterThan(stall!.pressure.windowMs! / 2);
+      expect(stall!.pressure.coveredMs).toBeGreaterThan(1000);
+      expect(["running", "cpu", null]).toContain(stall!.pressure.cause);
     }
-  }, 70_000);
+  });
 
   it("still profiles a stall when the profiler only starts once it is detected", async () => {
     // Functions that were already running are not named in this mode, which is why
@@ -116,7 +126,7 @@ describe("StallWatchdog", () => {
     expect(stalls).toHaveLength(1);
     expect(stalls[0]!.summary!.windowMs).toBeGreaterThan(500);
     expect(stalls[0]!.profileStartLatencyMs).toBeLessThan(500);
-  }, 70_000);
+  });
 
   it("names the caller of a blocking native call", async () => {
     const { stalls } = await run("continuous", "native");
@@ -126,9 +136,28 @@ describe("StallWatchdog", () => {
       const { pressure } = stalls[0]!;
       expect(pressure.windowMs).toBeGreaterThan(500);
       expect(pressure.mainUserMs).toBeLessThan(pressure.windowMs! / 4);
-      expect(pressure.cause).not.toBe("running");
+      expect(pressure.cause).toBe("blocked");
     }
-  }, 70_000);
+  });
+
+  it("does not call kernel time reclaim without a memory stall (Verifier 2, 3a)", async () => {
+    const { stalls } = await run("continuous", "dev-zero");
+    expect(stalls).toHaveLength(1);
+    const { pressure } = stalls[0]!;
+    if (HostProcess.Platform.defaultValue() === "linux") {
+      expect(pressure.memorySomeMs).toBeLessThan(pressure.mainSystemMs! / 2);
+      expect(["kernel", "cpu", null]).toContain(pressure.cause);
+    }
+  });
+
+  it("never calls a short JavaScript spin blocked (Verifier 2, 3b)", async () => {
+    const { blockedMs, stalls } = await run("continuous", "js-1150", 1000);
+    expect(blockedMs).toBeGreaterThanOrEqual(1150);
+    expect(stalls.length).toBeLessThanOrEqual(1);
+    if (HostProcess.Platform.defaultValue() === "linux") {
+      for (const stall of stalls) expect(["running", "cpu", null]).toContain(stall.pressure.cause);
+    }
+  });
 
   it("sees inside a long synchronous SQLite statement with the continuous profiler", async () => {
     const { blockedMs, stalls } = await run("continuous", "sqlite");
@@ -136,17 +165,17 @@ describe("StallWatchdog", () => {
     expect(stalls.length).toBeGreaterThanOrEqual(1);
     const frames = stalls.flatMap((stall) => stall.summary?.topSelf.map((f) => f.frame) ?? []);
     expect(frames.join("\n")).toContain("runSlowQuery");
-  }, 70_000);
+  });
 
   it("reports nothing and exits cleanly when the loop is healthy", async () => {
     const { stalls } = await run("continuous", "none");
     expect(stalls).toEqual([]);
-  }, 70_000);
+  });
 
   it("runs without a profiler when switched off", async () => {
     const { stalls } = await run("off", "js");
     expect(stalls).toHaveLength(1);
     expect(stalls[0]!.summary).toBeNull();
     expect(stalls[0]!.durationMs).toBeGreaterThan(1800);
-  }, 70_000);
+  });
 });
