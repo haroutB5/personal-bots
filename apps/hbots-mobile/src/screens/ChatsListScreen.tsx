@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { isChatArchived } from "@hbots/personal-client/bots/chatState";
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
 import { conversationChatTitle } from "@hbots/personal-client/feed/chatNames";
 
@@ -88,10 +89,10 @@ export function ChatsListScreen({
     if (list.data === null) return [];
     const byId = new Map(shells.map((shell) => [shell.id as string, shell] as const));
     return list.data.threads
-      .filter((link) => link.botId === botId && link.archivedAt === null)
+      .filter((link) => link.botId === botId)
       .flatMap((link) => {
         const shell = byId.get(link.threadId);
-        if (shell === undefined) return [];
+        if (shell === undefined || isChatArchived(link, shell)) return [];
         return [{ link, shell, unread: link.unread === true }];
       })
       .sort((left, right) => {

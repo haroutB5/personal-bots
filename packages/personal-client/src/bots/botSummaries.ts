@@ -24,7 +24,7 @@ import {
 } from "../conversation/conversationModel.ts";
 import { botActiveModelLabel, botActiveModelShortLabel } from "./botModelLabel.ts";
 import { chatActivityMs, chatActivityMsUncached } from "./chatActivity.ts";
-import { isChatSnoozed } from "./chatState.ts";
+import { isChatArchived, isChatSnoozed } from "./chatState.ts";
 import type { PerfOptimization } from "../perf/perfFlags.ts";
 import { routineNextRunLabel } from "../conversation/taskPresentation.ts";
 
@@ -429,7 +429,7 @@ export function buildBotSummaries(input: {
     const shell = shellsById.get(link.threadId);
     if (shell === undefined) continue;
     push(busyShellsByBot, link.botId, shell);
-    if (link.archivedAt !== null || shell.archivedAt !== null) continue;
+    if (isChatArchived(link, shell)) continue;
     if (isChatSnoozed(link, nowMs)) continue;
     push(shellsByBot, link.botId, shell);
   }

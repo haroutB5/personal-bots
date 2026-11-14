@@ -4,7 +4,7 @@ import type { PersonalBotThread } from "@t3tools/contracts";
 import { isThreadLive, isThreadRateLimited } from "./botSummaries";
 import { chatActivityMs } from "./chatActivity";
 import { type ChatChipKind, type ChatChipState, chatChipState, stateWords } from "./chatChipRows";
-import { isChatPinned, snoozeEndMs, whenWords } from "./chatState";
+import { isChatArchived, isChatPinned, snoozeEndMs, whenWords } from "./chatState";
 import { conversationChatTitle } from "./ConversationHeaderName";
 import { formatRelativeTime } from "./relativeTime";
 
@@ -67,7 +67,7 @@ export function buildChatSettingsTarget(input: {
 }): ChatSettingsTarget {
   const isOpenChat = input.threadId === input.currentThreadId;
   const { link, shell } = input;
-  const archived = link.archivedAt !== null || shell.archivedAt !== null;
+  const archived = isChatArchived(link, shell);
   const state = chatChipState({
     shell,
     waiting: input.waitingLabel !== null,

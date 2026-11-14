@@ -558,6 +558,17 @@ const make = Effect.gen(function* () {
       });
     }).pipe(Effect.mapError(engineError("archive")));
 
+  // A fresh command id each time: a chat can be archived and unarchived again,
+  // and a repeated id would replay the first receipt.
+  const unarchive = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
+    threads
+      .dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make(`personal-engine:thread.unarchive:${crypto.randomUUID()}`),
+        threadId,
+      })
+      .pipe(Effect.asVoid, Effect.mapError(engineError("unarchive")));
+
   const deleteThread = (threadId: ThreadId): Effect.Effect<void, PersonalEngineError> =>
     Effect.gen(function* () {
       yield* threads.dispatch({
@@ -1168,6 +1179,7 @@ const make = Effect.gen(function* () {
     cancelQueuedMessages,
     stop,
     archive,
+    unarchive,
     deleteThread,
     updateMeta,
     renameThreadIfUnchanged,

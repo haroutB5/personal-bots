@@ -426,6 +426,7 @@ const makeEngine = (harness: Harness) =>
         Effect.sync(() => {
           harness.calls.push({ type: "archive", threadId });
         }),
+      unarchive: () => Effect.void,
       deleteThread: (threadId) =>
         Effect.sync(() => {
           harness.calls.push({ type: "deleteThread", threadId });

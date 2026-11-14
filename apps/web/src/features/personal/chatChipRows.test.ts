@@ -384,7 +384,11 @@ describe("chat chip list: the temporary chip", () => {
   it("puts a chat archived on its thread only first as Archived while it is open", () => {
     // t3_thread_organize archived the thread; the phone's link still says open.
     const links = [link("a", 10), link("b", 20), link("swept", 30)];
-    const shells = [shell("a"), shell("b"), shell("swept", { archivedAt: "2026-10-01T11:00:00Z" })];
+    const shells = [
+      activeAt("a", 12),
+      activeAt("b", 40),
+      shell("swept", { archivedAt: "2026-10-01T11:00:00Z" }),
+    ];
     const model = build({ links, shells, current: "swept" });
     expect(model.chips[0]).toMatchObject({
       threadId: "swept",

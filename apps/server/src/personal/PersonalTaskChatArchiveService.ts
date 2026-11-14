@@ -18,6 +18,7 @@ import * as PersonalBotService from "./PersonalBotService.ts";
 import { unarchivedChatTitle, withChatTitleLock } from "./personalChatTitles.ts";
 import {
   archivedBusyChatsSql,
+  chatArchiveStateSql,
   decideTaskChatArchive,
   TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
   taskChatAutoArchiveCandidatesSql,
@@ -46,7 +47,8 @@ import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelation
  * restart just runs the next sweep. One log line per sweep.
  *
  * The other direction: a chat that gets a new turn is unarchived (link
- * `archived_at` and `auto_archived_at` cleared), so a reopened or steered
+ * `archived_at` and `auto_archived_at` cleared, and the thread too when a T3
+ * archive set it), so a reopened or steered
  * task, a routine run or the owner's message is never working out of sight
  * (QA's reopened bug hunt ran for an hour in an archived chat while its row
  * said Ready). One place covers every source: the turn-start event. Each
@@ -157,8 +159,16 @@ export const make = Effect.gen(function* () {
   const unarchiveForTurn: PersonalTaskChatArchiveShape["unarchiveForTurn"] = (threadId) =>
     Effect.gen(function* () {
       // Every turn start lands here; only an archived chat has anything to do.
-      const link = yield* repository.getThreadLink({ threadId });
-      if (Option.isNone(link) || link.value.archivedAt === null) return false;
+      // Archived is either flag: a T3 archive sets the thread as well as the
+      // link, and the apps hide the chat while either is set (isChatArchived).
+      const [state] = yield* sql.unsafe<{
+        readonly linkArchived: number | boolean;
+        readonly threadArchived: number | boolean | null;
+        readonly groupRelay: number | boolean;
+      }>(chatArchiveStateSql(rel), [threadId]);
+      if (state === undefined || Boolean(state.groupRelay)) return false;
+      const threadArchived = Boolean(state.threadArchived);
+      if (!Boolean(state.linkArchived) && !threadArchived) return false;
       return yield* withChatTitleLock(
         Effect.gen(function* () {
           // Another open chat of the bot may have taken the name while this one
@@ -180,10 +190,13 @@ export const make = Effect.gen(function* () {
               )
             RETURNING thread_id AS "threadId"
           `;
-          if (rows.length === 0) return false;
+          // After the link: the ThreadUnarchived sync then finds it open and does nothing.
+          if (threadArchived) yield* engine.unarchive(threadId);
+          if (rows.length === 0 && !threadArchived) return false;
           yield* Effect.logInfo("personal chat unarchived: a turn started in it", {
             threadId,
             renamed: renamedTo !== null,
+            thread: threadArchived,
           });
           return true;
         }),

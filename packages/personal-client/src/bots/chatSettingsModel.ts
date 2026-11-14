@@ -9,7 +9,7 @@ import {
   chatChipState,
   stateWords,
 } from "./chatChipRows.ts";
-import { isChatPinned, snoozeEndMs, whenWords } from "./chatState.ts";
+import { isChatArchived, isChatPinned, snoozeEndMs, whenWords } from "./chatState.ts";
 import { conversationChatTitle } from "../feed/chatNames.ts";
 import { formatRelativeTime } from "./relativeTime.ts";
 
@@ -72,7 +72,7 @@ export function buildChatSettingsTarget(input: {
 }): ChatSettingsTarget {
   const isOpenChat = input.threadId === input.currentThreadId;
   const { link, shell } = input;
-  const archived = link.archivedAt !== null || shell.archivedAt !== null;
+  const archived = isChatArchived(link, shell);
   const state = chatChipState({
     shell,
     waiting: input.waitingLabel !== null,

@@ -15,6 +15,18 @@ export interface ChatStateFields {
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 
+/**
+ * The one archive rule for chips, chat lists, sheets and unread dots: the link
+ * or the thread. A T3 archive (t3_thread_organize) sets the thread first, and
+ * that reaches the phone live while its link list waits for a refresh.
+ */
+export function isChatArchived(
+  link: { readonly archivedAt: DateTime.Utc | null } | null | undefined,
+  shell: { readonly archivedAt?: string | null | undefined } | null | undefined,
+): boolean {
+  return (link?.archivedAt ?? null) !== null || (shell?.archivedAt ?? null) !== null;
+}
+
 export function isChatPinned(item: Pick<ChatStateFields, "pinnedAt">): boolean {
   return item.pinnedAt !== undefined && item.pinnedAt !== null;
 }
