@@ -271,6 +271,29 @@ describe("chat chip list: which chats get a chip", () => {
     expect(done.chips.map((chip) => chip.threadId)).toEqual(["b", "a"]);
   });
 
+  it("never shows an archived routine chat, even with its run still queued", () => {
+    // The owner archived it (or the run archived itself): the Tasks screen shows the run.
+    const links = [
+      link("a", 10),
+      link("b", 20),
+      link("thread-only", 25),
+      link("link-only", 26, { archivedAt: at(40) }),
+    ];
+    const shells = [
+      activeAt("a", 12),
+      activeAt("b", 40),
+      shell("thread-only", { archivedAt: "2026-10-01T10:41:00.000Z" }),
+      shell("link-only"),
+    ];
+    const model = build({
+      links,
+      shells,
+      tasks: [task("r1", "thread-only", 24, "queued"), task("r2", "link-only", 25, "running")],
+      current: "a",
+    });
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(["b", "a"]);
+  });
+
   it("is the order of the All chats list, task chats the owner used included", () => {
     const links = [link("a", 10), link("b", 20), ownedAt("task-chat", 25, 45), link("c", 30)];
     const shells = [
@@ -356,6 +379,25 @@ describe("chat chip list: the temporary chip", () => {
       text: "Archived · Chat gone",
     });
     expect(model.openCount).toBe(2);
+  });
+
+  it("puts a chat archived on its thread only first as Archived while it is open", () => {
+    // t3_thread_organize archived the thread; the phone's link still says open.
+    const links = [link("a", 10), link("b", 20), link("swept", 30)];
+    const shells = [shell("a"), shell("b"), shell("swept", { archivedAt: "2026-10-01T11:00:00Z" })];
+    const model = build({ links, shells, current: "swept" });
+    expect(model.chips[0]).toMatchObject({
+      threadId: "swept",
+      kind: "archived",
+      current: true,
+      text: "Archived · Chat swept",
+    });
+    expect(model.openCount).toBe(2);
+    // Switched away: no chip at all.
+    expect(build({ links, shells, current: "a" }).chips.map((chip) => chip.threadId)).toEqual([
+      "b",
+      "a",
+    ]);
   });
 
   it("puts a routine run chat first (a routine's task made it)", () => {
