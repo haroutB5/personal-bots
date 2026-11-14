@@ -16,7 +16,6 @@ import {
 import {
   PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS,
   PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS,
-  PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES,
   PERSONAL_TASKS_RENEWAL_WAIT_MS,
   classifyProviderError,
   consecutiveRateLimited,
@@ -127,10 +126,20 @@ describe("limit policy", () => {
   });
 
   it("backs off 1, 5 and 15 minutes and then gives up", () => {
-    expect(PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES).toEqual([1, 5, 15]);
-    expect([1, 2, 3].map(rateLimitBackoffMinutes)).toEqual([1, 5, 15]);
-    expect(rateLimitBackoffMinutes(4)).toBeUndefined();
-    expect(rateLimitBackoffMinutes(0)).toBeUndefined();
+    const limited = (consecutive: number) =>
+      rateLimitBackoffMinutes({ consecutive, usageLimit: false, limitedForMs: 0 });
+    expect([1, 2, 3].map(limited)).toEqual([1, 5, 15]);
+    expect(limited(4)).toBeUndefined();
+    expect(limited(0)).toBeUndefined();
+  });
+
+  it("keeps a usage limit on a 30 minute retry until it outlasts a weekly window", () => {
+    const usage = (consecutive: number, limitedForMs: number) =>
+      rateLimitBackoffMinutes({ consecutive, usageLimit: true, limitedForMs });
+    expect([1, 2, 3].map((n) => usage(n, 0))).toEqual([1, 5, 15]);
+    expect(usage(4, 21 * 60_000)).toBe(30);
+    expect(usage(40, 6 * 24 * 60 * 60_000)).toBe(30);
+    expect(usage(400, 7 * 24 * 60 * 60_000)).toBeUndefined();
   });
 
   it("runs at once after a model fallback, uses a reset still ahead, and otherwise defers to the backoff", () => {
@@ -139,7 +148,7 @@ describe("limit policy", () => {
     ).toEqual({ kind: "run_now" });
     expect(
       immediateRateLimitRetry({ fallbackSwitched: false, reportedResetMs: NOW + 1, nowMs: NOW }),
-    ).toEqual({ kind: "at", availableAtMs: NOW + 1 });
+    ).toEqual({ kind: "at", availableAtMs: NOW + 1 + 60_000 });
     expect(
       immediateRateLimitRetry({ fallbackSwitched: false, reportedResetMs: NOW, nowMs: NOW }),
     ).toBeNull();
@@ -222,6 +231,30 @@ describe("limit policy", () => {
         category: "rate_limited",
         limit: { provider: "codex", reason: "5h window", retryAt: resetAt },
         resetAtMs: NOW + 3_600_000,
+        usageLimit: true,
+      });
+    });
+
+    it("takes a usage limit the session's failed turn names, with its reset, without waiting", () => {
+      const limited = {
+        ...base,
+        lastError: "Claude API rate limit reached. Try again later.",
+        activeTurnId: "turn-1",
+      };
+      expect(
+        settleSessionError({ ...limited, usageLimit: { resetAt: iso(NOW + 3_600_000) } }),
+      ).toEqual({
+        kind: "finish",
+        clearRenewalWait: false,
+        category: "rate_limited",
+        resetAtMs: NOW + 3_600_000,
+        usageLimit: true,
+      });
+      expect(settleSessionError({ ...limited, usageLimit: {} })).toEqual({
+        kind: "finish",
+        clearRenewalWait: false,
+        category: "rate_limited",
+        usageLimit: true,
       });
     });
 

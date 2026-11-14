@@ -209,6 +209,12 @@ const toSessionView = (session: OrchestrationSession): PersonalEngine.PersonalSe
             ? {}
             : { reason: session.providerRetry.reason }),
         },
+  ...(session.usageLimit === undefined
+    ? {}
+    : {
+        usageLimit:
+          session.usageLimit.resetAt === undefined ? {} : { resetAt: session.usageLimit.resetAt },
+      }),
   updatedAt: session.updatedAt,
 });
 
@@ -601,6 +607,7 @@ const makeSession = (input: {
   readonly activeTurnId: TurnId | null;
   readonly lastError?: string;
   readonly providerRetry?: OrchestrationSession["providerRetry"];
+  readonly usageLimit?: OrchestrationSession["usageLimit"];
   readonly providerInstanceId?: string;
   readonly updatedAt: string;
 }): OrchestrationSession => ({
@@ -614,6 +621,7 @@ const makeSession = (input: {
   activeTurnId: input.activeTurnId,
   lastError: input.lastError ?? null,
   ...(input.providerRetry !== undefined ? { providerRetry: input.providerRetry } : {}),
+  ...(input.usageLimit !== undefined ? { usageLimit: input.usageLimit } : {}),
   updatedAt: input.updatedAt,
 });
 
@@ -675,6 +683,7 @@ const endTurn = (
     readonly status?: OrchestrationSession["status"];
     readonly lastError?: string;
     readonly providerRetry?: OrchestrationSession["providerRetry"];
+    readonly usageLimit?: OrchestrationSession["usageLimit"];
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -700,6 +709,7 @@ const endTurn = (
         activeTurnId: null,
         ...(end.lastError === undefined ? {} : { lastError: end.lastError }),
         ...(end.providerRetry === undefined ? {} : { providerRetry: end.providerRetry }),
+        ...(end.usageLimit === undefined ? {} : { usageLimit: end.usageLimit }),
         updatedAt: now,
       }),
     );
@@ -713,6 +723,7 @@ const runTurn = (
     readonly status?: OrchestrationSession["status"];
     readonly lastError?: string;
     readonly providerRetry?: OrchestrationSession["providerRetry"];
+    readonly usageLimit?: OrchestrationSession["usageLimit"];
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -1725,6 +1736,93 @@ it.effect("rate limits back off 1m, 5m, 15m and then fail the task", () => {
     const failed = yield* reload(root.taskId);
     expect([failed.status, failed.errorCategory]).toEqual(["failed", "rate_limited"]);
     expect((yield* service.get({ taskId: root.taskId })).attempts.length).toBe(4);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+/** The turn the 14 Nov tasks ended on: Claude's own text, the adapter's error, the reset it read. */
+const FIVE_HOUR_LIMIT_REPLY = "You've hit your 5-hour limit · resets 5:50am (Europe/London)";
+const CLAUDE_LIMIT_ERROR = "Claude API rate limit reached. Try again later.";
+
+it.effect("a task stopped by a 5-hour limit waits for the reset, across a restart, then runs", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-tasks-db-" });
+    const dbPath = path.join(directory, "state.sqlite");
+    yield* TestClock.setTime(Date.parse("2026-11-14T02:36:01.000Z"));
+    const before = makeHarness();
+    const taskId = yield* Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("five-hour-limit");
+      const limited = {
+        status: "error" as const,
+        lastError: CLAUDE_LIMIT_ERROR,
+        usageLimit: { resetAt: "2026-11-14T05:50:00.000Z" },
+      };
+      yield* runTurn(before, threadOf(root), FIVE_HOUR_LIMIT_REPLY, limited);
+      const waiting = yield* reload(root.taskId);
+      expect([waiting.status, waiting.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
+      expect(DateTime.formatIso(waiting.availableAt!)).toBe("2026-11-14T05:51:00.000Z");
+      expect(waiting.errorMessage).toBe(
+        "Usage limit reached. The task runs again by itself just after the limit resets.",
+      );
+      // An hour of sweeps changes nothing: the wait is the reset, not a guessed backoff.
+      for (let minute = 0; minute < 60; minute += 1) {
+        yield* TestClock.adjust("1 minute");
+        yield* service.sweep;
+        yield* service.drain;
+      }
+      expect((yield* reload(root.taskId)).status).toBe("rate_limited");
+      return root.taskId;
+    }).pipe(Effect.provide(makeLayer(before, dbPath)));
+
+    // The server restarts while the task waits: the wait lives in the task row.
+    const after = makeHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      yield* TestClock.setTime(Date.parse("2026-11-14T05:50:30.000Z"));
+      yield* service.sweep;
+      yield* service.drain;
+      expect((yield* reload(taskId)).status).toBe("rate_limited");
+      expect(turnStarts(after)).toEqual([]);
+
+      yield* TestClock.setTime(Date.parse("2026-11-14T05:51:00.000Z"));
+      yield* service.sweep;
+      yield* service.drain;
+      expect((yield* reload(taskId)).status).toBe("running");
+      expect(turnStarts(after).length).toBe(1);
+    }).pipe(Effect.provide(makeLayer(after, dbPath)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a usage limit with no reported reset keeps retrying every 30 minutes", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("limit-no-reset");
+    const thread = threadOf(root);
+    const limited = { status: "error" as const, lastError: CLAUDE_LIMIT_ERROR, usageLimit: {} };
+
+    // The first three waits are the short backoff, then the task never runs out of tries.
+    for (const minutes of [1, 5, 15, 30, 30, 30]) {
+      yield* runTurn(harness, thread, FIVE_HOUR_LIMIT_REPLY, limited);
+      const waiting = yield* reload(root.taskId);
+      expect(waiting.status).toBe("rate_limited");
+      expect(waiting.errorMessage).toBe(
+        "Usage limit reached. The provider did not say when it resets, so the task tries again by itself at the time shown.",
+      );
+      const now = yield* DateTime.now;
+      expect(DateTime.toEpochMillis(waiting.availableAt!) - DateTime.toEpochMillis(now)).toBe(
+        minutes * 60_000,
+      );
+      yield* TestClock.adjust(`${minutes} minutes`);
+      yield* service.sweep;
+      yield* service.drain;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+    }
+    expect((yield* service.get({ taskId: root.taskId })).attempts.length).toBe(7);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

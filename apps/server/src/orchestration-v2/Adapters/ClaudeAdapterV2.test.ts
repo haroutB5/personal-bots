@@ -7431,6 +7431,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("reads the reset a 5-hour limit names only in its text", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-14T02:36:01.000Z"));
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-five-hour-text"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const text = "You've hit your 5-hour limit · resets 5:50am (Europe/London)";
+      yield* Queue.offerAll(harness.sdkMessages, [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "<synthetic>",
+            id: "00000000-0000-4000-8000-000000000690",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text }],
+            stop_reason: "stop_sequence",
+            stop_sequence: "",
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+          parent_tool_use_id: null,
+          error: "rate_limit",
+          uuid: "00000000-0000-4000-8000-000000000690",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000691",
+          result: text,
+          terminalReason: "api_error",
+          isError: true,
+          apiErrorStatus: 429,
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(terminal.failure.message, "Claude API rate limit reached. Try again later.");
+      assert.equal(terminal.failure.resetAt, "2026-11-14T05:50:00.000Z");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       name: "an unflagged result with surrounding whitespace",
