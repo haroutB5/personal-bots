@@ -158,7 +158,7 @@ function streamedWindow(
   resetsAt: string | undefined,
   names: ClaudeScopedLimitNames,
 ): ServerProviderUsageWindow | undefined {
-  if (type in WINDOWS) return makeWindow(type, usedPercent, resetsAt);
+  if (Object.hasOwn(WINDOWS, type)) return makeWindow(type, usedPercent, resetsAt);
   if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
     return scopedWindow(names.overageIncluded, usedPercent, resetsAt);
   }
@@ -203,11 +203,16 @@ function readUnifiedWindows(
   return windows;
 }
 
-/** Stream utilization is 0-1. Drop unnamed overage buckets until probed to avoid unreconcilable rows. */
+/**
+ * Stream utilization is 0-1. Drop unnamed overage buckets until probed to avoid unreconcilable rows.
+ * An event a request produced names the window that decided it. Before a turn's init the CLI
+ * resends its cached last event without one, and that older reading must not replace newer ones.
+ */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  if (info.rateLimitType === undefined) return undefined;
   const unifiedWindows = readUnifiedWindows(info, names);
   if (unifiedWindows.length > 0) {
     return { windows: unifiedWindows };
