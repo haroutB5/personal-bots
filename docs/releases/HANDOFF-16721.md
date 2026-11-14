@@ -38,3 +38,19 @@ Binary only. The previous release is `a72547da6f6c` (1.67.20). No schema change,
 - The server no longer freezes when heavy jobs fill memory.
 - Each freeze now records its cause.
 - A task stopped by a usage limit pauses and carries on by itself after the reset.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=2d2b07cb93c67a2a9c24ce5df8dcb19cb003b9ca release=2d2b07cb93c6 json-sha256=73b2ff2bbbeff31d421e269ee751a52dc8c7c568e8053e0c1922322f7c0abdf1 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
