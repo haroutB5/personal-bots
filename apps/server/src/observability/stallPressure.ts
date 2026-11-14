@@ -1,7 +1,8 @@
 /**
- * What the OS did to the main thread during a stall, as deltas between the stall's
- * detection and its end. A file that could not be read or parsed gives null fields,
- * never a throw: the watchdog must keep running on any host.
+ * What the OS did to the main thread during a stall, as deltas between a reading taken
+ * once the heartbeat looked late and one taken after the stall ended. A file that could
+ * not be read or parsed gives null fields, never a throw: the watchdog must keep running
+ * on any host.
  */
 
 /** Raw text of the files read at one moment. Null where the read failed. */
@@ -15,7 +16,7 @@ export interface PressureFiles {
   readonly cpuPressure: string | null;
 }
 
-export type PauseCause = "running" | "cpu" | "swap-in" | "disk" | "reclaim" | "blocked";
+export type PauseCause = "running" | "cpu" | "swap-in" | "disk" | "reclaim" | "kernel" | "blocked";
 
 const COUNTERS = [
   "mainMajflt",
@@ -39,10 +40,18 @@ export type PressureCounts = { readonly [K in Counter]: number | null };
 type RawCounts = PressureCounts;
 
 export type StallPressure = PressureCounts & {
-  /** Span the deltas cover: from the stall's detection to its end. */
+  /** Span the deltas cover, from the first reading to the last. */
   readonly windowMs: number | null;
+  /** How much of that span the main thread was stalled. */
+  readonly coveredMs: number | null;
   readonly cause: PauseCause | null;
 };
+
+/** When the main thread ran again, and how long it had been stalled. */
+export interface StallTiming {
+  readonly endedAt: number;
+  readonly durationMs: number;
+}
 
 /** /proc reports CPU time in USER_HZ ticks, which Linux fixes at 100 per second. */
 const MS_PER_TICK = 10;
@@ -122,13 +131,14 @@ const parsePressureFiles = (files: PressureFiles): RawCounts => ({
 });
 
 /**
- * The FINDINGS 8A rule, plus "running" (user code, not a pause) and "blocked" (a wait of
- * its own, no OS sign). Kernel time counts as reclaim: an allocation stall measured
- * 1490 of 1752 ms system time with memory pressure under a quarter of the window.
+ * The FINDINGS 8A rule, held to evidence about the main thread itself. The task stat and
+ * schedstat are the main thread's own; memory.stat and the pressure files cover the
+ * whole unit, so they only refine a verdict the main thread's numbers already point to.
+ * Anything weaker gives null: a wrong label is worse than none.
  */
 export const classifyPause = (delta: PressureCounts, windowMs: number): PauseCause | null => {
   if (windowMs <= 0) return null;
-  const { mainUserMs, mainSystemMs, mainRunqWaitMs, mainMajflt, pswpin } = delta;
+  const { mainUserMs, mainSystemMs, mainRunqWaitMs, mainMajflt } = delta;
   if (
     mainUserMs === null ||
     mainSystemMs === null ||
@@ -140,19 +150,38 @@ export const classifyPause = (delta: PressureCounts, windowMs: number): PauseCau
   const half = windowMs / 2;
   if (mainUserMs >= half) return "running";
   if (mainRunqWaitMs >= half) return "cpu";
-  if (mainMajflt >= LARGE_MAJFLT) {
-    if (pswpin === null) return null;
-    if (pswpin > 0) return "swap-in";
-    const { workingsetRefaultFile: refaults, ioSomeMs } = delta;
-    if (refaults === null && ioSomeMs === null) return null;
-    return (refaults ?? 0) > 0 || (ioSomeMs ?? 0) > 0 ? "disk" : "reclaim";
+  if (mainMajflt >= LARGE_MAJFLT) return faultSource(delta, mainMajflt);
+  if (mainSystemMs >= half) {
+    if (delta.memorySomeMs === null) return null;
+    return delta.memorySomeMs >= mainSystemMs / 2 ? "reclaim" : "kernel";
   }
-  if (mainSystemMs >= half) return "reclaim";
-  if (delta.memorySomeMs === null) return null;
-  return delta.memorySomeMs >= windowMs / 4 ? "reclaim" : "blocked";
+  const offCpuMs = windowMs - mainUserMs - mainSystemMs - mainRunqWaitMs;
+  return offCpuMs > half ? "blocked" : null;
 };
 
-export const measureStallPressure = (start: PressureFiles, end: PressureFiles): StallPressure => {
+/**
+ * Swap or file, for main-thread major faults. memory.stat may lag until the kernel
+ * flushes it, so it must show at least the main thread's faults to be trusted. Its swap
+ * count can be pinned to the main thread only when that thread made nearly all of the
+ * unit's major faults.
+ */
+const faultSource = (delta: PressureCounts, mainMajflt: number): PauseCause | null => {
+  const { pswpin, pgmajfault } = delta;
+  if (pswpin === null || pgmajfault === null || pgmajfault < mainMajflt) return null;
+  if (pswpin === 0) return "disk";
+  const otherMajflt = pgmajfault - mainMajflt;
+  return pswpin >= mainMajflt && otherMajflt * 10 <= mainMajflt ? "swap-in" : null;
+};
+
+/**
+ * The verdict needs the window to be mostly stall, and to see most of the stall: idle
+ * time after a short stall would otherwise read as a wait.
+ */
+export const measureStallPressure = (
+  start: PressureFiles,
+  end: PressureFiles,
+  stall: StallTiming,
+): StallPressure => {
   const before = parsePressureFiles(start);
   const after = parsePressureFiles(end);
   const delta = Object.fromEntries(
@@ -163,5 +192,11 @@ export const measureStallPressure = (start: PressureFiles, end: PressureFiles): 
     }),
   ) as PressureCounts;
   const windowMs = end.at > start.at ? end.at - start.at : null;
-  return { ...delta, windowMs, cause: windowMs === null ? null : classifyPause(delta, windowMs) };
+  const coveredMs =
+    windowMs === null ? null : Math.max(0, Math.min(stall.endedAt, end.at) - start.at);
+  const seen =
+    windowMs !== null &&
+    coveredMs !== null &&
+    coveredMs * 2 >= Math.max(windowMs, stall.durationMs);
+  return { ...delta, windowMs, coveredMs, cause: seen ? classifyPause(delta, windowMs) : null };
 };

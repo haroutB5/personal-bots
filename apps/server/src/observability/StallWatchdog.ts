@@ -105,7 +105,10 @@ export const startStallWatchdog = (options: StallWatchdogOptions): StallWatchdog
   worker.on("message", (message: { type: string } & Record<string, unknown>) => {
     if (message.type === "stall") {
       const { pressureStart, pressureEnd, ...stall } = message as unknown as WatchdogStallMessage;
-      options.onStall({ ...stall, pressure: measureStallPressure(pressureStart, pressureEnd) });
+      options.onStall({
+        ...stall,
+        pressure: measureStallPressure(pressureStart, pressureEnd, stall),
+      });
     } else if (message.type === "error") options.onError?.(String(message.message));
   });
   worker.on("error", (error) => options.onError?.(String(error)));

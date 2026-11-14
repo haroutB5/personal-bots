@@ -179,6 +179,7 @@ const watchdogStall: WatchdogStall = {
     ioSomeMs: 20,
     cpuSomeMs: 3,
     windowMs: 2000,
+    coveredMs: 2000,
     cause: "swap-in",
   },
 };

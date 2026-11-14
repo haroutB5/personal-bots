@@ -1,16 +1,7 @@
 /**
- * Source of the stall watchdog's worker thread, kept as plain JavaScript text so the
- * bundled server can start it with `new Worker(source, { eval: true })` (a worker
- * needs a file of its own otherwise, and the server ships as one bundle).
- *
- * The worker watches a heartbeat the main thread writes into shared memory. When the
- * beat is older than the threshold the main thread is blocked, whatever blocked it:
- * JavaScript, a synchronous SQLite or file call, garbage collection or the machine
- * itself. The worker then reads the main thread's CPU profile through the inspector
- * (V8's sampler thread keeps sampling while the main thread is blocked, even inside
- * a native call, and attributes the samples to the JavaScript frame that made the
- * call) and sends a small summary back: function names, file base names and line
- * numbers only.
+ * The watchdog worker as plain JavaScript text: the server ships as one bundle, so it
+ * starts with `new Worker(source, { eval: true })`. V8's sampler keeps profiling the
+ * main thread while it is blocked, even inside a native call.
  */
 
 /** What the summarizer returns: names, file base names, line numbers and milliseconds. */
@@ -117,11 +108,38 @@ function summarizeProfile(profile, windowStartUs, topN, maxDepth) {
 }
 `;
 
+/**
+ * Reads one /proc or cgroup file as text, or null. The real files are under 2 KB; a
+ * longer one is broken, and parsing it would cost the main thread.
+ */
+export const READ_TEXT_SOURCE = String.raw`
+const MAX_TEXT_BYTES = 8192;
+function readText(file) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, "r");
+    const buffer = Buffer.alloc(MAX_TEXT_BYTES + 1);
+    let length = 0;
+    let read = 0;
+    do {
+      read = fs.readSync(fd, buffer, length, buffer.length - length, null);
+      length += read;
+    } while (read > 0 && length < buffer.length);
+    return length > MAX_TEXT_BYTES ? null : buffer.toString("utf8", 0, length);
+  } catch (error) {
+    return null;
+  } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch (error) { /* already closed */ }
+  }
+}
+`;
+
 const WORKER_BODY = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
 const inspector = require("node:inspector");
 const os = require("node:os");
 const fs = require("node:fs");
+${READ_TEXT_SOURCE}
 
 const beat = new Int32Array(workerData.sab);
 const thresholdMs = workerData.thresholdMs;
@@ -179,9 +197,6 @@ const stopProfiler = async (timeoutMs) => {
   }
 };
 
-const readText = (file) => {
-  try { return fs.readFileSync(file, "utf8"); } catch (error) { return null; }
-};
 const taskDir = "/proc/self/task/" + process.pid;
 const unitDir = (() => {
   const text = readText("/proc/self/cgroup");
@@ -203,6 +218,7 @@ const lagMs = () => (((Date.now() | 0) - Atomics.load(beat, 0)) | 0);
 
 let state = "healthy";
 let stall = null;
+let lateReading = null;
 let busy = false;
 let healthyCpu = process.cpuUsage();
 let healthyAt = Date.now();
@@ -263,13 +279,17 @@ const poll = async () => {
           beatBeforeAt: now - lag,
           startPromise: null,
           startLatencyMs: null,
-          pressureStart: readPressureFiles(),
+          pressureStart: lateReading ?? readPressureFiles(),
         };
+        lateReading = null;
         if (profilerMode === "detect") {
           const begun = Date.now();
           stall.startPromise = startProfiler().then(() => { stall.startLatencyMs = Date.now() - begun; });
         }
       } else {
+        // Read the files once the beat looks late, so a stall's window starts near it.
+        if (lag < healthyLagMs) lateReading = null;
+        else if (lateReading === null) lateReading = readPressureFiles();
         healthyCpu = process.cpuUsage();
         healthyAt = now;
         if (profilerMode === "continuous") {
@@ -288,6 +308,7 @@ const poll = async () => {
     send({ type: "error", message: String(error && error.message ? error.message : error) });
     state = "healthy";
     stall = null;
+    lateReading = null;
   } finally {
     busy = false;
   }
