@@ -11,8 +11,21 @@ import { isProviderCapacityError } from "../personalModelFallbackPolicy.ts";
  * the answer. Nothing here reads a clock or a database.
  */
 
-/** Backoff before each rate-limited re-run; one more rate limit fails the task. */
+/** Backoff before each rate-limited re-run; one more rate limit fails the task, unless it is a usage limit. */
 export const PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES = [1, 5, 15] as const;
+
+/** A usage limit with no reported reset is tried this often once the backoff is spent. */
+export const PERSONAL_TASKS_USAGE_LIMIT_RETRY_MINUTES = 30;
+
+/**
+ * The longest window a usage limit spans (a weekly limit). A task still limited
+ * this long after its first limited attempt has a problem the reset will not
+ * fix, so it fails.
+ */
+export const PERSONAL_TASKS_USAGE_LIMIT_MAX_WAIT_MS = 7 * 24 * 60 * 60_000;
+
+/** A task runs this long after a reported reset: a window reported as reset can still refuse the first minute. */
+export const PERSONAL_TASKS_LIMIT_RESET_GRACE_MS = 60_000;
 
 /**
  * A turn that ends on "No conversation found" is followed by the app's own
@@ -108,7 +121,7 @@ export const consecutiveRateLimited = (categories: ReadonlyArray<string | null>)
 /**
  * A rate-limited attempt that needs no guess about the wait: the bot's model
  * fallback took over (run again at once), or the provider reported a reset that
- * is still ahead (used as-is, rather than spending the unreported-limit
+ * is still ahead (run just after it, rather than spending the unreported-limit
  * backoff budget). null means neither: fall through to the backoff.
  */
 export type ImmediateRateLimitRetry =
@@ -122,14 +135,38 @@ export const immediateRateLimitRetry = (input: {
 }): ImmediateRateLimitRetry | null => {
   if (input.fallbackSwitched) return { kind: "run_now" };
   if (input.reportedResetMs !== null && input.reportedResetMs > input.nowMs) {
-    return { kind: "at", availableAtMs: input.reportedResetMs };
+    return {
+      kind: "at",
+      availableAtMs: input.reportedResetMs + PERSONAL_TASKS_LIMIT_RESET_GRACE_MS,
+    };
   }
   return null;
 };
 
-/** The wait for the nth consecutive rate limit, or undefined once the budget is spent (fail the task). */
-export const rateLimitBackoffMinutes = (consecutive: number): number | undefined =>
-  PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES[consecutive - 1];
+/**
+ * The wait for the nth consecutive rate limit, or undefined once the budget is
+ * spent (fail the task). A usage limit outlasts the short backoff (a 5-hour
+ * window is longer than its 21 minutes), so it keeps a slow retry until it has
+ * lasted longer than any window could.
+ */
+export const rateLimitBackoffMinutes = (input: {
+  readonly consecutive: number;
+  readonly usageLimit: boolean;
+  /** How long ago the first attempt of this run of rate limits started. */
+  readonly limitedForMs: number;
+}): number | undefined => {
+  const listed = PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES[input.consecutive - 1];
+  if (listed !== undefined || !input.usageLimit) return listed;
+  return input.limitedForMs < PERSONAL_TASKS_USAGE_LIMIT_MAX_WAIT_MS
+    ? PERSONAL_TASKS_USAGE_LIMIT_RETRY_MINUTES
+    : undefined;
+};
+
+/** What a task waiting on a usage limit says, next to the time it runs again. */
+export const usageLimitWaitMessage = (resetKnown: boolean): string =>
+  resetKnown
+    ? "Usage limit reached. The task runs again by itself just after the limit resets."
+    : "Usage limit reached. The provider did not say when it resets, so the task tries again by itself at the time shown.";
 
 /**
  * What an attempt whose session ended in `error` does next.
@@ -158,6 +195,8 @@ export type SessionErrorSettlement =
       };
       /** The reset the provider reported for the limit, when it named one. */
       readonly resetAtMs?: number;
+      /** The turn stopped on a usage limit, which a reset ends: the task waits, it does not fail. */
+      readonly usageLimit?: true;
     };
 
 export const settleSessionError = (input: {
@@ -174,6 +213,8 @@ export const settleSessionError = (input: {
   readonly activeTurnId: string | null;
   /** When the session last changed, epoch ms (NaN when unparseable). */
   readonly sessionUpdatedAtMs: number;
+  /** The session's latest turn failed on a usage limit; `resetAt` when the provider named it. */
+  readonly usageLimit?: { readonly resetAt?: string } | undefined;
 }): SessionErrorSettlement => {
   let clearRenewalWait = false;
   if (input.lostConversation || input.renewalWaitSinceMs !== undefined) {
@@ -187,27 +228,28 @@ export const settleSessionError = (input: {
   // reset it reported (Codex usage limits), not a pattern guess.
   const ownRetry = providerRetryOfAttempt(input.providerRetry, input.attemptStartedAtMs);
   const limit = ownRetry?.kind === "rate_limited" ? ownRetry : undefined;
+  const usageLimited = limit !== undefined || input.usageLimit !== undefined;
   // The error comes first and the turn's completion, which carries the limit's
   // details, right after: give them a moment so a limited task gets its
   // fallback or its reported reset instead of a guessed backoff.
   if (
-    limit === undefined &&
+    !usageLimited &&
     input.activeTurnId !== null &&
     classifyProviderError(input.lastError) === "rate_limited" &&
     input.nowMs - input.sessionUpdatedAtMs < PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS
   ) {
     return { kind: "wait" };
   }
-  const resetMs = limit?.retryAt === undefined ? Number.NaN : Date.parse(limit.retryAt);
+  const resetAt = limit?.retryAt ?? input.usageLimit?.resetAt;
+  const resetMs = resetAt === undefined ? Number.NaN : Date.parse(resetAt);
   // A capacity/overloaded error spends no window and reports no retry, but it
   // is not a broken turn either: it takes the same fallback path as a limit so
   // the task carries on on the bot's fallback model instead of ending.
-  const capacity = limit === undefined && isProviderCapacityError(input.lastError);
+  const capacity = !usageLimited && isProviderCapacityError(input.lastError);
   return {
     kind: "finish",
     clearRenewalWait,
-    category:
-      limit !== undefined || capacity ? "rate_limited" : classifyProviderError(input.lastError),
+    category: usageLimited || capacity ? "rate_limited" : classifyProviderError(input.lastError),
     ...(limit === undefined
       ? capacity
         ? {
@@ -220,5 +262,6 @@ export const settleSessionError = (input: {
         : {}
       : { limit: { provider: limit.provider, reason: limit.reason, retryAt: limit.retryAt } }),
     ...(Number.isFinite(resetMs) ? { resetAtMs: resetMs } : {}),
+    ...(usageLimited ? { usageLimit: true as const } : {}),
   };
 };

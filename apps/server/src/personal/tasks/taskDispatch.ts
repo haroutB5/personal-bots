@@ -37,6 +37,7 @@ import {
   consecutiveRateLimited,
   immediateRateLimitRetry,
   rateLimitBackoffMinutes,
+  usageLimitWaitMessage,
 } from "./taskLimitPolicy.ts";
 import { withoutWaitingMarker } from "./taskResultPolicy.ts";
 import { sessionIsBusy } from "./taskSessionPolicy.ts";
@@ -153,30 +154,37 @@ export const makeTaskDispatch = (
                 : DateTime.toEpochMillis(outcome.availableAt),
             nowMs: DateTime.toEpochMillis(now),
           });
+          const usageLimit = outcome.usageLimit === true;
           if (immediate !== null) {
             yield* writeTask(changed, task.value, {
               status: "rate_limited",
               result: withoutWaitingMarker(task.value.result),
               availableAt:
-                immediate.kind === "run_now"
-                  ? now
-                  : (outcome.availableAt ?? DateTime.makeUnsafe(immediate.availableAtMs)),
+                immediate.kind === "run_now" ? now : DateTime.makeUnsafe(immediate.availableAtMs),
               errorCategory: "rate_limited",
-              errorMessage: outcome.message,
+              errorMessage:
+                usageLimit && immediate.kind === "at"
+                  ? usageLimitWaitMessage(true)
+                  : outcome.message,
             });
             return;
           }
           const attempts = yield* repository.listAttempts(attempt.taskId);
-          const backoff = rateLimitBackoffMinutes(
-            consecutiveRateLimited(attempts.map((entry) => entry.errorCategory)),
-          );
+          const consecutive = consecutiveRateLimited(attempts.map((entry) => entry.errorCategory));
+          const firstLimited = attempts.at(-consecutive) ?? attempt;
+          const backoff = rateLimitBackoffMinutes({
+            consecutive,
+            usageLimit,
+            limitedForMs:
+              DateTime.toEpochMillis(now) - DateTime.toEpochMillis(firstLimited.startedAt),
+          });
           if (backoff !== undefined) {
             yield* writeTask(changed, task.value, {
               status: "rate_limited",
               result: withoutWaitingMarker(task.value.result),
               availableAt: minutesFrom(now, backoff),
               errorCategory: "rate_limited",
-              errorMessage: outcome.message,
+              errorMessage: usageLimit ? usageLimitWaitMessage(false) : outcome.message,
             });
             return;
           }

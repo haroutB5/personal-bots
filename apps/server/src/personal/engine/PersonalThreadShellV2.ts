@@ -128,6 +128,11 @@ const sessionOf = (
     activeTurnId: shell.activeRunId === null ? null : TurnId.make(shell.activeRunId),
     lastError: shell.lastError ?? null,
     ...(extras.providerRetry === null ? {} : { providerRetry: extras.providerRetry }),
+    ...(shell.status === "failed" && shell.lastErrorClass === "usage_limit"
+      ? {
+          usageLimit: shell.usageLimitResetAt == null ? {} : { resetAt: shell.usageLimitResetAt },
+        }
+      : {}),
     updatedAt: DateTime.formatIso(shell.updatedAt),
   };
 };

@@ -1215,7 +1215,7 @@ it.effect(
       expect(bot.fallbackActive).toBeUndefined();
       const paused = yield* reload(root.taskId);
       expect([paused.status, paused.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
-      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!));
+      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!) + 60_000);
       yield* sweepNow;
       expect(turnStarts(harness).length).toBe(1);
     }).pipe(
@@ -1262,7 +1262,7 @@ it.effect(
       yield* sweepNow;
       const parked = yield* reload(root.taskId);
       expect([parked.status, parked.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
-      expect(DateTime.toEpochMillis(parked.availableAt!)).toBe(Date.parse(limit.retryAt!));
+      expect(DateTime.toEpochMillis(parked.availableAt!)).toBe(Date.parse(limit.retryAt!) + 60_000);
       const startsAfter = turnStarts(harness).length;
       yield* sweepNow;
       yield* sweepNow;
@@ -1284,7 +1284,7 @@ it.effect(
       const retry = yield* provider.claudeParked(harness, thread, turnId, 4 * 60 * 60_000);
       const parked = yield* reload(root.taskId);
       expect([parked.status, parked.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
-      expect(DateTime.toEpochMillis(parked.availableAt!)).toBe(Date.parse(retry.retryAt!));
+      expect(DateTime.toEpochMillis(parked.availableAt!)).toBe(Date.parse(retry.retryAt!) + 60_000);
       expect(interrupts(harness).filter((command) => command.threadId === thread).length).toBe(1);
       // The turn's own "interrupted" snapshot afterwards, and sweeps up to the reset, change nothing.
       yield* setSession(

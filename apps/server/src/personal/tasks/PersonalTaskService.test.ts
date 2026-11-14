@@ -1884,7 +1884,7 @@ it.effect(
 
       const paused = yield* reload(limited.taskId);
       expect([paused.status, paused.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
-      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!));
+      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!) + 60_000);
       expect(paused.errorMessage).toContain("HTTP 429 rate_limit");
       const interrupt = interrupts(harness).at(-1)!;
       expect([interrupt.threadId, interrupt.turnId]).toEqual([thread, turnId]);
@@ -1946,7 +1946,7 @@ it.effect("short retries stay with the provider; unreported limits back off", ()
     });
     const waiting = yield* reload(root.taskId);
     expect(waiting.status).toBe("rate_limited");
-    expect(DateTime.toEpochMillis(waiting.availableAt!)).toBe(Date.parse(limit.retryAt!));
+    expect(DateTime.toEpochMillis(waiting.availableAt!)).toBe(Date.parse(limit.retryAt!) + 60_000);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
@@ -5120,7 +5120,7 @@ it.effect(
       expect(bot.fallbackActive).toBeUndefined();
       const paused = yield* reload(root.taskId);
       expect([paused.status, paused.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
-      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(limit.retryAt!));
+      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(limit.retryAt!) + 60_000);
     }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(100))));
   },
 );
@@ -5231,7 +5231,7 @@ it.effect(
       const paused = yield* reload(root.taskId);
       expect([paused.status, paused.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
       // The reported reset, not the one minute backoff of an unreported limit.
-      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!));
+      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!) + 60_000);
     }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(100))));
   },
 );
