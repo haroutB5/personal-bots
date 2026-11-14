@@ -1,6 +1,6 @@
 ---
 name: speedoptimiser
-description: "Optimise and enhance the performance of an app: measure, fix the biggest measured offender one change per commit with before/after numbers, then ratchet each win into a budget that can only go down. Use when asked to speed up a web app or PWA, find what makes it slow, or set performance budgets."
+description: "Use for ANY optimisation task on any app or tool: a slow or laggy screen, a slow web app, PWA, Android app, server, build, test run or release. Measure each stage of the user's wait, fix the biggest measured offender one change per commit with before/after numbers, then ratchet each win into a budget that can only go down. Also use to find what makes something slow, or to set performance budgets."
 ---
 
 # Speed optimiser: measure, optimize, ratchet
@@ -10,6 +10,12 @@ The core lesson is that once there is a number to beat, the work becomes
 tractable, and the highest-leverage step is finding more things to measure.
 Never optimize on faith. Every change needs a measured offender before it
 and a measured win after it.
+
+The loop, in one line: name the wait, split it into stages, measure each
+stage, prove the cause, fix one thing, prove the win, lock it in, look for the
+next slow spot. Sections 1 to 7 are the loop for a web app or PWA, with
+scripts. Section 8 is the same loop for a native phone app, a server, or a
+build and release pipeline. Section 9 is how to run it as a team.
 
 Scripts are in this skill's `scripts/` folder, and templates in `templates/`.
 They need Node 18+ and `playwright-core` (`npm i -D playwright-core` in the app,
@@ -28,6 +34,25 @@ download is needed.
 - Reject complexity for trivial gains. The claude.ai team rejected a 900-line
   PR for 2 ms. If a change is big, its measured win must be big too.
 - Write unit tests for any logic you change, before you optimize it.
+- **Your first guess is a hypothesis, not a finding.** Write it down, then
+  measure. On hbots (13 Nov 2026) the guess for a slow chat open was "the
+  server sends the whole history". Measured: the server answered in 46 to
+  334 ms with a 70 KB tail. The 3 to 5 s waits were on the phone, before the
+  request left it. Fixing the guess would have shipped nothing.
+- **Every wait is a chain of stages.** Start at the user's tap and end when the
+  result is on screen. Time each stage on its own (client before the request,
+  network, server read, payload size, client parse, first render), so the
+  number says which side owns the time.
+- **If no metric can see the problem, build one.** A user's screenshot or
+  recording is a valid bug report even when every dashboard is green.
+  claude.ai's layout jank scored 0.008 against a "good" limit of 0.1, so the
+  team reported every shift by named region and phase instead, and found that
+  31% of loads moved something after the page was usable.
+- **A metric earns its place.** A new counter must be shown to move wall-clock
+  time, or it is thrown out. Never climb a hill that users do not feel.
+- **Prove a fix both ways.** The check goes red on the old code N of N runs and
+  green on the new code N of N runs (claude.ai used 20 of 20). A test that
+  passes on the old code proves nothing.
 - Note the machine state with every measurement (the harness prints CPU busy %
   and free memory). Other load on the machine easily moves wall-clock by 2x.
   Compare only interleaved A/B runs, or runs taken back to back.
@@ -190,6 +215,96 @@ one.
 
 ## 7. Report
 
+Add to the table below the list of what is still slow and the next offender by
+measured cost. A target that is met is not the stopping point: say what the
+next number to beat is.
+
 Finish with a table: journey, baseline p50/p75, after p50/p75, and the change
 that did it. Add what you tried and rejected, and why. Say where the budget
 file and RUM summary live, and state the machine load for the headline numbers.
+
+## 8. The same loop outside the browser
+
+The scripts above drive Chrome. For anything else, keep the loop and swap the
+instruments. Never skip the stage table.
+
+Native phone app (Android)
+
+- Put timing marks in the app for each stage of the journey and send them
+  through the app's existing diagnostics path. Marks carry durations, sizes and
+  fixed labels only, never user text. Then the real numbers come from the real
+  phone after an update, with nobody handling the phone.
+- An emulator is a lab, not the field. It has no hardware key store, a
+  different CPU and a fast local network. hbots: the emulator showed 1.0 s
+  opens while the real phone stalled 3 to 5 s on key store calls. Say which
+  numbers are lab and which are field.
+- Usual offenders, each one measured on hbots or claude.ai before it went on
+  this list: a secure key store call per read or write on the main thread
+  (wrap one data key instead and do the crypto in process); a cache with a size
+  cap the biggest item never fits under, so the slowest screen never gets the
+  cache (measured 1,085 KB against a 1,024 KB cap); a cache read that gates the
+  network request (give it a short deadline, 500 ms, then go to the network);
+  JSON parse of a large payload (measured 68 to 79 ms of a 127 ms read);
+  writes on the JS thread; a list that renders every row.
+- Test the upgrade path, not only a fresh install: old saved data must be read
+  or dropped cleanly, with no crash and no stuck spinner.
+
+Server
+
+- Split a request into queue wait, database time, payload build,
+  serialisation and bytes on the wire. Log each for the slow journey.
+- Probe event-loop lag while the journey runs. A stall with no slow query is
+  usually synchronous work or memory pressure, not the database.
+- Check what is sent, not only how fast: a bounded tail against the whole
+  history, and fields the client never reads.
+- A change in another project (upstream) that "improves performance" helps only
+  if it is on the measured path. Check before promising a gain.
+
+Build, test and release pipelines
+
+- The journey is "change ready" to "live". Take stage times from the logs of
+  the last 10 to 20 runs before proposing anything.
+- Count reruns and waits, not only step time. hbots: a census of 21 releases
+  showed the feared idle wait was never caused by the suspected chat, and that
+  two 11 minute reruns came from settings typed by hand. Moving those settings
+  into the tool beat every planned speed-up.
+- A skip rule that never fires is not a speed-up. Replay it against past runs
+  before building it.
+- Often the largest win is doing the slow thing less often (batching), which
+  needs no code.
+
+## 9. Running it as a team
+
+- **One thread, one journey.** Keep each task narrow: one journey or one
+  benchmark, improvements only inside it. Open a new task for a new slow spot
+  instead of widening a running one. Two writers never share a branch.
+- **Roles.** Architect (read-only) builds the stage table, names the top
+  offenders with numbers and writes the build brief with a target number.
+  Builder makes one change per commit with before and after. Verifier repeats
+  the numbers independently and tries to break the fix. Shipper releases and
+  reads the field numbers after.
+- **Estimate in milliseconds.** Each proposed fix gets an expected saving in ms
+  (or minutes for a pipeline) before work starts. Rank by saving against risk
+  and complexity, and set the target from the sum.
+- **Guardrails first.** Unit tests before the optimisation. Anything a user
+  could see goes behind a kill switch. Risky changes roll out in steps where
+  the app allows it. Classify every flag as a kill switch or a ramp and remove
+  it once the change is proven, so flags do not pile up.
+- **Protect brittle wins.** A fast path that depends on two things staying in
+  step (a static copy of a screen, a cache format) gets tests that fail the
+  moment they drift, plus a field report that flags any nonzero error.
+- **Taste belongs to the owner.** A change the user can perceive (a skeleton,
+  a fade, content filling in piece by piece) is shown with a before and after
+  screenshot or recording, and the owner rules on it. Never trade look or
+  behaviour for milliseconds silently.
+- **Ambition.** Do not ticket what can be done now, and do not stop at the
+  target. After each win ask what the next number is. Ask for odd ideas when
+  the obvious list is done: instruction counts, call counts, frames that miss
+  an 8.33 ms budget are all countable, and what can be counted can be climbed.
+- **Know when to stop a thread.** Close it when the next win is small against
+  its complexity. claude.ai turned down a 900-line change worth 2 ms.
+- **Watch after shipping.** Read the field numbers after each release. If the
+  field does not confirm the lab, turn the change off and iterate. If it does,
+  ratchet the budget down in the same change.
+- **Report honestly.** Label each number measured, inferred or guess, say lab
+  or field, and list what was not verified.
