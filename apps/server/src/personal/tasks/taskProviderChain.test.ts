@@ -485,7 +485,11 @@ const settleTurn = (
   h: Harness,
   thread: ThreadId,
   status: "completed" | "failed" | "interrupted",
-  failure?: { readonly message: string; readonly class: OrchestrationV2ProviderFailureClass },
+  failure?: {
+    readonly message: string;
+    readonly class: OrchestrationV2ProviderFailureClass;
+    readonly resetAt?: string;
+  },
 ) =>
   Effect.gen(function* () {
     const active = currentTurn(h, thread);
@@ -524,7 +528,7 @@ const settleTurn = (
           message: failure?.message ?? "The provider failed.",
           code: null,
           retryable: true,
-          resetAt: null,
+          resetAt: failure?.resetAt ?? null,
         },
         threadDisposition: "reusable",
       });
@@ -773,6 +777,33 @@ chainTest(
       const detail = yield* h.get(root);
       expect([detail.task.status, detail.attempts.length]).toEqual(["rate_limited", 1]);
       expect(detail.task.availableAt).not.toBeNull();
+    }),
+);
+
+chainTest(
+  "a Claude 5-hour limit with a reset parks the task until just after that reset, not on a guessed backoff",
+  (h) =>
+    Effect.gen(function* () {
+      const root = yield* h.createRoot("claude-five-hour");
+      const thread = yield* h.threadOf(root);
+      yield* start(h, thread);
+      const resetMs = Math.ceil(((yield* Clock.currentTimeMillis) + 3 * 3_600_000) / 1000) * 1000;
+      yield* settleTurn(h, thread, "failed", {
+        message: "Claude API rate limit reached. Try again later.",
+        class: "usage_limit",
+        resetAt: DateTime.formatIso(DateTime.makeUnsafe(resetMs)),
+      });
+      const parked = yield* h.until(
+        root,
+        (d) => d.task.status === "rate_limited",
+        "the task to wait for the reset",
+      );
+      expect(parked.task.errorCategory).toBe("rate_limited");
+      expect(DateTime.toEpochMillis(parked.task.availableAt!)).toBe(resetMs + 60_000);
+      expect(parked.task.errorMessage).toBe(
+        "Usage limit reached. The task runs again by itself just after the limit resets.",
+      );
+      expect(parked.attempts.length).toBe(1);
     }),
 );
 

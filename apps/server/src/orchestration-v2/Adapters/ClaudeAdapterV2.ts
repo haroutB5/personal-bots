@@ -259,6 +259,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import { installClaudeSdkWarningFilter } from "../../provider/Layers/claudeSdkWarnings.ts";
+import { claudeLimitResetFromText } from "./claudeLimitResetText.ts";
 
 // The v1 ClaudeAdapter installed this filter at import; the v2 move dropped the
 // call, so every bypassPermissions session logged the harmless
@@ -4599,13 +4600,17 @@ function providerFailureFromResult(
   }
   const apiErrorStatus = message.api_error_status ?? null;
   // API-key sessions get no rate_limit_info, so a gateway's 429 carries its reset only as text.
+  // A subscription limit with no structured reset names it in words: "resets 5:50am (Europe/London)".
   const resetAt =
-    apiErrorStatus === 429 && message.result.startsWith("API Error:")
+    (apiErrorStatus === 429 && message.result.startsWith("API Error:")
       ? gatewayCooldownResetAt(
           /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(message.result),
           receivedAt,
         )
-      : undefined;
+      : undefined) ??
+    (failureClass === "usage_limit"
+      ? claudeLimitResetFromText(message.result, DateTime.toEpochMillis(receivedAt))
+      : undefined);
   return makeProviderFailure({
     message: listedError ?? structuredError ?? failureHint ?? message.result,
     code:

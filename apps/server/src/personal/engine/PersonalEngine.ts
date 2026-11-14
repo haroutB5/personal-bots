@@ -80,6 +80,8 @@ export interface PersonalSessionView {
   readonly providerInstanceId: string | null;
   readonly providerName: string | null;
   readonly providerRetry: PersonalProviderRetryView | null;
+  /** The latest turn failed on a usage limit; `resetAt` when the provider named the reset. */
+  readonly usageLimit?: { readonly resetAt?: string } | null;
   readonly updatedAt: string;
 }
 

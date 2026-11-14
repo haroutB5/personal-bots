@@ -69,6 +69,8 @@ export type AttemptOutcome =
       readonly message: string | null;
       /** A reset the provider reported; replaces the 1/5/15 min backoff. */
       readonly availableAt?: DateTime.Utc;
+      /** A usage limit, which a reset ends: it never spends the task's last try. */
+      readonly usageLimit?: boolean;
       /** The usage limit the provider reported, for the bot's model fallback. */
       readonly limit?: {
         readonly provider: string;

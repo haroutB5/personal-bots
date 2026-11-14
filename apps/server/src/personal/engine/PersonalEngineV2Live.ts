@@ -108,6 +108,12 @@ export const toPersonalSessionView = (session: OrchestrationSession): PersonalSe
             : { reason: session.providerRetry.reason }),
           ...(session.providerRetry.auto === undefined ? {} : { auto: session.providerRetry.auto }),
         },
+  ...(session.usageLimit === undefined
+    ? {}
+    : {
+        usageLimit:
+          session.usageLimit.resetAt === undefined ? {} : { resetAt: session.usageLimit.resetAt },
+      }),
   updatedAt: session.updatedAt,
 });
 

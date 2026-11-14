@@ -506,6 +506,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
           providerName: session.providerName,
           activeTurnId: session.activeTurnId,
           sessionUpdatedAtMs: Date.parse(session.updatedAt),
+          usageLimit: session.usageLimit ?? undefined,
         });
         if (settlement.kind === "wait") {
           if (settlement.renewalWaitSinceMs !== undefined) {
@@ -532,6 +533,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
           ...(settlement.resetAtMs === undefined
             ? {}
             : { availableAt: DateTime.makeUnsafe(settlement.resetAtMs) }),
+          ...(settlement.usageLimit === true ? { usageLimit: true } : {}),
         });
         return;
       }

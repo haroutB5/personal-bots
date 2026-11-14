@@ -165,6 +165,11 @@ export const OrchestrationSession = Schema.Struct({
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   /** Set while the provider is rate limited or retrying; absent otherwise and on old events. */
   providerRetry: Schema.optional(OrchestrationSessionProviderRetry),
+  /**
+   * Set while the latest turn has failed on a usage limit; `resetAt` when the
+   * provider named the reset. Absent otherwise and on old events.
+   */
+  usageLimit: Schema.optional(Schema.Struct({ resetAt: Schema.optional(IsoDateTime) })),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
