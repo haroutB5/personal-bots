@@ -253,6 +253,10 @@
       "types": "./src/work/goalTimeline.ts",
       "import": "./src/work/goalTimeline.ts"
     },
+    "./work/workQuestionCards": {
+      "types": "./src/work/workQuestionCards.ts",
+      "import": "./src/work/workQuestionCards.ts"
+    },
     "./update/serverUpdate": {
       "types": "./src/update/serverUpdate.ts",
       "import": "./src/update/serverUpdate.ts"
