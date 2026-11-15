@@ -8,7 +8,7 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 438,
+    "items": 439,
     "byKind": {
       "screen": 75,
       "sheet": 25,
@@ -16,10 +16,10 @@
       "card": 24,
       "setting": 105,
       "pref": 14,
-      "rpc": 131
+      "rpc": 132
     },
     "byStatus": {
-      "done": 384,
+      "done": 385,
       "planned": 0,
       "n/a": 54,
       "unassigned": 0
@@ -35,7 +35,7 @@
       "A11": 17,
       "A16": 22,
       "A13": 9,
-      "A12": 41,
+      "A12": 42,
       "A1": 4,
       "A17": 1,
       "X4": 20,
@@ -974,7 +974,7 @@
       "scope": "personal",
       "layout": false,
       "logic": {
-        "files": 54,
+        "files": 55,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
@@ -1003,12 +1003,7 @@
       "layout": false,
       "logic": {
         "files": 32,
-        "inPackage": [
-          "voice/voiceCallApi.ts",
-          "voice/callState.ts",
-          "avatarMotion.ts",
-          "botSummaries.ts"
-        ],
+        "inPackage": ["voice/voiceCallApi.ts", "voice/callState.ts", "botSummaries.ts"],
         "direct": ["avatarMotion.ts", "voice/callState.ts", "voice/voiceCallApi.ts"]
       },
       "pr": "X4",
@@ -1038,7 +1033,7 @@
       "component": "BotUsageSheet",
       "logic": {
         "files": 7,
-        "inPackage": ["tokenUsagePresentation.ts"],
+        "inPackage": [],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -1070,9 +1065,6 @@
         "files": 41,
         "inPackage": [
           "chatState.ts",
-          "relativeTime.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
           "conversationModel.ts",
           "groupModel.ts",
           "chatActivity.ts",
@@ -1158,7 +1150,7 @@
       "primitive": "AlertDialog",
       "logic": {
         "files": 4,
-        "inPackage": ["usagePresentation.ts"],
+        "inPackage": [],
         "direct": ["usagePresentation.ts"]
       },
       "pr": "A2",
@@ -1173,13 +1165,7 @@
       "primitive": "Sheet",
       "logic": {
         "files": 37,
-        "inPackage": [
-          "tokenUsagePresentation.ts",
-          "usageStrip.ts",
-          "usagePresentation.ts",
-          "usePersonalBots.ts",
-          "relativeTime.ts"
-        ],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -1300,7 +1286,7 @@
       "web": "WorkScreen.tsx:239",
       "component": "DetailSheet",
       "logic": {
-        "files": 54,
+        "files": 55,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
@@ -1361,7 +1347,7 @@
       "component": "ProviderSheet",
       "logic": {
         "files": 35,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1376,7 +1362,7 @@
       "component": "ConfirmSheet",
       "logic": {
         "files": 35,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1391,7 +1377,7 @@
       "component": "InstallConfirmSheet",
       "logic": {
         "files": 35,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1406,7 +1392,7 @@
       "component": "RemapSheet",
       "logic": {
         "files": 35,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1531,10 +1517,8 @@
         "files": 80,
         "inPackage": [
           "usePersonalBots.ts",
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
-          "relativeTime.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "groupModel.ts",
           "chatActivity.ts",
@@ -1578,10 +1562,8 @@
         "files": 80,
         "inPackage": [
           "usePersonalBots.ts",
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
-          "relativeTime.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "groupModel.ts",
           "chatActivity.ts",
@@ -1624,17 +1606,15 @@
       "logic": {
         "files": 87,
         "inPackage": [
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
+          "chatsSnapshot.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
-          "chatActivity.ts",
-          "avatarMotion.ts"
+          "chatActivity.ts"
         ],
         "direct": [
           "avatarMotion.ts",
@@ -1684,17 +1664,15 @@
       "logic": {
         "files": 87,
         "inPackage": [
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
+          "chatsSnapshot.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
-          "chatActivity.ts",
-          "avatarMotion.ts"
+          "chatActivity.ts"
         ],
         "direct": [
           "avatarMotion.ts",
@@ -1744,17 +1722,15 @@
       "logic": {
         "files": 87,
         "inPackage": [
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
+          "chatsSnapshot.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
-          "chatActivity.ts",
-          "avatarMotion.ts"
+          "chatActivity.ts"
         ],
         "direct": [
           "avatarMotion.ts",
@@ -1811,9 +1787,7 @@
           "chatState.ts",
           "chatActivity.ts",
           "previewPrivacy.ts",
-          "relativeTime.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "botSummaries.ts",
           "taskPresentation.ts",
@@ -1824,8 +1798,7 @@
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "botModelLabel.ts",
-          "avatarMotion.ts"
+          "botModelLabel.ts"
         ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
@@ -1912,9 +1885,7 @@
           "chatState.ts",
           "chatActivity.ts",
           "previewPrivacy.ts",
-          "relativeTime.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "botSummaries.ts",
           "taskPresentation.ts",
@@ -1925,8 +1896,7 @@
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "botModelLabel.ts",
-          "avatarMotion.ts"
+          "botModelLabel.ts"
         ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
@@ -2013,9 +1983,7 @@
           "chatState.ts",
           "chatActivity.ts",
           "previewPrivacy.ts",
-          "relativeTime.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "botSummaries.ts",
           "taskPresentation.ts",
@@ -2026,8 +1994,7 @@
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "botModelLabel.ts",
-          "avatarMotion.ts"
+          "botModelLabel.ts"
         ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
@@ -2114,9 +2081,7 @@
           "chatState.ts",
           "chatActivity.ts",
           "previewPrivacy.ts",
-          "relativeTime.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "botSummaries.ts",
           "taskPresentation.ts",
@@ -2127,8 +2092,7 @@
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "botModelLabel.ts",
-          "avatarMotion.ts"
+          "botModelLabel.ts"
         ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
@@ -2215,9 +2179,7 @@
           "chatState.ts",
           "chatActivity.ts",
           "previewPrivacy.ts",
-          "relativeTime.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "botSummaries.ts",
           "taskPresentation.ts",
@@ -2228,8 +2190,7 @@
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "botModelLabel.ts",
-          "avatarMotion.ts"
+          "botModelLabel.ts"
         ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
@@ -2316,9 +2277,7 @@
           "chatState.ts",
           "chatActivity.ts",
           "previewPrivacy.ts",
-          "relativeTime.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "botSummaries.ts",
           "taskPresentation.ts",
@@ -2329,8 +2288,7 @@
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "botModelLabel.ts",
-          "avatarMotion.ts"
+          "botModelLabel.ts"
         ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
@@ -2431,7 +2389,7 @@
       "via": "menu",
       "logic": {
         "files": 33,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -2783,7 +2741,6 @@
           "usePersonalBots.ts",
           "previewPrivacy.ts",
           "taskPresentation.ts",
-          "relativeTime.ts",
           "greeting.ts",
           "conversationModel.ts"
         ],
@@ -2971,7 +2928,7 @@
       "via": "menu",
       "logic": {
         "files": 37,
-        "inPackage": ["unreadChats.ts", "groupModel.ts", "botSummaries.ts", "avatarMotion.ts"],
+        "inPackage": ["groupModel.ts", "botSummaries.ts"],
         "direct": [
           "avatarMotion.ts",
           "botMuteModel.ts",
@@ -3057,7 +3014,7 @@
       "via": "menu",
       "logic": {
         "files": 35,
-        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "bulkSelection.ts",
           "useBulkDelete.ts",
@@ -3255,10 +3212,8 @@
         "files": 80,
         "inPackage": [
           "usePersonalBots.ts",
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
-          "relativeTime.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "groupModel.ts",
           "chatActivity.ts",
@@ -3302,10 +3257,8 @@
         "files": 80,
         "inPackage": [
           "usePersonalBots.ts",
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
-          "relativeTime.ts",
+          "chatsSnapshot.ts",
           "conversationModel.ts",
           "groupModel.ts",
           "chatActivity.ts",
@@ -3347,7 +3300,7 @@
       "via": "gesture",
       "logic": {
         "files": 7,
-        "inPackage": ["tokenUsagePresentation.ts"],
+        "inPackage": [],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -3378,17 +3331,15 @@
       "logic": {
         "files": 87,
         "inPackage": [
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
+          "chatsSnapshot.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
-          "chatActivity.ts",
-          "avatarMotion.ts"
+          "chatActivity.ts"
         ],
         "direct": [
           "avatarMotion.ts",
@@ -3466,7 +3417,7 @@
       "via": "gesture",
       "logic": {
         "files": 33,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -3489,7 +3440,7 @@
       "via": "gesture",
       "logic": {
         "files": 33,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -3516,7 +3467,6 @@
           "usePersonalBots.ts",
           "previewPrivacy.ts",
           "taskPresentation.ts",
-          "relativeTime.ts",
           "greeting.ts",
           "conversationModel.ts"
         ],
@@ -3633,13 +3583,7 @@
       "via": "gesture",
       "logic": {
         "files": 37,
-        "inPackage": [
-          "tokenUsagePresentation.ts",
-          "usageStrip.ts",
-          "usagePresentation.ts",
-          "usePersonalBots.ts",
-          "relativeTime.ts"
-        ],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -3683,7 +3627,7 @@
       "via": "gesture",
       "logic": {
         "files": 35,
-        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "bulkSelection.ts",
           "useBulkDelete.ts",
@@ -3797,12 +3741,7 @@
       "web": "ContextUsedPanel.tsx:1",
       "logic": {
         "files": 48,
-        "inPackage": [
-          "usePersonalBots.ts",
-          "relativeTime.ts",
-          "greeting.ts",
-          "conversationModel.ts"
-        ],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "conversationModel.ts"],
         "direct": [
           "commandFeedback.ts",
           "contextUsed.ts",
@@ -3925,7 +3864,7 @@
       "web": "MemoryChangeCard.tsx:1",
       "logic": {
         "files": 7,
-        "inPackage": ["relativeTime.ts", "greeting.ts", "memoryCards.ts"],
+        "inPackage": ["greeting.ts", "memoryCards.ts"],
         "direct": ["memoryCards.ts", "memoryPresentation.ts"]
       },
       "pr": "A6",
@@ -3953,13 +3892,7 @@
       "web": "PersonalUsageStrip.tsx:1",
       "logic": {
         "files": 37,
-        "inPackage": [
-          "tokenUsagePresentation.ts",
-          "usageStrip.ts",
-          "usagePresentation.ts",
-          "usePersonalBots.ts",
-          "relativeTime.ts"
-        ],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -3981,7 +3914,7 @@
       "web": "PinnedStrip.tsx:1",
       "logic": {
         "files": 37,
-        "inPackage": ["unreadChats.ts", "groupModel.ts", "botSummaries.ts", "avatarMotion.ts"],
+        "inPackage": ["groupModel.ts", "botSummaries.ts"],
         "direct": [
           "avatarMotion.ts",
           "botMuteModel.ts",
@@ -4017,7 +3950,7 @@
       "web": "RulesUsageCard.tsx:1",
       "logic": {
         "files": 28,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts"],
         "direct": ["memoryPresentation.ts", "usePersonalAutomation.ts"]
       },
       "pr": "A6",
@@ -4166,7 +4099,7 @@
       "section": "Your name",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4191,7 +4124,7 @@
       "section": "Your name",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4216,7 +4149,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4241,7 +4174,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4266,7 +4199,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4291,7 +4224,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4316,7 +4249,7 @@
       "section": "Appearance",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4340,7 +4273,7 @@
       "section": "Appearance",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4364,7 +4297,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4389,7 +4322,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4414,7 +4347,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4439,7 +4372,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4464,7 +4397,7 @@
       "section": "Voice calls",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4489,7 +4422,7 @@
       "section": "Voice calls",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4514,7 +4447,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4539,7 +4472,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4564,7 +4497,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4589,7 +4522,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4614,7 +4547,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4639,7 +4572,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4664,7 +4597,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4689,7 +4622,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4714,7 +4647,7 @@
       "section": "About",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4739,7 +4672,7 @@
       "section": "About",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4764,7 +4697,7 @@
       "section": "Advanced",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4788,7 +4721,7 @@
       "section": "Advanced",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4812,7 +4745,7 @@
       "section": "Advanced",
       "logic": {
         "files": 36,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4836,12 +4769,7 @@
       "section": "Providers",
       "logic": {
         "files": 53,
-        "inPackage": [
-          "usePersonalBots.ts",
-          "usagePresentation.ts",
-          "conversationModel.ts",
-          "botSummaries.ts"
-        ],
+        "inPackage": ["usePersonalBots.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["commandFeedback.ts", "providerRows.ts", "usePersonalBots.ts"]
       },
       "pr": "A14",
@@ -4901,7 +4829,7 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": ["botAvatarShapes.ts"],
+        "inPackage": [],
         "direct": ["botAvatarShapes.ts"]
       },
       "pr": "A9",
@@ -4916,7 +4844,7 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": ["botAvatarShapes.ts"],
+        "inPackage": [],
         "direct": ["botAvatarShapes.ts"]
       },
       "pr": "A9",
@@ -4946,7 +4874,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4971,7 +4905,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4996,7 +4936,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5021,7 +4967,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5046,7 +4998,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5071,7 +5029,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5096,7 +5060,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5121,7 +5091,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5146,7 +5122,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5171,7 +5153,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5196,7 +5184,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5221,7 +5215,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5246,7 +5246,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5271,7 +5277,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5296,7 +5308,13 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "chatsSnapshot.ts",
+          "botSummaries.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -5505,7 +5523,6 @@
           "usePersonalBots.ts",
           "previewPrivacy.ts",
           "taskPresentation.ts",
-          "relativeTime.ts",
           "greeting.ts",
           "conversationModel.ts"
         ],
@@ -5706,7 +5723,7 @@
       "via": "field",
       "logic": {
         "files": 37,
-        "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "relativeTime.ts"],
+        "inPackage": ["usePersonalBots.ts", "perfFlags.ts"],
         "direct": [
           "commandFeedback.ts",
           "relativeTime.ts",
@@ -6338,12 +6355,7 @@
       "via": "field",
       "logic": {
         "files": 59,
-        "inPackage": [
-          "botSummaries.ts",
-          "usagePresentation.ts",
-          "conversationModel.ts",
-          "usePersonalBots.ts"
-        ],
+        "inPackage": ["botSummaries.ts", "conversationModel.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "providerRows.ts",
@@ -10359,6 +10371,19 @@
       "pr": "A4",
       "status": "done",
       "check": "Android calls personalBotsThreadFullText (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalProjectsList",
+      "kind": "rpc",
+      "title": "personalProjectsList (query)",
+      "web": "packages/personal-client/src/automation/automationClient.ts:68",
+      "rpcKind": "query",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "pr": "A12",
+      "status": "done",
+      "check": "Android calls personalProjectsList (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalBotsList",
