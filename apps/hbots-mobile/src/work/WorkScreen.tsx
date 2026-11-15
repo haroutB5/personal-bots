@@ -24,6 +24,7 @@ import {
   type WorkTimeline,
   type WorkTone,
 } from "@hbots/personal-client/work/workTimeline";
+import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
 import type { PersonalBot, PersonalTask, PersonalTaskId } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -35,6 +36,8 @@ import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
 import { EmptyText, ScreenScroll, SmallBotAvatar } from "../tasks/TaskUi";
 import { useWorkingThreads } from "../working/useWorkingThreads";
+import { ProjectCards } from "./ProjectCards";
+import { ProjectSheet } from "./ProjectSheet";
 
 /** Share of the track where the now line sits; queued work is drawn after it. */
 const NOW_AT = 0.88;
@@ -271,6 +274,8 @@ export function WorkScreen({
   const now = useMinuteNow();
   const [range, setRange] = useState<WorkRangeId>("4h");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const projectsQuery = native.automation.usePersonalProjects(environmentId);
   const [earlierOpen, setEarlierOpen] = useState(false);
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -311,6 +316,23 @@ export function WorkScreen({
     });
   }, [tasks, shells, links, bots, now, range]);
   const view = useMemo(() => buildWorkNow(timeline), [timeline]);
+  const projects = projectsQuery.data?.projects;
+  const projectSummary = useMemo(
+    () =>
+      buildProjectCards({
+        projects: projects ?? [],
+        tasks: tasks === null ? NO_TASKS : [...tasks.values()],
+        nowMs: now,
+        botName: (botId) => botMap.get(botId)?.name ?? "Removed bot",
+      }),
+    [projects, tasks, now, botMap],
+  );
+  const projectCard =
+    projectId === null
+      ? undefined
+      : [...projectSummary.cards, ...projectSummary.more, ...projectSummary.quiet].find(
+          (entry) => entry.projectId === projectId,
+        );
 
   const bar = selectedId === null ? undefined : workBarsById(timeline).get(selectedId);
   const group =
@@ -370,6 +392,8 @@ export function WorkScreen({
               </Text>
             </View>
           )}
+
+          <ProjectCards summary={projectSummary} botMap={botMap} onOpen={setProjectId} />
 
           <Text style={styles.section} maxFontSizeMultiplier={1.3}>
             Running now
@@ -578,6 +602,16 @@ export function WorkScreen({
           </>
         )}
       </SheetShell>
+
+      <ProjectSheet
+        card={projectCard}
+        tasks={tasks}
+        botMap={botMap}
+        nowMs={now}
+        onClose={() => setProjectId(null)}
+        onOpenTask={onOpenTask}
+        onOpenChat={onOpenChat}
+      />
     </View>
   );
 }

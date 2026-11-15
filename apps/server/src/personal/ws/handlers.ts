@@ -51,6 +51,7 @@ import * as PersonalConnectionService from "../connections/service.ts";
 import * as PersonalLoginRequestService from "../secrets/PersonalLoginRequestService.ts";
 import * as PersonalLoginService from "../secrets/PersonalLoginService.ts";
 import * as PersonalSecretService from "../secrets/PersonalSecretService.ts";
+import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalVoiceCallService from "../voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceSampleService from "../voiceCalls/PersonalVoiceSampleService.ts";
@@ -116,6 +117,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const personalBrowser = yield* PersonalBrowser.PersonalBrowser;
     const personalDesktop = yield* PersonalDesktop.PersonalDesktop;
     const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
+    const personalProjects = yield* PersonalProjectRepository.PersonalProjectRepository;
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalMemoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
     const personalPush = yield* PersonalPushService.PersonalPushService;
@@ -207,6 +209,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
               tasks: personalTasks,
               groups: personalGroups,
               routines: personalRoutines,
+              projects: personalProjects,
               memory: personalMemory,
               secrets: personalSecrets,
               engine: personalEngine,
@@ -491,6 +494,12 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
         observeRpcEffect(WS_METHODS.personalTasksList, personalTasks.list(input), {
           "rpc.aggregate": "server",
         }),
+      [WS_METHODS.personalProjectsList]: (_input) =>
+        observeRpcEffect(
+          WS_METHODS.personalProjectsList,
+          personalProjects.list().pipe(Effect.map((projects) => ({ projects }))),
+          { "rpc.aggregate": "server" },
+        ),
       [WS_METHODS.personalTasksGet]: (input) =>
         observeRpcEffect(WS_METHODS.personalTasksGet, personalTasks.get(input), {
           "rpc.aggregate": "server",
@@ -546,6 +555,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
               tasks: personalTasks,
               groups: personalGroups,
               routines: personalRoutines,
+              projects: personalProjects,
               memory: personalMemory,
               secrets: personalSecrets,
               engine: personalEngine,

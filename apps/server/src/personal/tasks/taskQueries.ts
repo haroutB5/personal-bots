@@ -23,6 +23,7 @@ export const makeTaskQueries = (core: TaskCore) => {
     activeAttemptForThread,
     fail,
     lock,
+    publish,
     readWorkRecord,
     rel,
     repository,
@@ -77,6 +78,17 @@ export const makeTaskQueries = (core: TaskCore) => {
         }),
       )
       .pipe(toPublic("updateWorkRecord"));
+
+  const linkProject: PersonalTaskService["Service"]["linkProject"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          if (!(yield* repository.linkProject({ ...input, now }))) return;
+          yield* publish(Option.toArray(yield* repository.getTask(input.taskId)));
+        }),
+      )
+      .pipe(toPublic("linkProject"));
 
   const taskForThread: PersonalTaskService["Service"]["taskForThread"] = (input) =>
     Effect.gen(function* () {
@@ -207,6 +219,7 @@ export const makeTaskQueries = (core: TaskCore) => {
     subscribe,
     taskForThread,
     updateWorkRecord,
+    linkProject,
     workRecord,
   };
 };

@@ -49,6 +49,7 @@ function makeServices(
       cancel: ({ taskId }: { taskId: string }) => record(`task:${taskId}`),
     },
     routines: { list: () => Effect.succeed({ routines: [] }), remove: () => Effect.void },
+    projects: { removeForLead: () => Effect.void },
     memory: { list: () => Effect.succeed([]), remove: () => Effect.void },
     secrets: {
       listPending: () => Effect.succeed({ requests: [] }),

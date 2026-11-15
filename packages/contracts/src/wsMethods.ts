@@ -213,6 +213,7 @@ export const WS_METHODS = {
 
   // Personal tasks methods
   personalTasksList: "personalTasks.list",
+  personalProjectsList: "personalProjects.list",
   personalTasksGet: "personalTasks.get",
   personalTasksCreate: "personalTasks.create",
   personalTasksCancel: "personalTasks.cancel",

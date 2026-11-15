@@ -14,6 +14,7 @@ import {
   personalSecretPlaceholder,
   ThreadId,
   type PersonalBot,
+  type PersonalBotId,
   type PersonalDelegationBrief,
   type PersonalTask,
 } from "@t3tools/contracts";
@@ -28,6 +29,8 @@ import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
 import { isOwnerMessageId } from "../../../personal/leadBots/leadBotConfirm.ts";
 import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLeadBotService.ts";
+import * as PersonalProjectRepository from "../../../personal/projects/PersonalProjectRepository.ts";
+import { projectLine } from "../../../personal/projects/projectText.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import {
   isServerOnlySecretName,
@@ -104,6 +107,8 @@ export const shortenBrowserHelpReason = (reason: string): string => {
 };
 
 const toolError = (reason: string) => new BotsToolError({ reason });
+
+export const PROJECTS_LEAD_ONLY = "Only a team lead keeps projects.";
 
 export const NOTIFY_USER_NO_TASK =
   "This chat is not running a task or a routine, so notify_user does nothing here: the user is already notified when you reply in a chat. Nothing was recorded.";
@@ -235,6 +240,7 @@ const make = Effect.gen(function* () {
   const browser = yield* PersonalBrowser.PersonalBrowser;
   const groups = yield* PersonalGroupService.PersonalGroupService;
   const leadBots = yield* PersonalLeadBotService.PersonalLeadBotService;
+  const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
 
   const listBots = botRepository
     .listBots()
@@ -374,6 +380,24 @@ const make = Effect.gen(function* () {
       .resolveCallerTask({ threadId: caller.threadId, botId: caller.botId, turnId })
       .pipe(Effect.mapError(readable));
     return { ...caller, turnId, task };
+  });
+
+  /** The caller's open project by name; a non-lead or an unknown name is a tool error. */
+  const callerProject = Effect.fn("BotsToolkit.callerProject")(function* (
+    caller: { readonly botId: PersonalBotId; readonly lead: boolean },
+    name: string,
+  ) {
+    if (!caller.lead) return yield* toolError(PROJECTS_LEAD_ONLY);
+    const project = yield* projects
+      .findOpen({ leadBotId: caller.botId, name })
+      .pipe(Effect.mapError(readable));
+    if (project !== null) return project;
+    const open = yield* projects.listOpenForLead(caller.botId).pipe(Effect.mapError(readable));
+    return yield* toolError(
+      open.length === 0
+        ? `No open project is named "${name}", and you have none open. Create it with update_project first.`
+        : `No open project is named "${name}". Open projects: ${open.map((project) => project.name).join(", ")}.`,
+    );
   });
 
   const callerRoot = Effect.fn("BotsToolkit.callerRoot")(function* () {
@@ -600,6 +624,8 @@ const make = Effect.gen(function* () {
         );
         const continueThreadId =
           input.continueChatId === undefined ? undefined : ThreadId.make(input.continueChatId);
+        const project =
+          input.project === undefined ? undefined : yield* callerProject(caller, input.project);
         const child = yield* tasks
           .delegate({
             parentTaskId: caller.task.taskId,
@@ -612,6 +638,7 @@ const make = Effect.gen(function* () {
               input.continueChatId,
             ),
             ...(continueThreadId === undefined ? {} : { continueThreadId }),
+            ...(project === undefined ? {} : { projectId: project.projectId }),
           })
           .pipe(Effect.mapError(readable));
         return {
@@ -678,6 +705,36 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(readable));
         return { record: renderWorkRecord(record) };
+      }),
+    update_project: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        if (!caller.lead) return yield* toolError(PROJECTS_LEAD_ONLY);
+        const project = yield* projects
+          .update({
+            leadBotId: caller.botId,
+            threadId: caller.threadId,
+            name: input.name,
+            ...(input.steps === undefined ? {} : { steps: input.steps }),
+            ...(input.minutesLeft === undefined ? {} : { minutesLeft: input.minutesLeft }),
+            ...(input.close === undefined ? {} : { close: input.close }),
+          })
+          .pipe(Effect.mapError(readable));
+        if (project.state.kind === "open") {
+          const running = yield* tasks
+            .taskForThread({ threadId: caller.threadId })
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(running)) {
+            yield* tasks
+              .linkProject({ taskId: running.value.taskId, projectId: project.projectId })
+              .pipe(Effect.ignore);
+          }
+        }
+        const open = yield* projects.listOpenForLead(caller.botId).pipe(Effect.mapError(readable));
+        return {
+          project: projectLine(project, DateTime.toEpochMillis(yield* DateTime.now)),
+          openProjects: open.map((entry) => entry.name),
+        };
       }),
     notify_user: (input) =>
       Effect.gen(function* () {

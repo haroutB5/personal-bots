@@ -624,7 +624,7 @@ const RPC_RULES = [
   [/^personalBotsSetProfile$/, { pr: "A14" }],
   [/^personalBotsListFiles$|^personalFiles/, { pr: "A13" }],
   [/^personalGroups/, { pr: "A10" }],
-  [/^personal(Tasks|Routines)/, { pr: "A12" }],
+  [/^personal(Tasks|Routines|Projects)/, { pr: "A12" }],
   [/^personalLeadBotChanges/, { pr: "A6" }],
   [
     /^personal(LoginRequests|ConnectionApprovals)|^personalSecrets(ListPending|Fulfill|Cancel)$/,

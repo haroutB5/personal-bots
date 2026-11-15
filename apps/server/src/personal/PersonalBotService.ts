@@ -953,20 +953,17 @@ export const make = Effect.gen(function* () {
         return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
       }
       const now = yield* DateTime.now;
-      if (input.archived || linked.value.archivedAt === null) {
+      if (input.archived) {
         // The link row and the session stop belong to the same archive.
         return yield* uninterruptibleWrite(
           Effect.gen(function* () {
             const updated = yield* repository
-              .setThreadArchived({
-                threadId: input.threadId,
-                archivedAt: input.archived ? now : null,
-              })
+              .setThreadArchived({ threadId: input.threadId, archivedAt: now })
               .pipe(Effect.mapError(repositoryError("thread archive")));
             if (Option.isNone(updated)) {
               return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
             }
-            if (input.archived) yield* stopArchivedSession(input.threadId);
+            yield* stopArchivedSession(input.threadId);
             return updated.value;
           }),
         );
@@ -979,12 +976,18 @@ export const make = Effect.gen(function* () {
             const shell = yield* engine
               .getThread(input.threadId)
               .pipe(Effect.mapError(repositoryError("thread lookup")));
-            const renamedTo = Option.isSome(shell)
-              ? yield* unarchivedChatTitle(repository, {
-                  threadId: input.threadId,
-                  title: shell.value.title,
-                })
-              : null;
+            // A T3 archive (t3_thread_organize, the web sidebar) archives the
+            // thread as well as the link. The apps count a chat archived while
+            // either one is (isChatArchived), so both are cleared.
+            const threadArchived = Option.isSome(shell) && shell.value.archivedAt !== null;
+            const archived = linked.value.archivedAt !== null || threadArchived;
+            const renamedTo =
+              archived && Option.isSome(shell)
+                ? yield* unarchivedChatTitle(repository, {
+                    threadId: input.threadId,
+                    title: shell.value.title,
+                  })
+                : null;
             if (renamedTo !== null) {
               yield* engine
                 .updateMeta({ threadId: input.threadId, title: renamedTo })
@@ -995,6 +998,12 @@ export const make = Effect.gen(function* () {
               .pipe(Effect.mapError(repositoryError("thread archive")));
             if (Option.isNone(updated)) {
               return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
+            }
+            // After the link: the ThreadUnarchived sync then finds it open and does nothing.
+            if (threadArchived) {
+              yield* engine
+                .unarchive(input.threadId)
+                .pipe(Effect.mapError(toPersonalBotsError("Personal bots chat unarchive failed.")));
             }
             return renamedTo === null || Option.isNone(shell)
               ? updated.value

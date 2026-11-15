@@ -47,6 +47,9 @@ function makeServices() {
         }),
       remove: ({ routineId }: { routineId: string }) => record(`routine:${routineId}`),
     },
+    projects: {
+      removeForLead: (botId: string) => record(`projects:${botId}`),
+    },
     memory: {
       list: (input: { scope?: string; scopeId?: string }) =>
         Effect.succeed(
@@ -97,6 +100,7 @@ describe("purgePersonalBot", () => {
         "cancel:task-running",
         "request:request-gone",
         "routine:routine-gone",
+        `projects:${bot}`,
         // Groups come BEFORE the thread delete: the membership cleanup writes
         // a system row naming the bot and still needs its member thread.
         `groups:${bot}`,

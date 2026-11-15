@@ -278,6 +278,26 @@ describe("resolveUsageLimitsAfterProbe", () => {
     });
   });
 
+  it("takes a probe whose window end differs from the published one only by sub-second rounding", () => {
+    const fable = {
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 62,
+      windowDurationMins: 10_080,
+      resetsAt: "2026-11-15T11:00:00.358Z",
+    } as const;
+    const publishedAt62 = { checkedAt: "2026-11-14T09:45:00.000Z", windows: [fable] };
+    const probeAt100 = {
+      checkedAt: "2026-11-14T13:45:00.000Z",
+      windows: [{ ...fable, usedPercent: 100, resetsAt: "2026-11-15T11:00:00.000Z" }],
+    };
+
+    expect(
+      resolveUsageLimitsAfterProbe({ published: publishedAt62, probed: probeAt100 })?.windows,
+    ).toEqual(probeAt100.windows);
+  });
+
   it("replaces the published windows when the probe's window ends at the same time or later", () => {
     const sameEndProbe = {
       checkedAt: "2026-11-12T07:28:21.374Z",

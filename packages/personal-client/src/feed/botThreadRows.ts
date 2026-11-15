@@ -2,7 +2,13 @@ import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "../bots/threadShell.ts";
 
 import { chatActivityMs } from "../bots/chatActivity.ts";
-import { isChatPinned, snoozeEndMs, soonestWakeFirst, pinnedFirst } from "../bots/chatState.ts";
+import {
+  isChatArchived,
+  isChatPinned,
+  snoozeEndMs,
+  soonestWakeFirst,
+  pinnedFirst,
+} from "../bots/chatState.ts";
 import { isGroupRelayLink } from "../conversation/groupModel.ts";
 
 export interface BotThreadRow {
@@ -14,7 +20,7 @@ export interface BotThreadRow {
 /**
  * A bot's chats split into open, snoozed and archived: the rows of
  * /bots/$botId. Open is pinned chats first, then the rest, each newest first.
- * Snoozed (still asleep at `nowMs`) leave the open list and wait in their own
+ * Archived is either flag (`isChatArchived`), so every chat lands in one list.
  */
 export function botThreadRows(
   botId: string,
@@ -32,13 +38,14 @@ export function botThreadRows(
     return [{ link, shell, updatedMs: chatActivityMs(shell, link) }];
   });
   const newestFirst = (left: BotThreadRow, right: BotThreadRow) => right.updatedMs - left.updatedMs;
-  const open = rows.filter((row) => row.link.archivedAt === null && row.shell.archivedAt === null);
+  const archived = (row: BotThreadRow) => isChatArchived(row.link, row.shell);
+  const open = rows.filter((row) => !archived(row));
   const asleep = (row: BotThreadRow) => snoozeEndMs(row.link, nowMs) !== null;
   return {
     active: pinnedFirst(open.filter((row) => !asleep(row)).toSorted(newestFirst), (row) =>
       isChatPinned(row.link),
     ),
-    archived: rows.filter((row) => row.link.archivedAt !== null).toSorted(newestFirst),
+    archived: rows.filter(archived).toSorted(newestFirst),
     snoozed: soonestWakeFirst(open.filter(asleep), (row) => snoozeEndMs(row.link, nowMs) ?? 0),
   };
 }

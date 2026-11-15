@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  PersonalProjectListResult,
   PersonalRoutineListResult,
   PersonalTask,
   PersonalTaskDetail,
@@ -59,6 +60,13 @@ export function createPersonalAutomationClient<R, ER>(
     tag: WS_METHODS.personalRoutinesList,
     staleTimeMs: 5_000,
     // Next-run times and occurrences move on the server's clock.
+    refreshIntervalMs: 30_000,
+  });
+
+  const personalProjectsList = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-projects:list",
+    tag: WS_METHODS.personalProjectsList,
+    staleTimeMs: 5_000,
     refreshIntervalMs: 30_000,
   });
 
@@ -190,12 +198,23 @@ export function createPersonalAutomationClient<R, ER>(
     return useEnvironmentQuery(atom);
   }
 
+  function usePersonalProjects(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalProjectListResult> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalProjectsList({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return useEnvironmentQuery(atom);
+  }
+
   return {
     personalTasksFeed,
     personalTaskDetail,
     personalTaskRelated,
     personalTaskHistory,
     personalRoutinesList,
+    personalProjectsList,
     personalTaskCancel,
     personalTaskRetry,
     personalRoutineCreate,
@@ -211,6 +230,7 @@ export function createPersonalAutomationClient<R, ER>(
     usePersonalTaskDetail,
     usePersonalRelatedTasks,
     usePersonalRoutines,
+    usePersonalProjects,
   };
 }
 

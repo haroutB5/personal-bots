@@ -104,6 +104,12 @@ export const DelegateTaskInput = Schema.Struct({
         "A chat id from list_bot_chats. Use it when the work follows up on something this bot discussed with the user in that chat: the task runs as a new turn there, with the earlier conversation in context.",
     }),
   ),
+  project: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Leads only: one of your open projects (update_project). Left out, the task joins this request's project, if any.",
+    }),
+  ),
 });
 export type DelegateTaskInput = typeof DelegateTaskInput.Type;
 
@@ -222,6 +228,45 @@ export const UpdateWorkRecordInput = Schema.Struct({
   ),
 });
 export type UpdateWorkRecordInput = typeof UpdateWorkRecordInput.Type;
+
+export const UpdateProjectInput = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)).annotate({
+    description: "At most 48 characters. Matches your open project in any case, else creates one.",
+  }),
+  steps: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        label: TrimmedNonEmptyString.check(Schema.isMaxLength(40)).annotate({
+          description: "At most 40 characters, e.g. 'Verify on emulator'.",
+        }),
+        state: Schema.Literals(["done", "doing", "todo"]),
+      }),
+    )
+      .check(Schema.isMinLength(1), Schema.isMaxLength(8))
+      .annotate({
+        description:
+          "1 to 8 steps in order; replaces the list. Required to create. Mark the current one 'doing'.",
+      }),
+  ),
+  minutesLeft: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10_080 }))).annotate({
+      description:
+        "Your estimate of minutes until it ships, 1 to 10080. null clears; left out keeps.",
+    }),
+  ),
+  close: Schema.optional(
+    Schema.Literals(["done", "dropped"]).annotate({
+      description: "'done' when it shipped, 'dropped' when it stopped.",
+    }),
+  ),
+});
+export type UpdateProjectInput = typeof UpdateProjectInput.Type;
+
+export const UpdateProjectResult = Schema.Struct({
+  project: Schema.String,
+  openProjects: Schema.Array(Schema.String),
+});
+export type UpdateProjectResult = typeof UpdateProjectResult.Type;
 
 export const UpdateWorkRecordResult = Schema.Struct({
   /** The record as it now reads. */
@@ -685,7 +730,7 @@ const ListBotChatsTool = Tool.make("list_bot_chats", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Hand a self-contained piece of work to another bot on your team. The bot starts with only what you pass here, so put what it needs in objective, context, constraints, acceptanceCriteria and expectedOutput. When the work follows up on something that bot discussed with the user in one of its chats, prefer continuing that chat: find it with list_bot_chats and pass its id as continueChatId. The task then runs as a new turn there with the earlier conversation in context; your brief shows as coming from you, not the user. It starts once the chat is idle; an archived chat reopens. Refused for another bot's chat, group, task, routine and deleted chats. It runs in the background and the result arrives as a follow-up message, so end your turn after delegating. steer_task, stop_task and get_task work on it. Repeating the same bot and objective in the same request returns the existing task. Refused for: a bot on the other team unless the user's own latest message names it; a bot already working above you on this request (handing back to the bot that took the original request is allowed); more than two levels of delegation. No cap on tasks per request; only five turns run at once and the rest queue.",
+    "Hand a self-contained piece of work to another bot on your team. The bot starts with only what you pass here, so put what it needs in objective, context, constraints, acceptanceCriteria and expectedOutput. When the work follows up a chat that bot had with the user, prefer continuing that chat: find it with list_bot_chats and pass its id as continueChatId. The task then runs as a new turn there with the earlier conversation in context; your brief shows as coming from you, not the user. It starts once the chat is idle; an archived chat reopens. Refused for another bot's chat, group, task, routine and deleted chats. It runs in the background and the result arrives as a follow-up message, so end your turn after delegating. steer_task, stop_task and get_task work on it. Repeating the same bot and objective in the same request returns the existing task. Refused for: a bot on the other team unless the user's own latest message names it; a bot already working above you on this request (handing back to the bot that took the original request is allowed); more than two levels of delegation. No cap on tasks per request; eight turns run at once (seven in a heavy job) and the rest queue.",
   parameters: DelegateTaskInput,
   success: DelegateTaskResult,
   failure: BotsToolFailure,
@@ -723,6 +768,19 @@ const UpdateWorkRecordTool = Tool.make("update_work_record", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
+const UpdateProjectTool = Tool.make("update_project", {
+  description: `${LEAD_ONLY} Keep a project that spans more than one task. The user sees its steps, your estimate and who works on it. Call again when a step moves or the estimate changes, and close it when it ships or stops. The same name updates, never duplicates. Link tasks with project on delegate_task; this call also links the task you are running.`,
+  parameters: UpdateProjectInput,
+  success: UpdateProjectResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update project")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
 const NotifyUserTool = Tool.make("notify_user", {
@@ -947,6 +1005,7 @@ export const BotsToolkit = Toolkit.make(
   DelegateTaskTool,
   GetTaskTool,
   UpdateWorkRecordTool,
+  UpdateProjectTool,
   NotifyUserTool,
   ReadChatHistoryTool,
   ListTasksTool,

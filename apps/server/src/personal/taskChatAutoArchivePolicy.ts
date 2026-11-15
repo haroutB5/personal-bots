@@ -163,6 +163,21 @@ export const taskChatAutoArchiveCandidatesSql = (rel: PersonalProjectionRelation
 `;
 
 /**
+ * One bot chat's two archive flags (the link's and the thread's) and whether it
+ * is a group relay, for the turn-start unarchive. No row: not a bot chat.
+ */
+export const chatArchiveStateSql = (rel: PersonalProjectionRelationsShape): string => `
+  SELECT
+    (bt.archived_at IS NOT NULL) AS "linkArchived",
+    (p.archived_at IS NOT NULL) AS "threadArchived",
+    EXISTS (SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = bt.thread_id)
+      AS "groupRelay"
+  FROM personal_bot_threads bt
+  LEFT JOIN ${rel.threads} p ON p.thread_id = bt.thread_id
+  WHERE bt.thread_id = ?
+`;
+
+/**
  * Archived bot chats that are working anyway: a turn started after the chat
  * was archived and is still running. A reopened or steered task, a routine
  * run and the owner's own message all start a turn, and the turn-start

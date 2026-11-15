@@ -16,6 +16,7 @@ import {
   ThreadId,
   type PersonalBotId,
   type PersonalDelegationBrief,
+  type PersonalProjectId,
   type PersonalRoutineNotifyMode,
   type PersonalTask,
   type PersonalTaskCreateInput,
@@ -31,6 +32,7 @@ import {
 } from "@t3tools/contracts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { type WorkRecordPatch } from "./workRecord.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -51,10 +53,10 @@ import { heavyJobLockHeld } from "./heavyJobLock.ts";
  * job holds the shared machine lock (a build, a full typecheck, the e2e suite).
  * The laptop has little RAM left then, so fewer turns run at once.
  */
-export const PERSONAL_TASKS_CONCURRENCY = 5;
+export const PERSONAL_TASKS_CONCURRENCY = 7;
 
 /**
- * The same cap with no heavy job running (Harout, 26 Oct: 8 normally, 5 while a
+ * The same cap with no heavy job running (Harout, 26 Oct: 8 normally; 14 Nov: 7, was 5, while a
  * heavy job holds `run/omarchy-heavy.lock`). Running turns are never stopped
  * when the limit drops; the dispatcher simply stops starting new ones until
  * the count is under the smaller limit again.
@@ -154,6 +156,11 @@ export interface PersonalTaskDelegateInput {
    * its chat. The chat stays an ordinary chat when the task ends.
    */
   readonly continueThreadId?: ThreadId;
+  /**
+   * The lead's project the child joins. The parent joins it too when it has
+   * none. Without it the child inherits the parent's project.
+   */
+  readonly projectId?: PersonalProjectId;
 }
 
 export interface PersonalTaskSteerInput {
@@ -247,6 +254,11 @@ export class PersonalTaskService extends Context.Service<
       readonly taskId: PersonalTaskId;
       readonly patch: WorkRecordPatch;
     }) => Effect.Effect<PersonalTaskWorkRecord, PersonalTasksError>;
+    /** Puts a task without a project into `projectId` and publishes it. A linked task keeps its project. */
+    readonly linkProject: (input: {
+      readonly taskId: PersonalTaskId;
+      readonly projectId: PersonalProjectId;
+    }) => Effect.Effect<void, PersonalTasksError>;
     /**
      * The bot's notify_user call for a running task: whether the finished run
      * should notify the user, with an optional one-line message for the push.
@@ -484,6 +496,7 @@ export const make = Effect.gen(function* () {
     recordNotifyDecision,
     related,
     subscribe,
+    linkProject,
     taskForThread,
     updateWorkRecord,
     workRecord,
@@ -538,6 +551,7 @@ export const make = Effect.gen(function* () {
     get,
     workRecord,
     updateWorkRecord,
+    linkProject,
     taskForThread,
     recordNotifyDecision,
     chatHistory,
@@ -565,4 +579,7 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(PersonalTaskService, make);
 
 /** The service with its own repositories; needs SqlClient, bots, engine and projections. */
-export const layerLive = layer.pipe(Layer.provideMerge(PersonalTaskRepository.layer));
+export const layerLive = layer.pipe(
+  Layer.provideMerge(PersonalTaskRepository.layer),
+  Layer.provideMerge(PersonalProjectRepository.layer),
+);

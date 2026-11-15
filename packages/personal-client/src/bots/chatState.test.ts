@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isChatArchived,
   isChatPinned,
   isChatSnoozed,
   nextWakeAtMs,
@@ -16,6 +17,21 @@ import {
 const local = (month: number, day: number, hour: number, minute = 0) =>
   new Date(2026, month - 1, day, hour, minute, 0, 0);
 const utc = (date: Date) => DateTime.makeUnsafe(date.getTime());
+
+describe("archive state", () => {
+  const when = DateTime.makeUnsafe(Date.UTC(2026, 10, 14, 16, 46));
+  it("a chat is archived when its link or its thread says so", () => {
+    expect(isChatArchived({ archivedAt: null }, { archivedAt: null })).toBe(false);
+    // Phone, web or bot archive: the link.
+    expect(isChatArchived({ archivedAt: when }, { archivedAt: null })).toBe(true);
+    // t3_thread_organize or the web sidebar: the thread, before the link catches up.
+    expect(isChatArchived({ archivedAt: null }, { archivedAt: "2026-11-14T16:46:00Z" })).toBe(true);
+    // Before the list or the shell arrives, the side that is known decides.
+    expect(isChatArchived(null, { archivedAt: "2026-11-14T16:46:00Z" })).toBe(true);
+    expect(isChatArchived({ archivedAt: when }, null)).toBe(true);
+    expect(isChatArchived(null, null)).toBe(false);
+  });
+});
 
 describe("pin and snooze state", () => {
   it("a chat is pinned only when it carries pinnedAt", () => {

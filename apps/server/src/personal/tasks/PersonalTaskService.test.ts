@@ -1,6 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - builds provider activity rows
-// These tests assert the five-slot cap and how work queues behind it, so the
-// heavy-job probe is pinned to "held" for the whole file. The 8/5 policy itself
+// These tests assert the seven-slot cap and how work queues behind it, so the
+// heavy-job probe is pinned to "held" for the whole file. The 8/7 policy itself
 // is covered in heavyJobLock.test.ts.
 process.env.PERSONAL_TASKS_HEAVY_PROBE = "held";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -51,6 +51,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import {
   makeSensitiveExposureStore,
@@ -426,6 +427,7 @@ const makeEngine = (harness: Harness) =>
         Effect.sync(() => {
           harness.calls.push({ type: "archive", threadId });
         }),
+      unarchive: () => Effect.void,
       deleteThread: (threadId) =>
         Effect.sync(() => {
           harness.calls.push({ type: "deleteThread", threadId });
@@ -550,6 +552,7 @@ const makeLayer = (
           ),
     ),
     Layer.provideMerge(PersonalTaskRepository.layer),
+    Layer.provideMerge(PersonalProjectRepository.layer),
     Layer.provideMerge(PersonalBotService.layerRequiringEngine),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(PersonalProjectionRelationsV2Live),
@@ -877,6 +880,61 @@ it.effect("depth and child limits are persisted on the root and survive a restar
     }).pipe(Effect.provide(makeLayer(makeHarness(), dbPath)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("a task delegated into a project links its parent, and later children inherit it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+    const project = yield* projects.update({
+      leadBotId: botId("assistant"),
+      threadId: null,
+      name: "Matchday optimisation",
+      steps: [{ label: "Build", state: "doing" }],
+    });
+    const root = yield* createRoot("project-root");
+    const unrelated = yield* createRoot("project-unrelated", "planner");
+    yield* TestClock.adjust("1 minute");
+    const child = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Build"),
+      projectId: project.projectId,
+    });
+    yield* TestClock.adjust("1 minute");
+    const grandchild = yield* service.delegate({
+      parentTaskId: child.taskId,
+      targetBotId: botId("researcher"),
+      brief: brief("Check"),
+    });
+    const sibling = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("planner"),
+      brief: brief("Plan"),
+    });
+
+    expect({
+      root: (yield* reload(root.taskId)).projectId,
+      child: child.projectId,
+      grandchild: grandchild.projectId,
+      sibling: sibling.projectId,
+      unrelated: (yield* reload(unrelated.taskId)).projectId,
+    }).toEqual({
+      root: project.projectId,
+      child: project.projectId,
+      grandchild: project.projectId,
+      sibling: project.projectId,
+      unrelated: null,
+    });
+
+    const listed = (yield* projects.list()).find((entry) => entry.projectId === project.projectId);
+    expect(listed?.lastActivityAt).toEqual(sibling.updatedAt);
+    expect(DateTime.toEpochMillis(sibling.updatedAt)).toBeGreaterThan(
+      DateTime.toEpochMillis(project.updatedAt),
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
 
 it.effect(
   "delegation rejects ancestry loops but lets a child hand work back to the root bot",
@@ -2886,30 +2944,31 @@ it("the delegation cap comes from the root row and the kill switch, and is off b
   expect(PersonalTaskService.personalTasksDelegationLimit(4, { [name]: "2" })).toBe(2);
 });
 
-it.effect("one request may delegate six tasks; five run at once and the rest queue", () => {
+it.effect("one request may delegate eight tasks; seven run at once and the rest queue", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     yield* seedBots;
     const service = yield* PersonalTaskService.PersonalTaskService;
-    const root = yield* createRoot("six-children");
+    const root = yield* createRoot("eight-children");
     const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
     const children = [];
-    for (let index = 1; index <= 6; index += 1) {
+    const parts = PersonalTaskService.PERSONAL_TASKS_CONCURRENCY + 1;
+    for (let index = 1; index <= parts; index += 1) {
       children.push(yield* delegate(index % 2 === 0 ? "developer" : "researcher", `Part ${index}`));
     }
     // The same bot and objective in the same turn is still one delegation.
     const repeat = yield* delegate("developer", "Part 2");
     expect(repeat.taskId).toBe(children[1]!.taskId);
-    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(7);
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(parts + 1);
 
-    yield* endTurn(harness, rootThread, turnId, "Delegated six parts.");
+    yield* endTurn(harness, rootThread, turnId, "Delegated eight parts.");
     yield* service.drain;
 
     const states = yield* Effect.forEach(children, (child) => reload(child.taskId));
     const running = states.filter((task) => task.status === "running");
     const queued = states.filter((task) => task.status === "queued");
     expect(running.length).toBe(PersonalTaskService.PERSONAL_TASKS_CONCURRENCY);
-    expect(queued.length).toBe(6 - PersonalTaskService.PERSONAL_TASKS_CONCURRENCY);
+    expect(queued.length).toBe(1);
 
     // A finished part frees its slot; the root's continuation takes it, and the
     // queued part starts as soon as that turn ends.
@@ -4379,7 +4438,7 @@ it.effect("a chat resuming after a usage limit takes a slot from the same cap as
   return Effect.gen(function* () {
     yield* seedBots;
     const service = yield* PersonalTaskService.PersonalTaskService;
-    // Two chats resume; the tasks get what is left of the five slots.
+    // Two chats resume; the tasks get what is left of the seven slots.
     expect(yield* service.reserveExternalSlot("chat-resume:a")).toBe(true);
     expect(yield* service.reserveExternalSlot("chat-resume:b")).toBe(true);
     // Holding a slot twice is still one slot.
@@ -4390,15 +4449,19 @@ it.effect("a chat resuming after a usage limit takes a slot from the same cap as
     }
     const statuses = () =>
       Effect.forEach(roots, (root) => reload(root.taskId).pipe(Effect.map((task) => task.status)));
-    expect(yield* statuses()).toEqual(["running", "running", "running", "queued"]);
+    const slotsLeft = PersonalTaskService.PERSONAL_TASKS_CONCURRENCY - 2;
+    expect(yield* statuses()).toEqual([
+      ...Array.from({ length: slotsLeft }, () => "running"),
+      "queued",
+    ]);
     // Every slot busy: another chat has to wait.
     expect(yield* service.reserveExternalSlot("chat-resume:c")).toBe(false);
 
     // A resumed chat's turn ends: its slot goes to the queued task.
     yield* service.releaseExternalSlot("chat-resume:a");
     yield* service.drain;
-    expect(yield* statuses()).toEqual(["running", "running", "running", "running"]);
-    expect(PersonalTaskService.PERSONAL_TASKS_CONCURRENCY).toBe(5);
+    expect(yield* statuses()).toEqual(Array.from({ length: slotsLeft + 1 }, () => "running"));
+    expect(PersonalTaskService.PERSONAL_TASKS_CONCURRENCY).toBe(7);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

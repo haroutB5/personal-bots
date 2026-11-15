@@ -60,6 +60,7 @@ export const delegationContinuationText = (input: {
   readonly stillRunningTitles: ReadonlyArray<string>;
   readonly notes: ReadonlyArray<string>;
   readonly sections: ReadonlyArray<string>;
+  readonly projectNudge?: string | null;
 }): string => {
   const stillRunning = input.stillRunningTitles.length > 0;
   return [
@@ -73,6 +74,7 @@ export const delegationContinuationText = (input: {
         ]
       : []),
     ...input.notes,
+    ...(input.projectNudge ? [input.projectNudge] : []),
     stillRunning
       ? "Continue the task below with these results. Do not give a final answer yet: the tasks still running will report back."
       : "Continue the task below with these results and give your final answer.",
@@ -139,7 +141,7 @@ export function stripSelfAttribution(fromName: string, message: string): string 
   // notes" is not from "Dev".
   const end = `(?![\\w'’])`;
   const prefix = new RegExp(
-    `^(?:(?:update\\s+)?from\\s+${n}${end}(?:\\s+here\\b)?|${n}\\s+here\\b|${n}\\s*:)[\\s:,.!;\\-–—]*`,
+    `^(?:(?:update\\s+)?from\\s+${n}${end}(?:\\s+here\\b)?|${n}\\s+here\\b|${n}\\s*:)[\\s:,.!;\\-–\\u2014]*`,
     "i",
   );
   const stripped = text.replace(prefix, "").trim();

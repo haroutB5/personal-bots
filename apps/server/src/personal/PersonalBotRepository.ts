@@ -1401,12 +1401,14 @@ export const make = Effect.gen(function* () {
       // comes along: a bot with nothing to read invents an answer.
       modelSelection: Schema.fromJsonString(ModelSelection),
       memoryAutoSave: Schema.Number,
+      lead: Schema.Number,
     }),
     execute: ({ threadId }) =>
       sql`
         SELECT b.name AS "name", b.title AS "title", b.instructions AS "instructions",
                b.model_selection_json AS "modelSelection",
-               b.memory_auto_save AS "memoryAutoSave"
+               b.memory_auto_save AS "memoryAutoSave",
+               b.is_lead AS "lead"
         FROM personal_bot_threads t
         JOIN personal_bots b ON b.bot_id = t.bot_id
         WHERE t.thread_id = ${threadId}
@@ -2235,6 +2237,7 @@ export const make = Effect.gen(function* () {
             instructions: row.instructions,
             model: row.modelSelection.model,
             memoryAutoSave: row.memoryAutoSave === 1,
+            lead: row.lead === 1,
             ...(typeof effort === "string" && effort.length > 0 ? { effort } : {}),
           };
         }),
