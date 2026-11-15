@@ -54,6 +54,17 @@ export function tableColumnWidths(table: MarkdownTable): ReadonlyArray<number> {
 }
 
 /**
+ * A send whose message the transcript already shows is that message, not a pending bubble. The
+ * pending row stays until then, so removing it never leaves a frame with no bubble at all.
+ */
+export function pendingNotArrived<P extends { readonly id: string }>(
+  pending: ReadonlyArray<P>,
+  arrivedIds: ReadonlySet<string>,
+): ReadonlyArray<P> {
+  return pending.filter((message) => !arrivedIds.has(message.id));
+}
+
+/**
  * The data index of a feed row. The list renders its rows reversed, so the
  * index used by `scrollToIndex` is the mirror of the transcript position.
  */

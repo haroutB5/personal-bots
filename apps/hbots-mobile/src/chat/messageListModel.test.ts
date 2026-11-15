@@ -5,6 +5,7 @@ import {
   claimsReplySwipe,
   LONG_PRESS_SLOP,
   opensMessageMenu,
+  pendingNotArrived,
   scrollIndexForItem,
   TABLE_CELL_MAX_WIDTH,
   tableColumnWidths,
@@ -21,6 +22,18 @@ describe("scrollIndexForItem", () => {
 
   it("returns null for a row the list does not hold", () => {
     expect(scrollIndexForItem(rows, "secret:missing")).toBeNull();
+  });
+});
+
+describe("pendingNotArrived", () => {
+  const pending = [{ id: "sent-1" }, { id: "sending-2" }];
+
+  it("keeps a send out of the list until the transcript shows it", () => {
+    expect(pendingNotArrived(pending, new Set())).toEqual(pending);
+  });
+
+  it("drops the send in the same render that shows its message", () => {
+    expect(pendingNotArrived(pending, new Set(["sent-1"]))).toEqual([{ id: "sending-2" }]);
   });
 });
 

@@ -34,7 +34,16 @@ import {
   IconX,
 } from "@tabler/icons-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  AppState,
+  Image,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import type { ChatEnvironment } from "./chatEnvironment";
 import {
@@ -68,11 +77,30 @@ import { discardOutgoingFiles, readableOutgoingFiles, retainOutgoingFiles } from
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
+import { PrewarmAttachmentImages } from "./AttachmentImage";
+import { AttachSheet } from "./AttachSheet";
+import { attachPhotos, cameraRefusal, plainNotice, type ComposerNotice } from "./attachSheetModel";
+import { CameraCaptureSheet } from "./CameraCaptureSheet";
+import {
+  CAMERA_OPEN_MS,
+  cameraFailure,
+  cameraLaunchDecision,
+  cameraLaunchKey,
+  cameraLaunchNotice,
+  isStuckLauncherFailure,
+  pendingLaunchOwner,
+  photoLaunchNotice,
+  watchCameraLaunch,
+} from "./cameraLaunch";
 import { ComposerHost } from "./ComposerHost";
+import { embeddedPickerAvailable } from "./PhotoStrip";
 import { keyboardImages, releasedIntakes } from "./composerInput";
+import { localImages } from "./localImages";
+import { shrinkDrafts } from "./photoDrafts";
+import { photosToWarm } from "./photoThumb";
 import { draftKey } from "./linkDraft";
 import { blockedMessage } from "../share/pickerModel";
-import { discardShare, readShare } from "../share/shareIntake";
+import { discardShare, readShare, shrinkPhoto } from "../share/shareIntake";
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
 
 const MAX_ATTACHMENTS = 10;
@@ -164,8 +192,13 @@ export function Composer({
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ComposerNotice | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [capture, setCapture] = useState<{ readonly reason: string | null } | null>(null);
+  const [embedded, setEmbedded] = useState(embeddedPickerAvailable);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachment | null>(null);
+  const systemCameraStuck = useRef<string | null>(null);
+  const cameraLaunching = useRef(false);
   const connection = native.useConnectionState();
   const startTurn = native.client.useAtomCommand(chat.thread.startTurn, {
     reportFailure: false,
@@ -247,25 +280,101 @@ export function Composer({
   const showStop = working && !hasContent;
   const canSend = hasContent && !preparing;
 
-  const addPicked = (next: ReadonlyArray<DraftAttachment>) => {
-    const current = draftRef.current.attachments;
-    const room = MAX_ATTACHMENTS - current.length;
-    const accepted = next.slice(0, Math.max(0, room));
-    const tooBig = accepted.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
+  /**
+   * The one way into the draft, from every source: photos are shrunk first, then the size cap
+   * applies. Keyboard and embedded-picker images keep their intake folder until the draft lets
+   * go of them.
+   */
+  const addDrafts = async (next: ReadonlyArray<DraftAttachment>, intakeId: string | null) => {
+    const shrunk = await shrinkDrafts(next, shrinkPhoto);
+    const tooBig = shrunk.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
     if (tooBig.length > 0) {
-      setError(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`);
+      if (intakeId !== null) discardShare(intakeId);
+      setNotice(
+        plainNotice(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`),
+      );
       return;
     }
-    setDraft((draft) => ({
-      ...draft,
-      attachments: [...draft.attachments, ...accepted.filter((item) => !tooBig.includes(item))],
-    }));
+    if (intakeId !== null) {
+      for (const draft of shrunk) intakeHeld.current.set(draft.id, intakeId);
+      setNotice(null);
+    }
+    setDraft((draft) => ({ ...draft, attachments: [...draft.attachments, ...shrunk] }));
   };
+
+  const addPicked = async (next: ReadonlyArray<DraftAttachment>) => {
+    const room = MAX_ATTACHMENTS - draftRef.current.attachments.length;
+    await addDrafts(next.slice(0, Math.max(0, room)), null);
+  };
+
+  const addCameraAsset = async (
+    asset: {
+      readonly uri: string;
+      readonly width: number;
+      readonly height: number;
+      readonly fileName?: string | null;
+      readonly fileSize?: number;
+    },
+    source: string,
+  ) => {
+    await addPicked([
+      {
+        id: `${Date.now()}-${source}`,
+        kind: "image",
+        name: attachmentName({ fileName: asset.fileName, camera: true, index: 0 }),
+        mimeType: "image/jpeg",
+        sizeBytes: sizeOf(asset.uri, asset.fileSize ?? 0),
+        uri: asset.uri,
+      },
+    ]);
+  };
+
+  // Android can kill this activity during a system camera launch. The photo it saved comes back
+  // here after the composer mounts again, so it lands as a draft instead of being lost. The
+  // launch marker keeps that recovery in the chat that opened the camera.
+  const pendingChecked = useRef(false);
+  useEffect(() => {
+    if (pendingChecked.current) return;
+    pendingChecked.current = true;
+    const launchKey = cameraLaunchKey(native.environmentId);
+    const pendingThread = native.client.ports.kv.getItem(launchKey);
+    if (pendingLaunchOwner(pendingThread, threadId) === "skip") {
+      console.info("[camera] pending result belongs to another chat");
+      return;
+    }
+    void (async () => {
+      try {
+        const pending = await ImagePicker.getPendingResultAsync();
+        if (pendingThread !== null) native.client.ports.kv.removeItem(launchKey);
+        if (pending === null) {
+          if (pendingThread !== null) console.info("[camera] pending result none");
+          return;
+        }
+        if ("code" in pending) {
+          const failure = cameraFailure(pending);
+          console.warn(
+            `[camera] pending result failed code=${failure.code} message=${failure.message}`,
+          );
+          return;
+        }
+        if (pending.canceled) return;
+        const asset = pending.assets[0];
+        if (asset === undefined) return;
+        await addCameraAsset(asset, "recovered");
+      } catch (error) {
+        const failure = cameraFailure(error);
+        console.warn(
+          `[camera] pending result failed code=${failure.code} message=${failure.message}`,
+        );
+      }
+    })();
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- recover once per composer mount
+  }, []);
 
   /** An image from the keyboard: the share intake's caps and refusals, then a draft attachment. */
   const addKeyboardImages = (intakeId: string | null) => {
     if (intakeId === null) {
-      setError(blockedMessage("empty"));
+      setNotice(plainNotice(blockedMessage("empty")));
       return;
     }
     const result = keyboardImages(readShare(intakeId), (index) => {
@@ -273,20 +382,15 @@ export function Composer({
     });
     if (!result.ok) {
       discardShare(intakeId);
-      setError(result.message);
+      setNotice(plainNotice(result.message));
       return;
     }
     if (draftRef.current.attachments.length + result.drafts.length > MAX_ATTACHMENTS) {
       discardShare(intakeId);
-      setError(blockedMessage("too-many-items"));
+      setNotice(plainNotice(blockedMessage("too-many-items")));
       return;
     }
-    for (const draft of result.drafts) intakeHeld.current.set(draft.id, intakeId);
-    setError(null);
-    setDraft((current) => ({
-      ...current,
-      attachments: [...current.attachments, ...result.drafts],
-    }));
+    void addDrafts(result.drafts, intakeId);
   };
 
   const pickPhotos = async () => {
@@ -299,7 +403,7 @@ export function Composer({
         quality: 1,
       });
       if (result.canceled) return;
-      addPicked(
+      await addPicked(
         result.assets.map((asset, index) => {
           const uri = asset.uri;
           const name = attachmentName({
@@ -317,42 +421,114 @@ export function Composer({
           };
         }),
       );
-    } catch {
-      setError("Couldn't open the photo picker.");
+    } catch (error) {
+      const failure = cameraFailure(error);
+      console.warn(`[photos] launch failed code=${failure.code} message=${failure.message}`);
+      if (embeddedPickerAvailable()) {
+        setEmbedded(true);
+        setAttachOpen(true);
+      } else {
+        setNotice(photoLaunchNotice(failure));
+      }
     } finally {
       setPicking(false);
     }
   };
 
+  const cameraPermission = async () => {
+    const current = await ImagePicker.getCameraPermissionsAsync();
+    if (current.granted) return current;
+    return ImagePicker.requestCameraPermissionsAsync();
+  };
+
+  /**
+   * The system camera can stay pending on Android 16 until a lifecycle change, and a recreated
+   * activity leaves its launcher unregistered. Both end in the in-app camera once the app has
+   * stayed in the foreground for CAMERA_OPEN_MS. The camera taking the screen stops that wait.
+   */
+  const launchSystemCamera = async () => {
+    const watch = watchCameraLaunch({
+      stallMs: CAMERA_OPEN_MS,
+      isForeground: () => AppState.currentState === "active",
+    });
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state !== "active") watch.background();
+    });
+    let asset: ImagePicker.ImagePickerAsset | undefined;
+    const launch = ImagePicker.launchCameraAsync({ quality: 1 });
+    void launch.then(
+      (result) => {
+        if (result.canceled) {
+          watch.settle({ kind: "cancelled" });
+          return;
+        }
+        asset = result.assets[0];
+        watch.settle({ kind: "succeeded" });
+      },
+      (error) => watch.settle({ kind: "rejected", failure: cameraFailure(error) }),
+    );
+
+    const outcome = await watch.outcome;
+    appState.remove();
+    const decision = cameraLaunchDecision(outcome);
+    if (decision.kind === "stop") return;
+    if (decision.kind === "accept") {
+      if (asset !== undefined) await addCameraAsset(asset, "camera");
+      return;
+    }
+
+    if (outcome.kind === "rejected") {
+      const failure = outcome.failure;
+      console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
+      setNotice(cameraLaunchNotice(failure));
+      if (isStuckLauncherFailure(failure)) systemCameraStuck.current = decision.reason;
+      setCapture({ reason: decision.reason });
+      return;
+    }
+    if (outcome.kind !== "timeout") return;
+
+    console.warn(`[camera] launch stalled after ${CAMERA_OPEN_MS}ms`);
+    systemCameraStuck.current = decision.reason;
+    setCapture({ reason: decision.reason });
+    // A system camera that opens after the wait still wins: its photo closes the sheet.
+    void launch.then(
+      (result) => {
+        if (result.canceled) return;
+        const late = result.assets[0];
+        if (late === undefined) return;
+        setCapture(null);
+        void addCameraAsset(late, "late");
+      },
+      (error) => {
+        const failure = cameraFailure(error);
+        console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
+      },
+    );
+  };
+
   const pickCamera = async () => {
+    if (cameraLaunching.current) return;
+    cameraLaunching.current = true;
     setPicking(true);
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        setError("Camera access is off for hbots.");
+      const refusal = cameraRefusal(await cameraPermission());
+      if (refusal !== null) {
+        setNotice(refusal);
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({ quality: 1 });
-      if (result.canceled) return;
-      const asset = result.assets[0];
-      if (asset === undefined) return;
-      addPicked([
-        {
-          id: `${Date.now()}-camera`,
-          kind: "image",
-          name: attachmentName({
-            fileName: null,
-            camera: true,
-            index: 0,
-          }),
-          mimeType: asset.mimeType ?? "image/jpeg",
-          sizeBytes: sizeOf(asset.uri, asset.fileSize ?? 0),
-          uri: asset.uri,
-        },
-      ]);
-    } catch {
-      setError("Couldn't open the camera.");
+      if (systemCameraStuck.current !== null) {
+        setNotice(null);
+        setCapture({ reason: systemCameraStuck.current });
+        return;
+      }
+      native.client.ports.kv.setItem(cameraLaunchKey(native.environmentId), threadId);
+      await launchSystemCamera();
+    } catch (error) {
+      const failure = cameraFailure(error);
+      console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
+      setNotice(cameraLaunchNotice(failure));
     } finally {
+      cameraLaunching.current = false;
       setPicking(false);
     }
   };
@@ -365,7 +541,7 @@ export function Composer({
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
-      addPicked(
+      await addPicked(
         result.assets.map((asset, index) => {
           const name = asset.name ?? `File ${index + 1}`;
           const mimeType = asset.mimeType ?? "application/octet-stream";
@@ -380,7 +556,7 @@ export function Composer({
         }),
       );
     } catch {
-      setError("Couldn't open the file picker.");
+      setNotice(plainNotice("Couldn't open the file picker."));
     } finally {
       setPicking(false);
     }
@@ -447,13 +623,15 @@ export function Composer({
         })),
       });
       if (entry === null) {
-        setError("Couldn't save that message on this device. Your draft is still here.");
+        setNotice(
+          plainNotice("Couldn't save that message on this device. Your draft is still here."),
+        );
         return false;
       }
       return true;
     } catch (cause) {
       console.warn("outbox queue failed", cause);
-      setError("Couldn't queue that message. Your draft is still here.");
+      setNotice(plainNotice("Couldn't queue that message. Your draft is still here."));
       return false;
     }
   };
@@ -495,13 +673,16 @@ export function Composer({
     else native.client.ports.kv.setItem(key, next.text);
   };
 
-  /** The server has the message: the bubble and its saved copy both go. */
+  /**
+   * The server has the message: its saved copy goes and its photo keeps drawing. The pending
+   * bubble stays until the transcript shows the message, so no frame is left without a bubble.
+   */
   const landed = (messageId: string) => {
     if (!activeSends.current.has(messageId)) return;
     activeSends.current.delete(messageId);
-    onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
-    discardClaimedIntakes(messageId);
+    // A sent image is drawn from its device file until the server's copy draws.
+    localImages.landed(messageId, () => discardClaimedIntakes(messageId));
     void discardOutgoingFiles(messageId);
     onSent();
   };
@@ -514,7 +695,9 @@ export function Composer({
     activeSends.current.set(outgoing.id, { ...active, outgoing: failed });
     onPendingChange((pending) => setPendingState(pending, outgoing.id, "failed"));
     if (!keepStored(failed, active.meta)) {
-      setError("Couldn't keep this message on the device. Try again before leaving the chat.");
+      setNotice(
+        plainNotice("Couldn't keep this message on the device. Try again before leaving the chat."),
+      );
     }
   };
 
@@ -553,7 +736,7 @@ export function Composer({
         if (readable === null) {
           sendAborts.current.delete(messageId);
           markFailed(outgoing);
-          setError("An attachment didn't upload. Try again.");
+          setNotice(plainNotice("An attachment didn't upload. Try again."));
           return false;
         }
         uploaded = (await uploadDraftAttachments(native, chat, readable)) ?? [];
@@ -563,9 +746,15 @@ export function Composer({
       if (uploaded.length !== snapshot.length) {
         sendAborts.current.delete(messageId);
         markFailed(outgoing);
-        setError("An attachment didn't upload. Try again.");
+        setNotice(plainNotice("An attachment didn't upload. Try again."));
         return false;
       }
+      localImages.hold(
+        messageId,
+        snapshot.flatMap((attachment, index) =>
+          attachment.kind === "image" ? [{ index, uri: attachment.uri }] : [],
+        ),
+      );
     }
     if (abort.signal.aborted) {
       sendAborts.current.delete(messageId);
@@ -635,6 +824,7 @@ export function Composer({
       case "rejected": {
         const failed = settle(outgoing, { ok: false });
         dropActive(failed);
+        localImages.drop(messageId);
         if (meta.clearDraftAfter) {
           reholdClaimedIntakes(messageId);
           restoreIntoComposer(failed);
@@ -642,11 +832,12 @@ export function Composer({
           discardClaimedIntakes(messageId);
         }
         void discardOutgoingFiles(messageId);
-        setError(end.message);
+        setNotice(plainNotice(end.message));
         return false;
       }
       case "not-sent": {
         dropActive(outgoing);
+        localImages.drop(messageId);
         const queued = await queueForLater(outgoing, meta);
         if (!queued) {
           reholdClaimedIntakes(messageId);
@@ -683,7 +874,7 @@ export function Composer({
   }): Promise<boolean> => {
     const messageId = newOutboxId();
     const createdAt = new Date().toISOString();
-    setError(null);
+    setNotice(null);
     onSendError(null);
     const { draft: clearedDraft, outgoing } = beginSend(
       { text: textValue, attachments: snapshot },
@@ -703,7 +894,11 @@ export function Composer({
       pendingSend(outgoing, threadId, textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
     ]);
     if (!keepStored(outgoing, meta)) {
-      setError("Couldn't save that message on the device. Don't leave the chat until it sends.");
+      setNotice(
+        plainNotice(
+          "Couldn't save that message on the device. Don't leave the chat until it sends.",
+        ),
+      );
     }
     if (snapshot.length > 0) {
       setPreparing(true);
@@ -720,7 +915,9 @@ export function Composer({
         reholdClaimedIntakes(messageId);
         if (clearDraftAfter) restoreIntoComposer(outgoing);
         void discardOutgoingFiles(messageId);
-        setError("Couldn't save those photos on this device. Your draft is still here.");
+        setNotice(
+          plainNotice("Couldn't save those photos on this device. Your draft is still here."),
+        );
         return false;
       }
     }
@@ -747,7 +944,7 @@ export function Composer({
     if (active === undefined) return false;
     activeSends.current.set(messageId, { ...active, outgoing: retrySend(active.outgoing) });
     onPendingChange((pending) => setPendingState(pending, messageId, "sending"));
-    setError(null);
+    setNotice(null);
     return await dispatch(messageId);
   };
 
@@ -756,7 +953,7 @@ export function Composer({
     onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
     if (active) {
-      discardClaimedIntakes(messageId);
+      localImages.landed(messageId, () => discardClaimedIntakes(messageId));
       void discardOutgoingFiles(messageId);
       onSent();
     }
@@ -808,10 +1005,25 @@ export function Composer({
 
   return (
     <View style={styles.root}>
-      {error !== null ? (
-        <Pressable onPress={() => setError(null)} accessibilityRole="alert" style={styles.error}>
-          <Text style={styles.errorText}>{error}</Text>
-        </Pressable>
+      <PrewarmAttachmentImages photos={photosToWarm(attachments)} />
+      {notice !== null ? (
+        <View accessibilityRole="alert" style={styles.error}>
+          <Pressable onPress={() => setNotice(null)} style={styles.errorBody}>
+            <Text style={styles.errorText}>{notice.message}</Text>
+          </Pressable>
+          {notice.openSettings ? (
+            <Pressable
+              onPress={() => {
+                setNotice(null);
+                void Linking.openSettings();
+              }}
+              accessibilityRole="button"
+              hitSlop={8}
+            >
+              <Text style={styles.errorAction}>Open settings</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
       {replyTo !== null ? (
         <View style={styles.replyBar}>
@@ -868,10 +1080,11 @@ export function Composer({
       ) : null}
       <View style={styles.row}>
         <Pressable
-          onPress={() => void pickPhotos()}
+          onPress={() => setAttachOpen(true)}
           disabled={picking || preparing}
           accessibilityRole="button"
           accessibilityLabel="Add photos"
+          testID="composer-plus"
           style={styles.roundButton}
         >
           <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
@@ -966,6 +1179,37 @@ export function Composer({
           <Text style={styles.previewFile}>{previewAttachment?.name ?? ""}</Text>
         )}
       </SheetShell>
+      <AttachSheet
+        visible={attachOpen}
+        photos={attachPhotos({
+          embedded,
+          attached: attachmentCount,
+          maxAttachments: MAX_ATTACHMENTS,
+        })}
+        onClose={() => setAttachOpen(false)}
+        onCamera={() => {
+          setAttachOpen(false);
+          void pickCamera();
+        }}
+        onAllPhotos={() => {
+          setAttachOpen(false);
+          void pickPhotos();
+        }}
+        onPicked={(intakeId) => {
+          setAttachOpen(false);
+          addKeyboardImages(intakeId);
+        }}
+        onUnavailable={() => setEmbedded(false)}
+      />
+      <CameraCaptureSheet
+        visible={capture !== null}
+        reason={capture?.reason ?? null}
+        onClose={() => setCapture(null)}
+        onPhoto={async (photo) => {
+          setCapture(null);
+          await addCameraAsset(photo, "in-app");
+        }}
+      />
       <SheetShell visible={sendMenuOpen} title="Send" onClose={() => setSendMenuOpen(false)}>
         <SheetAction
           label="Send now"
@@ -1036,8 +1280,13 @@ const styles = StyleSheet.create({
     borderColor: tokens.dangerBorder,
     backgroundColor: tokens.dangerBg,
     padding: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
+  errorBody: { flex: 1 },
   errorText: { color: tokens.danger, fontSize: 13, lineHeight: 18 },
+  errorAction: { color: tokens.text, fontSize: 13, lineHeight: 18, fontWeight: "600" },
   replyBar: {
     flexDirection: "row",
     alignItems: "center",
