@@ -69,7 +69,7 @@ import {
   tableColumnWidths,
 } from "./messageListModel";
 import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./messageTouch";
-import { AttachmentImage } from "./AttachmentImage";
+import { AttachmentImage, PendingAttachmentImage } from "./AttachmentImage";
 import { PageFrame } from "./PageFrame";
 import { ChoiceButtons } from "./ChoiceButtons";
 import { LiveWorkRow } from "./LiveWorkRow";
@@ -891,10 +891,33 @@ function PendingBubble({
     return () => clearTimeout(timer);
   }, [createdAtMs, sending]);
   const failed = message.state === "failed";
+  const imageLogged = useRef(false);
+  const imageDrawn = () => {
+    if (imageLogged.current || !Number.isFinite(createdAtMs)) return;
+    imageLogged.current = true;
+    console.info(`[perf] send-image-ms tap-to-image ${Math.round(Date.now() - createdAtMs)}`);
+  };
   return (
     <View style={styles.messageRowEnd}>
       <View style={[styles.userBubble, failed ? null : styles.pendingBubble]}>
         <Text style={styles.userText}>{message.text}</Text>
+        {message.attachments.map((attachment) =>
+          attachment.previewUri === null ? (
+            <View key={attachment.id} style={styles.attachment}>
+              <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+              <Text style={styles.attachmentText} numberOfLines={1}>
+                {attachment.name}
+              </Text>
+            </View>
+          ) : (
+            <PendingAttachmentImage
+              key={attachment.id}
+              uri={attachment.previewUri}
+              name={attachment.name}
+              onDrawn={imageDrawn}
+            />
+          ),
+        )}
         {failed ? (
           <View style={styles.pendingFooter}>
             <Text style={styles.pendingFailed}>Not sent</Text>

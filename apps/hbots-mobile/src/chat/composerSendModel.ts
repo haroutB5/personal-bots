@@ -22,8 +22,20 @@ export interface Outgoing extends ComposerDraft {
   readonly state: "sending" | "failed";
 }
 
+/**
+ * A pending attachment. An image keeps the device file it was picked from, so the bubble draws
+ * the photo at the tap instead of waiting for the upload. The path stays on this device: the
+ * shared feed type carries only the id and name.
+ */
+export interface PendingAttachment {
+  readonly id: string;
+  readonly name: string;
+  readonly previewUri: string | null;
+}
+
 /** A bubble the transcript has not echoed yet. A failed one keeps its text. */
 export interface PendingSend extends PendingOutgoingMessage {
+  readonly attachments: ReadonlyArray<PendingAttachment>;
   readonly state: "sending" | "failed";
 }
 
@@ -92,6 +104,7 @@ export function pendingSend(outgoing: Outgoing, threadId: string, text: string):
     attachments: outgoing.attachments.map((attachment) => ({
       id: attachment.id,
       name: attachment.name,
+      previewUri: attachment.kind === "image" ? attachment.uri : null,
     })),
     state: outgoing.state,
   };

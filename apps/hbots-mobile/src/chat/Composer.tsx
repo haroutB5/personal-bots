@@ -73,6 +73,7 @@ import { attachPhotos, cameraRefusal, plainNotice, type ComposerNotice } from ".
 import { ComposerHost } from "./ComposerHost";
 import { embeddedPickerAvailable } from "./PhotoStrip";
 import { keyboardImages, releasedIntakes } from "./composerInput";
+import { localImages } from "./localImages";
 import { draftKey } from "./linkDraft";
 import { blockedMessage } from "../share/pickerModel";
 import { discardShare, readShare } from "../share/shareIntake";
@@ -506,7 +507,8 @@ export function Composer({
     activeSends.current.delete(messageId);
     onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
-    discardClaimedIntakes(messageId);
+    // A sent image is drawn from its device file until the server's copy draws.
+    localImages.landed(messageId, () => discardClaimedIntakes(messageId));
     void discardOutgoingFiles(messageId);
     onSent();
   };
@@ -571,6 +573,15 @@ export function Composer({
         setNotice(plainNotice("An attachment didn't upload. Try again."));
         return false;
       }
+      localImages.hold(
+        messageId,
+        snapshot.flatMap((attachment, index) => {
+          const sent = uploaded[index];
+          return attachment.kind === "image" && sent !== undefined
+            ? [{ attachmentId: sent.id, uri: attachment.uri }]
+            : [];
+        }),
+      );
     }
     if (abort.signal.aborted) {
       sendAborts.current.delete(messageId);
@@ -640,6 +651,7 @@ export function Composer({
       case "rejected": {
         const failed = settle(outgoing, { ok: false });
         dropActive(failed);
+        localImages.drop(messageId);
         if (meta.clearDraftAfter) {
           reholdClaimedIntakes(messageId);
           restoreIntoComposer(failed);
@@ -652,6 +664,7 @@ export function Composer({
       }
       case "not-sent": {
         dropActive(outgoing);
+        localImages.drop(messageId);
         const queued = await queueForLater(outgoing, meta);
         if (!queued) {
           reholdClaimedIntakes(messageId);
@@ -761,7 +774,7 @@ export function Composer({
     onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
     if (active) {
-      discardClaimedIntakes(messageId);
+      localImages.landed(messageId, () => discardClaimedIntakes(messageId));
       void discardOutgoingFiles(messageId);
       onSent();
     }
