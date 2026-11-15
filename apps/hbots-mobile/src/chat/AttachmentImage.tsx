@@ -171,15 +171,15 @@ export function PrewarmAttachmentImages({ photos }: { readonly photos: ReadonlyA
   return (
     <>
       {photos.map((photo) => (
-        <Image
-          key={photo.id}
-          source={{ uri: photo.uri }}
-          style={styles.prewarm}
-          resizeMode="cover"
-          resizeMethod="resize"
-          fadeDuration={0}
-          pointerEvents="none"
-        />
+        <View key={photo.id} pointerEvents="none" style={styles.prewarm}>
+          <Image
+            source={{ uri: photo.uri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            resizeMethod="resize"
+            fadeDuration={0}
+          />
+        </View>
       ))}
     </>
   );
