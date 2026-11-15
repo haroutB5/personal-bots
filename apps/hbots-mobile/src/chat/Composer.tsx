@@ -264,7 +264,9 @@ export function Composer({
     const tooBig = shrunk.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
     if (tooBig.length > 0) {
       if (intakeId !== null) discardShare(intakeId);
-      setNotice(plainNotice(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`));
+      setNotice(
+        plainNotice(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`),
+      );
       return;
     }
     if (intakeId !== null) {
@@ -459,7 +461,9 @@ export function Composer({
         })),
       });
       if (entry === null) {
-        setNotice(plainNotice("Couldn't save that message on this device. Your draft is still here."));
+        setNotice(
+          plainNotice("Couldn't save that message on this device. Your draft is still here."),
+        );
         return false;
       }
       return true;
@@ -527,7 +531,9 @@ export function Composer({
     activeSends.current.set(outgoing.id, { ...active, outgoing: failed });
     onPendingChange((pending) => setPendingState(pending, outgoing.id, "failed"));
     if (!keepStored(failed, active.meta)) {
-      setNotice(plainNotice("Couldn't keep this message on the device. Try again before leaving the chat."));
+      setNotice(
+        plainNotice("Couldn't keep this message on the device. Try again before leaving the chat."),
+      );
     }
   };
 
@@ -727,7 +733,11 @@ export function Composer({
       pendingSend(outgoing, threadId, textValue || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
     ]);
     if (!keepStored(outgoing, meta)) {
-      setNotice(plainNotice("Couldn't save that message on the device. Don't leave the chat until it sends."));
+      setNotice(
+        plainNotice(
+          "Couldn't save that message on the device. Don't leave the chat until it sends.",
+        ),
+      );
     }
     if (snapshot.length > 0) {
       setPreparing(true);
@@ -744,7 +754,9 @@ export function Composer({
         reholdClaimedIntakes(messageId);
         if (clearDraftAfter) restoreIntoComposer(outgoing);
         void discardOutgoingFiles(messageId);
-        setNotice(plainNotice("Couldn't save those photos on this device. Your draft is still here."));
+        setNotice(
+          plainNotice("Couldn't save those photos on this device. Your draft is still here."),
+        );
         return false;
       }
     }

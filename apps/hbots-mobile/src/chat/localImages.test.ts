@@ -37,9 +37,10 @@ describe("own image from the tap until the server's copy draws", () => {
       { id: "draft-pdf", name: "notes.pdf", previewUri: null },
     ]);
     const first = bubble.attachments[0]!;
-    expect(
-      imageLayers({ local: first.previewUri, remoteUrl: null, remoteDrawn: false }),
-    ).toEqual({ local: photo.uri, remote: null });
+    expect(imageLayers({ local: first.previewUri, remoteUrl: null, remoteDrawn: false })).toEqual({
+      local: photo.uri,
+      remote: null,
+    });
   });
 
   it("keeps the local file under the server's copy until that copy has drawn", () => {
