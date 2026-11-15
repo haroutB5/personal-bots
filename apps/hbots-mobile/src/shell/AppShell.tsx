@@ -274,14 +274,15 @@ function Shell({ props }: { readonly props: AppShellProps }) {
   }, [props.native]);
   useNativeOutboxFlusher(props.native, chat);
 
-  const openRecoveredChat = useCallback((botId: string, threadId: string) => {
-    if (!navigationRef.isReady()) return;
+  const openRecoveredChat = useCallback((botId: string, threadId: string): boolean => {
+    if (!navigationRef.isReady()) return false;
     const current = navigationRef.getCurrentRoute();
     if (current?.name === "Chat") {
       const params = current.params as { readonly threadId?: string } | undefined;
-      if (params?.threadId === threadId) return;
+      if (params?.threadId === threadId) return true;
     }
     navigationRef.navigate("Chat", { botId, threadId });
+    return true;
   }, []);
   useCameraRecovery({
     native: props.native,

@@ -14,7 +14,7 @@ import { HbotsCamera } from "./hbotsCamera";
 export function useCameraRecovery(input: {
   readonly native: NativePersonal;
   readonly ready: boolean;
-  readonly openChat: (botId: string, threadId: string) => void;
+  readonly openChat: (botId: string, threadId: string) => boolean;
 }): void {
   const list = input.native.bots.usePersonalBotsList(input.native.environmentId);
   const chats = useMemo<ReadonlyArray<RecoveryChat> | null>(() => {
@@ -63,8 +63,7 @@ export function useCameraRecovery(input: {
         await HbotsCamera.discard(launch.owner).catch(() => undefined);
         return;
       case "open":
-        handled.current = key;
-        openChat.current(decision.botId, decision.threadId);
+        if (openChat.current(decision.botId, decision.threadId)) handled.current = key;
         return;
     }
   }, [chats, native.environmentId]);
