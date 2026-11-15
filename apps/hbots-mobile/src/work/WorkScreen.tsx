@@ -284,6 +284,15 @@ export function WorkScreen({
     environmentId,
     seenAtLoaded ? (seenAt ?? bootstrapSince) : null,
   );
+  // The digest request can fail before it leaves the phone, and the box then
+  // simply stays hidden. Log each distinct failure once so it is not silent.
+  const workSinceError = workSince.error;
+  const loggedWorkSinceError = useRef<string | null>(null);
+  useEffect(() => {
+    if (workSinceError === null || loggedWorkSinceError.current === workSinceError) return;
+    loggedWorkSinceError.current = workSinceError;
+    console.warn("Work digest request failed", workSinceError);
+  }, [workSinceError]);
   const focused = useIsFocused();
   const [appActive, setAppActive] = useState(AppState.currentState === "active");
   useEffect(() => {

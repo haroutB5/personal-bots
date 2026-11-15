@@ -60,7 +60,12 @@ export const PersonalWorkEvent = Schema.Union([
 export type PersonalWorkEvent = typeof PersonalWorkEvent.Type;
 
 export const PersonalWorkSinceInput = Schema.Struct({
-  since: Schema.DateTimeUtcFromString,
+  /** An ISO instant. Keyed query families carry JSON, so the boundary takes a string. */
+  since: Schema.String.check(
+    Schema.makeFilter((value) => Number.isFinite(Date.parse(value)), {
+      expected: "an ISO instant",
+    }),
+  ),
 });
 export type PersonalWorkSinceInput = typeof PersonalWorkSinceInput.Type;
 
