@@ -5,6 +5,7 @@ import type {
   PersonalTask,
   PersonalTaskDetail,
   PersonalTaskId,
+  PersonalWorkSinceResult,
   ThreadId,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
@@ -14,6 +15,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type { Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -66,6 +68,14 @@ export function createPersonalAutomationClient<R, ER>(
   const personalProjectsList = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "personal-projects:list",
     tag: WS_METHODS.personalProjectsList,
+    staleTimeMs: 5_000,
+    refreshIntervalMs: 30_000,
+  });
+
+  /** What happened before the Work tab's seen marker, newest first. */
+  const personalWorkSince = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-work:since",
+    tag: WS_METHODS.personalWorkSince,
     staleTimeMs: 5_000,
     refreshIntervalMs: 30_000,
   });
@@ -208,6 +218,24 @@ export function createPersonalAutomationClient<R, ER>(
     return useEnvironmentQuery(atom);
   }
 
+  /** The digest for `sinceIso` (a server asOf); null input keeps the request off. */
+  function usePersonalWorkSince(
+    environmentId: EnvironmentId | null,
+    sinceIso: string | null,
+  ): EnvironmentQueryView<PersonalWorkSinceResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || sinceIso === null
+          ? null
+          : personalWorkSince({
+              environmentId,
+              input: { since: DateTime.makeUnsafe(sinceIso) },
+            }),
+      [environmentId, sinceIso],
+    );
+    return useEnvironmentQuery(atom);
+  }
+
   return {
     personalTasksFeed,
     personalTaskDetail,
@@ -215,6 +243,7 @@ export function createPersonalAutomationClient<R, ER>(
     personalTaskHistory,
     personalRoutinesList,
     personalProjectsList,
+    personalWorkSince,
     personalTaskCancel,
     personalTaskRetry,
     personalRoutineCreate,
@@ -231,6 +260,7 @@ export function createPersonalAutomationClient<R, ER>(
     usePersonalRelatedTasks,
     usePersonalRoutines,
     usePersonalProjects,
+    usePersonalWorkSince,
   };
 }
 
