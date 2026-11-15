@@ -184,6 +184,7 @@ import {
   PersonalRoutineUpdateInput,
 } from "./personalRoutines.ts";
 import { PersonalProjectListResult } from "./personalProjects.ts";
+import { PersonalWorkSinceInput, PersonalWorkSinceResult } from "./personalWork.ts";
 import {
   PersonalMemoryError,
   PersonalMemoryDeleteInput,
@@ -490,6 +491,11 @@ const WsPersonalTasksListRpc = Rpc.make(WS_METHODS.personalTasksList, {
 const WsPersonalProjectsListRpc = Rpc.make(WS_METHODS.personalProjectsList, {
   payload: Schema.Struct({}),
   success: PersonalProjectListResult,
+  error: PersonalTasksRpcError,
+});
+const WsPersonalWorkSinceRpc = Rpc.make(WS_METHODS.personalWorkSince, {
+  payload: PersonalWorkSinceInput,
+  success: PersonalWorkSinceResult,
   error: PersonalTasksRpcError,
 });
 const WsPersonalTasksGetRpc = Rpc.make(WS_METHODS.personalTasksGet, {
@@ -1185,6 +1191,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalDesktopActivityRpc,
   WsPersonalRoutinesListRpc,
   WsPersonalProjectsListRpc,
+  WsPersonalWorkSinceRpc,
   WsPersonalRoutinesCreateRpc,
   WsPersonalRoutinesUpdateRpc,
   WsPersonalRoutinesDeleteRpc,
