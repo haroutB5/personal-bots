@@ -146,7 +146,7 @@ describe("PersonalWorkReads.questions", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("a reply older than 72 hours no longer asks", () =>
+  it.effect("a reply exactly 72 hours old or older no longer asks", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);
       yield* seedBot({ botId: "bot-a" });
@@ -165,6 +165,14 @@ describe("PersonalWorkReads.questions", () => {
         role: "assistant",
         text: REPLY,
         createdAt: "2026-11-12T12:00:01.000Z",
+      });
+      yield* seedChat({ threadId: "boundary", botId: "bot-a" });
+      yield* seedMessage({
+        messageId: "boundary-m1",
+        threadId: "boundary",
+        role: "assistant",
+        text: REPLY,
+        createdAt: "2026-11-12T12:00:00.000Z",
       });
 
       const result = yield* PersonalWorkReads.questions();

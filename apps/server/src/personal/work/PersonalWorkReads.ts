@@ -287,7 +287,7 @@ export const questions = (): Effect.Effect<
         AND b.deleted_at IS NULL
         AND b.enabled = 1
         AND m.role = 'assistant'
-        AND m.created_at >= ${floor}
+        AND m.created_at > ${floor}
         AND NOT EXISTS (
           SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
         )
