@@ -157,6 +157,13 @@ class PhotoShrinkTest {
     )
   }
 
+  @Test fun aCaptureReportsItsStoredSize() {
+    val source = photo("IMG_0001.jpg", 400, 300, Bitmap.CompressFormat.JPEG)
+
+    assertEquals(PhotoShrink.Size(400, 300), PhotoShrink.measure(source))
+    assertNull(PhotoShrink.measure(folder.newFile("not-an-image.jpg").apply { writeText("x") }))
+  }
+
   @Test fun onlyFilesInTheCacheAreRead() {
     val cache = folder.newFolder("cache")
     val inside = File(cache, "ImagePicker").apply { mkdirs() }.resolve("a.jpg").apply { writeText("x") }
