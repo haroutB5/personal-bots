@@ -2,14 +2,13 @@ package expo.modules.hbotssecure
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Log
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.KeyStore
 import java.security.SecureRandom
 import javax.crypto.Cipher
-import javax.crypto.CipherInputStream
-import javax.crypto.CipherOutputStream
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -33,6 +32,13 @@ private val MAGIC_KEY = byteArrayOf('k'.code.toByte(), '2'.code.toByte())
 
 /** Header (2) + IV + GCM tag: what a file holds beyond its plaintext. */
 private const val FILE_OVERHEAD_BYTES = 2 + IV_BYTES + TAG_BITS / 8
+
+/**
+ * Bytes per cipher call for attachments. Every call on a Keystore key is a binder round trip,
+ * and the cipher stream classes pass 512 bytes per call: a 6 MB photo took 11,700 calls and
+ * 4.7 s to decrypt on the emulator, most of it garbage collection.
+ */
+private const val CHUNK_BYTES = 64 * 1024
 
 private fun readFully(input: InputStream, into: ByteArray): Int {
   var read = 0
@@ -165,6 +171,24 @@ class DataKeys(private val wrapping: CacheKeys) {
     }
 }
 
+/** Runs [input] through [cipher] in [CHUNK_BYTES] pieces into [out], then checks or writes the tag. */
+private fun pump(direction: String, cipher: Cipher, input: InputStream, out: OutputStream) {
+  val started = System.nanoTime()
+  val buffer = ByteArray(CHUNK_BYTES)
+  var bytes = 0L
+  var updates = 0
+  while (true) {
+    val read = input.read(buffer)
+    if (read < 0) break
+    cipher.update(buffer, 0, read)?.let(out::write)
+    bytes += read
+    updates += 1
+  }
+  out.write(cipher.doFinal())
+  val ms = (System.nanoTime() - started) / 1_000_000
+  Log.i("HbotsSecure", "[perf] v1-crypt dir=$direction ms=$ms bytes=$bytes updates=$updates")
+}
+
 /** Writes to a sibling file and renames, so a crash never leaves half a file. */
 private fun atomically(target: File, write: (OutputStream) -> Unit) {
   target.parentFile?.mkdirs()
@@ -183,7 +207,7 @@ private fun atomically(target: File, write: (OutputStream) -> Unit) {
 /**
  * Files at rest for the offline cache. Chat copies are `v2 | iv | ciphertext`, AES-256-GCM
  * under the folder's [DataKeys] key. Attachments stay `v1 | iv | ciphertext` straight under
- * the Keystore key: they are streamed, rarely read, and a queued one must survive the update.
+ * the Keystore key, in [CHUNK_BYTES] cipher calls: a queued one must survive the update.
  * A chat copy in any other form, `v1` included, is deleted on read and counts as a miss.
  */
 class FileCrypto(private val keys: CacheKeys) {
@@ -226,10 +250,10 @@ class FileCrypto(private val keys: CacheKeys) {
     check(cipher.iv.size == IV_BYTES) { "unexpected IV size" }
     out.write(MAGIC_V1)
     out.write(cipher.iv)
-    CipherOutputStream(out, cipher).use { plain.copyTo(it) }
+    pump("enc", cipher, plain, out)
   }
 
-  private fun decryptFrom(input: InputStream): InputStream {
+  private fun decryptInto(input: InputStream, out: OutputStream) {
     val magic = ByteArray(MAGIC_V1.size)
     val iv = ByteArray(IV_BYTES)
     if (readFully(input, magic) != magic.size || !magic.contentEquals(MAGIC_V1)) {
@@ -238,7 +262,7 @@ class FileCrypto(private val keys: CacheKeys) {
     if (readFully(input, iv) != iv.size) throw java.io.IOException("short iv")
     val cipher = Cipher.getInstance(TRANSFORM)
     cipher.init(Cipher.DECRYPT_MODE, keys.key(), GCMParameterSpec(TAG_BITS, iv))
-    return CipherInputStream(input, cipher)
+    pump("dec", cipher, input, out)
   }
 
   fun writeText(path: String, text: String) {
@@ -300,11 +324,13 @@ class FileCrypto(private val keys: CacheKeys) {
     val file = File(source)
     if (!file.exists()) return false
     return try {
-      file.inputStream().use { raw ->
-        atomically(File(destination)) { out -> decryptFrom(raw).use { it.copyTo(out) } }
-      }
+      file.inputStream().use { raw -> atomically(File(destination)) { out -> decryptInto(raw, out) } }
       true
     } catch (_: Exception) {
+      file.delete()
+      File(destination).delete()
+      false
+    } catch (_: OutOfMemoryError) {
       file.delete()
       File(destination).delete()
       false
