@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.hbotscamera'
+version = '0.0.1'
+
+android {
+  namespace 'expo.modules.hbotscamera'
+  defaultConfig {
+    minSdkVersion 26
+    versionCode 1
+    versionName '0.0.1'
+  }
+}
+
+dependencies {
+  implementation 'androidx.core:core-ktx:1.17.0'
+
+  testImplementation 'junit:junit:4.13.2'
+}
