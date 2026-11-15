@@ -89,6 +89,38 @@ class PhotoShrinkTest {
     assertEquals(listOf(source.name), folder.root.list()!!.toList())
   }
 
+  /** The in-app capture the emulator saved: one flat black frame. */
+  private fun blackFrame(name: String): File {
+    val bitmap = Bitmap.createBitmap(934, 1179, Bitmap.Config.ARGB_8888)
+    Canvas(bitmap).drawColor(Color.BLACK)
+    val file = folder.newFile(name)
+    file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it) }
+    bitmap.recycle()
+    return file
+  }
+
+  @Test fun anAllBlackCaptureReadsAsBlack() {
+    val mean = PhotoShrink.lumaOf(blackFrame("black.jpg"))
+
+    assertNotNull(mean)
+    assertTrue(mean!! <= 0.005)
+  }
+
+  @Test fun aPhotoOfASceneDoesNotReadAsBlack() {
+    val mean = PhotoShrink.lumaOf(photo("scene.jpg", 400, 300, Bitmap.CompressFormat.JPEG))
+
+    assertNotNull(mean)
+    assertTrue(mean!! > 0.02)
+  }
+
+  @Test fun meanLumaWeightsGreenMost() {
+    assertEquals(0.0, PhotoShrink.meanLuma(intArrayOf(0xFF000000.toInt())), 0.0001)
+    assertEquals(1.0, PhotoShrink.meanLuma(intArrayOf(0xFFFFFFFF.toInt())), 0.0001)
+    assertEquals(0.2126, PhotoShrink.meanLuma(intArrayOf(0xFFFF0000.toInt())), 0.0001)
+    assertEquals(0.7152, PhotoShrink.meanLuma(intArrayOf(0xFF00FF00.toInt())), 0.0001)
+    assertEquals(0.0722, PhotoShrink.meanLuma(intArrayOf(0xFF0000FF.toInt())), 0.0001)
+  }
+
   @Test fun aSmallPhotoWithALocationLosesTheLocation() {
     val source = photo("small.jpg", 1600, 1200, Bitmap.CompressFormat.JPEG)
     ExifInterface(source.path).apply {
