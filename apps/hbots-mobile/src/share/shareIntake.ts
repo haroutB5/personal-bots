@@ -9,6 +9,7 @@ interface ShareModule {
   discard(id: string): void;
   discardAllExcept(keep: string | null): void;
   shrinkPhoto(uri: string, mimeType: string): Promise<ShrunkPhoto | null>;
+  photoMeanLuma(uri: string): Promise<number | null>;
 }
 
 const native = requireOptionalNativeModule<ShareModule>("HbotsShare");
@@ -35,4 +36,12 @@ export function discardStaleShares(keep: string | null): void {
 /** The photo at 2576 px on its long edge, upright and without metadata, or null to keep it. */
 export async function shrinkPhoto(uri: string, mimeType: string): Promise<ShrunkPhoto | null> {
   return (await native?.shrinkPhoto(uri, mimeType)) ?? null;
+}
+
+/**
+ * The photo's mean luma from 0 (black) to 1 (white), or null when the module or the file cannot
+ * read it. The in-app shutter uses it to refuse a capture the camera saved as a black frame.
+ */
+export async function photoMeanLuma(uri: string): Promise<number | null> {
+  return (await native?.photoMeanLuma(uri)) ?? null;
 }

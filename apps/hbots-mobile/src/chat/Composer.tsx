@@ -77,6 +77,7 @@ import { discardOutgoingFiles, readableOutgoingFiles, retainOutgoingFiles } from
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
+import { PrewarmAttachmentImages } from "./AttachmentImage";
 import { AttachSheet } from "./AttachSheet";
 import { attachPhotos, cameraRefusal, plainNotice, type ComposerNotice } from "./attachSheetModel";
 import { CameraCaptureSheet } from "./CameraCaptureSheet";
@@ -84,16 +85,19 @@ import {
   CAMERA_OPEN_MS,
   cameraFailure,
   cameraLaunchDecision,
+  cameraLaunchKey,
   cameraLaunchNotice,
   isStuckLauncherFailure,
+  pendingLaunchOwner,
   photoLaunchNotice,
-  type CameraFailure,
+  watchCameraLaunch,
 } from "./cameraLaunch";
 import { ComposerHost } from "./ComposerHost";
 import { embeddedPickerAvailable } from "./PhotoStrip";
 import { keyboardImages, releasedIntakes } from "./composerInput";
 import { localImages } from "./localImages";
 import { shrinkDrafts } from "./photoDrafts";
+import { photosToWarm } from "./photoThumb";
 import { draftKey } from "./linkDraft";
 import { blockedMessage } from "../share/pickerModel";
 import { discardShare, readShare, shrinkPhoto } from "../share/shareIntake";
@@ -326,15 +330,26 @@ export function Composer({
   };
 
   // Android can kill this activity during a system camera launch. The photo it saved comes back
-  // here after the composer mounts again, so it lands as a draft instead of being lost.
+  // here after the composer mounts again, so it lands as a draft instead of being lost. The
+  // launch marker keeps that recovery in the chat that opened the camera.
   const pendingChecked = useRef(false);
   useEffect(() => {
     if (pendingChecked.current) return;
     pendingChecked.current = true;
+    const launchKey = cameraLaunchKey(native.environmentId);
+    const pendingThread = native.client.ports.kv.getItem(launchKey);
+    if (pendingLaunchOwner(pendingThread, threadId) === "skip") {
+      console.info("[camera] pending result belongs to another chat");
+      return;
+    }
     void (async () => {
       try {
         const pending = await ImagePicker.getPendingResultAsync();
-        if (pending === null) return;
+        if (pendingThread !== null) native.client.ports.kv.removeItem(launchKey);
+        if (pending === null) {
+          if (pendingThread !== null) console.info("[camera] pending result none");
+          return;
+        }
         if ("code" in pending) {
           const failure = cameraFailure(pending);
           console.warn(
@@ -428,74 +443,67 @@ export function Composer({
 
   /**
    * The system camera can stay pending on Android 16 until a lifecycle change, and a recreated
-   * activity leaves its launcher unregistered. Both end in the in-app camera after a short wait.
+   * activity leaves its launcher unregistered. Both end in the in-app camera once the app has
+   * stayed in the foreground for CAMERA_OPEN_MS. The camera taking the screen stops that wait.
    */
   const launchSystemCamera = async () => {
-    type Launch =
-      | { readonly kind: "succeeded"; readonly asset: ImagePicker.ImagePickerAsset | undefined }
-      | { readonly kind: "cancelled" }
-      | { readonly kind: "rejected"; readonly failure: CameraFailure }
-      | { readonly kind: "stalled" };
-
-    const launch = ImagePicker.launchCameraAsync({ quality: 1 });
-    const outcome = await new Promise<Launch>((resolve) => {
-      let done = false;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      const finish = (value: Launch) => {
-        if (done) return;
-        done = true;
-        if (timer !== null) clearTimeout(timer);
-        resolve(value);
-      };
-      timer = setTimeout(() => {
-        if (AppState.currentState === "active") finish({ kind: "stalled" });
-      }, CAMERA_OPEN_MS);
-      launch.then(
-        (result) =>
-          finish(
-            result.canceled
-              ? { kind: "cancelled" }
-              : { kind: "succeeded", asset: result.assets[0] },
-          ),
-        (error) => finish({ kind: "rejected", failure: cameraFailure(error) }),
-      );
+    const watch = watchCameraLaunch({
+      stallMs: CAMERA_OPEN_MS,
+      isForeground: () => AppState.currentState === "active",
     });
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state !== "active") watch.background();
+    });
+    let asset: ImagePicker.ImagePickerAsset | undefined;
+    const launch = ImagePicker.launchCameraAsync({ quality: 1 });
+    void launch.then(
+      (result) => {
+        if (result.canceled) {
+          watch.settle({ kind: "cancelled" });
+          return;
+        }
+        asset = result.assets[0];
+        watch.settle({ kind: "succeeded" });
+      },
+      (error) => watch.settle({ kind: "rejected", failure: cameraFailure(error) }),
+    );
 
+    const outcome = await watch.outcome;
+    appState.remove();
     const decision = cameraLaunchDecision(outcome);
     if (decision.kind === "stop") return;
-    if (decision.kind === "accept" && outcome.kind === "succeeded") {
-      if (outcome.asset !== undefined) await addCameraAsset(outcome.asset, "camera");
+    if (decision.kind === "accept") {
+      if (asset !== undefined) await addCameraAsset(asset, "camera");
       return;
     }
-    if (decision.kind !== "fallback") return;
 
     if (outcome.kind === "rejected") {
       const failure = outcome.failure;
       console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
       setNotice(cameraLaunchNotice(failure));
       if (isStuckLauncherFailure(failure)) systemCameraStuck.current = decision.reason;
-    } else {
-      console.warn(`[camera] launch stalled after ${CAMERA_OPEN_MS}ms`);
-      systemCameraStuck.current = decision.reason;
+      setCapture({ reason: decision.reason });
+      return;
     }
-    setCapture({ reason: decision.reason });
+    if (outcome.kind !== "timeout") return;
 
-    if (outcome.kind === "stalled") {
-      // A system camera that opens after the wait still wins: its photo closes the sheet.
-      void launch.then(
-        (result) => {
-          if (result.canceled) return;
-          const asset = result.assets[0];
-          if (asset === undefined) return;
-          setCapture(null);
-          void addCameraAsset(asset, "late");
-        },
-        (error) => {
-          const failure = cameraFailure(error);
-          console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
-        },
-      );
-    }
+    console.warn(`[camera] launch stalled after ${CAMERA_OPEN_MS}ms`);
+    systemCameraStuck.current = decision.reason;
+    setCapture({ reason: decision.reason });
+    // A system camera that opens after the wait still wins: its photo closes the sheet.
+    void launch.then(
+      (result) => {
+        if (result.canceled) return;
+        const late = result.assets[0];
+        if (late === undefined) return;
+        setCapture(null);
+        void addCameraAsset(late, "late");
+      },
+      (error) => {
+        const failure = cameraFailure(error);
+        console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
+      },
+    );
   };
 
   const pickCamera = async () => {
@@ -513,6 +521,7 @@ export function Composer({
         setCapture({ reason: systemCameraStuck.current });
         return;
       }
+      native.client.ports.kv.setItem(cameraLaunchKey(native.environmentId), threadId);
       await launchSystemCamera();
     } catch (error) {
       const failure = cameraFailure(error);
@@ -996,6 +1005,7 @@ export function Composer({
 
   return (
     <View style={styles.root}>
+      <PrewarmAttachmentImages photos={photosToWarm(attachments)} />
       {notice !== null ? (
         <View accessibilityRole="alert" style={styles.error}>
           <Pressable onPress={() => setNotice(null)} style={styles.errorBody}>

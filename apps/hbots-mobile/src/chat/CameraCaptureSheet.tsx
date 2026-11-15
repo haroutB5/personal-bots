@@ -11,7 +11,8 @@ import {
 
 import { SheetCancel, SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
-import { cameraFailure } from "./cameraLaunch";
+import { photoMeanLuma } from "../share/shareIntake";
+import { cameraFailure, isBlackPhoto } from "./cameraLaunch";
 
 /**
  * The in-app camera behind a stuck system launcher. It uses the same CameraView as the pairing
@@ -33,15 +34,19 @@ export function CameraCaptureSheet({
   const [busy, setBusy] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const asked = useRef(false);
   const { height } = useWindowDimensions();
 
   useEffect(() => {
     if (!visible) return;
     if (permission === null || permission.granted || !permission.canAskAgain) return;
+    if (asked.current) return;
+    asked.current = true;
     void requestPermission();
   }, [visible, permission, requestPermission]);
 
   const close = () => {
+    asked.current = false;
     setBusy(false);
     setCameraReady(false);
     setError(null);
@@ -55,6 +60,12 @@ export function CameraCaptureSheet({
     try {
       const photo = await camera.current?.takePictureAsync({ quality: 1 });
       if (photo === undefined) throw new Error("The camera returned no photo.");
+      const mean = await photoMeanLuma(photo.uri);
+      if (isBlackPhoto(mean)) {
+        console.warn(`[camera] capture black mean=${mean ?? "unknown"}`);
+        setError("The photo came out black. Tap the shutter to try again.");
+        return;
+      }
       setCameraReady(false);
       await onPhoto({ uri: photo.uri, width: photo.width, height: photo.height });
     } catch (failure) {
@@ -69,6 +80,7 @@ export function CameraCaptureSheet({
   };
 
   const canShoot = permission?.granted === true && cameraReady;
+  const permissionDenied = permission?.status === "denied";
 
   return (
     <SheetShell visible={visible} title="Take a photo" onClose={close}>
@@ -87,10 +99,10 @@ export function CameraCaptureSheet({
           />
         ) : (
           <View style={styles.placeholder}>
-            {permission === null ? (
-              <ActivityIndicator color={tokens.textSecondary} />
-            ) : (
+            {permissionDenied ? (
               <Text style={styles.help}>Camera access is off for hbots.</Text>
+            ) : (
+              <ActivityIndicator color={tokens.textSecondary} />
             )}
           </View>
         )}

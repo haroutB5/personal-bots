@@ -6,6 +6,8 @@ import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, Text, View } fr
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { imageLayers, localImages } from "./localImages";
+import type { WarmPhoto } from "./photoThumb";
+import { PHOTO_THUMB } from "./photoThumb";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 
@@ -77,6 +79,7 @@ export function AttachmentImage({
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
               resizeMethod="resize"
+              fadeDuration={0}
               onError={() => setLocal(null)}
             />
           )}
@@ -86,6 +89,7 @@ export function AttachmentImage({
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
               resizeMethod="resize"
+              fadeDuration={0}
               accessibilityLabel={attachment.name}
               onLoad={() => {
                 setRemoteDrawn(true);
@@ -150,6 +154,7 @@ export function PendingAttachmentImage({
         style={StyleSheet.absoluteFill}
         resizeMode="cover"
         resizeMethod="resize"
+        fadeDuration={0}
         accessibilityLabel={name}
         onLoad={onDrawn}
         onError={() => setFailed(true)}
@@ -158,9 +163,39 @@ export function PendingAttachmentImage({
   );
 }
 
+/**
+ * Decodes the composer's waiting photos at the sent bubble's size, so the bubble's first frame
+ * after Send is the photo instead of an empty box while Android decodes it again.
+ */
+export function PrewarmAttachmentImages({ photos }: { readonly photos: ReadonlyArray<WarmPhoto> }) {
+  return (
+    <>
+      {photos.map((photo) => (
+        <Image
+          key={photo.id}
+          source={{ uri: photo.uri }}
+          style={styles.prewarm}
+          resizeMode="cover"
+          resizeMethod="resize"
+          fadeDuration={0}
+          pointerEvents="none"
+        />
+      ))}
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   thumbButton: { borderRadius: 14, overflow: "hidden", marginTop: 6 },
-  thumb: { width: 200, height: 160, backgroundColor: tokens.bg },
+  thumb: { width: PHOTO_THUMB.width, height: PHOTO_THUMB.height, backgroundColor: tokens.bg },
+  prewarm: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: PHOTO_THUMB.width,
+    height: PHOTO_THUMB.height,
+    opacity: 0,
+  },
   placeholder: {
     width: 200,
     height: 96,

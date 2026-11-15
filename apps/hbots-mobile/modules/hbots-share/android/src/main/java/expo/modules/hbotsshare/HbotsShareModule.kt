@@ -75,9 +75,24 @@ class HbotsShareModule : Module() {
       )
     }
 
+    /**
+     * The mean luma of a captured photo, 0 (black) to 1 (white), for the in-app shutter's
+     * black-frame guard. Null when the module cannot read the file.
+     */
+    AsyncFunction("photoMeanLuma") { uri: String ->
+      val context = app() ?: return@AsyncFunction null
+      val source = cachedFile(context.cacheDir, uri) ?: return@AsyncFunction null
+      try {
+        PhotoShrink.lumaOf(source)
+      } catch (_: Exception) {
+        null
+      } catch (_: OutOfMemoryError) {
+        null
+      }
+    }
+
     /** Whether the plus sheet can embed the system photo picker on this phone. */
-    Function("embeddedPickerAvailable") {
-      val context = app()
+    Function("embeddedPickerAvailable") {      val context = app()
       context != null && HbotsPhotoStripView.available(context)
     }
 

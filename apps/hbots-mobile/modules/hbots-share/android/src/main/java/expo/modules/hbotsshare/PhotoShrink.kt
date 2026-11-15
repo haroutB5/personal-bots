@@ -21,6 +21,7 @@ import kotlin.math.roundToInt
 internal object PhotoShrink {
   const val LONG_EDGE = 2576
   const val QUALITY = 85
+  private const val LUMA_SAMPLE = 64
   private val TYPES = setOf("image/jpeg", "image/png", "image/heic", "image/heif")
 
   /** What EXIF orientation asks for: turn the stored pixels clockwise, then mirror left to right. */
@@ -105,6 +106,41 @@ internal object PhotoShrink {
     } catch (_: Exception) {
       null
     }
+
+  /**
+   * Mean luma from 0 (black) to 1 (white) of a cached photo, read from a small decode so the
+   * shutter's black-frame guard is cheap, or null when the file cannot be decoded.
+   */
+  fun lumaOf(source: File): Double? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(source.path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= LUMA_SAMPLE) sample *= 2
+    val decoded = BitmapFactory.decodeFile(
+      source.path,
+      BitmapFactory.Options().apply { inSampleSize = sample },
+    ) ?: return null
+    return try {
+      val pixels = IntArray(decoded.width * decoded.height)
+      decoded.getPixels(pixels, 0, decoded.width, 0, 0, decoded.width, decoded.height)
+      meanLuma(pixels)
+    } finally {
+      decoded.recycle()
+    }
+  }
+
+  /** Mean luma from 0 (black) to 1 (white), weighted as the eye sees the three channels. */
+  fun meanLuma(pixels: IntArray): Double {
+    if (pixels.isEmpty()) return 1.0
+    var sum = 0.0
+    for (pixel in pixels) {
+      sum += 0.2126 * ((pixel shr 16) and 0xff) +
+        0.7152 * ((pixel shr 8) and 0xff) +
+        0.0722 * (pixel and 0xff)
+    }
+    return sum / (pixels.size * 255.0)
+  }
 
   /** Turns, mirrors and scales in one pass onto white, so a transparent PNG does not go black. */
   private fun draw(decoded: Bitmap, turn: Turn, size: Size): Bitmap {

@@ -3,16 +3,27 @@ import type { ComposerNotice } from "./attachSheetModel";
 /** How long the system camera gets to leave the app before the in-app camera opens. */
 export const CAMERA_OPEN_MS = 1500;
 
+/** A capture at or below this mean luma is an all-black frame, not a photo. */
+export const BLACK_PHOTO_LUMA = 0.005;
+
 export interface CameraFailure {
   readonly code: string;
   readonly message: string;
 }
 
-export type CameraLaunchOutcome =
+/** The outcomes the system camera's own activity result can produce. */
+export type CameraLaunchSettlement =
   | { readonly kind: "succeeded" }
   | { readonly kind: "cancelled" }
-  | { readonly kind: "rejected"; readonly failure: CameraFailure }
-  | { readonly kind: "stalled" };
+  | { readonly kind: "rejected"; readonly failure: CameraFailure };
+
+/**
+ * What ended the launch watch. A timeout is only a stall when the launch was still pending: a
+ * launch that settled first can never become one.
+ */
+export type CameraLaunchOutcome =
+  | CameraLaunchSettlement
+  | { readonly kind: "timeout"; readonly launchSettled: boolean };
 
 export type CameraLaunchDecision =
   | { readonly kind: "accept" }
@@ -31,9 +42,80 @@ export function cameraLaunchDecision(outcome: CameraLaunchOutcome): CameraLaunch
       return { kind: "stop" };
     case "rejected":
       return { kind: "fallback", reason: `System camera failed (${outcome.failure.code}).` };
-    case "stalled":
-      return { kind: "fallback", reason: "System camera did not open." };
+    case "timeout":
+      return outcome.launchSettled
+        ? { kind: "stop" }
+        : { kind: "fallback", reason: "System camera did not open." };
   }
+}
+
+export interface CameraLaunchWatch {
+  /** Settles once: the launch's own outcome, or a timeout after enough foreground time. */
+  readonly outcome: Promise<CameraLaunchOutcome>;
+  /** The launch's result or rejection arrived. A later timeout cannot change it. */
+  readonly settle: (settlement: CameraLaunchSettlement) => void;
+  /** The app left the foreground, so the camera took the screen; the wait stops for good. */
+  readonly background: () => void;
+  /** The composer is gone; drop the timer. */
+  readonly close: () => void;
+}
+
+/**
+ * Watches one system camera launch. The 1500 ms counts only while the app stays in the
+ * foreground: backgrounding means the camera took the screen, so the wait is cancelled and a
+ * resume never restarts it. A launch that settles first resolves with its own outcome.
+ */
+export function watchCameraLaunch(input: {
+  readonly stallMs: number;
+  readonly isForeground: () => boolean;
+}): CameraLaunchWatch {
+  let resolveOutcome!: (outcome: CameraLaunchOutcome) => void;
+  const outcome = new Promise<CameraLaunchOutcome>((resolve) => {
+    resolveOutcome = resolve;
+  });
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let done = false;
+  const stop = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+  };
+  const settleOnce = (value: CameraLaunchOutcome) => {
+    if (done) return;
+    done = true;
+    stop();
+    resolveOutcome(value);
+  };
+  timer = setTimeout(() => {
+    timer = null;
+    if (done || !input.isForeground()) return;
+    settleOnce({ kind: "timeout", launchSettled: false });
+  }, input.stallMs);
+  return {
+    outcome,
+    settle: settleOnce,
+    background: stop,
+    close: () => {
+      done = true;
+      stop();
+    },
+  };
+}
+
+/** One camera launch at a time, so the chat that launched it owns the recovered photo. */
+export function cameraLaunchKey(environmentId: string): string {
+  return `t3code:camera-launch:v1:${environmentId}`;
+}
+
+/**
+ * A pending system-camera photo belongs to the chat that launched the camera. Without a
+ * recorded chat the first composer to mount recovers it, as before the marker existed.
+ */
+export function pendingLaunchOwner(
+  pendingThreadId: string | null,
+  threadId: string,
+): "claim" | "skip" {
+  return pendingThreadId === null || pendingThreadId === threadId ? "claim" : "skip";
 }
 
 /** Expo errors carry a code; anything else is named unknown so the notice still names a cause. */
@@ -54,6 +136,11 @@ export function cameraFailure(error: unknown): CameraFailure {
 export function isStuckLauncherFailure(failure: CameraFailure): boolean {
   const text = `${failure.code} ${failure.message}`.toLowerCase();
   return text.includes("unregistered") || text.includes("activityresultlauncher");
+}
+
+/** A capture the camera saved as a black frame must not land as a draft silently. */
+export function isBlackPhoto(meanLuma: number | null): boolean {
+  return meanLuma !== null && meanLuma <= BLACK_PHOTO_LUMA;
 }
 
 export function cameraLaunchNotice(failure: CameraFailure): ComposerNotice {
