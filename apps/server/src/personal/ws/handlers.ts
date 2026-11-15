@@ -53,6 +53,7 @@ import * as PersonalLoginRequestService from "../secrets/PersonalLoginRequestSer
 import * as PersonalLoginService from "../secrets/PersonalLoginService.ts";
 import * as PersonalSecretService from "../secrets/PersonalSecretService.ts";
 import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
+import * as PersonalWorkAnswers from "../work/PersonalWorkAnswers.ts";
 import * as PersonalWorkReads from "../work/PersonalWorkReads.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalVoiceCallService from "../voiceCalls/PersonalVoiceCallService.ts";
@@ -517,6 +518,14 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
         ),
       [WS_METHODS.personalWorkSince]: (input) =>
         observeRpcEffect(WS_METHODS.personalWorkSince, PersonalWorkReads.since(input), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalWorkQuestions]: (_input) =>
+        observeRpcEffect(WS_METHODS.personalWorkQuestions, PersonalWorkReads.questions(), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalWorkAnswer]: (input) =>
+        observeRpcEffect(WS_METHODS.personalWorkAnswer, PersonalWorkAnswers.answer(input), {
           "rpc.aggregate": "server",
         }),
       [WS_METHODS.personalTasksGet]: (input) =>
