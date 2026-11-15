@@ -335,6 +335,7 @@ export function Composer({
       return false;
     }
     if (action.kind === "none") return false;
+    console.info(`[camera] claim source=${source} bytes=${action.bytes}`);
     await addCameraAsset({ uri: action.uri, fileSize: action.bytes, fileName: null }, source);
     return true;
   };
