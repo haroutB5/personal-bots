@@ -4,11 +4,10 @@ import {
   BLACK_PHOTO_LUMA,
   cameraFailure,
   cameraLaunchDecision,
-  cameraLaunchKey,
   cameraLaunchNotice,
+  claimAction,
   isBlackPhoto,
-  isStuckLauncherFailure,
-  pendingLaunchOwner,
+  launchClaimAllowed,
   photoLaunchNotice,
   watchCameraLaunch,
 } from "./cameraLaunch";
@@ -132,6 +131,34 @@ describe("watchCameraLaunch", () => {
   });
 });
 
+describe("launchClaimAllowed", () => {
+  /** The native record: a claim reads it once and clears it, like CameraLaunchStore. */
+  const launch = () => {
+    const store = { owner: "env-1/thread-1", photo: "camera/1.jpg" as string | null };
+    const claim = () => {
+      const photo = store.photo;
+      store.photo = null;
+      return photo;
+    };
+    return { store, claim };
+  };
+
+  it("leaves the record for the composer that mounts next when the launch resolves unmounted", () => {
+    const { store, claim } = launch();
+
+    expect(launchClaimAllowed(false) ? claim() : null).toBeNull();
+    expect(store.photo).toBe("camera/1.jpg");
+  });
+
+  it("claims the photo once from the composer still mounted for the launch", () => {
+    const { store, claim } = launch();
+
+    expect(launchClaimAllowed(true) ? claim() : null).toBe("camera/1.jpg");
+    expect(launchClaimAllowed(true) ? claim() : null).toBeNull();
+    expect(store.photo).toBeNull();
+  });
+});
+
 describe("isBlackPhoto", () => {
   it("flags the black captures the in-app camera saved", () => {
     expect(isBlackPhoto(0.0012)).toBe(true);
@@ -149,21 +176,28 @@ describe("isBlackPhoto", () => {
   });
 });
 
-describe("pending camera result ownership", () => {
-  it("claims a pending result when the launch recorded no chat", () => {
-    expect(pendingLaunchOwner(null, "thread-1")).toBe("claim");
+describe("claimAction", () => {
+  it("adds the photo the first claim returned", () => {
+    expect(claimAction({ status: "photo", uri: "file:///camera/1.jpg", bytes: 72987 })).toEqual({
+      kind: "add",
+      uri: "file:///camera/1.jpg",
+      bytes: 72987,
+    });
   });
 
-  it("claims a pending result in the chat that launched the camera", () => {
-    expect(pendingLaunchOwner("thread-1", "thread-1")).toBe("claim");
+  it("logs a launch that backed out and adds no draft", () => {
+    expect(claimAction({ status: "empty" })).toEqual({
+      kind: "log",
+      reason: "recovered launch empty",
+    });
   });
 
-  it("skips a pending result in another chat", () => {
-    expect(pendingLaunchOwner("thread-1", "thread-2")).toBe("skip");
+  it("leaves another chat's photo for that chat", () => {
+    expect(claimAction({ status: "other", owner: "env-1/thread-1" })).toEqual({ kind: "none" });
   });
 
-  it("keys the launch per server", () => {
-    expect(cameraLaunchKey("env-1")).toBe("t3code:camera-launch:v1:env-1");
+  it("adds nothing when no launch is recorded", () => {
+    expect(claimAction(null)).toEqual({ kind: "none" });
   });
 });
 
@@ -180,23 +214,6 @@ describe("cameraFailure", () => {
 
   it("names an error without a code", () => {
     expect(cameraFailure("boom")).toEqual({ code: "unknown", message: "boom" });
-  });
-});
-
-describe("isStuckLauncherFailure", () => {
-  it("recognises the unregistered launcher rejection", () => {
-    expect(
-      isStuckLauncherFailure({
-        code: "ERR_IMAGE_PICKER",
-        message: "Attempting to launch an unregistered ActivityResultLauncher",
-      }),
-    ).toBe(true);
-  });
-
-  it("does not mark an ordinary camera failure as stuck", () => {
-    expect(
-      isStuckLauncherFailure({ code: "ERR_IMAGE_PICKER", message: "Camera is unavailable" }),
-    ).toBe(false);
   });
 });
 

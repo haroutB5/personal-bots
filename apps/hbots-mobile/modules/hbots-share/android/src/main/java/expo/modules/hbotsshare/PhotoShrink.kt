@@ -100,6 +100,17 @@ internal object PhotoShrink {
     return Shrunk(out, size.width, size.height)
   }
 
+  /** The stored pixel size, or null when the file cannot be decoded. */
+  fun measure(source: File): Size? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(source.path, bounds)
+    return if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+      null
+    } else {
+      Size(bounds.outWidth, bounds.outHeight)
+    }
+  }
+
   private fun readExif(source: File): ExifInterface? =
     try {
       ExifInterface(source.path)

@@ -94,7 +94,7 @@ describe("every photo a draft takes in is shrunk", () => {
 
     for (const picker of [
       "launchImageLibraryAsync",
-      "launchCameraAsync",
+      "HbotsCamera.launch",
       "getDocumentAsync",
       "keyboardImages(readShare",
     ]) {

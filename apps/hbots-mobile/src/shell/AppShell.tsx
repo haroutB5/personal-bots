@@ -8,7 +8,7 @@ import {
   createNativeStackNavigator,
   type NativeStackScreenProps,
 } from "@react-navigation/native-stack";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackHandler, Linking, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -16,6 +16,7 @@ import type { AndroidRelease } from "../compat";
 import { chatComputerTarget } from "../chat/chatComputer";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
+import { useCameraRecovery } from "../chat/useCameraRecovery";
 import { useLinkGate } from "../security/useLinkGate";
 import { storeLinkDraft } from "../chat/linkDraft";
 import { clearChatNotifications } from "../notifications/clearChatNotifications";
@@ -265,12 +266,29 @@ function ChipEntrySettled({
 
 function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
+  const [navigatorReady, setNavigatorReady] = useState(false);
   const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
 
   useEffect(() => {
     configureNativeOutbox(props.native);
   }, [props.native]);
   useNativeOutboxFlusher(props.native, chat);
+
+  const openRecoveredChat = useCallback((botId: string, threadId: string): boolean => {
+    if (!navigationRef.isReady()) return false;
+    const current = navigationRef.getCurrentRoute();
+    if (current?.name === "Chat") {
+      const params = current.params as { readonly threadId?: string } | undefined;
+      if (params?.threadId === threadId) return true;
+    }
+    navigationRef.navigate("Chat", { botId, threadId });
+    return true;
+  }, []);
+  useCameraRecovery({
+    native: props.native,
+    ready: navigatorReady,
+    openChat: openRecoveredChat,
+  });
 
   const openLink = useCallback(
     (raw: string) => {
@@ -312,6 +330,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
       ref={navigationRef}
       theme={navigationTheme}
       onReady={() => {
+        setNavigatorReady(true);
         const pending = pendingLink.current;
         if (pending !== null) {
           pendingLink.current = null;

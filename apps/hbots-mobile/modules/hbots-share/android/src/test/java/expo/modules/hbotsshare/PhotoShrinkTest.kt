@@ -157,6 +157,13 @@ class PhotoShrinkTest {
     )
   }
 
+  @Test fun aCaptureReportsItsStoredSize() {
+    val source = photo("IMG_0001.jpg", 400, 300, Bitmap.CompressFormat.JPEG)
+
+    assertEquals(PhotoShrink.Size(400, 300), PhotoShrink.measure(source))
+    assertNull(PhotoShrink.measure(folder.newFile("not-an-image.jpg").apply { writeText("x") }))
+  }
+
   @Test fun onlyFilesInTheCacheAreRead() {
     val cache = folder.newFolder("cache")
     val inside = File(cache, "ImagePicker").apply { mkdirs() }.resolve("a.jpg").apply { writeText("x") }
@@ -166,5 +173,16 @@ class PhotoShrinkTest {
     assertNull(cachedFile(cache, outside.toURI().toString()))
     assertNull(cachedFile(cache, "file://${cache.path}/ImagePicker/../../secret.db"))
     assertNull(cachedFile(cache, "content://media/external/images/1"))
+  }
+
+  @Test fun theCameraFolderIsReadOnlyWhenNamed() {
+    val cache = folder.newFolder("cache")
+    val camera = folder.newFolder("files", "camera")
+    val photo = File(camera, "a.jpg").apply { writeText("x") }
+    val outside = folder.newFile("secret.db")
+
+    assertEquals(photo.canonicalFile, cachedFile(cache, photo.toURI().toString(), camera))
+    assertNull(cachedFile(cache, photo.toURI().toString()))
+    assertNull(cachedFile(cache, outside.toURI().toString(), camera))
   }
 }
