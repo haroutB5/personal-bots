@@ -34,7 +34,16 @@ import {
   IconX,
 } from "@tabler/icons-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Image, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  AppState,
+  Image,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import type { ChatEnvironment } from "./chatEnvironment";
 import {
@@ -70,6 +79,16 @@ import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
 import { AttachSheet } from "./AttachSheet";
 import { attachPhotos, cameraRefusal, plainNotice, type ComposerNotice } from "./attachSheetModel";
+import { CameraCaptureSheet } from "./CameraCaptureSheet";
+import {
+  CAMERA_OPEN_MS,
+  cameraFailure,
+  cameraLaunchDecision,
+  cameraLaunchNotice,
+  isStuckLauncherFailure,
+  photoLaunchNotice,
+  type CameraFailure,
+} from "./cameraLaunch";
 import { ComposerHost } from "./ComposerHost";
 import { embeddedPickerAvailable } from "./PhotoStrip";
 import { keyboardImages, releasedIntakes } from "./composerInput";
@@ -171,8 +190,11 @@ export function Composer({
   const [preparing, setPreparing] = useState(false);
   const [notice, setNotice] = useState<ComposerNotice | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [capture, setCapture] = useState<{ readonly reason: string | null } | null>(null);
   const [embedded, setEmbedded] = useState(embeddedPickerAvailable);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachment | null>(null);
+  const systemCameraStuck = useRef<string | null>(null);
+  const cameraLaunching = useRef(false);
   const connection = native.useConnectionState();
   const startTurn = native.client.useAtomCommand(chat.thread.startTurn, {
     reportFailure: false,
@@ -281,6 +303,59 @@ export function Composer({
     await addDrafts(next.slice(0, Math.max(0, room)), null);
   };
 
+  const addCameraAsset = async (
+    asset: {
+      readonly uri: string;
+      readonly width: number;
+      readonly height: number;
+      readonly fileName?: string | null;
+      readonly fileSize?: number;
+    },
+    source: string,
+  ) => {
+    await addPicked([
+      {
+        id: `${Date.now()}-${source}`,
+        kind: "image",
+        name: attachmentName({ fileName: asset.fileName, camera: true, index: 0 }),
+        mimeType: "image/jpeg",
+        sizeBytes: sizeOf(asset.uri, asset.fileSize ?? 0),
+        uri: asset.uri,
+      },
+    ]);
+  };
+
+  // Android can kill this activity during a system camera launch. The photo it saved comes back
+  // here after the composer mounts again, so it lands as a draft instead of being lost.
+  const pendingChecked = useRef(false);
+  useEffect(() => {
+    if (pendingChecked.current) return;
+    pendingChecked.current = true;
+    void (async () => {
+      try {
+        const pending = await ImagePicker.getPendingResultAsync();
+        if (pending === null) return;
+        if ("code" in pending) {
+          const failure = cameraFailure(pending);
+          console.warn(
+            `[camera] pending result failed code=${failure.code} message=${failure.message}`,
+          );
+          return;
+        }
+        if (pending.canceled) return;
+        const asset = pending.assets[0];
+        if (asset === undefined) return;
+        await addCameraAsset(asset, "recovered");
+      } catch (error) {
+        const failure = cameraFailure(error);
+        console.warn(
+          `[camera] pending result failed code=${failure.code} message=${failure.message}`,
+        );
+      }
+    })();
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- recover once per composer mount
+  }, []);
+
   /** An image from the keyboard: the share intake's caps and refusals, then a draft attachment. */
   const addKeyboardImages = (intakeId: string | null) => {
     if (intakeId === null) {
@@ -331,42 +406,120 @@ export function Composer({
           };
         }),
       );
-    } catch {
-      setNotice(plainNotice("Couldn't open the photo picker."));
+    } catch (error) {
+      const failure = cameraFailure(error);
+      console.warn(`[photos] launch failed code=${failure.code} message=${failure.message}`);
+      if (embeddedPickerAvailable()) {
+        setEmbedded(true);
+        setAttachOpen(true);
+      } else {
+        setNotice(photoLaunchNotice(failure));
+      }
     } finally {
       setPicking(false);
     }
   };
 
+  const cameraPermission = async () => {
+    const current = await ImagePicker.getCameraPermissionsAsync();
+    if (current.granted) return current;
+    return ImagePicker.requestCameraPermissionsAsync();
+  };
+
+  /**
+   * The system camera can stay pending on Android 16 until a lifecycle change, and a recreated
+   * activity leaves its launcher unregistered. Both end in the in-app camera after a short wait.
+   */
+  const launchSystemCamera = async () => {
+    type Launch =
+      | { readonly kind: "succeeded"; readonly asset: ImagePicker.ImagePickerAsset | undefined }
+      | { readonly kind: "cancelled" }
+      | { readonly kind: "rejected"; readonly failure: CameraFailure }
+      | { readonly kind: "stalled" };
+
+    const launch = ImagePicker.launchCameraAsync({ quality: 1 });
+    const outcome = await new Promise<Launch>((resolve) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const finish = (value: Launch) => {
+        if (done) return;
+        done = true;
+        if (timer !== null) clearTimeout(timer);
+        resolve(value);
+      };
+      timer = setTimeout(() => {
+        if (AppState.currentState === "active") finish({ kind: "stalled" });
+      }, CAMERA_OPEN_MS);
+      launch.then(
+        (result) =>
+          finish(
+            result.canceled
+              ? { kind: "cancelled" }
+              : { kind: "succeeded", asset: result.assets[0] },
+          ),
+        (error) => finish({ kind: "rejected", failure: cameraFailure(error) }),
+      );
+    });
+
+    const decision = cameraLaunchDecision(outcome);
+    if (decision.kind === "stop") return;
+    if (decision.kind === "accept" && outcome.kind === "succeeded") {
+      if (outcome.asset !== undefined) await addCameraAsset(outcome.asset, "camera");
+      return;
+    }
+    if (decision.kind !== "fallback") return;
+
+    if (outcome.kind === "rejected") {
+      const failure = outcome.failure;
+      console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
+      setNotice(cameraLaunchNotice(failure));
+      if (isStuckLauncherFailure(failure)) systemCameraStuck.current = decision.reason;
+    } else {
+      console.warn(`[camera] launch stalled after ${CAMERA_OPEN_MS}ms`);
+      systemCameraStuck.current = decision.reason;
+    }
+    setCapture({ reason: decision.reason });
+
+    if (outcome.kind === "stalled") {
+      // A system camera that opens after the wait still wins: its photo closes the sheet.
+      void launch.then(
+        (result) => {
+          if (result.canceled) return;
+          const asset = result.assets[0];
+          if (asset === undefined) return;
+          setCapture(null);
+          void addCameraAsset(asset, "late");
+        },
+        (error) => {
+          const failure = cameraFailure(error);
+          console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
+        },
+      );
+    }
+  };
+
   const pickCamera = async () => {
+    if (cameraLaunching.current) return;
+    cameraLaunching.current = true;
     setPicking(true);
     try {
-      const refusal = cameraRefusal(await ImagePicker.requestCameraPermissionsAsync());
+      const refusal = cameraRefusal(await cameraPermission());
       if (refusal !== null) {
         setNotice(refusal);
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({ quality: 1 });
-      if (result.canceled) return;
-      const asset = result.assets[0];
-      if (asset === undefined) return;
-      await addPicked([
-        {
-          id: `${Date.now()}-camera`,
-          kind: "image",
-          name: attachmentName({
-            fileName: null,
-            camera: true,
-            index: 0,
-          }),
-          mimeType: asset.mimeType ?? "image/jpeg",
-          sizeBytes: sizeOf(asset.uri, asset.fileSize ?? 0),
-          uri: asset.uri,
-        },
-      ]);
-    } catch {
-      setNotice(plainNotice("Couldn't open the camera."));
+      if (systemCameraStuck.current !== null) {
+        setNotice(null);
+        setCapture({ reason: systemCameraStuck.current });
+        return;
+      }
+      await launchSystemCamera();
+    } catch (error) {
+      const failure = cameraFailure(error);
+      console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
+      setNotice(cameraLaunchNotice(failure));
     } finally {
+      cameraLaunching.current = false;
       setPicking(false);
     }
   };
@@ -1037,6 +1190,15 @@ export function Composer({
           addKeyboardImages(intakeId);
         }}
         onUnavailable={() => setEmbedded(false)}
+      />
+      <CameraCaptureSheet
+        visible={capture !== null}
+        reason={capture?.reason ?? null}
+        onClose={() => setCapture(null)}
+        onPhoto={async (photo) => {
+          setCapture(null);
+          await addCameraAsset(photo, "in-app");
+        }}
       />
       <SheetShell visible={sendMenuOpen} title="Send" onClose={() => setSendMenuOpen(false)}>
         <SheetAction
