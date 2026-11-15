@@ -2,8 +2,19 @@ package expo.modules.hbotssecure
 
 import java.io.File
 import java.nio.file.Files
+import java.security.AlgorithmParameters
+import java.security.Key
+import java.security.Provider
+import java.security.SecureRandom
+import java.security.Security
+import java.security.spec.AlgorithmParameterSpec
+import javax.crypto.Cipher
+import javax.crypto.CipherInputStream
+import javax.crypto.CipherOutputStream
+import javax.crypto.CipherSpi
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -11,6 +22,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 
@@ -322,5 +334,146 @@ class CacheCryptoTest {
 
   @Test fun purgeOfAMissingFolderRemovesNothing() {
     assertEquals(0, FileCrypto(MemoryKeys()).purgeUnencrypted(File(dir, "nope")))
+  }
+
+  private fun randomBytes(size: Int) = ByteArray(size).also(SecureRandom()::nextBytes)
+
+  /**
+   * Every Keystore cipher call is a binder round trip on the phone, so a send pays per call.
+   * The 5,991,003 byte size is the lab's 6 MB photo, which is not a multiple of any chunk size.
+   */
+  @Test fun aSixMegabyteAttachmentTakesAtMostAHundredCipherCallsEachWay() {
+    val crypto = FileCrypto(MemoryKeys())
+    val bytes = randomBytes(5_991_003)
+    val counting = CountingGcm.provider()
+    Security.insertProviderAt(counting, 1)
+    try {
+      CountingGcm.updates = 0
+      crypto.encryptFile(bytes.inputStream(), path("blob"))
+      val encryptCalls = CountingGcm.updates
+
+      CountingGcm.updates = 0
+      assertTrue(crypto.decryptFile(path("blob"), path("plain")))
+      val decryptCalls = CountingGcm.updates
+
+      if (encryptCalls == 0 || decryptCalls == 0) fail("the counting cipher was not used")
+      assertTrue(
+        "encrypt made $encryptCalls and decrypt made $decryptCalls cipher calls",
+        encryptCalls <= 100 && decryptCalls <= 100,
+      )
+      assertArrayEquals(bytes, File(path("plain")).readBytes())
+    } finally {
+      Security.removeProvider(counting.name)
+    }
+  }
+
+  private val edgeSizes = listOf(0, 1, 65_535, 65_536, 65_537, 5_991_003)
+
+  @Test fun anAttachmentSealedByTheStreamCodeOf1_67_22StillOpens() {
+    val keys = MemoryKeys()
+    val crypto = FileCrypto(keys)
+    for (size in edgeSizes) {
+      val bytes = randomBytes(size)
+      File(path("blob")).writeBytes(StreamCodec1_67_22.seal(keys.key(), bytes))
+
+      assertTrue("size $size", crypto.decryptFile(path("blob"), path("plain")))
+      assertArrayEquals("size $size", bytes, File(path("plain")).readBytes())
+    }
+  }
+
+  @Test fun anAttachmentSealedNowOpensWithTheStreamCodeOf1_67_22() {
+    val keys = MemoryKeys()
+    val crypto = FileCrypto(keys)
+    for (size in edgeSizes) {
+      val bytes = randomBytes(size)
+      crypto.encryptFile(bytes.inputStream(), path("blob"))
+
+      assertArrayEquals("size $size", bytes, StreamCodec1_67_22.open(keys.key(), File(path("blob")).readBytes()))
+    }
+  }
+
+  @Test fun aTruncatedAttachmentIsRefusedAndNothingIsLeftBehind() {
+    val crypto = FileCrypto(MemoryKeys())
+    crypto.encryptFile(randomBytes(200_000).inputStream(), path("blob"))
+    val raw = File(path("blob")).readBytes()
+    File(path("blob")).writeBytes(raw.copyOf(raw.size - 8))
+
+    assertFalse(crypto.decryptFile(path("blob"), path("plain")))
+    assertFalse(File(path("plain")).exists())
+    assertFalse(File(path("plain.part")).exists())
+    assertFalse(File(path("blob")).exists())
+  }
+}
+
+/** The v1 attachment code as shipped through 1.67.22, copied here to pin the format on disk. */
+private object StreamCodec1_67_22 {
+  fun seal(key: SecretKey, plain: ByteArray): ByteArray {
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, key)
+    val out = java.io.ByteArrayOutputStream()
+    out.write(byteArrayOf('v'.code.toByte(), '1'.code.toByte()))
+    out.write(cipher.iv)
+    CipherOutputStream(out, cipher).use { plain.inputStream().copyTo(it) }
+    return out.toByteArray()
+  }
+
+  fun open(key: SecretKey, sealed: ByteArray): ByteArray {
+    assertEquals('v'.code.toByte(), sealed[0])
+    assertEquals('1'.code.toByte(), sealed[1])
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, sealed, 2, 12))
+    return CipherInputStream(sealed.inputStream(14, sealed.size - 14), cipher).use { it.readBytes() }
+  }
+}
+
+/** AES/GCM from SunJCE that counts `update` calls, registered ahead of every other provider in a test. */
+class CountingGcm : CipherSpi() {
+  private val inner = Cipher.getInstance("AES/GCM/NoPadding", "SunJCE")
+
+  override fun engineSetMode(mode: String?) {}
+
+  override fun engineSetPadding(padding: String?) {}
+
+  override fun engineGetBlockSize() = 16
+
+  override fun engineGetOutputSize(inputLen: Int) = inner.getOutputSize(inputLen)
+
+  override fun engineGetIV(): ByteArray? = inner.iv
+
+  override fun engineGetParameters(): AlgorithmParameters? = inner.parameters
+
+  override fun engineInit(opmode: Int, key: Key?, random: SecureRandom?) = inner.init(opmode, key, random)
+
+  override fun engineInit(opmode: Int, key: Key?, params: AlgorithmParameterSpec?, random: SecureRandom?) =
+    inner.init(opmode, key, params, random)
+
+  override fun engineInit(opmode: Int, key: Key?, params: AlgorithmParameters?, random: SecureRandom?) =
+    inner.init(opmode, key, params, random)
+
+  override fun engineUpdate(input: ByteArray, inputOffset: Int, inputLen: Int): ByteArray? {
+    updates += 1
+    return inner.update(input, inputOffset, inputLen)
+  }
+
+  override fun engineUpdate(input: ByteArray, inputOffset: Int, inputLen: Int, output: ByteArray, outputOffset: Int): Int {
+    updates += 1
+    return inner.update(input, inputOffset, inputLen, output, outputOffset)
+  }
+
+  override fun engineDoFinal(input: ByteArray?, inputOffset: Int, inputLen: Int): ByteArray =
+    if (input == null) inner.doFinal() else inner.doFinal(input, inputOffset, inputLen)
+
+  override fun engineDoFinal(input: ByteArray?, inputOffset: Int, inputLen: Int, output: ByteArray, outputOffset: Int): Int =
+    if (input == null) inner.doFinal(output, outputOffset) else inner.doFinal(input, inputOffset, inputLen, output, outputOffset)
+
+  companion object {
+    @Volatile var updates = 0
+
+    fun provider(): Provider =
+      object : Provider("CountingGcm", 1.0, "counts AES/GCM update calls") {
+        init {
+          put("Cipher.AES/GCM/NoPadding", CountingGcm::class.java.name)
+        }
+      }
   }
 }
