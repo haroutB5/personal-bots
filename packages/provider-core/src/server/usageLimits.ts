@@ -156,6 +156,9 @@ export function shortProbeFailureReason(message: string | undefined): string | u
     : `${trimmed.slice(0, REASON_MAX_CHARS - 1)}…`;
 }
 
+/** get_usage reports window ends to the millisecond and the stream to the second. */
+const WINDOW_END_TOLERANCE_MS = 5_000;
+
 /**
  * A probe can arrive after a newer reading and still describe the window that
  * a reset replaced. Its window ends earlier while the published one is still
@@ -177,7 +180,7 @@ function probeDescribesOlderWindow(
       Number.isFinite(publishedEndMs) &&
       Number.isFinite(probedEndMs) &&
       publishedEndMs > readAtMs &&
-      probedEndMs < publishedEndMs
+      probedEndMs < publishedEndMs - WINDOW_END_TOLERANCE_MS
     );
   });
 }

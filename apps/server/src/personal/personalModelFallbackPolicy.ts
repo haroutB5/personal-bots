@@ -1,4 +1,5 @@
 import type { ModelSelection, ServerProvider, ServerProviderUsageLimits } from "@t3tools/contracts";
+import { windowLimitsModel } from "@t3tools/shared/usageLimits";
 
 /**
  * When a bot that hit its provider's usage limit moves to its fallback model,
@@ -73,10 +74,10 @@ export function limitPool(reason: string | null | undefined): "opus" | "sonnet" 
   return "shared";
 }
 
-/** A usage window counts for a model when it is not another model family's own window. */
+/** A usage window counts for a model when it is not another model family's or model's own window. */
 export function windowAppliesToModel(windowId: string, model: string): boolean {
   const pool = limitPool(windowId);
-  if (pool === "shared") return true;
+  if (pool === "shared") return windowLimitsModel({ id: windowId }, model);
   return modelFamily(model) === pool;
 }
 

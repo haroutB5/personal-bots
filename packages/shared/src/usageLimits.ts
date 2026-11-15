@@ -23,6 +23,23 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+const SCOPED_WEEKLY_PREFIX = "seven_day_";
+const scopeToken = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+
+/** The window id of a weekly allowance that only one model draws on. */
+export function scopedWeeklyWindowId(modelName: string): string {
+  return `${SCOPED_WEEKLY_PREFIX}${scopeToken(modelName)}`;
+}
+
+/** A model-scoped weekly allowance blocks only its own model; an unknown model is not blocked. */
+export function windowLimitsModel(
+  window: Pick<ServerProviderUsageWindow, "id">,
+  model: string | null,
+): boolean {
+  if (!window.id.startsWith(SCOPED_WEEKLY_PREFIX)) return true;
+  return model !== null && scopeToken(model).includes(window.id.slice(SCOPED_WEEKLY_PREFIX.length));
+}
+
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
   now: number,
@@ -59,6 +76,8 @@ export function exhaustedUsageWindow(
         );
       });
     }
+    case "claudeAgent":
+      return exhausted.find((window) => windowLimitsModel(window, model));
     case "codex": {
       // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
       const hasPlanWindows = windows.some(
