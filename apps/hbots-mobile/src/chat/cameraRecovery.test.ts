@@ -33,6 +33,17 @@ describe("cameraRecoveryDecision", () => {
     expect(decide({})).toEqual({ kind: "open", botId: "bot-1", threadId: "thread-1" });
   });
 
+  it("opens the owner chat among several", () => {
+    expect(
+      decide({
+        chats: [
+          { botId: "bot-2", threadId: "thread-2" },
+          { botId: "bot-1", threadId: "thread-1" },
+        ],
+      }),
+    ).toEqual({ kind: "open", botId: "bot-1", threadId: "thread-1" });
+  });
+
   it("leaves a record that is ten minutes old for the composer that mounts later", () => {
     expect(decide({ launch: { owner, at: now - CAMERA_RECOVERY_MS } })).toEqual({
       kind: "leave",
