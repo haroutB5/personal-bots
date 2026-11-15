@@ -4,7 +4,7 @@
  * opens the full system picker as before. With no room left in the draft there is nothing to pick.
  */
 export type AttachPhotos =
-  | { readonly kind: "embedded"; readonly maxSelection: number }
+  | { readonly kind: "embedded" }
   | { readonly kind: "all-photos" }
   | { readonly kind: "full"; readonly message: string };
 
@@ -21,7 +21,7 @@ export function attachPhotos(input: {
     };
   }
   if (!input.embedded) return { kind: "all-photos" };
-  return { kind: "embedded", maxSelection: room };
+  return { kind: "embedded" };
 }
 
 export interface ComposerNotice {

@@ -1,18 +1,19 @@
 /**
- * The device files behind images this phone just sent, by the server's attachment id. The sent
- * bubble draws the file until the server's copy has drawn, so the photo stays on screen from the
- * tap onward. A message's files are let go (its `release`) once the message has landed and each
- * of its images has drawn from the server.
+ * The device files behind this phone's sent images, keyed by message and image place: the server
+ * claims an upload under a new id, so the upload id cannot key the file, while the message id and
+ * order survive. Each file is let go once the message landed and its server copy drew.
  */
+interface HeldImage {
+  readonly index: number;
+  readonly uri: string;
+}
+
 export interface LocalImages {
-  /** After the upload: these server attachment ids were sent from these files. */
-  readonly hold: (
-    messageId: string,
-    images: ReadonlyArray<{ readonly attachmentId: string; readonly uri: string }>,
-  ) => void;
-  readonly uriFor: (attachmentId: string) => string | null;
-  /** The server's copy has drawn; the file is no longer needed for this attachment. */
-  readonly drawn: (attachmentId: string) => void;
+  /** After the upload: these files are the message's images, in the order the server echoes. */
+  readonly hold: (messageId: string, images: ReadonlyArray<HeldImage>) => void;
+  readonly uriFor: (messageId: string, index: number) => string | null;
+  /** The server's copy has drawn; the file is no longer needed for this image. */
+  readonly drawn: (messageId: string, index: number) => void;
   /** The message landed. `release` runs now, or when its last held image draws. */
   readonly landed: (messageId: string, release: () => void) => void;
   /** The message will not show from the server (refused, queued, restored into the draft). */
@@ -20,42 +21,32 @@ export interface LocalImages {
 }
 
 export function createLocalImages(): LocalImages {
-  const uris = new Map<string, string>();
-  const byMessage = new Map<string, Set<string>>();
+  const held = new Map<string, Map<number, string>>();
   const releases = new Map<string, () => void>();
 
   const settle = (messageId: string) => {
-    if ((byMessage.get(messageId)?.size ?? 0) > 0) return;
-    byMessage.delete(messageId);
+    if ((held.get(messageId)?.size ?? 0) > 0) return;
+    held.delete(messageId);
     const release = releases.get(messageId);
     releases.delete(messageId);
     release?.();
   };
 
   const drop = (messageId: string) => {
-    for (const attachmentId of byMessage.get(messageId) ?? []) uris.delete(attachmentId);
-    byMessage.delete(messageId);
+    held.delete(messageId);
     releases.delete(messageId);
   };
 
   return {
     hold: (messageId, images) => {
       drop(messageId);
-      const held = new Set<string>();
-      for (const image of images) {
-        uris.set(image.attachmentId, image.uri);
-        held.add(image.attachmentId);
-      }
-      byMessage.set(messageId, held);
+      held.set(messageId, new Map(images.map((image) => [image.index, image.uri])));
     },
-    uriFor: (attachmentId) => uris.get(attachmentId) ?? null,
-    drawn: (attachmentId) => {
-      if (!uris.delete(attachmentId)) return;
-      for (const [messageId, held] of byMessage) {
-        if (!held.delete(attachmentId)) continue;
-        if (releases.has(messageId)) settle(messageId);
-        return;
-      }
+    uriFor: (messageId, index) => held.get(messageId)?.get(index) ?? null,
+    drawn: (messageId, index) => {
+      const slots = held.get(messageId);
+      if (slots === undefined || !slots.delete(index)) return;
+      if (releases.has(messageId)) settle(messageId);
     },
     landed: (messageId, release) => {
       releases.set(messageId, release);

@@ -511,11 +511,13 @@ export function Composer({
     else native.client.ports.kv.setItem(key, next.text);
   };
 
-  /** The server has the message: the bubble and its saved copy both go. */
+  /**
+   * The server has the message: its saved copy goes and its photo keeps drawing. The pending
+   * bubble stays until the transcript shows the message, so no frame is left without a bubble.
+   */
   const landed = (messageId: string) => {
     if (!activeSends.current.has(messageId)) return;
     activeSends.current.delete(messageId);
-    onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
     // A sent image is drawn from its device file until the server's copy draws.
     localImages.landed(messageId, () => discardClaimedIntakes(messageId));
@@ -587,12 +589,9 @@ export function Composer({
       }
       localImages.hold(
         messageId,
-        snapshot.flatMap((attachment, index) => {
-          const sent = uploaded[index];
-          return attachment.kind === "image" && sent !== undefined
-            ? [{ attachmentId: sent.id, uri: attachment.uri }]
-            : [];
-        }),
+        snapshot.flatMap((attachment, index) =>
+          attachment.kind === "image" ? [{ index, uri: attachment.uri }] : [],
+        ),
       );
     }
     if (abort.signal.aborted) {

@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ext.SdkExtensions
-import android.provider.MediaStore
 import android.util.Log
 import android.widget.photopicker.EmbeddedPhotoPickerFeatureInfo
 import android.widget.photopicker.EmbeddedPhotoPickerProviderFactory
@@ -22,9 +21,11 @@ import expo.modules.kotlin.views.ExpoView
 
 /**
  * The system photo picker drawn inside the plus sheet, so recent photos show at once with no
- * storage permission. Picked photos are copied into the share intake like a keyboard image and
- * JavaScript reads them through the same caps. When the device has no embedded picker, or its
- * session fails, the view reports `onUnavailable` and the sheet falls back to the full picker.
+ * storage permission. One tap picks: the picker grants the tapped photo's uri at once, and the
+ * view copies it into the share intake like a keyboard image. The picker's own Add button only
+ * exists in its expanded state and would make a pick take three taps, so a grant delivers too.
+ * JavaScript reads the intake through the same caps. When the device has no embedded picker, or
+ * its session fails, the view reports `onUnavailable` and the sheet falls back to the full picker.
  */
 @SuppressLint("NewApi")
 @OptIn(ExperimentalPhotoPickerApi::class)
@@ -35,8 +36,6 @@ class HbotsPhotoStripView(context: Context, appContext: AppContext) :
   private val granted = LinkedHashSet<Uri>()
   private var picker: EmbeddedPhotoPickerView? = null
   private var ended = false
-
-  var maxSelection: Int = 1
 
   override val shouldUseAndroidLayout = true
 
@@ -64,6 +63,7 @@ class HbotsPhotoStripView(context: Context, appContext: AppContext) :
 
     override fun onUriPermissionGranted(uris: List<Uri>) {
       granted.addAll(uris)
+      if (uris.isNotEmpty()) deliver()
     }
 
     override fun onUriPermissionRevoked(uris: List<Uri>) {
@@ -102,7 +102,7 @@ class HbotsPhotoStripView(context: Context, appContext: AppContext) :
       view.setEmbeddedPhotoPickerFeatureInfo(
         EmbeddedPhotoPickerFeatureInfo.Builder()
           .setMimeTypes(listOf("image/*"))
-          .setMaxSelectionLimit(maxSelection.coerceIn(1, MediaStore.getPickImagesMaxLimit()))
+          .setMaxSelectionLimit(1)
           .setOrderedSelection(true)
           .setThemeNightMode(Configuration.UI_MODE_NIGHT_YES)
           .build(),

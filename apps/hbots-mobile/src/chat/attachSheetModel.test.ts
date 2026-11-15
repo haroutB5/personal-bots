@@ -2,10 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { attachPhotos, cameraRefusal } from "./attachSheetModel";
 
 describe("attachPhotos", () => {
-  it("embeds the picker with the room left in the draft as its limit", () => {
+  it("embeds the picker while the draft has room", () => {
     expect(attachPhotos({ embedded: true, attached: 3, maxAttachments: 10 })).toEqual({
       kind: "embedded",
-      maxSelection: 7,
     });
   });
 

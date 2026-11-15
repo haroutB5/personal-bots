@@ -3,7 +3,6 @@ import { Platform, type NativeSyntheticEvent, type StyleProp, type ViewStyle } f
 
 interface StripProps {
   readonly style?: StyleProp<ViewStyle>;
-  readonly maxSelection: number;
   readonly onPicked: (event: NativeSyntheticEvent<{ readonly id?: string }>) => void;
   readonly onUnavailable: () => void;
 }
@@ -37,12 +36,10 @@ export function embeddedPickerAvailable(): boolean {
  */
 export function PhotoStrip({
   style,
-  maxSelection,
   onPicked,
   onUnavailable,
 }: {
   readonly style?: StyleProp<ViewStyle>;
-  readonly maxSelection: number;
   readonly onPicked: (intakeId: string | null) => void;
   readonly onUnavailable: () => void;
 }) {
@@ -50,7 +47,6 @@ export function PhotoStrip({
   return (
     <NativeStrip
       style={style}
-      maxSelection={maxSelection}
       onPicked={(event) => onPicked(event.nativeEvent.id ?? null)}
       onUnavailable={onUnavailable}
     />

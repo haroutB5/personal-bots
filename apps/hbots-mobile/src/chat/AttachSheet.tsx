@@ -44,12 +44,7 @@ export function AttachSheet({
       {/* Mounted only while open: unmounting closes the picker session and its grants. */}
       {photos.kind === "embedded" && visible ? (
         <View style={[styles.strip, { height: Math.round(height * 0.5) }]} testID="attach-photos">
-          <PhotoStrip
-            style={styles.fill}
-            maxSelection={photos.maxSelection}
-            onPicked={onPicked}
-            onUnavailable={onUnavailable}
-          />
+          <PhotoStrip style={styles.fill} onPicked={onPicked} onUnavailable={onUnavailable} />
         </View>
       ) : null}
     </SheetShell>

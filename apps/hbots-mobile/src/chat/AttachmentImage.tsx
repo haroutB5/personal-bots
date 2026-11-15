@@ -18,14 +18,19 @@ import { tokens } from "../shell/tokens";
 export function AttachmentImage({
   native,
   chat,
+  messageId,
+  index,
   attachment,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
+  /** The echoed message. Its id and the image's place survive the server's attachment claim. */
+  readonly messageId: string;
+  readonly index: number;
   readonly attachment: Extract<ChatAttachment, { readonly type: "image" }>;
 }) {
   const [open, setOpen] = useState(false);
-  const [local, setLocal] = useState(() => localImages.uriFor(attachment.id));
+  const [local, setLocal] = useState(() => localImages.uriFor(messageId, index));
   const [remoteDrawn, setRemoteDrawn] = useState(false);
   const state = assetUrlStateFromResult(
     useAtomValue(
@@ -71,6 +76,7 @@ export function AttachmentImage({
               source={{ uri: layers.local }}
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
+              resizeMethod="resize"
               onError={() => setLocal(null)}
             />
           )}
@@ -79,10 +85,11 @@ export function AttachmentImage({
               source={{ uri: layers.remote }}
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
+              resizeMethod="resize"
               accessibilityLabel={attachment.name}
               onLoad={() => {
                 setRemoteDrawn(true);
-                localImages.drawn(attachment.id);
+                localImages.drawn(messageId, index);
               }}
             />
           )}
@@ -142,6 +149,7 @@ export function PendingAttachmentImage({
         source={{ uri }}
         style={StyleSheet.absoluteFill}
         resizeMode="cover"
+        resizeMethod="resize"
         accessibilityLabel={name}
         onLoad={onDrawn}
         onError={() => setFailed(true)}
