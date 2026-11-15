@@ -110,6 +110,15 @@ export type CameraClaimAction =
   | { readonly kind: "log"; readonly reason: string };
 
 /**
+ * A launch result belongs only to the composer still mounted for it. When Android destroyed the
+ * activity, the old composer's promise can resolve into a composer that is gone; claiming there
+ * would consume the record before the composer that mounts next can recover it.
+ */
+export function launchClaimAllowed(mounted: boolean): boolean {
+  return mounted;
+}
+
+/**
  * The only way a claimed launch becomes a draft. A photo is added once; a backed-out launch
  * leaves a line in the log; another chat's launch and no launch at all add nothing.
  */

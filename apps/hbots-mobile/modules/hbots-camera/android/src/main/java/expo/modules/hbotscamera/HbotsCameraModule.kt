@@ -56,6 +56,11 @@ class HbotsCameraModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("HbotsCamera")
 
+    // App start: drop camera files no launch can reach any more.
+    OnCreate {
+      context()?.let { store(it).prune(System.currentTimeMillis()) }
+    }
+
     /** True when the camera saved a photo, false when the user backed out. */
     AsyncFunction("launch") { owner: String, promise: Promise ->
       val context = context()
@@ -101,6 +106,18 @@ class HbotsCameraModule : Module() {
           "bytes" to claim.bytes,
         )
       }
+    }
+
+    /** The launch still waiting for a composer, without consuming it. */
+    AsyncFunction("pending") {
+      val context = context() ?: return@AsyncFunction null
+      store(context).peek()?.let { mapOf("owner" to it.owner, "at" to it.at) }
+    }
+
+    /** Its chat no longer exists: drop this launch and its file. */
+    AsyncFunction("discard") { owner: String ->
+      val context = context() ?: return@AsyncFunction
+      store(context).discard(owner)
     }
   }
 }

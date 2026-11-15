@@ -1,5 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 
+import type { PendingCameraLaunch } from "./cameraRecovery";
+
 /** A native claim. A photo always names the chat that launched it, and a claim is used once. */
 export type CameraClaim =
   | { readonly status: "photo"; readonly uri: string; readonly bytes: number }
@@ -11,6 +13,10 @@ interface HbotsCameraNative {
   launch(owner: string): Promise<boolean>;
   /** The photo this chat launched, once; null when no launch is recorded. */
   claim(owner: string): Promise<CameraClaim | null>;
+  /** The launch still waiting for a composer, without consuming it. */
+  pending(): Promise<PendingCameraLaunch | null>;
+  /** Drops this chat's launch and its file once its chat no longer exists. */
+  discard(owner: string): Promise<void>;
 }
 
 const native = requireOptionalNativeModule<HbotsCameraNative>("HbotsCamera");
@@ -26,4 +32,8 @@ export const HbotsCamera: HbotsCameraNative = {
     return native.launch(owner);
   },
   claim: (owner) => (native === null ? Promise.resolve(null) : native.claim(owner)),
+  pending: async () => (native === null ? null : native.pending()),
+  discard: async (owner) => {
+    if (native !== null) await native.discard(owner);
+  },
 };

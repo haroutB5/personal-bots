@@ -6,6 +6,9 @@ import java.util.UUID
 /** One camera launch, committed before the intent fires so a recreated activity still names its chat. */
 data class CameraLaunch(val owner: String, val path: String, val at: Long)
 
+/** Capture files no launch points to are old, unreachable photos after this long. */
+private const val CAPTURE_KEEP_MS = 24L * 60 * 60 * 1000
+
 /**
  * What a claim answers. A photo belongs to the chat that asked; a launch is either still another
  * chat's or gone, so a claimed photo can never be handed out twice.
@@ -54,6 +57,29 @@ class CameraLaunchStore(private val records: LaunchRecords, private val dir: Fil
   /** The camera never opened: forget the launch and its file. */
   fun abandon() {
     val record = records.read() ?: return
+    drop(record)
+  }
+
+  /** The record still waiting for its composer, without consuming it. */
+  fun peek(): CameraLaunch? = records.read()
+
+  /** Its chat no longer exists: forget the launch and delete its file, never another chat's. */
+  fun discard(owner: String) {
+    val record = records.read() ?: return
+    if (record.owner != owner) return
+    drop(record)
+  }
+
+  /** Deletes capture files older than [maxAgeMs] that no recorded launch points to. */
+  fun prune(now: Long, maxAgeMs: Long = CAPTURE_KEEP_MS) {
+    val keep = records.read()?.let { owned(it.path) }?.path
+    val cutoff = now - maxAgeMs
+    dir.listFiles()?.forEach { file ->
+      if (file.isFile && file.path != keep && file.lastModified() < cutoff) file.delete()
+    }
+  }
+
+  private fun drop(record: CameraLaunch) {
     records.write(null)
     owned(record.path)?.delete()
   }

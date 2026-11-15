@@ -64,25 +64,43 @@ class HbotsShareModule : Module() {
      */
     AsyncFunction("shrinkPhoto") { uri: String, mimeType: String ->
       val context = app() ?: return@AsyncFunction null
-      // Same folder hbots-camera writes its launch into.
+      // Same folder hbots-camera writes its launch into; the draft's copies live in cache.
       val cameraDir = File(context.filesDir, "camera")
+      val draftDir = File(context.cacheDir, "camera-drafts")
       val source = cachedFile(context.cacheDir, uri, cameraDir) ?: return@AsyncFunction null
+      val fromCamera = source.path.startsWith(cameraDir.canonicalFile.path + File.separator)
+      val draftFile = if (fromCamera) {
+        CameraDraftFile.adopt(source, draftDir) ?: return@AsyncFunction null
+      } else {
+        source
+      }
       val shrunk = (
         try {
-          PhotoShrink.shrink(source, mimeType)
+          PhotoShrink.shrink(draftFile, mimeType)
         } catch (_: Exception) {
           null
         } catch (_: OutOfMemoryError) {
           null
         }
-      ) ?: return@AsyncFunction null
-      // A camera capture is single use: the draft now points at the shrunk copy.
-      if (source.path.startsWith(cameraDir.canonicalFile.path + File.separator)) source.delete()
+      )
+      if (shrunk != null) {
+        // The draft now points at the shrunk copy; the pre-shrink copy can go.
+        if (draftFile !== source) draftFile.delete()
+        return@AsyncFunction mapOf(
+          "uri" to Uri.fromFile(shrunk.file).toString(),
+          "width" to shrunk.width,
+          "height" to shrunk.height,
+          "bytes" to shrunk.file.length(),
+        )
+      }
+      // Only a camera capture needs a draft-owned copy when it needs no shrink.
+      if (!fromCamera) return@AsyncFunction null
+      val size = PhotoShrink.measure(draftFile)
       mapOf(
-        "uri" to Uri.fromFile(shrunk.file).toString(),
-        "width" to shrunk.width,
-        "height" to shrunk.height,
-        "bytes" to shrunk.file.length(),
+        "uri" to Uri.fromFile(draftFile).toString(),
+        "width" to (size?.width ?: 0),
+        "height" to (size?.height ?: 0),
+        "bytes" to draftFile.length(),
       )
     }
 

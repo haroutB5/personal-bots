@@ -87,6 +87,7 @@ import {
   cameraLaunchDecision,
   cameraLaunchNotice,
   claimAction,
+  launchClaimAllowed,
   photoLaunchNotice,
   watchCameraLaunch,
 } from "./cameraLaunch";
@@ -328,7 +329,8 @@ export function Composer({
 
   const cameraOwner = `${native.environmentId}/${threadId}`;
 
-  const claimCameraPhoto = async (source: string): Promise<boolean> => {
+  const claimCameraPhoto = async (source: string, allowed = true): Promise<boolean> => {
+    if (!allowed) return false;
     const action = claimAction(await HbotsCamera.claim(cameraOwner));
     if (action.kind === "log") {
       console.info(`[camera] ${action.reason}`);
@@ -460,7 +462,7 @@ export function Composer({
     const decision = cameraLaunchDecision(outcome);
     if (decision.kind === "stop") return;
     if (decision.kind === "accept") {
-      await claimCameraPhoto("camera");
+      await claimCameraPhoto("camera", launchClaimAllowed(mounted.current));
       return;
     }
 
@@ -479,7 +481,7 @@ export function Composer({
     // A system camera that opens after the wait still wins: its photo closes the sheet.
     void launch.then(
       (saved) => {
-        if (!saved || !mounted.current) return;
+        if (!saved || !launchClaimAllowed(mounted.current)) return;
         void claimCameraPhoto("late").then((added) => {
           if (added) setCapture(null);
         });
