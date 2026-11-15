@@ -31,8 +31,8 @@ export function embeddedPickerAvailable(): boolean {
 }
 
 /**
- * The system photo picker drawn in place. A pick calls `onPicked` with the share intake id the
- * photos were copied to; a picker that cannot run calls `onUnavailable`.
+ * The system photo picker drawn in place. One tap calls `onPicked` with the share intake id the
+ * photo was copied to; a picker that cannot run calls `onUnavailable`.
  */
 export function PhotoStrip({
   style,

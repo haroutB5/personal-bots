@@ -1431,12 +1431,14 @@ export function MessageList({
                     onOpenFile={onOpenFile}
                     onOpenLink={onOpenLink}
                   />
-                  {message.attachments?.map((attachment) =>
+                  {message.attachments?.map((attachment, index) =>
                     isImageAttachment(attachment) ? (
                       <AttachmentImage
                         key={attachment.id}
                         native={native}
                         chat={chat}
+                        messageId={String(message.id)}
+                        index={index}
                         attachment={attachment}
                       />
                     ) : (
