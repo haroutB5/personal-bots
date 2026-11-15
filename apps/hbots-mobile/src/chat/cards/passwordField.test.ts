@@ -15,6 +15,14 @@ describe("passwordFieldProps", () => {
     });
   });
 
+  it("keeps the system menu on the hidden field so a long press can paste", () => {
+    expect(passwordFieldProps(false).contextMenuHidden).toBe(false);
+  });
+
+  it("hides the system menu on the revealed field so the shown value cannot be copied", () => {
+    expect(passwordFieldProps(true).contextMenuHidden).toBe(true);
+  });
+
   it("reveals through the visible-password variation, never a text field", () => {
     expect(passwordFieldProps(true)).toMatchObject({
       secureTextEntry: false,
