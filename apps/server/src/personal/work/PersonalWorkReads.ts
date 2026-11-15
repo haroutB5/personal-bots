@@ -102,7 +102,8 @@ export const since = (
     const sql = yield* SqlClient.SqlClient;
     const asOf = yield* DateTime.now;
     const floor = DateTime.subtract(asOf, { days: PERSONAL_WORK_SINCE_DAYS });
-    const from = DateTime.isLessThan(input.since, floor) ? floor : input.since;
+    const requested = DateTime.makeUnsafe(input.since);
+    const from = DateTime.isLessThan(requested, floor) ? floor : requested;
     const sinceIso = DateTime.formatIso(from);
 
     const finishedRows = yield* sql<Readonly<Record<string, unknown>>>`

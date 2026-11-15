@@ -103,7 +103,7 @@ const insertProject = (input: {
     )
   `;
 
-const read = PersonalWorkReads.since({ since: at(SINCE) });
+const read = PersonalWorkReads.since({ since: SINCE });
 
 const kinds = (events: ReadonlyArray<PersonalWorkEvent>) =>
   events.map((event) =>
@@ -307,7 +307,7 @@ describe("PersonalWorkReads.since", () => {
       );
 
       const result = yield* PersonalWorkReads.since({
-        since: at("2026-10-01T00:00:00.000Z"),
+        since: "2026-10-01T00:00:00.000Z",
       });
 
       expect(result.events).toEqual([]);

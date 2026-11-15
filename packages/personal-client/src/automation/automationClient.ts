@@ -15,7 +15,6 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type { Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -229,7 +228,7 @@ export function createPersonalAutomationClient<R, ER>(
           ? null
           : personalWorkSince({
               environmentId,
-              input: { since: DateTime.makeUnsafe(sinceIso) },
+              input: { since: sinceIso },
             }),
       [environmentId, sinceIso],
     );
