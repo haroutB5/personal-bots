@@ -974,7 +974,7 @@
       "scope": "personal",
       "layout": false,
       "logic": {
-        "files": 54,
+        "files": 55,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
@@ -1291,7 +1291,7 @@
       "web": "WorkScreen.tsx:239",
       "component": "DetailSheet",
       "logic": {
-        "files": 54,
+        "files": 55,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
