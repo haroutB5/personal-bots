@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { DraftAttachment } from "./outboxNative";
@@ -82,7 +82,7 @@ describe("every photo a draft takes in is shrunk", () => {
   });
 
   it("has one way into the composer draft, and it shrinks first", () => {
-    const source = readFileSync(new URL("./Composer.tsx", import.meta.url), "utf8");
+    const source = NodeFS.readFileSync(new URL("./Composer.tsx", import.meta.url), "utf8");
     const appends = [...source.matchAll(/attachments: \[\.\.\.\w+\.attachments, /g)];
     expect(appends).toHaveLength(1);
 
