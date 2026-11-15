@@ -1,8 +1,6 @@
 /**
- * Props for a password field in either display mode. Revealed is Android's
- * VISIBLE_PASSWORD variation: the keyboard may show the text but must not
- * suggest from it, autofill it or learn it. A plain text field would do all
- * three.
+ * Revealed is Android's VISIBLE_PASSWORD variation: shown, never suggested, autofilled or learnt.
+ * The hidden field keeps the long-press menu for Paste; Android drops Copy and Cut when masked.
  */
 export function passwordFieldProps(visible: boolean) {
   return {
@@ -13,6 +11,6 @@ export function passwordFieldProps(visible: boolean) {
     spellCheck: false,
     importantForAutofill: "no" as const,
     textContentType: "none" as const,
-    contextMenuHidden: true,
+    contextMenuHidden: visible,
   };
 }
