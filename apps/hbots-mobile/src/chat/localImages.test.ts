@@ -43,12 +43,26 @@ describe("own image from the tap until the server's copy draws", () => {
     });
   });
 
+  it("draws the photo when the server gives the claimed attachment a new id", () => {
+    const images = createLocalImages();
+    // The upload is held under the id the phone uploaded; the server claims it under a new id.
+    images.hold("message-1", [{ index: 0, uri: photo.uri }]);
+
+    // The sent bubble asks by the message and the attachment's place in it, which survive the rewrite.
+    const local = images.uriFor("message-1", 0);
+    expect(local).toBe(photo.uri);
+    expect(imageLayers({ local, remoteUrl: null, remoteDrawn: false })).toEqual({
+      local: photo.uri,
+      remote: null,
+    });
+  });
+
   it("keeps the local file under the server's copy until that copy has drawn", () => {
     const images = createLocalImages();
-    images.hold("message-1", [{ attachmentId: "att-1", uri: photo.uri }]);
+    images.hold("message-1", [{ index: 0, uri: photo.uri }]);
     const remoteUrl = "https://hbots.example/attachments/att-1?sig=x";
 
-    const local = images.uriFor("att-1");
+    const local = images.uriFor("message-1", 0);
     expect(local).toBe(photo.uri);
     expect(imageLayers({ local, remoteUrl: null, remoteDrawn: false })).toEqual({
       local: photo.uri,
@@ -75,28 +89,28 @@ describe("own image from the tap until the server's copy draws", () => {
     const images = createLocalImages();
     const release = vi.fn();
     images.hold("message-1", [
-      { attachmentId: "att-1", uri: "file:///a.jpg" },
-      { attachmentId: "att-2", uri: "file:///b.jpg" },
+      { index: 0, uri: "file:///a.jpg" },
+      { index: 1, uri: "file:///b.jpg" },
     ]);
 
-    images.drawn("att-1");
-    expect(images.uriFor("att-1")).toBeNull();
-    expect(images.uriFor("att-2")).toBe("file:///b.jpg");
+    images.drawn("message-1", 0);
+    expect(images.uriFor("message-1", 0)).toBeNull();
+    expect(images.uriFor("message-1", 1)).toBe("file:///b.jpg");
 
     images.landed("message-1", release);
     expect(release).not.toHaveBeenCalled();
 
-    images.drawn("att-2");
-    images.drawn("att-2");
+    images.drawn("message-1", 1);
+    images.drawn("message-1", 1);
     expect(release).toHaveBeenCalledTimes(1);
-    expect(images.uriFor("att-2")).toBeNull();
+    expect(images.uriFor("message-1", 1)).toBeNull();
   });
 
   it("lets the files go at once when every image already drew before the message landed", () => {
     const images = createLocalImages();
     const release = vi.fn();
-    images.hold("message-1", [{ attachmentId: "att-1", uri: "file:///a.jpg" }]);
-    images.drawn("att-1");
+    images.hold("message-1", [{ index: 0, uri: "file:///a.jpg" }]);
+    images.drawn("message-1", 0);
 
     images.landed("message-1", release);
 
@@ -112,21 +126,20 @@ describe("own image from the tap until the server's copy draws", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("replaces a failed upload's ids with the retry's ids", () => {
+  it("replaces a failed upload's file with the retry's file", () => {
     const images = createLocalImages();
-    images.hold("message-1", [{ attachmentId: "att-old", uri: photo.uri }]);
-    images.hold("message-1", [{ attachmentId: "att-new", uri: photo.uri }]);
+    images.hold("message-1", [{ index: 0, uri: "file:///old.jpg" }]);
+    images.hold("message-1", [{ index: 0, uri: photo.uri }]);
 
-    expect(images.uriFor("att-old")).toBeNull();
-    expect(images.uriFor("att-new")).toBe(photo.uri);
+    expect(images.uriFor("message-1", 0)).toBe(photo.uri);
   });
 
   it("forgets a dropped message, so a refused send's files stay with the draft", () => {
     const images = createLocalImages();
-    images.hold("message-1", [{ attachmentId: "att-1", uri: photo.uri }]);
+    images.hold("message-1", [{ index: 0, uri: photo.uri }]);
 
     images.drop("message-1");
 
-    expect(images.uriFor("att-1")).toBeNull();
+    expect(images.uriFor("message-1", 0)).toBeNull();
   });
 });
