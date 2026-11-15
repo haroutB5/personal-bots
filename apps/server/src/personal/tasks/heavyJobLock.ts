@@ -7,7 +7,7 @@
  * takes a `flock` on
  * `~/.personal-bots/run/omarchy-heavy.lock` for the whole job. While it is
  * held, the laptop has little RAM to spare, so task dispatches drop from the
- * normal 8 to 5.
+ * normal 8 to 7.
  *
  * The probe is read-only on purpose: it never opens, takes, writes or unlinks
  * the lock (a second `flock -n` would either steal the lock for an instant or
@@ -107,7 +107,7 @@ export interface HeavyJobProbeDeps {
 
 /**
  * Tests only: `held`/`free` force the answer so a suite that depends on the
- * five-slot cap is deterministic on a machine where no heavy job runs. Read on
+ * seven-slot cap is deterministic on a machine where no heavy job runs. Read on
  * every probe, so no restart applies it.
  */
 export const HEAVY_JOB_PROBE_ENV = "PERSONAL_TASKS_HEAVY_PROBE";
@@ -117,7 +117,6 @@ export function heavyJobLockHeld(deps: HeavyJobProbeDeps = {}): boolean {
   const forced = (deps.env ?? process.env)[HEAVY_JOB_PROBE_ENV]?.trim().toLowerCase();
   if (forced === "held") return true;
   if (forced === "free") return false;
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- the host platform decides whether /proc exists; tests inject it.
   const platform = deps.platform ?? NodeOS.platform();
   if (platform !== "linux") return false;
   const lockPath = deps.lockPath ?? HEAVY_JOB_LOCK_PATH;
