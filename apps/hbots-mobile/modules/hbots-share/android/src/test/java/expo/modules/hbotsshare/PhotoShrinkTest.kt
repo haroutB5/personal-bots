@@ -38,6 +38,14 @@ class PhotoShrinkTest {
     return file
   }
 
+  /** 51.5074 N, 0.1278 W. */
+  private fun ExifInterface.setLondon() {
+    setAttribute(ExifInterface.TAG_GPS_LATITUDE, "51/1,30/1,2664/100")
+    setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, "N")
+    setAttribute(ExifInterface.TAG_GPS_LONGITUDE, "0/1,7/1,4008/100")
+    setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, "W")
+  }
+
   private fun isRed(pixel: Int) = Color.red(pixel) > 200 && Color.blue(pixel) < 60
   private fun isBlue(pixel: Int) = Color.blue(pixel) > 200 && Color.red(pixel) < 60
 
@@ -45,7 +53,7 @@ class PhotoShrinkTest {
     val source = photo("IMG_0001.jpg", 4000, 3000, Bitmap.CompressFormat.JPEG)
     ExifInterface(source.path).apply {
       setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_ROTATE_90.toString())
-      setLatLong(51.5074, -0.1278)
+      setLondon()
       saveAttributes()
     }
     assertNotNull(ExifInterface(source.path).getAttribute(ExifInterface.TAG_GPS_LATITUDE))
@@ -84,7 +92,7 @@ class PhotoShrinkTest {
   @Test fun aSmallPhotoWithALocationLosesTheLocation() {
     val source = photo("small.jpg", 1600, 1200, Bitmap.CompressFormat.JPEG)
     ExifInterface(source.path).apply {
-      setLatLong(51.5074, -0.1278)
+      setLondon()
       saveAttributes()
     }
 
