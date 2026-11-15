@@ -34,13 +34,10 @@ export interface WorkDigestView {
 const ms = DateTime.toEpochMillis;
 
 const byNewest = (left: PersonalWorkEvent, right: PersonalWorkEvent) =>
-  ms(right.at) - ms(left.at) ||
-  eventId(left).localeCompare(eventId(right));
+  ms(right.at) - ms(left.at) || eventId(left).localeCompare(eventId(right));
 
 const eventId = (event: PersonalWorkEvent): string =>
-  event.kind === "goalOpened" || event.kind === "goalClosed"
-    ? event.projectId
-    : event.task.taskId;
+  event.kind === "goalOpened" || event.kind === "goalClosed" ? event.projectId : event.task.taskId;
 
 const ofKind = <K extends PersonalWorkEvent["kind"]>(
   events: ReadonlyArray<PersonalWorkEvent>,
@@ -124,7 +121,7 @@ export function buildWorkDigest(input: {
 
   return {
     lines,
-    span: formatSpan(ms(input.asOf) - ms(input.seenAt)),
+    span: formatSpan(Date.parse(input.asOf) - Date.parse(input.seenAt)),
     omitted: input.omitted,
   };
 }

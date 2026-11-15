@@ -1,4 +1,5 @@
 import type { PersonalWorkEvent, WorkTaskRef } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildWorkDigest, workDigestView } from "./workDigest.ts";
@@ -20,21 +21,23 @@ const task = (taskId: string, botId: string, title: string): WorkTaskRef => ({
   title,
 });
 
+const at = (iso: string) => DateTime.makeUnsafe(iso);
+
 const failed = (
-  at: string,
+  atIso: string,
   ref: WorkTaskRef,
   status: "failed" | "interrupted",
-): PersonalWorkEvent => ({ kind: "taskFailed", at, task: ref, status });
+): PersonalWorkEvent => ({ kind: "taskFailed", at: at(atIso), task: ref, status });
 
-const done = (at: string, ref: WorkTaskRef): PersonalWorkEvent => ({
+const done = (atIso: string, ref: WorkTaskRef): PersonalWorkEvent => ({
   kind: "taskDone",
-  at,
+  at: at(atIso),
   task: ref,
 });
 
-const started = (at: string, ref: WorkTaskRef): PersonalWorkEvent => ({
+const started = (atIso: string, ref: WorkTaskRef): PersonalWorkEvent => ({
   kind: "taskStarted",
-  at,
+  at: at(atIso),
   task: ref,
 });
 
@@ -63,7 +66,7 @@ describe("buildWorkDigest", () => {
     const digest = digestOf([
       {
         kind: "goalClosed",
-        at: "2026-11-14T10:30:00.000Z",
+        at: at("2026-11-14T10:30:00.000Z"),
         projectId: "goal-1",
         name: "hbots 1.67.22",
         outcome: "done",
@@ -74,7 +77,10 @@ describe("buildWorkDigest", () => {
         task("task-runner", "bot-developer", "Runner tests"),
         "interrupted",
       ),
-      started("2026-11-14T10:09:00.000Z", task("task-chip", "bot-developer", "Archived chip check")),
+      started(
+        "2026-11-14T10:09:00.000Z",
+        task("task-chip", "bot-developer", "Archived chip check"),
+      ),
       started("2026-11-14T10:08:00.000Z", task("task-image", "bot-builder", "Image speed")),
     ]);
 
