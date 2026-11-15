@@ -20,8 +20,9 @@ android {
 
 dependencies {
   implementation 'androidx.core:core-ktx:1.17.0'
-  // Alpha: the only published version of the view wrapper (14 Nov 2026). Pinned exactly.
-  implementation 'androidx.photopicker:photopicker-embedded:1.0.0-alpha03'
+  // Alpha, pinned exactly. 1.0.0-alpha03 (renamed photopicker-embedded) needs compileSdk 37 and
+  // Android Gradle plugin 9.1; this artifact has the same EmbeddedPhotoPickerView for 36 and 8.12.
+  implementation 'androidx.photopicker:photopicker:1.0.0-alpha02'
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.robolectric:robolectric:4.14.1'
 }

@@ -14,8 +14,8 @@ import android.util.Log
 import android.widget.photopicker.EmbeddedPhotoPickerFeatureInfo
 import android.widget.photopicker.EmbeddedPhotoPickerProviderFactory
 import android.widget.photopicker.EmbeddedPhotoPickerSession
-import androidx.photopicker.embedded.EmbeddedPhotoPickerView
-import androidx.photopicker.embedded.ExperimentalPhotoPickerApi
+import androidx.photopicker.EmbeddedPhotoPickerView
+import androidx.photopicker.ExperimentalPhotoPickerApi
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
