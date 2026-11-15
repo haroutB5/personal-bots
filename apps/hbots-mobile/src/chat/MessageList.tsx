@@ -29,6 +29,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -64,12 +65,13 @@ import type { FileOpenRequest } from "./fileOpenRequest";
 import {
   claimsReplySwipe,
   opensMessageMenu,
+  pendingNotArrived,
   scrollIndexForItem,
   TABLE_CELL_MIN_WIDTH,
   tableColumnWidths,
 } from "./messageListModel";
 import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./messageTouch";
-import { AttachmentImage } from "./AttachmentImage";
+import { AttachmentImage, PendingAttachmentImage } from "./AttachmentImage";
 import { PageFrame } from "./PageFrame";
 import { ChoiceButtons } from "./ChoiceButtons";
 import { LiveWorkRow } from "./LiveWorkRow";
@@ -827,6 +829,7 @@ function SwipeMessageRow({
 function UserBubble({
   native,
   chat,
+  messageId,
   text,
   quote,
   attachments,
@@ -834,6 +837,7 @@ function UserBubble({
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
+  readonly messageId: string;
   readonly text: string;
   readonly quote: PersonalReplyQuote | null;
   readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
@@ -852,12 +856,14 @@ function UserBubble({
         </View>
       ) : null}
       <Text style={styles.userText}>{text}</Text>
-      {attachments?.map((attachment) =>
+      {attachments?.map((attachment, index) =>
         isImageAttachment(attachment) ? (
           <AttachmentImage
             key={attachment.id}
             native={native}
             chat={chat}
+            messageId={messageId}
+            index={index}
             attachment={attachment}
           />
         ) : (
@@ -891,10 +897,42 @@ function PendingBubble({
     return () => clearTimeout(timer);
   }, [createdAtMs, sending]);
   const failed = message.state === "failed";
+  const imageLogged = useRef(false);
+  // The first commit after the tap. The rest of the wait is the image decode.
+  const bubbleDrawnAt = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (bubbleDrawnAt.current === null) bubbleDrawnAt.current = Date.now();
+  }, []);
+  const imageDrawn = () => {
+    if (imageLogged.current || !Number.isFinite(createdAtMs)) return;
+    imageLogged.current = true;
+    const imageAt = Date.now();
+    const rendered = Math.round((bubbleDrawnAt.current ?? imageAt) - createdAtMs);
+    console.info(
+      `[perf] send-image-ms tap-to-image ${Math.round(imageAt - createdAtMs)} render=${rendered} decode=${Math.round(imageAt - createdAtMs) - rendered}`,
+    );
+  };
   return (
     <View style={styles.messageRowEnd}>
       <View style={[styles.userBubble, failed ? null : styles.pendingBubble]}>
         <Text style={styles.userText}>{message.text}</Text>
+        {message.attachments.map((attachment) =>
+          attachment.previewUri === null ? (
+            <View key={attachment.id} style={styles.attachment}>
+              <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+              <Text style={styles.attachmentText} numberOfLines={1}>
+                {attachment.name}
+              </Text>
+            </View>
+          ) : (
+            <PendingAttachmentImage
+              key={attachment.id}
+              uri={attachment.previewUri}
+              name={attachment.name}
+              onDrawn={imageDrawn}
+            />
+          ),
+        )}
         {failed ? (
           <View style={styles.pendingFooter}>
             <Text style={styles.pendingFailed}>Not sent</Text>
@@ -986,20 +1024,21 @@ export function MessageList({
 }) {
   const listRef = useRef<FlatList<Row>>(null);
   const highRefresh = useHighRefresh();
+  const arrivedIds = useMemo(() => new Set(items.map((item) => item.id)), [items]);
   const rows = useMemo<ReadonlyArray<Row>>(
     () => [
       ...items.map((item): Row => ({ kind: "item", key: item.id, item })),
       ...(work.phase === "idle"
         ? []
         : [{ kind: "work" as const, key: `work:${work.runId}`, work }]),
-      ...pending.map((message): Row => ({
+      ...pendingNotArrived(pending, arrivedIds).map((message): Row => ({
         kind: "pending",
         key: `pending:${message.id}`,
         message,
       })),
       ...queued.map((row): Row => ({ kind: "queued", key: `queued:${row.entry.id}`, row })),
     ],
-    [items, pending, queued, work],
+    [arrivedIds, items, pending, queued, work],
   );
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
   const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
@@ -1281,12 +1320,14 @@ export function MessageList({
                         onChoose={onChoose}
                       />
                     ) : null}
-                    {message.attachments?.map((attachment) =>
+                    {message.attachments?.map((attachment, index) =>
                       isImageAttachment(attachment) ? (
                         <AttachmentImage
                           key={attachment.id}
                           native={native}
                           chat={chat}
+                          messageId={String(message.id)}
+                          index={index}
                           attachment={attachment}
                         />
                       ) : (
@@ -1323,6 +1364,7 @@ export function MessageList({
                     <UserBubble
                       native={native}
                       chat={chat}
+                      messageId={String(message.id)}
                       text={text}
                       quote={quote}
                       attachments={message.attachments}
@@ -1389,12 +1431,14 @@ export function MessageList({
                     onOpenFile={onOpenFile}
                     onOpenLink={onOpenLink}
                   />
-                  {message.attachments?.map((attachment) =>
+                  {message.attachments?.map((attachment, index) =>
                     isImageAttachment(attachment) ? (
                       <AttachmentImage
                         key={attachment.id}
                         native={native}
                         chat={chat}
+                        messageId={String(message.id)}
+                        index={index}
                         attachment={attachment}
                       />
                     ) : (
