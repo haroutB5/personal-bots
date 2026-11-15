@@ -157,6 +157,13 @@ describe("PersonalWorkReads.since", () => {
           { source: "user", status: "failed", errorCategory: "provider_error" },
         ),
       );
+      yield* repository.insertTask(
+        makeTask(
+          "routine-done",
+          { createdAt: "2026-11-14T09:00:00.000Z", completedAt: "2026-11-14T10:00:03.000Z" },
+          { source: "routine" },
+        ),
+      );
 
       const result = yield* read;
 

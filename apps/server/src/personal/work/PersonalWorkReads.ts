@@ -69,9 +69,7 @@ const taskRef = (row: typeof TaskRow.Type): WorkTaskRef => ({
 });
 
 const idOf = (event: PersonalWorkEvent): string =>
-  event.kind === "goalOpened" || event.kind === "goalClosed"
-    ? event.projectId
-    : event.task.taskId;
+  event.kind === "goalOpened" || event.kind === "goalClosed" ? event.projectId : event.task.taskId;
 
 /** Failures first, then closed goals, finished work, restarts, new goals, starts. */
 const KIND_ORDER: Record<PersonalWorkEvent["kind"], number> = {
