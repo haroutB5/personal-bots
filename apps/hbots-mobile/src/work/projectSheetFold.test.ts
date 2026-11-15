@@ -9,7 +9,10 @@ const expandBoth = (fold: ProjectSheetFold): ProjectSheetFold =>
 
 describe("the goal sheet's folds", () => {
   it("opens a goal with both sections folded", () => {
-    expect(open("goal-a")).toEqual({ projectId: "goal-a", showAll: false, tasksOpen: false });
+    const fold = open("goal-a");
+    expect(fold.projectId).toBe("goal-a");
+    expect(fold.showAll).toBe(false);
+    expect(fold.tasksOpen).toBe(false);
   });
 
   it("keeps the folds while the sheet stays on the same goal", () => {
@@ -19,12 +22,10 @@ describe("the goal sheet's folds", () => {
 
   it("returns to folded when the sheet opens another goal", () => {
     // Verifier 2: Show all open on "Many steps", then "Clean proof" opened expanded.
-    const expanded = expandBoth(open("goal-a"));
-    expect(foldForProject(expanded, "goal-b")).toEqual({
-      projectId: "goal-b",
-      showAll: false,
-      tasksOpen: false,
-    });
+    const next = foldForProject(expandBoth(open("goal-a")), "goal-b");
+    expect(next.projectId).toBe("goal-b");
+    expect(next.showAll).toBe(false);
+    expect(next.tasksOpen).toBe(false);
   });
 
   it("does not remember the first goal's folds when it comes back", () => {
@@ -34,12 +35,10 @@ describe("the goal sheet's folds", () => {
   });
 
   it("folds both sections again when the sheet closes", () => {
-    const expanded = expandBoth(open("goal-a"));
-    expect(foldForProject(expanded, null)).toEqual({
-      projectId: null,
-      showAll: false,
-      tasksOpen: false,
-    });
+    const closed = foldForProject(expandBoth(open("goal-a")), null);
+    expect(closed.projectId).toBeNull();
+    expect(closed.showAll).toBe(false);
+    expect(closed.tasksOpen).toBe(false);
   });
 
   it("toggles one section without touching the other", () => {
