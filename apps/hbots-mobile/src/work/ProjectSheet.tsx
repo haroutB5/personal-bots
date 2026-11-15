@@ -13,11 +13,14 @@ import type {
   PersonalTask,
 } from "@t3tools/contracts";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
 import { GoalRow } from "./ProjectCards";
+import { foldForProject, foldedGoal, toggledFold, type ProjectSheetFold } from "./projectSheetFold";
+import { sheetBodyMaxHeight } from "./projectSheetLayout";
 
 const STEP_MARK = { done: "✓", doing: "●", todo: "○" } as const;
 
@@ -58,8 +61,12 @@ export function ProjectSheet({
   readonly onOpenTask: (taskId: string) => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
 }) {
-  const [showAll, setShowAll] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
+  const [lastFold, setFold] = useState<ProjectSheetFold>(() => foldedGoal(null));
+  const fold = foldForProject(lastFold, card?.projectId ?? null);
+  if (fold !== lastFold) setFold(fold);
+  const { showAll, tasksOpen } = fold;
   const lead = card === undefined ? undefined : botMap.get(card.leadBotId);
   const numbered = (card?.steps ?? []).map((step, position) => ({
     key: `step-${position}`,
@@ -86,7 +93,10 @@ export function ProjectSheet({
   return (
     <SheetShell visible={card !== undefined} title={card?.name ?? "Project"} onClose={onClose}>
       {card === undefined ? null : (
-        <>
+        <ScrollView
+          style={{ maxHeight: sheetBodyMaxHeight(height, insets.bottom) }}
+          contentContainerStyle={styles.scrollBody}
+        >
           <View style={styles.detail} testID="project-sheet">
             <Text style={styles.line} maxFontSizeMultiplier={1.6}>
               Kept by {lead?.name ?? "a removed lead"}
@@ -175,7 +185,7 @@ export function ProjectSheet({
                 )}
                 {timeline.length <= GOAL_TIMELINE_SHOWN ? null : (
                   <Pressable
-                    onPress={() => setShowAll((open) => !open)}
+                    onPress={() => setFold((current) => toggledFold(current, "showAll"))}
                     accessibilityRole="button"
                     accessibilityState={{ expanded: showAll }}
                     testID="project-sheet-show-all"
@@ -205,7 +215,7 @@ export function ProjectSheet({
             <SheetAction
               label={`All tasks (${allTasks.length})`}
               detail={tasksOpen ? "Hide" : "Show"}
-              onPress={() => setTasksOpen((open) => !open)}
+              onPress={() => setFold((current) => toggledFold(current, "tasksOpen"))}
             />
           )}
           {history !== null && tasksOpen
@@ -231,7 +241,7 @@ export function ProjectSheet({
               }}
             />
           )}
-        </>
+        </ScrollView>
       )}
     </SheetShell>
   );
@@ -239,6 +249,7 @@ export function ProjectSheet({
 
 const styles = StyleSheet.create({
   detail: { paddingHorizontal: 20, paddingBottom: 8, gap: 4 },
+  scrollBody: { paddingBottom: 8 },
   line: { color: tokens.textSecondary, fontSize: 13 },
   estimate: { color: tokens.text, fontSize: 15, fontWeight: "600" },
   block: { marginTop: 10, gap: 4 },
