@@ -5,6 +5,7 @@ import {
   taskStatusTone,
   type TaskListFilter,
 } from "@hbots/personal-client/conversation/taskPresentation";
+import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
 import {
   bulkDeleteConfirmLabel,
   bulkDeleteRoutinesConfirmMessage,
@@ -46,6 +47,7 @@ import {
   taskRowMeta,
   tasksScreenState,
 } from "./tasksModel";
+import { ClosedProjects } from "../work/ProjectCards";
 import { WorkScreen } from "../work/WorkScreen";
 import { EmptyText, ScreenScroll, SmallBotAvatar, StatusDot, TaskButton } from "./TaskUi";
 
@@ -218,6 +220,7 @@ export function TasksScreen({
   const environmentId = native.environmentId;
   const { tasks: taskFeed, error: taskError } = native.automation.usePersonalTasks(environmentId);
   const routinesQuery = native.automation.usePersonalRoutines(environmentId);
+  const projectsQuery = native.automation.usePersonalProjects(environmentId);
   const botsQuery = native.bots.usePersonalBotsList(environmentId);
   const history = native.client.useAtomCommand(native.automation.personalTaskHistory, {
     reportFailure: false,
@@ -241,6 +244,12 @@ export function TasksScreen({
   const bots = botsQuery.data?.bots;
   const botMap = useMemo(() => botsById(bots), [bots]);
   const merged = useMemo(() => mergeTaskLists(taskFeed, older.tasks), [taskFeed, older.tasks]);
+  const projects = projectsQuery.data?.projects;
+  const closedProjects = useMemo(
+    () =>
+      buildProjectCards({ projects: projects ?? [], tasks: [], nowMs: 0, botName: String }).closed,
+    [projects],
+  );
   const buckets = useMemo(() => taskBuckets(merged), [merged]);
   const counts = taskListCounts(buckets, routines);
   const loadState = tasksScreenState({
@@ -434,6 +443,7 @@ export function TasksScreen({
         <WorkScreen native={native} onOpenTask={onOpenTask} onOpenChat={onOpenChat} />
       ) : (
         <ScreenScroll contentStyle={selecting ? styles.scrollSelecting : undefined}>
+          {view === "completed" ? <ClosedProjects closed={closedProjects} /> : null}
           {loadState.kind === "error" ? (
             <EmptyText>{loadState.message}</EmptyText>
           ) : loadState.kind === "loading" ? (

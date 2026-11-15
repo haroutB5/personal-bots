@@ -104,6 +104,12 @@ export const DelegateTaskInput = Schema.Struct({
         "A chat id from list_bot_chats. Use it when the work follows up on something this bot discussed with the user in that chat: the task runs as a new turn there, with the earlier conversation in context.",
     }),
   ),
+  project: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Leads only: one of your open projects (update_project). Left out, the task joins this request's project, if any.",
+    }),
+  ),
 });
 export type DelegateTaskInput = typeof DelegateTaskInput.Type;
 
@@ -222,6 +228,45 @@ export const UpdateWorkRecordInput = Schema.Struct({
   ),
 });
 export type UpdateWorkRecordInput = typeof UpdateWorkRecordInput.Type;
+
+export const UpdateProjectInput = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)).annotate({
+    description: "At most 48 characters. Matches your open project in any case, else creates one.",
+  }),
+  steps: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        label: TrimmedNonEmptyString.check(Schema.isMaxLength(40)).annotate({
+          description: "At most 40 characters, e.g. 'Verify on emulator'.",
+        }),
+        state: Schema.Literals(["done", "doing", "todo"]),
+      }),
+    )
+      .check(Schema.isMinLength(1), Schema.isMaxLength(8))
+      .annotate({
+        description:
+          "1 to 8 steps in order; replaces the list. Required to create. Mark the current one 'doing'.",
+      }),
+  ),
+  minutesLeft: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10_080 }))).annotate({
+      description:
+        "Your estimate of minutes until it ships, 1 to 10080. null clears; left out keeps.",
+    }),
+  ),
+  close: Schema.optional(
+    Schema.Literals(["done", "dropped"]).annotate({
+      description: "'done' when it shipped, 'dropped' when it stopped.",
+    }),
+  ),
+});
+export type UpdateProjectInput = typeof UpdateProjectInput.Type;
+
+export const UpdateProjectResult = Schema.Struct({
+  project: Schema.String,
+  openProjects: Schema.Array(Schema.String),
+});
+export type UpdateProjectResult = typeof UpdateProjectResult.Type;
 
 export const UpdateWorkRecordResult = Schema.Struct({
   /** The record as it now reads. */
@@ -725,6 +770,19 @@ const UpdateWorkRecordTool = Tool.make("update_work_record", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
+const UpdateProjectTool = Tool.make("update_project", {
+  description: `${LEAD_ONLY} Keep a project that spans more than one task. The user sees its steps, your estimate and who works on it. Call again when a step moves or the estimate changes, and close it when it ships or stops. The same name updates, never duplicates. Link tasks with project on delegate_task; this call also links the task you are running.`,
+  parameters: UpdateProjectInput,
+  success: UpdateProjectResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update project")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const NotifyUserTool = Tool.make("notify_user", {
   description:
     "Decide whether the user gets a push notification when THIS routine run or task finishes. Call it once, near the end, with notify true and a one-line message when the result deserves attention (something changed or needs a decision), or notify false when there is nothing to tell. A routine set to 'bot decides' notifies only if you called it with notify true; one that notifies every run uses your message as the text. The last call wins. A failed run, or one that needs the user (a secret, browser help), always notifies. Your reply lands in the chat either way. Only works inside a task or routine run; in a normal chat it does nothing.",
@@ -947,6 +1005,7 @@ export const BotsToolkit = Toolkit.make(
   DelegateTaskTool,
   GetTaskTool,
   UpdateWorkRecordTool,
+  UpdateProjectTool,
   NotifyUserTool,
   ReadChatHistoryTool,
   ListTasksTool,

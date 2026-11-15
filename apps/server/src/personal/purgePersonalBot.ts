@@ -7,6 +7,7 @@ import type * as PersonalEngine from "./engine/PersonalEngine.ts";
 import type * as PersonalGroupService from "./groups/PersonalGroupService.ts";
 import type * as PersonalMemoryService from "./memory/PersonalMemoryService.ts";
 import type * as PersonalBotService from "./PersonalBotService.ts";
+import type * as PersonalProjectRepository from "./projects/PersonalProjectRepository.ts";
 import type * as PersonalRoutineService from "./routines/PersonalRoutineService.ts";
 import type * as PersonalSecretService from "./secrets/PersonalSecretService.ts";
 import type * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
@@ -15,6 +16,7 @@ export interface PersonalBotPurgeServices {
   readonly bots: PersonalBotService.PersonalBotService["Service"];
   readonly tasks: PersonalTaskService.PersonalTaskService["Service"];
   readonly routines: PersonalRoutineService.PersonalRoutineService["Service"];
+  readonly projects: PersonalProjectRepository.PersonalProjectRepository["Service"];
   readonly memory: PersonalMemoryService.PersonalMemoryService["Service"];
   readonly secrets: PersonalSecretService.PersonalSecretService["Service"];
   readonly engine: PersonalEngine.PersonalEngine["Service"];
@@ -23,7 +25,7 @@ export interface PersonalBotPurgeServices {
 
 /**
  * Deletes a bot completely: stops its work (active tasks, pending secret
- * requests), removes its routines, chats, bot-scoped memories and the secrets
+ * requests), removes its routines, projects, chats, bot-scoped memories and the secrets
  * only it used, then tombstones the bot row. Shared memories and secrets stay.
  * Each cleanup step is best-effort so one failure never leaves the bot alive.
  */
@@ -31,7 +33,7 @@ export const purgePersonalBot = Effect.fn("purgePersonalBot")(function* (
   services: PersonalBotPurgeServices,
   botId: PersonalBotId,
 ) {
-  const { bots, tasks, routines, memory, secrets, engine, groups } = services;
+  const { bots, tasks, routines, projects, memory, secrets, engine, groups } = services;
   const step =
     (name: string) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> =>
@@ -71,6 +73,8 @@ export const purgePersonalBot = Effect.fn("purgePersonalBot")(function* (
     if (routine.botId !== botId) continue;
     yield* routines.remove({ routineId: routine.routineId }).pipe(step("remove routine"));
   }
+
+  yield* projects.removeForLead(botId).pipe(step("remove projects"));
 
   // Groups come BEFORE the threads are deleted: the purge writes a line into
   // each affected group's transcript naming the bot, and reads the bot row and

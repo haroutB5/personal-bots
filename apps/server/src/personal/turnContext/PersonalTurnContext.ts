@@ -3,7 +3,7 @@
  *
  * One module owns the turn-time personal behaviour: the bot's persona for a
  * session, the memory and voice-call context for a turn, the reply quote, and
- * the chat-name rules for titles. Provider code calls it instead of reaching
+ * a lead's open projects, the chat-name rules for titles. Provider code calls it instead of reaching
  * into the personal repositories.
  *
  * @module personal/turnContext/PersonalTurnContext
@@ -33,6 +33,8 @@ import { personalBotSystemInstructions } from "../personalBotInstructions.ts";
 import { isPersonalTaskMessageId } from "../personalThreadTitles.ts";
 import { uniqueAutomaticTitle } from "../personalChatTitles.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
+import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
+import { openProjectsContext } from "../projects/projectText.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
 import * as PersonalVoiceCallRepository from "../voiceCalls/PersonalVoiceCallRepository.ts";
 import { voiceCallSummaryContextPacked } from "../voiceCalls/voiceCallSummaryContext.ts";
@@ -99,6 +101,10 @@ export const makePersonalTurnContext = (deps: {
   readonly personalMemory: Option.Option<PersonalMemoryService.PersonalMemoryService["Service"]>;
   readonly voiceCalls: PersonalVoiceCallRepository.PersonalVoiceCallRepository["Service"];
   readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThreadShell">;
+  readonly projects?: Pick<
+    PersonalProjectRepository.PersonalProjectRepository["Service"],
+    "listOpenForLead"
+  >;
 }): PersonalTurnContextShape => {
   const sessionInstructions = (threadId: ThreadId) =>
     deps.personalBots.getInstructionsForThread({ threadId }).pipe(
@@ -213,6 +219,27 @@ export const makePersonalTurnContext = (deps: {
       ),
     );
 
+  const leadProjectsContext = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const projects = deps.projects;
+      if (projects === undefined) return undefined;
+      const facts = yield* deps.personalBots.getChatFacts({ threadId });
+      if (Option.isNone(facts)) return undefined;
+      const bot = yield* deps.personalBots.getBotById({ botId: facts.value.botId });
+      if (Option.isNone(bot) || bot.value.lead !== true) return undefined;
+      const open = yield* projects.listOpenForLead(facts.value.botId);
+      return openProjectsContext(open, DateTime.toEpochMillis(yield* DateTime.now)) ?? undefined;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logDebug("lead projects lookup failed; sending the turn without them", {
+              threadId,
+              cause: Cause.pretty(cause).slice(0, 1_000),
+            }).pipe(Effect.as(undefined)),
+      ),
+    );
+
   const prepareTurn: PersonalTurnContextShape["prepareTurn"] = (input) =>
     Effect.gen(function* () {
       const memory = yield* memoryForTurn({
@@ -231,12 +258,11 @@ export const makePersonalTurnContext = (deps: {
       const packedCallContext = voiceCallSummaryContextPacked(callSummaries);
       const callContext = packedCallContext.block;
       const memoryContext = memory?.block;
-      const extraContext =
-        callContext === ""
-          ? memoryContext
-          : memoryContext === undefined || memoryContext.length === 0
-            ? callContext
-            : `${callContext}\n\n${memoryContext}`;
+      const projectsContext = yield* leadProjectsContext(input.threadId);
+      const contextParts = [callContext, projectsContext, memoryContext].filter(
+        (part): part is string => part !== undefined && part.length > 0,
+      );
+      const extraContext = contextParts.length === 0 ? memoryContext : contextParts.join("\n\n");
       return {
         text: withPersonalReplyQuote(input.text, input.context),
         extraContext,
@@ -280,12 +306,14 @@ const make = Effect.gen(function* () {
   const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
   const voiceCalls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   const projectionStore = yield* ProjectionStoreV2;
+  const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
   return makePersonalTurnContext({
     personalBots,
     personalSessions,
     personalMemory,
     voiceCalls,
     projectionStore,
+    projects,
   });
 });
 
