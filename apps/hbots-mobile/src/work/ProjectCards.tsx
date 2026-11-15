@@ -1,3 +1,4 @@
+import type { GoalNowRow } from "@hbots/personal-client/work/nowLine";
 import type {
   ClosedProject,
   ProjectCard,
@@ -10,6 +11,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "../shell/tokens";
 import { SmallBotAvatar } from "../tasks/TaskUi";
+
+const NO_ROWS: ReadonlyArray<GoalNowRow> = [];
 
 const ESTIMATE_COLOR: Record<ProjectEstimateTone, string> = {
   secondary: tokens.textSecondary,
@@ -38,45 +41,108 @@ function Segments({ steps }: { readonly steps: ReadonlyArray<PersonalProjectStep
   );
 }
 
-function Card({
-  card,
+function GoalRow({
+  row,
   bot,
-  onOpen,
+  onSelect,
 }: {
-  readonly card: ProjectCard;
+  readonly row: GoalNowRow;
   readonly bot: PersonalBot | undefined;
-  readonly onOpen: (projectId: string) => void;
+  readonly onSelect: (barId: string) => void;
 }) {
+  const name = bot?.name ?? "Removed bot";
   return (
     <Pressable
-      onPress={() => onOpen(card.projectId)}
+      onPress={() => onSelect(row.bar.id)}
       accessibilityRole="button"
-      accessibilityLabel={`${card.name}, ${card.estimateLabel}, ${card.whoLine}, ${card.stepLine}`}
+      accessibilityLabel={`${name}, ${row.now.label}, ${row.now.line}`}
       android_ripple={{ color: "rgba(255,255,255,0.08)" }}
-      testID={`work-project-${card.projectId}`}
-      style={styles.card}
+      testID={`work-goal-row-${row.bar.id}`}
+      style={styles.row}
     >
-      <View style={styles.top}>
-        <Text style={styles.name} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-          {card.name}
-        </Text>
-        <Text
-          style={[styles.estimate, { color: ESTIMATE_COLOR[card.estimateTone] }]}
-          numberOfLines={1}
-          maxFontSizeMultiplier={1.3}
-        >
-          {card.estimateLabel}
-        </Text>
-      </View>
-      <Segments steps={card.segments} />
-      <View style={styles.bottom}>
-        {card.whoBotId === null ? null : <SmallBotAvatar bot={bot} size={16} />}
-        <Text style={styles.line} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-          <Text style={card.whoTone === "idle" ? styles.whoIdle : styles.who}>{card.whoLine}</Text>
-          {` · ${card.stepLine}`}
+      <SmallBotAvatar bot={bot} size={22} />
+      <View style={styles.rowText}>
+        <View style={styles.rowTop}>
+          <Text style={styles.rowBot} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+            {name}
+          </Text>
+          <Text
+            style={[styles.rowLabel, row.bar.tone === "working" ? styles.rowLabelWorking : null]}
+            numberOfLines={1}
+            maxFontSizeMultiplier={1.3}
+          >
+            {row.now.label}
+          </Text>
+        </View>
+        <Text style={styles.rowLine} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          {row.now.line}
         </Text>
       </View>
     </Pressable>
+  );
+}
+
+function Card({
+  card,
+  bot,
+  rows,
+  botMap,
+  onOpen,
+  onSelectRow,
+}: {
+  readonly card: ProjectCard;
+  readonly bot: PersonalBot | undefined;
+  readonly rows: ReadonlyArray<GoalNowRow>;
+  readonly botMap: ReadonlyMap<string, PersonalBot>;
+  readonly onOpen: (projectId: string) => void;
+  readonly onSelectRow: (barId: string) => void;
+}) {
+  return (
+    <View style={styles.card}>
+      <Pressable
+        onPress={() => onOpen(card.projectId)}
+        accessibilityRole="button"
+        accessibilityLabel={`${card.name}, ${card.estimateLabel}, ${card.whoLine}, ${card.stepLine}`}
+        android_ripple={{ color: "rgba(255,255,255,0.08)" }}
+        testID={`work-project-${card.projectId}`}
+        style={styles.cardHead}
+      >
+        <View style={styles.top}>
+          <Text style={styles.name} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+            {card.name}
+          </Text>
+          <Text
+            style={[styles.estimate, { color: ESTIMATE_COLOR[card.estimateTone] }]}
+            numberOfLines={1}
+            maxFontSizeMultiplier={1.3}
+          >
+            {card.estimateLabel}
+          </Text>
+        </View>
+        <Segments steps={card.segments} />
+        <View style={styles.bottom}>
+          {card.whoBotId === null ? null : <SmallBotAvatar bot={bot} size={16} />}
+          <Text style={styles.line} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+            <Text style={card.whoTone === "idle" ? styles.whoIdle : styles.who}>
+              {card.whoLine}
+            </Text>
+            {` · ${card.stepLine}`}
+          </Text>
+        </View>
+      </Pressable>
+      {rows.length === 0 ? null : (
+        <View style={styles.rows}>
+          {rows.map((row) => (
+            <GoalRow
+              key={row.bar.id}
+              row={row}
+              bot={botMap.get(row.bar.botId)}
+              onSelect={onSelectRow}
+            />
+          ))}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -113,18 +179,22 @@ function FoldRow({
 }
 
 /**
- * The leads' open projects above Running now: name, estimate, step segments
- * and who works on it now. Nothing at all when there are none, so the Work tab
- * reads as before.
+ * The leads' open projects above Running now: name, estimate, step segments,
+ * who works on it now and a row per piece of live work under it. Nothing at
+ * all when there are none, so the Work tab reads as before.
  */
 export function ProjectCards({
   summary,
+  rowsByProject,
   botMap,
   onOpen,
+  onSelectRow,
 }: {
   readonly summary: ProjectSummary;
+  readonly rowsByProject: ReadonlyMap<string, ReadonlyArray<GoalNowRow>>;
   readonly botMap: ReadonlyMap<string, PersonalBot>;
   readonly onOpen: (projectId: string) => void;
+  readonly onSelectRow: (barId: string) => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [quietOpen, setQuietOpen] = useState(false);
@@ -134,7 +204,10 @@ export function ProjectCards({
       key={entry.projectId}
       card={entry}
       bot={entry.whoBotId === null ? undefined : botMap.get(entry.whoBotId)}
+      rows={rowsByProject.get(entry.projectId) ?? NO_ROWS}
+      botMap={botMap}
       onOpen={onOpen}
+      onSelectRow={onSelectRow}
     />
   );
   return (
@@ -215,10 +288,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: tokens.border,
     backgroundColor: tokens.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 7,
+    overflow: "hidden",
   },
+  cardHead: { paddingHorizontal: 12, paddingVertical: 10, gap: 7 },
+  rows: { paddingHorizontal: 12, paddingBottom: 4 },
   top: { flexDirection: "row", alignItems: "center", gap: 8 },
   name: { flex: 1, color: tokens.text, fontSize: 15, fontWeight: "600" },
   estimate: {
@@ -236,6 +309,28 @@ const styles = StyleSheet.create({
   bottom: { flexDirection: "row", alignItems: "center", gap: 6 },
   line: { flex: 1, color: tokens.textSecondary, fontSize: 13 },
   who: { color: tokens.text },
+  row: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: tokens.border,
+    paddingVertical: 6,
+  },
+  rowText: { flex: 1, minWidth: 0, gap: 2 },
+  rowTop: { flexDirection: "row", alignItems: "center", gap: 8 },
+  rowBot: { flex: 1, color: tokens.text, fontSize: 13, fontWeight: "600" },
+  rowLabel: {
+    flexShrink: 0,
+    maxWidth: "60%",
+    color: tokens.textSecondary,
+    fontSize: 12,
+    fontWeight: "500",
+    fontVariant: ["tabular-nums"],
+  },
+  rowLabelWorking: { color: tokens.working },
+  rowLine: { color: tokens.textSecondary, fontSize: 13 },
   whoIdle: { color: tokens.textTertiary },
   fold: {
     minHeight: 44,

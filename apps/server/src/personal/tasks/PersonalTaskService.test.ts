@@ -6289,3 +6289,65 @@ it.effect("an approval answer with no unfinished task still adopts its turn as a
     expect(caller.parentTaskId).toBeNull();
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+describe("a lead-turn root's title", () => {
+  const userMessage = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    messageId: string,
+    text: string,
+    createdAt: string,
+  ) => ({
+    messageId: MessageId.make(messageId),
+    threadId,
+    turnId,
+    role: "user" as const,
+    text,
+    isStreaming: false,
+    createdAt,
+    updatedAt: createdAt,
+  });
+
+  it.effect("comes from the owner's message, not an app-written task turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const threadId = ThreadId.make("title-owner-thread");
+      const turnId = TurnId.make("title-owner-turn");
+      const now = DateTime.formatIso(yield* DateTime.now);
+      harness.messages.set(threadId, [
+        userMessage(threadId, turnId, "m-1", "Make images send faster\nmore detail", now),
+        userMessage(threadId, turnId, "personal-task-abc", "[Task continuation] Continue", now),
+      ]);
+
+      const caller = yield* service.resolveCallerTask({
+        threadId,
+        botId: botId("assistant"),
+        turnId,
+      });
+      expect(caller.title).toBe("Make images send faster");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("keeps the task turn's text when the owner never wrote in the chat", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const threadId = ThreadId.make("title-fallback-thread");
+      const turnId = TurnId.make("title-fallback-turn");
+      const now = DateTime.formatIso(yield* DateTime.now);
+      harness.messages.set(threadId, [
+        userMessage(threadId, turnId, "personal-task-x", "[Task continuation] Go", now),
+      ]);
+
+      const caller = yield* service.resolveCallerTask({
+        threadId,
+        botId: botId("assistant"),
+        turnId,
+      });
+      expect(caller.title).toBe("[Task continuation] Go");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+});

@@ -6,6 +6,7 @@ import {
   type TaskListFilter,
 } from "@hbots/personal-client/conversation/taskPresentation";
 import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
+import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import {
   bulkDeleteConfirmLabel,
   bulkDeleteRoutinesConfirmMessage,
@@ -35,6 +36,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { confirmDestructive } from "../components/confirmDestructive";
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { useBotShells } from "../personal/useBotShells";
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { routineTriggerStatusLabel } from "@hbots/personal-client/routines/routineHook";
 import { tokens } from "../shell/tokens";
@@ -113,12 +115,14 @@ function Segment({
 
 function TaskRow({
   task,
+  title,
   bot,
   parentTitle,
   now,
   onPress,
 }: {
   readonly task: PersonalTask;
+  readonly title: string;
   readonly bot: PersonalBot | undefined;
   readonly parentTitle: string | null;
   readonly now: number;
@@ -130,14 +134,14 @@ function TaskRow({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${task.title}, ${taskRowMeta(task, botName, parentTitle)}`}
+      accessibilityLabel={`${title}, ${taskRowMeta(task, botName, parentTitle)}`}
       android_ripple={{ color: "rgba(255,255,255,0.08)" }}
       style={styles.row}
     >
       <SmallBotAvatar bot={bot} />
       <View style={styles.rowText}>
         <Text style={styles.rowTitle} numberOfLines={1} maxFontSizeMultiplier={1.6}>
-          {task.title}
+          {title}
         </Text>
         <View style={styles.rowMetaLine}>
           <StatusDot tone={taskStatusTone(task.status)} />
@@ -222,6 +226,7 @@ export function TasksScreen({
   const routinesQuery = native.automation.usePersonalRoutines(environmentId);
   const projectsQuery = native.automation.usePersonalProjects(environmentId);
   const botsQuery = native.bots.usePersonalBotsList(environmentId);
+  const { shells } = useBotShells(native, environmentId);
   const history = native.client.useAtomCommand(native.automation.personalTaskHistory, {
     reportFailure: false,
   });
@@ -244,6 +249,14 @@ export function TasksScreen({
   const bots = botsQuery.data?.bots;
   const botMap = useMemo(() => botsById(bots), [bots]);
   const merged = useMemo(() => mergeTaskLists(taskFeed, older.tasks), [taskFeed, older.tasks]);
+  const chatTitles = useMemo(
+    () => new Map(shells.map((shell) => [shell.id as string, shell.title])),
+    [shells],
+  );
+  const parentTitleOf = (parentTaskId: string | null) => {
+    const parent = parentTaskId === null ? undefined : merged?.get(parentTaskId);
+    return parent === undefined ? null : taskDisplayTitle(parent, chatTitles);
+  };
   const projects = projectsQuery.data?.projects;
   const closedProjects = useMemo(
     () =>
@@ -479,12 +492,9 @@ export function TasksScreen({
                 <TaskRow
                   key={task.taskId}
                   task={task}
+                  title={taskDisplayTitle(task, chatTitles)}
                   bot={botMap.get(task.botId)}
-                  parentTitle={
-                    task.parentTaskId === null
-                      ? null
-                      : (merged?.get(task.parentTaskId)?.title ?? null)
-                  }
+                  parentTitle={parentTitleOf(task.parentTaskId)}
                   now={now}
                   onPress={() => onOpenTask(task.taskId)}
                 />

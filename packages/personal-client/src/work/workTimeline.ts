@@ -1,6 +1,8 @@
 import { PERSONAL_TASK_TERMINAL_STATUSES, type PersonalTask } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { taskDisplayTitle } from "./taskPresentation.ts";
+
 /**
  * How a bar is drawn. working: solid green. waitingOthers: striped green.
  * needsYou: amber. failed: red. done and stopped: dim. queued: dashed box
@@ -132,16 +134,6 @@ function taskWaitSince(task: PersonalTask, tone: WorkTone, startMs: number): num
   return Math.max(startMs, since);
 }
 
-/**
- * A turn the owner started carries the message as its title, which reads as
- * noise in a list. Its chat's name says what the work is about.
- */
-function taskTitle(task: PersonalTask, chatTitles: ReadonlyMap<string, string>): string {
-  if (task.source !== "user" || task.threadId === null) return task.title;
-  const chat = chatTitles.get(task.threadId)?.trim() ?? "";
-  return chat.length > 0 ? chat : task.title;
-}
-
 interface TaskBarContext {
   readonly chatTitles: ReadonlyMap<string, string>;
   /** When each chat's latest turn began. */
@@ -168,7 +160,7 @@ function taskBar(task: PersonalTask, context: TaskBarContext): WorkBar {
     taskId: task.taskId as string,
     threadId: task.threadId === null ? null : (task.threadId as string),
     botId: task.botId as string,
-    title: taskTitle(task, context.chatTitles),
+    title: taskDisplayTitle(task, context.chatTitles),
     tone,
     startMs,
     endMs,
@@ -218,7 +210,7 @@ function initiatorOf(
 ): WorkInitiator {
   if (root === undefined) return { kind: "unknown" };
   if (root.source === "routine") return { kind: "routine", title: root.title };
-  if (root.source === "user") return { kind: "you", title: taskTitle(root, chatTitles) };
+  if (root.source === "user") return { kind: "you", title: taskDisplayTitle(root, chatTitles) };
   return { kind: "unknown" };
 }
 
@@ -533,6 +525,62 @@ export function buildWorkNow(timeline: WorkTimeline): WorkNow {
       group.lanes.some((lane) => lane.bars.some((bar) => bar.tone === "failed")),
     ).length,
   };
+}
+
+const GOAL_ROW_RANK: Partial<Record<PersonalTask["status"], number>> = {
+  running: 0,
+  waiting_for_agent: 1,
+  rate_limited: 2,
+  queued: 3,
+};
+
+/**
+ * Puts each live bar in exactly one place: under the open goal its own task
+ * serves, else loose. Per bar, not per request, because one lead's request can
+ * serve two goals. Loose bars keep their request's row.
+ */
+export function placeRunning(
+  now: WorkNow,
+  tasksById: ReadonlyMap<string, PersonalTask>,
+  openProjectIds: ReadonlySet<string>,
+): {
+  readonly byProject: ReadonlyMap<string, ReadonlyArray<WorkBar>>;
+  readonly loose: ReadonlyArray<WorkNowRow>;
+} {
+  const byProject = new Map<string, WorkBar[]>();
+  const loose: WorkNowRow[] = [];
+  const goalOf = (bar: WorkBar): string | null => {
+    const projectId = bar.taskId === null ? null : tasksById.get(bar.taskId)?.projectId;
+    return projectId !== null && projectId !== undefined && openProjectIds.has(projectId)
+      ? projectId
+      : null;
+  };
+  for (const row of now.running) {
+    const left: WorkBar[] = [];
+    for (const bar of [row.lead, ...row.helpers]) {
+      const projectId = goalOf(bar);
+      if (projectId === null) left.push(bar);
+      else byProject.set(projectId, [...(byProject.get(projectId) ?? []), bar]);
+    }
+    const [lead, ...helpers] = left;
+    if (lead !== undefined) loose.push({ key: row.key, lead, helpers });
+  }
+  const rank = (bar: WorkBar) =>
+    GOAL_ROW_RANK[
+      (bar.taskId === null ? undefined : tasksById.get(bar.taskId))?.status ?? "queued"
+    ] ?? 3;
+  for (const [projectId, bars] of byProject) {
+    byProject.set(
+      projectId,
+      bars.toSorted((left, right) => rank(left) - rank(right) || left.startMs - right.startMs),
+    );
+  }
+  return { byProject, loose };
+}
+
+/** The loose group keeps its old name until a goal card sits above it. */
+export function workLooseHeader(goalCards: number, looseCount: number): string {
+  return goalCards === 0 ? "Running now" : `Not in a goal · ${looseCount}`;
 }
 
 /** What the owner is asked to do, in one short line. */

@@ -1,4 +1,5 @@
 import { selectUsageCards } from "@hbots/personal-client/usage/usagePresentation";
+import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import { DateTime } from "effect";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
@@ -60,6 +61,7 @@ export function LauncherBridge({ native }: { readonly native: NativePersonal }) 
   const widget = useMemo((): WidgetFeed | null => {
     if (bots === null || links === null || working.status !== "ready") return null;
     const shellById = new Map(botShells.shells.map((shell) => [shell.id as string, shell]));
+    const chatTitles = new Map(botShells.shells.map((shell) => [shell.id as string, shell.title]));
     return buildWidgetFeed({
       bots,
       threads: working.threads.map((thread) => {
@@ -86,7 +88,7 @@ export function LauncherBridge({ native }: { readonly native: NativePersonal }) 
         ? {}
         : {
             tasks: [...tasks.values()].map((task) => ({
-              title: task.title,
+              title: taskDisplayTitle(task, chatTitles),
               botId: task.botId as string,
               status: task.status,
               completedAtMs: ms(task.completedAt),

@@ -48,9 +48,12 @@ export interface ClosedProject {
 }
 
 export interface ProjectSummary {
-  /** At most PROJECT_CARDS_MAX cards, busiest and most recent first. */
+  /**
+   * Every project with live work, then idle ones up to PROJECT_CARDS_MAX,
+   * busiest and most recent first. Live work never folds away.
+   */
   readonly cards: ReadonlyArray<ProjectCard>;
-  /** Open projects past the card limit, behind "+N more". */
+  /** Idle open projects past the card limit, behind "+N more". */
   readonly more: ReadonlyArray<ProjectCard>;
   /** Open projects nobody works on and quiet for 72 h; still open, shown folded. */
   readonly quiet: ReadonlyArray<ProjectCard>;
@@ -217,9 +220,12 @@ export function buildProjectCards(input: {
   const isQuiet = (card: ProjectCard) =>
     card.activeTaskIds.length === 0 && nowMs - card.lastActivityMs >= PROJECT_QUIET_MS;
   const awake = open.filter((card) => !isQuiet(card)).toSorted(byActivity);
+  const live = awake.filter((card) => card.activeTaskIds.length > 0);
+  const idle = awake.filter((card) => card.activeTaskIds.length === 0);
+  const room = Math.max(0, PROJECT_CARDS_MAX - live.length);
   return {
-    cards: awake.slice(0, PROJECT_CARDS_MAX),
-    more: awake.slice(PROJECT_CARDS_MAX),
+    cards: [...live, ...idle.slice(0, room)],
+    more: idle.slice(room),
     quiet: open.filter(isQuiet).toSorted(byActivity),
     closed: closed.toSorted((a, b) => b.closedMs - a.closedMs),
   };

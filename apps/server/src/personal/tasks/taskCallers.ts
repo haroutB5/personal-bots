@@ -19,6 +19,10 @@ import {
   minutesFrom,
   type WorkItem,
 } from "./taskShared.ts";
+import {
+  isPersonalTaskMessageId,
+  PERSONAL_TASK_MESSAGE_ID_PREFIX,
+} from "../personalThreadTitles.ts";
 import { isTerminal } from "./taskSessionPolicy.ts";
 import type { TaskCore } from "./taskCore.ts";
 import type { PersonalTaskService } from "./PersonalTaskService.ts";
@@ -101,7 +105,28 @@ export const makeTaskCallers = (
             lastUserText.length > 0
               ? lastUserText.slice(0, 4_000)
               : "Continue the conversation in this thread.";
-          const title = (objective.split("\n")[0] ?? "").trim().slice(0, 80) || "Chat request";
+          // A turn the app wrote ("[Task continuation] ...") says nothing about
+          // the request; the owner's own latest message names it.
+          const named =
+            lastUser !== undefined && isPersonalTaskMessageId(lastUser.id)
+              ? Option.getOrUndefined(
+                  yield* engine
+                    .latestUserMessage({
+                      threadId: input.threadId,
+                      excludeIdPrefix: PERSONAL_TASK_MESSAGE_ID_PREFIX,
+                    })
+                    .pipe(
+                      Effect.mapError((cause) =>
+                        fail("Personal tasks could not read the thread.", cause),
+                      ),
+                    ),
+                )
+              : lastUser;
+          const namedText = named?.text.trim() ?? "";
+          const title =
+            ((namedText.length > 0 ? namedText : objective).split("\n")[0] ?? "")
+              .trim()
+              .slice(0, 80) || "Chat request";
           const now = yield* DateTime.now;
           const taskId = PersonalTaskId.make(NodeCrypto.randomUUID());
           const task: PersonalTask = {

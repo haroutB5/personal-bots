@@ -223,6 +223,20 @@ describe("buildProjectCards folds", () => {
     ]);
   });
 
+  it("never folds a goal with live work behind +N more", () => {
+    const ids = ["a", "b", "c", "d", "e"];
+    const summary = buildProjectCards({
+      projects: ids.map((id, index) => project({ id, lastActivityAgoMs: (index + 1) * HOUR })),
+      tasks: ids.map((id) =>
+        task({ id: `t-${id}`, botId: "builder", status: "running", projectId: id }),
+      ),
+      nowMs: NOW,
+      botName,
+    });
+    expect(summary.cards.length).toBe(5);
+    expect(summary.more.length).toBe(0);
+  });
+
   it("no projects gives nothing to draw", () => {
     expect(buildProjectCards({ projects: [], tasks: [], nowMs: NOW, botName })).toEqual({
       cards: [],
