@@ -1,5 +1,6 @@
 import { requireOptionalNativeModule } from "expo";
 
+import type { ShrunkPhoto } from "../chat/photoDrafts";
 import type { RawShare } from "./pickerModel";
 import { parseRawShare } from "./rawShare";
 
@@ -7,6 +8,7 @@ interface ShareModule {
   read(id: string): string | null;
   discard(id: string): void;
   discardAllExcept(keep: string | null): void;
+  shrinkPhoto(uri: string, mimeType: string): Promise<ShrunkPhoto | null>;
 }
 
 const native = requireOptionalNativeModule<ShareModule>("HbotsShare");
@@ -28,4 +30,9 @@ export function discardShare(id: string): void {
  */
 export function discardStaleShares(keep: string | null): void {
   native?.discardAllExcept(keep);
+}
+
+/** The photo at 2576 px on its long edge, upright and without metadata, or null to keep it. */
+export async function shrinkPhoto(uri: string, mimeType: string): Promise<ShrunkPhoto | null> {
+  return (await native?.shrinkPhoto(uri, mimeType)) ?? null;
 }

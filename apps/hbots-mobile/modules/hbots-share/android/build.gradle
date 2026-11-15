@@ -13,6 +13,9 @@ android {
     versionCode 1
     versionName '0.0.1'
   }
+  testOptions {
+    unitTests.includeAndroidResources = true
+  }
 }
 
 dependencies {
@@ -20,4 +23,5 @@ dependencies {
   // Alpha: the only published version of the view wrapper (14 Nov 2026). Pinned exactly.
   implementation 'androidx.photopicker:photopicker-embedded:1.0.0-alpha03'
   testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.14.1'
 }

@@ -74,9 +74,10 @@ import { ComposerHost } from "./ComposerHost";
 import { embeddedPickerAvailable } from "./PhotoStrip";
 import { keyboardImages, releasedIntakes } from "./composerInput";
 import { localImages } from "./localImages";
+import { shrinkDrafts } from "./photoDrafts";
 import { draftKey } from "./linkDraft";
 import { blockedMessage } from "../share/pickerModel";
-import { discardShare, readShare } from "../share/shareIntake";
+import { discardShare, readShare, shrinkPhoto } from "../share/shareIntake";
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
 
 const MAX_ATTACHMENTS = 10;
@@ -253,19 +254,29 @@ export function Composer({
   const showStop = working && !hasContent;
   const canSend = hasContent && !preparing;
 
-  const addPicked = (next: ReadonlyArray<DraftAttachment>) => {
-    const current = draftRef.current.attachments;
-    const room = MAX_ATTACHMENTS - current.length;
-    const accepted = next.slice(0, Math.max(0, room));
-    const tooBig = accepted.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
+  /**
+   * The one way into the draft, from every source: photos are shrunk first, then the size cap
+   * applies. Keyboard and embedded-picker images keep their intake folder until the draft lets
+   * go of them.
+   */
+  const addDrafts = async (next: ReadonlyArray<DraftAttachment>, intakeId: string | null) => {
+    const shrunk = await shrinkDrafts(next, shrinkPhoto);
+    const tooBig = shrunk.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
     if (tooBig.length > 0) {
+      if (intakeId !== null) discardShare(intakeId);
       setNotice(plainNotice(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`));
       return;
     }
-    setDraft((draft) => ({
-      ...draft,
-      attachments: [...draft.attachments, ...accepted.filter((item) => !tooBig.includes(item))],
-    }));
+    if (intakeId !== null) {
+      for (const draft of shrunk) intakeHeld.current.set(draft.id, intakeId);
+      setNotice(null);
+    }
+    setDraft((draft) => ({ ...draft, attachments: [...draft.attachments, ...shrunk] }));
+  };
+
+  const addPicked = async (next: ReadonlyArray<DraftAttachment>) => {
+    const room = MAX_ATTACHMENTS - draftRef.current.attachments.length;
+    await addDrafts(next.slice(0, Math.max(0, room)), null);
   };
 
   /** An image from the keyboard: the share intake's caps and refusals, then a draft attachment. */
@@ -287,12 +298,7 @@ export function Composer({
       setNotice(plainNotice(blockedMessage("too-many-items")));
       return;
     }
-    for (const draft of result.drafts) intakeHeld.current.set(draft.id, intakeId);
-    setNotice(null);
-    setDraft((current) => ({
-      ...current,
-      attachments: [...current.attachments, ...result.drafts],
-    }));
+    void addDrafts(result.drafts, intakeId);
   };
 
   const pickPhotos = async () => {
@@ -305,7 +311,7 @@ export function Composer({
         quality: 1,
       });
       if (result.canceled) return;
-      addPicked(
+      await addPicked(
         result.assets.map((asset, index) => {
           const uri = asset.uri;
           const name = attachmentName({
@@ -342,7 +348,7 @@ export function Composer({
       if (result.canceled) return;
       const asset = result.assets[0];
       if (asset === undefined) return;
-      addPicked([
+      await addPicked([
         {
           id: `${Date.now()}-camera`,
           kind: "image",
@@ -371,7 +377,7 @@ export function Composer({
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
-      addPicked(
+      await addPicked(
         result.assets.map((asset, index) => {
           const name = asset.name ?? `File ${index + 1}`;
           const mimeType = asset.mimeType ?? "application/octet-stream";
