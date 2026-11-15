@@ -8,6 +8,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { isGroupRelayLink } from "../conversation/groupModel.ts";
+import { isChatArchived } from "./chatState.ts";
 import { isOwnerChat, taskChatThreadIds } from "./ownerChats.ts";
 
 /**
@@ -44,7 +45,7 @@ export function isChatUnread(
   shell?: Pick<EnvironmentThreadShell, "archivedAt"> | null,
 ): boolean {
   if (link.unread !== true || link.lastReplyAt === undefined) return false;
-  if (link.archivedAt !== null || (shell?.archivedAt ?? null) !== null) return false;
+  if (isChatArchived(link, shell)) return false;
   if (link.groupRelay === true) return false;
   if (seen.openThreadId === link.threadId) return false;
   const seenUpTo = seen.seenUpToMs.get(link.threadId);

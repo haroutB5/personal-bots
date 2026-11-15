@@ -6,7 +6,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
-  CommandId,
   MessageId,
   PERSONAL_GROUP_CATCHUP_MAX_CHARS,
   PERSONAL_GROUP_CONCURRENCY,
@@ -109,7 +108,7 @@ export const makeGroupTurns = (
 
   const interruptActiveTurn = Effect.fn("PersonalGroupService.interruptActiveTurn")(function* (
     round: RoundRecord,
-    reason: string,
+    _reason: string,
   ) {
     if (round.activeThreadId === null) {
       return;
@@ -343,8 +342,8 @@ export const makeGroupTurns = (
       const now = yield* DateTime.now;
       const nowMs = DateTime.toEpochMillis(now);
       // PERSONAL_GROUP_CONCURRENCY = 1, and this slot is disjoint from the
-      // task system's five (PERSONAL_TASKS_CONCURRENCY), so the worst case
-      // stays six provider turns.
+      // task system's seven under a heavy job (PERSONAL_TASKS_CONCURRENCY), so
+      // the worst case stays eight provider turns then.
       const next = nextRound(
         live,
         (entry) => (entry.availableAt === null ? null : DateTime.toEpochMillis(entry.availableAt)),

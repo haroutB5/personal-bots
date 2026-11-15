@@ -101,6 +101,49 @@ describe("buildChatChips", () => {
     expect(chipTexts([] as never, [] as never)).toEqual([]);
   });
 
+  describe("an archived chat has no chip", () => {
+    const open = (threadId: string, minute: number) => ({
+      botId: "bot-1",
+      threadId,
+      createdAt: at(`2026-11-14T16:${minute}:00.000Z`),
+      lastActivityAt: at(`2026-11-14T16:${minute}:00.000Z`),
+      archivedAt: null,
+    });
+    const links = [
+      open("hbots", 10),
+      open("apps", 20),
+      // t3_thread_organize archived its thread; the phone's link list is a refresh behind.
+      open("sweep", 46),
+      { ...open("link-only", 30), archivedAt: at("2026-11-14T16:31:00.000Z") },
+    ] as never;
+    const shells = [
+      { id: "hbots", title: "Hbots" },
+      { id: "apps", title: "Apps" },
+      {
+        id: "sweep",
+        title: "PStack stuck-task sweep",
+        archivedAt: "2026-11-14T16:46:47.000Z",
+        // Its routine run is still queued on the session.
+        session: { status: "starting", activeTurnId: null },
+      },
+      { id: "link-only", title: "Archived from the phone" },
+    ] as never;
+
+    it("drops a chat archived on its thread, on its link, or with a run still queued", () => {
+      const chips = buildChatChips({ botId: "bot-1", currentThreadId: "hbots", links, shells });
+      expect(chips.map((chip) => chip.text)).toEqual(["Apps", "Hbots"]);
+    });
+
+    it("keeps the chip of the archived chat open right now, and only while it is open", () => {
+      const chips = buildChatChips({ botId: "bot-1", currentThreadId: "sweep", links, shells });
+      expect(chips.map((chip) => [chip.threadId, chip.current])).toEqual([
+        ["sweep", true],
+        ["apps", false],
+        ["hbots", false],
+      ]);
+    });
+  });
+
   it("puts pinned chats first and then newest activity, current chip included", () => {
     const chips = buildChatChips({
       botId: "bot-1",
