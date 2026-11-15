@@ -19,6 +19,7 @@ import type {
 } from "@hbots/personal-client/bots/threadShell";
 import { botMuteState, mutedUntilLabel } from "@hbots/personal-client/bots/botMuteModel";
 import { botActiveModelShortLabel } from "@hbots/personal-client/bots/botModelLabel";
+import { isChatArchived } from "@hbots/personal-client/bots/chatState";
 import { conversationChatTitle } from "@hbots/personal-client/feed/chatNames";
 import {
   contextBadgeLabel,
@@ -169,8 +170,9 @@ export interface ChatChipModel {
 }
 
 /**
- * The bot's chat chips, pinned first then newest activity first: the order of
- * the bot's chat list. The current chat always has a chip.
+ * The bot's chat chips, pinned first then newest activity first. An archived
+ * chat (`isChatArchived`) has no chip, whatever runs in it, unless it is the
+ * current chat, which always has one.
  */
 export function buildChatChips(input: {
   readonly botId: string;
@@ -182,10 +184,10 @@ export function buildChatChips(input: {
 }): ReadonlyArray<ChatChipModel> {
   const shellById = new Map(input.shells.map((shell) => [shell.id as string, shell]));
   const rows = input.links
-    .filter((link) => link.botId === input.botId && link.archivedAt === null)
+    .filter((link) => link.botId === input.botId)
     .flatMap((link) => {
       const shell = shellById.get(link.threadId);
-      if (shell === undefined) return [];
+      if (shell === undefined || isChatArchived(link, shell)) return [];
       return [{ link, shell }];
     });
   const current = rows.find((row) => row.link.threadId === input.currentThreadId);

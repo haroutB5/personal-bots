@@ -49,6 +49,9 @@ interface Harness {
   events: Queue.Queue<PersonalEngine.PersonalThreadEvent> | null;
   /** Runs when the sweep reads a chat's live state, before it archives. */
   beforeShell: Effect.Effect<unknown> | null;
+  /** Threads a T3 archive set (thread `archivedAt`), and the thread unarchives sent. */
+  readonly threadArchivedAt: Map<string, string>;
+  readonly unarchived: Array<string>;
 }
 
 const makeHarness = (): Harness => ({
@@ -57,6 +60,8 @@ const makeHarness = (): Harness => ({
   titles: new Map(),
   events: null,
   beforeShell: null,
+  threadArchivedAt: new Map(),
+  unarchived: [],
 });
 
 /** A test-local PersonalEngine: only the calls this service and the bot service make. */
@@ -96,7 +101,7 @@ const makeEngineLayer = (harness: Harness) =>
               modelSelection: { instanceId: INSTANCE, model: "claude" },
               runtimeMode: "full-access",
               interactionMode: "default",
-              archivedAt: null,
+              archivedAt: harness.threadArchivedAt.get(threadId) ?? null,
               session:
                 shell.session === null
                   ? null
@@ -114,6 +119,11 @@ const makeEngineLayer = (harness: Harness) =>
         stop: (input: PersonalEngine.PersonalStopInput) =>
           Effect.sync(() => {
             harness.dispatched.push(input);
+          }),
+        unarchive: (threadId: ThreadId) =>
+          Effect.sync(() => {
+            harness.threadArchivedAt.delete(threadId);
+            harness.unarchived.push(threadId);
           }),
         events: Stream.fromQueue(events),
       };
@@ -705,6 +715,56 @@ describe("PersonalTaskChatArchive", () => {
       const service = yield* PersonalTaskChatArchive.PersonalTaskChatArchive;
       expect(yield* service.unarchiveForTurn(ThreadId.make("chat-open"))).toBe(false);
       expect(yield* linkState("chat-open")).toEqual({ archivedAt: null, autoArchivedAt: null });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  /** What t3_thread_organize leaves: the thread archived, the link too unless its sync lagged. */
+  const t3Archive = (harness: Harness, id: string, link: boolean) =>
+    Effect.gen(function* () {
+      const at = iso(T0 + MIN);
+      yield* seedV2Thread({
+        threadId: id,
+        title: id,
+        instanceId: INSTANCE,
+        createdAt: iso(T0),
+        archivedAt: at,
+      });
+      harness.threadArchivedAt.set(id, at);
+      if (link) {
+        const bots = yield* PersonalBotService.PersonalBotService;
+        yield* bots.archiveThread({ threadId: ThreadId.make(id), archived: true });
+      }
+    });
+
+  it.effect("a new turn unarchives a T3-archived chat's thread as well as its link", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [{ id: "chat-both" }, { id: "chat-thread-only" }, { id: "chat-open" }]);
+      yield* t3Archive(harness, "chat-both", true);
+      yield* t3Archive(harness, "chat-thread-only", false);
+      const service = yield* PersonalTaskChatArchive.PersonalTaskChatArchive;
+      expect(yield* service.unarchiveForTurn(ThreadId.make("chat-both"))).toBe(true);
+      expect(yield* service.unarchiveForTurn(ThreadId.make("chat-thread-only"))).toBe(true);
+      expect(yield* service.unarchiveForTurn(ThreadId.make("chat-open"))).toBe(false);
+      expect(harness.unarchived).toEqual(["chat-both", "chat-thread-only"]);
+      expect(yield* linkState("chat-both")).toEqual({ archivedAt: null, autoArchivedAt: null });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("Unarchive from the app brings a T3-archived chat back on its thread too", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [{ id: "chat-both" }, { id: "chat-thread-only" }, { id: "chat-phone" }]);
+      yield* t3Archive(harness, "chat-both", true);
+      yield* t3Archive(harness, "chat-thread-only", false);
+      const bots = yield* PersonalBotService.PersonalBotService;
+      // Archived from the phone: the link only, as before.
+      yield* bots.archiveThread({ threadId: ThreadId.make("chat-phone"), archived: true });
+      for (const id of ["chat-both", "chat-thread-only", "chat-phone"]) {
+        yield* bots.archiveThread({ threadId: ThreadId.make(id), archived: false });
+        expect(yield* linkState(id)).toEqual({ archivedAt: null, autoArchivedAt: null });
+      }
+      expect(harness.unarchived).toEqual(["chat-both", "chat-thread-only"]);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 

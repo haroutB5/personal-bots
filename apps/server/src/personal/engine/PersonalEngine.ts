@@ -326,6 +326,8 @@ export interface PersonalEngineShape {
   }) => Effect.Effect<void, PersonalEngineError>;
   readonly stop: (input: PersonalStopInput) => Effect.Effect<void, PersonalEngineError>;
   readonly archive: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;
+  /** Unarchives the orchestration thread. Fails when the thread is not archived. */
+  readonly unarchive: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;
   readonly deleteThread: (threadId: ThreadId) => Effect.Effect<void, PersonalEngineError>;
   readonly updateMeta: (input: PersonalUpdateMetaInput) => Effect.Effect<void, PersonalEngineError>;
   /** Rename only if the thread still matches the title and version seen. */

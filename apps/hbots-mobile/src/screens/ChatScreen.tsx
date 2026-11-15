@@ -51,6 +51,7 @@ import {
 import { DEFAULT_TOKEN_USAGE_WINDOW } from "@hbots/personal-client/usage/tokenUsagePresentation";
 import { motionForConversationState } from "@hbots/personal-client/bots/avatarMotionState";
 import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
+import { isChatArchived } from "@hbots/personal-client/bots/chatState";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
 import { sharedPreferencesFromProfile } from "@hbots/personal-client/settings/profilePreferences";
@@ -247,8 +248,8 @@ export function ChatScreen({
     return () => clearTimeout(timer);
   }, [loadFailed, loadRetryDelayMs, loadRetryCount, threadId, retryThread]);
   const shell = record?.shell ?? null;
-  const archived = shell?.archivedAt != null;
   const link = links.find((candidate) => candidate.threadId === threadId) ?? null;
+  const archived = isChatArchived(link, shell);
 
   const showToolSteps = sharedPreferencesFromProfile(profile.data).showToolSteps;
   const items = useMemo(

@@ -57,6 +57,25 @@ describe("botThreadRows", () => {
       "2 open · 1 archived",
     );
   });
+
+  it("files a chat archived on its thread or on its link under Archived, never in neither list", () => {
+    // t3_thread_organize archives the thread; the link follows a moment later.
+    const threadArchived = {
+      ...shell("thread-only", "2026-09-25T10:00:00.000Z"),
+      archivedAt: "2026-09-25T11:00:00.000Z",
+    } as unknown as EnvironmentThreadShell;
+    const rows = botThreadRows(
+      "cto",
+      [link("open", "cto"), link("thread-only", "cto"), link("link-only", "cto", true)],
+      [
+        shell("open", "2026-09-24T10:00:00.000Z"),
+        threadArchived,
+        shell("link-only", "2026-09-23T10:00:00.000Z"),
+      ],
+    );
+    expect(rows.active.map((row) => row.link.threadId)).toEqual(["open"]);
+    expect(rows.archived.map((row) => row.link.threadId)).toEqual(["thread-only", "link-only"]);
+  });
 });
 
 describe("botThreadRows order", () => {

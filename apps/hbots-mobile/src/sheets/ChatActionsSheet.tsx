@@ -1,5 +1,6 @@
 import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
+import { isChatArchived } from "@hbots/personal-client/bots/chatState";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -52,7 +53,9 @@ export function ChatActionsSheet({
         }}
       />
       <SheetAction
-        label={row?.shell.archivedAt != null ? "Unarchive chat" : "Archive chat"}
+        label={
+          row !== null && isChatArchived(row.link, row.shell) ? "Unarchive chat" : "Archive chat"
+        }
         onPress={() => {
           if (row !== null) onArchive(row);
         }}

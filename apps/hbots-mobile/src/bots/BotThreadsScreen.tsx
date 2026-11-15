@@ -19,7 +19,7 @@ import {
 } from "@hbots/personal-client/bots/botModelLabel";
 import { isThreadLive } from "@hbots/personal-client/bots/botSummaries";
 import { bulkResultNotice, type ChatSection } from "@hbots/personal-client/bots/chatSelection";
-import { isChatPinned } from "@hbots/personal-client/bots/chatState";
+import { isChatArchived, isChatPinned } from "@hbots/personal-client/bots/chatState";
 import type { BulkChatOptions } from "@hbots/personal-client/bots/bulkChatActions";
 import { botThreadRows, type BotThreadRow } from "@hbots/personal-client/feed/botThreadRows";
 
@@ -571,7 +571,7 @@ export function BotThreadsScreen({
         }}
         onArchive={(row) => {
           setMenuRow(null);
-          void archiveOne({ ...row, updatedMs: 0 }, row.shell.archivedAt === null);
+          void archiveOne({ ...row, updatedMs: 0 }, !isChatArchived(row.link, row.shell));
         }}
         onDelete={(row) => {
           setMenuRow(null);
