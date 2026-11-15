@@ -1,4 +1,11 @@
-import type { PersonalWorkEvent, WorkTaskRef } from "@t3tools/contracts";
+import {
+  PersonalBotId,
+  PersonalProjectId,
+  PersonalTaskId,
+  ThreadId,
+  type PersonalWorkEvent,
+  type WorkTaskRef,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -13,8 +20,8 @@ const BOTS: Readonly<Record<string, string>> = {
 const botName = (botId: string) => BOTS[botId] ?? "Removed bot";
 
 const task = (taskId: string, botId: string, title: string): WorkTaskRef => ({
-  taskId,
-  botId,
+  taskId: PersonalTaskId.make(taskId),
+  botId: PersonalBotId.make(botId),
   threadId: null,
   source: "delegation",
   parentTaskId: null,
@@ -67,7 +74,7 @@ describe("buildWorkDigest", () => {
       {
         kind: "goalClosed",
         at: at("2026-11-14T10:30:00.000Z"),
-        projectId: "goal-1",
+        projectId: PersonalProjectId.make("goal-1"),
         name: "hbots 1.67.22",
         outcome: "done",
       },
@@ -137,9 +144,9 @@ describe("buildWorkDigest", () => {
 
   it("titles a user's task after its chat and passes the server's omitted count through", () => {
     const request: WorkTaskRef = {
-      taskId: "task-owner",
-      botId: "bot-builder",
-      threadId: "thread-1",
+      taskId: PersonalTaskId.make("task-owner"),
+      botId: PersonalBotId.make("bot-builder"),
+      threadId: ThreadId.make("thread-1"),
       source: "user",
       parentTaskId: null,
       title: "MCPONCE delegate_task {...}",
