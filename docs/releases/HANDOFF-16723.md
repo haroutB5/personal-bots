@@ -34,3 +34,19 @@ None. Schema stays 157. The runner skips the backup (no migration). Migration 02
 ## Rollback
 
 Binary only. The previous release is `1b545881d3d1` (1.67.22). No schema change, so 1.67.22 boots on the same database. The previous APK (1.67.22) stays in `android-updates/`.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=f2ade20bfe561dc19ab97538e0897cdd9d10ac2b release=f2ade20bfe56 json-sha256=bbd7da8bf71b24e222970b2d3094ed3cd7de906e1f9de780d1f446cc14f522e9 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
