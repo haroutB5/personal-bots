@@ -24,12 +24,15 @@ import {
   type WorkTimeline,
   type WorkTone,
 } from "@hbots/personal-client/work/workTimeline";
-import { buildRunningView } from "@hbots/personal-client/work/nowLine";
+import { buildRunningView, type GoalNowRow } from "@hbots/personal-client/work/nowLine";
 import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
 import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
+import { buildWorkDigest } from "@hbots/personal-client/work/workDigest";
 import type { PersonalBot, PersonalTask, PersonalTaskId } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useIsFocused } from "@react-navigation/native";
+import * as DateTime from "effect/DateTime";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AppState, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { confirmDestructive } from "../components/confirmDestructive";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -40,6 +43,8 @@ import { EmptyText, ScreenScroll, SmallBotAvatar } from "../tasks/TaskUi";
 import { useWorkingThreads } from "../working/useWorkingThreads";
 import { ProjectCards } from "./ProjectCards";
 import { ProjectSheet } from "./ProjectSheet";
+import { ensureSeenAtLoaded, saveSeenAt, useSeenAt, useSeenAtLoaded } from "./seenAt";
+import { SinceLooked } from "./SinceLooked";
 
 /** Share of the track where the now line sits; queued work is drawn after it. */
 const NOW_AT = 0.88;
@@ -47,6 +52,7 @@ const TICK_COUNT = 4;
 const STRIPES = Array.from({ length: 64 }, (_, index) => index);
 const NO_TASKS: ReadonlyArray<PersonalTask> = [];
 const NO_TASK_MAP: ReadonlyMap<string, PersonalTask> = new Map();
+const NO_GOAL_ROWS: ReadonlyArray<GoalNowRow> = [];
 
 const TONE_COLOR: Record<WorkTone, string> = {
   working: tokens.working,
@@ -271,6 +277,33 @@ export function WorkScreen({
   const botsQuery = native.bots.usePersonalBotsList(environmentId);
   const { shells } = useBotShells(native, environmentId);
   const working = useWorkingThreads(native);
+  const seenAt = useSeenAt();
+  const seenAtLoaded = useSeenAtLoaded();
+  const [bootstrapSince] = useState(() => new Date().toISOString());
+  const workSince = native.automation.usePersonalWorkSince(
+    environmentId,
+    seenAtLoaded ? (seenAt ?? bootstrapSince) : null,
+  );
+  // The digest request can fail before it leaves the phone, and the box then
+  // simply stays hidden. Log each distinct failure once so it is not silent.
+  const workSinceError = workSince.error;
+  const loggedWorkSinceError = useRef<string | null>(null);
+  useEffect(() => {
+    if (workSinceError === null || loggedWorkSinceError.current === workSinceError) return;
+    loggedWorkSinceError.current = workSinceError;
+    console.warn("Work digest request failed", workSinceError);
+  }, [workSinceError]);
+  const focused = useIsFocused();
+  const [appActive, setAppActive] = useState(AppState.currentState === "active");
+  useEffect(() => {
+    void ensureSeenAtLoaded();
+    const subscription = AppState.addEventListener("change", (state) =>
+      setAppActive(state === "active"),
+    );
+    return () => subscription.remove();
+  }, []);
+  const [hiddenAsOf, setHiddenAsOf] = useState<string | null>(null);
+  const visibleSinceRef = useRef<number | null>(null);
   const cancel = native.client.useAtomCommand(native.automation.personalTaskCancel, {
     reportFailure: false,
   });
@@ -309,6 +342,50 @@ export function WorkScreen({
     () => new Map(shells.map((shell) => [shell.id as string, shell.title])),
     [shells],
   );
+  const resultAsOf = workSince.data === null ? null : DateTime.formatIso(workSince.data.asOf);
+  // First run: the first response's asOf becomes the marker, and no box shows.
+  useEffect(() => {
+    if (seenAt === null && resultAsOf !== null) void saveSeenAt(resultAsOf);
+  }, [seenAt, resultAsOf]);
+  const digest = useMemo(() => {
+    if (seenAt === null || workSince.data === null || resultAsOf === null) return null;
+    if (hiddenAsOf === resultAsOf) return null;
+    return buildWorkDigest({
+      events: workSince.data.events,
+      omitted: workSince.data.omitted,
+      seenAt,
+      asOf: resultAsOf,
+      chatTitles,
+      botName: (botId) => botMap.get(botId)?.name ?? "Removed bot",
+    });
+  }, [seenAt, workSince.data, resultAsOf, hiddenAsOf, chatTitles, botMap]);
+  // A box that stayed up for 5 s is done being read: leaving the tab stores the
+  // newest server time, so the next visit starts after it.
+  const digestVisible = digest !== null && focused && appActive;
+  const digestAsOfRef = useRef<string | null>(null);
+  useEffect(() => {
+    digestAsOfRef.current = resultAsOf;
+  }, [resultAsOf]);
+  useEffect(() => {
+    if (!digestVisible) {
+      visibleSinceRef.current = null;
+      return;
+    }
+    visibleSinceRef.current ??= Date.now();
+    return () => {
+      const shownAt = visibleSinceRef.current;
+      visibleSinceRef.current = null;
+      if (shownAt !== null && Date.now() - shownAt >= 5_000 && digestAsOfRef.current !== null) {
+        void saveSeenAt(digestAsOfRef.current);
+      }
+    };
+  }, [digestVisible]);
+  const clearDigest = () => {
+    if (resultAsOf === null) return;
+    setHiddenAsOf(resultAsOf);
+    visibleSinceRef.current = null;
+    void saveSeenAt(resultAsOf);
+  };
   const timeline = useMemo(() => {
     const botIdByThread = new Map<string, string>(
       (links ?? []).map((link) => [link.threadId, link.botId]),
@@ -355,6 +432,13 @@ export function WorkScreen({
       : [...projectSummary.cards, ...projectSummary.more, ...projectSummary.quiet].find(
           (entry) => entry.projectId === projectId,
         );
+  const project =
+    projectId === null
+      ? null
+      : ((projects ?? []).find((entry) => entry.projectId === projectId) ?? null);
+  const projectRows =
+    projectId === null ? NO_GOAL_ROWS : (running.rowsByProject.get(projectId) ?? NO_GOAL_ROWS);
+  const projectHistory = native.automation.usePersonalProjectHistory(environmentId, projectId);
 
   const bar = selectedId === null ? undefined : workBarsById(timeline).get(selectedId);
   const group =
@@ -395,6 +479,7 @@ export function WorkScreen({
         <EmptyText>Loading…</EmptyText>
       ) : (
         <ScreenScroll contentStyle={styles.body}>
+          {digest === null ? null : <SinceLooked digest={digest} onClear={clearDigest} />}
           {view.needs.length === 0 ? null : (
             <View style={styles.needs} testID="work-needs">
               <Text style={styles.needsTitle} maxFontSizeMultiplier={1.3}>
@@ -640,6 +725,9 @@ export function WorkScreen({
 
       <ProjectSheet
         card={projectCard}
+        project={project}
+        rows={projectRows}
+        history={projectHistory.data ?? null}
         tasks={tasks}
         botMap={botMap}
         chatTitles={chatTitles}

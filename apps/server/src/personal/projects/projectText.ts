@@ -60,5 +60,9 @@ export const openProjectsContext = (
 };
 
 /** The line added to a task result that reaches a lead when the task has a project. */
-export const projectResultNudge = (projectName: string): string =>
-  `Project ${projectName}: update its steps and estimate with update_project.`;
+export const projectResultNudge = (project: Pick<PersonalProject, "name" | "why">): string => {
+  const base = `Project ${project.name}: update its steps and estimate with update_project.`;
+  return project.why === undefined || project.why === null || project.why.trim().length === 0
+    ? `${base}\nAdd why it matters with update_project: one plain line.`
+    : base;
+};

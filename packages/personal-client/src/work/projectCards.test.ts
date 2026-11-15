@@ -92,6 +92,16 @@ describe("buildProjectCards estimate label", () => {
     expect([card.estimateLabel, card.estimateTone]).toEqual(["About 25 min left", "secondary"]);
   });
 
+  it("88 minutes left rounds to the nearest half hour", () => {
+    const card = cardOf([project({ id: "a", dueInMs: 88 * MIN, estimatedAgoMs: 5 * MIN })]);
+    expect([card.estimateLabel, card.estimateTone]).toEqual(["About 1 h 30 min left", "secondary"]);
+  });
+
+  it("2 h 20 min left rounds to 2 h 30 min", () => {
+    const card = cardOf([project({ id: "a", dueInMs: 140 * MIN, estimatedAgoMs: 5 * MIN })]);
+    expect(card.estimateLabel).toBe("About 2 h 30 min left");
+  });
+
   it("an estimate 2 h old or more shows its age, tertiary", () => {
     const card = cardOf([project({ id: "a", dueInMs: HOUR, estimatedAgoMs: 3 * HOUR })]);
     expect([card.estimateLabel, card.estimateTone]).toEqual([
@@ -235,6 +245,48 @@ describe("buildProjectCards folds", () => {
     });
     expect(summary.cards.length).toBe(5);
     expect(summary.more.length).toBe(0);
+  });
+
+  it("an overdue idle goal sorts before idle goals so it never folds behind +N more", () => {
+    const summary = buildProjectCards({
+      projects: [
+        project({ id: "live-a", lastActivityAgoMs: 4 * HOUR }),
+        project({ id: "live-b", lastActivityAgoMs: 3 * HOUR }),
+        project({
+          id: "late",
+          dueInMs: -2 * HOUR,
+          estimatedAgoMs: 5 * HOUR,
+          lastActivityAgoMs: 10 * HOUR,
+        }),
+        project({ id: "fresh", lastActivityAgoMs: HOUR }),
+        project({ id: "older", lastActivityAgoMs: 2 * HOUR }),
+      ],
+      tasks: [
+        task({
+          id: "t-a",
+          botId: "builder",
+          status: "running",
+          projectId: "live-a",
+          updatedAgoMs: 4 * HOUR,
+        }),
+        task({
+          id: "t-b",
+          botId: "builder",
+          status: "running",
+          projectId: "live-b",
+          updatedAgoMs: 3 * HOUR,
+        }),
+      ],
+      nowMs: NOW,
+      botName,
+    });
+    expect(summary.cards.map((card) => card.projectId)).toEqual([
+      "live-b",
+      "live-a",
+      "late",
+      "fresh",
+    ]);
+    expect(summary.more.map((card) => card.projectId)).toEqual(["older"]);
   });
 
   it("no projects gives nothing to draw", () => {

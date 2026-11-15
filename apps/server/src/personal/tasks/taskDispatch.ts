@@ -258,7 +258,7 @@ export const makeTaskDispatch = (
           stillRunningTitles: stillRunning.map((handoff) => handoff.brief.title),
           notes,
           sections: taskSections(task, null),
-          projectNudge: leadsOpenProject ? projectResultNudge(project.name) : null,
+          projectNudge: leadsOpenProject ? projectResultNudge(project) : null,
         }),
         marker: marker(
           "continuation",

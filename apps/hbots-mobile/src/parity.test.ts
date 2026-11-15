@@ -54,6 +54,7 @@ const A12_ITEMS = [
   "rpc:personalTasksGet",
   "rpc:personalTasksRelated",
   "rpc:personalTasksHistory",
+  "rpc:personalWorkSince",
   "rpc:personalRoutinesList",
   "rpc:personalTasksCancel",
   "rpc:personalTasksRetry",

@@ -23,6 +23,7 @@ export const tokens = {
   border: "#33332f",
   borderStrong: "#6f6f6b",
   track: "#3f3f3c",
+  info: "#4a8cff",
   avatarHalo: "#6f6f6b",
   scrim: "rgba(0,0,0,0.55)",
 } as const;

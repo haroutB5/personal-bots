@@ -1,10 +1,13 @@
 import type {
   EnvironmentId,
+  PersonalProjectHistoryResult,
+  PersonalProjectId,
   PersonalProjectListResult,
   PersonalRoutineListResult,
   PersonalTask,
   PersonalTaskDetail,
   PersonalTaskId,
+  PersonalWorkSinceResult,
   ThreadId,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
@@ -66,6 +69,21 @@ export function createPersonalAutomationClient<R, ER>(
   const personalProjectsList = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "personal-projects:list",
     tag: WS_METHODS.personalProjectsList,
+    staleTimeMs: 5_000,
+    refreshIntervalMs: 30_000,
+  });
+
+  /** One goal's recorded plan changes and linked tasks, while its sheet is open. */
+  const personalProjectsHistory = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-projects:history",
+    tag: WS_METHODS.personalProjectsHistory,
+    staleTimeMs: 5_000,
+  });
+
+  /** What happened before the Work tab's seen marker, newest first. */
+  const personalWorkSince = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-work:since",
+    tag: WS_METHODS.personalWorkSince,
     staleTimeMs: 5_000,
     refreshIntervalMs: 30_000,
   });
@@ -208,6 +226,42 @@ export function createPersonalAutomationClient<R, ER>(
     return useEnvironmentQuery(atom);
   }
 
+  /** One goal's history while its sheet is open; null input keeps the request off. */
+  function usePersonalProjectHistory(
+    environmentId: EnvironmentId | null,
+    projectId: string | null,
+  ): EnvironmentQueryView<PersonalProjectHistoryResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || projectId === null
+          ? null
+          : personalProjectsHistory({
+              environmentId,
+              input: { projectId: projectId as PersonalProjectId },
+            }),
+      [environmentId, projectId],
+    );
+    return useEnvironmentQuery(atom);
+  }
+
+  /** The digest for `sinceIso` (a server asOf); null input keeps the request off. */
+  function usePersonalWorkSince(
+    environmentId: EnvironmentId | null,
+    sinceIso: string | null,
+  ): EnvironmentQueryView<PersonalWorkSinceResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || sinceIso === null
+          ? null
+          : personalWorkSince({
+              environmentId,
+              input: { since: sinceIso },
+            }),
+      [environmentId, sinceIso],
+    );
+    return useEnvironmentQuery(atom);
+  }
+
   return {
     personalTasksFeed,
     personalTaskDetail,
@@ -215,6 +269,8 @@ export function createPersonalAutomationClient<R, ER>(
     personalTaskHistory,
     personalRoutinesList,
     personalProjectsList,
+    personalProjectsHistory,
+    personalWorkSince,
     personalTaskCancel,
     personalTaskRetry,
     personalRoutineCreate,
@@ -231,6 +287,8 @@ export function createPersonalAutomationClient<R, ER>(
     usePersonalRelatedTasks,
     usePersonalRoutines,
     usePersonalProjects,
+    usePersonalProjectHistory,
+    usePersonalWorkSince,
   };
 }
 

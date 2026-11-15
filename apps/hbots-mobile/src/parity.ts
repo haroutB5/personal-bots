@@ -155,6 +155,8 @@ export const DONE_ITEMS: readonly string[] = [
   "rpc:personalTasksRelated",
   "rpc:personalTasksHistory",
   "rpc:personalProjectsList",
+  "rpc:personalProjectsHistory",
+  "rpc:personalWorkSince",
   "rpc:personalRoutinesList",
   "rpc:personalTasksCancel",
   "rpc:personalTasksRetry",

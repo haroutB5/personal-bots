@@ -8,7 +8,7 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 439,
+    "items": 441,
     "byKind": {
       "screen": 75,
       "sheet": 25,
@@ -16,10 +16,10 @@
       "card": 24,
       "setting": 105,
       "pref": 14,
-      "rpc": 132
+      "rpc": 134
     },
     "byStatus": {
-      "done": 385,
+      "done": 387,
       "planned": 0,
       "n/a": 54,
       "unassigned": 0
@@ -35,7 +35,7 @@
       "A11": 17,
       "A16": 22,
       "A13": 9,
-      "A12": 42,
+      "A12": 44,
       "A1": 4,
       "A17": 1,
       "X4": 20,
@@ -10365,7 +10365,7 @@
       "id": "rpc:personalProjectsList",
       "kind": "rpc",
       "title": "personalProjectsList (query)",
-      "web": "packages/personal-client/src/automation/automationClient.ts:68",
+      "web": "packages/personal-client/src/automation/automationClient.ts:71",
       "rpcKind": "query",
       "wire": null,
       "contract": null,
@@ -10373,6 +10373,32 @@
       "pr": "A12",
       "status": "done",
       "check": "Android calls personalProjectsList (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalProjectsHistory",
+      "kind": "rpc",
+      "title": "personalProjectsHistory (query)",
+      "web": "packages/personal-client/src/automation/automationClient.ts:79",
+      "rpcKind": "query",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "pr": "A12",
+      "status": "done",
+      "check": "Android calls personalProjectsHistory (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalWorkSince",
+      "kind": "rpc",
+      "title": "personalWorkSince (query)",
+      "web": "packages/personal-client/src/automation/automationClient.ts:86",
+      "rpcKind": "query",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "pr": "A12",
+      "status": "done",
+      "check": "Android calls personalWorkSince (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalBotsList",

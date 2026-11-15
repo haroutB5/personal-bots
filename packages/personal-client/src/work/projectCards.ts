@@ -23,6 +23,7 @@ export interface ProjectCard {
   readonly leadBotId: string;
   readonly threadId: string | null;
   readonly name: string;
+  readonly why: string | null;
   readonly steps: ReadonlyArray<PersonalProjectStep>;
   /** One per step, in order: done filled, doing green, todo empty. */
   readonly segments: ReadonlyArray<PersonalProjectStepState>;
@@ -69,6 +70,23 @@ export const formatSpan = (ms: number): string => {
   return `${Math.round(ms / (24 * HOUR))} d`;
 };
 
+/**
+ * How long is left, in the card's own words. Under an hour stays exact. Above
+ * it, round to the nearest half hour so "About 1 h 30 min left" is truthful and
+ * "About 1 h left" is not shown for an hour and a half.
+ */
+export const formatTimeLeft = (ms: number): string => {
+  const minutes = Math.max(1, Math.round(ms / MINUTE));
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 48 * 60) {
+    const rounded = Math.max(60, Math.round(minutes / 30) * 30);
+    const hours = Math.floor(rounded / 60);
+    const rest = rounded % 60;
+    return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+  }
+  return formatSpan(ms);
+};
+
 const isActive = (task: PersonalTask) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status);
 
 const namesOf = (botIds: ReadonlyArray<string>, botName: (botId: string) => string) => {
@@ -95,7 +113,7 @@ const estimateOf = (
       estimate,
     };
   }
-  const left = `About ${formatSpan(dueMs - nowMs)} left`;
+  const left = `About ${formatTimeLeft(dueMs - nowMs)} left`;
   const age = nowMs - estimatedMs;
   return age < FRESH_ESTIMATE_MS
     ? { estimateLabel: left, estimateTone: "secondary", estimate }
@@ -205,6 +223,7 @@ export function buildProjectCards(input: {
       leadBotId: project.leadBotId,
       threadId: project.threadId,
       name: project.name,
+      why: project.why ?? null,
       steps: project.steps,
       segments: project.steps.map((step) => step.state),
       ...estimateOf(project, nowMs),
@@ -214,9 +233,12 @@ export function buildProjectCards(input: {
       lastActivityMs,
     });
   }
+  // Live work first. An overdue goal outranks every idle one so it can never
+  // be the card that folds behind "+N more".
+  const rank = (card: ProjectCard) =>
+    card.activeTaskIds.length > 0 ? 0 : card.estimateTone === "overdue" ? 1 : 2;
   const byActivity = (a: ProjectCard, b: ProjectCard) =>
-    Number(b.activeTaskIds.length > 0) - Number(a.activeTaskIds.length > 0) ||
-    b.lastActivityMs - a.lastActivityMs;
+    rank(a) - rank(b) || b.lastActivityMs - a.lastActivityMs;
   const isQuiet = (card: ProjectCard) =>
     card.activeTaskIds.length === 0 && nowMs - card.lastActivityMs >= PROJECT_QUIET_MS;
   const awake = open.filter((card) => !isQuiet(card)).toSorted(byActivity);

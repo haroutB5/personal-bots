@@ -41,7 +41,7 @@ function Segments({ steps }: { readonly steps: ReadonlyArray<PersonalProjectStep
   );
 }
 
-function GoalRow({
+export function GoalRow({
   row,
   bot,
   onSelect,
