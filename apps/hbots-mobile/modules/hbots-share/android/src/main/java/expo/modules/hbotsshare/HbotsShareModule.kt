@@ -6,17 +6,23 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.net.URI
 
-/** The file a file:// uri names, only when it sits inside `cacheDir`. */
-internal fun cachedFile(cacheDir: File, uri: String): File? {
+/**
+ * The file a file:// uri names, only when it sits inside `cacheDir` or one of `roots`. The camera
+ * module keeps its captured photo in `filesDir/camera`; every picker still lands in cache.
+ */
+internal fun cachedFile(cacheDir: File, uri: String, vararg roots: File): File? {
   val parsed = try {
     URI(uri)
   } catch (_: Exception) {
     return null
   }
   if (parsed.scheme != "file" || parsed.path == null) return null
-  val file = File(parsed.path).canonicalFile
-  val root = cacheDir.canonicalFile
-  return if (file.isFile && file.path.startsWith(root.path + File.separator)) file else null
+  val file = runCatching { File(parsed.path).canonicalFile }.getOrNull() ?: return null
+  if (!file.isFile) return null
+  val allowed = (listOf(cacheDir) + roots).any { root ->
+    runCatching { file.path.startsWith(root.canonicalFile.path + File.separator) }.getOrDefault(false)
+  }
+  return if (allowed) file else null
 }
 
 class HbotsShareModule : Module() {
@@ -52,12 +58,15 @@ class HbotsShareModule : Module() {
     }
 
     /**
-     * Shrinks a photo the composer just took in (see PhotoShrink). Reads only files in this app's
-     * cache, where every picker and the share intake put their copies. Null keeps the original.
+     * Shrinks a photo the composer just took in (see PhotoShrink). Reads files in this app's cache,
+     * where every picker and the share intake put their copies, and the camera module's capture.
+     * Null keeps the original.
      */
     AsyncFunction("shrinkPhoto") { uri: String, mimeType: String ->
       val context = app() ?: return@AsyncFunction null
-      val source = cachedFile(context.cacheDir, uri) ?: return@AsyncFunction null
+      // Same folder hbots-camera writes its launch into.
+      val cameraDir = File(context.filesDir, "camera")
+      val source = cachedFile(context.cacheDir, uri, cameraDir) ?: return@AsyncFunction null
       val shrunk = (
         try {
           PhotoShrink.shrink(source, mimeType)
@@ -67,6 +76,8 @@ class HbotsShareModule : Module() {
           null
         }
       ) ?: return@AsyncFunction null
+      // A camera capture is single use: the draft now points at the shrunk copy.
+      if (source.path.startsWith(cameraDir.canonicalFile.path + File.separator)) source.delete()
       mapOf(
         "uri" to Uri.fromFile(shrunk.file).toString(),
         "width" to shrunk.width,

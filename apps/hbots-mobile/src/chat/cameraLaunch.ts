@@ -1,4 +1,5 @@
 import type { ComposerNotice } from "./attachSheetModel";
+import type { CameraClaim } from "./hbotsCamera";
 
 /** How long the system camera gets to leave the app before the in-app camera opens. */
 export const CAMERA_OPEN_MS = 1500;
@@ -102,20 +103,26 @@ export function watchCameraLaunch(input: {
   };
 }
 
-/** One camera launch at a time, so the chat that launched it owns the recovered photo. */
-export function cameraLaunchKey(environmentId: string): string {
-  return `t3code:camera-launch:v1:${environmentId}`;
-}
+/** What a claim turns into. One mapping for the live launch, a recreated activity and a killed process. */
+export type CameraClaimAction =
+  | { readonly kind: "add"; readonly uri: string; readonly bytes: number }
+  | { readonly kind: "none" }
+  | { readonly kind: "log"; readonly reason: string };
 
 /**
- * A pending system-camera photo belongs to the chat that launched the camera. Without a
- * recorded chat the first composer to mount recovers it, as before the marker existed.
+ * The only way a claimed launch becomes a draft. A photo is added once; a backed-out launch
+ * leaves a line in the log; another chat's launch and no launch at all add nothing.
  */
-export function pendingLaunchOwner(
-  pendingThreadId: string | null,
-  threadId: string,
-): "claim" | "skip" {
-  return pendingThreadId === null || pendingThreadId === threadId ? "claim" : "skip";
+export function claimAction(claim: CameraClaim | null): CameraClaimAction {
+  if (claim === null) return { kind: "none" };
+  switch (claim.status) {
+    case "photo":
+      return { kind: "add", uri: claim.uri, bytes: claim.bytes };
+    case "empty":
+      return { kind: "log", reason: "recovered launch empty" };
+    case "other":
+      return { kind: "none" };
+  }
 }
 
 /** Expo errors carry a code; anything else is named unknown so the notice still names a cause. */
@@ -130,12 +137,6 @@ export function cameraFailure(error: unknown): CameraFailure {
     return { code, message };
   }
   return { code: "unknown", message: String(error) };
-}
-
-/** The unregistered launcher rejection stays broken until the app process restarts. */
-export function isStuckLauncherFailure(failure: CameraFailure): boolean {
-  const text = `${failure.code} ${failure.message}`.toLowerCase();
-  return text.includes("unregistered") || text.includes("activityresultlauncher");
 }
 
 /** A capture the camera saved as a black frame must not land as a draft silently. */

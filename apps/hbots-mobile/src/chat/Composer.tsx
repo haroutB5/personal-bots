@@ -85,13 +85,12 @@ import {
   CAMERA_OPEN_MS,
   cameraFailure,
   cameraLaunchDecision,
-  cameraLaunchKey,
   cameraLaunchNotice,
-  isStuckLauncherFailure,
-  pendingLaunchOwner,
+  claimAction,
   photoLaunchNotice,
   watchCameraLaunch,
 } from "./cameraLaunch";
+import { HbotsCamera } from "./hbotsCamera";
 import { ComposerHost } from "./ComposerHost";
 import { embeddedPickerAvailable } from "./PhotoStrip";
 import { keyboardImages, releasedIntakes } from "./composerInput";
@@ -310,8 +309,6 @@ export function Composer({
   const addCameraAsset = async (
     asset: {
       readonly uri: string;
-      readonly width: number;
-      readonly height: number;
       readonly fileName?: string | null;
       readonly fileSize?: number;
     },
@@ -329,46 +326,43 @@ export function Composer({
     ]);
   };
 
-  // Android can kill this activity during a system camera launch. The photo it saved comes back
-  // here after the composer mounts again, so it lands as a draft instead of being lost. The
-  // launch marker keeps that recovery in the chat that opened the camera.
+  const cameraOwner = `${native.environmentId}/${threadId}`;
+
+  const claimCameraPhoto = async (source: string): Promise<boolean> => {
+    const action = claimAction(await HbotsCamera.claim(cameraOwner));
+    if (action.kind === "log") {
+      console.info(`[camera] ${action.reason}`);
+      return false;
+    }
+    if (action.kind === "none") return false;
+    await addCameraAsset({ uri: action.uri, fileSize: action.bytes, fileName: null }, source);
+    return true;
+  };
+
+  // Android can destroy this activity or kill the process during a system camera launch. The
+  // native module recorded the launching chat and the photo file before the camera opened, so
+  // the composer that mounts next claims the photo once. The r4 kv marker is cleared here.
   const pendingChecked = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     if (pendingChecked.current) return;
     pendingChecked.current = true;
-    const launchKey = cameraLaunchKey(native.environmentId);
-    const pendingThread = native.client.ports.kv.getItem(launchKey);
-    if (pendingLaunchOwner(pendingThread, threadId) === "skip") {
-      console.info("[camera] pending result belongs to another chat");
-      return;
-    }
+    native.client.ports.kv.removeItem(`t3code:camera-launch:v1:${native.environmentId}`);
     void (async () => {
       try {
-        const pending = await ImagePicker.getPendingResultAsync();
-        if (pendingThread !== null) native.client.ports.kv.removeItem(launchKey);
-        if (pending === null) {
-          if (pendingThread !== null) console.info("[camera] pending result none");
-          return;
-        }
-        if ("code" in pending) {
-          const failure = cameraFailure(pending);
-          console.warn(
-            `[camera] pending result failed code=${failure.code} message=${failure.message}`,
-          );
-          return;
-        }
-        if (pending.canceled) return;
-        const asset = pending.assets[0];
-        if (asset === undefined) return;
-        await addCameraAsset(asset, "recovered");
+        await claimCameraPhoto("recovered");
       } catch (error) {
         const failure = cameraFailure(error);
-        console.warn(
-          `[camera] pending result failed code=${failure.code} message=${failure.message}`,
-        );
+        console.warn(`[camera] claim failed code=${failure.code} message=${failure.message}`);
       }
     })();
-    // eslint-disable-next-line react/exhaustive-effect-dependencies -- recover once per composer mount
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- claim once per composer mount
   }, []);
 
   /** An image from the keyboard: the share intake's caps and refusals, then a draft attachment. */
@@ -442,9 +436,9 @@ export function Composer({
   };
 
   /**
-   * The system camera can stay pending on Android 16 until a lifecycle change, and a recreated
-   * activity leaves its launcher unregistered. Both end in the in-app camera once the app has
-   * stayed in the foreground for CAMERA_OPEN_MS. The camera taking the screen stops that wait.
+   * The camera intent stays pending when no camera app takes the screen, so a launch still
+   * pending after CAMERA_OPEN_MS of foreground time opens the in-app camera instead. The camera
+   * taking the screen stops that wait, and a real rejection opens the in-app camera at once.
    */
   const launchSystemCamera = async () => {
     const watch = watchCameraLaunch({
@@ -454,17 +448,9 @@ export function Composer({
     const appState = AppState.addEventListener("change", (state) => {
       if (state !== "active") watch.background();
     });
-    let asset: ImagePicker.ImagePickerAsset | undefined;
-    const launch = ImagePicker.launchCameraAsync({ quality: 1 });
+    const launch = HbotsCamera.launch(cameraOwner);
     void launch.then(
-      (result) => {
-        if (result.canceled) {
-          watch.settle({ kind: "cancelled" });
-          return;
-        }
-        asset = result.assets[0];
-        watch.settle({ kind: "succeeded" });
-      },
+      (saved) => watch.settle(saved ? { kind: "succeeded" } : { kind: "cancelled" }),
       (error) => watch.settle({ kind: "rejected", failure: cameraFailure(error) }),
     );
 
@@ -473,7 +459,7 @@ export function Composer({
     const decision = cameraLaunchDecision(outcome);
     if (decision.kind === "stop") return;
     if (decision.kind === "accept") {
-      if (asset !== undefined) await addCameraAsset(asset, "camera");
+      await claimCameraPhoto("camera");
       return;
     }
 
@@ -481,7 +467,6 @@ export function Composer({
       const failure = outcome.failure;
       console.warn(`[camera] launch failed code=${failure.code} message=${failure.message}`);
       setNotice(cameraLaunchNotice(failure));
-      if (isStuckLauncherFailure(failure)) systemCameraStuck.current = decision.reason;
       setCapture({ reason: decision.reason });
       return;
     }
@@ -492,12 +477,11 @@ export function Composer({
     setCapture({ reason: decision.reason });
     // A system camera that opens after the wait still wins: its photo closes the sheet.
     void launch.then(
-      (result) => {
-        if (result.canceled) return;
-        const late = result.assets[0];
-        if (late === undefined) return;
-        setCapture(null);
-        void addCameraAsset(late, "late");
+      (saved) => {
+        if (!saved || !mounted.current) return;
+        void claimCameraPhoto("late").then((added) => {
+          if (added) setCapture(null);
+        });
       },
       (error) => {
         const failure = cameraFailure(error);
@@ -521,7 +505,6 @@ export function Composer({
         setCapture({ reason: systemCameraStuck.current });
         return;
       }
-      native.client.ports.kv.setItem(cameraLaunchKey(native.environmentId), threadId);
       await launchSystemCamera();
     } catch (error) {
       const failure = cameraFailure(error);
