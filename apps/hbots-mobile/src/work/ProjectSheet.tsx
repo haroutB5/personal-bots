@@ -1,4 +1,5 @@
 import { formatSpan, type ProjectCard } from "@hbots/personal-client/work/projectCards";
+import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import type { PersonalBot, PersonalTask } from "@t3tools/contracts";
 import { StyleSheet, Text, View } from "react-native";
 
@@ -18,6 +19,7 @@ export function ProjectSheet({
   card,
   tasks,
   botMap,
+  chatTitles,
   nowMs,
   onClose,
   onOpenTask,
@@ -26,6 +28,7 @@ export function ProjectSheet({
   readonly card: ProjectCard | undefined;
   readonly tasks: ReadonlyMap<string, PersonalTask> | null;
   readonly botMap: ReadonlyMap<string, PersonalBot>;
+  readonly chatTitles: ReadonlyMap<string, string>;
   readonly nowMs: number;
   readonly onClose: () => void;
   readonly onOpenTask: (taskId: string) => void;
@@ -82,7 +85,7 @@ export function ProjectSheet({
             return (
               <SheetAction
                 key={taskId}
-                label={task.title}
+                label={taskDisplayTitle(task, chatTitles)}
                 detail={`${botMap.get(task.botId)?.name ?? "Removed bot"} · ${task.status.replaceAll("_", " ")}`}
                 onPress={() => {
                   onClose();

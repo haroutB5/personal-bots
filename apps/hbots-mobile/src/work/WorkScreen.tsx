@@ -25,6 +25,7 @@ import {
   type WorkTone,
 } from "@hbots/personal-client/work/workTimeline";
 import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
+import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import type { PersonalBot, PersonalTask, PersonalTaskId } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -302,6 +303,10 @@ export function WorkScreen({
     () => new Map<string, PersonalBot>((bots ?? []).map((bot) => [bot.botId, bot])),
     [bots],
   );
+  const chatTitles = useMemo(
+    () => new Map(shells.map((shell) => [shell.id as string, shell.title])),
+    [shells],
+  );
   const timeline = useMemo(() => {
     const botIdByThread = new Map<string, string>(
       (links ?? []).map((link) => [link.threadId, link.botId]),
@@ -312,9 +317,9 @@ export function WorkScreen({
       botIds: (bots ?? []).map((bot) => bot.botId),
       nowMs: now,
       rangeMs: workRangeMs(range, now),
-      chatTitles: new Map(shells.map((shell) => [shell.id as string, shell.title])),
+      chatTitles,
     });
-  }, [tasks, shells, links, bots, now, range]);
+  }, [tasks, shells, links, bots, now, range, chatTitles]);
   const view = useMemo(() => buildWorkNow(timeline), [timeline]);
   const projects = projectsQuery.data?.projects;
   const projectSummary = useMemo(
@@ -352,7 +357,10 @@ export function WorkScreen({
 
   const stop = async () => {
     if (task === undefined) return;
-    const confirmed = await confirmDestructive(stopTaskConfirmMessage(task.title), "Stop task");
+    const confirmed = await confirmDestructive(
+      stopTaskConfirmMessage(taskDisplayTitle(task, chatTitles)),
+      "Stop task",
+    );
     if (!confirmed) return;
     setBusy(true);
     setActionError(null);
@@ -607,6 +615,7 @@ export function WorkScreen({
         card={projectCard}
         tasks={tasks}
         botMap={botMap}
+        chatTitles={chatTitles}
         nowMs={now}
         onClose={() => setProjectId(null)}
         onOpenTask={onOpenTask}
