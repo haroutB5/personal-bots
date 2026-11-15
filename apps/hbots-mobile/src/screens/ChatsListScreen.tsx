@@ -16,8 +16,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { isChatArchived } from "@hbots/personal-client/bots/chatState";
+import { isThreadLive } from "@hbots/personal-client/bots/botSummaries";
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
 import { conversationChatTitle } from "@hbots/personal-client/feed/chatNames";
+import { chatGoalTags, chatRowTagLine } from "@hbots/personal-client/work/projectCards";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -28,6 +30,7 @@ import { ChatActionsSheet, type ChatActionRow } from "../sheets/ChatActionsSheet
 import { NewChatSheet } from "../sheets/NewChatSheet";
 import { RenameChatSheet } from "../sheets/RenameChatSheet";
 import { SnoozeSheet } from "../sheets/SnoozeSheet";
+import { GoalSheetHost } from "../work/GoalSheetHost";
 
 interface Row extends ChatActionRow {
   readonly unread: boolean;
@@ -45,12 +48,16 @@ export function ChatsListScreen({
   botId,
   onBack,
   onOpenChat,
+  onOpenBotChat,
+  onOpenTask,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
   readonly botId: string;
   readonly onBack: () => void;
   readonly onOpenChat: (threadId: string) => void;
+  readonly onOpenBotChat: (botId: string, threadId: string) => void;
+  readonly onOpenTask: (taskId: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const highRefresh = useHighRefresh();
@@ -64,6 +71,7 @@ export function ChatsListScreen({
   const [renameRow, setRenameRow] = useState<ChatActionRow | null>(null);
   const [snoozeMany, setSnoozeMany] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [goalId, setGoalId] = useState<string | null>(null);
 
   const archiveThreads = native.client.useAtomCommand(native.bots.personalBotArchiveThreads, {
     reportFailure: false,
@@ -104,6 +112,11 @@ export function ChatsListScreen({
         return rightAt - leftAt;
       });
   }, [botId, list.data, shells]);
+
+  // The goals poll every 30 s; the 7-day done window uses the row clock the
+  // list already shows, so it cannot drift from the times beside it.
+  const projects = native.automation.usePersonalProjects(native.environmentId).data?.projects;
+  const goalTags = useMemo(() => chatGoalTags(projects ?? [], now), [projects, now]);
 
   const selecting = selected.size > 0;
   const allSelected = rows.length > 0 && rows.every((row) => selected.has(row.link.threadId));
@@ -285,6 +298,10 @@ export function ChatsListScreen({
               item.link.newestMessage == null || item.link.newestMessage.hidden === true
                 ? ""
                 : item.link.newestMessage.text;
+            const tagLine = chatRowTagLine(
+              goalTags.get(item.link.threadId),
+              isThreadLive(item.shell),
+            );
             return (
               <Pressable
                 onPress={() =>
@@ -326,6 +343,41 @@ export function ChatsListScreen({
                       {preview}
                     </Text>
                   ) : null}
+                  {tagLine.kind === "none" ? null : (
+                    <View style={styles.tagRow}>
+                      {tagLine.kind === "noGoal" ? (
+                        <Text style={[styles.tag, styles.tagNeutral, styles.tagNeutralText]}>
+                          No goal
+                        </Text>
+                      ) : (
+                        <>
+                          {tagLine.goals.map((goal) => (
+                            <Pressable
+                              key={goal.projectId}
+                              onPress={() => setGoalId(goal.projectId)}
+                              disabled={selecting}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Goal ${goal.name}`}
+                              style={({ pressed }) => [
+                                styles.tag,
+                                pressed ? styles.tagPressed : null,
+                              ]}
+                            >
+                              <Text style={styles.tagText} numberOfLines={1}>
+                                {goal.name}
+                              </Text>
+                            </Pressable>
+                          ))}
+                          {tagLine.more > 0 ? (
+                            <Text style={styles.tagCount}>{`+${tagLine.more}`}</Text>
+                          ) : null}
+                          {tagLine.done > 0 ? (
+                            <Text style={styles.tagCount}>{`+${tagLine.done} done`}</Text>
+                          ) : null}
+                        </>
+                      )}
+                    </View>
+                  )}
                 </View>
                 {!selecting ? (
                   <Pressable
@@ -445,6 +497,19 @@ export function ChatsListScreen({
           onCreated={(threadId) => onOpenChat(threadId)}
         />
       ) : null}
+
+      {goalId === null ? null : (
+        <GoalSheetHost
+          native={native}
+          projectId={goalId}
+          onClose={() => setGoalId(null)}
+          onOpenTask={onOpenTask}
+          onOpenChat={(openBotId, threadId) => {
+            setGoalId(null);
+            onOpenBotChat(openBotId, threadId);
+          }}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -498,6 +563,20 @@ const styles = StyleSheet.create({
   rowTime: { marginLeft: "auto", color: tokens.textTertiary, fontSize: 13 },
   rowPreview: { color: tokens.textPreview, fontSize: 14, lineHeight: 19 },
   rowMenu: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  tagRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 1 },
+  tag: {
+    maxWidth: 140,
+    minHeight: 20,
+    justifyContent: "center",
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    backgroundColor: tokens.goalTagBg,
+  },
+  tagPressed: { opacity: 0.7 },
+  tagText: { color: tokens.goalTagText, fontSize: 11, lineHeight: 15 },
+  tagNeutral: { backgroundColor: tokens.fillMuted },
+  tagNeutralText: { color: tokens.textSecondary, fontSize: 11, lineHeight: 15 },
+  tagCount: { color: tokens.textTertiary, fontSize: 11, lineHeight: 15 },
   rowMenuText: { color: tokens.textSecondary, fontSize: 16, letterSpacing: 1 },
   check: {
     width: 22,
