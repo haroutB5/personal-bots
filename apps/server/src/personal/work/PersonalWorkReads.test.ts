@@ -17,9 +17,7 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalWorkReads from "./PersonalWorkReads.ts";
 
-const layer = PersonalTaskRepository.layer.pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const layer = PersonalTaskRepository.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const BOT = PersonalBotId.make("bot-developer");
 const SINCE = "2026-11-14T10:00:00.000Z";
@@ -115,22 +113,30 @@ const kinds = (events: ReadonlyArray<PersonalWorkEvent>) =>
   );
 
 describe("PersonalWorkReads.since", () => {
-  it.effect("a delegation completed one second before since is excluded and one after is included", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW_MS);
-      const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
-      yield* repository.insertTask(
-        makeTask("before", { createdAt: "2026-11-14T09:00:00.000Z", completedAt: "2026-11-14T09:59:59.000Z" }),
-      );
-      yield* repository.insertTask(
-        makeTask("after", { createdAt: "2026-11-14T09:00:00.000Z", completedAt: "2026-11-14T10:00:01.000Z" }),
-      );
+  it.effect(
+    "a delegation completed one second before since is excluded and one after is included",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
+        yield* repository.insertTask(
+          makeTask("before", {
+            createdAt: "2026-11-14T09:00:00.000Z",
+            completedAt: "2026-11-14T09:59:59.000Z",
+          }),
+        );
+        yield* repository.insertTask(
+          makeTask("after", {
+            createdAt: "2026-11-14T09:00:00.000Z",
+            completedAt: "2026-11-14T10:00:01.000Z",
+          }),
+        );
 
-      const result = yield* read;
+        const result = yield* read;
 
-      expect(kinds(result.events)).toEqual(["taskDone:after"]);
-      expect(result.asOf).toEqual(DateTime.makeUnsafe("2026-11-14T12:00:00.000Z"));
-    }).pipe(Effect.provide(layer)),
+        expect(kinds(result.events)).toEqual(["taskDone:after"]);
+        expect(result.asOf).toEqual(DateTime.makeUnsafe("2026-11-14T12:00:00.000Z"));
+      }).pipe(Effect.provide(layer)),
   );
 
   it.effect("a user-source completion is left out and a user-source failure is kept", () =>
@@ -166,16 +172,24 @@ describe("PersonalWorkReads.since", () => {
       const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
       const attempt = yield* insertAttempt;
       yield* repository.insertTask(
-        makeTask("limited", {
-          createdAt: "2026-11-14T09:00:00.000Z",
-          completedAt: null,
-        }, { status: "running" }),
+        makeTask(
+          "limited",
+          {
+            createdAt: "2026-11-14T09:00:00.000Z",
+            completedAt: null,
+          },
+          { status: "running" },
+        ),
       );
       yield* repository.insertTask(
-        makeTask("stalled", {
-          createdAt: "2026-11-14T09:00:00.000Z",
-          completedAt: null,
-        }, { status: "running" }),
+        makeTask(
+          "stalled",
+          {
+            createdAt: "2026-11-14T09:00:00.000Z",
+            completedAt: null,
+          },
+          { status: "running" },
+        ),
       );
       yield* attempt({
         taskId: "limited",
@@ -267,12 +281,10 @@ describe("PersonalWorkReads.since", () => {
 
       expect(result.events).toHaveLength(60);
       expect(result.omitted).toBe(5);
-      expect(result.events[0]?.kind === "taskDone" ? result.events[0].task.title : null).toBe(
-        "task-64",
-      );
-      expect(result.events.at(-1)?.kind === "taskDone" ? result.events.at(-1)?.task.title : null).toBe(
-        "task-05",
-      );
+      const newest = result.events[0];
+      const oldest = result.events.at(-1);
+      expect(newest?.kind === "taskDone" ? newest.task.title : null).toBe("task-64");
+      expect(oldest?.kind === "taskDone" ? oldest.task.title : null).toBe("task-05");
     }).pipe(Effect.provide(layer)),
   );
 
