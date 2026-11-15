@@ -7,6 +7,7 @@ import {
   cameraLaunchNotice,
   claimAction,
   isBlackPhoto,
+  launchClaimAllowed,
   photoLaunchNotice,
   watchCameraLaunch,
 } from "./cameraLaunch";
@@ -127,6 +128,34 @@ describe("watchCameraLaunch", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("launchClaimAllowed", () => {
+  /** The native record: a claim reads it once and clears it, like CameraLaunchStore. */
+  const launch = () => {
+    const store = { owner: "env-1/thread-1", photo: "camera/1.jpg" as string | null };
+    const claim = () => {
+      const photo = store.photo;
+      store.photo = null;
+      return photo;
+    };
+    return { store, claim };
+  };
+
+  it("leaves the record for the composer that mounts next when the launch resolves unmounted", () => {
+    const { store, claim } = launch();
+
+    expect(launchClaimAllowed(false) ? claim() : null).toBeNull();
+    expect(store.photo).toBe("camera/1.jpg");
+  });
+
+  it("claims the photo once from the composer still mounted for the launch", () => {
+    const { store, claim } = launch();
+
+    expect(launchClaimAllowed(true) ? claim() : null).toBe("camera/1.jpg");
+    expect(launchClaimAllowed(true) ? claim() : null).toBeNull();
+    expect(store.photo).toBeNull();
   });
 });
 

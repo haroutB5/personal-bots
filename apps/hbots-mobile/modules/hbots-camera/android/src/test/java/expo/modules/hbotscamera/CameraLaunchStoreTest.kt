@@ -134,4 +134,59 @@ class CameraLaunchStoreTest {
     assertFalse(file.exists())
     assertNull(store.claim(owner))
   }
+
+  @Test
+  fun discardDropsTheRecordAndFileOnlyForItsOwner() {
+    val owner = "env-1/thread-1"
+    val file = store.begin(owner, 1L)
+    file.writeBytes(byteArrayOf(1, 2, 3))
+
+    store.discard("env-1/thread-2")
+
+    assertTrue(file.isFile)
+    assertEquals(owner, records.read()?.owner)
+
+    store.discard(owner)
+
+    assertNull(records.read())
+    assertFalse(file.exists())
+  }
+
+  @Test
+  fun pruneDropsOldFilesNoRecordPointsTo() {
+    val now = 1_800_000_000_000L
+    val shot = store.begin("env-1/thread-1", now)
+    shot.writeBytes(byteArrayOf(1, 2, 3))
+    val orphan = File(dir, "orphan.jpg").apply {
+      writeBytes(byteArrayOf(4))
+      setLastModified(now - 25 * HOUR)
+    }
+    val recent = File(dir, "recent.jpg").apply {
+      writeBytes(byteArrayOf(5))
+      setLastModified(now - HOUR)
+    }
+
+    store.prune(now)
+
+    assertTrue(shot.isFile)
+    assertFalse(orphan.exists())
+    assertTrue(recent.isFile)
+  }
+
+  @Test
+  fun pruneKeepsAnOldFileTheRecordStillPointsTo() {
+    val now = 1_800_000_000_000L
+    val shot = store.begin("env-1/thread-1", 1L)
+    shot.writeBytes(byteArrayOf(1, 2, 3))
+    shot.setLastModified(now - 25 * HOUR)
+
+    store.prune(now)
+
+    assertTrue(shot.isFile)
+    assertTrue(store.claim("env-1/thread-1") is CameraClaim.Photo)
+  }
+
+  private companion object {
+    const val HOUR = 60 * 60 * 1000L
+  }
 }
