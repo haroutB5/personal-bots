@@ -237,6 +237,10 @@
       "types": "./src/work/projectCards.ts",
       "import": "./src/work/projectCards.ts"
     },
+    "./work/nowLine": {
+      "types": "./src/work/nowLine.ts",
+      "import": "./src/work/nowLine.ts"
+    },
     "./work/taskPresentation": {
       "types": "./src/work/taskPresentation.ts",
       "import": "./src/work/taskPresentation.ts"

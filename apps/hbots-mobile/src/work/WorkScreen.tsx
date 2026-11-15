@@ -24,6 +24,7 @@ import {
   type WorkTimeline,
   type WorkTone,
 } from "@hbots/personal-client/work/workTimeline";
+import { buildRunningView } from "@hbots/personal-client/work/nowLine";
 import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
 import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import type { PersonalBot, PersonalTask, PersonalTaskId } from "@t3tools/contracts";
@@ -45,6 +46,7 @@ const NOW_AT = 0.88;
 const TICK_COUNT = 4;
 const STRIPES = Array.from({ length: 64 }, (_, index) => index);
 const NO_TASKS: ReadonlyArray<PersonalTask> = [];
+const NO_TASK_MAP: ReadonlyMap<string, PersonalTask> = new Map();
 
 const TONE_COLOR: Record<WorkTone, string> = {
   working: tokens.working,
@@ -332,6 +334,21 @@ export function WorkScreen({
       }),
     [projects, tasks, now, botMap],
   );
+  const running = useMemo(
+    () =>
+      buildRunningView({
+        now: view,
+        tasks: tasks ?? NO_TASK_MAP,
+        summary: projectSummary,
+        notes: working.notes,
+        chatTitles,
+        botName: (botId) => botMap.get(botId)?.name ?? "Removed bot",
+        nowMs: now,
+      }),
+    [view, tasks, projectSummary, working.notes, chatTitles, botMap, now],
+  );
+  // With goals on screen, an empty "Not in a goal" group says nothing.
+  const looseHidden = projectSummary.cards.length > 0 && running.loose.length === 0;
   const projectCard =
     projectId === null
       ? undefined
@@ -401,37 +418,47 @@ export function WorkScreen({
             </View>
           )}
 
-          <ProjectCards summary={projectSummary} botMap={botMap} onOpen={setProjectId} />
+          <ProjectCards
+            summary={projectSummary}
+            rowsByProject={running.rowsByProject}
+            botMap={botMap}
+            onOpen={setProjectId}
+            onSelectRow={setSelectedId}
+          />
 
-          <Text style={styles.section} maxFontSizeMultiplier={1.3}>
-            Running now
-          </Text>
-          {view.running.length === 0 ? (
-            <Text style={styles.empty} testID="work-none-running" maxFontSizeMultiplier={1.6}>
-              No bot is working right now.
-            </Text>
-          ) : (
-            view.running.map((row) => (
-              <View key={row.key} style={styles.group} testID={`work-running-${row.key}`}>
-                <NowRow
-                  bar={row.lead}
-                  bot={botMap.get(row.lead.botId)}
-                  status={workBarTimeLabel(row.lead, timeline.nowMs)}
-                  helper={false}
-                  onSelect={setSelectedId}
-                />
-                {row.helpers.map((helper) => (
-                  <NowRow
-                    key={helper.id}
-                    bar={helper}
-                    bot={botMap.get(helper.botId)}
-                    status={workBarTimeLabel(helper, timeline.nowMs)}
-                    helper
-                    onSelect={setSelectedId}
-                  />
-                ))}
-              </View>
-            ))
+          {looseHidden ? null : (
+            <>
+              <Text style={styles.section} testID="work-loose-header" maxFontSizeMultiplier={1.3}>
+                {running.looseHeader}
+              </Text>
+              {running.loose.length === 0 ? (
+                <Text style={styles.empty} testID="work-none-running" maxFontSizeMultiplier={1.6}>
+                  No bot is working right now.
+                </Text>
+              ) : (
+                running.loose.map((row) => (
+                  <View key={row.key} style={styles.group} testID={`work-running-${row.key}`}>
+                    <NowRow
+                      bar={row.lead}
+                      bot={botMap.get(row.lead.botId)}
+                      status={workBarTimeLabel(row.lead, timeline.nowMs)}
+                      helper={false}
+                      onSelect={setSelectedId}
+                    />
+                    {row.helpers.map((helper) => (
+                      <NowRow
+                        key={helper.id}
+                        bar={helper}
+                        bot={botMap.get(helper.botId)}
+                        status={workBarTimeLabel(helper, timeline.nowMs)}
+                        helper
+                        onSelect={setSelectedId}
+                      />
+                    ))}
+                  </View>
+                ))
+              )}
+            </>
           )}
 
           {idleNames.length === 0 ? null : (
