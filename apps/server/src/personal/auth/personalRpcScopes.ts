@@ -73,6 +73,7 @@ export const PERSONAL_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalFilesDeleteMany]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalTasksList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalProjectsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalProjectsHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksGet]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksHistory]: AuthOrchestrationReadScope,

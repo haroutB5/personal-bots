@@ -4,6 +4,7 @@ import {
   McpCapabilityUnavailableError,
   PERSONAL_GROUP_VOTE_MAX_OPTIONS,
   PERSONAL_GROUP_VOTE_MIN_OPTIONS,
+  PERSONAL_PROJECT_WHY_MAX,
   PersonalBotNotificationMute,
   PersonalGroupVoteId,
   PersonalGroupVoteStatus,
@@ -252,6 +253,11 @@ export const UpdateProjectInput = Schema.Struct({
     Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10_080 }))).annotate({
       description:
         "Your estimate of minutes until it ships, 1 to 10080. null clears; left out keeps.",
+    }),
+  ),
+  why: Schema.optional(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(PERSONAL_PROJECT_WHY_MAX))).annotate({
+      description: "Why this goal matters, one plain line. Empty string clears; left out keeps.",
     }),
   ),
   close: Schema.optional(

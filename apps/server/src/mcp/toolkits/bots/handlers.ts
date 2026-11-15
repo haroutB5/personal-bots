@@ -717,6 +717,7 @@ const make = Effect.gen(function* () {
             name: input.name,
             ...(input.steps === undefined ? {} : { steps: input.steps }),
             ...(input.minutesLeft === undefined ? {} : { minutesLeft: input.minutesLeft }),
+            ...(input.why === undefined ? {} : { why: input.why }),
             ...(input.close === undefined ? {} : { close: input.close }),
           })
           .pipe(Effect.mapError(readable));

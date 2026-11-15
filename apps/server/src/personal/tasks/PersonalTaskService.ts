@@ -299,6 +299,11 @@ export class PersonalTaskService extends Context.Service<
     readonly list: (
       filter: PersonalTaskListInput,
     ) => Effect.Effect<PersonalTaskListResult, PersonalTasksError>;
+    /** A project's linked tasks, newest first, at most `limit`. */
+    readonly projectTasks: (input: {
+      readonly projectId: PersonalProjectId;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTasksError>;
     /**
      * Unfinished tasks and the newest finished ones as upserts, then live
      * upserts; all as summaries (see `toTaskSummary`).
@@ -493,6 +498,7 @@ export const make = Effect.gen(function* () {
     get,
     history,
     list,
+    projectTasks,
     recordNotifyDecision,
     related,
     subscribe,
@@ -556,6 +562,7 @@ export const make = Effect.gen(function* () {
     recordNotifyDecision,
     chatHistory,
     list,
+    projectTasks,
     subscribe,
     history,
     related,

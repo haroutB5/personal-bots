@@ -160,6 +160,12 @@ export const makeTaskQueries = (core: TaskCore) => {
       toPublic("list"),
     );
 
+  const projectTasks: PersonalTaskService["Service"]["projectTasks"] = (input) =>
+    repository.listProjectTasks(input).pipe(
+      Effect.map((tasks) => [...tasks]),
+      toPublic("projectTasks"),
+    );
+
   // Subscribe before reading the replay so no change falls in between; a
   // task changed in that window is sent twice, which upserts absorb.
   const subscribe: PersonalTaskService["Service"]["subscribe"] = Stream.unwrap(
@@ -214,6 +220,7 @@ export const makeTaskQueries = (core: TaskCore) => {
     get,
     history,
     list,
+    projectTasks,
     recordNotifyDecision,
     related,
     subscribe,

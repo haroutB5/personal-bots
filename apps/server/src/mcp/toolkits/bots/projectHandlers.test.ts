@@ -141,6 +141,25 @@ describe("update_project", () => {
       }),
     );
   });
+
+  it.effect("why is stored, kept when left out and cleared by an empty string", () => {
+    const { run, call } = harness({ lead: true });
+    return run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const why = () =>
+          sql<{ readonly why: string | null }>`
+            SELECT why FROM personal_projects WHERE lead_bot_id = ${LEAD}
+          `.pipe(Effect.map((rows) => rows[0]?.why ?? null));
+        yield* call("update_project", { name: "Kino", steps: STEPS, why: "Why it matters" });
+        expect(yield* why()).toBe("Why it matters");
+        yield* call("update_project", { name: "Kino" });
+        expect(yield* why()).toBe("Why it matters");
+        yield* call("update_project", { name: "Kino", why: "" });
+        expect(yield* why()).toBeNull();
+      }),
+    );
+  });
 });
 
 describe("delegate_task with a project", () => {

@@ -82,6 +82,7 @@ export * from "./personalLeadBots.ts";
 export * from "./personalProgressNote.ts";
 export * from "./personalTasks.ts";
 export * from "./personalProjects.ts";
+export * from "./personalProjectHistory.ts";
 export * from "./personalWork.ts";
 export * from "./personalChatNotices.ts";
 export * from "./personalVoiceCallSettings.ts";

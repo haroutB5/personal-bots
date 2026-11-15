@@ -29,6 +29,8 @@ export const PersonalProjectState = Schema.Union([
 ]);
 export type PersonalProjectState = typeof PersonalProjectState.Type;
 
+export const PERSONAL_PROJECT_WHY_MAX = 140;
+
 /**
  * Work a team lead keeps across many tasks. The lead writes the name, the
  * steps and the estimate; which tasks belong to it is `projectId` on the task,
@@ -46,6 +48,10 @@ export const PersonalProject = Schema.Struct({
   lastActivityAt: Schema.DateTimeUtcFromString,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
+  /** One plain line from the lead on why this goal matters. Absent on old servers. */
+  why: Schema.optional(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(PERSONAL_PROJECT_WHY_MAX))),
+  ),
 });
 export type PersonalProject = typeof PersonalProject.Type;
 
@@ -54,3 +60,24 @@ export const PersonalProjectListResult = Schema.Struct({
   projects: Schema.Array(PersonalProject),
 });
 export type PersonalProjectListResult = typeof PersonalProjectListResult.Type;
+
+/** One durable change to a goal's plan, as the lead's updates recorded it. */
+export const PersonalProjectHistoryEntry = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("step"),
+    at: Schema.DateTimeUtcFromString,
+    label: Schema.String,
+    state: PersonalProjectStepState,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("replanned"),
+    at: Schema.DateTimeUtcFromString,
+    steps: Schema.Number,
+  }),
+]);
+export type PersonalProjectHistoryEntry = typeof PersonalProjectHistoryEntry.Type;
+
+export const PersonalProjectHistoryInput = Schema.Struct({
+  projectId: PersonalProjectId,
+});
+export type PersonalProjectHistoryInput = typeof PersonalProjectHistoryInput.Type;

@@ -24,7 +24,7 @@ import {
   type WorkTimeline,
   type WorkTone,
 } from "@hbots/personal-client/work/workTimeline";
-import { buildRunningView } from "@hbots/personal-client/work/nowLine";
+import { buildRunningView, type GoalNowRow } from "@hbots/personal-client/work/nowLine";
 import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
 import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import { buildWorkDigest } from "@hbots/personal-client/work/workDigest";
@@ -52,6 +52,7 @@ const TICK_COUNT = 4;
 const STRIPES = Array.from({ length: 64 }, (_, index) => index);
 const NO_TASKS: ReadonlyArray<PersonalTask> = [];
 const NO_TASK_MAP: ReadonlyMap<string, PersonalTask> = new Map();
+const NO_GOAL_ROWS: ReadonlyArray<GoalNowRow> = [];
 
 const TONE_COLOR: Record<WorkTone, string> = {
   working: tokens.working,
@@ -422,6 +423,13 @@ export function WorkScreen({
       : [...projectSummary.cards, ...projectSummary.more, ...projectSummary.quiet].find(
           (entry) => entry.projectId === projectId,
         );
+  const project =
+    projectId === null
+      ? null
+      : ((projects ?? []).find((entry) => entry.projectId === projectId) ?? null);
+  const projectRows =
+    projectId === null ? NO_GOAL_ROWS : (running.rowsByProject.get(projectId) ?? NO_GOAL_ROWS);
+  const projectHistory = native.automation.usePersonalProjectHistory(environmentId, projectId);
 
   const bar = selectedId === null ? undefined : workBarsById(timeline).get(selectedId);
   const group =
@@ -708,6 +716,9 @@ export function WorkScreen({
 
       <ProjectSheet
         card={projectCard}
+        project={project}
+        rows={projectRows}
+        history={projectHistory.data ?? null}
         tasks={tasks}
         botMap={botMap}
         chatTitles={chatTitles}

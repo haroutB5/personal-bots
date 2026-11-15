@@ -187,3 +187,156 @@ describe("PersonalProjectRepository.update", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+describe("PersonalProjectRepository history", () => {
+  const historyOf = Effect.gen(function* () {
+    const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+    const open = yield* projects.findOpen({ leadBotId: LEAD, name: "Kino" });
+    if (open === null) return [];
+    return yield* projects.history(open.projectId);
+  });
+
+  it.effect("a step change adds one entry per moved step and a repeat adds nothing", () =>
+    Effect.gen(function* () {
+      const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+      yield* projects.update({
+        leadBotId: LEAD,
+        threadId: null,
+        name: "Kino",
+        steps: [
+          { label: "Build", state: "doing" },
+          { label: "Verify", state: "todo" },
+        ],
+      });
+      yield* projects.update({
+        leadBotId: LEAD,
+        threadId: null,
+        name: "Kino",
+        steps: [
+          { label: "Build", state: "done" },
+          { label: "Verify", state: "doing" },
+        ],
+      });
+      const moved = yield* historyOf;
+      expect(
+        moved.map((entry) => (entry.kind === "step" ? [entry.label, entry.state] : entry.kind)),
+      ).toEqual([
+        ["Build", "done"],
+        ["Verify", "doing"],
+      ]);
+
+      yield* projects.update({
+        leadBotId: LEAD,
+        threadId: null,
+        name: "Kino",
+        steps: [
+          { label: "Build", state: "done" },
+          { label: "Verify", state: "doing" },
+        ],
+      });
+      expect(yield* historyOf).toHaveLength(2);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("changed labels add one replanned entry with the new step count", () =>
+    Effect.gen(function* () {
+      const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+      yield* projects.update({
+        leadBotId: LEAD,
+        threadId: null,
+        name: "Kino",
+        steps: [
+          { label: "Build", state: "doing" },
+          { label: "Verify", state: "todo" },
+        ],
+      });
+      yield* projects.update({
+        leadBotId: LEAD,
+        threadId: null,
+        name: "Kino",
+        steps: [
+          { label: "Build", state: "doing" },
+          { label: "Ship", state: "todo" },
+          { label: "Close out", state: "todo" },
+        ],
+      });
+      const history = yield* historyOf;
+      expect(history).toHaveLength(1);
+      expect(history[0]?.kind).toBe("replanned");
+      expect(history[0]?.kind === "replanned" ? history[0].steps : 0).toBe(3);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("45 single-step changes keep the newest 40 entries", () =>
+    Effect.gen(function* () {
+      const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+      yield* projects.update({
+        leadBotId: LEAD,
+        threadId: null,
+        name: "Kino",
+        steps: [
+          { label: "Build", state: "todo" },
+          { label: "Verify", state: "todo" },
+        ],
+      });
+      yield* Effect.forEach(
+        Array.from({ length: 45 }, (_, index) => index),
+        (index) =>
+          projects.update({
+            leadBotId: LEAD,
+            threadId: null,
+            name: "Kino",
+            steps: [
+              { label: "Build", state: index % 2 === 0 ? "done" : "todo" },
+              { label: "Verify", state: "todo" },
+            ],
+          }),
+        { discard: true },
+      );
+      expect(yield* historyOf).toHaveLength(40);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "why is stored, kept by a later call without it, and cleared by an empty string",
+    () => {
+      const why = "Harout can't keep up across chats";
+      return Effect.gen(function* () {
+        const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+        const created = yield* projects.update({
+          leadBotId: LEAD,
+          threadId: null,
+          name: "Kino",
+          steps: STEPS,
+          why,
+        });
+        expect(created.why).toBe(why);
+
+        const kept = yield* projects.update({
+          leadBotId: LEAD,
+          threadId: null,
+          name: "Kino",
+        });
+        expect(kept.why).toBe(why);
+
+        const cleared = yield* projects.update({
+          leadBotId: LEAD,
+          threadId: null,
+          name: "Kino",
+          why: "",
+        });
+        expect(cleared.why).toBeNull();
+
+        const tooLong = yield* Effect.flip(
+          projects.update({
+            leadBotId: LEAD,
+            threadId: null,
+            name: "Kino",
+            why: "x".repeat(141),
+          }),
+        );
+        expect(tooLong.message).toBe("Keep why to 140 characters.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});

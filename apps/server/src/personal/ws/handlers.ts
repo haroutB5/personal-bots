@@ -1,6 +1,7 @@
 import {
   AuthSessionId,
   EnvironmentAuthorizationError,
+  PERSONAL_PROJECT_HISTORY_TASKS_MAX,
   PersonalBotsError,
   PersonalPushError,
   ThreadId,
@@ -499,6 +500,19 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
         observeRpcEffect(
           WS_METHODS.personalProjectsList,
           personalProjects.list().pipe(Effect.map((projects) => ({ projects }))),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalProjectsHistory]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalProjectsHistory,
+          Effect.gen(function* () {
+            const history = yield* personalProjects.history(input.projectId);
+            const tasks = yield* personalTasks.projectTasks({
+              projectId: input.projectId,
+              limit: PERSONAL_PROJECT_HISTORY_TASKS_MAX,
+            });
+            return { history: [...history], tasks: [...tasks] };
+          }),
           { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.personalWorkSince]: (input) =>

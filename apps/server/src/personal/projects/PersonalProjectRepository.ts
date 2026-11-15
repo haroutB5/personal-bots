@@ -8,8 +8,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
+  PERSONAL_PROJECT_WHY_MAX,
   PersonalBotId,
   PersonalProjectId,
+  PersonalProjectHistoryEntry,
   PersonalProjectStep,
   PersonalTasksError,
   ThreadId,
@@ -20,6 +22,8 @@ import {
 export const PROJECT_NAME_MAX = 48;
 export const PROJECT_STEP_LABEL_MAX = 40;
 export const PROJECT_STEPS_MAX = 8;
+export const PROJECT_WHY_MAX = PERSONAL_PROJECT_WHY_MAX;
+export const PROJECT_HISTORY_MAX = 40;
 export const PROJECT_MINUTES_LEFT_MAX = 10_080;
 export const PROJECT_CLOSED_LIST_DAYS = 30;
 
@@ -32,6 +36,8 @@ export interface PersonalProjectUpdateInput {
   readonly steps?: ReadonlyArray<PersonalProjectStep>;
   /** Minutes from now; null clears the estimate; absent keeps it. */
   readonly minutesLeft?: number | null;
+  /** One plain line on why the goal matters; null or "" clears it; absent keeps it. */
+  readonly why?: string | null;
   readonly close?: PersonalProjectClose;
 }
 
@@ -48,8 +54,15 @@ const ProjectDbRow = Schema.Struct({
   lastActivityAt: Schema.DateTimeUtcFromString,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
+  why: Schema.NullOr(Schema.String),
+  history: Schema.fromJsonString(Schema.Array(PersonalProjectHistoryEntry)),
 });
 const decodeRow = Schema.decodeUnknownEffect(ProjectDbRow);
+
+interface ProjectRecord {
+  readonly project: PersonalProject;
+  readonly history: ReadonlyArray<PersonalProjectHistoryEntry>;
+}
 
 const PROJECT_COLUMNS = `
   p.project_id AS "projectId",
@@ -69,29 +82,73 @@ const PROJECT_COLUMNS = `
     )
   ) AS "lastActivityAt",
   p.created_at AS "createdAt",
-  p.updated_at AS "updatedAt"
+  p.updated_at AS "updatedAt",
+  p.why AS "why",
+  p.history_json AS "history"
 `;
 
-const toProject = (row: typeof ProjectDbRow.Type): PersonalProject => {
+const toRecord = (row: typeof ProjectDbRow.Type): ProjectRecord => {
   const state: PersonalProjectState =
     row.state === "open" || row.closedAt === null
       ? { kind: "open" }
       : { kind: row.state, closedAt: row.closedAt };
   return {
-    projectId: row.projectId,
-    leadBotId: row.leadBotId,
-    threadId: row.threadId,
-    name: row.name,
-    steps: row.steps,
-    estimate:
-      row.dueAt === null || row.estimatedAt === null
-        ? null
-        : { dueAt: row.dueAt, estimatedAt: row.estimatedAt },
-    state,
-    lastActivityAt: row.lastActivityAt,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    project: {
+      projectId: row.projectId,
+      leadBotId: row.leadBotId,
+      threadId: row.threadId,
+      name: row.name,
+      steps: row.steps,
+      estimate:
+        row.dueAt === null || row.estimatedAt === null
+          ? null
+          : { dueAt: row.dueAt, estimatedAt: row.estimatedAt },
+      state,
+      lastActivityAt: row.lastActivityAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      why: row.why,
+    },
+    history: row.history,
   };
+};
+
+/**
+ * What to append for one update: nothing when the steps are unchanged, one
+ * entry per moved step, or a replan when the labels changed. Newest first.
+ */
+const historyAfterUpdate = (
+  history: ReadonlyArray<PersonalProjectHistoryEntry>,
+  before: ReadonlyArray<PersonalProjectStep>,
+  after: ReadonlyArray<PersonalProjectStep> | undefined,
+  at: string,
+): ReadonlyArray<PersonalProjectHistoryEntry> => {
+  if (after === undefined) return history;
+  const sameLabels =
+    before.length === after.length &&
+    before.every((step, index) => step.label === after[index]?.label);
+  if (!sameLabels) {
+    const replanned: PersonalProjectHistoryEntry = {
+      kind: "replanned",
+      at: DateTime.makeUnsafe(at),
+      steps: after.length,
+    };
+    return [replanned, ...history].slice(0, PROJECT_HISTORY_MAX);
+  }
+  const moved = after.flatMap((step, index) => {
+    const previous = before[index];
+    return previous !== undefined && previous.state !== step.state
+      ? [
+          {
+            kind: "step" as const,
+            at: DateTime.makeUnsafe(at),
+            label: step.label,
+            state: step.state,
+          },
+        ]
+      : [];
+  });
+  return [...moved, ...history].slice(0, PROJECT_HISTORY_MAX);
 };
 
 const fail = (message: string) => new PersonalTasksError({ message });
@@ -111,6 +168,9 @@ export const projectInputProblem = (input: PersonalProjectUpdateInput): string |
     if (long !== undefined) {
       return `Keep each step label to ${PROJECT_STEP_LABEL_MAX} characters: "${long.label}".`;
     }
+  }
+  if (input.why !== undefined && input.why !== null && input.why.trim().length > PROJECT_WHY_MAX) {
+    return `Keep why to ${PROJECT_WHY_MAX} characters.`;
   }
   if (
     input.minutesLeft !== undefined &&
@@ -147,6 +207,10 @@ export class PersonalProjectRepository extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<PersonalProject>, PersonalTasksError>;
     /** Every open project, plus those closed in the last 30 days. */
     readonly list: () => Effect.Effect<ReadonlyArray<PersonalProject>, PersonalTasksError>;
+    /** One project's recorded plan changes, newest first. Empty when it is missing. */
+    readonly history: (
+      projectId: PersonalProjectId,
+    ) => Effect.Effect<ReadonlyArray<PersonalProjectHistoryEntry>, PersonalTasksError>;
     readonly removeForLead: (leadBotId: PersonalBotId) => Effect.Effect<void, PersonalTasksError>;
   }
 >()("t3/personal/projects/PersonalProjectRepository") {}
@@ -160,12 +224,15 @@ const make = Effect.gen(function* () {
   const decodeAll = (rows: ReadonlyArray<unknown>) =>
     Effect.forEach(rows, (row) =>
       decodeRow(row).pipe(
-        Effect.map(toProject),
+        Effect.map(toRecord),
         Effect.mapError(
           (cause) => new PersonalTasksError({ message: "A project row is invalid.", cause }),
         ),
       ),
     );
+
+  const projectsOf = (records: ReadonlyArray<ProjectRecord>) =>
+    records.map((record) => record.project);
 
   const selectOpen = (leadBotId: PersonalBotId, name: string) =>
     sql`
@@ -184,13 +251,18 @@ const make = Effect.gen(function* () {
       SELECT ${sql.literal(PROJECT_COLUMNS)} FROM personal_projects p
       WHERE p.lead_bot_id = ${leadBotId} AND p.state = 'open'
       ORDER BY "lastActivityAt" DESC, p.created_at DESC
-    `.pipe(Effect.mapError(sqlFailure("read")), Effect.flatMap(decodeAll));
+    `.pipe(Effect.mapError(sqlFailure("read")), Effect.flatMap(decodeAll), Effect.map(projectsOf));
 
   const get: PersonalProjectRepository["Service"]["get"] = (projectId) =>
-    selectById(projectId).pipe(Effect.map((rows) => rows[0] ?? null));
+    selectById(projectId).pipe(Effect.map((rows) => rows[0]?.project ?? null));
 
   const findOpen: PersonalProjectRepository["Service"]["findOpen"] = (input) =>
-    selectOpen(input.leadBotId, input.name.trim()).pipe(Effect.map((rows) => rows[0] ?? null));
+    selectOpen(input.leadBotId, input.name.trim()).pipe(
+      Effect.map((rows) => rows[0]?.project ?? null),
+    );
+
+  const history: PersonalProjectRepository["Service"]["history"] = (projectId) =>
+    selectById(projectId).pipe(Effect.map((rows) => rows[0]?.history ?? []));
 
   const openNames = (leadBotId: PersonalBotId) =>
     listOpenForLead(leadBotId).pipe(
@@ -207,6 +279,12 @@ const make = Effect.gen(function* () {
       if (problem !== null) return yield* fail(problem);
       const name = input.name.trim();
       const steps = input.steps?.map((step) => ({ label: step.label.trim(), state: step.state }));
+      const why =
+        input.why === undefined
+          ? undefined
+          : input.why === null || input.why.trim().length === 0
+            ? null
+            : input.why.trim();
       const now = yield* DateTime.now;
       const at = DateTime.formatIso(now);
       const estimate =
@@ -235,16 +313,23 @@ const make = Effect.gen(function* () {
               yield* sql`
                 INSERT INTO personal_projects (
                   project_id, lead_bot_id, thread_id, name, steps_json, due_at, estimated_at,
-                  state, closed_at, created_at, updated_at
+                  state, closed_at, created_at, updated_at, why, history_json
                 )
                 VALUES (
                   ${created}, ${input.leadBotId}, ${input.threadId}, ${name},
                   ${JSON.stringify(steps)}, ${estimate?.dueAt ?? null},
-                  ${estimate?.estimatedAt ?? null}, 'open', NULL, ${at}, ${at}
+                  ${estimate?.estimatedAt ?? null}, 'open', NULL, ${at}, ${at},
+                  ${why ?? null}, '[]'
                 )
               `.pipe(Effect.mapError(sqlFailure("save")));
               return created;
             }
+            const nextHistory = historyAfterUpdate(
+              existing.history,
+              existing.project.steps,
+              steps,
+              at,
+            );
             yield* sql`
               UPDATE personal_projects
               SET thread_id = COALESCE(${input.threadId}, thread_id),
@@ -253,10 +338,14 @@ const make = Effect.gen(function* () {
                   estimated_at = ${estimate === undefined ? sql`estimated_at` : estimate.estimatedAt},
                   state = ${input.close ?? "open"},
                   closed_at = ${input.close === undefined ? null : at},
-                  updated_at = ${at}
-              WHERE project_id = ${existing.projectId}
+                  updated_at = ${at},
+                  why = ${why === undefined ? sql`why` : why},
+                  history_json = ${JSON.stringify(
+                    Schema.encodeSync(Schema.Array(PersonalProjectHistoryEntry))(nextHistory),
+                  )}
+              WHERE project_id = ${existing.project.projectId}
             `.pipe(Effect.mapError(sqlFailure("save")));
-            return existing.projectId;
+            return existing.project.projectId;
           }),
         )
         .pipe(
@@ -266,7 +355,7 @@ const make = Effect.gen(function* () {
         );
       const stored = (yield* selectById(projectId))[0];
       if (stored === undefined) return yield* fail("The project could not be read after saving.");
-      return stored;
+      return stored.project;
     });
 
   const list: PersonalProjectRepository["Service"]["list"] = () =>
@@ -278,7 +367,11 @@ const make = Effect.gen(function* () {
         SELECT ${sql.literal(PROJECT_COLUMNS)} FROM personal_projects p
         WHERE p.state = 'open' OR p.closed_at >= ${since}
         ORDER BY "lastActivityAt" DESC, p.created_at DESC
-      `.pipe(Effect.mapError(sqlFailure("read")), Effect.flatMap(decodeAll));
+      `.pipe(
+        Effect.mapError(sqlFailure("read")),
+        Effect.flatMap(decodeAll),
+        Effect.map(projectsOf),
+      );
     });
 
   const removeForLead: PersonalProjectRepository["Service"]["removeForLead"] = (leadBotId) =>
@@ -302,6 +395,7 @@ const make = Effect.gen(function* () {
     findOpen,
     listOpenForLead,
     list,
+    history,
     removeForLead,
   } satisfies PersonalProjectRepository["Service"];
 });

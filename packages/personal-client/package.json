@@ -249,6 +249,10 @@
       "types": "./src/work/workDigest.ts",
       "import": "./src/work/workDigest.ts"
     },
+    "./work/goalTimeline": {
+      "types": "./src/work/goalTimeline.ts",
+      "import": "./src/work/goalTimeline.ts"
+    },
     "./update/serverUpdate": {
       "types": "./src/update/serverUpdate.ts",
       "import": "./src/update/serverUpdate.ts"

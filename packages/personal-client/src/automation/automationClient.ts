@@ -1,5 +1,7 @@
 import type {
   EnvironmentId,
+  PersonalProjectHistoryResult,
+  PersonalProjectId,
   PersonalProjectListResult,
   PersonalRoutineListResult,
   PersonalTask,
@@ -70,6 +72,13 @@ export function createPersonalAutomationClient<R, ER>(
     tag: WS_METHODS.personalProjectsList,
     staleTimeMs: 5_000,
     refreshIntervalMs: 30_000,
+  });
+
+  /** One goal's recorded plan changes and linked tasks, while its sheet is open. */
+  const personalProjectsHistory = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-projects:history",
+    tag: WS_METHODS.personalProjectsHistory,
+    staleTimeMs: 5_000,
   });
 
   /** What happened before the Work tab's seen marker, newest first. */
@@ -218,6 +227,24 @@ export function createPersonalAutomationClient<R, ER>(
     return useEnvironmentQuery(atom);
   }
 
+  /** One goal's history while its sheet is open; null input keeps the request off. */
+  function usePersonalProjectHistory(
+    environmentId: EnvironmentId | null,
+    projectId: string | null,
+  ): EnvironmentQueryView<PersonalProjectHistoryResult> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || projectId === null
+          ? null
+          : personalProjectsHistory({
+              environmentId,
+              input: { projectId: projectId as PersonalProjectId },
+            }),
+      [environmentId, projectId],
+    );
+    return useEnvironmentQuery(atom);
+  }
+
   /** The digest for `sinceIso` (a server asOf); null input keeps the request off. */
   function usePersonalWorkSince(
     environmentId: EnvironmentId | null,
@@ -243,6 +270,7 @@ export function createPersonalAutomationClient<R, ER>(
     personalTaskHistory,
     personalRoutinesList,
     personalProjectsList,
+    personalProjectsHistory,
     personalWorkSince,
     personalTaskCancel,
     personalTaskRetry,
@@ -260,6 +288,7 @@ export function createPersonalAutomationClient<R, ER>(
     usePersonalRelatedTasks,
     usePersonalRoutines,
     usePersonalProjects,
+    usePersonalProjectHistory,
     usePersonalWorkSince,
   };
 }

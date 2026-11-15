@@ -189,6 +189,11 @@ export class PersonalTaskRepository extends Context.Service<
     readonly listTasks: (
       filter: PersonalTaskListInput,
     ) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
+    /** A project's linked tasks, newest first, at most `limit`. */
+    readonly listProjectTasks: (input: {
+      readonly projectId: PersonalProjectId;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
     /**
      * The subscribe replay: every non-terminal task plus the newest
      * `terminalLimit` finished ones, newest first. Older history stays
@@ -489,6 +494,17 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.flatMap((rows) => decodeTasks("listTasks", rows)));
   };
+
+  const listProjectTasks: PersonalTaskRepository["Service"]["listProjectTasks"] = (input) =>
+    query(
+      "listProjectTasks",
+      sql`
+        SELECT ${sql.literal(TASK_COLUMNS)} FROM personal_tasks
+        WHERE project_id = ${input.projectId}
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ${input.limit}
+      `,
+    ).pipe(Effect.flatMap((rows) => decodeTasks("listProjectTasks", rows)));
 
   // The open tasks come from the status index (PB_PERF_OFF=task-replay-index
   // goes back to the table scan): every phone reconnect replays this, and the
@@ -955,6 +971,7 @@ export const make = Effect.gen(function* () {
     getTask: asRead(getTask),
     getTaskByIdempotencyKey: asRead(getTaskByIdempotencyKey),
     listTasks: asRead(listTasks),
+    listProjectTasks: asRead(listProjectTasks),
     listForReplay: asRead(listForReplay),
     listTerminalPage: asRead(listTerminalPage),
     listRelated: asRead(listRelated),
