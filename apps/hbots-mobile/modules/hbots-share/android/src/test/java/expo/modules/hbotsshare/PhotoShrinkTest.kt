@@ -167,4 +167,15 @@ class PhotoShrinkTest {
     assertNull(cachedFile(cache, "file://${cache.path}/ImagePicker/../../secret.db"))
     assertNull(cachedFile(cache, "content://media/external/images/1"))
   }
+
+  @Test fun theCameraFolderIsReadOnlyWhenNamed() {
+    val cache = folder.newFolder("cache")
+    val camera = folder.newFolder("files", "camera")
+    val photo = File(camera, "a.jpg").apply { writeText("x") }
+    val outside = folder.newFile("secret.db")
+
+    assertEquals(photo.canonicalFile, cachedFile(cache, photo.toURI().toString(), camera))
+    assertNull(cachedFile(cache, photo.toURI().toString()))
+    assertNull(cachedFile(cache, outside.toURI().toString(), camera))
+  }
 }
