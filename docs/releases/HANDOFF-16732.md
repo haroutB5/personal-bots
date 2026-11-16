@@ -32,3 +32,20 @@ None. `Migrations.ts` has no diff against trunk and the highest id stays 159. Pa
 ## Rollback
 
 Binary rollback to `b2f47cf6b5bb` (1.67.31) plus its APK. The database is unchanged by this release.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=454372bd9d0194b377f30f167df87b776962ec43 release=454372bd9d01 json-sha256=54b8059273ac8d64eec48fbeb3d02ea7b6d8f3eb827e8acaa0acb992529bfe11 result=PASS -->
+
+- server-tests: SKIPPED, skip: no changed path is an input of server-tests: apps/server, packages, scripts/personal/adblock, scripts/personal/dsh-runtime, scripts/personal/updates, scripts/personal/sync, scripts/personal/testing (not packages/personal-client/, packages/client-runtime/)
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: SKIPPED, skip: no changed path is an input of e2e: apps/server, apps/web, packages, scripts/personal/e2e, scripts/personal/node/e2e-smoke.mjs, scripts/personal/testing
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-
+
+<!-- gate-evidence:end -->
