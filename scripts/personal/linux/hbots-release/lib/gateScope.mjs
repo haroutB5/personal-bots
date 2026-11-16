@@ -496,9 +496,9 @@ export function commandsFor(plan, def) {
 /**
  * The runner-seal check. Recomputes every plan from the live-to-release diff and
  * refuses any gate whose mode, args, base or changedPaths differ, and any
- * planned gate the evidence leaves out.
+ * planned check that is not in the evidence exactly once.
  */
-export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reader, requiredIds }) {
+export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reader }) {
   const problems = [];
   if (!/^[a-f0-9]{40}$/.test(liveSha ?? ""))
     problems.push(
@@ -557,16 +557,16 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
       }
     }
   }
-  // A gate the plan runs cannot be left out of the evidence. The seal requires
-  // every check; a caller may name the subset its own gate list defines.
-  const present = new Set(gates.map((gate) => gate?.id));
-  for (const plan of scope.plans)
-    if (
-      plan.mode !== "skip" &&
-      (!requiredIds || requiredIds.includes(plan.id)) &&
-      !present.has(plan.id)
-    )
+  // Exactly one evidence gate per planned check: a gate left out or repeated is
+  // a refusal, whatever mode the plan gave it.
+  const count = new Map();
+  for (const gate of gates) count.set(gate?.id, (count.get(gate?.id) ?? 0) + 1);
+  for (const plan of scope.plans) {
+    const seen = count.get(plan.id) ?? 0;
+    if (seen === 0)
       problems.push(`gate ${plan.id} is planned ${plan.mode} but missing from the evidence`);
+    else if (seen > 1) problems.push(`gate ${plan.id} appears ${seen} times in the evidence`);
+  }
   return problems;
 }
 

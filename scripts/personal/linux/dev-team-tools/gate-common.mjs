@@ -89,7 +89,6 @@ export function planProblems(e,v) {
       releaseSha,
       changedPaths:diffPaths(v.repo,baseSha,releaseSha),
       reader:readerFor(scope,v.repo,releaseSha),
-      requiredIds:Object.keys(required),
     });
   } catch(err) { return [`cannot verify gate plans: ${err.message}`] }
 }

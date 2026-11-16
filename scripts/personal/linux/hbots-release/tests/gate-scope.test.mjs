@@ -112,6 +112,9 @@ const selectedEvidence = ({ base, paths, args, omit = [], patch = {} }) => {
       args: CORE,
       journeys: CORE.map((id) => ({ id, ok: true })),
     },
+    ...Object.keys(CHECKS)
+      .filter((id) => !["server-tests", "server-tsc", "e2e"].includes(id))
+      .map((id) => ({ id, kind: "node", mode: "skip", ...common })),
   ]
     .filter((gate) => !omit.includes(gate.id))
     .map((gate) => ({ ...gate, ...patch[gate.id] }));
@@ -288,6 +291,18 @@ NodeTest.test("the seal refuses evidence that leaves out a planned gate", () => 
       planEvidenceProblems(cfg, a, evidence({ omit: ["server-tests"] })).join(" "),
       /server-tests is planned selected but missing/,
     );
+  });
+});
+
+NodeTest.test("the seal refuses evidence that leaves out a planned skip or repeats a gate", () => {
+  pushCase(({ cfg, a, evidence }) => {
+    NodeAssert.match(
+      planEvidenceProblems(cfg, a, evidence({ omit: ["hbots-mobile", "release-tools"] })).join(" "),
+      /hbots-mobile is planned skip but missing[^]*release-tools is planned skip but missing/,
+    );
+    const twice = evidence();
+    twice.gates.push({ ...twice.gates[0] });
+    NodeAssert.match(planEvidenceProblems(cfg, a, twice).join(" "), /server-tests appears 2 times/);
   });
 });
 

@@ -15,6 +15,9 @@ const installScope=(repo)=>{
 };
 const lockBase=()=>path.join(fs.mkdtempSync(path.join(os.tmpdir(),'hbots-heavy-')),'gate');
 const jobEnv=(base,extra={})=>({...process.env,HEAVY_JOB_BASE:base,HEAVY_JOB_MEMORY_HIGH:'off',...extra});
+// The gates every plan covers besides the five required ones; each only has to exit 0.
+// They sit before e2e so the tests that read the last gate still read e2e.
+const withExtra=(defs,commandOf=()=>'true')=>[...defs.filter(d=>d.id!=='e2e'),...['personal-client','hbots-mobile','hbots-mobile-kotlin','parity','release-tools'].map(id=>({id,kind:'node',cwd:'.',commands:[commandOf(id)]})),...defs.filter(d=>d.id==='e2e')];
 test('lock gives exact nice 10, idle I/O, nested execution and preserves failures',()=>{
  const base=lockBase();
  const r=run('bash',[path.join(here,'heavy-job.sh'),'--label','test priority','--','bash','-c',`ps -o ni= -p $$; ionice -p $$; bash '${here}/heavy-job.sh' --label nested -- bash -c 'exit 23'`],{env:jobEnv(base)});
@@ -108,7 +111,7 @@ test('evidence real commands, notes ancestry, failures and tampering',()=>{
  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
  fs.writeFileSync(path.join(releases,'current.txt'),`${release}\n`);
  const fixture=path.join(root,'command.mjs');fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));`);
- const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]}));
+ const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]})));
  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
  const gateEnv=jobEnv(lockBase());
@@ -144,7 +147,7 @@ test('a skipped gate needs an allowlisted live-to-release diff',()=>{
   const mobileStage=stage(mobile);
   const fixture=path.join(root,'command.mjs');
   fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]}));
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]})));
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=(release)=>['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
   const gateEnv=jobEnv(lockBase());
@@ -152,7 +155,7 @@ test('a skipped gate needs an allowlisted live-to-release diff',()=>{
   assert.equal(r.status,0,r.stdout+r.stderr);
   const mobileFile=path.join(mobileStage.dir,'gate-evidence.json'),mobileEvidence=fs.readFileSync(mobileFile,'utf8');
   const mobileJson=JSON.parse(mobileEvidence);
-  assert.deepEqual(mobileJson.gates.filter(g=>g.mode==='skip').map(g=>g.id).sort(),['e2e','server-tests','server-tsc','web-tests','web-tsc']);
+  assert.deepEqual(mobileJson.gates.filter(g=>g.mode==='skip').map(g=>g.id).sort(),['e2e','hbots-mobile-kotlin','personal-client','release-tools','server-tests','server-tsc','web-tests','web-tsc']);
   assert.equal(node('check-gate-evidence.mjs',args(mobileStage.release)).status,0);
   fs.writeFileSync(path.join(repo,'apps/server/src/index.ts'),'export const value=2;\n');const server=commit('server change');
   const serverStage=stage(server);
@@ -192,7 +195,7 @@ if(kind.startsWith('server-tests')||kind==='e2e'){
 }
 if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{STARTS:starts})});
@@ -226,7 +229,7 @@ if(kind.startsWith('server-tests')||kind==='e2e'){
 }
 if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
   defs[0].concurrent=[[`node '${fixture}' server-tests-1`],[`node '${fixture}' server-tests-2`]];
   delete defs[0].commands;
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
@@ -275,7 +278,7 @@ const kind=process.argv[2];
 if(kind==='server-tests') fs.writeFileSync(process.env.SEEN,JSON.stringify({t3:process.env.T3CODE_ENVIRONMENT_LABEL??'unset',personal:process.env.PERSONAL_SEED_MODEL??'unset',dsh:process.env.DSH_PROBE??'unset',keep:process.env.KEEP_ME??'unset'}));
 if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{SEEN:seen,T3CODE_ENVIRONMENT_LABEL:'Bots',PERSONAL_SEED_MODEL:'live',DSH_PROBE:'live',KEEP_ME:'ok'})});
@@ -301,7 +304,7 @@ const id=process.argv[2];
 fs.writeFileSync(process.env.SEEN+'/'+id+'.json',JSON.stringify({tmp:process.env.TMPDIR,exists:fs.existsSync(process.env.TMPDIR),browsers:process.env.PLAYWRIGHT_BROWSERS_PATH??'unset'}));
 if(id==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   // The 1.67.19 chain exported a TMPDIR inside a git-ignored worktree folder.
@@ -400,8 +403,8 @@ test('a gate cwd with its own vp wins over the repo root copy',()=>{
   fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
   fs.writeFileSync(path.join(releases,'current.txt'),`${release}\n`);
   const fixture=path.join(root,'command.mjs');fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]}));
-  defs.push({id:'personal-client',kind:'vitest',cwd:'packages/personal-client',commands:['vp test; echo "Tests 1 passed (1)"']});
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]})));
+  defs.splice(defs.findIndex(d=>d.id==='personal-client'),1,{id:'personal-client',kind:'vitest',cwd:'packages/personal-client',commands:['vp test; echo "Tests 1 passed (1)"']});
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
   const r=node('gate-evidence.mjs',[...args,'--gates-json',defFile],{env:jobEnv(lockBase())});
