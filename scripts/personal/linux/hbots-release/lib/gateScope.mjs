@@ -86,7 +86,10 @@ export const E2E_RESILIENCE_JOURNEYS = [
   "offline-screens",
   "stale-deploy",
 ];
+// The resilience journeys check server behaviour too (exactly-once delivery in the
+// server database, /version.txt, chunk 404s), so a server change runs them.
 const E2E_RESILIENCE_INPUTS = [
+  "apps/server/",
   "apps/web/",
   "packages/client-runtime/",
   "packages/personal-client/",

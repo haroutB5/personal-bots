@@ -83,6 +83,15 @@ const CORE = [
   "continue-chat",
   "revoked-session",
 ];
+const RESILIENCE = [
+  "offline-queue",
+  "offline-network",
+  "cold-load-drop",
+  "offline-screens",
+  "stale-deploy",
+];
+// A server change runs the core journeys and the resilience ones.
+const ALL_JOURNEYS = [...CORE, ...RESILIENCE];
 
 // The evidence a push-service change must carry: server-tests selected, server-tsc
 // whole, e2e with the core journeys. `omit` drops a gate, `patch` edits one.
@@ -109,8 +118,8 @@ const selectedEvidence = ({ base, paths, args, omit = [], patch = {} }) => {
       mode: "selected",
       selector: "e2eJourneys@1",
       ...common,
-      args: CORE,
-      journeys: CORE.map((id) => ({ id, ok: true })),
+      args: ALL_JOURNEYS,
+      journeys: ALL_JOURNEYS.map((id) => ({ id, ok: true })),
     },
     ...Object.keys(CHECKS)
       .filter((id) => !["server-tests", "server-tsc", "e2e"].includes(id))
@@ -326,7 +335,7 @@ NodeTest.test("the seal refuses a skip claimed for a gate the plan runs", () => 
 
 NodeTest.test("the seal refuses e2e journeys that differ from the planned ones", () => {
   pushCase(({ cfg, a, evidence }) => {
-    const few = CORE.slice(0, 5);
+    const few = ALL_JOURNEYS.slice(0, 5);
     const forged = evidence({
       patch: { e2e: { journeys: few.map((id) => ({ id, ok: true })) } },
     });
@@ -493,4 +502,15 @@ NodeTest.test("a file read by path selects its reader whatever its extension", (
     adblock.some((file) => /adblock/i.test(file)),
     adblock.join(","),
   );
+});
+
+NodeTest.test("a server-only change runs the resilience journeys too", () => {
+  const plan = planOf(
+    planChecks(["apps/server/src/persistence/Migrations.ts"], { reader: fsReader(REPO) }),
+    "e2e",
+  );
+  NodeAssert.equal(plan.mode, "selected");
+  for (const id of ["offline-queue", "offline-network", "stale-deploy", "bots-list-chat"])
+    NodeAssert.ok(plan.args.includes(id), id);
+  NodeAssert.equal(plan.args.length, 12);
 });
