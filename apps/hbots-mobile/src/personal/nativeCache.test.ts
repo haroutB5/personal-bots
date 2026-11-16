@@ -60,7 +60,7 @@ vi.mock("expo-file-system", () => {
 });
 
 import serverBody from "./fixtures/boundedThreadSnapshot.json";
-import { readCachedThread, writeCachedThread } from "./nativeCache";
+import { hasCachedThread, readCachedThread, writeCachedThread } from "./nativeCache";
 
 const FILE =
   "file:///documents/hbots-thread-cache/thread-environment-phone-f37b73c4-f46d-4da7-8d7b-32007f18562b.json";
@@ -176,5 +176,16 @@ describe("thread cache file", () => {
 
     expect(Option.isNone(loaded)).toBe(true);
     expect(files.has(FILE)).toBe(false);
+  });
+
+  it("tells without reading whether a chat has a saved copy", async () => {
+    expect(hasCachedThread("environment-phone", "f37b73c4-f46d-4da7-8d7b-32007f18562b")).toBe(
+      false,
+    );
+
+    await writeCachedThread("environment-phone", snapshot);
+
+    expect(hasCachedThread("environment-phone", "f37b73c4-f46d-4da7-8d7b-32007f18562b")).toBe(true);
+    expect(hasCachedThread("environment-phone", "another-thread")).toBe(false);
   });
 });

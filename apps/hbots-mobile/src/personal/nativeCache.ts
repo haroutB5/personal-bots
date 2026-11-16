@@ -83,6 +83,11 @@ function persistenceError(
   });
 }
 
+/** Whether a saved copy of the chat sits on the phone. A stat of one file, no read, no decrypt. */
+export function hasCachedThread(environmentId: string, threadId: string): boolean {
+  return !sealed && threadFile(environmentId, threadId).exists;
+}
+
 /**
  * The last cached detail of a thread, or none. A file that cannot be read back
  * (an old plaintext file, a lost key, damage) is deleted and counts as a miss,

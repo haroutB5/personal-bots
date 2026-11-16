@@ -63,7 +63,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
-import { takeChatTap } from "../personal/chatOpenIntent";
+import { holdChat, takeChatTap } from "../personal/chatOpenIntent";
 import { takeChatOpenReport } from "../personal/chatOpenPerf";
 import { reportPerf } from "../crash/crashReporter";
 import { GoalSheetHost } from "../work/GoalSheetHost";
@@ -473,6 +473,9 @@ export function ChatScreen({
       reportPerf(report.body);
     });
   }, [thread, threadId]);
+
+  const hasThread = thread !== null;
+  useEffect(() => (hasThread ? holdChat(threadId) : undefined), [hasThread, threadId]);
 
   useEffect(() => {
     if (prewarmed.current || thread !== null) return;

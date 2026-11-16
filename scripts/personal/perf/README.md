@@ -226,6 +226,10 @@ follows after its next check, not instantly. A server without the field, or an
 unreachable one, leaves everything on. Names live in
 `apps/hbots-mobile/src/perfFlags.ts`.
 
+| Android flag           | What it does                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `android-preload-chat` | Pressing a bot tile or a chat row starts the chat's `/bounded` snapshot request at the press, before the chat screen mounts. Only for a chat that is not in memory and has no saved copy on the phone. The open that follows takes the request (kept 5 s). Off: the request starts after the screen mounts, as before. `PB_PERF_OFF=android-preload-chat`, then restart. |
+
 ## Send prep (session prewarm)
 
 `prewarm.mjs` measures the server's prep for a send: `thread.turn-start-requested`
