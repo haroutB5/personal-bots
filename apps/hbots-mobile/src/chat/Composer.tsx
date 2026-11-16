@@ -100,7 +100,7 @@ import { shrinkDrafts } from "./photoDrafts";
 import { photosToWarm } from "./photoThumb";
 import { draftKey } from "./linkDraft";
 import { blockedMessage } from "../share/pickerModel";
-import { discardShare, readShare, shrinkPhoto } from "../share/shareIntake";
+import { discardCameraDraft, discardShare, readShare, shrinkPhoto } from "../share/shareIntake";
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
 
 const MAX_ATTACHMENTS = 10;
@@ -573,6 +573,11 @@ export function Composer({
     for (const [attachmentId, intakeId] of claimed) intakeHeld.current.set(attachmentId, intakeId);
   };
 
+  // The outbox kept its own copy, so a sent or dropped draft's camera copy can go.
+  const releaseDraftCopies = (snapshot: ReadonlyArray<DraftAttachment>) => {
+    for (const attachment of snapshot) discardCameraDraft(attachment.uri);
+  };
+
   const queue = async (
     messageId: string,
     textValue: string,
@@ -663,12 +668,15 @@ export function Composer({
    * The server has the message: its saved copy goes and its photo keeps drawing. The pending
    * bubble stays until the transcript shows the message, so no frame is left without a bubble.
    */
-  const landed = (messageId: string) => {
+  const landed = (messageId: string, snapshot: ReadonlyArray<DraftAttachment>) => {
     if (!activeSends.current.has(messageId)) return;
     activeSends.current.delete(messageId);
     dropStored(messageId);
     // A sent image is drawn from its device file until the server's copy draws.
-    localImages.landed(messageId, () => discardClaimedIntakes(messageId));
+    localImages.landed(messageId, () => {
+      discardClaimedIntakes(messageId);
+      releaseDraftCopies(snapshot);
+    });
     void discardOutgoingFiles(messageId);
     onSent();
   };
@@ -781,7 +789,7 @@ export function Composer({
     // failed bubble goes instead of doubling the transcript.
     void attempt.then(
       (result) => {
-        if (result._tag === "Success") landed(messageId);
+        if (result._tag === "Success") landed(messageId, snapshot);
       },
       () => undefined,
     );
@@ -805,7 +813,7 @@ export function Composer({
     if (!activeSends.current.has(messageId)) return true;
     switch (end.kind) {
       case "sent":
-        landed(messageId);
+        landed(messageId, snapshot);
         return true;
       case "rejected": {
         const failed = settle(outgoing, { ok: false });
@@ -935,11 +943,15 @@ export function Composer({
   };
 
   const forget = (messageId: string) => {
-    const active = activeSends.current.delete(messageId);
+    const active = activeSends.current.get(messageId);
+    activeSends.current.delete(messageId);
     onPendingChange((pending) => removePending(pending, messageId));
     dropStored(messageId);
-    if (active) {
-      localImages.landed(messageId, () => discardClaimedIntakes(messageId));
+    if (active !== undefined) {
+      localImages.landed(messageId, () => {
+        discardClaimedIntakes(messageId);
+        releaseDraftCopies(active.outgoing.attachments);
+      });
       void discardOutgoingFiles(messageId);
       onSent();
     }
@@ -1048,12 +1060,13 @@ export function Composer({
                 )}
               </Pressable>
               <Pressable
-                onPress={() =>
+                onPress={() => {
+                  discardCameraDraft(attachment.uri);
                   setDraft((current) => ({
                     ...current,
                     attachments: current.attachments.filter((item) => item.id !== attachment.id),
-                  }))
-                }
+                  }));
+                }}
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${attachment.name}, ${index + 1} of ${attachmentCount}`}
                 style={styles.thumbRemove}
