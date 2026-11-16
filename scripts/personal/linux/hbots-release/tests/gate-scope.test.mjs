@@ -768,6 +768,80 @@ NodeTest.test("the Kotlin dependency regex reads every project() form", () => {
     });
 });
 
+NodeTest.test(
+  "N6: Gradle comments are not dependencies, build.gradle.kts and path = are read",
+  () => {
+    const cases = [
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  // implementation project(':util')\n}\n",
+        dependent: false,
+      },
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  /* implementation project(':util') */\n}\n",
+        dependent: false,
+      },
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  /*\n   implementation project(':util')\n  */\n}\n",
+        dependent: false,
+      },
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  implementation project(':util') // real\n}\n",
+        dependent: true,
+      },
+      {
+        file: "build.gradle.kts",
+        text: 'dependencies {\n  implementation(project(":util"))\n}\n',
+        dependent: true,
+      },
+      {
+        file: "build.gradle.kts",
+        text: 'dependencies {\n  implementation(project(path = ":util"))\n}\n',
+        dependent: true,
+      },
+      {
+        file: "build.gradle.kts",
+        text: 'dependencies {\n  // api(project(":util"))\n}\n',
+        dependent: false,
+      },
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  implementation project(path = ':util')\n}\n",
+        dependent: true,
+      },
+    ];
+    for (const { file, text, dependent } of cases)
+      withFixture((f) => {
+        const base = "apps/hbots-mobile/modules";
+        const put = (rel, body) => {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(f.repo, rel)), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(f.repo, rel), body);
+        };
+        put(`${base}/util/android/src/main/Util.kt`, "class Util\n");
+        put(`${base}/util/android/src/test/UtilTest.kt`, "class UtilTest\n");
+        put(`${base}/app/android/${file}`, text);
+        put(`${base}/app/android/src/test/AppTest.kt`, "class AppTest\n");
+        const head = commit(f.repo, "kotlin fake");
+        const plan = planOf(
+          planChecks([`${base}/util/android/src/main/Util.kt`], {
+            reader: gitReader(f.repo, head),
+          }),
+          "hbots-mobile-kotlin",
+        );
+        NodeAssert.deepEqual(
+          plan.args,
+          dependent
+            ? [":app:testDebugUnitTest", ":util:testDebugUnitTest"]
+            : [":util:testDebugUnitTest"],
+          `${file}: ${text}`,
+        );
+      });
+  },
+);
+
 NodeTest.test("a shared file moved away selects the tests whose modules still name it", () => {
   withFixture((f) => {
     const pkg = NodePath.join(f.repo, "packages/shared");

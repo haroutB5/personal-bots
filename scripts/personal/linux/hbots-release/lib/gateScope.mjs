@@ -300,12 +300,19 @@ function kotlinModules(reader) {
   }
   const deps = new Map();
   for (const name of all) {
-    const gradle = reader.read(`apps/hbots-mobile/modules/${name}/android/build.gradle`) ?? "";
+    const gradle = ["build.gradle", "build.gradle.kts"]
+      .map((file) => reader.read(`apps/hbots-mobile/modules/${name}/android/${file}`) ?? "")
+      .join("\n")
+      // A commented-out project() is not a dependency. Line comments need a space or
+      // the line start before them, so a URL in a string stays.
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/(^|\s)\/\/.*$/gm, "$1");
     deps.set(
       name,
       // Any configuration (implementation, api, testImplementation, ...) and either
-      // call form: `x project(':a')` or `x(project(":a"))`, with `path:` allowed.
-      [...gradle.matchAll(/project\(\s*(?:path\s*:\s*)?['"]:([^'":]+)['"]/g)].map((m) => m[1]),
+      // call form: `x project(':a')` or `x(project(":a"))`, with `path:` or the
+      // Kotlin DSL `path =` allowed.
+      [...gradle.matchAll(/project\(\s*(?:path\s*[:=]\s*)?['"]:([^'":]+)['"]/g)].map((m) => m[1]),
     );
   }
   return { names: [...tested].sort(), all, deps };
