@@ -4,13 +4,14 @@
     "kind": "vitest",
     "title": "Server fork gate (personal, mcp, persistence, preview, workspace, assets, orchestration-v2, cloud, provider, process)",
     "cwd": "apps/server",
+    "commands": [
+      "NODE_ENV=test vp test run {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
+    ],
     "concurrent": [
       [
-        "NODE_ENV=test vp test run --shard=1/2 src/personal src/mcp src/persistence src/preview src/workspace src/assets src/orchestration-v2 src/cloud src/provider src/process"
+        "NODE_ENV=test vp test run --shard=1/2 {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
       ],
-      [
-        "NODE_ENV=test vp test run --shard=2/2 src/personal src/mcp src/persistence src/preview src/workspace src/assets src/orchestration-v2 src/cloud src/provider src/process"
-      ]
+      ["NODE_ENV=test vp test run --shard=2/2 {args}"]
     ]
   },
   {
@@ -40,9 +41,9 @@
   {
     "id": "e2e",
     "kind": "e2e",
-    "title": "Phone e2e smoke on Linux (five journeys)",
+    "title": "Phone e2e smoke on Linux (seven core journeys, five resilience)",
     "cwd": ".",
-    "commands": ["node scripts/personal/node/e2e-smoke.mjs --suite-timeout 600 --json"]
+    "commands": ["node scripts/personal/node/e2e-smoke.mjs --suite-timeout 600 --json --journey {args}"]
   },
   {
     "id": "personal-client",
@@ -65,15 +66,7 @@
     "cwd": "apps/hbots-mobile",
     "commands": [
       "EXPO_NO_GIT_STATUS=1 npx expo prebuild --platform android --no-install",
-      "cd android && ./gradlew :hbots-notify:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-secure:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-updater:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-voice:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-launcher:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-liveview:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-share:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-display:testDebugUnitTest --no-daemon --console=plain",
-      "cd android && ./gradlew :hbots-tile:testDebugUnitTest --no-daemon --console=plain"
+      "cd android && ./gradlew {args} --no-daemon --console=plain"
     ]
   },
   {
@@ -84,5 +77,12 @@
     "commands": [
       "node scripts/personal/parity/parity-matrix.mjs . --ref HEAD --android-ref HEAD --client-ref HEAD --check --out scripts/personal/parity/parity.json && git diff --exit-code scripts/personal/parity/parity.json"
     ]
+  },
+  {
+    "id": "release-tools",
+    "kind": "node",
+    "title": "Release and dev-team tool tests",
+    "cwd": ".",
+    "commands": ["node --test --test-concurrency=1 {args}"]
   }
 ]
