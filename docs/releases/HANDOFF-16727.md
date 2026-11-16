@@ -27,3 +27,19 @@ None. Measured: no migration file in either branch diff and none in the merged d
 ## Rollback
 
 Binary rollback to `9a251eb0b91b` (1.67.26) plus its APK. The database is unchanged by this release.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=ea030dbb756baa6d9fd21d75ae16f689e6a55fa0 release=ea030dbb756b json-sha256=c48c06cfcc8c5286f6de72c88d1abb58b2a32fe7619f205dde5022a5d9b18344 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
