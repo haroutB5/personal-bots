@@ -220,6 +220,7 @@ export function ChatScreen({
   const reportViewing = native.client.useAtomCommand(native.bots.personalPushReportViewing, {
     reportFailure: false,
   });
+  const refreshWorkQuestions = native.automation.useRefreshPersonalWorkQuestions(environmentId);
   const searchMessages = native.client.useAtomCommand(native.bots.personalBotsSearchMessages, {
     reportFailure: false,
   });
@@ -473,19 +474,20 @@ export function ChatScreen({
 
   useEffect(() => {
     if (connection.phase !== "connected") return;
-    const send = (viewing: boolean) => {
-      void reportViewing({
+    const send = (viewing: boolean) =>
+      reportViewing({
         environmentId,
         input: { threadId: viewing ? ThreadId.make(threadId) : null },
       });
-    };
-    send(true);
-    const timer = setInterval(() => send(true), 10_000);
+    void send(true);
+    const timer = setInterval(() => void send(true), 10_000);
     return () => {
       clearInterval(timer);
-      send(false);
+      // The server hides a Work card once its chat was opened, and the leave is what
+      // stamps that. Ask for the cards again only after the stamp is written.
+      void send(false).then(() => refreshWorkQuestions());
     };
-  }, [connection.phase, environmentId, reportViewing, threadId]);
+  }, [connection.phase, environmentId, refreshWorkQuestions, reportViewing, threadId]);
 
   useEffect(() => {
     if (!searchOpen) {
