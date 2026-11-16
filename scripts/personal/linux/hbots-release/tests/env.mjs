@@ -12,6 +12,8 @@ import * as NodeURL from "node:url";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeTest from "node:test";
 import { makeFixtureDb } from "../lib/fixture.mjs";
+import { planChecks } from "../lib/gateScope.mjs";
+import { gitReader } from "../lib/serverTestSelect.mjs";
 
 export const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const ROOT = NodePath.dirname(HERE);
@@ -364,7 +366,8 @@ export async function makeEnv({
   git(repo, "commit", "-q", "-m", "notes");
   env.mainSha = git(repo, "rev-parse", "HEAD");
   env.repo = repo;
-  env.release = "b".repeat(12);
+  // The release is a real commit of the fixture repo: the seal recomputes the gate plan from it.
+  env.release = env.mainSha.slice(0, 12);
   env.thread = "11111111-2222-4333-8444-555555555555";
 
   // stub dev-team tools (the real ones are pinned and copied so PINS.json covers the same set of names)
@@ -514,6 +517,34 @@ function overrides(env) {
   return o;
 }
 
+// The evidence the collector would write for the fixture diff, from the real planner, with
+// the e2e counts the seal reads. The seal recomputes the same plan from the repo.
+function planGates(env) {
+  const changed = git(
+    env.repo,
+    "diff",
+    "--no-renames",
+    "--name-only",
+    "-z",
+    env.rollbackFull,
+    env.mainSha,
+  )
+    .split("\0")
+    .filter(Boolean);
+  const scope = planChecks(changed, { reader: gitReader(env.repo, env.mainSha) });
+  return scope.plans.map((plan) => ({
+    id: plan.id,
+    kind: plan.id === "e2e" ? "e2e" : "node",
+    mode: plan.mode,
+    reason: plan.reason,
+    baseSha: env.rollbackFull,
+    changedPaths: scope.changedPaths,
+    ...(plan.selector ? { selector: plan.selector } : {}),
+    ...(plan.mode !== "skip" && plan.args ? { args: plan.args } : {}),
+    ...(plan.id === "e2e" ? { counts: { journeys: 3, passed: 3 } } : {}),
+  }));
+}
+
 function makeRelease(env, sha, version, { migrates, badLog }) {
   const dir = NodePath.join(env.home, "releases", sha);
   NodeFS.rmSync(dir, { recursive: true, force: true });
@@ -544,7 +575,7 @@ function makeRelease(env, sha, version, { migrates, badLog }) {
       finishedAt: startedAt,
       release: sha,
       binSha256: sha256(NodeFS.readFileSync(bin)),
-      gates: [{ id: "e2e", counts: { journeys: 3, passed: 3 } }],
+      gates: planGates(env),
     }),
   );
   return dir;

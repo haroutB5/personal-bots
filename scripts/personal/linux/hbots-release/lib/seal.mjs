@@ -161,8 +161,12 @@ export function planEvidenceProblems(cfg, a, evidence) {
     });
     return r.code === 0 ? r.out.split("\n")[0].trim() : null;
   };
-  const liveSha = resolve(live);
   const releaseSha = resolve(a.release);
+  // A release that is already live (--verify-live after the restart) has current.txt equal to
+  // itself, so the live-to-release diff is empty. The base is then the rollback commit, the
+  // live release it replaced, which is what the evidence was collected against.
+  let liveSha = resolve(live);
+  if (liveSha && releaseSha && liveSha === releaseSha) liveSha = resolve(a.rollback) ?? liveSha;
   if (!liveSha || !releaseSha) {
     return [
       `cannot verify gate plans: live ${live || "(missing)"} and release ${a.release} are not both commits in ${a["repo-root"]}`,
@@ -244,7 +248,9 @@ export async function writeSeal(cfg, a, names, note) {
   for (const gate of (evidence.gates ?? []).filter((g) => g?.mode === "skip"))
     note(`Gate ${gate.id} skipped: ${gate.reason}`);
   for (const gate of (evidence.gates ?? []).filter((g) => g?.mode === "selected"))
-    note(`Gate ${gate.id} selected ${gate.args?.length ?? 0} ${gate.selector?.split("@")[0] ?? "items"}: ${gate.reason}`);
+    note(
+      `Gate ${gate.id} selected ${gate.args?.length ?? 0} ${gate.selector?.split("@")[0] ?? "items"}: ${gate.reason}`,
+    );
   return seal;
 }
 
