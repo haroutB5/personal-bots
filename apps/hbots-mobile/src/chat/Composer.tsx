@@ -27,7 +27,6 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/co
 import {
   IconArrowUp,
   IconFile,
-  IconCamera,
   IconPaperclip,
   IconPlus,
   IconSquare,
@@ -1110,17 +1109,6 @@ export function Composer({
               style={[styles.field, styles.fieldInHost]}
             />
           </ComposerHost>
-          <Pressable
-            onPress={() => void pickCamera()}
-            disabled={picking || preparing}
-            accessibilityRole="button"
-            accessibilityLabel="Take a photo"
-            hitSlop={4}
-            testID="composer-camera"
-            style={styles.fieldIconButton}
-          >
-            <IconCamera size={19} color={tokens.textSecondary} strokeWidth={1.75} />
-          </Pressable>
           <Pressable
             onPress={() => void pickFiles()}
             disabled={picking || preparing}
