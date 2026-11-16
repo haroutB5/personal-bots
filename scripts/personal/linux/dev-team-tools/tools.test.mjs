@@ -528,3 +528,25 @@ test('restore staging copies every database in the backup and nothing else',asyn
   assert.throws(()=>stageDatabases(make(path.join(tmp,'none'),[]),path.join(tmp,'dest-none')),/no database/);
  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 });
+// BOOTSTRAP RULE. gates-linux.json is the file the INSTALLED gate-evidence.mjs reads
+// (--gates-json) while it gates the release that replaces it. That tool runs every
+// command as plain text and knows no placeholder, so a `{args}` in this file reaches
+// vitest, gradle, node --test and the e2e runner as the literal text "{args}" and fails
+// four gates (1.67.28, 16 Nov: server-tests, e2e, hbots-mobile-kotlin, release-tools).
+// Templated definitions live in gates-linux.scoped.json, which only the new tool and
+// the planner read. A change to a file the installed tool reads must stay readable by
+// the installed tool for one release.
+test('gates-linux.json (read by the installed tool) holds no placeholder the old format does not know',()=>{
+ const root=path.resolve(here,'../../../..');
+ const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));
+ assert.ok(Array.isArray(defs)&&defs.length>0);
+ const placeholder=/(?<!\$)\{[A-Za-z_][\w-]*\}/;
+ for(const d of defs){
+  const lanes=d.concurrent??[d.commands];
+  for(const command of lanes.flat())assert.doesNotMatch(command,placeholder,`${d.id}: "${command}" has a placeholder; put templated gates in gates-linux.scoped.json`);
+  assert.deepEqual(Object.keys(d).filter(k=>!['id','kind','title','cwd','commands','concurrent'].includes(k)),[],`${d.id}: a field the installed tool does not read`);
+ }
+ const scoped=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.scoped.json'),'utf8'));
+ for(const d of defs)assert.ok(scoped.some(s=>s.id===d.id),`${d.id} is missing from gates-linux.scoped.json`);
+ assert.match(JSON.stringify(scoped),/\{args\}/,'the scoped file carries the templates');
+});
