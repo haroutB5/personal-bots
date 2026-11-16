@@ -8,7 +8,7 @@
     "lib/backup.mjs": "110d8d715446c3c8cf4acef7b34be1eda92ecb17daf8de0f059055840d09da04",
     "lib/seal.mjs": "5c4e3548dd412369fd02909bd8860e80dd88a80858cb35e8dd8c49209fad8273",
     "lib/gateScope.mjs": "bea744e469e635ac0ffed1e490e32878541515453340df41b925d842ebd62812",
-    "lib/serverTestSelect.mjs": "1c3b29986543ccad3720d53a48a1a968ae7b8a78d1d67c7c0dbb595d6218f7d9",
+    "lib/serverTestSelect.mjs": "f9506740925ead3efdecb0bbf65d998f67edf594fa35d642d3c776877b965e74",
     "lib/compact.mjs": "faf944c7d1a8e9c8a8e792c7118fdea416e5545698212344237d798c331177f5",
     "lib/compact-db.mjs": "c38a3b4a5ad44d382d16427d16b6265066bcf7e35fa05b3d758ebd77ed267fe1",
     "tools/check-release-notes.mjs": "b1501431a607f4e960205f500eb7a7777649d59dacf6d3ee523a004ce5cd2d06",
