@@ -74,20 +74,49 @@ const withFixture = (body) => {
   }
 };
 
-const selectedEvidence = ({ base, paths, args }) => ({
-  gates: [
+const CORE = [
+  "bots-list-chat",
+  "new-chat-named",
+  "delegate-task",
+  "chats-search",
+  "long-press-reply",
+  "continue-chat",
+  "revoked-session",
+];
+
+// The evidence a push-service change must carry: server-tests selected, server-tsc
+// whole, e2e with the core journeys. `omit` drops a gate, `patch` edits one.
+const selectedEvidence = ({ base, paths, args, omit = [], patch = {} }) => {
+  const common = { baseSha: base, changedPaths: paths, reason: "inputs changed" };
+  const gates = [
     {
       id: "server-tests",
       kind: "vitest",
       mode: "selected",
       selector: "serverTests@1",
-      reason: "server-tests inputs changed",
-      baseSha: base,
-      changedPaths: paths,
+      ...common,
       args,
     },
-  ],
-});
+    {
+      id: "server-tsc",
+      kind: "tsc",
+      mode: "whole",
+      ...common,
+    },
+    {
+      id: "e2e",
+      kind: "e2e",
+      mode: "selected",
+      selector: "e2eJourneys@1",
+      ...common,
+      args: CORE,
+      journeys: CORE.map((id) => ({ id, ok: true })),
+    },
+  ]
+    .filter((gate) => !omit.includes(gate.id))
+    .map((gate) => ({ ...gate, ...patch[gate.id] }));
+  return { gates };
+};
 
 NodeTest.test("every tracked path classifies", () => {
   const paths = git(REPO, "ls-files", "-z").split("\0").filter(Boolean);
@@ -227,3 +256,97 @@ NodeTest.test("a new folder under scripts/personal is unmapped, upstream scripts
   NodeAssert.equal(classifyPath("scripts/personal/backup.ps1").kind, "none");
   NodeAssert.equal(classifyPath("scripts/personal/perf/skill/x.md").kind, "none");
 });
+
+const pushCase = (body) =>
+  withFixture((f) => {
+    const cfg = { currentTxt: NodePath.join(f.releases, "current.txt") };
+    const paths = ["apps/server/src/personal/push/PersonalPushService.ts"];
+    const a = { "repo-root": f.repo, release: f.head };
+    const args = ["src/personal/push/PersonalPushService.test.ts"];
+    body({
+      f,
+      cfg,
+      a,
+      args,
+      evidence: (extra = {}) => selectedEvidence({ base: f.base, paths, args, ...extra }),
+    });
+  });
+
+NodeTest.test("the seal accepts the full evidence for a push-service change", () => {
+  pushCase(({ cfg, a, evidence }) =>
+    NodeAssert.deepEqual(planEvidenceProblems(cfg, a, evidence()), []),
+  );
+});
+
+NodeTest.test("the seal refuses evidence that leaves out a planned gate", () => {
+  pushCase(({ cfg, a, evidence }) => {
+    NodeAssert.match(
+      planEvidenceProblems(cfg, a, evidence({ omit: ["server-tsc"] })).join(" "),
+      /server-tsc is planned whole but missing/,
+    );
+    NodeAssert.match(
+      planEvidenceProblems(cfg, a, evidence({ omit: ["server-tests"] })).join(" "),
+      /server-tests is planned selected but missing/,
+    );
+  });
+});
+
+NodeTest.test("the seal refuses a skip claimed for a gate the plan runs", () => {
+  pushCase(({ cfg, a, evidence }) => {
+    const forged = evidence({
+      patch: { "server-tests": { mode: "skip", args: undefined, selector: undefined } },
+    });
+    NodeAssert.match(
+      planEvidenceProblems(cfg, a, forged).join(" "),
+      /server-tests is skip, the recomputed plan is selected/,
+    );
+  });
+});
+
+NodeTest.test("the seal refuses e2e journeys that differ from the planned ones", () => {
+  pushCase(({ cfg, a, evidence }) => {
+    const few = CORE.slice(0, 5);
+    const forged = evidence({
+      patch: { e2e: { journeys: few.map((id) => ({ id, ok: true })) } },
+    });
+    NodeAssert.match(
+      planEvidenceProblems(cfg, a, forged).join(" "),
+      /e2e journeys differ from the planned journeys/,
+    );
+  });
+});
+
+NodeTest.test("the seal refuses a whole gate whose recorded args differ", () => {
+  withFixture((f) => {
+    const cfg = { currentTxt: NodePath.join(f.releases, "current.txt") };
+    fixtureToolchainEdit(f);
+    const a = { "repo-root": f.repo, release: f.head2 };
+    const reader = gitReader(f.repo, f.head2);
+    const paths = git(f.repo, "diff", "--no-renames", "--name-only", f.base, f.head2)
+      .split("\n")
+      .filter(Boolean);
+    const scope = planChecks(paths, { reader });
+    const gates = scope.plans.map((plan) => ({
+      id: plan.id,
+      mode: "whole",
+      reason: "toolchain",
+      baseSha: f.base,
+      changedPaths: paths,
+      ...(plan.args ? { args: plan.args } : {}),
+    }));
+    NodeAssert.deepEqual(planEvidenceProblems(cfg, a, { gates }), []);
+    const forged = gates.map((gate) =>
+      gate.id === "server-tests" ? { ...gate, args: ["src/personal"] } : gate,
+    );
+    NodeAssert.match(
+      planEvidenceProblems(cfg, a, { gates: forged }).join(" "),
+      /server-tests args differ from the recomputed plan/,
+    );
+  });
+});
+
+function fixtureToolchainEdit(f) {
+  NodeFS.writeFileSync(NodePath.join(f.repo, "package.json"), '{"name":"x"}\n');
+  f.head2 = commit(f.repo, "toolchain");
+  git(f.repo, "reset", "-q", "--hard", f.head2);
+}

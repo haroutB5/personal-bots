@@ -166,7 +166,8 @@ try {
       reason:p.plan.reason,
       baseSha:scope.baseSha,
       changedPaths:scope.changedPaths,
-      ...(p.plan.mode==='selected'?{selector:p.plan.selector,args:p.plan.args}:{}),
+      ...(p.plan.mode==='selected'?{selector:p.plan.selector}:{}),
+      ...(p.plan.args?{args:p.plan.args}:{}),
     };
   }).filter(Boolean));
   const endDirty=dirty();

@@ -498,9 +498,10 @@ export function commandsFor(plan, def) {
 
 /**
  * The runner-seal check. Recomputes every plan from the live-to-release diff and
- * refuses any gate whose mode, selected args, base or changedPaths differ.
+ * refuses any gate whose mode, args, base or changedPaths differ, and any
+ * planned gate the evidence leaves out.
  */
-export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reader }) {
+export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reader, requiredIds }) {
   const problems = [];
   if (!/^[a-f0-9]{40}$/.test(liveSha ?? ""))
     problems.push(
@@ -538,11 +539,11 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
       claimed.some((file, index) => file !== expected[index])
     )
       problems.push(`gate ${gate.id} changedPaths differ from the live-to-release diff`);
-    if (plan.mode === "selected") {
-      if (gate.selector !== plan.selector)
-        problems.push(
-          `gate ${gate.id} selector ${gate.selector ?? "(missing)"} is not ${plan.selector}`,
-        );
+    if (plan.mode === "selected" && gate.selector !== plan.selector)
+      problems.push(
+        `gate ${gate.id} selector ${gate.selector ?? "(missing)"} is not ${plan.selector}`,
+      );
+    if (plan.mode !== "skip" && plan.args) {
       const args = Array.isArray(gate.args) ? gate.args : null;
       if (
         !args ||
@@ -550,8 +551,25 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
         args.some((arg, index) => arg !== plan.args[index])
       )
         problems.push(`gate ${gate.id} args differ from the recomputed plan`);
+      // The journeys that ran are the journeys that were planned.
+      if (gate.id === "e2e" && Array.isArray(gate.journeys)) {
+        const ran = gate.journeys.map((journey) => journey?.id).sort();
+        const planned = [...plan.args].sort();
+        if (ran.length !== planned.length || ran.some((id, index) => id !== planned[index]))
+          problems.push(`gate e2e journeys differ from the planned journeys`);
+      }
     }
   }
+  // A gate the plan runs cannot be left out of the evidence. The seal requires
+  // every check; a caller may name the subset its own gate list defines.
+  const present = new Set(gates.map((gate) => gate?.id));
+  for (const plan of scope.plans)
+    if (
+      plan.mode !== "skip" &&
+      (!requiredIds || requiredIds.includes(plan.id)) &&
+      !present.has(plan.id)
+    )
+      problems.push(`gate ${plan.id} is planned ${plan.mode} but missing from the evidence`);
   return problems;
 }
 

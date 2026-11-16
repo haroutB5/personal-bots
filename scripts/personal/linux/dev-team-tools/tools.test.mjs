@@ -107,8 +107,8 @@ test('evidence real commands, notes ancestry, failures and tampering',()=>{
  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
  fs.writeFileSync(path.join(releases,'current.txt'),`${release}\n`);
- const fixture=path.join(root,'command.mjs');fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));`);
- const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}`]}));
+ const fixture=path.join(root,'command.mjs');fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));`);
+ const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]}));
  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
  const gateEnv=jobEnv(lockBase());
@@ -143,8 +143,8 @@ test('a skipped gate needs an allowlisted live-to-release diff',()=>{
   const stage=(sha)=>{const release=sha.slice(0,12),dir=path.join(releases,release);fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);return {release,dir}};
   const mobileStage=stage(mobile);
   const fixture=path.join(root,'command.mjs');
-  fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}`]}));
+  fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));`);
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]}));
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=(release)=>['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
   const gateEnv=jobEnv(lockBase());
@@ -190,9 +190,9 @@ if(kind.startsWith('server-tests')||kind==='e2e'){
   fs.appendFileSync(process.env.STARTS,String(Date.now())+'\\n');
   await new Promise((resolve)=>setTimeout(resolve,1500));
 }
-if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{STARTS:starts})});
@@ -224,9 +224,9 @@ if(kind.startsWith('server-tests')||kind==='e2e'){
   fs.appendFileSync(process.env.STARTS,kind+':'+Date.now()+'\\n');
   if(kind.startsWith('server-tests')) await new Promise((resolve)=>setTimeout(resolve,400));
 }
-if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
   defs[0].concurrent=[[`node '${fixture}' server-tests-1`],[`node '${fixture}' server-tests-2`]];
   delete defs[0].commands;
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
@@ -273,9 +273,9 @@ test('gate commands run without the live app environment',()=>{
   fs.writeFileSync(fixture,`import fs from 'node:fs';
 const kind=process.argv[2];
 if(kind==='server-tests') fs.writeFileSync(process.env.SEEN,JSON.stringify({t3:process.env.T3CODE_ENVIRONMENT_LABEL??'unset',personal:process.env.PERSONAL_SEED_MODEL??'unset',dsh:process.env.DSH_PROBE??'unset',keep:process.env.KEEP_ME??'unset'}));
-if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{SEEN:seen,T3CODE_ENVIRONMENT_LABEL:'Bots',PERSONAL_SEED_MODEL:'live',DSH_PROBE:'live',KEEP_ME:'ok'})});
@@ -299,9 +299,9 @@ test('each gate gets a private TMPDIR under /tmp, removed after it, and the pinn
   fs.writeFileSync(fixture,`import fs from 'node:fs';
 const id=process.argv[2];
 fs.writeFileSync(process.env.SEEN+'/'+id+'.json',JSON.stringify({tmp:process.env.TMPDIR,exists:fs.existsSync(process.env.TMPDIR),browsers:process.env.PLAYWRIGHT_BROWSERS_PATH??'unset'}));
-if(id==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));
+if(id==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}`]}));
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]}));
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
   // The 1.67.19 chain exported a TMPDIR inside a git-ignored worktree folder.
@@ -399,8 +399,8 @@ test('a gate cwd with its own vp wins over the repo root copy',()=>{
   fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
   fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
   fs.writeFileSync(path.join(releases,'current.txt'),`${release}\n`);
-  const fixture=path.join(root,'command.mjs');fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:Array.from({length:5},(_,i)=>({id:'j'+i,ok:true}))}));`);
-  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}`]}));
+  const fixture=path.join(root,'command.mjs');fs.writeFileSync(fixture,`if(process.argv[2]==='vitest') console.log('Tests 3 passed (3)'); else if(process.argv[2]==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));`);
+  const defs=Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${kind}${id==='e2e'?' {args}':''}`]}));
   defs.push({id:'personal-client',kind:'vitest',cwd:'packages/personal-client',commands:['vp test; echo "Tests 1 passed (1)"']});
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases];
