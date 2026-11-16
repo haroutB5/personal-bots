@@ -30,6 +30,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  memo,
   useMemo,
   useRef,
   useState,
@@ -46,6 +47,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ListRenderItemInfo,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type StyleProp,
@@ -70,7 +72,14 @@ import {
   TABLE_CELL_MIN_WIDTH,
   tableColumnWidths,
 } from "./messageListModel";
-import { createRowReverser } from "./messageRows";
+import {
+  createRowReverser,
+  rowInputs,
+  sameRowProps,
+  type Row,
+  type RowContext,
+  type RowInputs,
+} from "./messageRows";
 import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./messageTouch";
 import { AttachmentImage, PendingAttachmentImage } from "./AttachmentImage";
 import { PageFrame } from "./PageFrame";
@@ -95,12 +104,6 @@ import {
 export interface MessageListHandle {
   readonly scrollToCard: (itemId: string) => void;
 }
-
-type Row =
-  | { readonly kind: "item"; readonly key: string; readonly item: ConversationItem }
-  | { readonly kind: "work"; readonly key: string; readonly work: RunWork }
-  | { readonly kind: "pending"; readonly key: string; readonly message: PendingSend }
-  | { readonly kind: "queued"; readonly key: string; readonly row: OutboxRow };
 
 type ImageAttachment = Extract<ChatAttachment, { readonly type: "image" }>;
 
@@ -477,8 +480,7 @@ function blockKey(block: MarkdownBlock): string {
 function replyBody(
   text: string,
   streaming: boolean,
-  itemId: string,
-  states: ReadonlyMap<string, ChoicesState>,
+  state: ChoicesState | null,
   onChoose: ((text: string) => Promise<boolean>) | undefined,
 ): {
   readonly body: string;
@@ -489,7 +491,6 @@ function replyBody(
     return { body: text, options: null, state: null };
   }
   const split = splitChoices(text, streaming);
-  const state = states.get(itemId) ?? null;
   const draw = split.options !== null && state !== null;
   const heldBack = split.options === null && split.body !== text;
   return {
@@ -957,6 +958,352 @@ function PendingBubble({
   );
 }
 
+/** What every row shares. A new object here draws every row again, so it is rebuilt only for a real change. */
+interface RowShared {
+  readonly native: NativePersonal;
+  readonly chat: ChatEnvironment;
+  readonly botName: string;
+  readonly currentUserId: string;
+  readonly onReply: (quote: PersonalReplyQuote) => void;
+  readonly onMessageMenu: (message: {
+    readonly messageId: string;
+    readonly name: string;
+    readonly text: string;
+    readonly sentAt: Date | null;
+  }) => void;
+  readonly onOpenFile: ((request: FileOpenRequest) => void) | undefined;
+  readonly onOpenLink: ((href: string) => void) | undefined;
+  readonly onChoose: ((text: string) => Promise<boolean>) | undefined;
+  readonly onCancelQueued: (id: string) => void;
+  readonly onRetryQueued: (id: string) => void;
+  readonly onRetryPending: ((id: string) => void) | undefined;
+}
+
+function rowKey(row: Row): string {
+  return row.key;
+}
+
+function dayLabelNow(at: Date): string {
+  return formatDayDivider(at, new Date());
+}
+
+type RowViewProps = { readonly inputs: RowInputs; readonly shared: RowShared };
+
+/** One transcript row. It draws again only when its own inputs or the shared ones change. */
+const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
+  const {
+    native,
+    chat,
+    botName,
+    currentUserId,
+    onReply,
+    onMessageMenu,
+    onOpenFile,
+    onOpenLink,
+    onChoose,
+    onCancelQueued,
+    onRetryQueued,
+    onRetryPending,
+  } = shared;
+  const row = inputs.row;
+  if (row.kind === "work") {
+    return <LiveWorkRow work={row.work} />;
+  }
+  if (row.kind === "pending") {
+    return (
+      <PendingBubble
+        message={row.message}
+        onRetry={onRetryPending === undefined ? undefined : () => onRetryPending(row.message.id)}
+      />
+    );
+  }
+  if (row.kind === "queued") {
+    return (
+      <View style={styles.messageRowEnd}>
+        <View style={[styles.userBubble, styles.pendingBubble]}>
+          <Text style={styles.userText}>{row.row.entry.text}</Text>
+          <View style={styles.queuedFooter}>
+            <Text style={styles.queuedState}>
+              {row.row.state === "sending"
+                ? "Sending…"
+                : row.row.state === "failed"
+                  ? (row.row.entry.error ?? "Not sent")
+                  : "Queued"}
+            </Text>
+            {row.row.state === "failed" ? (
+              <Pressable
+                onPress={() => onRetryQueued(row.row.entry.id)}
+                accessibilityRole="button"
+                style={styles.queuedButton}
+              >
+                <Text style={styles.queuedButtonText}>Retry</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => onCancelQueued(row.row.entry.id)}
+              accessibilityRole="button"
+              style={styles.queuedButton}
+            >
+              <Text style={styles.queuedButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
+  }
+  const item = row.item;
+  if (item.kind === "divider") {
+    return (
+      <View style={styles.dividerRow}>
+        <Text style={styles.dividerText}>{inputs.dayLabel}</Text>
+      </View>
+    );
+  }
+  if (isChatCard(item)) {
+    return inputs.cardContext === undefined ? null : renderChatCard(item, inputs.cardContext);
+  }
+  if (item.kind === "work") {
+    return (
+      <View style={styles.work}>
+        {item.entries.map((entry) => (
+          <View key={entry.id} style={styles.workRow}>
+            <View style={[styles.workDot, entry.tone === "error" ? styles.workError : null]} />
+            <Text style={styles.workText} numberOfLines={2}>
+              {entry.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    );
+  }
+  if (item.kind === "html-render") {
+    return (
+      <PageFrame native={native} chat={chat} htmlRender={item.htmlRender} onOpenLink={onOpenLink} />
+    );
+  }
+  if (item.kind === "plan") {
+    return (
+      <View style={styles.planCard}>
+        <Text style={styles.planLabel}>Plan</Text>
+        <MarkdownBody
+          text={item.plan.planMarkdown}
+          tone="assistant"
+          onOpenFile={onOpenFile}
+          onOpenLink={onOpenLink}
+        />
+      </View>
+    );
+  }
+  if (item.kind === "notice" || item.kind === "system-turn") {
+    return (
+      <Text style={styles.notice} numberOfLines={3}>
+        {item.message.text}
+      </Text>
+    );
+  }
+  if (item.kind === "group-system") {
+    return (
+      <Text style={styles.notice} numberOfLines={3}>
+        {groupSystemLabel(item.event, item.message.text)}
+      </Text>
+    );
+  }
+  if (item.kind === "group-message") {
+    const message = item.message;
+    const text = ownerVisibleText(message.text);
+    if (text.length === 0) return null;
+    const reply = replyBody(text, message.streaming, inputs.choice, onChoose);
+    const body = reply.body;
+    const sentAt = Number.isNaN(Date.parse(message.createdAt)) ? null : new Date(message.createdAt);
+    const speaker = inputs.speaker;
+    return (
+      <View style={styles.messageRowStart}>
+        <SwipeMessageRow
+          align="start"
+          sentAt={sentAt}
+          onReply={() =>
+            onReply(
+              replyQuoteForMessage({
+                message: { id: message.id, role: message.role, text: body },
+                botName: item.speaker.name,
+              }),
+            )
+          }
+        >
+          <LongPressSurface
+            onLongPress={() =>
+              onMessageMenu({
+                messageId: String(message.id),
+                name: item.speaker.name,
+                text: body,
+                sentAt,
+              })
+            }
+            style={[
+              styles.assistantPress,
+              markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
+            ]}
+          >
+            {item.showSpeaker ? (
+              <View style={styles.speakerRow}>
+                {speaker !== null ? (
+                  <BotAvatar
+                    shape={speaker.avatarShape}
+                    color={speaker.avatarColor}
+                    size={18}
+                    label={speaker.name}
+                  />
+                ) : null}
+                <Text style={styles.speakerName} numberOfLines={1}>
+                  {item.speaker.name}
+                </Text>
+              </View>
+            ) : null}
+            <MarkdownBody
+              text={body}
+              tone="assistant"
+              onOpenFile={onOpenFile}
+              onOpenLink={onOpenLink}
+            />
+            {reply.options !== null && reply.state !== null ? (
+              <ChoiceButtons options={reply.options} state={reply.state} onChoose={onChoose} />
+            ) : null}
+            {message.attachments?.map((attachment, index) =>
+              isImageAttachment(attachment) ? (
+                <AttachmentImage
+                  key={attachment.id}
+                  native={native}
+                  chat={chat}
+                  messageId={String(message.id)}
+                  index={index}
+                  attachment={attachment}
+                />
+              ) : (
+                <View key={attachment.id} style={styles.attachment}>
+                  <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+                  <Text style={styles.attachmentText} numberOfLines={1}>
+                    {attachment.name}
+                  </Text>
+                </View>
+              ),
+            )}
+          </LongPressSurface>
+        </SwipeMessageRow>
+      </View>
+    );
+  }
+  if (item.kind !== "message") return null;
+  const message = item.message;
+  const text = ownerVisibleText(message.text);
+  const role = message.role;
+  const sentAt = Number.isNaN(Date.parse(message.createdAt)) ? null : new Date(message.createdAt);
+  const quote = readPersonalReplyQuote(message.context);
+  if (role === "user") {
+    return (
+      <View style={styles.messageRowEnd}>
+        <SwipeMessageRow
+          align="end"
+          sentAt={sentAt}
+          onReply={() => onReply(replyQuoteForMessage({ message, botName: currentUserId }))}
+        >
+          <View style={styles.userColumn}>
+            <UserBubble
+              native={native}
+              chat={chat}
+              messageId={String(message.id)}
+              text={text}
+              quote={quote}
+              attachments={message.attachments}
+              onLongPress={() =>
+                onMessageMenu({
+                  messageId: String(message.id),
+                  name: "You",
+                  text,
+                  sentAt,
+                })
+              }
+            />
+            {inputs.readStatus !== null ? (
+              <Text style={styles.readStatus}>
+                {inputs.readStatus === "read"
+                  ? "Read"
+                  : inputs.readStatus === "queued"
+                    ? "Queued"
+                    : "Steering"}
+              </Text>
+            ) : null}
+          </View>
+        </SwipeMessageRow>
+      </View>
+    );
+  }
+  if (text.length === 0) return null;
+  const reply = replyBody(text, message.streaming, inputs.choice, onChoose);
+  const body = reply.body;
+  return (
+    <View style={styles.messageRowStart}>
+      <SwipeMessageRow
+        align="start"
+        sentAt={sentAt}
+        onReply={() =>
+          onReply(
+            replyQuoteForMessage({
+              message: { id: message.id, role: message.role, text: body },
+              botName,
+            }),
+          )
+        }
+      >
+        <LongPressSurface
+          onLongPress={() =>
+            onMessageMenu({
+              messageId: String(message.id),
+              name: botName,
+              text: body,
+              sentAt,
+            })
+          }
+          style={[
+            styles.assistantPress,
+            markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
+          ]}
+        >
+          <MarkdownBody
+            text={body}
+            messageId={String(message.id)}
+            tone="assistant"
+            onOpenFile={onOpenFile}
+            onOpenLink={onOpenLink}
+          />
+          {message.attachments?.map((attachment, index) =>
+            isImageAttachment(attachment) ? (
+              <AttachmentImage
+                key={attachment.id}
+                native={native}
+                chat={chat}
+                messageId={String(message.id)}
+                index={index}
+                attachment={attachment}
+              />
+            ) : (
+              <View key={attachment.id} style={styles.attachment}>
+                <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+                <Text style={styles.attachmentText} numberOfLines={1}>
+                  {attachment.name}
+                </Text>
+              </View>
+            ),
+          )}
+          {reply.options !== null && reply.state !== null ? (
+            <ChoiceButtons options={reply.options} state={reply.state} onChoose={onChoose} />
+          ) : null}
+          {inputs.contextUsed ? <Text style={styles.contextUsed}>{"Context used ⌄"}</Text> : null}
+        </LongPressSurface>
+      </SwipeMessageRow>
+    </View>
+  );
+}, sameRowProps);
+
 export function MessageList({
   native,
   chat,
@@ -1049,6 +1396,67 @@ export function MessageList({
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
   const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
   const [reverseRows] = useState(createRowReverser<Row>);
+  const handlerProps = {
+    onReply,
+    onMessageMenu,
+    onOpenFile,
+    onOpenLink,
+    onChoose,
+    onCancelQueued,
+    onRetryQueued,
+    onRetryPending,
+  };
+  // The screen passes new closures on every render; rows call through this ref so the shared
+  // object, and with it every row, stays the same until something a row draws changes.
+  const latestHandlers = useRef(handlerProps);
+  useLayoutEffect(() => {
+    latestHandlers.current = handlerProps;
+  });
+  const hasOpenFile = onOpenFile !== undefined;
+  const hasOpenLink = onOpenLink !== undefined;
+  const hasChoose = onChoose !== undefined;
+  const hasRetryPending = onRetryPending !== undefined;
+  const shared = useMemo<RowShared>(
+    () => ({
+      native,
+      chat,
+      botName,
+      currentUserId,
+      onReply: (quote) => latestHandlers.current.onReply(quote),
+      onMessageMenu: (message) => latestHandlers.current.onMessageMenu(message),
+      onOpenFile: hasOpenFile
+        ? (request) => latestHandlers.current.onOpenFile?.(request)
+        : undefined,
+      onOpenLink: hasOpenLink ? (href) => latestHandlers.current.onOpenLink?.(href) : undefined,
+      onChoose: hasChoose
+        ? (text) => latestHandlers.current.onChoose?.(text) ?? Promise.resolve(false)
+        : undefined,
+      onCancelQueued: (id) => latestHandlers.current.onCancelQueued(id),
+      onRetryQueued: (id) => latestHandlers.current.onRetryQueued(id),
+      onRetryPending: hasRetryPending
+        ? (id) => latestHandlers.current.onRetryPending?.(id)
+        : undefined,
+    }),
+    [native, chat, botName, currentUserId, hasOpenFile, hasOpenLink, hasChoose, hasRetryPending],
+  );
+  // Everything besides the row itself that a row reads: what the list re-renders its rows for.
+  const rowContext = useMemo<RowContext>(
+    () => ({
+      choiceStates,
+      contextTurns,
+      latestMessageStatus,
+      cardContext,
+      dayLabel: dayLabelNow,
+      groupSpeaker,
+    }),
+    [choiceStates, contextTurns, latestMessageStatus, cardContext, groupSpeaker],
+  );
+  const renderItem = useCallback(
+    ({ item: row }: ListRenderItemInfo<Row>) => (
+      <ChatRow inputs={rowInputs(row, rowContext)} shared={shared} />
+    ),
+    [rowContext, shared],
+  );
   const lastReveal = useRef<string | null>(null);
   const scrollToCard = useCallback(
     (itemId: string) => {
@@ -1115,14 +1523,14 @@ export function MessageList({
       <FlatList
         ref={listRef}
         data={reverseRows(rows)}
-        extraData={cardContext}
+        extraData={rowContext}
         inverted
         nestedScrollEnabled
         onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
         onScroll={onScroll}
         scrollEventThrottle={16}
         style={styles.list}
-        keyExtractor={(row) => row.key}
+        keyExtractor={rowKey}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -1146,332 +1554,7 @@ export function MessageList({
             </Pressable>
           )
         }
-        renderItem={({ item: row }) => {
-          if (row.kind === "work") {
-            return <LiveWorkRow work={row.work} />;
-          }
-          if (row.kind === "pending") {
-            return (
-              <PendingBubble
-                message={row.message}
-                onRetry={
-                  onRetryPending === undefined ? undefined : () => onRetryPending(row.message.id)
-                }
-              />
-            );
-          }
-          if (row.kind === "queued") {
-            return (
-              <View style={styles.messageRowEnd}>
-                <View style={[styles.userBubble, styles.pendingBubble]}>
-                  <Text style={styles.userText}>{row.row.entry.text}</Text>
-                  <View style={styles.queuedFooter}>
-                    <Text style={styles.queuedState}>
-                      {row.row.state === "sending"
-                        ? "Sending…"
-                        : row.row.state === "failed"
-                          ? (row.row.entry.error ?? "Not sent")
-                          : "Queued"}
-                    </Text>
-                    {row.row.state === "failed" ? (
-                      <Pressable
-                        onPress={() => onRetryQueued(row.row.entry.id)}
-                        accessibilityRole="button"
-                        style={styles.queuedButton}
-                      >
-                        <Text style={styles.queuedButtonText}>Retry</Text>
-                      </Pressable>
-                    ) : null}
-                    <Pressable
-                      onPress={() => onCancelQueued(row.row.entry.id)}
-                      accessibilityRole="button"
-                      style={styles.queuedButton}
-                    >
-                      <Text style={styles.queuedButtonText}>Cancel</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            );
-          }
-          const item = row.item;
-          if (item.kind === "divider") {
-            return (
-              <View style={styles.dividerRow}>
-                {/* eslint-disable-next-line react/purity -- the divider names the day in the device's zone */}
-                <Text style={styles.dividerText}>{formatDayDivider(item.at, new Date())}</Text>
-              </View>
-            );
-          }
-          if (isChatCard(item)) {
-            return cardContext === undefined ? null : renderChatCard(item, cardContext);
-          }
-          if (item.kind === "work") {
-            return (
-              <View style={styles.work}>
-                {item.entries.map((entry) => (
-                  <View key={entry.id} style={styles.workRow}>
-                    <View
-                      style={[styles.workDot, entry.tone === "error" ? styles.workError : null]}
-                    />
-                    <Text style={styles.workText} numberOfLines={2}>
-                      {entry.label}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            );
-          }
-          if (item.kind === "html-render") {
-            return (
-              <PageFrame
-                native={native}
-                chat={chat}
-                htmlRender={item.htmlRender}
-                onOpenLink={onOpenLink}
-              />
-            );
-          }
-          if (item.kind === "plan") {
-            return (
-              <View style={styles.planCard}>
-                <Text style={styles.planLabel}>Plan</Text>
-                <MarkdownBody
-                  text={item.plan.planMarkdown}
-                  tone="assistant"
-                  onOpenFile={onOpenFile}
-                  onOpenLink={onOpenLink}
-                />
-              </View>
-            );
-          }
-          if (item.kind === "notice" || item.kind === "system-turn") {
-            return (
-              <Text style={styles.notice} numberOfLines={3}>
-                {item.message.text}
-              </Text>
-            );
-          }
-          if (item.kind === "group-system") {
-            return (
-              <Text style={styles.notice} numberOfLines={3}>
-                {groupSystemLabel(item.event, item.message.text)}
-              </Text>
-            );
-          }
-          if (item.kind === "group-message") {
-            const message = item.message;
-            const text = ownerVisibleText(message.text);
-            if (text.length === 0) return null;
-            const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
-            const body = reply.body;
-            const sentAt = Number.isNaN(Date.parse(message.createdAt))
-              ? null
-              : new Date(message.createdAt);
-            const speaker = groupSpeaker?.(item.speaker.botId) ?? null;
-            return (
-              <View style={styles.messageRowStart}>
-                <SwipeMessageRow
-                  align="start"
-                  sentAt={sentAt}
-                  onReply={() =>
-                    onReply(
-                      replyQuoteForMessage({
-                        message: { id: message.id, role: message.role, text: body },
-                        botName: item.speaker.name,
-                      }),
-                    )
-                  }
-                >
-                  <LongPressSurface
-                    onLongPress={() =>
-                      onMessageMenu({
-                        messageId: String(message.id),
-                        name: item.speaker.name,
-                        text: body,
-                        sentAt,
-                      })
-                    }
-                    style={[
-                      styles.assistantPress,
-                      markdownNeedsWidth(body) || reply.options !== null
-                        ? styles.assistantWide
-                        : null,
-                    ]}
-                  >
-                    {item.showSpeaker ? (
-                      <View style={styles.speakerRow}>
-                        {speaker !== null ? (
-                          <BotAvatar
-                            shape={speaker.avatarShape}
-                            color={speaker.avatarColor}
-                            size={18}
-                            label={speaker.name}
-                          />
-                        ) : null}
-                        <Text style={styles.speakerName} numberOfLines={1}>
-                          {item.speaker.name}
-                        </Text>
-                      </View>
-                    ) : null}
-                    <MarkdownBody
-                      text={body}
-                      tone="assistant"
-                      onOpenFile={onOpenFile}
-                      onOpenLink={onOpenLink}
-                    />
-                    {reply.options !== null && reply.state !== null ? (
-                      <ChoiceButtons
-                        options={reply.options}
-                        state={reply.state}
-                        onChoose={onChoose}
-                      />
-                    ) : null}
-                    {message.attachments?.map((attachment, index) =>
-                      isImageAttachment(attachment) ? (
-                        <AttachmentImage
-                          key={attachment.id}
-                          native={native}
-                          chat={chat}
-                          messageId={String(message.id)}
-                          index={index}
-                          attachment={attachment}
-                        />
-                      ) : (
-                        <View key={attachment.id} style={styles.attachment}>
-                          <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
-                          <Text style={styles.attachmentText} numberOfLines={1}>
-                            {attachment.name}
-                          </Text>
-                        </View>
-                      ),
-                    )}
-                  </LongPressSurface>
-                </SwipeMessageRow>
-              </View>
-            );
-          }
-          if (item.kind !== "message") return null;
-          const message = item.message;
-          const text = ownerVisibleText(message.text);
-          const role = message.role;
-          const sentAt = Number.isNaN(Date.parse(message.createdAt))
-            ? null
-            : new Date(message.createdAt);
-          const quote = readPersonalReplyQuote(message.context);
-          if (role === "user") {
-            return (
-              <View style={styles.messageRowEnd}>
-                <SwipeMessageRow
-                  align="end"
-                  sentAt={sentAt}
-                  onReply={() => onReply(replyQuoteForMessage({ message, botName: currentUserId }))}
-                >
-                  <View style={styles.userColumn}>
-                    <UserBubble
-                      native={native}
-                      chat={chat}
-                      messageId={String(message.id)}
-                      text={text}
-                      quote={quote}
-                      attachments={message.attachments}
-                      onLongPress={() =>
-                        onMessageMenu({
-                          messageId: String(message.id),
-                          name: "You",
-                          text,
-                          sentAt,
-                        })
-                      }
-                    />
-                    {latestMessageStatus?.messageId === String(message.id) ? (
-                      <Text style={styles.readStatus}>
-                        {latestMessageStatus.status === "read"
-                          ? "Read"
-                          : latestMessageStatus.status === "queued"
-                            ? "Queued"
-                            : "Steering"}
-                      </Text>
-                    ) : null}
-                  </View>
-                </SwipeMessageRow>
-              </View>
-            );
-          }
-          if (text.length === 0) return null;
-          const reply = replyBody(text, message.streaming, item.id, choiceStates, onChoose);
-          const body = reply.body;
-          return (
-            <View style={styles.messageRowStart}>
-              <SwipeMessageRow
-                align="start"
-                sentAt={sentAt}
-                onReply={() =>
-                  onReply(
-                    replyQuoteForMessage({
-                      message: { id: message.id, role: message.role, text: body },
-                      botName,
-                    }),
-                  )
-                }
-              >
-                <LongPressSurface
-                  onLongPress={() =>
-                    onMessageMenu({
-                      messageId: String(message.id),
-                      name: botName,
-                      text: body,
-                      sentAt,
-                    })
-                  }
-                  style={[
-                    styles.assistantPress,
-                    markdownNeedsWidth(body) || reply.options !== null
-                      ? styles.assistantWide
-                      : null,
-                  ]}
-                >
-                  <MarkdownBody
-                    text={body}
-                    messageId={String(message.id)}
-                    tone="assistant"
-                    onOpenFile={onOpenFile}
-                    onOpenLink={onOpenLink}
-                  />
-                  {message.attachments?.map((attachment, index) =>
-                    isImageAttachment(attachment) ? (
-                      <AttachmentImage
-                        key={attachment.id}
-                        native={native}
-                        chat={chat}
-                        messageId={String(message.id)}
-                        index={index}
-                        attachment={attachment}
-                      />
-                    ) : (
-                      <View key={attachment.id} style={styles.attachment}>
-                        <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
-                        <Text style={styles.attachmentText} numberOfLines={1}>
-                          {attachment.name}
-                        </Text>
-                      </View>
-                    ),
-                  )}
-                  {reply.options !== null && reply.state !== null ? (
-                    <ChoiceButtons
-                      options={reply.options}
-                      state={reply.state}
-                      onChoose={onChoose}
-                    />
-                  ) : null}
-                  {contextTurns.has(String(message.id)) ? (
-                    <Text style={styles.contextUsed}>{"Context used ⌄"}</Text>
-                  ) : null}
-                </LongPressSurface>
-              </SwipeMessageRow>
-            </View>
-          );
-        }}
+        renderItem={renderItem}
       />
       {jumpShown ? (
         <View style={styles.jumpWrap} pointerEvents="box-none">
