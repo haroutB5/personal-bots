@@ -1,0 +1,90 @@
+[
+  {
+    "id": "server-tests",
+    "kind": "vitest",
+    "title": "Server fork gate (personal, mcp, persistence, preview, workspace, assets, orchestration-v2, cloud, provider, process)",
+    "cwd": "apps/server",
+    "commands": [
+      "NODE_ENV=test vp test run {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
+    ],
+    "concurrent": [
+      [
+        "NODE_ENV=test vp test run --shard=1/2 {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
+      ],
+      ["NODE_ENV=test vp test run --shard=2/2 {args}"]
+    ]
+  },
+  {
+    "id": "server-tsc",
+    "kind": "tsc",
+    "title": "Server typecheck",
+    "cwd": "apps/server",
+    "commands": ["node ../../scripts/personal/node/typecheck-lean.mjs"]
+  },
+  {
+    "id": "web-tests",
+    "kind": "vitest",
+    "title": "Web fork gate",
+    "cwd": "apps/web",
+    "commands": [
+      "node ../../scripts/personal/node/check-test-tree.mjs --package web",
+      "NODE_ENV=test vp test run --project unit src/features/personal src/authBootstrap.test.ts src/components/chat/providerIconUtils.test.ts"
+    ]
+  },
+  {
+    "id": "web-tsc",
+    "kind": "tsc",
+    "title": "Web typecheck",
+    "cwd": "apps/web",
+    "commands": ["node ../../scripts/personal/node/typecheck-lean.mjs"]
+  },
+  {
+    "id": "e2e",
+    "kind": "e2e",
+    "title": "Phone e2e smoke on Linux (seven core journeys, five resilience)",
+    "cwd": ".",
+    "commands": [
+      "node scripts/personal/node/e2e-smoke.mjs --suite-timeout 600 --json --journey {args}"
+    ]
+  },
+  {
+    "id": "personal-client",
+    "kind": "vitest",
+    "title": "Personal client package tests",
+    "cwd": "packages/personal-client",
+    "commands": ["NODE_ENV=test vp test run", "npx tsc --noEmit"]
+  },
+  {
+    "id": "hbots-mobile",
+    "kind": "vitest",
+    "title": "hbots Android app lint, typecheck and JS tests",
+    "cwd": "apps/hbots-mobile",
+    "commands": ["vp lint .", "npx tsc --noEmit", "NODE_ENV=test vp test run"]
+  },
+  {
+    "id": "hbots-mobile-kotlin",
+    "kind": "node",
+    "title": "hbots Android Kotlin unit tests",
+    "cwd": "apps/hbots-mobile",
+    "commands": [
+      "EXPO_NO_GIT_STATUS=1 npx expo prebuild --platform android --no-install",
+      "cd android && ./gradlew {args} --no-daemon --console=plain"
+    ]
+  },
+  {
+    "id": "parity",
+    "kind": "node",
+    "title": "Web to Android parity",
+    "cwd": ".",
+    "commands": [
+      "node scripts/personal/parity/parity-matrix.mjs . --ref HEAD --android-ref HEAD --client-ref HEAD --check --out scripts/personal/parity/parity.json && git diff --exit-code scripts/personal/parity/parity.json"
+    ]
+  },
+  {
+    "id": "release-tools",
+    "kind": "node",
+    "title": "Release and dev-team tool tests",
+    "cwd": ".",
+    "commands": ["node --test --test-concurrency=1 {args}"]
+  }
+]

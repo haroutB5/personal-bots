@@ -18,9 +18,10 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
+import { RegistryContext } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import type { Atom } from "effect/reactivity";
-import { useMemo } from "react";
+import { useCallback, useContext, useMemo } from "react";
 
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../react/query.ts";
 import { foldPersonalTasksFeed } from "./taskFeed.ts";
@@ -104,6 +105,19 @@ export function createPersonalAutomationClient<R, ER>(
         personalWorkQuestions({ environmentId: target.environmentId, input: {} }) as never,
       ),
     );
+
+  /**
+   * Redraws the Work questions now. The server hides a question once its chat was
+   * opened, so the phone asks again right after it leaves one instead of waiting
+   * for the 30 s poll. Nothing happens for a null environment.
+   */
+  const refreshPersonalWorkQuestions = (
+    registry: Registry,
+    environmentId: EnvironmentId | null,
+  ): void => {
+    if (environmentId === null) return;
+    registry.refresh(personalWorkQuestions({ environmentId, input: {} }) as never);
+  };
 
   const personalWorkAnswer = createEnvironmentRpcCommand(runtime, {
     label: "personal-work:answer",
@@ -285,6 +299,18 @@ export function createPersonalAutomationClient<R, ER>(
     return useEnvironmentQuery(atom);
   }
 
+  /**
+   * A function that redraws the Work questions. It reads the registry only, so a
+   * chat that calls it does not start the questions poll.
+   */
+  function useRefreshPersonalWorkQuestions(environmentId: EnvironmentId | null): () => void {
+    const registry = useContext(RegistryContext);
+    return useCallback(
+      () => refreshPersonalWorkQuestions(registry, environmentId),
+      [registry, environmentId],
+    );
+  }
+
   /** The bot questions the Work tab can answer; polls every 30 s while focused. */
   function usePersonalWorkQuestions(
     environmentId: EnvironmentId | null,
@@ -306,6 +332,7 @@ export function createPersonalAutomationClient<R, ER>(
     personalProjectsHistory,
     personalWorkSince,
     personalWorkQuestions,
+    refreshPersonalWorkQuestions,
     personalWorkAnswer,
     personalTaskCancel,
     personalTaskRetry,
@@ -326,6 +353,7 @@ export function createPersonalAutomationClient<R, ER>(
     usePersonalProjectHistory,
     usePersonalWorkSince,
     usePersonalWorkQuestions,
+    useRefreshPersonalWorkQuestions,
   };
 }
 

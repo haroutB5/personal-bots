@@ -3,7 +3,6 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  chatGoalPills,
   chatGoalTags,
   chatGoalTagsComplete,
   chatRowTagLine,
@@ -174,45 +173,5 @@ describe("what the goals list can say about a chat", () => {
     expect(rowOf(projects, "helper", true)).toEqual({ kind: "noGoal" });
     expect(rowOf(projects, "helper", false)).toEqual({ kind: "none" });
     expect(rowOf(projects, "lead", true)).toMatchObject({ kind: "tags" });
-  });
-});
-
-describe("chatGoalPills", () => {
-  it("reads the name, the step and the time left, and drops the time when there is none", () => {
-    const soon = project({ id: "g1", chats: ["t1"], dueInMs: HOUR });
-    const noEstimate = project({ id: "g2", chats: ["t1"] });
-    expect(chatGoalPills({ projects: [soon, noEstimate], threadId: "t1", nowMs: NOW })).toEqual([
-      { projectId: "g1", name: "Goal g1", text: "◎ Goal g1 · step 2 of 4 · ~1 h ›" },
-      { projectId: "g2", name: "Goal g2", text: "◎ Goal g2 · step 2 of 4 ›" },
-    ]);
-  });
-
-  it("follows the step line's done forms and says when a goal is overdue", () => {
-    const allDone = project({
-      id: "g1",
-      chats: ["t1"],
-      steps: STEPS.map((step) => ({ ...step, state: "done" as const })),
-      dueInMs: -2 * HOUR,
-    });
-    expect(chatGoalPills({ projects: [allDone], threadId: "t1", nowMs: NOW })[0]?.text).toBe(
-      "◎ Goal g1 · all 4 steps done · overdue by 2 h ›",
-    );
-    const someDone = project({
-      id: "g2",
-      chats: ["t1"],
-      steps: [
-        { label: "Design", state: "done" },
-        { label: "Build", state: "todo" },
-        { label: "Release", state: "todo" },
-      ],
-    });
-    expect(chatGoalPills({ projects: [someDone], threadId: "t1", nowMs: NOW })[0]?.text).toBe(
-      "◎ Goal g2 · 1 of 3 steps done ›",
-    );
-  });
-
-  it("skips a chat no open goal tags", () => {
-    const other = project({ id: "g1", chats: ["t2"] });
-    expect(chatGoalPills({ projects: [other], threadId: "t1", nowMs: NOW })).toEqual([]);
   });
 });

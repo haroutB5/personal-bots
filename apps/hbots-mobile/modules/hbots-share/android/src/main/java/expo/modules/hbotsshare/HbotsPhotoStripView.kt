@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ext.SdkExtensions
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.photopicker.EmbeddedPhotoPickerFeatureInfo
 import android.widget.photopicker.EmbeddedPhotoPickerProviderFactory
@@ -21,9 +22,11 @@ import expo.modules.kotlin.views.ExpoView
 
 /**
  * The system photo picker drawn inside the plus sheet, so recent photos show at once with no
- * storage permission. One tap picks: the picker grants the tapped photo's uri at once, and the
- * view copies it into the share intake like a keyboard image. The picker's own Add button only
- * exists in its expanded state and would make a pick take three taps, so a grant delivers too.
+ * storage permission. A tap selects a photo: the picker grants its uri about 400 ms later and
+ * the view reports the new count with `onSelection`, and a second tap revokes it. Nothing is
+ * copied until `add()` (the sheet's Add button) or the picker's own `onSelectionComplete`: then
+ * the selected photos, in tap order, are copied into the share intake like a keyboard image.
+ * The picker's own Add button only exists in its expanded state, so the sheet draws its own.
  * JavaScript reads the intake through the same caps. When the device has no embedded picker, or
  * its session fails, the view reports `onUnavailable` and the sheet falls back to the full picker.
  */
@@ -33,9 +36,13 @@ class HbotsPhotoStripView(context: Context, appContext: AppContext) :
   ExpoView(context, appContext) {
   private val onPicked by EventDispatcher()
   private val onUnavailable by EventDispatcher()
-  private val granted = LinkedHashSet<Uri>()
+  private val onSelection by EventDispatcher()
+  private val selection = PhotoSelection<Uri>()
   private var picker: EmbeddedPhotoPickerView? = null
   private var ended = false
+
+  /** How many photos one pick may hold: the room left in the draft. */
+  var maxSelection: Int = 1
 
   override val shouldUseAndroidLayout = true
 
@@ -62,12 +69,13 @@ class HbotsPhotoStripView(context: Context, appContext: AppContext) :
     }
 
     override fun onUriPermissionGranted(uris: List<Uri>) {
-      granted.addAll(uris)
-      if (uris.isNotEmpty()) deliver()
+      selection.grant(uris)
+      onSelection(mapOf("count" to selection.count))
     }
 
     override fun onUriPermissionRevoked(uris: List<Uri>) {
-      granted.removeAll(uris.toSet())
+      selection.revoke(uris)
+      onSelection(mapOf("count" to selection.count))
     }
 
     override fun onSelectionComplete() {
@@ -102,7 +110,7 @@ class HbotsPhotoStripView(context: Context, appContext: AppContext) :
       view.setEmbeddedPhotoPickerFeatureInfo(
         EmbeddedPhotoPickerFeatureInfo.Builder()
           .setMimeTypes(listOf("image/*"))
-          .setMaxSelectionLimit(1)
+          .setMaxSelectionLimit(maxSelection.coerceIn(1, MediaStore.getPickImagesMaxLimit()))
           .setOrderedSelection(true)
           .setThemeNightMode(Configuration.UI_MODE_NIGHT_YES)
           .build(),
@@ -119,14 +127,20 @@ class HbotsPhotoStripView(context: Context, appContext: AppContext) :
     onUnavailable(mapOf("reason" to reason))
   }
 
+  /** The sheet's Add button: copies the photos selected so far. A second call copies nothing. */
+  fun add() {
+    deliver()
+  }
+
   /**
    * The grants last only while the session is open, so the copy runs before JavaScript closes the
    * sheet. It runs off the main thread: ten full-size photos can take longer than a frame budget.
+   * `take` hands the selection over once, so a second Add never copies the photos twice.
    */
   private fun deliver() {
-    if (ended || granted.isEmpty()) return
+    if (ended) return
+    val uris = selection.take() ?: return
     ended = true
-    val uris = granted.toList()
     val app = context.applicationContext
     Thread {
       val id = try {

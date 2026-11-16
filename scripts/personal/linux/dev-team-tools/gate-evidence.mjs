@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
-import {options,git,hash,gatePass,validate,gateScopeOf,treeState,treeChange,resolveCommit} from './gate-common.mjs';
+import {options,git,hash,gatePass,validate,gateScopeOf,gateScopeModule,treeState,treeChange,resolveCommit} from './gate-common.mjs';
 let v;
 try {v=options()} catch(e){console.error(e.message);process.exit(2)}
 const here=path.dirname(fileURLToPath(import.meta.url));
@@ -18,23 +18,36 @@ const loadGates=()=>{
   if(wanted.some(id=>!defs.some(d=>d.id===id)))throw new Error('Unknown gate selection');
   return {defs,wanted};
 };
-// One line per selected gate: skipped with the table's reason, or run.
-const planOf=(defs,wanted,scope)=>defs.filter(d=>wanted.includes(d.id)).map(d=>({def:d,skip:scope.skip.includes(d.id),reason:scope.reasons[d.id]}));
+// One entry per selected gate: skip with the planned reason, or run the planned
+// mode and args.
+const planOf=(defs,wanted,scope)=>defs.filter(d=>wanted.includes(d.id)).map(d=>{
+  const plan=scope.plans.find(p=>p.id===d.id);
+  if(!plan)throw new Error(`gate ${d.id} has no row in the gate scope registry`);
+  return {def:d,plan};
+});
 const printPlan=(scope,plan)=>{
   console.log(`gate scope: ${scope.summary}`);
-  for(const p of plan) console.log(`${p.def.id}: ${p.skip?'SKIPPED':'RUN'}${p.reason?` (${p.reason})`:''}`);
+  for(const p of plan){
+    const args=p.plan.mode==='selected'?` [${p.plan.args.length}]`:'';
+    console.log(`${p.def.id}: ${p.plan.mode.toUpperCase()}${args} (${p.plan.reason})`);
+  }
+  // A changed test that no gate command runs: say so, so a plan never looks as if it ran it.
+  for(const file of scope.notRun??[])console.log(`not run by any gate: ${file}`);
 };
 // --dry-run prints what the gate would run for the release against the live one,
-// without the heavy-job lock, a staged release or running anything.
+// without the heavy-job lock, a staged release or running anything. --head plans
+// the same diff with the files of another commit, for replaying an old release.
 if(v['dry-run']){
   try {
-    const head=resolveCommit(v.repo,v.release);
-    if(!head)throw new Error(`release ${v.release} is not a commit in ${v.repo}`);
+    const releaseSha=resolveCommit(v.repo,v.release);
+    if(!releaseSha)throw new Error(`release ${v.release} is not a commit in ${v.repo}`);
+    const head=resolveCommit(v.repo,v.head??v.release);
+    if(!head)throw new Error(`head ${v.head} is not a commit in ${v.repo}`);
     const {defs,wanted}=loadGates();
-    const scope=gateScopeOf(v,head);
+    const scope=gateScopeOf(v,head,releaseSha);
     const plan=planOf(defs,wanted,scope);
     printPlan(scope,plan);
-    console.log(`dry run: ${plan.filter(p=>!p.skip).length} of ${wanted.length} gates would run (base ${scope.baseSha?.slice(0,12)??'none'}, head ${head.slice(0,12)})`);
+    console.log(`dry run: ${plan.filter(p=>p.plan.mode!=='skip').length} of ${wanted.length} gates would run (base ${scope.baseSha?.slice(0,12)??'none'}, release ${releaseSha.slice(0,12)}, files ${head.slice(0,12)})`);
     process.exit(0);
   } catch(e){console.error(`FAIL: ${e.message}`);process.exit(2)}
 }
@@ -61,8 +74,6 @@ const gateEnv=(cwd,tmp)=>{
   return env;
 };
 if(!process.env.PLAYWRIGHT_BROWSERS_PATH&&!fs.existsSync(GATE_BROWSERS)) console.warn(`warning: the pinned test browser folder ${GATE_BROWSERS} is missing`);
-const lanesOf=(d)=>d.concurrent??[d.commands];
-const commandsOf=(d)=>lanesOf(d).flat();
 try {
   const sha=git(v.repo,'rev-parse','HEAD'), dirty=()=>git(v.repo,'status','--porcelain','--untracked-files=no');
   const startDirty=dirty();
@@ -78,10 +89,10 @@ try {
   if(!sha.startsWith(v.release)||staged.version!==v.version||!sha.startsWith(staged.sha)||staged.dirty!=='false')throw new Error('Stage a clean matching commit/version first');
   const binHash=hash(path.join(v.dir,'dist/bin.mjs'));
   const scope=gateScopeOf(v,sha);
+  const scopeModule=gateScopeModule(v.repo);
   const {defs,wanted}=loadGates();
   const plan=planOf(defs,wanted,scope);
   printPlan(scope,plan);
-  const skipIds=new Set(plan.filter(p=>p.skip).map(p=>p.def.id));
   let kept=[];
   if(v.merge){const old=JSON.parse(fs.readFileSync(v.file,'utf8'));if(old.sha!==sha||old.treeClean!==true||old.binSha256!==binHash)throw new Error('Cannot merge evidence from different/dirty tree or artifact');kept=old.gates.filter(g=>!wanted.includes(g.id))}
   const logDir=path.join(v.dir,'gate-evidence-logs');fs.mkdirSync(logDir,{recursive:true});
@@ -99,7 +110,7 @@ try {
     };
     next(0);
   });
-  const runGate=async(d)=>{
+  const runGate=async(d,lanes)=>{
     const log=path.join(logDir,`${d.id}.log`),fd=fs.openSync(log,'w'),started=Date.now();
     const stdio=['ignore',fd,fd,'ignore','ignore','ignore','ignore','ignore','ignore','ignore'];
     if(linkOf(8)!==null) stdio[8]=8;
@@ -114,8 +125,8 @@ try {
         const found=path.resolve(spawnSync('bash',['-c','command -v vp'],{cwd,env,encoding:'utf8'}).stdout.trim()||'.');
         if(found!==ownVp)throw new Error(`${d.id}: vp resolves to ${found}, expected ${ownVp}`);
       }
-      const lanes=await Promise.all(lanesOf(d).map((commands)=>runCommands(commands,cwd,env,stdio)));
-      const commands=lanes.flat();
+      const laneResults=await Promise.all(lanes.map((commands)=>runCommands(commands,cwd,env,stdio)));
+      const commands=laneResults.flat();
       const text=fs.readFileSync(log,'utf8').replace(/\x1b\[[0-9;?]*[A-Za-z]/g,'');
       const g={id:d.id,kind:d.kind,title:d.title??d.id,cwd:d.cwd??'.',commands,exit:commands.find(c=>c.exit!==0)?.exit??0,seconds:(Date.now()-started)/1000,log};
       if(d.kind==='vitest'){
@@ -132,29 +143,50 @@ try {
       try{fs.rmSync(tmp,{recursive:true,force:true})}catch(err){console.warn(`warning: could not remove ${tmp}: ${err.message}`)}
     }
   };
-  const selected=defs.filter(d=>wanted.includes(d.id));
-  const skipped=new Map(selected.filter(d=>skipIds.has(d.id)).map(d=>[d.id,{id:d.id,kind:d.kind,title:d.title??d.id,cwd:d.cwd??'.',skipped:true,reason:scope.reasons[d.id],baseSha:scope.baseSha,changedPaths:scope.changedPaths,seconds:0,commands:[]}]));
-  const toRun=selected.filter(d=>!skipIds.has(d.id));
-  const serverTests=toRun.find(d=>d.id==='server-tests');
-  const e2eGate=toRun.find(d=>d.id==='e2e');
+  const selected=plan.map(p=>p.def);
+  const skipped=new Map(plan.filter(p=>p.plan.mode==='skip').map(p=>[p.def.id,{id:p.def.id,kind:p.def.kind,title:p.def.title??p.def.id,cwd:p.def.cwd??'.',mode:'skip',reason:p.plan.reason,baseSha:scope.baseSha,changedPaths:scope.changedPaths,seconds:0,commands:[]}]));
+  const lanes=p=>scopeModule.commandsFor(p.plan,p.def);
+  const toRun=plan.filter(p=>p.plan.mode!=='skip');
+  const serverTests=toRun.find(p=>p.def.id==='server-tests');
+  const e2eGate=toRun.find(p=>p.def.id==='e2e');
   // Two shards plus the browser peaked at the 5 GiB soft cap and starved e2e, so only a single-lane server-tests shares the window.
-  const together=serverTests!==undefined&&e2eGate!==undefined&&(serverTests.concurrent?.length??1)===1;
+  const together=serverTests!==undefined&&e2eGate!==undefined&&lanes(serverTests).length===1;
+  const run=(p)=>runGate(p.def,lanes(p));
   if(together){
     checkStable('before server-tests and e2e');
-    await Promise.all([runGate(serverTests),runGate(e2eGate)]);
+    await Promise.all([run(serverTests),run(e2eGate)]);
     checkStable('after server-tests and e2e');
   }
-  for(const d of toRun) if(!(together&&(d===serverTests||d===e2eGate))){checkStable(`before ${d.id}`);await runGate(d);checkStable(`after ${d.id}`)}
-  gates.push(...selected.map(d=>results.get(d.id)??skipped.get(d.id)).filter(Boolean));
+  for(const p of toRun) if(!(together&&(p===serverTests||p===e2eGate))){checkStable(`before ${p.def.id}`);await run(p);checkStable(`after ${p.def.id}`)}
+  gates.push(...plan.map(p=>{
+    const result=results.get(p.def.id)??skipped.get(p.def.id)??null;
+    if(!result)return null;
+    if(p.plan.mode==='skip')return result;
+    return {
+      ...result,
+      mode:p.plan.mode,
+      reason:p.plan.reason,
+      baseSha:scope.baseSha,
+      changedPaths:scope.changedPaths,
+      ...(p.plan.mode==='selected'?{selector:p.plan.selector}:{}),
+      ...(p.plan.args?{args:p.plan.args}:{}),
+    };
+  }).filter(Boolean));
   const endDirty=dirty();
-  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{summary:scope.summary,skip:[...skipIds],reasons:scope.reasons,baseSha:scope.baseSha,changedPaths:scope.changedPaths},gates};
+  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{summary:scope.summary,baseSha:scope.baseSha,changedPaths:scope.changedPaths,notRun:scope.notRun??[]},gates};
   e.ok=validate(e,{...v,commit:undefined}).length===0;
   fs.writeFileSync(v.file,JSON.stringify(e,null,2)+'\n');
   if(!v['skip-notes']){
     const notesFile=path.join(v.repo,'docs/releases',v.notes);fs.mkdirSync(path.dirname(notesFile),{recursive:true});
-    const section=`<!-- gate-evidence:begin sha=${sha} release=${v.release} json-sha256=${hash(v.file)} result=${e.ok?'PASS':'FAIL'} -->\n${gates.map(g=>`- ${g.id}: ${g.skipped===true?'SKIPPED':gatePass(g)?'PASS':'FAIL'}${g.skipped===true?'':`, exit ${g.exit}`}`).join('\n')}\n<!-- gate-evidence:end -->`;
+    const line=g=>{
+      const status=g.mode==='skip'?'SKIPPED':gatePass(g)?'PASS':'FAIL';
+      const detail=g.mode==='skip'||g.mode==='selected'?`, ${g.mode}: ${g.reason}`:(g.exit!==undefined?`, exit ${g.exit}`:'');
+      return `- ${g.id}: ${status}${detail}`;
+    };
+    const unrun=(scope.notRun??[]).map(file=>`- not run by any gate: ${file}`);
+    const section=`<!-- gate-evidence:begin sha=${sha} release=${v.release} json-sha256=${hash(v.file)} result=${e.ok?'PASS':'FAIL'} -->\n${[...gates.map(line),...unrun].join('\n')}\n<!-- gate-evidence:end -->`;
     const old=fs.existsSync(notesFile)?fs.readFileSync(notesFile,'utf8'):`# HANDOFF ${v.version}\n`;
     fs.writeFileSync(notesFile,old.includes('<!-- gate-evidence:begin')?old.replace(/<!-- gate-evidence:begin[^]*?<!-- gate-evidence:end -->/,section):old.trimEnd()+'\n\n## Gate evidence\n\n'+section+'\n');
   }
   console.log(`${e.ok?'PASS':'FAIL'}: ${v.file}`);process.exitCode=e.ok?0:1;
-} catch(e){console.error(`FAIL: ${e.message}`);process.exitCode=2}
+} catch(e){console.error(`FAIL: ${e.stack??e.message}`);process.exitCode=2}
