@@ -37,3 +37,20 @@ None. `Migrations.ts` has no diff against trunk and the highest id stays 159. Pa
 ## Rollback
 
 Binary rollback to `250e2e23c635` (1.67.30) plus its APK. The database is unchanged by this release.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=b2f47cf6b5bb2834399702ba826479541cbee7bf release=b2f47cf6b5bb json-sha256=6afa31620a99bb7c4f016b2a040b6718a686703d436a394d178b7085bfeb9630 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+- release-tools: PASS, exit 0
+
+<!-- gate-evidence:end -->
