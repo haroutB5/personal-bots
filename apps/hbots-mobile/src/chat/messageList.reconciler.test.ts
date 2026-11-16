@@ -473,4 +473,29 @@ describe("MessageList through the reconciler", () => {
     expect(label()).toMatch(/^Yesterday/u);
     expect(counts.messageRows).toBe(0);
   });
+
+  it("R15 a swipe to reply on a reply that grew after its row mounted quotes the grown text", () => {
+    const onReply = vi.fn();
+    mount(
+      props({ items: [message("a0", "assistant", "first chunk", { streaming: true })], onReply }),
+    );
+    update(
+      props({
+        items: [message("a0", "assistant", "first chunk and the rest", { streaming: false })],
+        onReply,
+      }),
+    );
+    const swipe = hosts("Animated.View")[0]!;
+    act(() => swipe.props.panConfig.onPanResponderRelease({}, { dx: 100, dy: 0 }));
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply.mock.calls[0]![0]).toMatchObject({ excerpt: "first chunk and the rest" });
+  });
+
+  it("R16 a short swipe does not reply", () => {
+    const onReply = vi.fn();
+    mount(props({ items: [message("a0", "assistant", "hello")], onReply }));
+    const swipe = hosts("Animated.View")[0]!;
+    act(() => swipe.props.panConfig.onPanResponderRelease({}, { dx: 40, dy: 0 }));
+    expect(onReply).not.toHaveBeenCalled();
+  });
 });

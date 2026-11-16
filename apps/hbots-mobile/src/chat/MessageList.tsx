@@ -765,6 +765,11 @@ function SwipeMessageRow({
   const translateX = useRef(new Animated.Value(0)).current;
   const [revealed, setRevealed] = useState(false);
   const beganInScroller = useRef(false);
+  // The responder below is made once; it reads the row's current reply at release time.
+  const latestOnReply = useRef(onReply);
+  useLayoutEffect(() => {
+    latestOnReply.current = onReply;
+  });
   const scrollTouch = useMemo<HorizontalScrollTouch>(
     () => ({
       began: () => {
@@ -790,8 +795,8 @@ function SwipeMessageRow({
       onPanResponderRelease: (_event, gesture) => {
         const direction = align === "end" ? -1 : 1;
         const distance = gesture.dx * direction;
-        if (distance > 56 && onReply !== undefined) {
-          onReply();
+        if (distance > 56) {
+          latestOnReply.current?.();
         }
         Animated.spring(translateX, {
           toValue: 0,
