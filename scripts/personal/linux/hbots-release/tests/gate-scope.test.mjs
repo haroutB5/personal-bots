@@ -428,3 +428,14 @@ NodeTest.test("a selected server set over 150 files runs every file in some lane
   NodeAssert.equal(small.length, 1);
   NodeAssert.equal(new Set(lanesRun(small).flat()).size >= 100, true);
 });
+
+NodeTest.test("a path a gate reads by name still runs the checks of its own area", () => {
+  for (const file of ["apps/hbots-mobile/src/pairing.ts", "apps/hbots-mobile/src/dpop.ts"]) {
+    const scope = planChecks([file], { reader: fsReader(REPO) });
+    const ran = running(scope);
+    for (const id of ["server-tests", "hbots-mobile", "parity"])
+      NodeAssert.ok(ran.includes(id), `${file} must run ${id}, ran ${ran.join(",")}`);
+  }
+  const doc = classifyPath("docs/user/t3-connect-troubleshooting.md");
+  NodeAssert.deepEqual(doc.checks, ["server-tests"]);
+});

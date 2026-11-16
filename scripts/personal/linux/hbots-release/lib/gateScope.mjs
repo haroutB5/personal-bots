@@ -202,17 +202,18 @@ const isUnsafe = (file) =>
 export function classifyPath(file) {
   if (typeof file !== "string" || isUnsafe(file)) return { kind: "unmapped", checks: [] };
   if (matchesAny(file, TOOLCHAIN)) return { kind: "toolchain", checks: [] };
-  if (GATED_PATHS.includes(file))
-    return {
-      kind: "check",
-      checks: CHECK_IDS.filter((id) => CHECKS[id].inputs.includes(file)),
-    };
-  if (isPlainDoc(file)) return { kind: "none", checks: [] };
-  if (NO_CHECK.includes(file)) return { kind: "none", checks: [] };
+  // A file a gate reads by name runs that gate and also every check of its own
+  // area, so the phone tests still run for apps/hbots-mobile/src/pairing.ts.
+  const named = GATED_PATHS.includes(file)
+    ? CHECK_IDS.filter((id) => CHECKS[id].inputs.includes(file))
+    : [];
+  if (isPlainDoc(file) || NO_CHECK.includes(file))
+    return named.length ? { kind: "check", checks: named } : { kind: "none", checks: [] };
   const checks = CHECK_IDS.filter((id) => {
     const row = CHECKS[id];
     return (
-      row.inputs.some((pattern) => matches(file, pattern)) && !matchesAny(file, row.except ?? [])
+      named.includes(id) ||
+      (row.inputs.some((pattern) => matches(file, pattern)) && !matchesAny(file, row.except ?? []))
     );
   });
   if (checks.length) return { kind: "check", checks };
