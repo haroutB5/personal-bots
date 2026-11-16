@@ -6,7 +6,9 @@
 
 export type AndroidPerfOptimization =
   /** Start a chat's snapshot request at the press, before the screen mounts. */
-  "android-preload-chat";
+  | "android-preload-chat"
+  /** Check for an app update when the connection comes back, at most once a minute. */
+  | "android-update-on-reconnect";
 
 let off: ReadonlySet<string> = new Set();
 
