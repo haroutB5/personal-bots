@@ -25,3 +25,19 @@ None. Measured: no migration, schema or contracts file in the fixes diff. Params
 ## Rollback
 
 Binary rollback to `ea030dbb756b` (1.67.27) plus its APK. The database is unchanged by this release.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=6bc353268a0386bb1459fa7880bec4334941d084 release=6bc353268a03 json-sha256=f226089452d81ec266cf0effa6c0afa4b28cb364b04954e96d4dbe43f6c070ab result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
