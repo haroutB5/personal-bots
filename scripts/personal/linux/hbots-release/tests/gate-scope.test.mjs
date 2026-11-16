@@ -348,6 +348,23 @@ NodeTest.test("the seal refuses e2e journeys that differ from the planned ones",
   });
 });
 
+NodeTest.test(
+  "the seal refuses an e2e gate with no journeys list or one that is not a list",
+  () => {
+    pushCase(({ cfg, a, evidence }) => {
+      for (const patch of [{ journeys: undefined }, { journeys: "all" }, { journeys: null }]) {
+        const forged = evidence({ patch: { e2e: patch } });
+        NodeAssert.match(
+          planEvidenceProblems(cfg, a, forged).join(" "),
+          /e2e journeys differ from the planned journeys|e2e gate has no journeys list/,
+          JSON.stringify(patch),
+        );
+      }
+      NodeAssert.deepEqual(planEvidenceProblems(cfg, a, evidence()), []);
+    });
+  },
+);
+
 NodeTest.test("the seal refuses a whole gate whose recorded args differ", () => {
   withFixture((f) => {
     const cfg = { currentTxt: NodePath.join(f.releases, "current.txt") };
@@ -365,6 +382,7 @@ NodeTest.test("the seal refuses a whole gate whose recorded args differ", () => 
       baseSha: f.base,
       changedPaths: paths,
       ...(plan.args ? { args: plan.args } : {}),
+      ...(plan.id === "e2e" ? { journeys: plan.args.map((id) => ({ id, ok: true })) } : {}),
     }));
     NodeAssert.deepEqual(planEvidenceProblems(cfg, a, { gates }), []);
     const forged = gates.map((gate) =>

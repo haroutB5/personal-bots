@@ -629,10 +629,17 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
       )
         problems.push(`gate ${gate.id} args differ from the recomputed plan`);
       // The journeys that ran are the journeys that were planned.
-      if (gate.id === "e2e" && Array.isArray(gate.journeys)) {
-        const ran = gate.journeys.map((journey) => journey?.id).sort();
+      // A missing or non-list `journeys` is as wrong as a different list.
+      if (gate.id === "e2e") {
+        const ran = Array.isArray(gate.journeys)
+          ? gate.journeys.map((journey) => journey?.id).sort()
+          : null;
         const planned = [...plan.args].sort();
-        if (ran.length !== planned.length || ran.some((id, index) => id !== planned[index]))
+        if (!ran)
+          problems.push(
+            `gate e2e has no journeys list; gate e2e journeys differ from the planned journeys`,
+          );
+        else if (ran.length !== planned.length || ran.some((id, index) => id !== planned[index]))
           problems.push(`gate e2e journeys differ from the planned journeys`);
       }
     }
