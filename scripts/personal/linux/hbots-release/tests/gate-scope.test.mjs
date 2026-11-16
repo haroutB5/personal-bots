@@ -573,3 +573,29 @@ NodeTest.test("files the root vite config imports or loads are toolchain", () =>
     NodeAssert.equal(classifyPath(file).kind, "toolchain", file);
   NodeAssert.equal(classifyPath("infra/relay/package.json").kind, "none");
 });
+
+NodeTest.test("the fs reader and the git reader select the same tests", () => {
+  const head = git(REPO, "rev-parse", "HEAD");
+  for (const file of [
+    "apps/hbots-mobile/src/dpop.ts",
+    "apps/hbots-mobile/src/pairing.ts",
+    "apps/server/src/bin.ts",
+    "packages/shared/src/dpop.ts",
+    "apps/server/src/personal/push/PersonalPushService.ts",
+  ]) {
+    const fromFs = planOf(planChecks([file], { reader: fsReader(REPO) }), "server-tests").args;
+    const fromGit = planOf(
+      planChecks([file], { reader: gitReader(REPO, head) }),
+      "server-tests",
+    ).args;
+    NodeAssert.deepEqual(fromFs, fromGit, file);
+  }
+  // dpop.ts is reached through vi.mock in a server test, so both readers select it
+  const dpop = planOf(
+    planChecks(["apps/hbots-mobile/src/dpop.ts"], { reader: fsReader(REPO) }),
+    "server-tests",
+  ).args;
+  NodeAssert.ok(
+    dpop.includes("src/personal/auth/orchestrationProtocolUpgrade.integration.test.ts"),
+  );
+});

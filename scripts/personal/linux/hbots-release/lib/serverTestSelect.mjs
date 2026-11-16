@@ -82,19 +82,27 @@ export function fsReader(root) {
  */
 export function gitReader(repo, sha) {
   const listings = new Map();
-  const known = new Set();
   const cache = new Map();
+  // One listing of the whole commit, so a file outside the listed folders (an
+  // import that reaches into apps/hbots-mobile) resolves the way it does on disk.
+  let tree = null;
+  const allFiles = () => {
+    tree ??= new Set(
+      NodeChildProcess.execFileSync(
+        "git",
+        ["-C", repo, "ls-tree", "-r", "--name-only", "-z", sha],
+        { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 },
+      )
+        .split("\0")
+        .filter(Boolean),
+    );
+    return tree;
+  };
   const listFiles = (dir) => {
     if (listings.has(dir)) return listings.get(dir);
-    const out = NodeChildProcess.execFileSync(
-      "git",
-      ["-C", repo, "ls-tree", "-r", "--name-only", sha, "--", dir],
-      { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
-    )
-      .split("\n")
-      .filter(Boolean);
+    const prefix = dir.endsWith("/") ? dir : `${dir}/`;
+    const out = [...allFiles()].filter((file) => file.startsWith(prefix) || file === dir);
     listings.set(dir, out);
-    for (const file of out) known.add(file);
     return out;
   };
   const prefetch = (files) => {
@@ -128,7 +136,7 @@ export function gitReader(repo, sha) {
   };
   return {
     listFiles,
-    exists: (file) => known.has(file),
+    exists: (file) => allFiles().has(file),
     read: (file) => {
       if (!cache.has(file)) prefetch([file]);
       return cache.get(file) ?? null;
@@ -305,9 +313,14 @@ export function selectServerTests({ reader, changedPaths }) {
   }
   const graphModules = new Set(seen);
 
+  // Any changed file the graph reaches counts, wherever it lives: a server test can
+  // import or mock a file under apps/hbots-mobile.
   const changed = new Set(
     changedPaths.filter(
-      (file) => file.startsWith(`${SERVER_PKG_DIR}/`) || file.startsWith("packages/"),
+      (file) =>
+        file.startsWith(`${SERVER_PKG_DIR}/`) ||
+        file.startsWith("packages/") ||
+        graphModules.has(file),
     ),
   );
   const selected = new Set();
