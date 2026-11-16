@@ -7,12 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
-import {
-  SERVER_GATE_DIRS,
-  fsReader,
-  gitReader,
-  selectServerTests,
-} from "./serverTestSelect.mjs";
+import { SERVER_GATE_DIRS, fsReader, gitReader, selectServerTests } from "./serverTestSelect.mjs";
 
 export const APP_VERSION = "scripts/personal/app-version.txt";
 export const PARITY_MATRIX = "scripts/personal/parity/parity.json";
@@ -61,7 +56,6 @@ export const NO_CHECK = [
   "third-party-licenses/",
   ".vite-hooks/",
   ".vscode/",
-  "scripts/",
   "scripts/personal/perf/",
   "scripts/personal/qa/",
   "scripts/personal/contract/",
@@ -158,7 +152,12 @@ export const CHECKS = {
     select: "e2eJourneys@1",
   },
   parity: {
-    inputs: ["apps/web/", "apps/hbots-mobile/", "packages/personal-client/", "scripts/personal/parity/"],
+    inputs: [
+      "apps/web/",
+      "apps/hbots-mobile/",
+      "packages/personal-client/",
+      "scripts/personal/parity/",
+    ],
     except: ["apps/hbots-mobile/package.json", PARITY_MATRIX],
   },
   "release-tools": {
@@ -183,7 +182,10 @@ const matches = (file, pattern) => {
       .join("[^/]+");
     return new RegExp(`^${body}`).test(file);
   }
-  return pattern.endsWith("/") ? file.startsWith(pattern) : file === pattern;
+  // A trailing "-" names a file family (`sqlite-*.cjs`); a trailing "/" a folder.
+  return pattern.endsWith("/") || pattern.endsWith("-")
+    ? file.startsWith(pattern)
+    : file === pattern;
 };
 const matchesAny = (file, patterns) => patterns.some((pattern) => matches(file, pattern));
 const isPlainDoc = (file) =>
@@ -202,25 +204,29 @@ export function classifyPath(file) {
   if (GATED_PATHS.includes(file))
     return {
       kind: "check",
-      checks: CHECK_IDS.filter((id) =>
-        CHECKS[id].inputs.includes(file),
-      ),
+      checks: CHECK_IDS.filter((id) => CHECKS[id].inputs.includes(file)),
     };
   if (isPlainDoc(file)) return { kind: "none", checks: [] };
   if (NO_CHECK.includes(file)) return { kind: "none", checks: [] };
   const checks = CHECK_IDS.filter((id) => {
     const row = CHECKS[id];
     return (
-      row.inputs.some((pattern) => matches(file, pattern)) &&
-      !matchesAny(file, row.except ?? [])
+      row.inputs.some((pattern) => matches(file, pattern)) && !matchesAny(file, row.except ?? [])
     );
   });
   if (checks.length) return { kind: "check", checks };
   if (matchesAny(file, NO_CHECK)) return { kind: "none", checks: [] };
   // A ps1 helper directly under scripts/personal is retired tooling.
-  if (file.startsWith("scripts/personal/") && !file.slice("scripts/personal/".length).includes("/") && file.endsWith(".ps1"))
+  if (
+    file.startsWith("scripts/personal/") &&
+    !file.slice("scripts/personal/".length).includes("/") &&
+    file.endsWith(".ps1")
+  )
     return { kind: "none", checks: [] };
   if (!file.includes("/")) return { kind: "none", checks: [] };
+  // Upstream scripts outside scripts/personal are not shipped and no gate reads them.
+  if (file.startsWith("scripts/") && !file.startsWith("scripts/personal/"))
+    return { kind: "none", checks: [] };
   return { kind: "unmapped", checks: [] };
 }
 
@@ -249,11 +255,15 @@ function selectKotlin({ reader, changedPaths }) {
   const hit = new Set();
   let every = false;
   for (const file of changedPaths) {
-    if (file === "apps/hbots-mobile/app.config.ts" || file.startsWith("apps/hbots-mobile/plugins/")) {
+    if (
+      file === "apps/hbots-mobile/app.config.ts" ||
+      file.startsWith("apps/hbots-mobile/plugins/")
+    ) {
       every = true;
       break;
     }
-    const moduleFile = /^apps\/hbots-mobile\/modules\/([^/]+)\/(?:android\/|expo-module\.config\.json)/.exec(file);
+    const moduleFile =
+      /^apps\/hbots-mobile\/modules\/([^/]+)\/(?:android\/|expo-module\.config\.json)/.exec(file);
     if (moduleFile && names.includes(moduleFile[1])) hit.add(moduleFile[1]);
   }
   if (every) return { args: all, count: all.length, unit: "Gradle tasks" };
@@ -322,17 +332,22 @@ function expandTests(reader, entries) {
   const files = new Set();
   for (const entry of entries) {
     if (reader.exists(entry)) files.add(entry);
-    else for (const file of reader.listFiles(entry)) if (/\.test\.(?:mjs|cjs|js)$/.test(file)) files.add(file);
+    else
+      for (const file of reader.listFiles(entry))
+        if (/\.test\.(?:mjs|cjs|js)$/.test(file)) files.add(file);
   }
   return [...files].sort();
 }
 
 function selectReleaseTools({ reader, changedPaths }) {
-  const all = expandTests(reader, [...new Set(RELEASE_TOOL_GROUPS.flatMap((group) => group.tests))]);
+  const all = expandTests(reader, [
+    ...new Set(RELEASE_TOOL_GROUPS.flatMap((group) => group.tests)),
+  ]);
   const tests = new Set();
   for (const file of changedPaths)
     for (const group of RELEASE_TOOL_GROUPS)
-      if (file.startsWith(group.prefix)) for (const test of expandTests(reader, group.tests)) tests.add(test);
+      if (file.startsWith(group.prefix))
+        for (const test of expandTests(reader, group.tests)) tests.add(test);
   const args = [...tests].sort();
   return { args: args.length ? args : all, count: args.length, unit: "test files" };
 }
@@ -437,10 +452,12 @@ export function planChecks(paths, options = {}) {
     summary:
       run.length === 0
         ? "SKIP every check (no input changed)"
-        : `RUN ${run.map((plan) => plan.id).join(", ")} (${selected.length} selected, ${run.length - selected.length} whole); SKIP ${plans
-            .filter((plan) => plan.mode === "skip")
-            .map((plan) => plan.id)
-            .join(", ") || "none"}`,
+        : `RUN ${run.map((plan) => plan.id).join(", ")} (${selected.length} selected, ${run.length - selected.length} whole); SKIP ${
+            plans
+              .filter((plan) => plan.mode === "skip")
+              .map((plan) => plan.id)
+              .join(", ") || "none"
+          }`,
   };
 }
 
@@ -486,9 +503,13 @@ export function commandsFor(plan, def) {
 export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reader }) {
   const problems = [];
   if (!/^[a-f0-9]{40}$/.test(liveSha ?? ""))
-    problems.push(`cannot verify gate plans: the live release ${liveSha ?? "(missing)"} is not a commit`);
+    problems.push(
+      `cannot verify gate plans: the live release ${liveSha ?? "(missing)"} is not a commit`,
+    );
   if (!/^[a-f0-9]{40}$/.test(releaseSha ?? ""))
-    problems.push(`cannot verify gate plans: the release ${releaseSha ?? "(missing)"} is not a commit`);
+    problems.push(
+      `cannot verify gate plans: the release ${releaseSha ?? "(missing)"} is not a commit`,
+    );
   if (problems.length) return problems;
   const scope = planChecks(changedPaths, { reader });
   if (scope.error === "unmapped")
@@ -508,7 +529,9 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
         `evidence gate ${gate.id} is ${gate.mode ?? "(missing mode)"}, the recomputed plan is ${plan.mode}`,
       );
     if (gate.baseSha !== liveSha)
-      problems.push(`gate ${gate.id} claims base ${gate.baseSha ?? "(missing)"}, live is ${liveSha}`);
+      problems.push(
+        `gate ${gate.id} claims base ${gate.baseSha ?? "(missing)"}, live is ${liveSha}`,
+      );
     const claimed = Array.isArray(gate.changedPaths) ? [...gate.changedPaths].sort() : [];
     if (
       claimed.length !== expected.length ||

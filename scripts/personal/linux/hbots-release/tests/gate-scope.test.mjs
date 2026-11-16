@@ -114,10 +114,9 @@ NodeTest.test("the 1.67.20 replay selects 21 server tests", () => {
 });
 
 NodeTest.test("a version-bump-only diff runs only hbots-mobile", () => {
-  const scope = planChecks(
-    ["scripts/personal/app-version.txt", "apps/hbots-mobile/package.json"],
-    { reader: fsReader(REPO) },
-  );
+  const scope = planChecks(["scripts/personal/app-version.txt", "apps/hbots-mobile/package.json"], {
+    reader: fsReader(REPO),
+  });
   NodeAssert.deepEqual(running(scope), ["hbots-mobile"]);
   NodeAssert.equal(planOf(scope, "hbots-mobile").mode, "whole");
 });
@@ -145,7 +144,9 @@ NodeTest.test("a literal path change selects its reader test", () => {
 
 NodeTest.test("a Kotlin module change selects that module and its dependents", () => {
   const scope = planChecks(
-    ["apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateWorker.kt"],
+    [
+      "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateWorker.kt",
+    ],
     { reader: fsReader(REPO) },
   );
   const plan = planOf(scope, "hbots-mobile-kotlin");
@@ -154,7 +155,10 @@ NodeTest.test("a Kotlin module change selects that module and its dependents", (
     ":hbots-notify:testDebugUnitTest",
     ":hbots-updater:testDebugUnitTest",
   ]);
-  const whole = planOf(planChecks(["package.json"], { reader: fsReader(REPO) }), "hbots-mobile-kotlin");
+  const whole = planOf(
+    planChecks(["package.json"], { reader: fsReader(REPO) }),
+    "hbots-mobile-kotlin",
+  );
   NodeAssert.equal(whole.mode, "whole");
   NodeAssert.ok(whole.args.includes(":hbots-camera:testDebugUnitTest"));
   NodeAssert.ok(whole.args.includes(":hbots-pageview:testDebugUnitTest"));
@@ -177,8 +181,15 @@ NodeTest.test("the seal refuses evidence whose args differ from the recomputed p
       args: ["src/personal/push/PersonalPushService.test.ts"],
     });
     NodeAssert.deepEqual(planEvidenceProblems(cfg, a, good), []);
-    const wrong = selectedEvidence({ base: f.base, paths, args: ["src/persistence/other.test.ts"] });
-    NodeAssert.match(planEvidenceProblems(cfg, a, wrong).join(" "), /args differ from the recomputed plan/);
+    const wrong = selectedEvidence({
+      base: f.base,
+      paths,
+      args: ["src/persistence/other.test.ts"],
+    });
+    NodeAssert.match(
+      planEvidenceProblems(cfg, a, wrong).join(" "),
+      /args differ from the recomputed plan/,
+    );
   });
 });
 
@@ -191,11 +202,28 @@ NodeTest.test("the seal refuses a selected gate whose base is not live", () => {
       paths,
       args: ["src/personal/push/PersonalPushService.test.ts"],
     });
-    const problems = planEvidenceProblems(
-      cfg,
-      { "repo-root": f.repo, release: f.head },
-      evidence,
-    );
+    const problems = planEvidenceProblems(cfg, { "repo-root": f.repo, release: f.head }, evidence);
     NodeAssert.match(problems.join(" "), /claims base .* live is/);
   });
+});
+
+NodeTest.test("release tooling beside scripts/personal maps to release-tools", () => {
+  for (const file of [
+    "scripts/personal/sqlite-check.cjs",
+    "scripts/personal/sqlite-snapshot.cjs",
+    "scripts/personal/idle-classification-16654.mjs",
+    "scripts/personal/copy-externals.mjs",
+    "scripts/personal/migration-check.cjs",
+  ]) {
+    NodeAssert.deepEqual(classifyPath(file).checks, ["release-tools"], file);
+  }
+});
+
+NodeTest.test("a new folder under scripts/personal is unmapped, upstream scripts are not", () => {
+  NodeAssert.equal(classifyPath("scripts/personal/brand-new/run.mjs").kind, "unmapped");
+  NodeAssert.equal(classifyPath("scripts/personal/brand-new.mjs").kind, "unmapped");
+  NodeAssert.equal(classifyPath("scripts/test-cached.ts").kind, "none");
+  NodeAssert.equal(classifyPath("scripts/scenarios/t3.ts").kind, "none");
+  NodeAssert.equal(classifyPath("scripts/personal/backup.ps1").kind, "none");
+  NodeAssert.equal(classifyPath("scripts/personal/perf/skill/x.md").kind, "none");
 });
