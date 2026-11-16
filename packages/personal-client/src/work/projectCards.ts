@@ -173,13 +173,6 @@ export type ChatRowTagLine =
   | { readonly kind: "noGoal" }
   | { readonly kind: "none" };
 
-/** One goal's pill at the top of a chat. */
-export interface ChatGoalPill {
-  readonly projectId: string;
-  readonly name: string;
-  readonly text: string;
-}
-
 const GOAL_DONE_WINDOW_MS = 7 * 24 * HOUR;
 const CHAT_ROW_GOAL_NAMES = 2;
 
@@ -251,39 +244,6 @@ export function chatRowTagLine(
     more: Math.max(0, tag.open.length - CHAT_ROW_GOAL_NAMES),
     done: tag.doneCount,
   };
-}
-
-const pillEstimateOf = (project: PersonalProject, nowMs: number): string => {
-  if (project.estimate === null) return "";
-  const dueMs = DateTime.toEpochMillis(project.estimate.dueAt);
-  return nowMs >= dueMs
-    ? ` · overdue by ${formatSpan(nowMs - dueMs)}`
-    : ` · ~${formatTimeLeft(dueMs - nowMs)}`;
-};
-
-/**
- * One pill per open goal on the chat, the way the chat's top strip shows it:
- * `◎ name · step 2 of 5 · ~1 h ›`.
- */
-export function chatGoalPills(input: {
-  readonly projects: ReadonlyArray<PersonalProject>;
-  readonly threadId: string;
-  readonly nowMs: number;
-}): ReadonlyArray<ChatGoalPill> {
-  return input.projects.flatMap((project) =>
-    project.state.kind !== "open" || !chatsOfProject(project).includes(input.threadId)
-      ? []
-      : [
-          {
-            projectId: project.projectId,
-            name: project.name,
-            text: `◎ ${project.name} · ${stepCountOf(project.steps)}${pillEstimateOf(
-              project,
-              input.nowMs,
-            )} ›`,
-          },
-        ],
-  );
 }
 
 /** A chat a goal line can name: the open chat's own title. */

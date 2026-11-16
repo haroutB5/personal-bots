@@ -1,10 +1,11 @@
 /**
  * What the plus sheet shows under its Camera row. The embedded system picker shows recent photos
  * at once; a phone without it, or one whose picker session failed, gets an "All photos" row that
- * opens the full system picker as before. With no room left in the draft there is nothing to pick.
+ * opens the full system picker as before. The embedded picker selects up to the room left in the
+ * draft and the sheet's Add button confirms. With no room left there is nothing to pick.
  */
 export type AttachPhotos =
-  | { readonly kind: "embedded" }
+  | { readonly kind: "embedded"; readonly maxSelection: number }
   | { readonly kind: "all-photos" }
   | { readonly kind: "full"; readonly message: string };
 
@@ -21,7 +22,28 @@ export function attachPhotos(input: {
     };
   }
   if (!input.embedded) return { kind: "all-photos" };
-  return { kind: "embedded" };
+  return { kind: "embedded", maxSelection: room };
+}
+
+/** The sheet's Add button: disabled until a photo is selected, then it says how many it adds. */
+export function addPhotosLabel(count: number): {
+  readonly label: string;
+  readonly enabled: boolean;
+} {
+  if (count <= 0) return { label: "Add", enabled: false };
+  return { label: count === 1 ? "Add 1 photo" : `Add ${count} photos`, enabled: true };
+}
+
+/**
+ * The system picker's options for the "All photos" row: the room left in the draft is the most
+ * it may return, and a single place left is a single pick (expo treats a limit of 1 that way).
+ */
+export function libraryPick(room: number): {
+  readonly allowsMultipleSelection: boolean;
+  readonly selectionLimit: number;
+} {
+  const limit = Math.max(1, room);
+  return { allowsMultipleSelection: limit > 1, selectionLimit: limit };
 }
 
 export interface ComposerNotice {

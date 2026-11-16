@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
+import { MARKED_UNREAD_GRACE_MS } from "../PersonalBotRepository.ts";
 
 const TaskRow = Schema.Struct({
   taskId: PersonalTaskId,
@@ -223,6 +224,10 @@ const QuestionRow = Schema.Struct({
   botId: PersonalBotId,
   messageId: MessageId,
   askedAt: Schema.DateTimeUtcFromString,
+  /** When the owner last had the chat open; null when never. */
+  lastViewedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  /** When the owner marked the chat unread; null when not. */
+  markedUnreadAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   /** Null when the bot hides previews. */
   text: Schema.NullOr(Schema.String),
   hidden: Schema.Number,
@@ -245,10 +250,32 @@ const questionFromReply = (text: string): string | null => {
 };
 
 /**
+ * Whether a question still waits for the owner: a chat never opened, a question
+ * asked after the last view, or a chat marked unread after that view (the mark
+ * counts from `MARKED_UNREAD_GRACE_MS` later, so the leave that follows
+ * "Mark unread" does not clear it). Otherwise the owner has seen the chat.
+ * All three times are server clock, compared as epoch millis.
+ */
+export function questionAwaitsOwner(row: {
+  readonly askedAt: DateTime.Utc;
+  readonly lastViewedAt: DateTime.Utc | null;
+  readonly markedUnreadAt: DateTime.Utc | null;
+}): boolean {
+  if (row.lastViewedAt === null) return true;
+  const viewedMs = DateTime.toEpochMillis(row.lastViewedAt);
+  if (DateTime.toEpochMillis(row.askedAt) > viewedMs) return true;
+  return (
+    row.markedUnreadAt !== null &&
+    DateTime.toEpochMillis(row.markedUnreadAt) + MARKED_UNREAD_GRACE_MS > viewedMs
+  );
+}
+
+/**
  * Bot questions the owner can answer from the Work tab: each live bot chat's
  * newest message, when it is an assistant reply under 72 hours old that ends in
  * a choices block. Delegation task chats are left out because there the bot
- * answers its lead, and a group relay is not the owner's conversation.
+ * answers its lead, and a group relay is not the owner's conversation. A chat
+ * the owner opened since the question is left out too (`questionAwaitsOwner`).
  */
 export const questions = (): Effect.Effect<
   PersonalWorkQuestionsResult,
@@ -269,6 +296,8 @@ export const questions = (): Effect.Effect<
         t.bot_id AS "botId",
         m.message_id AS "messageId",
         m.created_at AS "askedAt",
+        t.last_viewed_at AS "lastViewedAt",
+        t.marked_unread_at AS "markedUnreadAt",
         CASE WHEN COALESCE(b.hide_previews, 0) = 1 THEN NULL ELSE m.text END AS "text",
         COALESCE(b.hide_previews, 0) AS "hidden"
       FROM personal_bot_threads t
@@ -304,6 +333,8 @@ export const questions = (): Effect.Effect<
     const kept: PersonalWorkQuestion[] = [];
     for (const row of rows) {
       if (kept.length >= PERSONAL_WORK_QUESTIONS_MAX) break;
+      // A question the owner has seen leaves the list before it can take a slot.
+      if (!questionAwaitsOwner(row)) continue;
       const options = row.text === null ? null : splitChoices(row.text).options;
       if (options === null && row.hidden === 0) continue;
       kept.push({

@@ -27,7 +27,6 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/co
 import {
   IconArrowUp,
   IconFile,
-  IconCamera,
   IconPaperclip,
   IconPlus,
   IconSquare,
@@ -79,7 +78,13 @@ import { tokens } from "../shell/tokens";
 import { attachmentName } from "./attachmentName";
 import { PrewarmAttachmentImages } from "./AttachmentImage";
 import { AttachSheet } from "./AttachSheet";
-import { attachPhotos, cameraRefusal, plainNotice, type ComposerNotice } from "./attachSheetModel";
+import {
+  attachPhotos,
+  cameraRefusal,
+  libraryPick,
+  plainNotice,
+  type ComposerNotice,
+} from "./attachSheetModel";
 import { CameraCaptureSheet } from "./CameraCaptureSheet";
 import {
   CAMERA_OPEN_MS,
@@ -395,8 +400,7 @@ export function Composer({
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        allowsMultipleSelection: true,
-        selectionLimit: MAX_ATTACHMENTS,
+        ...libraryPick(MAX_ATTACHMENTS - draftRef.current.attachments.length),
         quality: 1,
       });
       if (result.canceled) return;
@@ -1105,17 +1109,6 @@ export function Composer({
               style={[styles.field, styles.fieldInHost]}
             />
           </ComposerHost>
-          <Pressable
-            onPress={() => void pickCamera()}
-            disabled={picking || preparing}
-            accessibilityRole="button"
-            accessibilityLabel="Take a photo"
-            hitSlop={4}
-            testID="composer-camera"
-            style={styles.fieldIconButton}
-          >
-            <IconCamera size={19} color={tokens.textSecondary} strokeWidth={1.75} />
-          </Pressable>
           <Pressable
             onPress={() => void pickFiles()}
             disabled={picking || preparing}
