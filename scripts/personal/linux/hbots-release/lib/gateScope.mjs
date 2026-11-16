@@ -4,6 +4,7 @@
 // The same module feeds the gate-evidence collector, the runner seal and the
 // builder command, and reads at a commit so all three get the same answer.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
@@ -586,7 +587,7 @@ function parseCli(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--commands" || arg === "--json") out[arg.slice(2)] = true;
-    else if (arg === "--base" || arg === "--head" || arg === "--repo")
+    else if (arg === "--base" || arg === "--head" || arg === "--repo" || arg === "--gates-json")
       out[arg.slice(2)] = argv[(index += 1)];
     else if (arg.startsWith("--")) throw new Error(`unknown option ${arg}`);
     else out.positional.push(arg);
@@ -616,7 +617,7 @@ if (invokedDirectly()) {
   }
   if (!options.base || !options.head) {
     console.error(
-      "Usage: node gateScope.mjs --base <rev> --head <rev> [--repo DIR] [--commands|--json]",
+      "Usage: node gateScope.mjs --base <rev> --head <rev> [--repo DIR] [--gates-json FILE] [--commands|--json]",
     );
     NodeProcess.exit(2);
   }
@@ -626,7 +627,10 @@ if (invokedDirectly()) {
   try {
     const baseSha = git("rev-parse", "--verify", `${options.base}^{commit}`);
     const headSha = git("rev-parse", "--verify", `${options.head}^{commit}`);
-    const changedPaths = git("diff", "--no-renames", "--name-only", "-z", baseSha, headSha)
+    // A branch that trunk has moved past is planned from where it left trunk, so
+    // trunk's newer changes do not count as the branch's own.
+    const mergeBase = git("merge-base", baseSha, headSha);
+    const changedPaths = git("diff", "--no-renames", "--name-only", "-z", mergeBase, headSha)
       .split("\0")
       .filter(Boolean);
     const reader = gitReader(repo, headSha);
@@ -637,12 +641,20 @@ if (invokedDirectly()) {
       );
       NodeProcess.exit(2);
     }
-    const result = { baseSha, headSha, ...scope };
+    const result = { baseSha: mergeBase, requestedBase: baseSha, headSha, ...scope };
     if (options.json) {
       console.log(JSON.stringify(result, null, 2));
     } else if (options.commands) {
       printPlan(result, true);
-      const defs = JSON.parse(reader.read("scripts/personal/node/gates-linux.json"));
+      // The gate commands ship with this planner, so read them from this checkout:
+      // the head's own copy may predate the {args} placeholders.
+      const defsFile =
+        options["gates-json"] ??
+        NodePath.resolve(
+          NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+          "../../../node/gates-linux.json",
+        );
+      const defs = JSON.parse(NodeFS.readFileSync(defsFile, "utf8"));
       for (const plan of result.plans) {
         if (plan.mode === "skip" || plan.id === "e2e") continue;
         const def = defs.find((entry) => entry.id === plan.id);

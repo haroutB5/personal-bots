@@ -350,3 +350,37 @@ function fixtureToolchainEdit(f) {
   f.head2 = commit(f.repo, "toolchain");
   git(f.repo, "reset", "-q", "--hard", f.head2);
 }
+
+const CLI = NodePath.join(ROOT, "lib/gateScope.mjs");
+const cli = (repo, ...args) =>
+  NodeChildProcess.spawnSync(process.execPath, [CLI, "--repo", repo, ...args], {
+    encoding: "utf8",
+  });
+
+NodeTest.test(
+  "the builder command plans from the merge base and uses this checkout's gate commands",
+  () => {
+    withFixture((f) => {
+      // trunk moves on after the branch point: a change the branch never made.
+      git(f.repo, "branch", "feature", f.head);
+      git(f.repo, "checkout", "-q", "-b", "trunk", f.base);
+      NodeFS.mkdirSync(NodePath.join(f.repo, "apps/web"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(f.repo, "apps/web/other.ts"), "export const other = 1;\n");
+      commit(f.repo, "trunk moves on");
+      const json = cli(f.repo, "--base", "trunk", "--head", "feature", "--json");
+      NodeAssert.equal(json.status, 0, json.stderr);
+      const result = JSON.parse(json.stdout);
+      NodeAssert.deepEqual(result.changedPaths, [
+        "apps/server/src/personal/push/PersonalPushService.ts",
+      ]);
+      NodeAssert.equal(result.baseSha, f.base);
+      const lines = cli(f.repo, "--base", "trunk", "--head", "feature", "--commands");
+      NodeAssert.equal(lines.status, 0, lines.stderr);
+      NodeAssert.match(
+        lines.stdout,
+        /vp test run src\/personal\/push\/PersonalPushService\.test\.ts/,
+      );
+      NodeAssert.doesNotMatch(lines.stdout, /e2e-smoke/);
+    });
+  },
+);
