@@ -7,13 +7,13 @@
     "lib/idle.mjs": "bde774a5d884d5f72e5fff5f6e1b1b9037822387f6891293ff18dd68e1b7998f",
     "lib/backup.mjs": "110d8d715446c3c8cf4acef7b34be1eda92ecb17daf8de0f059055840d09da04",
     "lib/seal.mjs": "151139676ce69c86536b0bb063ad4c1d2acc23523aeb44b897c7d75cdd438134",
-    "lib/gateScope.mjs": "03b7f180c62f62350fd8c82bb21931a0772b9faaee536091837bdfea70ca7720",
+    "lib/gateScope.mjs": "90f46615a6392489c805f2ad60d69fa9a8001ea25f9169ff4de9d915ae61c15d",
     "lib/serverTestSelect.mjs": "6c10345838955c35835060093f1a145111e262ded2b821691fc6dc4ced7aa21b",
     "lib/compact.mjs": "faf944c7d1a8e9c8a8e792c7118fdea416e5545698212344237d798c331177f5",
     "lib/compact-db.mjs": "c38a3b4a5ad44d382d16427d16b6265066bcf7e35fa05b3d758ebd77ed267fe1",
     "tools/check-release-notes.mjs": "b1501431a607f4e960205f500eb7a7777649d59dacf6d3ee523a004ce5cd2d06",
     "tools/check-gate-evidence.mjs": "a397e27254c5dac7cbb7c042911ee9a7cc5de70f3adb8ea7dd5ce7fe640c4510",
-    "tools/gate-common.mjs": "687374691eda27c7c56c99f373eff727bf7ee9d66027382256cf4880445a531b",
+    "tools/gate-common.mjs": "f0ced71fd4ac3c3405763eef8055498fa6937cf7bfb999c75773a0a7d5c72338",
     "tools/ops-common.mjs": "197fcb32a02ca5da3c6da2a0caeb4cfe22a05375e1d36b4dc6f14eb0f3cc6377",
     "tools/notify-release.mjs": "a7f1b2f9156ff4f362cb332bfcdeda0b0518b2b1a58897696d99dfff27b71942"
   }
