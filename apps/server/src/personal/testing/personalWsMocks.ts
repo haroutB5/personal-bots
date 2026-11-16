@@ -15,6 +15,7 @@ import * as PersonalConnectionApprovalService from "../connections/approvalServi
 import * as PersonalConnectionService from "../connections/service.ts";
 import * as PersonalDesktop from "../desktop/PersonalDesktop.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
+import { PersonalProjectionRelationsV2Live } from "../engine/PersonalProjectionRelationsV2Live.ts";
 import * as PersonalGroupService from "../groups/PersonalGroupService.ts";
 import * as PersonalLeadBots from "../leadBots/PersonalLeadBotService.ts";
 import * as PersonalLoginRequestService from "../secrets/PersonalLoginRequestService.ts";
@@ -32,6 +33,7 @@ import * as PersonalVoiceCallService from "../voiceCalls/PersonalVoiceCallServic
 import * as PersonalVoiceSampleService from "../voiceCalls/PersonalVoiceSampleService.ts";
 
 export const layerUnusedPersonalWsServices = Layer.mergeAll(
+  PersonalProjectionRelationsV2Live,
   Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
   Layer.mock(PersonalBotService.PersonalBotService)({}),
   Layer.mock(PersonalBotShellStream.PersonalBotShellStream)({ subscribe: Stream.empty }),

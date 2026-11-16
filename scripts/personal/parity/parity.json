@@ -8,7 +8,7 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 441,
+    "items": 443,
     "byKind": {
       "screen": 75,
       "sheet": 25,
@@ -16,15 +16,15 @@
       "card": 24,
       "setting": 105,
       "pref": 14,
-      "rpc": 134
+      "rpc": 136
     },
     "byStatus": {
-      "done": 387,
+      "done": 389,
       "planned": 0,
       "n/a": 54,
       "unassigned": 0
     },
-    "userActions": 158,
+    "userActions": 159,
     "byPr": {
       "A2": 18,
       "A4": 13,
@@ -35,7 +35,7 @@
       "A11": 17,
       "A16": 22,
       "A13": 9,
-      "A12": 44,
+      "A12": 46,
       "A1": 4,
       "A17": 1,
       "X4": 20,
@@ -10365,7 +10365,7 @@
       "id": "rpc:personalProjectsList",
       "kind": "rpc",
       "title": "personalProjectsList (query)",
-      "web": "packages/personal-client/src/automation/automationClient.ts:71",
+      "web": "packages/personal-client/src/automation/automationClient.ts:72",
       "rpcKind": "query",
       "wire": null,
       "contract": null,
@@ -10378,7 +10378,7 @@
       "id": "rpc:personalProjectsHistory",
       "kind": "rpc",
       "title": "personalProjectsHistory (query)",
-      "web": "packages/personal-client/src/automation/automationClient.ts:79",
+      "web": "packages/personal-client/src/automation/automationClient.ts:80",
       "rpcKind": "query",
       "wire": null,
       "contract": null,
@@ -10391,7 +10391,7 @@
       "id": "rpc:personalWorkSince",
       "kind": "rpc",
       "title": "personalWorkSince (query)",
-      "web": "packages/personal-client/src/automation/automationClient.ts:86",
+      "web": "packages/personal-client/src/automation/automationClient.ts:87",
       "rpcKind": "query",
       "wire": null,
       "contract": null,
@@ -10399,6 +10399,33 @@
       "pr": "A12",
       "status": "done",
       "check": "Android calls personalWorkSince (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalWorkQuestions",
+      "kind": "rpc",
+      "title": "personalWorkQuestions (query)",
+      "web": "packages/personal-client/src/automation/automationClient.ts:95",
+      "rpcKind": "query",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "pr": "A12",
+      "status": "done",
+      "check": "Android calls personalWorkQuestions (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalWorkAnswer",
+      "kind": "rpc",
+      "title": "personalWorkAnswer (command)",
+      "web": "packages/personal-client/src/automation/automationClient.ts:110",
+      "rpcKind": "command",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "userAction": true,
+      "pr": "A12",
+      "status": "done",
+      "check": "Android calls personalWorkAnswer (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalBotsList",

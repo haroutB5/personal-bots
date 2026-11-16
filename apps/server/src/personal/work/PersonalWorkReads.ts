@@ -1,6 +1,10 @@
 import {
+  PERSONAL_WORK_QUESTION_MAX_AGE_HOURS,
+  PERSONAL_WORK_QUESTION_MAX_CHARS,
+  PERSONAL_WORK_QUESTIONS_MAX,
   PERSONAL_WORK_SINCE_DAYS,
   PERSONAL_WORK_SINCE_MAX,
+  MessageId,
   PersonalBotId,
   PersonalProjectId,
   PersonalTaskId,
@@ -8,7 +12,11 @@ import {
   PersonalTaskStatus,
   ThreadId,
   PersonalTasksError,
+  plainLine,
+  splitChoices,
   type PersonalWorkEvent,
+  type PersonalWorkQuestion,
+  type PersonalWorkQuestionsResult,
   type PersonalWorkSinceInput,
   type PersonalWorkSinceResult,
   type WorkTaskRef,
@@ -17,6 +25,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import { PersonalProjectionRelations } from "../engine/PersonalProjectionRelations.ts";
 
 const TaskRow = Schema.Struct({
   taskId: PersonalTaskId,
@@ -206,4 +216,104 @@ export const since = (
     const sorted = newestFirst(events);
     const kept = sorted.slice(0, PERSONAL_WORK_SINCE_MAX);
     return { events: kept, omitted: sorted.length - kept.length, asOf };
+  });
+
+const QuestionRow = Schema.Struct({
+  threadId: ThreadId,
+  botId: PersonalBotId,
+  messageId: MessageId,
+  askedAt: Schema.DateTimeUtcFromString,
+  /** Null when the bot hides previews. */
+  text: Schema.NullOr(Schema.String),
+  hidden: Schema.Number,
+});
+
+/**
+ * The reply's asking line: its last sentence that ends in a question mark, else
+ * its last line. Null when the block carried no words at all.
+ */
+const questionFromReply = (text: string): string | null => {
+  const body = splitChoices(text).body;
+  const lines = body
+    .split(/\r?\n/)
+    .map(plainLine)
+    .filter((line) => line.length > 0);
+  const asking = lines.findLast((line) => line.endsWith("?")) ?? lines.at(-1);
+  if (asking === undefined) return null;
+  if (asking.length <= PERSONAL_WORK_QUESTION_MAX_CHARS) return asking;
+  return `${asking.slice(0, PERSONAL_WORK_QUESTION_MAX_CHARS - 1).trimEnd()}…`;
+};
+
+/**
+ * Bot questions the owner can answer from the Work tab: each live bot chat's
+ * newest message, when it is an assistant reply under 72 hours old that ends in
+ * a choices block. Delegation task chats are left out because there the bot
+ * answers its lead, and a group relay is not the owner's conversation.
+ */
+export const questions = (): Effect.Effect<
+  PersonalWorkQuestionsResult,
+  PersonalTasksError,
+  SqlClient.SqlClient | PersonalProjectionRelations
+> =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rel = yield* PersonalProjectionRelations;
+    const asOf = yield* DateTime.now;
+    const floor = DateTime.formatIso(
+      DateTime.subtract(asOf, { hours: PERSONAL_WORK_QUESTION_MAX_AGE_HOURS }),
+    );
+
+    const rows = yield* sql<Readonly<Record<string, unknown>>>`
+      SELECT
+        t.thread_id AS "threadId",
+        t.bot_id AS "botId",
+        m.message_id AS "messageId",
+        m.created_at AS "askedAt",
+        CASE WHEN COALESCE(b.hide_previews, 0) = 1 THEN NULL ELSE m.text END AS "text",
+        COALESCE(b.hide_previews, 0) AS "hidden"
+      FROM personal_bot_threads t
+      JOIN personal_bots b ON b.bot_id = t.bot_id
+      JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id
+      JOIN ${sql.unsafe(rel.messages)} m ON m.message_id = (
+        SELECT n.message_id
+        FROM ${sql.unsafe(rel.messages)} n
+        WHERE n.thread_id = t.thread_id AND n.role IN ('user', 'assistant')
+        ORDER BY n.created_at DESC, n.message_id DESC
+        LIMIT 1
+      )
+      WHERE t.archived_at IS NULL
+        AND p.archived_at IS NULL
+        AND p.deleted_at IS NULL
+        AND b.deleted_at IS NULL
+        AND b.enabled = 1
+        AND m.role = 'assistant'
+        AND m.created_at > ${floor}
+        AND NOT EXISTS (
+          SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM personal_tasks task
+          WHERE task.thread_id = t.thread_id AND task.source = 'delegation'
+        )
+      ORDER BY m.created_at DESC, m.message_id DESC
+    `.pipe(
+      Effect.mapError(fail("questions")),
+      Effect.flatMap((found) => decodeAll(QuestionRow, "questions", found)),
+    );
+
+    const kept: PersonalWorkQuestion[] = [];
+    for (const row of rows) {
+      if (kept.length >= PERSONAL_WORK_QUESTIONS_MAX) break;
+      const options = row.text === null ? null : splitChoices(row.text).options;
+      if (options === null && row.hidden === 0) continue;
+      kept.push({
+        threadId: row.threadId,
+        botId: row.botId,
+        messageId: row.messageId,
+        askedAt: row.askedAt,
+        question: row.text === null ? null : questionFromReply(row.text),
+        options: row.hidden === 0 ? options : null,
+      });
+    }
+    return { questions: kept };
   });

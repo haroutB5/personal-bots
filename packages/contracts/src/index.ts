@@ -79,6 +79,7 @@ export * from "./personalAppIdentity.ts";
 export * from "./personalChatArchive.ts";
 export * from "./personalBotModelDefaults.ts";
 export * from "./personalLeadBots.ts";
+export * from "./personalChoices.ts";
 export * from "./personalProgressNote.ts";
 export * from "./personalTasks.ts";
 export * from "./personalProjects.ts";

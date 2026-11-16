@@ -78,6 +78,9 @@ export const PERSONAL_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalTasksSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.personalWorkSince]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalWorkQuestions]: AuthOrchestrationReadScope,
+  // Answering posts a message as the owner, so it needs the operate scope.
+  [WS_METHODS.personalWorkAnswer]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalTasksRelated]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalTasksCancel]: AuthOrchestrationOperateScope,

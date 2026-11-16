@@ -7,6 +7,7 @@ import type {
   PersonalTask,
   PersonalTaskDetail,
   PersonalTaskId,
+  PersonalWorkQuestionsResult,
   PersonalWorkSinceResult,
   ThreadId,
 } from "@t3tools/contracts";
@@ -86,6 +87,28 @@ export function createPersonalAutomationClient<R, ER>(
     tag: WS_METHODS.personalWorkSince,
     staleTimeMs: 5_000,
     refreshIntervalMs: 30_000,
+  });
+
+  /** Bot questions the Work tab can answer, refreshed like the digest. */
+  const personalWorkQuestions = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-work:questions",
+    tag: WS_METHODS.personalWorkQuestions,
+    staleTimeMs: 5_000,
+    refreshIntervalMs: 30_000,
+  });
+
+  /** Every answer redraws the question list the Work tab reads. */
+  const refreshWorkQuestions = (target: CommandTarget, registry: Registry) =>
+    Effect.sync(() =>
+      registry.refresh(
+        personalWorkQuestions({ environmentId: target.environmentId, input: {} }) as never,
+      ),
+    );
+
+  const personalWorkAnswer = createEnvironmentRpcCommand(runtime, {
+    label: "personal-work:answer",
+    tag: WS_METHODS.personalWorkAnswer,
+    onSuccess: refreshWorkQuestions,
   });
 
   type CommandTarget = { readonly environmentId: EnvironmentId };
@@ -262,6 +285,17 @@ export function createPersonalAutomationClient<R, ER>(
     return useEnvironmentQuery(atom);
   }
 
+  /** The bot questions the Work tab can answer; polls every 30 s while focused. */
+  function usePersonalWorkQuestions(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalWorkQuestionsResult> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalWorkQuestions({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return useEnvironmentQuery(atom);
+  }
+
   return {
     personalTasksFeed,
     personalTaskDetail,
@@ -271,6 +305,8 @@ export function createPersonalAutomationClient<R, ER>(
     personalProjectsList,
     personalProjectsHistory,
     personalWorkSince,
+    personalWorkQuestions,
+    personalWorkAnswer,
     personalTaskCancel,
     personalTaskRetry,
     personalRoutineCreate,
@@ -289,6 +325,7 @@ export function createPersonalAutomationClient<R, ER>(
     usePersonalProjects,
     usePersonalProjectHistory,
     usePersonalWorkSince,
+    usePersonalWorkQuestions,
   };
 }
 

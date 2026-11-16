@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
+  PERSONAL_PROJECT_CHATS_MAX,
   PERSONAL_PROJECT_WHY_MAX,
   PersonalBotId,
   PersonalProjectId,
@@ -111,6 +112,30 @@ const toRecord = (row: typeof ProjectDbRow.Type): ProjectRecord => {
     },
     history: row.history,
   };
+};
+
+/**
+ * The chats a goal tags: its own chat first, then the ones whose tasks moved
+ * most recently, at most PERSONAL_PROJECT_CHATS_MAX.
+ */
+const chatListOf = (
+  ownThreadId: ThreadId | null,
+  rows: ReadonlyArray<{ readonly threadId: string; readonly at: string }>,
+): ReadonlyArray<ThreadId> => {
+  const seen = new Set<string>();
+  const chats: Array<ThreadId> = [];
+  const add = (threadId: string | null) => {
+    if (threadId === null || seen.has(threadId)) return;
+    if (chats.length >= PERSONAL_PROJECT_CHATS_MAX) return;
+    seen.add(threadId);
+    chats.push(ThreadId.make(threadId));
+  };
+  add(ownThreadId);
+  const newestFirst = rows.toSorted(
+    (left, right) => right.at.localeCompare(left.at) || left.threadId.localeCompare(right.threadId),
+  );
+  for (const row of newestFirst) add(row.threadId);
+  return chats;
 };
 
 /**
@@ -358,12 +383,44 @@ const make = Effect.gen(function* () {
       return stored.project;
     });
 
+  /** Which chats work on each goal, from its linked tasks' last update. */
+  const chatsByProject = (projects: ReadonlyArray<PersonalProject>) =>
+    Effect.gen(function* () {
+      if (projects.length === 0) return new Map<string, ReadonlyArray<ThreadId>>();
+      const rows = yield* sql<{
+        readonly projectId: string;
+        readonly threadId: string;
+        readonly at: string;
+      }>`
+        SELECT project_id AS "projectId", thread_id AS "threadId", MAX(updated_at) AS "at"
+        FROM personal_tasks
+        WHERE ${sql.in(
+          "project_id",
+          projects.map((project) => project.projectId),
+        )}
+          AND thread_id IS NOT NULL
+        GROUP BY project_id, thread_id
+      `.pipe(Effect.mapError(sqlFailure("read")));
+      const grouped = new Map<string, Array<{ readonly threadId: string; readonly at: string }>>();
+      for (const row of rows) {
+        const rowsOfProject = grouped.get(row.projectId) ?? [];
+        rowsOfProject.push({ threadId: row.threadId, at: row.at });
+        grouped.set(row.projectId, rowsOfProject);
+      }
+      return new Map(
+        projects.map((project) => [
+          project.projectId,
+          chatListOf(project.threadId, grouped.get(project.projectId) ?? []),
+        ]),
+      );
+    });
+
   const list: PersonalProjectRepository["Service"]["list"] = () =>
     Effect.gen(function* () {
       const since = DateTime.formatIso(
         DateTime.subtract(yield* DateTime.now, { days: PROJECT_CLOSED_LIST_DAYS }),
       );
-      return yield* sql`
+      const projects = yield* sql`
         SELECT ${sql.literal(PROJECT_COLUMNS)} FROM personal_projects p
         WHERE p.state = 'open' OR p.closed_at >= ${since}
         ORDER BY "lastActivityAt" DESC, p.created_at DESC
@@ -372,6 +429,11 @@ const make = Effect.gen(function* () {
         Effect.flatMap(decodeAll),
         Effect.map(projectsOf),
       );
+      const chats = yield* chatsByProject(projects);
+      return projects.map((project) => ({
+        ...project,
+        chats: chats.get(project.projectId) ?? [],
+      }));
     });
 
   const removeForLead: PersonalProjectRepository["Service"]["removeForLead"] = (leadBotId) =>

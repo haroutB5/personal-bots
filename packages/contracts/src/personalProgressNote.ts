@@ -37,7 +37,7 @@ const SUMMARY_TITLE = /(?:^|\n|(?<=[.!?:)]))\*\*([^*\n]{2,150})\*\*(?=\n|$)/g;
 const FENCE_OR_RULE = /^(`{3,}|~{3,}|[-*_]{3,}\s*$)/;
 
 /** The words of one line, without the markdown around them. */
-function plainLine(line: string): string {
+export function plainLine(line: string): string {
   return line
     .trim()
     .replace(/^#{1,6}(\s+|$)/, "")

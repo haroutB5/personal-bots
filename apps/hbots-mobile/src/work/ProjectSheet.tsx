@@ -1,4 +1,9 @@
-import { formatSpan, type ProjectCard } from "@hbots/personal-client/work/projectCards";
+import {
+  formatSpan,
+  goalChatLine,
+  type GoalChatLookup,
+  type ProjectCard,
+} from "@hbots/personal-client/work/projectCards";
 import {
   buildGoalTimeline,
   goalTimelineTime,
@@ -18,7 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
-import { GoalRow } from "./ProjectCards";
+import { GoalOwnerLine, GoalRow } from "./ProjectCards";
 import { foldForProject, foldedGoal, toggledFold, type ProjectSheetFold } from "./projectSheetFold";
 import { sheetBodyMaxHeight } from "./projectSheetLayout";
 
@@ -41,6 +46,7 @@ export function ProjectSheet({
   tasks,
   botMap,
   chatTitles,
+  chats,
   nowMs,
   onClose,
   onOpenTask,
@@ -56,6 +62,7 @@ export function ProjectSheet({
   readonly tasks: ReadonlyMap<string, PersonalTask> | null;
   readonly botMap: ReadonlyMap<string, PersonalBot>;
   readonly chatTitles: ReadonlyMap<string, string>;
+  readonly chats: ReadonlyMap<string, GoalChatLookup>;
   readonly nowMs: number;
   readonly onClose: () => void;
   readonly onOpenTask: (taskId: string) => void;
@@ -68,6 +75,16 @@ export function ProjectSheet({
   if (fold !== lastFold) setFold(fold);
   const { showAll, tasksOpen } = fold;
   const lead = card === undefined ? undefined : botMap.get(card.leadBotId);
+  const owner =
+    card === undefined
+      ? null
+      : goalChatLine({
+          leadBotId: card.leadBotId,
+          threadId: card.threadId,
+          bot: botMap.get(card.leadBotId),
+          chats,
+        });
+  const openThreadId = owner?.threadId ?? null;
   const numbered = (card?.steps ?? []).map((step, position) => ({
     key: `step-${position}`,
     number: position + 1,
@@ -98,6 +115,17 @@ export function ProjectSheet({
           contentContainerStyle={styles.scrollBody}
         >
           <View style={styles.detail} testID="project-sheet">
+            {owner === null ? null : (
+              <GoalOwnerLine
+                line={owner}
+                bot={botMap.get(owner.botId)}
+                testID="project-sheet-owner"
+                onOpenChat={(botId, threadId) => {
+                  onClose();
+                  onOpenChat(botId, threadId);
+                }}
+              />
+            )}
             <Text style={styles.line} maxFontSizeMultiplier={1.6}>
               Kept by {lead?.name ?? "a removed lead"}
             </Text>
@@ -231,11 +259,11 @@ export function ProjectSheet({
                 />
               ))
             : null}
-          {card.threadId === null ? null : (
+          {openThreadId === null ? null : (
             <SheetAction
               label={`Open ${lead?.name ?? "lead"} chat`}
               onPress={() => {
-                const threadId = card.threadId;
+                const threadId = openThreadId;
                 onClose();
                 if (threadId !== null) onOpenChat(card.leadBotId, threadId);
               }}
