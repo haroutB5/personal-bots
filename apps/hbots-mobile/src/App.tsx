@@ -25,6 +25,7 @@ import { classifyFailure } from "./failure";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
 import { failureFor, reducePairing } from "./onboarding/model";
 import { inspectServer, pair } from "./pairing";
+import { androidPerfOptimizationOn } from "./perfFlags";
 import { PushBridge } from "./notifications/PushBridge";
 import { LauncherBridge } from "./launcher/LauncherBridge";
 import { WorkingBridge } from "./working/WorkingBridge";
@@ -33,6 +34,7 @@ import { AppAtomRegistryProvider } from "./personal/atomRegistry";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
 import { getOutboxSnapshot } from "@hbots/personal-client/composer/outbox";
 import { wipeLocalData } from "./platform/nativePorts";
+import { startReconnectCheck } from "./reconnectCheck";
 import { renewSession } from "./renew";
 import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
 import { loadServer, saveServer } from "./serverMemory";
@@ -399,6 +401,25 @@ function App() {
     });
     return () => subscription.remove();
   }, [checkForUpdate]);
+
+  // A server restart drops the socket and the phone reconnects within seconds, so that is when a
+  // release published with the restart is looked for (reconnectCheck.ts).
+  const readyNative = screen.kind === "ready" ? screen.native : null;
+  useEffect(() => {
+    if (readyNative === null) {
+      return;
+    }
+    return startReconnectCheck({
+      connection: { subscribe: readyNative.subscribeConnected },
+      check: () => {
+        const session = activeSessionRef.current;
+        if (session !== null) {
+          void checkForUpdate(session, false);
+        }
+      },
+      isOn: () => androidPerfOptimizationOn("android-update-on-reconnect"),
+    });
+  }, [checkForUpdate, readyNative]);
 
   useEffect(() => {
     const timer = setInterval(() => {

@@ -172,6 +172,8 @@ export interface NativePersonal {
    * that has already gone still looks connected for a frame.
    */
   readonly readConnection: () => { readonly connected: boolean; readonly generation: number };
+  /** Calls the listener with whether the socket is up now, and again on each change. Returns the stop function. */
+  readonly subscribeConnected: (listener: (connected: boolean) => void) => () => void;
   readonly retry: () => void;
   readonly dispose: () => Promise<void>;
 }
@@ -595,6 +597,16 @@ export function createNativePersonal(
       return state;
     },
     readConnection: () => ({ connected: socketAlive, generation: generation.value }),
+    subscribeConnected: (listener) => {
+      const fiber = Effect.runFork(
+        Stream.runForEach(SubscriptionRef.changes(stateRef), (next) =>
+          Effect.sync(() => listener(next.phase === "connected")),
+        ),
+      );
+      return () => {
+        void Effect.runPromise(Fiber.interrupt(fiber));
+      };
+    },
     retry: () => {
       if (current !== null) {
         const session = current;
