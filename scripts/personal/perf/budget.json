@@ -82,6 +82,41 @@
       }
     }
   },
+  "android": {
+    "about": "Android app budgets. Lab only: no script reads this block (check.mjs reads settings and journeys only), so it is a record that a reviewer compares a build against by hand, until a checker is written. max is the ceiling (observed x (1 + headroom)); budgets only go down. The device numbers were measured on the gaming PC rig emulator FindX9Pro-Rig (API 36 x86_64, 1080x2355 at 480 dpi, dark, animations off), not on the laptop: laptop emulator numbers are faster and are not comparable.",
+    "bundleBytes": {
+      "max": 9551517,
+      "headroom": 0.02,
+      "observed": 9364232,
+      "unit": "bytes",
+      "what": "Hermes bytecode (.hbc) of the Android release bundle, minified",
+      "machine": "laptop (any machine: the size is deterministic, same sha256 40fafb767a95e09c at merged head 55222391ad and at trunk 97fe283a0a)",
+      "script": "qa/hbots-optimise/cold-start/export-bundle.sh <out dir>, run from apps/hbots-mobile (expo export --platform android --dump-sourcemap), size of the .hbc file",
+      "evidence": "qa/hbots-optimise/cold-start/merge/BUILD.md; qa/hbots-optimise/stream/logs/bundle-trunk.log"
+    },
+    "coldStart": {
+      "cachedListMs": {
+        "max": 2942,
+        "headroom": 0.15,
+        "observed": 2558,
+        "unit": "ms",
+        "what": "cold start, tap to the cached chat list painted, p75 of 21 launches (merged head 55222391ad)",
+        "machine": "gaming PC rig emulator FindX9Pro-Rig (rig.sh up FindX9Pro-Rig --wipe)",
+        "script": "qa/hbots-optimise/cold-start/verify/scripts/ab.sh cold 7 <round> <tag> (start.sh cold; tap to list = am TotalTime plus the first bright change point after the blank frame, scripts/list.mjs; stats.mjs)",
+        "evidence": "qa/hbots-optimise/cold-start/verify/VERIFY-cold-start.md, merged all tap->list n 21 p50 2524 p75 2558"
+      }
+    },
+    "warmStartMs": {
+      "max": 164,
+      "headroom": 0.15,
+      "observed": 143,
+      "unit": "ms",
+      "what": "warm start, Home then relaunch, am TotalTime p75 of 14 launches (merged head 55222391ad)",
+      "machine": "gaming PC rig emulator FindX9Pro-Rig (rig.sh up FindX9Pro-Rig --wipe)",
+      "script": "qa/hbots-optimise/cold-start/verify/scripts/ab.sh warm 7 <round> <tag> (start.sh warm; stats.mjs)",
+      "evidence": "qa/hbots-optimise/cold-start/verify/VERIFY-cold-start.md, row 5: merged p50 129 p75 143"
+    }
+  },
   "ratchetedAt": "2026-10-07",
   "ratchetedFrom": "2026-10-07 (1.66.3, skip-clerk): only deterministic counters were lowered, to observed x (1 + headroom) from 26 candidate runs (no run differed; 42 runs of 1.66.1 gave 123 / 2261 KB and 182 / 3601.6 KB, also with no spread): J1-warm requests 126 -> 124 (120 in every run) and jsKB 2289 -> 2195 (2130.9 KB), J1-deep requests 185 -> 183 (178) and jsKB 3642 -> 3576 (3471.5 KB). New budgets of 0 for requests to other origins (extRequests) on J1-cold, J1-warm and J1-deep (1.66.1 medians: 4, 2 and 2 requests, 127.3 KB of Clerk scripts on a cold open). No wall or long-task ceiling was touched: the J1-deep ceilings (2656, 2202) fail on the 1.66.1 build itself on this laptop in this session (gate p50 2781 to 3086 ms, loaded laptop), and wall in the A/B is inside noise. Evidence: qa/fastopen/summ s1,s2,s3 (interleaved swaps), gate-*.log, deepab-raw.json; docs/releases/HANDOFF-1663.md. Earlier: 2026-10-06 (1.64.1, 1e2d1a02d7a0): only the four deterministic counters were lowered, to observed x (1 + headroom): J1-warm requests 196 -> 126 (122 in every run), J1-warm jsKB 3632 -> 2289 (2221.7 to 2222.5 KB), J1-deep requests 246 -> 185 (180 in every run), J1-deep jsKB 4321 -> 3642 (3534.6 to 3535.5 KB). 16 runs of 1.64.0 and 16 of 1.64.1 gave the same counts (no cv). No wall or long-task ceiling was touched: on this rig J2.chatShell fails its 237 ceiling on 1.64.0 itself (p50 309 and 315.6) and on 1.64.1 (276.5, 281.9, 278), and J1-warm.wall (1785) sits at its edge (1.64.0: 1631 to 2008, 1.64.1: 1564 to 2008). Evidence: qa/perf1641/check-both.log, final/check-ratchet.log, final/summary.txt. Earlier: J2.chatShell: median of 5 committed-gate runs of 1.59.5 bf1e6cebf0c4 (169.3 ms) x 1.4 = 237, measured interleaved with 5 runs of 1.60.0 47f1670e01f9 (median 189.2, not lower); earlier J1 ratchet from 1.59.4 4db8bb035114",
   "recalibratedAt": "2026-09-30",

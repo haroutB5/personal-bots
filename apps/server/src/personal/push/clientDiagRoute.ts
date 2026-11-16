@@ -199,6 +199,13 @@ const FIELDS: Record<string, Read> = {
   cachedListMs: count,
   liveListMs: count,
   cold: bool,
+  // perf a-stream (hbots-mobile chatStreamPerf.ts): at the end of a streamed reply, how many
+  // list updates it made, the median and slowest commit in ms, and the rows in the list. A phone
+  // that sends none logs the old record.
+  updates: count,
+  commitMsP50: count,
+  commitMsMax: count,
+  rows: count,
   clients: (value) =>
     Array.isArray(value)
       ? value

@@ -1,0 +1,413 @@
+import type { ChoicesState } from "@hbots/personal-client/conversation/choices";
+import type { ConversationItem } from "@hbots/personal-client/conversation/conversationModel";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import {
+  createRowReverser,
+  rowInputs,
+  sameRowProps,
+  type Row,
+  type RowContext,
+  type RowProps,
+} from "./messageRows";
+
+type Item = ConversationItem;
+
+function message(id: string, role: "user" | "assistant", text: string, extra = {}): Item {
+  return {
+    kind: "message",
+    id,
+    message: { id, role, text, streaming: false, createdAt: "2026-11-16T10:00:00.000Z", ...extra },
+  } as unknown as Item;
+}
+
+/** A 150-turn chat: user, assistant, user, assistant, ... Built fresh on every call. */
+function chat(turns: number, overrides: Record<string, string> = {}): Item[] {
+  const items: Item[] = [];
+  for (let turn = 0; turn < turns; turn += 1) {
+    items.push(message(`u${turn}`, "user", `question ${turn}`));
+    items.push(message(`a${turn}`, "assistant", overrides[`a${turn}`] ?? `answer ${turn}`));
+  }
+  return items;
+}
+
+function rowsOf(items: ReadonlyArray<Item>): Row[] {
+  return items.map((item): Row => ({ kind: "item", key: item.id, item }));
+}
+
+const noCards = undefined;
+
+function context(over: Partial<RowContext> = {}): RowContext {
+  return {
+    choiceStates: new Map(),
+    contextTurns: new Map(),
+    latestMessageStatus: null,
+    cardContext: noCards,
+    dayLabel: (at) => `day ${at.toISOString().slice(0, 10)}`,
+    groupSpeaker: undefined,
+    ...over,
+  };
+}
+
+const shared = { name: "shared" };
+
+/** What React.memo does for one row: render it again unless its props are the same. */
+function paint(
+  screen: Map<string, RowProps>,
+  rows: ReadonlyArray<Row>,
+  ctx: RowContext,
+  sharedProps: object = shared,
+): number {
+  let renders = 0;
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const next: RowProps = { inputs: rowInputs(row, ctx), shared: sharedProps };
+    const before = screen.get(row.key);
+    if (before === undefined || !sameRowProps(before, next)) {
+      renders += 1;
+      screen.set(row.key, next);
+    }
+    seen.add(row.key);
+  }
+  for (const key of screen.keys()) if (!seen.has(key)) screen.delete(key);
+  return renders;
+}
+
+describe("row memo", () => {
+  it("paints every row once, then one changed row paints one row", () => {
+    const screen = new Map<string, RowProps>();
+
+    expect(paint(screen, rowsOf(chat(150)), context())).toBe(300);
+
+    // A streamed update: every wrapper, row object, map and array is new; one reply grew.
+    const next = rowsOf(chat(150, { a149: "answer 149, and more words arrived" }));
+    expect(paint(screen, next, context({ choiceStates: new Map(), contextTurns: new Map() }))).toBe(
+      1,
+    );
+  });
+
+  it("paints no row when a rebuilt list holds the same rows", () => {
+    const screen = new Map<string, RowProps>();
+    paint(screen, rowsOf(chat(40)), context());
+
+    expect(paint(screen, rowsOf(chat(40)), context())).toBe(0);
+  });
+
+  it("paints one row for one new row at the end", () => {
+    const screen = new Map<string, RowProps>();
+    paint(screen, rowsOf(chat(40)), context());
+
+    expect(paint(screen, rowsOf([...chat(40), message("u40", "user", "hello")]), context())).toBe(
+      1,
+    );
+  });
+
+  it("paints every row again when the shared inputs change", () => {
+    const screen = new Map<string, RowProps>();
+    paint(screen, rowsOf(chat(10)), context());
+
+    expect(paint(screen, rowsOf(chat(10)), context(), { name: "another bot" })).toBe(20);
+  });
+
+  it("repaints a row whose attachments changed, even with the same text", () => {
+    const screen = new Map<string, RowProps>();
+    const withImage = (name: string) => [
+      message("u0", "user", "look", { attachments: [{ type: "image", id: "i1", name }] }),
+    ];
+    paint(screen, rowsOf(withImage("a.png")), context());
+
+    expect(paint(screen, rowsOf(withImage("a.png")), context())).toBe(0);
+    expect(paint(screen, rowsOf(withImage("b.png")), context())).toBe(1);
+  });
+
+  it("repaints the replies whose choices state or context line changed, and only those", () => {
+    const screen = new Map<string, RowProps>();
+    const open = { kind: "open", disabled: false } as const;
+    paint(
+      screen,
+      rowsOf(chat(20)),
+      context({ choiceStates: new Map([["a19", open]]), contextTurns: new Map() }),
+    );
+
+    expect(
+      paint(
+        screen,
+        rowsOf(chat(20)),
+        context({
+          choiceStates: new Map([["a19", { kind: "used", picked: "Yes" }]]),
+          contextTurns: new Map(),
+        }),
+      ),
+    ).toBe(1);
+    expect(
+      paint(
+        screen,
+        rowsOf(chat(20)),
+        context({
+          choiceStates: new Map([["a19", { kind: "used", picked: "Yes" }]]),
+          contextTurns: new Map([["a3", "u3"]]),
+        }),
+      ),
+    ).toBe(1);
+  });
+
+  it("moves the read line from one user message to the next: two rows", () => {
+    const screen = new Map<string, RowProps>();
+    const status = (messageId: string) =>
+      ({ messageId, status: "read" }) as unknown as RowContext["latestMessageStatus"];
+    paint(screen, rowsOf(chat(20)), context({ latestMessageStatus: status("u18") }));
+
+    expect(paint(screen, rowsOf(chat(20)), context({ latestMessageStatus: status("u19") }))).toBe(
+      2,
+    );
+  });
+
+  it("repaints a day divider when its label changes at midnight, and no other row", () => {
+    const screen = new Map<string, RowProps>();
+    const items = [
+      { kind: "divider", id: "d1", at: new Date("2026-11-16T10:00:00Z") } as unknown as Item,
+      ...chat(5),
+    ];
+    paint(screen, rowsOf(items), context({ dayLabel: () => "Today, 10:00" }));
+
+    expect(paint(screen, rowsOf(items), context({ dayLabel: () => "Today, 10:00" }))).toBe(0);
+    expect(paint(screen, rowsOf(items), context({ dayLabel: () => "Yesterday, 10:00" }))).toBe(1);
+  });
+});
+
+describe("row memo: every input that moves a row's pixels repaints it", () => {
+  /** Paints `before`, then checks the same data rebuilt paints nothing and `after` paints `expected`. */
+  function repaints(
+    before: { rows: ReadonlyArray<Row>; ctx?: RowContext },
+    rebuilt: () => { rows: ReadonlyArray<Row>; ctx?: RowContext },
+    after: { rows: ReadonlyArray<Row>; ctx?: RowContext },
+    expected: number,
+  ): void {
+    const screen = new Map<string, RowProps>();
+    paint(screen, before.rows, before.ctx ?? context());
+    const again = rebuilt();
+    expect(paint(screen, again.rows, again.ctx ?? context())).toBe(0);
+    expect(paint(screen, after.rows, after.ctx ?? context())).toBe(expected);
+  }
+
+  const groupItem = (id: string, speaker: { botId: string; name: string }, text = "hi"): Item =>
+    ({
+      kind: "group-message",
+      id,
+      showSpeaker: true,
+      speaker,
+      message: { id, role: "assistant", text, streaming: false, createdAt: "2026-11-16T10:00:00Z" },
+    }) as unknown as Item;
+  const ada = { botId: "b1", name: "Ada" };
+
+  it("repaints a reply when only its streaming flag drops", () => {
+    const reply = (streaming: boolean) =>
+      rowsOf([message("a0", "assistant", "Pick one\n\n```choices\nYes\nNo", { streaming })]);
+
+    repaints({ rows: reply(true) }, () => ({ rows: reply(true) }), { rows: reply(false) }, 1);
+  });
+
+  it("repaints a group message when its speaker's avatar changes", () => {
+    const withColor = (avatarColor: string) =>
+      context({ groupSpeaker: () => ({ name: "Ada", avatarShape: "blob", avatarColor }) });
+    const rows = () => rowsOf([groupItem("g1", ada)]);
+
+    repaints(
+      { rows: rows(), ctx: withColor("red") },
+      () => ({ rows: rows(), ctx: withColor("red") }),
+      { rows: rows(), ctx: withColor("blue") },
+      1,
+    );
+  });
+
+  it("repaints a day divider when its date changes and its words stay the same", () => {
+    const divider = (at: string) =>
+      rowsOf([{ kind: "divider", id: "d1", at: new Date(at) } as unknown as Item]);
+    const ctx = () => context({ dayLabel: () => "Earlier" });
+
+    repaints(
+      { rows: divider("2026-11-15T10:00:00Z"), ctx: ctx() },
+      () => ({ rows: divider("2026-11-15T10:00:00Z"), ctx: ctx() }),
+      { rows: divider("2026-11-14T10:00:00Z"), ctx: ctx() },
+      1,
+    );
+  });
+
+  it("repaints the read line when the same message goes from queued to read", () => {
+    const status = (value: string) =>
+      context({
+        latestMessageStatus: {
+          messageId: "u1",
+          status: value,
+        } as unknown as RowContext["latestMessageStatus"],
+      });
+
+    repaints(
+      { rows: rowsOf(chat(3)), ctx: status("queued") },
+      () => ({ rows: rowsOf(chat(3)), ctx: status("queued") }),
+      { rows: rowsOf(chat(3)), ctx: status("read") },
+      1,
+    );
+  });
+
+  it("repaints a group message when its choices state changes", () => {
+    const states = (state: ChoicesState) => context({ choiceStates: new Map([["g1", state]]) });
+    const rows = () => rowsOf([groupItem("g1", ada, "Pick\n\n```choices\nYes\nNo\n```")]);
+
+    repaints(
+      { rows: rows(), ctx: states({ kind: "open", disabled: false }) },
+      () => ({ rows: rows(), ctx: states({ kind: "open", disabled: false }) }),
+      { rows: rows(), ctx: states({ kind: "used", picked: "Yes" }) },
+      1,
+    );
+  });
+
+  it("repaints a message when only its sent time changes", () => {
+    const at = (createdAt: string) => rowsOf([message("u0", "user", "hello", { createdAt })]);
+
+    repaints(
+      { rows: at("2026-11-16T10:00:00.000Z") },
+      () => ({ rows: at("2026-11-16T10:00:00.000Z") }),
+      { rows: at("2026-11-16T10:05:00.000Z") },
+      1,
+    );
+  });
+
+  it("repaints a user message when the reply quote it carries changes", () => {
+    // The projection passes `context` by reference, so a rebuilt feed keeps the same object.
+    const contexts = new Map<string, unknown>();
+    const quoteOf = (excerpt: string) => {
+      if (!contexts.has(excerpt)) {
+        contexts.set(excerpt, {
+          version: 1,
+          records: [
+            {
+              version: 1,
+              contextId: "personal-reply",
+              label: "Reply to Bot",
+              kind: "personal-reply",
+              payload: { messageId: "a9", name: "Bot", excerpt },
+            },
+          ],
+        });
+      }
+      return contexts.get(excerpt);
+    };
+    const quoted = (excerpt: string) =>
+      rowsOf([message("u0", "user", "look", { context: quoteOf(excerpt) })]);
+
+    repaints({ rows: quoted("old") }, () => ({ rows: quoted("old") }), { rows: quoted("new") }, 1);
+  });
+
+  it("repaints a message that gains an attachment and one that loses one", () => {
+    const files = (names: string[]) =>
+      rowsOf([
+        message("u0", "user", "files", {
+          attachments: names.map((name, index) => ({ type: "file", id: `f${index}`, name })),
+        }),
+      ]);
+
+    repaints(
+      { rows: files(["a"]) },
+      () => ({ rows: files(["a"]) }),
+      { rows: files(["a", "b"]) },
+      1,
+    );
+    repaints(
+      { rows: files(["a", "b"]) },
+      () => ({ rows: files(["a", "b"]) }),
+      { rows: files(["a"]) },
+      1,
+    );
+  });
+
+  it("repaints the live work row, a pending bubble and a queued row when their data changes", () => {
+    const work = (label: string) =>
+      ({
+        kind: "work",
+        key: "work",
+        work: { phase: "working", runId: "r1", current: { id: "s1", label } },
+      }) as unknown as Row;
+    const pending = (state: string) =>
+      ({
+        kind: "pending",
+        key: "pending:p1",
+        message: { id: "p1", text: "sending", attachments: [], state },
+      }) as unknown as Row;
+    const queued = (state: string) =>
+      ({
+        kind: "queued",
+        key: "queued:q1",
+        row: { entry: { id: "q1", text: "later", threadId: "t" }, state },
+      }) as unknown as Row;
+    const all = (label: string, pendingState: string, queuedState: string) => [
+      work(label),
+      pending(pendingState),
+      queued(queuedState),
+    ];
+
+    repaints(
+      { rows: all("step one", "sending", "waiting") },
+      () => ({ rows: all("step one", "sending", "waiting") }),
+      { rows: all("step two", "failed", "failed") },
+      3,
+    );
+  });
+});
+
+describe("rows that read the card context", () => {
+  const card = (id: string): Item =>
+    ({ kind: "question", id, card: { requestId: id } }) as unknown as Item;
+  const ctxA = { nowMs: 1 } as unknown as NonNullable<RowContext["cardContext"]>;
+  const ctxB = { nowMs: 2 } as unknown as NonNullable<RowContext["cardContext"]>;
+
+  it("repaints every card row, and no message row, when the card context changes", () => {
+    const screen = new Map<string, RowProps>();
+    const items = () => [...chat(10), card("q1"), card("q2")];
+    paint(screen, rowsOf(items()), context({ cardContext: ctxA }));
+
+    expect(paint(screen, rowsOf(items()), context({ cardContext: ctxA }))).toBe(0);
+    expect(paint(screen, rowsOf(items()), context({ cardContext: ctxB }))).toBe(2);
+  });
+
+  it("paints a card row that was waiting for its context", () => {
+    const screen = new Map<string, RowProps>();
+    paint(screen, rowsOf([card("q1")]), context({ cardContext: undefined }));
+
+    expect(paint(screen, rowsOf([card("q1")]), context({ cardContext: ctxA }))).toBe(1);
+  });
+
+  it("repaints a card row whose own data changed", () => {
+    const screen = new Map<string, RowProps>();
+    paint(screen, rowsOf([card("q1")]), context({ cardContext: ctxA }));
+    const changed = { kind: "question", id: "q1", card: { requestId: "q1", answer: "x" } };
+
+    expect(
+      paint(screen, rowsOf([changed as unknown as Item]), context({ cardContext: ctxA })),
+    ).toBe(1);
+  });
+});
+
+describe("the reversed list", () => {
+  it("is not computed again for the same rows", () => {
+    const reverse = createRowReverser<Row>();
+    const rows = rowsOf(chat(30));
+    const spy = vi.spyOn(rows, "toReversed");
+
+    const first = reverse(rows);
+    const second = reverse(rows);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(second).toBe(first);
+    expect(first[0]).toBe(rows[rows.length - 1]);
+  });
+
+  it("is computed again when the rows change", () => {
+    const reverse = createRowReverser<Row>();
+    const first = reverse(rowsOf(chat(3)));
+    const second = reverse(rowsOf(chat(4)));
+
+    expect(second).not.toBe(first);
+    expect(second).toHaveLength(8);
+  });
+});

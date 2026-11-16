@@ -197,6 +197,31 @@ ceiling is 1.59.5's median x 1.4 = 237. The other ten ceilings are unchanged.
 Evidence: `~/.personal-bots/qa/frontend-160/calib.json`, `calib.log`,
 `check-cal-*.log`.
 
+### Android budgets (lab only, no checker reads them)
+
+`budget.json` also holds an `android` block. `check.mjs` reads `settings` and
+`journeys` only, so nothing checks this block yet: it is the record a
+reviewer compares a build against by hand, and the place a future checker will
+read. No checker is written here. Same format as above: `max` is the ceiling
+(observed x (1 + headroom)), `observed` is the measurement it came from, and
+budgets only go down. Each number names its machine and script, because a
+device number is only comparable with a number from the same machine.
+
+| Budget                           | max     | observed | headroom | Machine and script                                                                                                                                            |
+| -------------------------------- | ------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `android.bundleBytes`            | 9551517 | 9364232  | 2%       | Any machine (the size is deterministic). `qa/hbots-optimise/cold-start/export-bundle.sh <out>` from `apps/hbots-mobile`: size of the `.hbc` file.             |
+| `android.coldStart.cachedListMs` | 2942    | 2558     | 15%      | Gaming PC rig emulator FindX9Pro-Rig. `verify/scripts/ab.sh cold 7 <round> <tag>` in `qa/hbots-optimise/cold-start/`: tap to cached list, p75 of 21 launches. |
+| `android.warmStartMs`            | 164     | 143      | 15%      | Gaming PC rig emulator FindX9Pro-Rig. `verify/scripts/ab.sh warm 7 <round> <tag>`: `am start` TotalTime, p75 of 14 launches.                                  |
+
+The two device numbers come from the gaming PC rig (API 36 x86_64, 1080x2355
+at 480 dpi, dark, animations off). Laptop emulator numbers are faster and are
+not comparable: a laptop run that beats 2942 ms proves nothing. The bundle
+number was measured at merged head 55222391ad and again at trunk 97fe283a0a:
+both give 9,364,232 bytes and the same sha256 (`40fafb767a95e09c...`).
+Evidence: `qa/hbots-optimise/cold-start/merge/BUILD.md`,
+`qa/hbots-optimise/cold-start/verify/VERIFY-cold-start.md`,
+`qa/hbots-optimise/stream/logs/bundle-trunk.log`.
+
 ## Kill switches
 
 Every optimization that changes when work happens is on by default and can be
