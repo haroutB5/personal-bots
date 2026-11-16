@@ -386,6 +386,41 @@ describe("client diagnostics route", () => {
     });
   });
 
+  it("keeps the counts of an a-stream beacon and drops bad ones", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-stream",
+          updates: 12,
+          commitMsP50: 31,
+          commitMsMax: 118,
+          rows: 301,
+          replyText: "not kept",
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-stream",
+      updates: 12,
+      commitMsP50: 31,
+      commitMsMax: 118,
+      rows: 301,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-stream",
+          updates: -1,
+          commitMsP50: "x",
+          commitMsMax: 1.5,
+          rows: 7,
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-stream", rows: 7 });
+  });
+
   it("accepts the stale-notification cleanup line: how many, and why", () => {
     expect(
       sanitizeClientDiag(

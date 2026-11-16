@@ -77,6 +77,7 @@ import { ChoiceButtons } from "./ChoiceButtons";
 import { LiveWorkRow } from "./LiveWorkRow";
 import type { PendingSend } from "./composerSendModel";
 import { JUMP_SETTLE_MS, jumpVisible } from "./jumpToLatest";
+import { useStreamCommitPerf } from "./useStreamCommitPerf";
 import {
 
   /* eslint-disable react/refs -- the list owns imperative scroll and swipe handles */
@@ -1022,6 +1023,9 @@ export function MessageList({
     readonly avatarColor: string;
   } | null;
 }) {
+  // The clock at the top of this render: the stream metric reads it in a layout effect.
+  // eslint-disable-next-line react/purity -- a measurement, it does not change what is drawn
+  const renderStartedAt = performance.now();
   const listRef = useRef<FlatList<Row>>(null);
   const highRefresh = useHighRefresh();
   const arrivedIds = useMemo(() => new Set(items.map((item) => item.id)), [items]);
@@ -1040,6 +1044,7 @@ export function MessageList({
     ],
     [arrivedIds, items, pending, queued, work],
   );
+  useStreamCommitPerf(renderStartedAt, items, rows.length);
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
   const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
   const lastReveal = useRef<string | null>(null);
