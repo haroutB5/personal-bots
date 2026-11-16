@@ -4,7 +4,7 @@ import {
   type SecretAccessState,
   type SecretPlacementState,
 } from "@hbots/personal-client/settings/secretAccess";
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../../ui/icons";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 

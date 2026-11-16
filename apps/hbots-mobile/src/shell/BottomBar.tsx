@@ -7,7 +7,7 @@ import {
   IconFileFilled,
   IconMessageCircle,
   IconMessageCircleFilled,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { TabName } from "../nav/routes";

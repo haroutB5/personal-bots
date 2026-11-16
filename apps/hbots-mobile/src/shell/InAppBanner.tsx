@@ -1,6 +1,6 @@
 import type { PersonalPushInAppNotification } from "@t3tools/contracts";
 import { motionDuration, motionEase } from "@hbots/personal-client/motion/motionTokens";
-import { IconX } from "@tabler/icons-react-native";
+import { IconX } from "../ui/icons";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

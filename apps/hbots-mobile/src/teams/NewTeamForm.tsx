@@ -2,7 +2,7 @@ import type { PersonalBot, PersonalBotTeam } from "@t3tools/contracts";
 import { isGroupOnlyBot } from "@t3tools/contracts";
 import { commandFailureMessage } from "@hbots/personal-client/bots/commandFeedback";
 import { botActiveModelShortLabel } from "@hbots/personal-client/bots/botModelLabel";
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 import { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,

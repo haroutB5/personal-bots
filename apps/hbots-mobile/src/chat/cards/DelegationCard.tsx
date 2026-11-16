@@ -3,7 +3,7 @@ import { workEntriesFromActivities } from "@hbots/personal-client/feed/chatFeed"
 import { taskCardBotLine } from "@hbots/personal-client/bots/botSummaries";
 import { deriveDelegationCard } from "@hbots/personal-client/conversation/delegationModel";
 import { hidesBotPreviews } from "@hbots/personal-client/conversation/previewPrivacy";
-import { IconChevronRight } from "@tabler/icons-react-native";
+import { IconChevronRight } from "../../ui/icons";
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 

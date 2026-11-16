@@ -1,5 +1,5 @@
 import { formatCallDuration } from "@hbots/personal-client/conversation/voice/callState";
-import { IconMicrophone, IconMicrophoneOff, IconPhoneOff } from "@tabler/icons-react-native";
+import { IconMicrophone, IconMicrophoneOff, IconPhoneOff } from "../ui/icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 

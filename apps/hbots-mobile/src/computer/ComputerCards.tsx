@@ -21,7 +21,7 @@ import {
   IconPointer,
   IconShield,
   IconWorld,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import { useState, type ComponentType, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 

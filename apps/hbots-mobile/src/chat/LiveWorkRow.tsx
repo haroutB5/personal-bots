@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { IconChevronRight } from "@tabler/icons-react-native";
+import { IconChevronRight } from "../ui/icons";
 import {
   workStepLabel,
   type RunWork,

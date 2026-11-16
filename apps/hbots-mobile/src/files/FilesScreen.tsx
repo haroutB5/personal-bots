@@ -26,7 +26,7 @@ import {
   IconFileText,
   IconPhoto,
   IconSearch,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import * as DateTime from "effect/DateTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {

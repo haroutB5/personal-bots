@@ -1,6 +1,6 @@
 import { isGroupOnlyBot, PERSONAL_GROUP_MAX_MEMBERS } from "@t3tools/contracts";
 import type { PersonalBot, PersonalGroup } from "@t3tools/contracts";
-import { IconChevronLeft, IconChevronRight, IconDots, IconPlus } from "@tabler/icons-react-native";
+import { IconChevronLeft, IconChevronRight, IconDots, IconPlus } from "../ui/icons";
 import { useState } from "react";
 import {
   ActivityIndicator,

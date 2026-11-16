@@ -1,5 +1,5 @@
 import type { ChoicesState } from "@hbots/personal-client/conversation/choices";
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 

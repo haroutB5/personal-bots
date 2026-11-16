@@ -29,7 +29,7 @@ import {
   type PersonalRoutine,
   type PersonalTask,
 } from "@t3tools/contracts";
-import { IconDots, IconPlus } from "@tabler/icons-react-native";
+import { IconDots, IconPlus } from "../ui/icons";
 import * as DateTime from "effect/DateTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";

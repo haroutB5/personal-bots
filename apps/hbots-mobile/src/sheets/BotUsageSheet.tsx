@@ -23,7 +23,7 @@ import {
   shortProviderLabel,
   TOKEN_USAGE_WINDOWS,
 } from "@hbots/personal-client/usage/tokenUsagePresentation";
-import { IconX } from "@tabler/icons-react-native";
+import { IconX } from "../ui/icons";
 import { useMemo } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 

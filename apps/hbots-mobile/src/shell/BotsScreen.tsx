@@ -29,7 +29,7 @@ import {
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useIsFocused } from "@react-navigation/native";
-import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "@tabler/icons-react-native";
+import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "../ui/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,

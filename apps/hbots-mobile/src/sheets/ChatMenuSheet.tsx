@@ -18,7 +18,7 @@ import {
   IconSwitchHorizontal,
   IconTrash,
   IconZzz,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import { useState } from "react";
 import type { ComponentType } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";

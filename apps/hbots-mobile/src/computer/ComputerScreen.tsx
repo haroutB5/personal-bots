@@ -23,7 +23,7 @@ import {
   saveSourcePrefs,
   type SourcePrefs,
 } from "@hbots/personal-client/computer/computerSource";
-import { IconDeviceLaptop, IconMaximize, IconRefresh, IconWorld } from "@tabler/icons-react-native";
+import { IconDeviceLaptop, IconMaximize, IconRefresh, IconWorld } from "../ui/icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {

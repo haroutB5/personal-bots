@@ -1,6 +1,6 @@
 import type { PersonalLoginRequest } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
-import { IconCheck, IconEye, IconEyeOff } from "@tabler/icons-react-native";
+import { IconCheck, IconEye, IconEyeOff } from "../../ui/icons";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 

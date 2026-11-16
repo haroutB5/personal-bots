@@ -106,7 +106,8 @@ describe("the bundled app", () => {
   });
 
   it("resolves every package from a single root", () => {
-    expect(sources.length).toBeGreaterThan(7_000);
+    // Real bundle: 2,223 sources since the icon deep imports (8,286 with the package root).
+    expect(sources.length).toBeGreaterThan(1_500);
     expect(duplicatePackages(sources)).toEqual([]);
   });
 });

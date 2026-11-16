@@ -25,7 +25,7 @@ import {
   IconFileTypePdf,
   IconPhoto,
   IconPaperclip,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import {
   useCallback,
   useEffect,

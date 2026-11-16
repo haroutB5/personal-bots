@@ -1,4 +1,4 @@
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 import type { FieldChoice } from "@hbots/personal-client/bots/botFormFields";
 import { FlatList, Pressable, StyleSheet, Text, useWindowDimensions } from "react-native";
 

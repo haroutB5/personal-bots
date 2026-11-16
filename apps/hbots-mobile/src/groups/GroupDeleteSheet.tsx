@@ -1,7 +1,7 @@
 import type { PersonalBot } from "@t3tools/contracts";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 
 import {
   groupDeleteSummary,

@@ -32,7 +32,7 @@ import {
   IconPlus,
   IconSquare,
   IconX,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import { useEffect, useRef, useState } from "react";
 import {
   AppState,

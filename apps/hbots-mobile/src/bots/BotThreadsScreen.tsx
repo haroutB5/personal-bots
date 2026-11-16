@@ -1,5 +1,5 @@
 import { ThreadId, type PersonalBotThread } from "@t3tools/contracts";
-import { IconDots, IconNotebook, IconPencil, IconPlus } from "@tabler/icons-react-native";
+import { IconDots, IconNotebook, IconPencil, IconPlus } from "../ui/icons";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,

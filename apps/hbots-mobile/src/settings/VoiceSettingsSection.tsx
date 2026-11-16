@@ -20,7 +20,7 @@ import {
   voiceApiKeyCheckLine,
   type VoiceCallCheck,
 } from "@hbots/personal-client/conversation/voice/voiceCallApi";
-import { IconCheck, IconPlayerPlay, IconPlayerStop } from "@tabler/icons-react-native";
+import { IconCheck, IconPlayerPlay, IconPlayerStop } from "../ui/icons";
 import * as Redacted from "effect/Redacted";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";

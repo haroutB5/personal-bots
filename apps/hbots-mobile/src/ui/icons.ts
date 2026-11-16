@@ -1,0 +1,73 @@
+/**
+ * The icons the app draws, each from its own file in @tabler/icons-react-native. Importing the
+ * package root loads all 6,151 icon modules at launch, so nothing in src/ may do that: add an
+ * icon here and import it from this file.
+ */
+
+export { default as IconAlarm } from "@tabler/icons-react-native/IconAlarm";
+export { default as IconArchive } from "@tabler/icons-react-native/IconArchive";
+export { default as IconArchiveOff } from "@tabler/icons-react-native/IconArchiveOff";
+export { default as IconArrowDown } from "@tabler/icons-react-native/IconArrowDown";
+export { default as IconArrowLeft } from "@tabler/icons-react-native/IconArrowLeft";
+export { default as IconArrowRight } from "@tabler/icons-react-native/IconArrowRight";
+export { default as IconArrowUp } from "@tabler/icons-react-native/IconArrowUp";
+export { default as IconArrowsMaximize } from "@tabler/icons-react-native/IconArrowsMaximize";
+export { default as IconBadgeCc } from "@tabler/icons-react-native/IconBadgeCc";
+export { default as IconBell } from "@tabler/icons-react-native/IconBell";
+export { default as IconBellOff } from "@tabler/icons-react-native/IconBellOff";
+export { default as IconCamera } from "@tabler/icons-react-native/IconCamera";
+export { default as IconChartBar } from "@tabler/icons-react-native/IconChartBar";
+export { default as IconCheck } from "@tabler/icons-react-native/IconCheck";
+export { default as IconChevronDown } from "@tabler/icons-react-native/IconChevronDown";
+export { default as IconChevronLeft } from "@tabler/icons-react-native/IconChevronLeft";
+export { default as IconChevronRight } from "@tabler/icons-react-native/IconChevronRight";
+export { default as IconCircleCheck } from "@tabler/icons-react-native/IconCircleCheck";
+export { default as IconCircleCheckFilled } from "@tabler/icons-react-native/IconCircleCheckFilled";
+export { default as IconClock } from "@tabler/icons-react-native/IconClock";
+export { default as IconCrown } from "@tabler/icons-react-native/IconCrown";
+export { default as IconDeviceLaptop } from "@tabler/icons-react-native/IconDeviceLaptop";
+export { default as IconDots } from "@tabler/icons-react-native/IconDots";
+export { default as IconDownload } from "@tabler/icons-react-native/IconDownload";
+export { default as IconExternalLink } from "@tabler/icons-react-native/IconExternalLink";
+export { default as IconEye } from "@tabler/icons-react-native/IconEye";
+export { default as IconEyeOff } from "@tabler/icons-react-native/IconEyeOff";
+export { default as IconFile } from "@tabler/icons-react-native/IconFile";
+export { default as IconFileCode } from "@tabler/icons-react-native/IconFileCode";
+export { default as IconFileFilled } from "@tabler/icons-react-native/IconFileFilled";
+export { default as IconFileText } from "@tabler/icons-react-native/IconFileText";
+export { default as IconFileTypePdf } from "@tabler/icons-react-native/IconFileTypePdf";
+export { default as IconFlag } from "@tabler/icons-react-native/IconFlag";
+export { default as IconHandStop } from "@tabler/icons-react-native/IconHandStop";
+export { default as IconHierarchy } from "@tabler/icons-react-native/IconHierarchy";
+export { default as IconKeyboard } from "@tabler/icons-react-native/IconKeyboard";
+export { default as IconLoader2 } from "@tabler/icons-react-native/IconLoader2";
+export { default as IconMail } from "@tabler/icons-react-native/IconMail";
+export { default as IconMaximize } from "@tabler/icons-react-native/IconMaximize";
+export { default as IconMessageCircle } from "@tabler/icons-react-native/IconMessageCircle";
+export { default as IconMessageCircleFilled } from "@tabler/icons-react-native/IconMessageCircleFilled";
+export { default as IconMessages } from "@tabler/icons-react-native/IconMessages";
+export { default as IconMicrophone } from "@tabler/icons-react-native/IconMicrophone";
+export { default as IconMicrophoneOff } from "@tabler/icons-react-native/IconMicrophoneOff";
+export { default as IconNotebook } from "@tabler/icons-react-native/IconNotebook";
+export { default as IconPaperclip } from "@tabler/icons-react-native/IconPaperclip";
+export { default as IconPencil } from "@tabler/icons-react-native/IconPencil";
+export { default as IconPhone } from "@tabler/icons-react-native/IconPhone";
+export { default as IconPhoneOff } from "@tabler/icons-react-native/IconPhoneOff";
+export { default as IconPhoto } from "@tabler/icons-react-native/IconPhoto";
+export { default as IconPin } from "@tabler/icons-react-native/IconPin";
+export { default as IconPinnedOff } from "@tabler/icons-react-native/IconPinnedOff";
+export { default as IconPlayerPlay } from "@tabler/icons-react-native/IconPlayerPlay";
+export { default as IconPlayerStop } from "@tabler/icons-react-native/IconPlayerStop";
+export { default as IconPlus } from "@tabler/icons-react-native/IconPlus";
+export { default as IconPointer } from "@tabler/icons-react-native/IconPointer";
+export { default as IconRefresh } from "@tabler/icons-react-native/IconRefresh";
+export { default as IconSearch } from "@tabler/icons-react-native/IconSearch";
+export { default as IconSettings } from "@tabler/icons-react-native/IconSettings";
+export { default as IconShield } from "@tabler/icons-react-native/IconShield";
+export { default as IconSquare } from "@tabler/icons-react-native/IconSquare";
+export { default as IconSwitchHorizontal } from "@tabler/icons-react-native/IconSwitchHorizontal";
+export { default as IconTrash } from "@tabler/icons-react-native/IconTrash";
+export { default as IconWifiOff } from "@tabler/icons-react-native/IconWifiOff";
+export { default as IconWorld } from "@tabler/icons-react-native/IconWorld";
+export { default as IconX } from "@tabler/icons-react-native/IconX";
+export { default as IconZzz } from "@tabler/icons-react-native/IconZzz";

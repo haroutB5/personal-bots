@@ -1,4 +1,4 @@
-import { IconCamera, IconPhoto } from "@tabler/icons-react-native";
+import { IconCamera, IconPhoto } from "../ui/icons";
 import type { ComponentType } from "react";
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 

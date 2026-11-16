@@ -9,7 +9,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { IconX } from "@tabler/icons-react-native";
+import { IconX } from "../ui/icons";
 import { useLayoutEffect, useRef } from "react";
 import type { PropsWithChildren } from "react";
 

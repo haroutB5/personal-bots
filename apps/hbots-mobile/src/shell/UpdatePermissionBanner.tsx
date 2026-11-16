@@ -1,4 +1,4 @@
-import { IconDownload } from "@tabler/icons-react-native";
+import { IconDownload } from "../ui/icons";
 import { Pressable, StyleSheet, Text } from "react-native";
 
 import { confirmUpdateInstall, type UpdateSnapshot } from "../updater";

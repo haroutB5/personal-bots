@@ -1,5 +1,5 @@
 import { offlineBannerHint, offlineBannerText } from "@hbots/personal-client/bots/offlineBanner";
-import { IconWifiOff } from "@tabler/icons-react-native";
+import { IconWifiOff } from "../ui/icons";
 import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 

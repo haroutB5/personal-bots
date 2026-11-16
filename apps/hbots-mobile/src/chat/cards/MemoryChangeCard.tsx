@@ -7,7 +7,7 @@ import {
   type MemoryCardItem,
 } from "@hbots/personal-client/conversation/memoryCards";
 import { appsLabel, memoryReachTag } from "@hbots/personal-client/memory/presentation";
-import { IconCheck, IconX } from "@tabler/icons-react-native";
+import { IconCheck, IconX } from "../../ui/icons";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 

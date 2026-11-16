@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AppState, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { IconBell } from "@tabler/icons-react-native";
+import { IconBell } from "../ui/icons";
 
 import { tokens } from "../shell/tokens";
 import { nativeNotify } from "./nativeNotify";

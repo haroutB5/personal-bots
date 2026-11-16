@@ -4,7 +4,7 @@ import type {
   VoiceCallSummary,
   VoiceCallTranscriptEntry,
 } from "@hbots/personal-client/conversation/voice/voiceCallApi";
-import { IconChevronDown, IconPhone } from "@tabler/icons-react-native";
+import { IconChevronDown, IconPhone } from "../ui/icons";
 import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 

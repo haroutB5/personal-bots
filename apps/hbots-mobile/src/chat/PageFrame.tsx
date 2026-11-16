@@ -2,7 +2,7 @@ import { assetUrlStateFromResult } from "@t3tools/client-runtime/state/assets";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { useAtomValue } from "@effect/atom-react";
 import { requireNativeView } from "expo";
-import { IconArrowsMaximize, IconX } from "@tabler/icons-react-native";
+import { IconArrowsMaximize, IconX } from "../ui/icons";
 import { useState } from "react";
 import {
   ActivityIndicator,

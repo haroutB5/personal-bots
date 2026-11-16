@@ -1,7 +1,7 @@
 import type { PersonalConnectionRiskReason } from "@t3tools/contracts";
 import type { ConnectionApprovalCardItem } from "@hbots/personal-client/conversation/connectionApprovalCards";
 import { approvalHasExpired } from "@hbots/personal-client/conversation/connectionApprovalCards";
-import { IconCheck, IconX } from "@tabler/icons-react-native";
+import { IconCheck, IconX } from "../../ui/icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "../../shell/tokens";

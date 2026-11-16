@@ -5,7 +5,7 @@ import {
   type LeadBotChangeCardItem,
 } from "@hbots/personal-client/conversation/leadBotChangeCards";
 import { leadBotTextDiff } from "@hbots/personal-client/conversation/leadBotTextDiff";
-import { IconCheck, IconShield, IconX } from "@tabler/icons-react-native";
+import { IconCheck, IconShield, IconX } from "../../ui/icons";
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 

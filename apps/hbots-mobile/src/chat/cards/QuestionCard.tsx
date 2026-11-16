@@ -1,4 +1,4 @@
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../../ui/icons";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,

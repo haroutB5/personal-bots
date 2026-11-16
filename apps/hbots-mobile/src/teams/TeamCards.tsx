@@ -1,4 +1,4 @@
-import { IconChevronRight, IconCrown, IconDots } from "@tabler/icons-react-native";
+import { IconChevronRight, IconCrown, IconDots } from "../ui/icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "../shell/tokens";

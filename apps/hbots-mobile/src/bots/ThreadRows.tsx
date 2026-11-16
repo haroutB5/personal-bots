@@ -1,4 +1,4 @@
-import { IconDots, IconPin } from "@tabler/icons-react-native";
+import { IconDots, IconPin } from "../ui/icons";
 import * as DateTime from "effect/DateTime";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 

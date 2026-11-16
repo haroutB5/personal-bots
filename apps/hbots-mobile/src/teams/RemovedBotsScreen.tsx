@@ -1,5 +1,5 @@
 import { PersonalBotId, type PersonalRemovedBot } from "@t3tools/contracts";
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

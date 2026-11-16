@@ -4,7 +4,7 @@ import {
   TEXT_PREVIEW_MAX_BYTES,
 } from "@hbots/personal-client/files/filesModel";
 import type { PersonalFile } from "@t3tools/contracts";
-import { IconDownload, IconExternalLink, IconTrash } from "@tabler/icons-react-native";
+import { IconDownload, IconExternalLink, IconTrash } from "../ui/icons";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,

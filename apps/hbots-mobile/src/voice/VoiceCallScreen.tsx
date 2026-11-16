@@ -12,7 +12,7 @@ import {
   IconMicrophone,
   IconMicrophoneOff,
   IconPhoneOff,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,

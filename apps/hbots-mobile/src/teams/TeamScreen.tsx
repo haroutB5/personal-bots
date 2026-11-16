@@ -4,7 +4,7 @@ import { commandFailureMessage } from "@hbots/personal-client/bots/commandFeedba
 import { botActiveModelShortLabel } from "@hbots/personal-client/bots/botModelLabel";
 import { buildTeamGroups } from "@hbots/personal-client/teams/teamDiagramModel";
 import { planDrop } from "@hbots/personal-client/teams/teamMoves";
-import { IconPlus } from "@tabler/icons-react-native";
+import { IconPlus } from "../ui/icons";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

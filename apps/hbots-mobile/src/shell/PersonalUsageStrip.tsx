@@ -33,7 +33,7 @@ import {
 } from "@hbots/personal-client/usage/usageStrip";
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
 import { useAtomValue } from "@effect/atom-react";
-import { IconRefresh, IconX } from "@tabler/icons-react-native";
+import { IconRefresh, IconX } from "../ui/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,

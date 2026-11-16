@@ -7,7 +7,7 @@ import {
   type PersonalReplyQuote,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { IconChevronLeft, IconDots } from "@tabler/icons-react-native";
+import { IconChevronLeft, IconDots } from "../ui/icons";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,

@@ -5,7 +5,7 @@ import {
   ThreadId,
   type PersonalBot,
 } from "@t3tools/contracts";
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 import { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,

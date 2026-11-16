@@ -1,4 +1,4 @@
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 import type { BotAvatarShape } from "@t3tools/contracts";
 import {
   BOT_AVATAR_SHAPE_LABELS,

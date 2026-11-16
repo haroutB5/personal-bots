@@ -1,6 +1,6 @@
 import type { PersonalBrowserInputMessage } from "@t3tools/contracts";
 import { fitFrame } from "@hbots/personal-client/computer/computerModel";
-import { IconArrowLeft, IconKeyboard } from "@tabler/icons-react-native";
+import { IconArrowLeft, IconKeyboard } from "../ui/icons";
 import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import {
   Keyboard,

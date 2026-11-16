@@ -1,4 +1,4 @@
-import { IconCheck } from "@tabler/icons-react-native";
+import { IconCheck } from "../ui/icons";
 import type { ServerProvider } from "@t3tools/contracts";
 import { modelOptionLabel } from "@hbots/personal-client/bots/botFormModel";
 import {

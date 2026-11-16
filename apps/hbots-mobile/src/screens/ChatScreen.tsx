@@ -18,7 +18,7 @@ import {
   IconPlus,
   IconSearch,
   IconX,
-} from "@tabler/icons-react-native";
+} from "../ui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,

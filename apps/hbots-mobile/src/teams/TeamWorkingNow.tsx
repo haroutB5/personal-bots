@@ -1,4 +1,4 @@
-import { IconArrowRight } from "@tabler/icons-react-native";
+import { IconArrowRight } from "../ui/icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { BotAvatar } from "../shell/BotAvatar";

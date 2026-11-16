@@ -1,4 +1,4 @@
-import { IconChevronDown } from "@tabler/icons-react-native";
+import { IconChevronDown } from "../ui/icons";
 import type { ReactNode, RefObject } from "react";
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 

@@ -6,7 +6,7 @@ import {
   secretAccessProblem,
   type SecretAccessState,
 } from "@hbots/personal-client/settings/secretAccess";
-import { IconCheck, IconX } from "@tabler/icons-react-native";
+import { IconCheck, IconX } from "../../ui/icons";
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
