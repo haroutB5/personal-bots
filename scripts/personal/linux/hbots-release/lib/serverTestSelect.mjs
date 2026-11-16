@@ -362,12 +362,13 @@ export function selectServerTests({ reader, changedPaths }) {
 
   // Literal references. A test or module can read a file by its path string, which
   // no import shows: a fixture, a doc, a spawned entry file. Every changed file
-  // outside the graph gets needles, whatever its extension, and a test that holds
-  // one is selected. A graph module that holds one counts as changed too, so the
+  // gets needles, in the graph or not, whatever its extension: a test that names a
+  // file puts it in the graph, and a module that names it must still be reached.
+  // A test that holds one is selected. A graph module that holds one counts as changed too, so the
   // tests that import it are selected by the walk below.
   const parentOf = (file) => NodePath.posix.basename(NodePath.posix.dirname(file));
   const needles = new Set();
-  for (const file of changedPaths.filter((entry) => !graphModules.has(entry))) {
+  for (const file of changedPaths) {
     const base = NodePath.posix.basename(file);
     needles.add(`${parentOf(file)}/${base}`);
     const dir = NodePath.posix.dirname(file);

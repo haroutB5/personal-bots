@@ -803,3 +803,43 @@ NodeTest.test("a shared file moved away selects the tests whose modules still na
     NodeAssert.ok(plan.args.includes("src/personal/push/UsesArray.test.ts"), plan.args.join(","));
   });
 });
+
+NodeTest.test(
+  "N5: a changed spawned entry selects the importers of the module that names it",
+  () => {
+    withFixture((f) => {
+      const src = NodePath.join(f.repo, "apps/server/src/personal");
+      NodeFS.writeFileSync(NodePath.join(src, "entry.ts"), "export const entry = 1;\n");
+      // a test spawns the entry by name, so the entry is in the import graph
+      NodeFS.writeFileSync(
+        NodePath.join(src, "spawn.test.ts"),
+        'import * as Path from "node:path";\nPath.join(__dirname, "entry.ts");\n',
+      );
+      // a non-test module names the entry too, and another test imports that module
+      NodeFS.writeFileSync(
+        NodePath.join(src, "Worker.ts"),
+        'export const worker = new URL("./entry.ts", import.meta.url);\n',
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(src, "worker.test.ts"),
+        'import { worker } from "./Worker.ts";\nworker;\n',
+      );
+      const head = commit(f.repo, "entry named by a module");
+      const args = planOf(
+        planChecks(["apps/server/src/personal/entry.ts"], { reader: gitReader(f.repo, head) }),
+        "server-tests",
+      ).args;
+      NodeAssert.ok(args.includes("src/personal/spawn.test.ts"), args.join(","));
+      NodeAssert.ok(args.includes("src/personal/worker.test.ts"), args.join(","));
+    });
+  },
+);
+
+NodeTest.test("N5: a change to bin.ts of the real tree selects 300 or more tests", () => {
+  const args = planOf(
+    planChecks(["apps/server/src/bin.ts"], { reader: fsReader(REPO) }),
+    "server-tests",
+  ).args;
+  NodeAssert.ok(args.length >= 300, `bin.ts selected ${args.length}`);
+  NodeAssert.ok(args.includes("src/provider/CodexManagedRuntime.test.ts"));
+});
