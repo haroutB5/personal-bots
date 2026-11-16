@@ -1,13 +1,14 @@
 // Checks a COPY of the database (a backup). It refuses every path under the live data roots: opening the live
 // state.sqlite or its -wal/-shm from a second process crashed the server with SIGBUS on 26 Oct.
 // Library: checkCopy(file). CLI: node dbcheck.mjs <backup-dir>/state.sqlite (or statev2.sqlite)
-//   -> checkpoints the copy into a single file, runs integrity_check, prints {"ic","rows","mem","mig","bytes","sha256"}.
+//   -> checkpoints the copy into a single file, runs integrity_check, prints {"ic","rows","mem","mig","bytes","sha256"}, rows = V2 chat messages.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
 import * as NodeSqlite from "node:sqlite";
 
+const CHAT_ROWS_SQL = "SELECT count(*) n FROM orchestration_v2_projection_messages";
 const LIVE_ROOTS = [/^\/home\/[^/]+\/\.personal-bots\/(dev|prod)(\/|$)/];
 
 export function assertNotLive(file) {
@@ -63,7 +64,7 @@ export function checkCopy(file, { withDigest = true } = {}) {
     };
     const out = {
       ic: "ok",
-      rows: count("SELECT count(*) n FROM projection_thread_activities"),
+      rows: count(CHAT_ROWS_SQL),
       mem: count("SELECT count(*) n FROM personal_memory"),
       mig: count("SELECT max(migration_id) n FROM effect_sql_migrations"),
     };
