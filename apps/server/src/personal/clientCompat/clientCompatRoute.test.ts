@@ -206,6 +206,18 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(body.perfOff).toEqual(["android-preload-chat", "android-other"]);
   });
 
+  it("follows PB_PERF_OFF on each request, with no restart", async () => {
+    const handler = await fixture({ stamp: "version=1.66.110\n" });
+    const perfOff = async () =>
+      ((await (await handler(get())).json()) as { perfOff: unknown }).perfOff;
+
+    process.env.PB_PERF_OFF = "android-preload-chat";
+    expect(await perfOff()).toEqual(["android-preload-chat"]);
+
+    delete process.env.PB_PERF_OFF;
+    expect(await perfOff()).toEqual([]);
+  });
+
   it("lists nothing when PB_PERF_OFF is unset, empty or names only server switches", async () => {
     const handler = await fixture({ stamp: "version=1.66.112\n" });
     expect(((await (await handler(get())).json()) as { perfOff: unknown }).perfOff).toEqual([]);

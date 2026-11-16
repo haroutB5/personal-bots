@@ -213,4 +213,31 @@ describe("the server's perfOff list", () => {
       expect(androidPerfOptimizationOn("android-update-on-reconnect")).toBe(true);
     },
   );
+
+  it("clears a list set earlier when a later answer carries no perfOff at all", async () => {
+    setPerfOff(["android-preload-chat", "android-update-on-reconnect"]);
+    respond(withPerfOff());
+
+    await expect(fetchCompat(BASE)).resolves.toMatchObject({ perfOff: [] });
+    expect(androidPerfOptimizationOn("android-preload-chat")).toBe(true);
+    expect(androidPerfOptimizationOn("android-update-on-reconnect")).toBe(true);
+  });
+
+  it("switches off only the names it knows, whatever else the list holds", async () => {
+    const many = Array.from({ length: 20_000 }, (_, index) => `android-x${index}`);
+    respond(withPerfOff(["", "  ", "nonsense", "android-preload-chat", "android-preload-chat", ...many]));
+
+    await expect(fetchCompat(BASE)).resolves.toMatchObject({ perfOff: expect.any(Array) });
+    expect(androidPerfOptimizationOn("android-preload-chat")).toBe(false);
+    expect(androidPerfOptimizationOn("android-update-on-reconnect")).toBe(true);
+  });
+
+  it("does not trim a name, so a padded one from a hand-made server switches nothing off", async () => {
+    respond(withPerfOff([" android-preload-chat"]));
+
+    await fetchCompat(BASE);
+
+    expect(androidPerfOptimizationOn("android-preload-chat")).toBe(true);
+  });
 });
+

@@ -286,6 +286,64 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "perf", journey: "a-chat-open", ms: 9 });
   });
 
+  describe("the chat-open fields from a hostile client", () => {
+    const beacon = (extra: Record<string, unknown>) =>
+      sanitizeClientDiag(
+        JSON.stringify({ event: "perf", journey: "a-chat-open", ms: 5, ...extra }),
+      );
+
+    it("drops non-integers, negatives, strings, objects and values past the cap", () => {
+      expect(
+        beacon({
+          fromTapMs: 1.5,
+          responseMs: -1,
+          decodeMs: "9",
+          prefetched: "true",
+          requestAtMs: { a: 1 },
+          readMs: 1e14,
+        }),
+      ).toEqual({ event: "perf", journey: "a-chat-open", ms: 5 });
+      expect(sanitizeClientDiag('{"event":"perf","ms":5,"fromTapMs":1e999}')).toEqual({
+        event: "perf",
+        ms: 5,
+      });
+    });
+
+    it("keeps zero, the largest allowed count and both booleans", () => {
+      expect(beacon({ fromTapMs: 0, responseMs: 1e13, decodeMs: 3, prefetched: false })).toEqual({
+        event: "perf",
+        journey: "a-chat-open",
+        ms: 5,
+        fromTapMs: 0,
+        responseMs: 1e13,
+        decodeMs: 3,
+        prefetched: false,
+      });
+      expect(beacon({ prefetched: true })).toMatchObject({ prefetched: true });
+    });
+
+    it("takes prefetched as a boolean only", () => {
+      for (const value of [1, 0, "yes", null, [true], {}]) {
+        expect(beacon({ prefetched: value })).not.toHaveProperty("prefetched");
+      }
+    });
+
+    it("drops prototype keys and unknown fields, and keeps the logged line within its cap", () => {
+      const text = `{"event":"perf","ms":5,"__proto__":{"fromTapMs":1},"constructor":{"x":1},"fromTapMs":7,"junk":"${"y".repeat(100_000)}"}`;
+
+      expect(sanitizeClientDiag(text)).toEqual({ event: "perf", ms: 5, fromTapMs: 7 });
+      expect(({} as Record<string, unknown>).fromTapMs).toBeUndefined();
+      const line = clientDiagLine(text, "anonymous");
+      expect(line === null || line.length <= CLIENT_DIAG_LOGGED_CHARS + 200).toBe(true);
+    });
+
+    it("does not throw on garbage, arrays or an empty body", () => {
+      for (const text of ["", "null", "[]", "[1,2]", '"x"', "{", '{"event":1}', "\u0000"]) {
+        expect(() => sanitizeClientDiag(text)).not.toThrow();
+      }
+    });
+  });
+
   it("accepts the stale-notification cleanup line: how many, and why", () => {
     expect(
       sanitizeClientDiag(
