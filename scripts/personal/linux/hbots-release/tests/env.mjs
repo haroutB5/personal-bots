@@ -542,6 +542,9 @@ function planGates(env) {
     ...(plan.selector ? { selector: plan.selector } : {}),
     ...(plan.mode !== "skip" && plan.args ? { args: plan.args } : {}),
     ...(plan.id === "e2e" ? { counts: { journeys: 3, passed: 3 } } : {}),
+    ...(plan.id === "e2e" && plan.mode !== "skip"
+      ? { journeys: plan.args.map((id) => ({ id, ok: true })) }
+      : {}),
   }));
 }
 
