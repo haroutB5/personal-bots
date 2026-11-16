@@ -143,7 +143,9 @@ class HbotsShareModule : Module() {
     }
 
     View(HbotsPhotoStripView::class) {
-      Events("onPicked", "onUnavailable")
+      Events("onPicked", "onUnavailable", "onSelection")
+      Prop("maxSelection") { view: HbotsPhotoStripView, max: Int -> view.maxSelection = max }
+      AsyncFunction("add") { view: HbotsPhotoStripView -> view.add() }
     }
   }
 }

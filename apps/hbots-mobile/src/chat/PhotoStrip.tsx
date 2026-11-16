@@ -1,8 +1,17 @@
 import { requireNativeView, requireOptionalNativeModule } from "expo";
+import type { Ref } from "react";
 import { Platform, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from "react-native";
 
+/** What the native view lets the sheet do: copy the photos selected so far. */
+export interface PhotoStripHandle {
+  add(): Promise<void>;
+}
+
 interface StripProps {
+  readonly ref?: Ref<PhotoStripHandle>;
   readonly style?: StyleProp<ViewStyle>;
+  readonly maxSelection: number;
+  readonly onSelection: (event: NativeSyntheticEvent<{ readonly count: number }>) => void;
   readonly onPicked: (event: NativeSyntheticEvent<{ readonly id?: string }>) => void;
   readonly onUnavailable: () => void;
 }
@@ -31,22 +40,32 @@ export function embeddedPickerAvailable(): boolean {
 }
 
 /**
- * The system photo picker drawn in place. One tap calls `onPicked` with the share intake id the
- * photo was copied to; a picker that cannot run calls `onUnavailable`.
+ * The system photo picker drawn in place. Taps select up to `maxSelection` photos and report the
+ * count; `ref.add()` copies them and calls `onPicked` with the share intake id. A picker that
+ * cannot run calls `onUnavailable`.
  */
 export function PhotoStrip({
+  ref,
   style,
+  maxSelection,
+  onSelection,
   onPicked,
   onUnavailable,
 }: {
+  readonly ref?: Ref<PhotoStripHandle>;
   readonly style?: StyleProp<ViewStyle>;
+  readonly maxSelection: number;
+  readonly onSelection: (count: number) => void;
   readonly onPicked: (intakeId: string | null) => void;
   readonly onUnavailable: () => void;
 }) {
   if (NativeStrip === null) return null;
   return (
     <NativeStrip
+      ref={ref}
       style={style}
+      maxSelection={maxSelection}
+      onSelection={(event) => onSelection(event.nativeEvent.count)}
       onPicked={(event) => onPicked(event.nativeEvent.id ?? null)}
       onUnavailable={onUnavailable}
     />
