@@ -5,6 +5,18 @@ const { getDefaultConfig } = require("expo/metro-config");
 const config = getDefaultConfig(__dirname);
 const workspaceRoot = path.resolve(__dirname, "../..");
 
+// inlineRequires on. Expo's experimentalImportSupport must go off with it: left on, the bundle
+// cannot resolve @t3tools/source-control-definitions/registry (exports hold only "import").
+// A bare import "x" is not inlined, so the start mark, polyfills and expo still run first.
+const expoTransformOptions = config.transformer.getTransformOptions;
+config.transformer.getTransformOptions = async (...args) => {
+  const options = await expoTransformOptions(...args);
+  return {
+    ...options,
+    transform: { ...options.transform, experimentalImportSupport: false, inlineRequires: true },
+  };
+};
+
 config.watchFolders = [...new Set([...(config.watchFolders ?? []), workspaceRoot])];
 config.resolver.nodeModulesPaths = [
   path.join(__dirname, "node_modules"),
