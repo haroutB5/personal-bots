@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isChatArchived } from "../bots/chatState";
+import { isChatArchived } from "../bots/chatState.ts";
 
 export const PROJECT_CARDS_MAX = 4;
 export const PROJECT_QUIET_MS = 72 * 60 * 60_000;
