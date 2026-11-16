@@ -224,12 +224,26 @@ export function chatGoalTags(
 }
 
 /**
- * The chat row's one tag line. "No goal" shows only on a chat working now,
- * and only when there is no tag at all to show.
+ * Whether the goal tags cover every chat: true only when the list loaded and
+ * the server sends each goal's `chats`. An old server sends none, so a chat
+ * with no tag cannot be called goal-free.
  */
-export function chatRowTagLine(tag: ChatGoalTag | undefined, workingNow: boolean): ChatRowTagLine {
+export function chatGoalTagsComplete(projects: ReadonlyArray<PersonalProject> | null): boolean {
+  return projects !== null && projects.some((project) => project.chats !== undefined);
+}
+
+/**
+ * The chat row's one tag line. "No goal" shows only on a chat working now,
+ * with no tag at all, and only when the goals list can tell (see
+ * `chatGoalTagsComplete`).
+ */
+export function chatRowTagLine(
+  tag: ChatGoalTag | undefined,
+  workingNow: boolean,
+  tagsComplete: boolean,
+): ChatRowTagLine {
   if (tag === undefined || (tag.open.length === 0 && tag.doneCount === 0)) {
-    return workingNow ? { kind: "noGoal" } : { kind: "none" };
+    return workingNow && tagsComplete ? { kind: "noGoal" } : { kind: "none" };
   }
   return {
     kind: "tags",

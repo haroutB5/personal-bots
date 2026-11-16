@@ -19,7 +19,11 @@ import { isChatArchived } from "@hbots/personal-client/bots/chatState";
 import { isThreadLive } from "@hbots/personal-client/bots/botSummaries";
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
 import { conversationChatTitle } from "@hbots/personal-client/feed/chatNames";
-import { chatGoalTags, chatRowTagLine } from "@hbots/personal-client/work/projectCards";
+import {
+  chatGoalTags,
+  chatGoalTagsComplete,
+  chatRowTagLine,
+} from "@hbots/personal-client/work/projectCards";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -114,9 +118,11 @@ export function ChatsListScreen({
   }, [botId, list.data, shells]);
 
   // The goals poll every 30 s; the 7-day done window uses the row clock the
-  // list already shows, so it cannot drift from the times beside it.
+  // list already shows, so it cannot drift from the times beside it. A row
+  // claims "No goal" only when the list loaded and the server sends its chats.
   const projects = native.automation.usePersonalProjects(native.environmentId).data?.projects;
   const goalTags = useMemo(() => chatGoalTags(projects ?? [], now), [projects, now]);
+  const goalTagsComplete = chatGoalTagsComplete(projects ?? null);
 
   const selecting = selected.size > 0;
   const allSelected = rows.length > 0 && rows.every((row) => selected.has(row.link.threadId));
@@ -129,6 +135,11 @@ export function ChatsListScreen({
       else next.add(threadId);
       return next;
     });
+  };
+
+  const selectRow = (threadId: string) => {
+    if (!selecting) setSelected(new Set([threadId]));
+    else toggle(threadId);
   };
 
   const runBulk = async (kind: "archive" | "delete" | "pin" | "unread") => {
@@ -301,16 +312,14 @@ export function ChatsListScreen({
             const tagLine = chatRowTagLine(
               goalTags.get(item.link.threadId),
               isThreadLive(item.shell),
+              goalTagsComplete,
             );
             return (
               <Pressable
                 onPress={() =>
                   selecting ? toggle(item.link.threadId) : onOpenChat(item.link.threadId)
                 }
-                onLongPress={() => {
-                  if (!selecting) setSelected(new Set([item.link.threadId]));
-                  else toggle(item.link.threadId);
-                }}
+                onLongPress={() => selectRow(item.link.threadId)}
                 delayLongPress={350}
                 accessibilityRole="button"
                 accessibilityLabel={`${title}${item.unread ? ", unread" : ""}${item.link.pinnedAt !== undefined ? ", pinned" : ""}`}
@@ -355,6 +364,8 @@ export function ChatsListScreen({
                             <Pressable
                               key={goal.projectId}
                               onPress={() => setGoalId(goal.projectId)}
+                              onLongPress={() => selectRow(item.link.threadId)}
+                              delayLongPress={350}
                               disabled={selecting}
                               accessibilityRole="button"
                               accessibilityLabel={`Goal ${goal.name}`}
