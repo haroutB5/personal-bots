@@ -224,6 +224,12 @@ const QuestionRow = Schema.Struct({
   botId: PersonalBotId,
   messageId: MessageId,
   askedAt: Schema.DateTimeUtcFromString,
+  /**
+   * When the question was complete: the row's last change once it stopped
+   * streaming. The row is created when the text starts, so `askedAt` can be
+   * earlier than a leave that happened mid-stream.
+   */
+  completeAt: Schema.DateTimeUtcFromString,
   /** When the owner last had the chat open; null when never. */
   lastViewedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   /** When the owner marked the chat unread; null when not. */
@@ -251,7 +257,9 @@ const questionFromReply = (text: string): string | null => {
 
 /**
  * Whether a question still waits for the owner: a chat never opened, a question
- * asked after the last view, or a chat marked unread after that view (the mark
+ * completed after the last view (`askedAt` here is the time it was complete, not
+ * the time its row was created, so an owner who left while it streamed still
+ * gets the card), or a chat marked unread after that view (the mark
  * counts from `MARKED_UNREAD_GRACE_MS` later, so the leave that follows
  * "Mark unread" does not clear it). Otherwise the owner has seen the chat.
  * All three times are server clock, compared as epoch millis.
@@ -273,7 +281,7 @@ export function questionAwaitsOwner(row: {
 /**
  * Bot questions the owner can answer from the Work tab: each live bot chat's
  * newest message, when it is an assistant reply under 72 hours old that ends in
- * a choices block. Delegation task chats are left out because there the bot
+ * a choices block and has finished streaming. Delegation task chats are left out because there the bot
  * answers its lead, and a group relay is not the owner's conversation. A chat
  * the owner opened since the question is left out too (`questionAwaitsOwner`).
  */
@@ -296,6 +304,7 @@ export const questions = (): Effect.Effect<
         t.bot_id AS "botId",
         m.message_id AS "messageId",
         m.created_at AS "askedAt",
+        MAX(m.updated_at, m.created_at) AS "completeAt",
         t.last_viewed_at AS "lastViewedAt",
         t.marked_unread_at AS "markedUnreadAt",
         CASE WHEN COALESCE(b.hide_previews, 0) = 1 THEN NULL ELSE m.text END AS "text",
@@ -316,6 +325,7 @@ export const questions = (): Effect.Effect<
         AND b.deleted_at IS NULL
         AND b.enabled = 1
         AND m.role = 'assistant'
+        AND m.is_streaming = 0
         AND m.created_at > ${floor}
         AND NOT EXISTS (
           SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
@@ -334,7 +344,7 @@ export const questions = (): Effect.Effect<
     for (const row of rows) {
       if (kept.length >= PERSONAL_WORK_QUESTIONS_MAX) break;
       // A question the owner has seen leaves the list before it can take a slot.
-      if (!questionAwaitsOwner(row)) continue;
+      if (!questionAwaitsOwner({ ...row, askedAt: row.completeAt })) continue;
       const options = row.text === null ? null : splitChoices(row.text).options;
       if (options === null && row.hidden === 0) continue;
       kept.push({
