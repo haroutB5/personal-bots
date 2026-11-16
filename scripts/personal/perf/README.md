@@ -216,6 +216,16 @@ restart: `PB_PERF_OFF=session-prewarm` (comma-separated, names in
 | `task-replay-index`          | That replay reads the unfinished tasks as `status IN (open statuses)` through the status index (1.66.46). Off: the old `NOT (status IN finished)`, which read the whole `personal_tasks` table on every phone reconnect (6 MB on the 14 Oct backup). Same rows either way.                                                                          |
 | `owner-message-active-links` | The bots list reads each chat's `lastOwnerMessageAt` (the owner's own newest message, for the task-chat chips) only for chats that are not archived; archived ones send null, which no screen reads (1.66.46). Off: it is read for every chat (14.3 MB instead of 9.2 MB per bots list on the 14 Oct backup). Same values on every unarchived chat. |
 
+### Android switches
+
+The same `PB_PERF_OFF` also switches off Android changes. Names start with
+`android-`. The server lists them as `perfOff` in `GET /api/personal/client-compat`;
+the app reads the list on every compat check (launch, return to the app after
+an hour, the six-hourly check) and keeps the last one in memory, so a phone
+follows after its next check, not instantly. A server without the field, or an
+unreachable one, leaves everything on. Names live in
+`apps/hbots-mobile/src/perfFlags.ts`.
+
 ## Send prep (session prewarm)
 
 `prewarm.mjs` measures the server's prep for a send: `thread.turn-start-requested`

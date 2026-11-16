@@ -7,7 +7,7 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { HttpRouter } from "effect/http";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../../config.ts";
 import {
@@ -17,8 +17,15 @@ import {
 
 const disposers: Array<() => Promise<void>> = [];
 const roots: string[] = [];
+const savedPerfOff = process.env.PB_PERF_OFF;
+
+beforeEach(() => {
+  delete process.env.PB_PERF_OFF;
+});
 
 afterEach(async () => {
+  if (savedPerfOff === undefined) delete process.env.PB_PERF_OFF;
+  else process.env.PB_PERF_OFF = savedPerfOff;
   for (const dispose of disposers.splice(0)) await dispose();
   for (const root of roots.splice(0)) await NodeFSP.rm(root, { recursive: true, force: true });
 });
@@ -83,6 +90,7 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await response.json()).toEqual({
       serverVersion: "1.66.110",
       android: NO_RELEASE,
+      perfOff: [],
     });
   });
 
@@ -103,6 +111,7 @@ describe("the version handshake the phone reads before signing in", () => {
           notes: "Update screen and zoom fixes",
         },
       },
+      perfOff: [],
     });
   });
 
@@ -111,6 +120,7 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await (await handler(get())).json()).toEqual({
       serverVersion: null,
       android: NO_RELEASE,
+      perfOff: [],
     });
   });
 
@@ -122,6 +132,7 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await response.json()).toEqual({
       serverVersion: null,
       android: NO_RELEASE,
+      perfOff: [],
     });
   });
 
@@ -130,6 +141,7 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await (await handler(get())).json()).toEqual({
       serverVersion: "1.66.112",
       android: NO_RELEASE,
+      perfOff: [],
     });
   });
 
@@ -141,6 +153,7 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await response.json()).toEqual({
       serverVersion: "1.66.112",
       android: NO_RELEASE,
+      perfOff: [],
     });
   });
 
@@ -152,6 +165,7 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await (await handler(get())).json()).toEqual({
       serverVersion: "1.66.112",
       android: NO_RELEASE,
+      perfOff: [],
     });
   });
 
@@ -163,6 +177,7 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await (await handler(get())).json()).toEqual({
       serverVersion: "1.66.112",
       android: NO_RELEASE,
+      perfOff: [],
     });
   });
 
@@ -179,6 +194,26 @@ describe("the version handshake the phone reads before signing in", () => {
     expect(await (await handler(get())).json()).toEqual({
       serverVersion: "1.66.112",
       android: NO_RELEASE,
+      perfOff: [],
     });
+  });
+  it("lists the Android switches named in PB_PERF_OFF, android- names only", async () => {
+    process.env.PB_PERF_OFF = "session-prewarm, android-preload-chat ,text-previews,android-other";
+    const handler = await fixture({ stamp: "version=1.66.112\n" });
+
+    const body = (await (await handler(get())).json()) as { perfOff: unknown };
+
+    expect(body.perfOff).toEqual(["android-preload-chat", "android-other"]);
+  });
+
+  it("lists nothing when PB_PERF_OFF is unset, empty or names only server switches", async () => {
+    const handler = await fixture({ stamp: "version=1.66.112\n" });
+    expect(((await (await handler(get())).json()) as { perfOff: unknown }).perfOff).toEqual([]);
+
+    process.env.PB_PERF_OFF = "";
+    expect(((await (await handler(get())).json()) as { perfOff: unknown }).perfOff).toEqual([]);
+
+    process.env.PB_PERF_OFF = "session-prewarm,task-summaries";
+    expect(((await (await handler(get())).json()) as { perfOff: unknown }).perfOff).toEqual([]);
   });
 });

@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as Schema from "effect/Schema";
+
 import { apkUrlFor, fetchCompat } from "./compat";
+import { androidPerfOptimizationOn, resetPerfOffForTest } from "./perfFlags";
 
 const BASE = "https://relay.example.test/";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  resetPerfOffForTest();
 });
 
 function respond(body: unknown, status = 200) {
@@ -45,6 +49,7 @@ describe("fetchCompat", () => {
         size: 46_076_721,
         notes: "Faster reconnect.",
       },
+      perfOff: [],
     });
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
       "https://relay.example.test/api/personal/client-compat",
@@ -57,6 +62,7 @@ describe("fetchCompat", () => {
       serverVersion: null,
       minimumNativeVersion: null,
       latest: null,
+      perfOff: [],
     });
   });
 
@@ -69,6 +75,7 @@ describe("fetchCompat", () => {
       serverVersion: "1.66.113",
       minimumNativeVersion: "1.66.110",
       latest: null,
+      perfOff: [],
     });
   });
 
@@ -99,5 +106,71 @@ describe("apkUrlFor", () => {
         notes: "",
       }),
     ).toBe("https://relay.example.test/api/personal/android/apk/1.66.113");
+  });
+});
+
+describe("the server's perfOff list", () => {
+  const withPerfOff = (perfOff?: unknown) => ({
+    serverVersion: "1.67.28",
+    android: { minimumNativeVersion: "1.66.110", latest: null },
+    ...(perfOff === undefined ? {} : { perfOff }),
+  });
+
+  it("reads the names and switches that optimisation off", async () => {
+    respond(withPerfOff(["android-preload-chat"]));
+    const compat = await fetchCompat(BASE);
+
+    expect(compat?.perfOff).toEqual(["android-preload-chat"]);
+    expect(androidPerfOptimizationOn("android-preload-chat")).toBe(false);
+  });
+
+  it("decodes as empty when a 1.67.27 server omits it, so everything stays on", async () => {
+    respond(withPerfOff());
+    const compat = await fetchCompat(BASE);
+
+    expect(compat?.perfOff).toEqual([]);
+    expect(androidPerfOptimizationOn("android-preload-chat")).toBe(true);
+  });
+
+  it("switches back on when a later answer no longer lists it", async () => {
+    respond(withPerfOff(["android-preload-chat"]));
+    await fetchCompat(BASE);
+    respond(withPerfOff([]));
+    await fetchCompat(BASE);
+
+    expect(androidPerfOptimizationOn("android-preload-chat")).toBe(true);
+  });
+
+  it("keeps the last list when a check fails", async () => {
+    respond(withPerfOff(["android-preload-chat"]));
+    await fetchCompat(BASE);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("Bad Gateway", { status: 502 })),
+    );
+
+    await expect(fetchCompat(BASE)).resolves.toBeNull();
+    expect(androidPerfOptimizationOn("android-preload-chat")).toBe(false);
+  });
+
+  it("is ignored by a phone that does not know the field (the 1.67.27 decoder)", () => {
+    const oldDecoder = Schema.decodeUnknownSync(
+      Schema.Struct({
+        serverVersion: Schema.NullOr(Schema.String),
+        android: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              minimumNativeVersion: Schema.String,
+              latest: Schema.NullOr(Schema.Unknown),
+            }),
+          ),
+        ),
+      }),
+    );
+
+    expect(oldDecoder(withPerfOff(["android-preload-chat"]))).toEqual({
+      serverVersion: "1.67.28",
+      android: { minimumNativeVersion: "1.66.110", latest: null },
+    });
   });
 });

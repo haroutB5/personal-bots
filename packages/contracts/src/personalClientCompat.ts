@@ -39,6 +39,11 @@ export const PersonalClientCompat = Schema.Struct({
     /** Null when there is no readable, valid published APK manifest. */
     latest: Schema.NullOr(PersonalAndroidRelease),
   }),
+  /**
+   * Android performance switches the server turned off (PB_PERF_OFF, `android-` names). A
+   * phone that finds none, because the server is older, runs everything on.
+   */
+  perfOff: Schema.Array(Schema.String),
 });
 export type PersonalClientCompat = typeof PersonalClientCompat.Type;
 

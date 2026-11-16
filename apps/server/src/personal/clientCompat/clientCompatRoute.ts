@@ -4,7 +4,8 @@
  * server runs and the oldest APK that may connect.
  *
  * Open to anonymous callers on purpose. It exposes only the served
- * `version.txt` stamp and one constant, both already public, and the phone
+ * `version.txt` stamp, one constant and the names of switched-off Android
+ * optimisations (PB_PERF_OFF), none of them secret, and the phone
  * must learn that it is too old before it holds any session credential.
  */
 import {
@@ -19,6 +20,7 @@ import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { ServerConfig } from "../../config.ts";
 import { readLatestAndroidRelease } from "../androidUpdates/latestRelease.ts";
+import { androidPerfOff } from "../perfFlags.ts";
 import { readLiveHbotsVersion } from "../releaseVersion.ts";
 
 export const PERSONAL_CLIENT_COMPAT_PATH = "/api/personal/client-compat";
@@ -47,6 +49,7 @@ export const personalClientCompatRouteLayer = HttpRouter.add(
         minimumNativeVersion: PERSONAL_ANDROID_MINIMUM_NATIVE_VERSION,
         latest,
       },
+      perfOff: androidPerfOff(),
     };
     return yield* HttpServerResponse.json(compat, { headers: HEADERS });
   }).pipe(

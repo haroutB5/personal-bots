@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { requestJson } from "./http";
+import { setPerfOff } from "./perfFlags";
 
 export interface AndroidRelease {
   readonly version: string;
@@ -13,6 +14,8 @@ export interface ClientCompat {
   readonly serverVersion: string | null;
   readonly minimumNativeVersion: string | null;
   readonly latest: AndroidRelease | null;
+  /** Android switches the server turned off; empty from a server that does not send it. */
+  readonly perfOff: ReadonlyArray<string>;
 }
 
 const decodeCompat = Schema.decodeUnknownSync(
@@ -33,6 +36,7 @@ const decodeCompat = Schema.decodeUnknownSync(
         }),
       ),
     ),
+    perfOff: Schema.optional(Schema.Array(Schema.String)),
   }),
 );
 
@@ -42,10 +46,13 @@ export async function fetchCompat(httpBaseUrl: string): Promise<ClientCompat | n
     const body = await requestJson("compat", new URL("/api/personal/client-compat", httpBaseUrl));
     const decoded = decodeCompat(body);
     const android = decoded.android ?? null;
+    const perfOff = decoded.perfOff ?? [];
+    setPerfOff(perfOff);
     return {
       serverVersion: decoded.serverVersion,
       minimumNativeVersion: android?.minimumNativeVersion ?? null,
       latest: android?.latest ?? null,
+      perfOff,
     };
   } catch {
     return null;

@@ -6,7 +6,9 @@
  *   PB_PERF_OFF=session-prewarm,task-summaries
  *
  * The client-side switches live in apps/web/src/features/personal/perfFlags.ts
- * (scripts/personal/perf/README.md lists both).
+ * (scripts/personal/perf/README.md lists both). A name that starts with `android-`
+ * is for the Android app: the server only passes it on, in the `perfOff` list of
+ * `/api/personal/client-compat`, and the phone reads it on each compat check.
  */
 export const SERVER_PERF_OFF_ENV = "PB_PERF_OFF";
 
@@ -36,4 +38,15 @@ export function serverPerfOptimizationOn(
     .split(",")
     .map((entry) => entry.trim())
     .includes(name);
+}
+
+/** The `android-` names in PB_PERF_OFF, once each, in the order written. */
+export function androidPerfOff(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): ReadonlyArray<string> {
+  const names = (env[SERVER_PERF_OFF_ENV] ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.startsWith("android-"));
+  return [...new Set(names)];
 }
