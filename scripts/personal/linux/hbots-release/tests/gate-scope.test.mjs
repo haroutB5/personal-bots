@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeChildProcess from "node:child_process";
-import { CHECKS, classifyPath, planChecks } from "../lib/gateScope.mjs";
+import { CHECKS, classifyPath, commandsFor, planChecks } from "../lib/gateScope.mjs";
 import { fsReader, gitReader } from "../lib/serverTestSelect.mjs";
 import { planEvidenceProblems } from "../lib/seal.mjs";
 
@@ -384,3 +384,32 @@ NodeTest.test(
     });
   },
 );
+
+// Files a lane would run: every .test.ts token of its command, after the --shard
+// flag is applied the way vitest applies it (round robin over the file list).
+const lanesRun = (lanes) =>
+  lanes.map((lane) => {
+    const command = lane[0];
+    const files = command.split(/\s+/).filter((token) => token.endsWith(".test.ts"));
+    const shard = /--shard=(\d+)\/(\d+)/.exec(command);
+    if (!shard) return files;
+    const [index, count] = [Number(shard[1]), Number(shard[2])];
+    return files.filter((_, at) => at % count === index - 1);
+  });
+
+NodeTest.test("a selected server set over 150 files runs every file in some lane", () => {
+  const defs = JSON.parse(NodeFS.readFileSync(GATES_JSON, "utf8"));
+  const def = defs.find((entry) => entry.id === "server-tests");
+  const args = Array.from({ length: 389 }, (_, i) => `src/personal/gen/file${i}.test.ts`);
+  const lanes = commandsFor({ id: "server-tests", mode: "selected", args }, def);
+  NodeAssert.equal(lanes.length, 2);
+  const ran = new Set(lanesRun(lanes).flat());
+  for (const file of args) NodeAssert.ok(ran.has(file), `${file} never runs`);
+  NodeAssert.ok(!lanes.flat().some((command) => command.includes("--shard")));
+  const small = commandsFor(
+    { id: "server-tests", mode: "selected", args: args.slice(0, 100) },
+    def,
+  );
+  NodeAssert.equal(small.length, 1);
+  NodeAssert.equal(new Set(lanesRun(small).flat()).size >= 100, true);
+});

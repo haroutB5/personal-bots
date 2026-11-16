@@ -476,7 +476,7 @@ const fill = (command, plan) =>
 /**
  * Shell lanes for one plan. A skip has none; a whole check with `concurrent`
  * keeps its shards; a selected server-tests set over 150 files splits into two
- * shards, the point where one lane stopped fitting the 5 GiB soft cap.
+ * lanes of named halves, the point where one lane stopped fitting the 5 GiB soft cap.
  */
 export function commandsFor(plan, def) {
   if (!def || plan.mode === "skip") return [];
@@ -484,15 +484,11 @@ export function commandsFor(plan, def) {
     return def.concurrent.map((lane) => lane.map((command) => fill(command, plan)));
   const commands = def.commands ?? [];
   if (plan.id === "server-tests" && plan.mode === "selected" && plan.args.length > 150) {
+    // Two lanes, each with its own named half. No --shard: vitest applies a shard
+    // to the files already named, so sharding a half would drop half of it.
     const half = Math.ceil(plan.args.length / 2);
-    const shard = (index, args) =>
-      fill(
-        commands[0]
-          .replace("vp test run", `vp test run --shard=${index}/2`)
-          .replace("{args}", "{args}"),
-        { ...plan, args },
-      );
-    return [[shard(1, plan.args.slice(0, half))], [shard(2, plan.args.slice(half))]];
+    const lane = (args) => [fill(commands[0], { ...plan, args })];
+    return [lane(plan.args.slice(0, half)), lane(plan.args.slice(half))];
   }
   return [commands.map((command) => fill(command, plan))];
 }
