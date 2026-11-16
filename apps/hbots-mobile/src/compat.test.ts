@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { apkUrlFor, fetchCompat } from "./compat";
-import { androidPerfOptimizationOn, resetPerfOffForTest } from "./perfFlags";
+import { androidPerfOptimizationOn, resetPerfOffForTest, setPerfOff } from "./perfFlags";
 
 const BASE = "https://relay.example.test/";
 
@@ -173,4 +173,44 @@ describe("the server's perfOff list", () => {
       android: { minimumNativeVersion: "1.66.110", latest: null },
     });
   });
+
+  it.each([
+    ["a string", "android-preload-chat"],
+    ["null", null],
+    ["a number", 3],
+    ["an object", { "android-preload-chat": true }],
+    ["a list with a non-string in it", ["android-preload-chat", 4]],
+  ])(
+    "keeps the rest of the answer and switches nothing off when perfOff is %s",
+    async (_name, perfOff) => {
+      setPerfOff(["android-update-on-reconnect"]);
+      respond({
+        serverVersion: "1.67.28",
+        android: {
+          minimumNativeVersion: "1.66.110",
+          latest: {
+            version: "1.67.28",
+            sha256: "b".repeat(64),
+            size: 55_000_000,
+            notes: "",
+          },
+        },
+        perfOff,
+      });
+
+      await expect(fetchCompat(BASE)).resolves.toEqual({
+        serverVersion: "1.67.28",
+        minimumNativeVersion: "1.66.110",
+        latest: {
+          version: "1.67.28",
+          sha256: "b".repeat(64),
+          size: 55_000_000,
+          notes: "",
+        },
+        perfOff: [],
+      });
+      expect(androidPerfOptimizationOn("android-preload-chat")).toBe(true);
+      expect(androidPerfOptimizationOn("android-update-on-reconnect")).toBe(true);
+    },
+  );
 });

@@ -36,9 +36,16 @@ const decodeCompat = Schema.decodeUnknownSync(
         }),
       ),
     ),
-    perfOff: Schema.optional(Schema.Array(Schema.String)),
+    // Read loosely: a wrongly typed switch list must not fail the version and update fields.
+    perfOff: Schema.optional(Schema.Unknown),
   }),
 );
+
+function perfOffNames(value: unknown): ReadonlyArray<string> {
+  return Array.isArray(value) && value.every((name) => typeof name === "string")
+    ? (value as ReadonlyArray<string>)
+    : [];
+}
 
 /** A server without the route, an old server, or a failed read shows no update. */
 export async function fetchCompat(httpBaseUrl: string): Promise<ClientCompat | null> {
@@ -46,7 +53,7 @@ export async function fetchCompat(httpBaseUrl: string): Promise<ClientCompat | n
     const body = await requestJson("compat", new URL("/api/personal/client-compat", httpBaseUrl));
     const decoded = decodeCompat(body);
     const android = decoded.android ?? null;
-    const perfOff = decoded.perfOff ?? [];
+    const perfOff = perfOffNames(decoded.perfOff);
     setPerfOff(perfOff);
     return {
       serverVersion: decoded.serverVersion,
