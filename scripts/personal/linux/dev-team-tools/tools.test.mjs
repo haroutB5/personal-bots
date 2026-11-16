@@ -244,6 +244,41 @@ else console.log('Tests 3 passed (3)');`);
   assert.ok(Number(e2e[1])-Math.max(...lanes)>=350,`e2e started ${Number(e2e[1])-Math.max(...lanes)} ms after both lanes`);
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
+test('a changed test that no gate runs is printed, recorded and noted',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-notrun-'));
+ try{
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases');
+  fs.mkdirSync(repo);installScope(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','base');
+  const base=git('rev-parse','HEAD');
+  fs.mkdirSync(path.join(repo,'packages/shared/src'),{recursive:true});
+  fs.writeFileSync(path.join(repo,'packages/shared/src/Orphan.test.ts'),'export {};\n');
+  git('add','-A');git('commit','-qm','a test no gate runs');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  fs.writeFileSync(path.join(releases,'current.txt'),`${base.slice(0,12)}\n`);
+  const fixture=path.join(root,'command.mjs');
+  fs.writeFileSync(fixture,`const kind=process.argv[2];
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
+else console.log('Tests 3 passed (3)');`);
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
+  const dry=node('gate-evidence.mjs',[...args,'--dry-run'],{env:{...process.env,HBOTS_HEAVY_JOB_HELD:''}});
+  assert.equal(dry.status,0,dry.stdout+dry.stderr);
+  assert.match(dry.stdout,/^not run by any gate: packages\/shared\/src\/Orphan\.test\.ts$/m);
+  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase())});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.match(r.stdout,/^not run by any gate: packages\/shared\/src\/Orphan\.test\.ts$/m);
+  const evidence=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
+  assert.deepEqual(evidence.gateScope.notRun,['packages/shared/src/Orphan.test.ts']);
+  const notes=fs.readFileSync(path.join(repo,'docs/releases',fs.readdirSync(path.join(repo,'docs/releases'))[0]),'utf8');
+  assert.match(notes,/^- not run by any gate: packages\/shared\/src\/Orphan\.test\.ts$/m);
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
 test('server-tests gate runs two whole shards and one selected lane',()=>{
  const root=path.resolve(here,'../../../..');
  const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));

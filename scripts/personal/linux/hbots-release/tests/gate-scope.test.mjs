@@ -958,3 +958,65 @@ NodeTest.test("N7: vi.doMock, vi.importActual and vi.importMock name a dependenc
       NodeAssert.ok(args.includes("src/personal/mocker.test.ts"), `${form}: ${args.join(",")}`);
     });
 });
+
+NodeTest.test("B1: a changed test that no gate runs is listed as not run", () => {
+  const scope = planChecks(
+    [
+      "packages/shared/src/AgentScope.test.ts",
+      "apps/server/src/auth/EnvironmentAuth.test.ts",
+      "apps/web/src/appearanceFonts.browser.test.ts",
+      "scripts/personal/e2e/page-errors.test.mjs",
+      // these four are run by a gate
+      "apps/server/src/personal/projects/projectText.test.ts",
+      "apps/web/src/authBootstrap.test.ts",
+      "packages/personal-client/src/bots/index.test.ts",
+      "scripts/personal/linux/hbots-release/tests/idle.test.mjs",
+      // a source file is not a test
+      "packages/shared/src/AgentScope.ts",
+    ],
+    { reader: fsReader(REPO) },
+  );
+  NodeAssert.deepEqual(scope.notRun, [
+    "packages/shared/src/AgentScope.test.ts",
+    "apps/server/src/auth/EnvironmentAuth.test.ts",
+    "apps/web/src/appearanceFonts.browser.test.ts",
+    "scripts/personal/e2e/page-errors.test.mjs",
+  ]);
+  // a toolchain change runs every check whole and still names the unrun test
+  const toolchain = planChecks(["package.json", "packages/shared/src/AgentScope.test.ts"], {
+    reader: fsReader(REPO),
+  });
+  NodeAssert.deepEqual(toolchain.notRun, ["packages/shared/src/AgentScope.test.ts"]);
+});
+
+NodeTest.test(
+  "B1: a deleted test is not listed, the builder command and evidence name the rest",
+  () => {
+    withFixture((f) => {
+      const dir = "apps/server/src/auth";
+      NodeFS.mkdirSync(NodePath.join(f.repo, dir), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(f.repo, dir, "Gone.test.ts"), "export {};\n");
+      const before = commit(f.repo, "add auth tests");
+      NodeFS.writeFileSync(NodePath.join(f.repo, dir, "Fresh.test.ts"), "export {};\n");
+      NodeFS.rmSync(NodePath.join(f.repo, dir, "Gone.test.ts"));
+      const head = commit(f.repo, "a test added and one deleted");
+      const scope = planChecks([`${dir}/Fresh.test.ts`, `${dir}/Gone.test.ts`], {
+        reader: gitReader(f.repo, head),
+      });
+      NodeAssert.deepEqual(scope.notRun, [`${dir}/Fresh.test.ts`]);
+      const out = cli(f.repo, "--base", before, "--head", head, "--commands");
+      NodeAssert.equal(out.status, 0, out.stderr);
+      NodeAssert.match(out.stderr, new RegExp(`not run by any gate: ${dir}/Fresh\\.test\\.ts`));
+      NodeAssert.doesNotMatch(out.stderr + out.stdout, /not run by any gate: .*Gone/);
+      // stdout carries commands only, so a shell can run it
+      NodeAssert.doesNotMatch(out.stdout, /not run by any gate/);
+      const printed = cli(f.repo, "--base", before, "--head", head);
+      NodeAssert.match(
+        printed.stdout,
+        /not run by any gate: apps\/server\/src\/auth\/Fresh\.test\.ts/,
+      );
+      const json = JSON.parse(cli(f.repo, "--base", before, "--head", head, "--json").stdout);
+      NodeAssert.deepEqual(json.notRun, [`${dir}/Fresh.test.ts`]);
+    });
+  },
+);

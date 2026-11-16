@@ -416,6 +416,44 @@ function selectReleaseTools({ reader, changedPaths }) {
   return { args: args.length ? args : all, count: args.length, unit: "test files" };
 }
 
+// Test files that some gate command runs, read off the gate commands in
+// gates-linux.json. Everything else that is a test by name runs in no gate, so a
+// plan never looks as if it ran a changed test that nothing ran.
+const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const KOTLIN_TEST = /^apps\/hbots-mobile\/modules\/[^/]+\/android\/src\/test\/.+\.kt$/;
+const GATE_TEST_RULES = [
+  // server-tests
+  (file) =>
+    SERVER_GATE_DIRS.some((dir) => file.startsWith(`apps/server/${dir}/`)) &&
+    /\.test\.tsx?$/.test(file),
+  // web-tests: the unit project, so no .browser.test files
+  (file) =>
+    !/\.browser\.test\./.test(file) &&
+    /\.test\.tsx?$/.test(file) &&
+    (file.startsWith("apps/web/src/features/personal/") ||
+      file === "apps/web/src/authBootstrap.test.ts" ||
+      file === "apps/web/src/components/chat/providerIconUtils.test.ts"),
+  // hbots-mobile: vite.config.ts includes src and scripts .test.ts
+  (file) => /^apps\/hbots-mobile\/(?:src|scripts)\/.+\.test\.ts$/.test(file),
+  // personal-client: no vite config, so every test file of the package
+  (file) => file.startsWith("packages/personal-client/") && /\.test\.tsx?$/.test(file),
+  (file) => KOTLIN_TEST.test(file),
+];
+
+/** Changed test files, present at the head, that no gate runs. */
+export function testsNoGateRuns(changedPaths, reader) {
+  const releaseTools = new Set(
+    expandTests(reader, [...new Set(RELEASE_TOOL_GROUPS.flatMap((group) => group.tests))]),
+  );
+  return changedPaths.filter(
+    (file) =>
+      (TEST_NAME.test(file) || KOTLIN_TEST.test(file)) &&
+      reader.exists(file) &&
+      !releaseTools.has(file) &&
+      !GATE_TEST_RULES.some((rule) => rule(file)),
+  );
+}
+
 function selectFor(id, { reader, changedPaths }) {
   if (id === "server-tests") {
     const found = selectServerTests({ reader, changedPaths });
@@ -491,6 +529,7 @@ export function planChecks(paths, options = {}) {
         ...(wholeArgs(id, reader) ? { args: wholeArgs(id, reader) } : {}),
       })),
       summary: `RUN every check whole (toolchain changed: ${listed(toolchain)})`,
+      notRun: testsNoGateRuns(changedPaths, reader),
     };
   const plans = CHECK_IDS.map((id) => {
     const row = CHECKS[id];
@@ -535,6 +574,7 @@ export function planChecks(paths, options = {}) {
   return {
     changedPaths,
     plans,
+    notRun: testsNoGateRuns(changedPaths, reader),
     summary:
       run.length === 0
         ? "SKIP every check (no input changed)"
@@ -695,6 +735,7 @@ function printPlan(scope, toError = false) {
     const args = plan.mode === "selected" ? ` [${plan.args.length}]` : "";
     log(`  ${plan.id}: ${plan.mode}${args} (${plan.reason})`);
   }
+  for (const file of scope.notRun ?? []) log(`not run by any gate: ${file}`);
 }
 
 if (invokedDirectly()) {

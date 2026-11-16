@@ -31,6 +31,8 @@ const printPlan=(scope,plan)=>{
     const args=p.plan.mode==='selected'?` [${p.plan.args.length}]`:'';
     console.log(`${p.def.id}: ${p.plan.mode.toUpperCase()}${args} (${p.plan.reason})`);
   }
+  // A changed test that no gate command runs: say so, so a plan never looks as if it ran it.
+  for(const file of scope.notRun??[])console.log(`not run by any gate: ${file}`);
 };
 // --dry-run prints what the gate would run for the release against the live one,
 // without the heavy-job lock, a staged release or running anything. --head plans
@@ -171,7 +173,7 @@ try {
     };
   }).filter(Boolean));
   const endDirty=dirty();
-  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{summary:scope.summary,baseSha:scope.baseSha,changedPaths:scope.changedPaths},gates};
+  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{summary:scope.summary,baseSha:scope.baseSha,changedPaths:scope.changedPaths,notRun:scope.notRun??[]},gates};
   e.ok=validate(e,{...v,commit:undefined}).length===0;
   fs.writeFileSync(v.file,JSON.stringify(e,null,2)+'\n');
   if(!v['skip-notes']){
@@ -181,7 +183,8 @@ try {
       const detail=g.mode==='skip'||g.mode==='selected'?`, ${g.mode}: ${g.reason}`:(g.exit!==undefined?`, exit ${g.exit}`:'');
       return `- ${g.id}: ${status}${detail}`;
     };
-    const section=`<!-- gate-evidence:begin sha=${sha} release=${v.release} json-sha256=${hash(v.file)} result=${e.ok?'PASS':'FAIL'} -->\n${gates.map(line).join('\n')}\n<!-- gate-evidence:end -->`;
+    const unrun=(scope.notRun??[]).map(file=>`- not run by any gate: ${file}`);
+    const section=`<!-- gate-evidence:begin sha=${sha} release=${v.release} json-sha256=${hash(v.file)} result=${e.ok?'PASS':'FAIL'} -->\n${[...gates.map(line),...unrun].join('\n')}\n<!-- gate-evidence:end -->`;
     const old=fs.existsSync(notesFile)?fs.readFileSync(notesFile,'utf8'):`# HANDOFF ${v.version}\n`;
     fs.writeFileSync(notesFile,old.includes('<!-- gate-evidence:begin')?old.replace(/<!-- gate-evidence:begin[^]*?<!-- gate-evidence:end -->/,section):old.trimEnd()+'\n\n## Gate evidence\n\n'+section+'\n');
   }
