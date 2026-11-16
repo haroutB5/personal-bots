@@ -25,7 +25,7 @@ import {
   type WorkTone,
 } from "@hbots/personal-client/work/workTimeline";
 import { buildRunningView, type GoalNowRow } from "@hbots/personal-client/work/nowLine";
-import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
+import { buildProjectCards, goalChatMap } from "@hbots/personal-client/work/projectCards";
 import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import { buildWorkDigest } from "@hbots/personal-client/work/workDigest";
 import {
@@ -360,6 +360,7 @@ export function WorkScreen({
     () => new Map(shells.map((shell) => [shell.id as string, shell.title])),
     [shells],
   );
+  const goalChats = useMemo(() => goalChatMap({ shells, links: links ?? [] }), [shells, links]);
   const resultAsOf = workSince.data === null ? null : DateTime.formatIso(workSince.data.asOf);
   // First run: the first response's asOf becomes the marker, and no box shows.
   useEffect(() => {
@@ -605,7 +606,9 @@ export function WorkScreen({
             summary={projectSummary}
             rowsByProject={running.rowsByProject}
             botMap={botMap}
+            chats={goalChats}
             onOpen={setProjectId}
+            onOpenChat={onOpenChat}
             onSelectRow={setSelectedId}
           />
 
@@ -829,6 +832,7 @@ export function WorkScreen({
         tasks={tasks}
         botMap={botMap}
         chatTitles={chatTitles}
+        chats={goalChats}
         nowMs={now}
         onClose={() => setProjectId(null)}
         onOpenTask={onOpenTask}

@@ -1,4 +1,4 @@
-import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
+import { buildProjectCards, goalChatMap } from "@hbots/personal-client/work/projectCards";
 import { buildRunningView, type GoalNowRow } from "@hbots/personal-client/work/nowLine";
 import {
   buildWorkNow,
@@ -65,6 +65,7 @@ export function GoalSheetHost({
     () => new Map(shells.map((shell) => [shell.id as string, shell.title])),
     [shells],
   );
+  const goalChats = useMemo(() => goalChatMap({ shells, links: links ?? [] }), [shells, links]);
   const summary = useMemo(
     () =>
       buildProjectCards({
@@ -114,6 +115,7 @@ export function GoalSheetHost({
       tasks={feed}
       botMap={botMap}
       chatTitles={chatTitles}
+      chats={goalChats}
       nowMs={now}
       onClose={onClose}
       onOpenTask={onOpenTask}

@@ -1,4 +1,5 @@
 import {
+  hidesBotPreviews,
   PERSONAL_TASK_TERMINAL_STATUSES,
   type PersonalProject,
   type PersonalProjectStep,
@@ -6,6 +7,8 @@ import {
   type PersonalTask,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+
+import { isChatArchived } from "../bots/chatState";
 
 export const PROJECT_CARDS_MAX = 4;
 export const PROJECT_QUIET_MS = 72 * 60 * 60_000;
@@ -267,6 +270,71 @@ export function chatGoalPills(input: {
           },
         ],
   );
+}
+
+/** A chat a goal line can name: the open chat's own title. */
+export interface GoalChatLookup {
+  readonly title: string;
+}
+
+/**
+ * The open chats, keyed by thread id, with the shell's title. Archived and
+ * deleted chats are left out, so a goal naming one shows its bot alone.
+ */
+export function goalChatMap(input: {
+  readonly shells: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly archivedAt?: string | null | undefined;
+  }>;
+  readonly links: ReadonlyArray<{
+    readonly threadId: string;
+    readonly archivedAt: DateTime.Utc | null;
+  }>;
+}): ReadonlyMap<string, GoalChatLookup> {
+  const linkById = new Map(input.links.map((link) => [link.threadId, link]));
+  const chats = new Map<string, GoalChatLookup>();
+  for (const shell of input.shells) {
+    if (isChatArchived(linkById.get(shell.id), shell)) continue;
+    chats.set(shell.id, { title: shell.title });
+  }
+  return chats;
+}
+
+/** The line under a goal's title: the lead bot, and the chat it runs the goal in. */
+export interface GoalChatLine {
+  readonly botId: string;
+  /** Shown whole: the row never ellipsizes it. */
+  readonly botName: string;
+  /** Ellipsized by the row when long; null when the chat cannot be named. */
+  readonly chatTitle: string | null;
+  /** What a tap opens; null when the chat is gone or was never set. */
+  readonly threadId: string | null;
+}
+
+/**
+ * Which chat runs a goal, as its card and sheet name it. The bot always shows.
+ * The chat names itself only while it is still open and the bot does not hide
+ * previews; a tap opens it only while it is open.
+ */
+export function goalChatLine(input: {
+  readonly leadBotId: string;
+  readonly threadId: string | null;
+  readonly bot: { readonly name: string; readonly hidePreviews?: boolean } | null | undefined;
+  readonly chats: ReadonlyMap<string, GoalChatLookup>;
+}): GoalChatLine {
+  const botName = input.bot?.name ?? "Removed bot";
+  const chat = input.threadId === null ? undefined : input.chats.get(input.threadId);
+  if (chat === undefined) {
+    return { botId: input.leadBotId, botName, chatTitle: null, threadId: null };
+  }
+  const hidden = input.bot !== null && input.bot !== undefined && hidesBotPreviews(input.bot);
+  return {
+    botId: input.leadBotId,
+    botName,
+    chatTitle: hidden ? null : chat.title,
+    threadId: input.threadId,
+  };
 }
 
 const whoOf = (
