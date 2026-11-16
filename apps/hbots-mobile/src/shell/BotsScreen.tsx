@@ -61,7 +61,8 @@ import { SnoozeSheet } from "../sheets/SnoozeSheet";
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { UpdateSnapshot } from "../updater";
 import { BotAvatar } from "./BotAvatar";
-import { InAppNotifications } from "./InAppNotifications";
+import { InAppBannerHost } from "./InAppBannerHost";
+import type { InAppBannerFeed } from "./inAppBannerFeed";
 import { NewItemsSheet } from "./NewItemsSheet";
 import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
 import { classifyRelease, DRAG_SLOP_DP, moveTo, reorderByDrag } from "./pinnedOrderModel";
@@ -419,6 +420,7 @@ interface NewChatTarget {
 export function BotsScreen({
   native,
   chat,
+  banners,
   installedVersion,
   update,
   onOpenInstallPermission,
@@ -430,6 +432,7 @@ export function BotsScreen({
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
+  readonly banners: InAppBannerFeed;
   readonly installedVersion: string;
   readonly update: UpdateSnapshot | null;
   readonly onOpenInstallPermission: () => void;
@@ -1092,9 +1095,8 @@ export function BotsScreen({
         )}
       </ScrollView>
 
-      <InAppNotifications
-        native={native}
-        currentPath="/bots"
+      <InAppBannerHost
+        banners={banners}
         onOpen={(url) => {
           const match = /^\/bots\/([^/?#]+)\/([^/?#]+)/u.exec(url);
           if (match !== null)

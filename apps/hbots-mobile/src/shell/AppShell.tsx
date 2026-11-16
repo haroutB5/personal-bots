@@ -35,6 +35,8 @@ import { TeamScreen } from "../teams/TeamScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
 import { BotsScreen } from "./BotsScreen";
+import { createInAppBannerFeed, type InAppBannerFeed } from "./inAppBannerFeed";
+import { InAppPresence } from "./InAppPresence";
 import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
@@ -268,6 +270,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
   const [navigatorReady, setNavigatorReady] = useState(false);
   const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
+  const banners = useMemo(createInAppBannerFeed, []);
 
   useEffect(() => {
     configureNativeOutbox(props.native);
@@ -352,6 +355,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 {...screenProps}
                 native={props.native}
                 chat={chat}
+                banners={banners}
                 installedVersion={props.installedVersion}
                 update={props.update}
                 onOpenInstallPermission={props.onOpenPermission}
@@ -635,6 +639,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           </Stack.Screen>
         </Stack.Navigator>
       </TopReserveInsets>
+      <InAppPresence native={props.native} banners={banners} />
       <VoiceCallLayer navigation={VOICE_CALL_NAVIGATION} />
     </NavigationContainer>
   );
@@ -679,6 +684,7 @@ function RoutineFormRoute({
 function TabsWithBots({
   native,
   chat,
+  banners,
   installedVersion,
   update,
   onOpenInstallPermission,
@@ -686,6 +692,7 @@ function TabsWithBots({
 }: TabsProps & {
   readonly native: NativePersonal;
   readonly chat: ReturnType<typeof createChatEnvironment>;
+  readonly banners: InAppBannerFeed;
   readonly installedVersion: string;
   readonly update: UpdateSnapshot | null;
   readonly onOpenInstallPermission: () => void;
@@ -712,6 +719,7 @@ function TabsWithBots({
           <BotsScreen
             native={native}
             chat={chat}
+            banners={banners}
             installedVersion={installedVersion}
             update={update}
             onOpenInstallPermission={onOpenInstallPermission}
