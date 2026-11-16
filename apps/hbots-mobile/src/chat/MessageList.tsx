@@ -1,9 +1,11 @@
 import type { ChatAttachment, PersonalReplyQuote } from "@t3tools/contracts";
 import { MessageId, readPersonalReplyQuote } from "@t3tools/contracts";
 import {
+  dayKey,
   formatDayDivider,
   type ConversationItem,
 } from "@hbots/personal-client/conversation/conversationModel";
+import { PERSONAL_TIME_ZONE } from "@hbots/personal-client/conversation/greeting";
 import { replyQuoteForMessage } from "@hbots/personal-client/feed/messageReply";
 import { ownerVisibleText } from "@hbots/personal-client/feed/composerText";
 import {
@@ -87,6 +89,7 @@ import { ChoiceButtons } from "./ChoiceButtons";
 import { LiveWorkRow } from "./LiveWorkRow";
 import type { PendingSend } from "./composerSendModel";
 import { JUMP_SETTLE_MS, jumpVisible } from "./jumpToLatest";
+import { useNow } from "./useNow";
 import { useStreamCommitPerf } from "./useStreamCommitPerf";
 import {
 
@@ -983,8 +986,9 @@ function rowKey(row: Row): string {
   return row.key;
 }
 
-function dayLabelNow(at: Date): string {
-  return formatDayDivider(at, new Date());
+/** A moment inside the London day `key`, which a divider's words are worded against. */
+function inDay(key: string): Date {
+  return new Date(`${key}T12:00:00Z`);
 }
 
 type RowViewProps = { readonly inputs: RowInputs; readonly shared: RowShared };
@@ -1439,6 +1443,9 @@ export function MessageList({
     }),
     [native, chat, botName, currentUserId, hasOpenFile, hasOpenLink, hasChoose, hasRetryPending],
   );
+  // A day divider's words depend on today's date. The day key makes a new day a new context, so
+  // "Today" turns to "Yesterday" on its own, whatever the card context does.
+  const today = dayKey(new Date(useNow()), PERSONAL_TIME_ZONE);
   // Everything besides the row itself that a row reads: what the list re-renders its rows for.
   const rowContext = useMemo<RowContext>(
     () => ({
@@ -1446,10 +1453,10 @@ export function MessageList({
       contextTurns,
       latestMessageStatus,
       cardContext,
-      dayLabel: dayLabelNow,
+      dayLabel: (at) => formatDayDivider(at, inDay(today)),
       groupSpeaker,
     }),
-    [choiceStates, contextTurns, latestMessageStatus, cardContext, groupSpeaker],
+    [choiceStates, contextTurns, latestMessageStatus, cardContext, groupSpeaker, today],
   );
   const renderItem = useCallback(
     ({ item: row }: ListRenderItemInfo<Row>) => (

@@ -455,16 +455,22 @@ describe("MessageList through the reconciler", () => {
     expect(hosts("ChoiceButtons").length).toBe(0);
   });
 
-  it("R13 the day divider turns from Today to Yesterday when the card context changes at midnight", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
+  it("R13 the day divider turns from Today to Yesterday at the day change, with the card context held constant", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     vi.setSystemTime(new Date("2026-11-16T12:00:00Z"));
     const divider = { kind: "divider", id: "divider:x", at: new Date("2026-11-16T10:00:00Z") };
-    const stable = props({ items: [divider, ...chat(2)], cardContext: { nowMs: 1 } });
-    mount(stable);
+    mount(props({ items: [divider, ...chat(2)], cardContext: { nowMs: 1 } }));
     const label = () => strings().find((text) => /^(Today|Yesterday)/u.test(text));
     expect(label()).toMatch(/^Today/u);
+
+    reset();
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(label()).toMatch(/^Today/u);
+    expect(counts.messageRows).toBe(0);
+
     vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
-    update({ ...stable, cardContext: { nowMs: 2 } });
+    act(() => vi.advanceTimersByTime(30_000));
     expect(label()).toMatch(/^Yesterday/u);
+    expect(counts.messageRows).toBe(0);
   });
 });
