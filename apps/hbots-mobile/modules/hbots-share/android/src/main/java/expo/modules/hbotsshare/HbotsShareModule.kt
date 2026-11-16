@@ -33,7 +33,7 @@ class HbotsShareModule : Module() {
 
     // App start: no composer draft outlives a process start, so every old copy is unreachable.
     OnCreate {
-      context()?.let {
+      app()?.let {
         CameraDraftFile.prune(
           CameraDraftFile.dir(it.cacheDir),
           emptyList(),
