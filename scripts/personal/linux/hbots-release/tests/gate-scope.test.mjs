@@ -139,7 +139,7 @@ NodeTest.test("every tracked path classifies", () => {
 });
 
 NodeTest.test(
-  "the 1.67.20 replay selects 23 server tests, 21 by imports and 2 by a literal mention",
+  "the 1.67.20 replay selects 25 server tests, 21 by imports and 4 by a literal mention",
   () => {
     const base = "d8a0c8f571267663ea5995d82240699ee6e557d9";
     const head = "a72547da6f6c7ecf7e1ee6a07aa68ac5430370aa";
@@ -152,8 +152,10 @@ NodeTest.test(
     const plan = planOf(scope, "server-tests");
     NodeAssert.equal(plan.mode, "selected");
     // 21 by the import graph; reviewPrompts.ts names scripts/personal/app-version.txt,
-    // so the two claudeCodeReview tests that import it ride along since D5.
-    NodeAssert.equal(plan.args.length, 23);
+    // so the two claudeCodeReview tests that import it ride along since D5; since N2
+    // two tests that spawn or read a server entry (CodexManagedRuntime, PersonalBrowser)
+    // are reached through the entry's own imports.
+    NodeAssert.equal(plan.args.length, 25);
     NodeAssert.ok(plan.args.includes("src/personal/claudeCodeReview/quietHours.test.ts"));
     NodeAssert.ok(plan.args.includes("src/personal/push/PersonalPushService.test.ts"));
     NodeAssert.ok(!plan.args.includes("src/persistence/sqliteCheckpointWorker.test.ts"));
