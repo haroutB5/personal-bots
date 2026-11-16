@@ -2,7 +2,13 @@ import type { PersonalProject, PersonalProjectStep } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { chatGoalPills, chatGoalTags, chatRowTagLine, type ChatGoalTag } from "./projectCards.ts";
+import {
+  chatGoalPills,
+  chatGoalTags,
+  chatGoalTagsComplete,
+  chatRowTagLine,
+  type ChatGoalTag,
+} from "./projectCards.ts";
 
 const NOW = Date.parse("2026-11-15T12:00:00.000Z");
 const DAY = 24 * 60 * 60_000;
@@ -86,6 +92,18 @@ describe("chatGoalTags", () => {
   });
 });
 
+describe("chatGoalTagsComplete", () => {
+  it("needs the loaded list and a server that sends each goal's chats", () => {
+    expect(chatGoalTagsComplete(null)).toBe(false);
+    expect(chatGoalTagsComplete([])).toBe(false);
+    expect(chatGoalTagsComplete([project({ id: "old", threadId: "t1" })])).toBe(false);
+    expect(chatGoalTagsComplete([project({ id: "new", chats: [] })])).toBe(true);
+    expect(
+      chatGoalTagsComplete([project({ id: "old" }), project({ id: "new", chats: ["t1"] })]),
+    ).toBe(true);
+  });
+});
+
 describe("chatRowTagLine", () => {
   const tag = (names: ReadonlyArray<string>, done: number): ChatGoalTag => ({
     open: names.map((name, index) => ({ projectId: `g${index + 1}`, name })),
@@ -93,30 +111,69 @@ describe("chatRowTagLine", () => {
   });
 
   it("shows two names, then +1, then the done count", () => {
-    const three = chatRowTagLine(tag(["One", "Two", "Three"], 0), true);
+    const three = chatRowTagLine(tag(["One", "Two", "Three"], 0), true, true);
     expect(three.kind === "tags" ? three.goals.map((goal) => goal.name) : []).toEqual([
       "One",
       "Two",
     ]);
     expect(three).toMatchObject({ kind: "tags", more: 1, done: 0 });
-    const withDone = chatRowTagLine(tag(["One", "Two", "Three"], 2), false);
+    const withDone = chatRowTagLine(tag(["One", "Two", "Three"], 2), false, true);
     expect(withDone).toMatchObject({ kind: "tags", more: 1, done: 2 });
   });
 
-  it("says No goal only on a chat that is working now with nothing to show", () => {
-    expect(chatRowTagLine(undefined, true)).toEqual({ kind: "noGoal" });
-    expect(chatRowTagLine(undefined, false)).toEqual({ kind: "none" });
-    expect(chatRowTagLine(tag(["One"], 0), true)).toMatchObject({
+  it("says No goal only on a working chat with nothing to show and a list that can tell", () => {
+    expect(chatRowTagLine(undefined, true, true)).toEqual({ kind: "noGoal" });
+    expect(chatRowTagLine(undefined, false, true)).toEqual({ kind: "none" });
+    expect(chatRowTagLine(undefined, true, false)).toEqual({ kind: "none" });
+    expect(chatRowTagLine(tag([], 0), true, false)).toEqual({ kind: "none" });
+    expect(chatRowTagLine(tag(["One"], 0), true, false)).toMatchObject({
       kind: "tags",
       more: 0,
       done: 0,
     });
-    expect(chatRowTagLine(tag([], 1), true)).toMatchObject({
+    expect(chatRowTagLine(tag([], 1), true, false)).toMatchObject({
       kind: "tags",
       goals: [],
       more: 0,
       done: 1,
     });
+  });
+});
+
+describe("what the goals list can say about a chat", () => {
+  const rowOf = (
+    projects: ReadonlyArray<PersonalProject> | null,
+    threadId: string,
+    workingNow: boolean,
+  ) =>
+    chatRowTagLine(
+      chatGoalTags(projects ?? [], NOW).get(threadId),
+      workingNow,
+      chatGoalTagsComplete(projects),
+    );
+
+  it("claims no goal when the list has not loaded", () => {
+    expect(rowOf(null, "helper", true)).toEqual({ kind: "none" });
+  });
+
+  it("claims no goal on an old server that sends no chats", () => {
+    expect(rowOf([project({ id: "old", threadId: "lead" })], "helper", true)).toEqual({
+      kind: "none",
+    });
+  });
+
+  it("still tags a goal's own chat on an old server", () => {
+    expect(rowOf([project({ id: "old", threadId: "lead" })], "lead", true)).toMatchObject({
+      kind: "tags",
+      goals: [{ name: "Goal old" }],
+    });
+  });
+
+  it("claims no goal on a new server when no goal tags the working chat", () => {
+    const projects = [project({ id: "new", chats: ["lead"] })];
+    expect(rowOf(projects, "helper", true)).toEqual({ kind: "noGoal" });
+    expect(rowOf(projects, "helper", false)).toEqual({ kind: "none" });
+    expect(rowOf(projects, "lead", true)).toMatchObject({ kind: "tags" });
   });
 });
 
