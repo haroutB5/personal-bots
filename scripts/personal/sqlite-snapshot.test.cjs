@@ -175,13 +175,21 @@ function hungSnapshot(f, hang) {
  const r=spawnSync(process.execPath,['--disable-warning=ExperimentalWarning','-e',script,f.source,f.target],{encoding:'utf8',timeout:60000});
  return {...r,ms:Date.now()-started};
 }
+// The watchdog ends the process with SIGKILL. Windows reports that as exit 1.
+// Linux reports no exit code and the signal name. Every caller treats anything
+// but exit 0 as a failed backup.
+function assertEndedByWatchdog(r) {
+ if (process.platform==='win32') {assert.equal(r.status,1);return;}
+ assert.equal(r.status,null);
+ assert.equal(r.signal,'SIGKILL');
+}
 test('watchdog ends a synchronous integrity check that never returns; nothing is published', () => {
  const f=fixture();
  try {
   // A real synchronous block of the main thread, like a stuck integrity_check read.
   const r=hungSnapshot(f,`check.checkDatabase=()=>{Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000);throw new Error('not ended');};`);
   assert.equal(r.error,undefined);
-  assert.equal(r.status,1);
+  assertEndedByWatchdog(r);
   assert.match(r.stderr,/integrity check exceeded the hard time limit/);
   assert.doesNotMatch(r.stdout,/finished/);
   assert.ok(r.ms<20000,`ended after ${r.ms} ms`);
@@ -192,7 +200,7 @@ test('watchdog ends a digest pass that never finishes; nothing is published', ()
  const f=fixture();
  try {
   const r=hungSnapshot(f,`check.fileHash=()=>new Promise(()=>{setInterval(()=>{},1000);});`);
-  assert.equal(r.status,1);
+  assertEndedByWatchdog(r);
   assert.match(r.stderr,/hash or integrity check exceeded the hard time limit/);
   assert.ok(r.ms<20000,`ended after ${r.ms} ms`);
   assert.equal(fs.existsSync(f.target),false);assert.equal(fs.existsSync(f.target+'.integrity.json'),false);
