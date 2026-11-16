@@ -2,15 +2,18 @@ import * as Effect from "effect/Effect";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { RECONNECT_CHECK_MIN_GAP_MS, startReconnectCheck } from "../reconnectCheck";
+import { startReconnectCheck } from "../reconnectCheck";
 import { subscribeConnectedPhase } from "./connectionSubscription";
 
 type Phase = "connecting" | "connected" | "offline";
 type State = { readonly phase: Phase };
 
+// oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- @effect/vitest is not a dependency of this package, and the listener under test is plain callbacks over a ref.
 const makeRef = () => Effect.runSync(SubscriptionRef.make<State>({ phase: "connecting" }));
 const setPhase = (ref: SubscriptionRef.SubscriptionRef<State>, phase: Phase) =>
+  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- same reason as makeRef.
   Effect.runSync(SubscriptionRef.set(ref, { phase }));
+// oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- the listener runs on a stream fiber; a check that nothing arrives has no milestone to await, so it gets one short turn of the event loop.
 const tick = () => new Promise((done) => setTimeout(done, 20));
 
 const noUpdates = { subscribe: () => () => undefined };
@@ -83,31 +86,6 @@ describe("the reconnect check on a real connection state", () => {
     await tick();
 
     expect(check).not.toHaveBeenCalled();
-  });
-
-  it("starts at most one check a minute through 20 minutes of a flap every 5 seconds", async () => {
-    const ref = makeRef();
-    const startedAt: number[] = [];
-    const clock = { at: 5_000_000 };
-    const stop = startReconnectCheck({
-      connection: { subscribe: (listener) => subscribeConnectedPhase(ref, listener) },
-      updates: noUpdates,
-      check: () => startedAt.push(clock.at),
-      isOn: () => true,
-      now: () => clock.at,
-    });
-    await tick();
-    for (let second = 0; second < 20 * 60; second += 5) {
-      clock.at += 5_000;
-      setPhase(ref, second % 10 === 0 ? "connected" : "offline");
-      await Promise.resolve();
-    }
-    await tick();
-    stop();
-
-    const gaps = startedAt.slice(1).map((at, index) => at - startedAt[index]!);
-    expect(startedAt.length).toBeLessThanOrEqual(20);
-    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(RECONNECT_CHECK_MIN_GAP_MS);
   });
 
   it("treats a socket that is already up at subscribe time as the first connect, a moment after the launch check", async () => {

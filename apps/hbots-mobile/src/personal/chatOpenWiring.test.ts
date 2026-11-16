@@ -4,8 +4,8 @@
  * are stubbed. Counts what the server received.
  */
 import { ThreadId } from "@t3tools/contracts";
-import { createServer, type IncomingMessage, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const files = vi.hoisted(() => new Set<string>());
@@ -50,8 +50,10 @@ import {
 } from "./threadSnapshotLoader";
 import type { StoredSession } from "../session";
 
+const IDLE_PATH = "/idle";
+
 interface Lab {
-  readonly server: Server;
+  readonly server: NodeHttp.Server;
   readonly base: string;
   readonly log: Array<{ url: string; authorization: string | undefined }>;
   mode: "ok" | "503" | "404" | "hang" | "failfirst";
@@ -62,7 +64,11 @@ const labs: Lab[] = [];
 async function startLab(sequence = 46): Promise<Lab> {
   const log: Lab["log"] = [];
   const lab = { log, mode: "ok", sequence } as Lab;
-  const server = createServer((req: IncomingMessage, res) => {
+  const server = NodeHttp.createServer((req: NodeHttp.IncomingMessage, res) => {
+    if (req.url === IDLE_PATH) {
+      res.end();
+      return;
+    }
     log.push({ url: req.url ?? "", authorization: req.headers.authorization });
     if (lab.mode === "hang") return;
     if (lab.mode === "503" || (lab.mode === "failfirst" && log.length === 1)) {
@@ -79,7 +85,7 @@ async function startLab(sequence = 46): Promise<Lab> {
     res.end(JSON.stringify({ ...serverBody, snapshotSequence: lab.sequence }));
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const base = `http://127.0.0.1:${(server.address() as NodeNet.AddressInfo).port}`;
   Object.assign(lab, { server, base });
   labs.push(lab);
   return lab;
@@ -100,7 +106,15 @@ const session = (lab: Lab, token = "t"): StoredSession => ({
 let counter = 0;
 let A = ThreadId.make("a-0");
 let B = ThreadId.make("b-0");
-const settle = () => new Promise((done) => setTimeout(done, 60));
+
+/**
+ * Waits until the server has the `atLeast` requests a press started, then until it has answered
+ * one more of its own. A request sent before that one has reached the log by then.
+ */
+async function settle(lab: Lab, atLeast = 0): Promise<void> {
+  if (atLeast > 0) await expect.poll(() => lab.log.length).toBeGreaterThanOrEqual(atLeast);
+  await fetch(`${lab.base}${IDLE_PATH}`);
+}
 
 afterEach(async () => {
   resetPerfOffForTest();
@@ -126,7 +140,7 @@ describe("requests sent by a press and the open after it", () => {
     threadSnapshotLoader(stored);
     onChatPress(A);
     const result = await loadThreadSnapshot(stored, A);
-    await settle();
+    await settle(lab, 1);
     expect(result._tag).toBe("present");
     expect(lab.log.map((entry) => entry.url.split("?")[0])).toEqual([
       `/api/orchestration/threads/${A}/bounded`,
@@ -144,7 +158,7 @@ describe("requests sent by a press and the open after it", () => {
     setPerfOff(["android-preload-chat"]);
     threadSnapshotLoader(stored);
     onChatPress(A);
-    await settle();
+    await settle(lab);
     expect(lab.log).toHaveLength(0);
     await loadThreadSnapshot(stored, A);
     expect(lab.log).toHaveLength(1);
@@ -159,7 +173,7 @@ describe("requests sent by a press and the open after it", () => {
     onChatPress(A);
     release();
     onChatPress(A);
-    await settle();
+    await settle(lab);
     expect(lab.log).toHaveLength(0);
   });
 
@@ -169,7 +183,7 @@ describe("requests sent by a press and the open after it", () => {
     threadSnapshotLoader(stored);
     files.add(`file:///documents/hbots-thread-cache/thread-environment-phone-${A}.json`);
     onChatPress(A);
-    await settle();
+    await settle(lab);
     expect(lab.log).toHaveLength(0);
   });
 
@@ -180,7 +194,7 @@ describe("requests sent by a press and the open after it", () => {
     onChatPress(A);
     onChatPress(B);
     await loadThreadSnapshot(stored, B);
-    await settle();
+    await settle(lab, 2);
     expect(lab.log.map((entry) => entry.url.split("/")[4])).toEqual([A, B]);
   });
 
@@ -191,7 +205,7 @@ describe("requests sent by a press and the open after it", () => {
     onChatPress(A);
     onChatPress(A);
     await loadThreadSnapshot(stored, A);
-    await settle();
+    await settle(lab, 1);
     expect(lab.log).toHaveLength(1);
   });
 });
@@ -203,7 +217,7 @@ describe("a prefetch under a wrong session, a failure or a stale clock", () => {
     const s1 = session(first, "token-one");
     threadSnapshotLoader(s1);
     onChatPress(A);
-    await settle();
+    await settle(first, 1);
     expect(first.log).toHaveLength(1);
 
     const s2 = session(second, "token-two");
@@ -223,7 +237,7 @@ describe("a prefetch under a wrong session, a failure or a stale clock", () => {
     threadSnapshotLoader(s1);
     threadSnapshotLoader(s2);
     onChatPress(A);
-    await settle();
+    await settle(second, 1);
     expect(second.log).toHaveLength(1);
     const result = await loadThreadSnapshot(s1, A);
     expect(first.log).toHaveLength(1);
@@ -277,7 +291,7 @@ describe("a prefetch under a wrong session, a failure or a stale clock", () => {
     void loadThreadSnapshot(stored, A).then(() => {
       settled = true;
     });
-    await new Promise((done) => setTimeout(done, 1500));
+    await settle(lab, 1);
     expect(settled).toBe(false);
     expect(lab.log).toHaveLength(1);
   });
@@ -289,7 +303,7 @@ describe("a prefetch under a wrong session, a failure or a stale clock", () => {
     const clock = vi.spyOn(performance, "now");
     clock.mockReturnValue(1_000);
     onChatPress(A);
-    await settle();
+    await settle(lab, 1);
     clock.mockReturnValue(1_000 + 5_001);
     await loadThreadSnapshot(stored, A);
     expect(lab.log).toHaveLength(2);
@@ -305,7 +319,7 @@ describe("the open beacon after a prefetch (current behaviour, D4 of the review)
     const clock = vi.spyOn(performance, "now");
     clock.mockReturnValue(10_000);
     onChatPress(A);
-    await settle();
+    await settle(lab, 1);
     clock.mockReturnValue(10_250);
     const openedAt = 10_250;
     const result = await loadThreadSnapshot(stored, A);
@@ -323,12 +337,14 @@ describe("the open beacon after a prefetch (current behaviour, D4 of the review)
     const lab = await startLab();
     const stored = session(lab);
     threadSnapshotLoader(stored);
+    const clock = vi.spyOn(performance, "now");
+    clock.mockReturnValue(30_000);
     onChatPress(A);
-    await settle();
-    const openedAt = performance.now();
+    await settle(lab, 1);
+    clock.mockReturnValue(30_100);
     await loadThreadSnapshot(stored, A);
-    const tapAt = takeChatTap(A, openedAt);
-    const report = takeChatOpenReport(A, openedAt, performance.now() + 5, tapAt);
+    const tapAt = takeChatTap(A, 30_100);
+    const report = takeChatOpenReport(A, 30_100, 30_200, tapAt);
     expect(report.body.prefetched).toBe(true);
     expect(typeof report.body.responseMs).toBe("number");
     expect(report.body.store).toBe("network");
@@ -341,7 +357,6 @@ describe("the open beacon after a prefetch (current behaviour, D4 of the review)
     const clock = vi.spyOn(performance, "now");
     clock.mockReturnValue(20_000);
     onChatPress(A);
-    await settle();
     clock.mockReturnValue(20_200);
     const tapAt = takeChatTap(A, 20_200);
     const report = takeChatOpenReport(A, 20_200, 20_300, tapAt);

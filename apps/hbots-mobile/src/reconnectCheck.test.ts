@@ -355,3 +355,21 @@ describe("back off after a failed download", () => {
     expect(s.check).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("a connection that flaps", () => {
+  it("starts at most one check a minute through 20 minutes of a flap every 5 seconds", () => {
+    const { connection, clock, check } = setup();
+    const startedAt: number[] = [];
+    check.mockImplementation(() => startedAt.push(clock.at));
+    for (let second = 0; second < 20 * 60; second += 5) {
+      clock.at += 5 * SECOND;
+      connection.set(second % 10 === 0);
+    }
+
+    const gaps = startedAt.slice(1).map((at, index) => at - startedAt[index]!);
+    expect(startedAt.length).toBeGreaterThan(1);
+    expect(startedAt.length).toBeLessThanOrEqual(20);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(RECONNECT_CHECK_MIN_GAP_MS);
+  });
+});
+
