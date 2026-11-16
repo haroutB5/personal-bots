@@ -26,3 +26,19 @@ Harout wanted the Tasks tab to show what changed since he last looked, and each 
 ## Rollback
 
 Binary rollback to `2b719a700cb6` (1.67.25) plus its APK. The database stays at 159. The 159 change is additive, so 1.67.25 boots on it. The pre-migration backup is the data fallback.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=9a251eb0b91b8326c81314aa989e2c58335115cd release=9a251eb0b91b json-sha256=931d4d2e9ef27099f27514451d67937e70385e4b21db3b0c338c3fd08323ed3f result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
+<!-- gate-evidence:end -->
