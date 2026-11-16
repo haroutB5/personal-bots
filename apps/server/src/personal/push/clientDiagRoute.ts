@@ -178,7 +178,13 @@ const FIELDS: Record<string, Read> = {
   requestMs: count,
   // perf a-chat-open (hbots-mobile chatOpenPerf.ts): when the snapshot request left after
   // the open, the saved-copy read, and the slowest saved-copy write since the last line.
+  // fromTapMs is the open measured from the tap, responseMs and decodeMs split the request,
+  // prefetched says the request started at the tap. A phone without them sends none.
   requestAtMs: count,
+  fromTapMs: count,
+  responseMs: count,
+  decodeMs: count,
+  prefetched: bool,
   readMs: count,
   readBytes: count,
   writeMs: count,

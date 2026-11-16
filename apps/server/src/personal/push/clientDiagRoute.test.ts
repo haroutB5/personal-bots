@@ -241,6 +241,51 @@ describe("client diagnostics route", () => {
     });
   });
 
+  it("keeps the tap-time chat-open fields and still reads an old phone's beacon", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 300,
+          fromTapMs: 505,
+          responseMs: 41,
+          decodeMs: 17,
+          prefetched: true,
+          store: "network",
+          requestAtMs: 0,
+          decodeMsText: "not kept",
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 300,
+      fromTapMs: 505,
+      responseMs: 41,
+      decodeMs: 17,
+      prefetched: true,
+      store: "network",
+      requestAtMs: 0,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "perf", journey: "a-chat-open", ms: 412, store: "memory" }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-chat-open", ms: 412, store: "memory" });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 9,
+          fromTapMs: -4,
+          responseMs: "x",
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-chat-open", ms: 9 });
+  });
+
   it("accepts the stale-notification cleanup line: how many, and why", () => {
     expect(
       sanitizeClientDiag(
