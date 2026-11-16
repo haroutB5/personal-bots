@@ -324,6 +324,10 @@ export function selectServerTests({ reader, changedPaths }) {
     ),
   );
   const selected = new Set();
+  // A test the release changed or added runs itself. A file deleted at the head is
+  // not in `tests`, so no arg names a path that matches nothing.
+  const testSet = new Set(tests);
+  for (const file of changedPaths) if (testSet.has(file)) selected.add(file);
 
   // Literal references. A test or module can read a file by its path string, which
   // no import shows: a fixture, a doc, a spawned entry file. Every changed file

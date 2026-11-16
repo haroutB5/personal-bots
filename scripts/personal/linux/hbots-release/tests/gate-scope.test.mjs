@@ -599,3 +599,72 @@ NodeTest.test("the fs reader and the git reader select the same tests", () => {
     dpop.includes("src/personal/auth/orchestrationProtocolUpgrade.integration.test.ts"),
   );
 });
+
+NodeTest.test("a changed or added server test runs itself, a deleted one is never named", () => {
+  withFixture((f) => {
+    const dir = "apps/server/src/personal/push";
+    // an existing test changes, and a new test is added, with no source change
+    NodeFS.appendFileSync(NodePath.join(f.repo, dir, "PersonalPushService.test.ts"), "// edit\n");
+    NodeFS.writeFileSync(
+      NodePath.join(f.repo, dir, "Fresh.test.ts"),
+      'import * as Push from "./PersonalPushService.ts";\nPush.push;\n',
+    );
+    NodeFS.writeFileSync(NodePath.join(f.repo, dir, "Gone.test.ts"), "export {};\n");
+    const before = commit(f.repo, "tests only");
+    NodeFS.rmSync(NodePath.join(f.repo, dir, "Gone.test.ts"));
+    const head = commit(f.repo, "delete a test");
+    const select = (sha, paths) =>
+      planOf(planChecks(paths, { reader: gitReader(f.repo, sha) }), "server-tests");
+    const changed = select(before, [`${dir}/PersonalPushService.test.ts`, `${dir}/Fresh.test.ts`]);
+    NodeAssert.equal(changed.mode, "selected");
+    NodeAssert.deepEqual(changed.args, [
+      "src/personal/push/Fresh.test.ts",
+      "src/personal/push/PersonalPushService.test.ts",
+    ]);
+    // a lone changed test used to select nothing, so only the always-run tests ran
+    const lone = select(before, [`${dir}/Fresh.test.ts`]);
+    NodeAssert.deepEqual(lone.args, ["src/personal/push/Fresh.test.ts"]);
+    // a deleted test is not at the head, so no arg names a file that matches nothing
+    const gone = select(head, [`${dir}/Gone.test.ts`]);
+    NodeAssert.ok(!gone.args.some((arg) => arg.includes("Gone")), gone.args.join(","));
+    NodeAssert.ok(gone.args.length > 0);
+  });
+});
+
+NodeTest.test("a changed test of the real tree selects itself", () => {
+  const select = (file) =>
+    planOf(planChecks([file], { reader: fsReader(REPO) }), "server-tests").args;
+  for (const file of [
+    "apps/server/src/personal/projects/projectText.test.ts",
+    "apps/server/src/mcp/toolkits/bots/projectHandlers.test.ts",
+    "apps/server/src/personal/tasks/PersonalTaskService.test.ts",
+  ])
+    NodeAssert.ok(select(file).includes(file.slice("apps/server/".length)), file);
+});
+
+NodeTest.test("a changed test or journey file of any selecting check selects itself", () => {
+  const read = (file) =>
+    planOf(planChecks([file], { reader: fsReader(REPO) }), "hbots-mobile-kotlin");
+  const kotlin = read(
+    "apps/hbots-mobile/modules/hbots-camera/android/src/test/java/expo/modules/hbotscamera/CameraTest.kt",
+  );
+  NodeAssert.equal(kotlin.mode, "selected");
+  NodeAssert.ok(kotlin.args.includes(":hbots-camera:testDebugUnitTest"));
+  // an e2e journey file runs every journey, and so does the runner that loads them
+  for (const file of [
+    "scripts/personal/e2e/offlineQueue.mjs",
+    "scripts/personal/node/e2e-smoke.mjs",
+    "scripts/personal/testing/seed.mjs",
+  ]) {
+    const e2e = planOf(planChecks([file], { reader: fsReader(REPO) }), "e2e");
+    NodeAssert.equal(e2e.mode, "selected", file);
+    NodeAssert.equal(e2e.args.length, 12, file);
+  }
+  const tools = planOf(
+    planChecks(["scripts/personal/linux/hbots-release/tests/idle.test.mjs"], {
+      reader: fsReader(REPO),
+    }),
+    "release-tools",
+  );
+  NodeAssert.ok(tools.args.includes("scripts/personal/linux/hbots-release/tests/idle.test.mjs"));
+});

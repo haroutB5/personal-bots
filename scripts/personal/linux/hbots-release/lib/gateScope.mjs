@@ -128,6 +128,8 @@ const E2E_RESILIENCE_INPUTS = [
   "packages/client-runtime/",
   "packages/personal-client/",
   "scripts/personal/e2e/",
+  "scripts/personal/node/e2e-smoke.mjs",
+  "scripts/personal/testing/",
 ];
 
 // One row per check. `inputs` and `except` are prefixes, exact paths, or
