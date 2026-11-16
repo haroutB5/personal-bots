@@ -812,6 +812,29 @@ NodeTest.test(
         text: "dependencies {\n  implementation project(path = ':util')\n}\n",
         dependent: true,
       },
+      // N9: a "/*" inside a string (a glob) is not a block comment.
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  implementation fileTree(dir: 'libs', include: ['**/*.jar'])\n  implementation project(':util')\n}\n/** doc */\n",
+        dependent: true,
+      },
+      {
+        file: "build.gradle.kts",
+        text: 'dependencies {\n  implementation(fileTree("libs") { include("**/*.jar") })\n  implementation(project(":util"))\n}\n/* end */\n',
+        dependent: true,
+      },
+      // A "//" inside a string (a URL) does not hide what follows on the line.
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  def u = 'https://x.test/a'; implementation project(':util')\n}\n",
+        dependent: true,
+      },
+      // A project() named only inside a comment that follows a string stays out.
+      {
+        file: "build.gradle",
+        text: "dependencies {\n  implementation 'a:b:1' /* implementation project(':util') */\n}\n",
+        dependent: false,
+      },
     ];
     for (const { file, text, dependent } of cases)
       withFixture((f) => {

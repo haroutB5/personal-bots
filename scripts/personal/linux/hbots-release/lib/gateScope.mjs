@@ -303,10 +303,12 @@ function kotlinModules(reader) {
     const gradle = ["build.gradle", "build.gradle.kts"]
       .map((file) => reader.read(`apps/hbots-mobile/modules/${name}/android/${file}`) ?? "")
       .join("\n")
-      // A commented-out project() is not a dependency. Line comments need a space or
-      // the line start before them, so a URL in a string stays.
-      .replace(/\/\*[\s\S]*?\*\//g, " ")
-      .replace(/(^|\s)\/\/.*$/gm, "$1");
+      // A commented-out project() is not a dependency. Strings are matched first and
+      // kept, so a "/*" in a glob or a "//" in a URL never opens a comment.
+      .replace(
+        /("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|\/\*[\s\S]*?\*\/|\/\/.*$/gm,
+        (_match, string) => string ?? " ",
+      );
     deps.set(
       name,
       // Any configuration (implementation, api, testImplementation, ...) and either
