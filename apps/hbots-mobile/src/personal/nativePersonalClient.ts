@@ -58,6 +58,7 @@ import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
 import { createNativeEnvironmentCache } from "./nativeCache";
+import { subscribeConnectedPhase } from "./connectionSubscription";
 import { connectWithDeadline } from "./connectDeadline";
 import { threadSnapshotLoader } from "./threadSnapshotLoader";
 import { phoneHasInternet, resetNetworkClient } from "./networkReset";
@@ -597,16 +598,7 @@ export function createNativePersonal(
       return state;
     },
     readConnection: () => ({ connected: socketAlive, generation: generation.value }),
-    subscribeConnected: (listener) => {
-      const fiber = Effect.runFork(
-        Stream.runForEach(SubscriptionRef.changes(stateRef), (next) =>
-          Effect.sync(() => listener(next.phase === "connected")),
-        ),
-      );
-      return () => {
-        void Effect.runPromise(Fiber.interrupt(fiber));
-      };
-    },
+    subscribeConnected: (listener) => subscribeConnectedPhase(stateRef, listener),
     retry: () => {
       if (current !== null) {
         const session = current;

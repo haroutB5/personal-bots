@@ -26,4 +26,23 @@ describe("androidPerfOff", () => {
   it("does not take a server switch that merely contains the prefix", () => {
     expect(androidPerfOff({ PB_PERF_OFF: "not-android-x,androidish" })).toEqual([]);
   });
+
+  it("reads tab and newline padding the same as spaces, and a whitespace-only value as nothing", () => {
+    expect(androidPerfOff({ PB_PERF_OFF: "\tandroid-a\n, android-a ,android-b" })).toEqual([
+      "android-a",
+      "android-b",
+    ]);
+    expect(androidPerfOff({ PB_PERF_OFF: "\t\n" })).toEqual([]);
+  });
+
+  it("is case sensitive and does not take a look-alike hyphen, so a typo switches nothing off", () => {
+    expect(androidPerfOff({ PB_PERF_OFF: "Android-preload-chat" })).toEqual([]);
+    expect(androidPerfOff({ PB_PERF_OFF: "android\u2011preload-chat" })).toEqual([]);
+  });
+
+  it("passes a very long list through whole, because the value is the operator's", () => {
+    const names = Array.from({ length: 50_000 }, (_, index) => `android-${index}`);
+
+    expect(androidPerfOff({ PB_PERF_OFF: names.join(",") })).toHaveLength(50_000);
+  });
 });

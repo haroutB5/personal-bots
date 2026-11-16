@@ -413,6 +413,7 @@ function App() {
     }
     return startReconnectCheck({
       connection: { subscribe: readyNative.subscribeConnected },
+      updates: { subscribe: subscribeUpdate },
       check: () => {
         const session = activeSessionRef.current;
         if (session !== null) {
