@@ -80,6 +80,9 @@ const seedMessage = (input: {
   readonly role: "user" | "assistant";
   readonly text: string;
   readonly createdAt?: string;
+  /** When the row last changed; the row's `created_at` when omitted. */
+  readonly updatedAt?: string;
+  readonly streaming?: boolean;
 }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -89,7 +92,8 @@ const seedMessage = (input: {
         message_id, thread_id, role, streaming, created_at, updated_at, payload_json
       )
       VALUES (
-        ${input.messageId}, ${input.threadId}, ${input.role}, 0, ${createdAt}, ${createdAt},
+        ${input.messageId}, ${input.threadId}, ${input.role}, ${input.streaming === true ? 1 : 0},
+        ${createdAt}, ${input.updatedAt ?? createdAt},
         json_object('text', ${input.text})
       )
     `;
@@ -561,6 +565,169 @@ describe("PersonalWorkReads.questions once the chat was viewed", () => {
       const wire = Schema.encodeSync(PersonalWorkQuestionsResult)(result);
 
       expect(wire.questions.map((question) => question.threadId)).toEqual(["fresh"]);
+      expect(Object.keys(wire.questions[0] ?? {}).toSorted()).toEqual([
+        "askedAt",
+        "botId",
+        "messageId",
+        "options",
+        "question",
+        "threadId",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("PersonalWorkReads.questions for a reply that streamed while the owner was in the chat", () => {
+  // The row is created when the final text starts (T) and settles when it finishes (T + 10 s).
+  const T = Date.parse("2026-11-15T09:00:00.000Z");
+  const iso = (offsetMs: number) => new Date(T + offsetMs).toISOString();
+
+  const seedStreamed = (input: {
+    readonly threadId: string;
+    readonly streaming?: boolean;
+    readonly finishedAfterMs?: number;
+    readonly lastViewedAfterMs: number | null;
+    readonly markedUnreadAfterMs?: number | null;
+  }) =>
+    Effect.gen(function* () {
+      yield* seedBot({ botId: "bot-a" });
+      yield* seedChat({ threadId: input.threadId, botId: "bot-a" });
+      yield* seedMessage({
+        messageId: `${input.threadId}-m1`,
+        threadId: input.threadId,
+        role: "assistant",
+        text: REPLY,
+        createdAt: iso(0),
+        updatedAt: iso(input.finishedAfterMs ?? 10_000),
+        ...(input.streaming === undefined ? {} : { streaming: input.streaming }),
+      });
+      yield* seedViewed({
+        threadId: input.threadId,
+        lastViewedAt: input.lastViewedAfterMs === null ? null : iso(input.lastViewedAfterMs),
+        markedUnreadAt: input.markedUnreadAfterMs == null ? null : iso(input.markedUnreadAfterMs),
+      });
+    });
+
+  it.effect("shows the card when the owner left while the question was still streaming", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      yield* seedStreamed({ threadId: "left-mid-stream", lastViewedAfterMs: 5_000 });
+
+      const result = yield* PersonalWorkReads.questions();
+
+      expect(result.questions.map((question) => question.threadId)).toEqual(["left-mid-stream"]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("hides the card when the owner left after the question finished", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      yield* seedStreamed({ threadId: "left-after", lastViewedAfterMs: 12_000 });
+
+      const result = yield* PersonalWorkReads.questions();
+
+      expect(result.questions).toEqual([]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "hides the card when view heartbeats ran during the stream and the leave came after the finish",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        // Heartbeats at T + 2 s and T + 8 s are overwritten by the leave at T + 11 s.
+        yield* seedStreamed({ threadId: "heartbeat-then-leave", lastViewedAfterMs: 11_000 });
+
+        const result = yield* PersonalWorkReads.questions();
+
+        expect(result.questions).toEqual([]);
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("hides the card when the owner views exactly as the question finished", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      yield* seedStreamed({ threadId: "view-at-finish", lastViewedAfterMs: 10_000 });
+
+      const result = yield* PersonalWorkReads.questions();
+
+      expect(result.questions).toEqual([]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("still brings the card back when the chat is marked unread after the finish", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      // Seen at T + 12 s, then marked unread past the grace: back.
+      yield* seedStreamed({
+        threadId: "marked-after-view",
+        lastViewedAfterMs: 12_000,
+        markedUnreadAfterMs: 12_000 + MARKED_UNREAD_GRACE_MS + 1_000,
+      });
+      // Marked unread at T + 11 s, the leave stamped T + 12 s: the grace keeps it.
+      yield* seedChat({ threadId: "marked-then-left", botId: "bot-a" });
+      yield* seedMessage({
+        messageId: "marked-then-left-m1",
+        threadId: "marked-then-left",
+        role: "assistant",
+        text: REPLY,
+        createdAt: iso(0),
+        updatedAt: iso(10_000),
+      });
+      yield* seedViewed({
+        threadId: "marked-then-left",
+        lastViewedAt: iso(12_000),
+        markedUnreadAt: iso(11_000),
+      });
+
+      const result = yield* PersonalWorkReads.questions();
+
+      expect(result.questions.map((question) => question.threadId).toSorted()).toEqual([
+        "marked-after-view",
+        "marked-then-left",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("gives no card while the reply is still streaming", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      yield* seedStreamed({
+        threadId: "still-streaming",
+        streaming: true,
+        finishedAfterMs: 4_000,
+        lastViewedAfterMs: null,
+      });
+
+      const result = yield* PersonalWorkReads.questions();
+
+      expect(result.questions).toEqual([]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps the card's age and order on the row's creation time, with six wire fields", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      yield* seedStreamed({ threadId: "older-finished-later", lastViewedAfterMs: null });
+      // A newer question that finished before the older one did.
+      yield* seedChat({ threadId: "newer-finished-first", botId: "bot-a" });
+      yield* seedMessage({
+        messageId: "newer-finished-first-m1",
+        threadId: "newer-finished-first",
+        role: "assistant",
+        text: REPLY,
+        createdAt: iso(2_000),
+        updatedAt: iso(3_000),
+      });
+
+      const result = yield* PersonalWorkReads.questions();
+      const wire = Schema.encodeSync(PersonalWorkQuestionsResult)(result);
+
+      expect(wire.questions.map((question) => question.threadId)).toEqual([
+        "newer-finished-first",
+        "older-finished-later",
+      ]);
+      expect(wire.questions.map((question) => question.askedAt)).toEqual([iso(2_000), iso(0)]);
       expect(Object.keys(wire.questions[0] ?? {}).toSorted()).toEqual([
         "askedAt",
         "botId",
