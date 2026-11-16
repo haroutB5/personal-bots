@@ -668,3 +668,47 @@ NodeTest.test("a changed test or journey file of any selecting check selects its
   );
   NodeAssert.ok(tools.args.includes("scripts/personal/linux/hbots-release/tests/idle.test.mjs"));
 });
+
+NodeTest.test(
+  "a changed server file read as text or behind a spawned entry selects the reader",
+  () => {
+    const select = (file) =>
+      planOf(planChecks([file], { reader: fsReader(REPO) }), "server-tests").args;
+    // bin.ts imports binMain.ts, and CodexManagedRuntime.test.ts spawns bin.ts
+    NodeAssert.ok(
+      select("apps/server/src/binMain.ts").includes("src/provider/CodexManagedRuntime.test.ts"),
+    );
+    // machineImportProvisioning.test.ts reads PersonalBotService.ts as text
+    NodeAssert.ok(
+      select("apps/server/src/personal/PersonalBotService.ts").includes(
+        "src/personal/connections/machineImportProvisioning.test.ts",
+      ),
+    );
+  },
+);
+
+NodeTest.test("a spawned entry and a text read carry through a small fixture tree", () => {
+  withFixture((f) => {
+    const src = NodePath.join(f.repo, "apps/server/src/personal");
+    NodeFS.writeFileSync(NodePath.join(src, "entry.ts"), 'import "./inner.ts";\n');
+    NodeFS.writeFileSync(NodePath.join(src, "inner.ts"), "export const inner = 1;\n");
+    NodeFS.writeFileSync(NodePath.join(src, "deep.ts"), "export const deep = 1;\n");
+    NodeFS.writeFileSync(
+      NodePath.join(src, "spawn.test.ts"),
+      'import * as Path from "node:path";\nPath.join(__dirname, "entry.ts");\n',
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(src, "reader.test.ts"),
+      'import { push } from "./push/PersonalPushService.ts";\nnew URL("./deep.ts", import.meta.url);\npush;\n',
+    );
+    const head = commit(f.repo, "entry and text reader");
+    const select = (file) =>
+      planOf(
+        planChecks([`apps/server/src/personal/${file}`], { reader: gitReader(f.repo, head) }),
+        "server-tests",
+      ).args;
+    NodeAssert.ok(select("inner.ts").includes("src/personal/spawn.test.ts"));
+    NodeAssert.ok(select("entry.ts").includes("src/personal/spawn.test.ts"));
+    NodeAssert.ok(select("deep.ts").includes("src/personal/reader.test.ts"));
+  });
+});

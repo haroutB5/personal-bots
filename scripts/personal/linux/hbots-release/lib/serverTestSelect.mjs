@@ -191,6 +191,8 @@ function makeResolver(reader, packages) {
 const IMPORT_RE =
   /(?:import|export)\s+(type\s+)?(\{[^}]*\}|[^;'"]*?)\s*from\s*["']([^"']+)["']|import\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|vi\.mock\(\s*["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)/g;
 
+const NAMED_SOURCE_RE = /[A-Za-z0-9_$@.\-/]+\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)\b/g;
+
 export function selectServerTests({ reader, changedPaths }) {
   const tests = SERVER_GATE_DIRS.flatMap((dir) =>
     reader.listFiles(`${SERVER_PKG_DIR}/${dir}`),
@@ -264,6 +266,34 @@ export function selectServerTests({ reader, changedPaths }) {
     }
     return map;
   };
+  // Source files a test names as a string and does not import: a spawned entry, a
+  // file read as text. They count as the test's dependencies, so a change to the
+  // file or to anything it imports reaches the test.
+  const sourceByBase = new Map();
+  for (const file of [...reader.listFiles(SERVER_PKG_DIR), ...packageFiles]) {
+    if (!SOURCE.test(file) || isTest(file)) continue;
+    const base = NodePath.posix.basename(file);
+    if (/^index\./.test(base)) continue;
+    if (!sourceByBase.has(base)) sourceByBase.set(base, []);
+    sourceByBase.get(base).push(file);
+  }
+  const namedBy = (test, source) => {
+    const out = new Set();
+    const text = source.replace(IMPORT_RE, "");
+    for (const token of text.match(NAMED_SOURCE_RE) ?? []) {
+      if (token.startsWith(".")) {
+        const target = NodePath.posix.normalize(
+          NodePath.posix.join(NodePath.posix.dirname(test), token),
+        );
+        if (SOURCE.test(target) && !isTest(target) && reader.exists(target)) out.add(target);
+        continue;
+      }
+      const candidates = sourceByBase.get(NodePath.posix.basename(token)) ?? [];
+      for (const candidate of candidates)
+        if (!token.includes("/") || candidate.endsWith(`/${token}`)) out.add(candidate);
+    }
+    return out;
+  };
   const deps = new Map();
   const depsOf = (file) => {
     if (deps.has(file)) return deps.get(file);
@@ -272,6 +302,7 @@ export function selectServerTests({ reader, changedPaths }) {
     if (!SOURCE.test(file)) return out;
     const source = reader.read(file);
     if (!source) return out;
+    if (isTest(file)) for (const named of namedBy(file, source)) out.add(named);
     for (const match of source.matchAll(IMPORT_RE)) {
       const spec = match[3] ?? match[4] ?? match[5] ?? match[6] ?? match[7];
       const target = resolveSpec(spec, file);
