@@ -32,6 +32,14 @@ export const TOOLCHAIN = [
   "vite.config.ts",
   "tsconfig.base.json",
   "tsconfig.effect.json",
+  ".npmrc",
+  ".oxlintrc.json",
+  ".oxfmtrc.json",
+  ".env.test",
+  "tsconfig.json",
+  "vite.config.mts",
+  "vitest.config.ts",
+  "vitest.workspace.ts",
   "patches/",
   "scripts/lib/",
 ];
@@ -63,6 +71,23 @@ export const NO_CHECK = [
   "third-party-licenses/",
   ".vite-hooks/",
   ".vscode/",
+  // Upstream script folders and root files, named one by one so a new one stops the plan.
+  "scripts/fixtures/",
+  "scripts/licenses/",
+  "scripts/mobile-behavior/",
+  "scripts/mobile-e2e/",
+  "scripts/npm-launcher/",
+  "scripts/scenarios/",
+  ".coderabbit.config.ts",
+  ".env.example",
+  ".gitattributes",
+  ".gitignore",
+  ".task-cache.json",
+  ".vercelignore",
+  "LICENSE",
+  "knip.jsonc",
+  "t3.json",
+  "third-party-licenses.config.json",
   "scripts/personal/perf/",
   "scripts/personal/qa/",
   "scripts/personal/contract/",
@@ -250,9 +275,8 @@ export function classifyPath(file) {
     file.endsWith(".ps1")
   )
     return { kind: "none", checks: [] };
-  if (!file.includes("/")) return { kind: "none", checks: [] };
-  // Upstream scripts outside scripts/personal are not shipped and no gate reads them.
-  if (file.startsWith("scripts/") && !file.startsWith("scripts/personal/"))
+  // Upstream scripts sitting directly under scripts/ are not shipped and no gate reads them.
+  if (/^scripts\/[^/]+\.(?:ts|mjs|cjs|js|json|py|ps1|sh)$/.test(file))
     return { kind: "none", checks: [] };
   return { kind: "unmapped", checks: [] };
 }

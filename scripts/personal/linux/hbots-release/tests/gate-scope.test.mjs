@@ -534,3 +534,36 @@ NodeTest.test("a Kotlin module without unit tests is a stated skip, never an emp
   );
   NodeAssert.equal(updater.mode, "selected");
 });
+
+NodeTest.test(
+  "a new scripts folder or an unknown root file stops the plan; root config runs everything",
+  () => {
+    for (const file of [
+      "scripts/personal/newtool/run.mjs",
+      "scripts/brandnew/x.ts",
+      "scripts/deep/er/x.ts",
+      "random-root-file.txt",
+      "notes.json",
+    ])
+      NodeAssert.equal(classifyPath(file).kind, "unmapped", file);
+    for (const file of [
+      ".npmrc",
+      "vitest.config.ts",
+      "tsconfig.json",
+      ".oxlintrc.json",
+      ".env.test",
+    ])
+      NodeAssert.equal(classifyPath(file).kind, "toolchain", file);
+    for (const file of [
+      "scripts/test-cached.ts",
+      "scripts/scenarios/t3.ts",
+      "scripts/mobile-e2e/x.ts",
+      "scripts/licenses/x.mjs",
+      ".gitignore",
+      "README.md",
+      "LICENSE",
+      "t3.json",
+    ])
+      NodeAssert.equal(classifyPath(file).kind, "none", file);
+  },
+);
