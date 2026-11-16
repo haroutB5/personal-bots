@@ -89,7 +89,7 @@ export async function reportAnrForTest(): Promise<void> {
 }
 
 /** One timing line (chatOpenPerf.ts): durations and sizes only. Dropped before pairing. */
-export function reportPerf(body: Record<string, number | string>): void {
+export function reportPerf(body: Record<string, number | string | boolean>): void {
   if (baseUrl === null) return;
   void post(baseUrl, body).catch(() => undefined);
 }

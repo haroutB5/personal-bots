@@ -63,6 +63,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { FileOpenRequest } from "../chat/fileOpenRequest";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
+import { takeChatTap } from "../personal/chatOpenIntent";
 import { takeChatOpenReport } from "../personal/chatOpenPerf";
 import { reportPerf } from "../crash/crashReporter";
 import { GoalSheetHost } from "../work/GoalSheetHost";
@@ -466,7 +467,8 @@ export function ChatScreen({
     if (thread === null || openLogged.current) return;
     openLogged.current = true;
     requestAnimationFrame(() => {
-      const report = takeChatOpenReport(threadId, openedAt.current, performance.now());
+      const tapAt = takeChatTap(threadId, openedAt.current);
+      const report = takeChatOpenReport(threadId, openedAt.current, performance.now(), tapAt);
       console.info(report.line);
       reportPerf(report.body);
     });

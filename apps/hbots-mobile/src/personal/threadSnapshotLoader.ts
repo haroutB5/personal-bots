@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 
 import { authorizedFetch } from "../authorizedRequest";
 import type { StoredSession } from "../session";
-import { noteRequestStart } from "./chatOpenPerf";
+import { noteRequestDone, noteRequestStart } from "./chatOpenPerf";
 
 const decodeBoundedSnapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadBoundedSnapshot);
 
@@ -21,7 +21,8 @@ export async function loadThreadSnapshot(
   stored: StoredSession,
   threadId: ThreadId,
 ): Promise<ThreadSnapshotLoadResult> {
-  noteRequestStart(threadId, performance.now());
+  const startedAt = performance.now();
+  noteRequestStart(threadId, startedAt);
   try {
     const response = await authorizedFetch(
       stored,
@@ -34,6 +35,7 @@ export async function loadThreadSnapshot(
         headers: { ...withOrchestrationProtocolHeader({}) } as Record<string, string>,
       },
     );
+    const respondedAt = performance.now();
     if (response.status === 404) return { _tag: "missing" };
     if (!response.ok) return { _tag: "unavailable" };
     const {
@@ -41,11 +43,16 @@ export async function loadThreadSnapshot(
       idTable: _idTable,
       ...bounded
     } = decodeBoundedSnapshot((await response.json()) as unknown);
+    const projection = boundedSnapshotProjection({ ...bounded, turnItemsOmitLocalVisible });
+    noteRequestDone(threadId, startedAt, {
+      responseMs: respondedAt - startedAt,
+      decodeMs: performance.now() - respondedAt,
+    });
     return {
       _tag: "present",
       snapshot: {
         ...bounded,
-        projection: boundedSnapshotProjection({ ...bounded, turnItemsOmitLocalVisible }),
+        projection,
       },
       history: {
         historyCursor: bounded.historyCursor,

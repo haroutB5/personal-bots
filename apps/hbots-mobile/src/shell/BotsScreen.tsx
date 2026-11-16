@@ -45,6 +45,7 @@ import {
 } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { noteChatTap } from "../personal/chatOpenIntent";
 import { useBotShells } from "../personal/useBotShells";
 import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
 import { GroupAvatarCluster } from "../groups/GroupAvatarCluster";
@@ -720,8 +721,10 @@ export function BotsScreen({
   const openBot = (target: NewChatTarget, newestThreadId: string | null) => {
     closeAllSwipeRows();
     const tap = botTapTarget(newestThreadId);
-    if (tap.kind === "chat") onOpenChat(target.botId, tap.threadId);
-    else setNewChatBot(target);
+    if (tap.kind === "chat") {
+      noteChatTap(tap.threadId);
+      onOpenChat(target.botId, tap.threadId);
+    } else setNewChatBot(target);
   };
 
   const openSummary = (summary: BotSummary) =>

@@ -27,6 +27,7 @@ import {
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { noteChatTap } from "../personal/chatOpenIntent";
 import { useBotShells } from "../personal/useBotShells";
 import { useHighRefresh } from "../display/useHighRefresh";
 import { tokens } from "../shell/tokens";
@@ -316,9 +317,14 @@ export function ChatsListScreen({
             );
             return (
               <Pressable
-                onPress={() =>
-                  selecting ? toggle(item.link.threadId) : onOpenChat(item.link.threadId)
-                }
+                onPress={() => {
+                  if (selecting) {
+                    toggle(item.link.threadId);
+                    return;
+                  }
+                  noteChatTap(item.link.threadId);
+                  onOpenChat(item.link.threadId);
+                }}
                 onLongPress={() => selectRow(item.link.threadId)}
                 delayLongPress={350}
                 accessibilityRole="button"

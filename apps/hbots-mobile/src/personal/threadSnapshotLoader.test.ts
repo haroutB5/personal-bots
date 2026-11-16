@@ -14,6 +14,7 @@ vi.mock("expo-crypto", () => ({}));
 
 import type { StoredSession } from "../session";
 import serverBody from "./fixtures/boundedThreadSnapshot.json";
+import { takeChatOpenReport } from "./chatOpenPerf";
 import { loadThreadSnapshot } from "./threadSnapshotLoader";
 
 const THREAD_ID = ThreadId.make("f37b73c4-f46d-4da7-8d7b-32007f18562b");
@@ -103,6 +104,7 @@ function compactBody(): unknown {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("loadThreadSnapshot", () => {
@@ -162,5 +164,23 @@ describe("loadThreadSnapshot", () => {
     vi.stubGlobal("fetch", () => Promise.resolve(new Response(null, { status: 404 })));
 
     expect(await load()).toEqual({ _tag: "missing" });
+  });
+
+  it("times the response and the decode of its own request for the open report", async () => {
+    vi.stubGlobal("fetch", () => Promise.resolve(Response.json(serverBody)));
+    const clock = [1_010, 1_052, 1_069];
+    vi.spyOn(performance, "now").mockImplementation(() => clock.shift() ?? 1_069);
+
+    await load();
+
+    expect(takeChatOpenReport(String(THREAD_ID), 1_000, 1_100).body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 100,
+      store: "network",
+      requestAtMs: 10,
+      responseMs: 42,
+      decodeMs: 17,
+    });
   });
 });

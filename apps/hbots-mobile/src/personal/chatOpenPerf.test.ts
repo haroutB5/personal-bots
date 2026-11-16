@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   noteCacheRead,
   noteCacheWrite,
+  noteRequestDone,
   noteRequestStart,
   takeChatOpenReport,
 } from "./chatOpenPerf";
@@ -79,6 +80,72 @@ describe("chat open timings", () => {
       event: "perf",
       journey: "a-chat-open",
       ms: 50,
+      store: "memory",
+    });
+  });
+  it("measures an open from the tap too, and keeps ms from the mount", () => {
+    noteRequestStart("t-tap", 1_130);
+    noteRequestDone("t-tap", 1_130, { responseMs: 41.4, decodeMs: 16.6 });
+
+    const report = takeChatOpenReport("t-tap", 1_100, 1_400, 900);
+
+    expect(report.body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 300,
+      fromTapMs: 500,
+      store: "network",
+      requestAtMs: 30,
+      responseMs: 41,
+      decodeMs: 17,
+    });
+    expect(report.line).toBe("[perf] chat-open-ms 300 network request-at-ms 30 from-tap-ms 500");
+  });
+
+  it("never reports fromTapMs below ms, even when the tap time is later than the mount", () => {
+    const report = takeChatOpenReport("t-skew", 2_000, 2_250, 2_040);
+
+    expect(report.body.ms).toBe(250);
+    expect(report.body.fromTapMs).toBe(250);
+  });
+
+  it("leaves out fromTapMs when no tap is known, as an open from a link does", () => {
+    noteRequestStart("t-link", 3_080);
+
+    expect(takeChatOpenReport("t-link", 3_000, 3_300).body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 300,
+      store: "network",
+      requestAtMs: 80,
+    });
+  });
+
+  it("counts a request that left at the tap as this open's own, and says it was a prefetch", () => {
+    noteRequestStart("t-pre", 5_020, true);
+    noteRequestDone("t-pre", 5_020, { responseMs: 38, decodeMs: 12 });
+
+    expect(takeChatOpenReport("t-pre", 5_240, 5_420, 5_000).body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 180,
+      fromTapMs: 420,
+      store: "network",
+      requestAtMs: 0,
+      prefetched: true,
+      responseMs: 38,
+      decodeMs: 12,
+    });
+  });
+
+  it("ignores a request that left before the tap", () => {
+    noteRequestStart("t-before", 4_000);
+
+    expect(takeChatOpenReport("t-before", 9_100, 9_200, 9_000).body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 100,
+      fromTapMs: 200,
       store: "memory",
     });
   });
