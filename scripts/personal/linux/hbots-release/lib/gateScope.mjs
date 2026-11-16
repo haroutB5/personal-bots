@@ -175,6 +175,22 @@ export const CHECKS = {
 };
 export const CHECK_IDS = Object.keys(CHECKS);
 
+// Files a test runner loads through its config, so no import reaches them: a
+// vitest or vite config, a setup or globalSetup file, shard weights, a tsconfig,
+// a package manifest, and the shared test helpers. Any of them in a check's
+// inputs runs that check whole, never selected.
+const WHOLE_TRIGGERS = [
+  /(?:^|\/)(?:vite|vitest)(?:\.[\w-]+)?\.config\.[cm]?[jt]s$/,
+  /(?:^|\/)tsconfig[^/]*\.json$/,
+  /\.setup\.[cm]?[jt]sx?$/,
+  /(?:^|\/)[^/]*[gG]lobalSetup[^/]*\.[cm]?[jt]sx?$/,
+  /(?:^|\/)shardWeights\.json$/,
+  /(?:^|\/)package\.json$/,
+  /^apps\/server\/src\/testUtils\//,
+  /^packages\/shared\/src\/testing\//,
+];
+const forcesWhole = (file) => WHOLE_TRIGGERS.some((pattern) => pattern.test(file));
+
 const matches = (file, pattern) => {
   if (pattern.includes("*")) {
     const body = pattern
@@ -437,6 +453,14 @@ export function planChecks(paths, options = {}) {
       };
     if (!row.select)
       return { id, mode: "whole", reason: `${id} inputs changed: ${listed(hits[id])}` };
+    const infra = hits[id].filter(forcesWhole);
+    if (infra.length)
+      return {
+        id,
+        mode: "whole",
+        reason: `${id} test setup or config changed: ${listed(infra)}; runs whole`,
+        ...(wholeArgs(id, reader) ? { args: wholeArgs(id, reader) } : {}),
+      };
     const selection = selectFor(id, { reader, changedPaths });
     return {
       id,

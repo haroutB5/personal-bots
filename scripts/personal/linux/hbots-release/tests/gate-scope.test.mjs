@@ -439,3 +439,28 @@ NodeTest.test("a path a gate reads by name still runs the checks of its own area
   const doc = classifyPath("docs/user/t3-connect-troubleshooting.md");
   NodeAssert.deepEqual(doc.checks, ["server-tests"]);
 });
+
+NodeTest.test("vitest setup and config files run the server tests whole", () => {
+  for (const file of [
+    "apps/server/vite.config.ts",
+    "apps/server/tsconfig.json",
+    "apps/server/tsconfig.typecheck-tests-core.json",
+    "apps/server/src/testUtils/gitConfig.setup.ts",
+    "apps/server/src/testUtils/managedServiceEnv.setup.ts",
+    "apps/server/src/testUtils/shardWeights.json",
+    "packages/shared/src/testing/xdgGlobalSetup.ts",
+    "packages/contracts/package.json",
+  ]) {
+    const plan = planOf(planChecks([file], { reader: fsReader(REPO) }), "server-tests");
+    NodeAssert.equal(plan.mode, "whole", file);
+    NodeAssert.ok(plan.args.includes("src/personal"), file);
+  }
+  // an ordinary source file still selects.
+  const plan = planOf(
+    planChecks(["apps/server/src/personal/push/PersonalPushService.ts"], {
+      reader: fsReader(REPO),
+    }),
+    "server-tests",
+  );
+  NodeAssert.equal(plan.mode, "selected");
+});
