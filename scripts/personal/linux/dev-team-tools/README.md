@@ -18,6 +18,8 @@ node tools/gate-evidence.mjs --version 1.2.3 --release 0123456789ab --repo-root 
 node tools/check-gate-evidence.mjs --version 1.2.3 --release 0123456789ab --repo-root /path/to/repo --commit FULL_NOTES_COMMIT
 ```
 
+Pass `scripts/personal/node/gates-linux.scoped.json` as `--gates-json` to the new tool (it carries the `{args}` templates and the `release-tools` gate). The installed (old) tool must be given `scripts/personal/node/gates-linux.json`: it knows no placeholder. A change to a file that the installed tool reads must stay readable by the installed tool for one release.
+
 `build.sh` calls the chosen repo's `node scripts/personal/node/hbots.mjs build
 --copy-externals` under the lock. It never activates. `heavy-job.sh` accepts an
 argument vector after `--`; use `bash -o pipefail -c '...'` for shell syntax.

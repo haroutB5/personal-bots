@@ -5,7 +5,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { readJson, run, runAsync, sha256File, atomicWrite } from "./util.mjs";
-import { verifySkippedGates } from "./gateScope.mjs";
+import { verifyPlans } from "./gateScope.mjs";
+import { gitReader } from "./serverTestSelect.mjs";
 
 const HASH_CLI = NodePath.join(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -136,21 +137,19 @@ export async function verifySeal(cfg, a, names, opts = {}) {
   if (problems.length)
     throw new Error(`Staged artifact is not the sealed one: ${problems.slice(0, 6).join(" ")}`);
   if (seal.evidence != null) {
-    const skips = skipEvidenceProblems(cfg, a, readJson(facts.evidencePath));
-    if (skips.length)
-      throw new Error(`Skipped gates are not justified: ${skips.slice(0, 4).join(" ")}`);
+    const plans = planEvidenceProblems(cfg, a, readJson(facts.evidencePath));
+    if (plans.length)
+      throw new Error(`Gate plans are not justified: ${plans.slice(0, 4).join(" ")}`);
   }
   return seal;
 }
 
 /**
- * Recompute the live-to-release diff and refuse a skip the allowlist does not
- * cover. The evidence's baseSha and changedPaths are compared with that diff,
- * never trusted as the source of truth.
+ * Recompute every gate plan from the live-to-release diff and the release
+ * commit's own files. The evidence's mode, args, base and changedPaths are
+ * compared with that plan, never trusted as the source of truth.
  */
-export function skipEvidenceProblems(cfg, a, evidence) {
-  const skipped = (evidence?.gates ?? []).filter((gate) => gate?.skipped === true);
-  if (skipped.length === 0) return [];
+export function planEvidenceProblems(cfg, a, evidence) {
   let live = "";
   try {
     live = NodeFS.readFileSync(cfg.currentTxt, "utf8").trim();
@@ -162,28 +161,33 @@ export function skipEvidenceProblems(cfg, a, evidence) {
     });
     return r.code === 0 ? r.out.split("\n")[0].trim() : null;
   };
-  const liveSha = resolve(live);
   const releaseSha = resolve(a.release);
+  // A release that is already live (--verify-live after the restart) has current.txt equal to
+  // itself, so the live-to-release diff is empty. The base is then the rollback commit, the
+  // live release it replaced, which is what the evidence was collected against.
+  let liveSha = resolve(live);
+  if (liveSha && releaseSha && liveSha === releaseSha) liveSha = resolve(a.rollback) ?? liveSha;
   if (!liveSha || !releaseSha) {
     return [
-      `cannot verify skipped gates: live ${live || "(missing)"} and release ${a.release} are not both commits in ${a["repo-root"]}`,
+      `cannot verify gate plans: live ${live || "(missing)"} and release ${a.release} are not both commits in ${a["repo-root"]}`,
     ];
   }
   const diff = run(
     "git",
-    ["-C", a["repo-root"], "diff", "--no-renames", "--name-only", liveSha, releaseSha],
+    ["-C", a["repo-root"], "diff", "--no-renames", "--name-only", "-z", liveSha, releaseSha],
     { timeout: 120_000 },
   );
   if (diff.code !== 0) {
     return [
-      `cannot verify skipped gates: git diff ${liveSha.slice(0, 12)}..${releaseSha.slice(0, 12)} failed: ${diff.err.slice(0, 200)}`,
+      `cannot verify gate plans: git diff ${liveSha.slice(0, 12)}..${releaseSha.slice(0, 12)} failed: ${diff.err.slice(0, 200)}`,
     ];
   }
-  return verifySkippedGates({
+  return verifyPlans({
     evidence,
     liveSha,
     releaseSha,
-    changedPaths: diff.out.split("\n").filter(Boolean),
+    changedPaths: diff.out.split("\0").filter(Boolean),
+    reader: gitReader(a["repo-root"], releaseSha),
   });
 }
 
@@ -203,9 +207,9 @@ export function readEvidence(evidencePath, binSha, a) {
 export async function writeSeal(cfg, a, names, note) {
   const facts = await artifactFacts(cfg, a, names);
   const { evidence, e2e } = readEvidence(facts.evidencePath, facts.binSha, a);
-  const skips = skipEvidenceProblems(cfg, a, evidence);
-  if (skips.length) throw new Error(`Cannot seal: ${skips.join(" ")}`);
-  const e2eSkipped = e2e.skipped === true;
+  const plans = planEvidenceProblems(cfg, a, evidence);
+  if (plans.length) throw new Error(`Cannot seal: ${plans.join(" ")}`);
+  const e2eSkipped = e2e.mode === "skip";
   const seal = {
     schema: 1,
     version: a.version,
@@ -241,8 +245,12 @@ export async function writeSeal(cfg, a, names, note) {
   note(
     `Seal written: ${names.seal} (dist ${facts.dist.files} files, externals ${facts.externals.files}, tools ${facts.tools.files}, e2e ${e2eSkipped ? "skipped by the gate-inputs table" : `${seal.evidence.e2ePassed}/${seal.evidence.e2eJourneys}`} in the evidence).`,
   );
-  for (const gate of (evidence.gates ?? []).filter((g) => g?.skipped === true))
+  for (const gate of (evidence.gates ?? []).filter((g) => g?.mode === "skip"))
     note(`Gate ${gate.id} skipped: ${gate.reason}`);
+  for (const gate of (evidence.gates ?? []).filter((g) => g?.mode === "selected"))
+    note(
+      `Gate ${gate.id} selected ${gate.args?.length ?? 0} ${gate.selector?.split("@")[0] ?? "items"}: ${gate.reason}`,
+    );
   return seal;
 }
 
