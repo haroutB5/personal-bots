@@ -714,3 +714,38 @@ NodeTest.test("a spawned entry and a text read carry through a small fixture tre
     NodeAssert.ok(select("deep.ts").includes("src/personal/reader.test.ts"));
   });
 });
+
+NodeTest.test("the Kotlin dependency regex reads every project() form", () => {
+  const forms = [
+    "implementation project(':util')",
+    'implementation project(":util")',
+    "api project(':util')",
+    "testImplementation project(':util')",
+    "implementation(project(':util'))",
+    'implementation(project(":util"))',
+    'api( project( ":util" ) )',
+    "debugImplementation project(path: ':util')",
+  ];
+  for (const form of forms)
+    withFixture((f) => {
+      const mod = (name, files) => {
+        for (const [rel, text] of Object.entries(files)) {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(f.repo, rel)), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(f.repo, rel), text);
+        }
+      };
+      const base = "apps/hbots-mobile/modules";
+      mod("util", { [`${base}/util/android/src/main/Util.kt`]: "class Util\n" });
+      mod("app", {
+        [`${base}/app/android/build.gradle`]: `dependencies {\n  ${form}\n}\n`,
+        [`${base}/app/android/src/test/AppTest.kt`]: "class AppTest\n",
+      });
+      const head = commit(f.repo, "kotlin fake");
+      const plan = planOf(
+        planChecks([`${base}/util/android/src/main/Util.kt`], { reader: gitReader(f.repo, head) }),
+        "hbots-mobile-kotlin",
+      );
+      NodeAssert.equal(plan.mode, "selected", form);
+      NodeAssert.deepEqual(plan.args, [":app:testDebugUnitTest"], form);
+    });
+});

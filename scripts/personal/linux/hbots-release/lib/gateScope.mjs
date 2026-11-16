@@ -303,7 +303,9 @@ function kotlinModules(reader) {
     const gradle = reader.read(`apps/hbots-mobile/modules/${name}/android/build.gradle`) ?? "";
     deps.set(
       name,
-      [...gradle.matchAll(/implementation\s+project\(['"]:([^'"]+)['"]\)/g)].map((m) => m[1]),
+      // Any configuration (implementation, api, testImplementation, ...) and either
+      // call form: `x project(':a')` or `x(project(":a"))`, with `path:` allowed.
+      [...gradle.matchAll(/project\(\s*(?:path\s*:\s*)?['"]:([^'":]+)['"]/g)].map((m) => m[1]),
     );
   }
   return { names: [...tested].sort(), all, deps };
