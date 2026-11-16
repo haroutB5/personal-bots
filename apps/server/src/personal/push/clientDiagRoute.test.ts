@@ -286,6 +286,48 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "perf", journey: "a-chat-open", ms: 9 });
   });
 
+  it("keeps the cold-start marks of an a-start beacon and drops bad ones", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-start",
+          jsMainMs: 612,
+          sessionMs: 840,
+          cachedListMs: 1790,
+          liveListMs: 2210,
+          cold: true,
+          sessionText: "not kept",
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-start",
+      jsMainMs: 612,
+      sessionMs: 840,
+      cachedListMs: 1790,
+      liveListMs: 2210,
+      cold: true,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "perf", journey: "a-start", jsMainMs: 600, cold: false }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-start", jsMainMs: 600, cold: false });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-start",
+          jsMainMs: -1,
+          sessionMs: "x",
+          cachedListMs: 1.5,
+          cold: "yes",
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-start" });
+  });
+
   it("accepts the stale-notification cleanup line: how many, and why", () => {
     expect(
       sanitizeClientDiag(

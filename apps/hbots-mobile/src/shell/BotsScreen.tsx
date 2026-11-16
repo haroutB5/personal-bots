@@ -46,6 +46,8 @@ import {
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { onChatPress } from "../personal/chatPress";
+import { reportPerf } from "../crash/crashReporter";
+import { noteStartMark, takeStartReport } from "../personal/startPerf";
 import { useBotShells } from "../personal/useBotShells";
 import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
 import { GroupAvatarCluster } from "../groups/GroupAvatarCluster";
@@ -71,6 +73,13 @@ import { SystemStatsLine } from "./SystemStatsLine";
 import { tokens } from "./tokens";
 
 const SKELETON_ROWS = 4;
+/** A phone that never reaches live data still sends its start marks after this wait. */
+const START_REPORT_WAIT_MS = 15_000;
+
+function sendStartReport(): void {
+  const body = takeStartReport();
+  if (body !== null) reportPerf(body);
+}
 
 function statusColor(summary: BotSummary, now: number): string {
   return botStatus(summary, now).tone === "review" ? tokens.reviewText : tokens.textSecondary;
@@ -827,6 +836,24 @@ export function BotsScreen({
     visibleCount: visible.length,
     query,
   });
+
+  useEffect(() => {
+    if (!showingSnapshot) return;
+    const frame = requestAnimationFrame(() => {
+      noteStartMark("cachedList");
+      setTimeout(sendStartReport, START_REPORT_WAIT_MS);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [showingSnapshot]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const frame = requestAnimationFrame(() => {
+      noteStartMark("liveList");
+      sendStartReport();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loaded]);
 
   return (
     <KeyboardAvoidingView

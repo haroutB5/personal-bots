@@ -31,6 +31,7 @@ import { LauncherBridge } from "./launcher/LauncherBridge";
 import { WorkingBridge } from "./working/WorkingBridge";
 import { pushController } from "./notifications/pushRuntime";
 import { AppAtomRegistryProvider } from "./personal/atomRegistry";
+import { noteStartMark } from "./personal/startPerf";
 import { createNativePersonal, type NativePersonal } from "./personal/nativePersonalClient";
 import { getOutboxSnapshot } from "@hbots/personal-client/composer/outbox";
 import { wipeLocalData } from "./platform/nativePorts";
@@ -330,6 +331,7 @@ function App() {
       if (!live) {
         return "done";
       }
+      noteStartMark("session");
       if (session === null) {
         await wipeLocalData();
         const server = await loadServer();

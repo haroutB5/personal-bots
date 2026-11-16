@@ -190,6 +190,15 @@ const FIELDS: Record<string, Read> = {
   writeMs: count,
   writeBytes: count,
   writes: count,
+  // perf a-start (hbots-mobile startPerf.ts): when the JS bundle began to run, the saved session
+  // was read, and the chat list first painted from its saved copy and from live data, on the
+  // phone's JS clock. cold says the process was started in front of the user. A phone that
+  // sends none, or sends one of them, still logs the old record.
+  jsMainMs: count,
+  sessionMs: count,
+  cachedListMs: count,
+  liveListMs: count,
+  cold: bool,
   clients: (value) =>
     Array.isArray(value)
       ? value

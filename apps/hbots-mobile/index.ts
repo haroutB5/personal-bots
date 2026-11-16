@@ -1,3 +1,4 @@
+import "./src/personal/startMain";
 import "./src/polyfills";
 
 import { registerRootComponent } from "expo";
