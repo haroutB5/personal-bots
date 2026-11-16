@@ -1,9 +1,12 @@
 import type { GoalNowRow } from "@hbots/personal-client/work/nowLine";
-import type {
-  ClosedProject,
-  ProjectCard,
-  ProjectEstimateTone,
-  ProjectSummary,
+import {
+  goalChatLine,
+  type ClosedProject,
+  type GoalChatLine,
+  type GoalChatLookup,
+  type ProjectCard,
+  type ProjectEstimateTone,
+  type ProjectSummary,
 } from "@hbots/personal-client/work/projectCards";
 import type { PersonalBot, PersonalProjectStepState } from "@t3tools/contracts";
 import { useState } from "react";
@@ -38,6 +41,57 @@ function Segments({ steps }: { readonly steps: ReadonlyArray<PersonalProjectStep
         />
       ))}
     </View>
+  );
+}
+
+export function GoalOwnerLine({
+  line,
+  bot,
+  testID,
+  onOpenChat,
+}: {
+  readonly line: GoalChatLine;
+  readonly bot: PersonalBot | undefined;
+  readonly testID: string;
+  readonly onOpenChat: (botId: string, threadId: string) => void;
+}) {
+  const body = (
+    <>
+      <SmallBotAvatar bot={bot} size={16} />
+      <Text style={styles.ownerBot} maxFontSizeMultiplier={1.3}>
+        {line.botName}
+      </Text>
+      {line.chatTitle === null ? null : (
+        <>
+          <Text style={styles.ownerSep} maxFontSizeMultiplier={1.3}>
+            ›
+          </Text>
+          <Text style={styles.ownerChat} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+            {line.chatTitle}
+          </Text>
+        </>
+      )}
+    </>
+  );
+  const threadId = line.threadId;
+  if (threadId === null) {
+    return (
+      <View style={styles.owner} testID={testID}>
+        {body}
+      </View>
+    );
+  }
+  return (
+    <Pressable
+      onPress={() => onOpenChat(line.botId, threadId)}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${line.botName} chat${line.chatTitle === null ? "" : `, ${line.chatTitle}`}`}
+      android_ripple={{ color: "rgba(255,255,255,0.08)" }}
+      testID={testID}
+      style={styles.owner}
+    >
+      {body}
+    </Pressable>
   );
 }
 
@@ -87,16 +141,26 @@ function Card({
   bot,
   rows,
   botMap,
+  chats,
   onOpen,
+  onOpenChat,
   onSelectRow,
 }: {
   readonly card: ProjectCard;
   readonly bot: PersonalBot | undefined;
   readonly rows: ReadonlyArray<GoalNowRow>;
   readonly botMap: ReadonlyMap<string, PersonalBot>;
+  readonly chats: ReadonlyMap<string, GoalChatLookup>;
   readonly onOpen: (projectId: string) => void;
+  readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onSelectRow: (barId: string) => void;
 }) {
+  const owner = goalChatLine({
+    leadBotId: card.leadBotId,
+    threadId: card.threadId,
+    bot: botMap.get(card.leadBotId),
+    chats,
+  });
   return (
     <View style={styles.card}>
       <Pressable
@@ -119,6 +183,12 @@ function Card({
             {card.estimateLabel}
           </Text>
         </View>
+        <GoalOwnerLine
+          line={owner}
+          bot={botMap.get(card.leadBotId)}
+          testID={`work-project-owner-${card.projectId}`}
+          onOpenChat={onOpenChat}
+        />
         <Segments steps={card.segments} />
         <View style={styles.bottom}>
           {card.whoBotId === null ? null : <SmallBotAvatar bot={bot} size={16} />}
@@ -187,13 +257,17 @@ export function ProjectCards({
   summary,
   rowsByProject,
   botMap,
+  chats,
   onOpen,
+  onOpenChat,
   onSelectRow,
 }: {
   readonly summary: ProjectSummary;
   readonly rowsByProject: ReadonlyMap<string, ReadonlyArray<GoalNowRow>>;
   readonly botMap: ReadonlyMap<string, PersonalBot>;
+  readonly chats: ReadonlyMap<string, GoalChatLookup>;
   readonly onOpen: (projectId: string) => void;
+  readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onSelectRow: (barId: string) => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
@@ -206,7 +280,9 @@ export function ProjectCards({
       bot={entry.whoBotId === null ? undefined : botMap.get(entry.whoBotId)}
       rows={rowsByProject.get(entry.projectId) ?? NO_ROWS}
       botMap={botMap}
+      chats={chats}
       onOpen={onOpen}
+      onOpenChat={onOpenChat}
       onSelectRow={onSelectRow}
     />
   );
@@ -307,6 +383,10 @@ const styles = StyleSheet.create({
   segmentDoing: { backgroundColor: tokens.working },
   segmentTodo: { backgroundColor: tokens.fillMuted },
   bottom: { flexDirection: "row", alignItems: "center", gap: 6 },
+  owner: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 6 },
+  ownerBot: { flexShrink: 0, color: tokens.textSecondary, fontSize: 13 },
+  ownerSep: { flexShrink: 0, color: tokens.textTertiary, fontSize: 13 },
+  ownerChat: { flexShrink: 1, color: tokens.textSecondary, fontSize: 13 },
   line: { flex: 1, color: tokens.textSecondary, fontSize: 13 },
   who: { color: tokens.text },
   row: {

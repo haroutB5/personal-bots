@@ -2,7 +2,7 @@ import type { PersonalProject, PersonalProjectStep, PersonalTask } from "@t3tool
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildProjectCards } from "./projectCards.ts";
+import { buildProjectCards, goalChatLine, goalChatMap } from "./projectCards.ts";
 
 const NOW = Date.parse("2026-11-14T12:00:00.000Z");
 const MIN = 60_000;
@@ -296,5 +296,108 @@ describe("buildProjectCards folds", () => {
       quiet: [],
       closed: [],
     });
+  });
+});
+
+const CHATS = new Map([
+  ["thread-poteto", { title: "Hbots" }],
+  ["thread-long", { title: "Goal cards and the chat that runs each goal, named in full" }],
+]);
+const POTETO = { name: "Poteto" };
+
+const ownerLine = (input?: {
+  readonly threadId?: string | null;
+  readonly bot?: { readonly name: string; readonly hidePreviews?: boolean } | null;
+}) =>
+  goalChatLine({
+    leadBotId: "poteto",
+    threadId: input?.threadId === undefined ? "thread-poteto" : input.threadId,
+    bot: input?.bot === undefined ? POTETO : input.bot,
+    chats: CHATS,
+  });
+
+describe("goalChatLine", () => {
+  it("names the lead bot and the chat a normal goal runs in", () => {
+    expect(ownerLine()).toEqual({
+      botId: "poteto",
+      botName: "Poteto",
+      chatTitle: "Hbots",
+      threadId: "thread-poteto",
+    });
+  });
+
+  it("a goal with no chat shows the bot alone and cannot be tapped", () => {
+    expect(ownerLine({ threadId: null })).toEqual({
+      botId: "poteto",
+      botName: "Poteto",
+      chatTitle: null,
+      threadId: null,
+    });
+  });
+
+  it("a chat that is gone shows the bot alone and cannot be tapped", () => {
+    expect(ownerLine({ threadId: "thread-deleted" })).toEqual({
+      botId: "poteto",
+      botName: "Poteto",
+      chatTitle: null,
+      threadId: null,
+    });
+  });
+
+  it("a bot with hidden previews shows its name alone but the chat still opens", () => {
+    expect(ownerLine({ bot: { name: "Poteto", hidePreviews: true } })).toEqual({
+      botId: "poteto",
+      botName: "Poteto",
+      chatTitle: null,
+      threadId: "thread-poteto",
+    });
+  });
+
+  it("a long chat title is kept whole for the row to ellipsize, and the bot name never changes", () => {
+    const line = ownerLine({ threadId: "thread-long" });
+    expect(line.botName).toBe("Poteto");
+    expect(line.chatTitle).toBe("Goal cards and the chat that runs each goal, named in full");
+    expect(line.threadId).toBe("thread-long");
+  });
+
+  it("a removed lead bot still names the chat it left behind", () => {
+    expect(ownerLine({ bot: null })).toEqual({
+      botId: "poteto",
+      botName: "Removed bot",
+      chatTitle: "Hbots",
+      threadId: "thread-poteto",
+    });
+  });
+});
+
+describe("goalChatMap", () => {
+  const shell = (id: string, archivedAt: string | null = null) => ({
+    id,
+    title: `Chat ${id}`,
+    archivedAt,
+  });
+  const link = (threadId: string, archivedAt: string | null = null) => ({
+    threadId,
+    archivedAt: archivedAt === null ? null : DateTime.makeUnsafe(archivedAt),
+  });
+
+  it("keeps every open chat and leaves out archived ones, from either side", () => {
+    const chats = goalChatMap({
+      shells: [
+        shell("open"),
+        shell("shell-archived", "2026-11-01T00:00:00.000Z"),
+        shell("link-archived"),
+      ],
+      links: [
+        link("open"),
+        link("shell-archived"),
+        link("link-archived", "2026-11-02T00:00:00.000Z"),
+      ],
+    });
+    expect([...chats.entries()]).toEqual([["open", { title: "Chat open" }]]);
+  });
+
+  it("a chat the list does not hold is not there to name", () => {
+    expect(goalChatMap({ shells: [], links: [link("deleted")] }).size).toBe(0);
   });
 });

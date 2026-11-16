@@ -1,42 +1,9 @@
-import type { PhonePushKind } from "@t3tools/contracts";
+import { hasDestructiveWord, type PhonePushKind } from "@t3tools/contracts";
+
+export { DESTRUCTIVE_WORDS, hasDestructiveWord } from "@t3tools/contracts";
 
 export const INLINE_MAX_OPTIONS = 3;
 export const INLINE_MAX_LABEL_LENGTH = 20;
-
-/**
- * Words that make an option unsafe to send from a notification, SPEC 5b. A
- * word matches where a word starts, so "deployment" and "pushed" match too:
- * a false refusal only costs the phone a tap into the app.
- */
-export const DESTRUCTIVE_WORDS = [
-  "delete",
-  "remove",
-  "drop",
-  "reset",
-  "wipe",
-  "revoke",
-  "rotate",
-  "overwrite",
-  "discard",
-  "force",
-  "uninstall",
-  "deploy",
-  "publish",
-  "merge",
-  "push",
-  "pay",
-  "buy",
-  "send",
-  "sign out",
-  "cancel",
-] as const;
-
-const DESTRUCTIVE_PATTERN = new RegExp(
-  `\\b(?:${DESTRUCTIVE_WORDS.map((word) => word.replace(/\s+/g, "[\\s-]*")).join("|")})`,
-  "i",
-);
-
-export const hasDestructiveWord = (text: string): boolean => DESTRUCTIVE_PATTERN.test(text);
 
 export interface PendingQuestionOption {
   readonly label: string;

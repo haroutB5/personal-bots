@@ -1,10 +1,12 @@
-import { PersonalBotId } from "@t3tools/contracts";
+import { PersonalBotId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+
+const thread = (id: string) => ThreadId.make(id);
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PersonalProjectRepository from "./PersonalProjectRepository.ts";
@@ -339,4 +341,91 @@ describe("PersonalProjectRepository history", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe("PersonalProjectRepository.list", () => {
+  it.effect("gives each goal its chats: its own chat first, then the newest, 10 at most", () => {
+    const insertTask = (input: {
+      readonly taskId: string;
+      readonly projectId: string;
+      readonly threadId: string;
+      readonly updatedAt: string;
+    }) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+            INSERT INTO personal_tasks (
+              task_id, root_task_id, bot_id, thread_id, title, objective, status, source,
+              idempotency_key, depth, max_depth, max_children, project_id, created_at, updated_at
+            )
+            VALUES (
+              ${input.taskId}, ${input.taskId}, 'bot-builder', ${input.threadId}, 'Task', 'Do it.',
+              'running', 'delegation', ${input.taskId}, 1, 3, 5, ${input.projectId},
+              '2026-11-15T08:00:00.000Z', ${input.updatedAt}
+            )
+          `;
+      });
+    return Effect.gen(function* () {
+      const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
+      const busy = yield* projects.update({
+        leadBotId: LEAD,
+        threadId: thread("thread-lead"),
+        name: "Busy goal",
+        steps: STEPS,
+      });
+      const quiet = yield* projects.update({
+        leadBotId: LEAD,
+        threadId: thread("thread-quiet"),
+        name: "Quiet goal",
+        steps: STEPS,
+      });
+      const detached = yield* projects.update({
+        leadBotId: OTHER_LEAD,
+        threadId: null,
+        name: "No lead chat",
+        steps: STEPS,
+      });
+      for (let index = 1; index <= 12; index += 1) {
+        const minute = String(index).padStart(2, "0");
+        yield* insertTask({
+          taskId: `task-${minute}`,
+          projectId: busy.projectId,
+          threadId: `thread-${minute}`,
+          updatedAt: `2026-11-15T10:${minute}:00.000Z`,
+        });
+      }
+      // The lead's own chat also carries a task: it still comes first, once.
+      yield* insertTask({
+        taskId: "task-lead",
+        projectId: busy.projectId,
+        threadId: "thread-lead",
+        updatedAt: "2026-11-15T09:00:00.000Z",
+      });
+      yield* insertTask({
+        taskId: "task-detached",
+        projectId: detached.projectId,
+        threadId: "thread-helper",
+        updatedAt: "2026-11-15T10:30:00.000Z",
+      });
+
+      const listed = yield* projects.list();
+      const chatsOf = (projectId: string) =>
+        listed.find((entry) => entry.projectId === projectId)?.chats;
+
+      expect(chatsOf(busy.projectId)).toEqual([
+        "thread-lead",
+        "thread-12",
+        "thread-11",
+        "thread-10",
+        "thread-09",
+        "thread-08",
+        "thread-07",
+        "thread-06",
+        "thread-05",
+        "thread-04",
+      ]);
+      expect(chatsOf(quiet.projectId)).toEqual(["thread-quiet"]);
+      expect(chatsOf(detached.projectId)).toEqual(["thread-helper"]);
+    }).pipe(Effect.provide(layer));
+  });
 });

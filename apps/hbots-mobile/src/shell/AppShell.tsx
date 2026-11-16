@@ -382,6 +382,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                     navigation.replace("Chat", { botId, threadId, via: "chip" })
                   }
                   onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+                  onOpenTask={(taskId) => navigation.push("Task", { taskId })}
                   onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
                   onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
                   onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
@@ -399,6 +400,8 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 onOpenChat={(threadId) =>
                   navigation.replace("Chat", { botId: route.params.botId, threadId })
                 }
+                onOpenBotChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onOpenTask={(taskId) => navigation.push("Task", { taskId })}
               />
             )}
           </Stack.Screen>

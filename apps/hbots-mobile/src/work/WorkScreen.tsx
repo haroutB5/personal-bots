@@ -25,14 +25,25 @@ import {
   type WorkTone,
 } from "@hbots/personal-client/work/workTimeline";
 import { buildRunningView, type GoalNowRow } from "@hbots/personal-client/work/nowLine";
-import { buildProjectCards } from "@hbots/personal-client/work/projectCards";
+import { buildProjectCards, goalChatMap } from "@hbots/personal-client/work/projectCards";
 import { taskDisplayTitle } from "@hbots/personal-client/work/taskPresentation";
 import { buildWorkDigest } from "@hbots/personal-client/work/workDigest";
-import type { PersonalBot, PersonalTask, PersonalTaskId } from "@t3tools/contracts";
+import {
+  answerNeedsConfirm,
+  buildWorkQuestionCards,
+  type WorkQuestionCard,
+} from "@hbots/personal-client/work/workQuestionCards";
+import {
+  MessageId,
+  ThreadId,
+  type PersonalBot,
+  type PersonalTask,
+  type PersonalTaskId,
+} from "@t3tools/contracts";
 import { useIsFocused } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AppState, Pressable, StyleSheet, Text, View } from "react-native";
+import { AppState, Platform, Pressable, StyleSheet, Text, ToastAndroid, View } from "react-native";
 
 import { confirmDestructive } from "../components/confirmDestructive";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -43,6 +54,7 @@ import { EmptyText, ScreenScroll, SmallBotAvatar } from "../tasks/TaskUi";
 import { useWorkingThreads } from "../working/useWorkingThreads";
 import { ProjectCards } from "./ProjectCards";
 import { ProjectSheet } from "./ProjectSheet";
+import { QuestionCard, type QuestionPhase } from "./QuestionCard";
 import { ensureSeenAtLoaded, saveSeenAt, useSeenAt, useSeenAtLoaded } from "./seenAt";
 import { SinceLooked } from "./SinceLooked";
 
@@ -307,6 +319,12 @@ export function WorkScreen({
   const cancel = native.client.useAtomCommand(native.automation.personalTaskCancel, {
     reportFailure: false,
   });
+  const answerQuestion = native.client.useAtomCommand(native.automation.personalWorkAnswer, {
+    reportFailure: false,
+  });
+  const workQuestions = native.automation.usePersonalWorkQuestions(environmentId);
+  const [questionPhases, setQuestionPhases] = useState<Readonly<Record<string, QuestionPhase>>>({});
+  const questionCommandIds = useRef(new Map<string, string>());
   const now = useMinuteNow();
   const [range, setRange] = useState<WorkRangeId>("4h");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -342,6 +360,7 @@ export function WorkScreen({
     () => new Map(shells.map((shell) => [shell.id as string, shell.title])),
     [shells],
   );
+  const goalChats = useMemo(() => goalChatMap({ shells, links: links ?? [] }), [shells, links]);
   const resultAsOf = workSince.data === null ? null : DateTime.formatIso(workSince.data.asOf);
   // First run: the first response's asOf becomes the marker, and no box shows.
   useEffect(() => {
@@ -400,6 +419,33 @@ export function WorkScreen({
     });
   }, [tasks, shells, links, bots, now, range, chatTitles]);
   const view = useMemo(() => buildWorkNow(timeline), [timeline]);
+  // A chat already on screen (working or waiting) owns its answer; a second
+  // card for it would race the bar.
+  const liveThreadIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const bar of workBarsById(timeline).values()) {
+      if (bar.endMs === null && bar.threadId !== null) ids.add(bar.threadId);
+    }
+    return ids;
+  }, [timeline]);
+  const questionCards = useMemo(
+    () =>
+      buildWorkQuestionCards({
+        questions: (workQuestions.data?.questions ?? []).map((question) => ({
+          threadId: question.threadId,
+          botId: question.botId,
+          messageId: question.messageId,
+          askedAtMs: DateTime.toEpochMillis(question.askedAt),
+          question: question.question,
+          options: question.options,
+        })),
+        botName: (botId) => botMap.get(botId)?.name ?? "Removed bot",
+        chatTitle: (threadId) => chatTitles.get(threadId) ?? "Chat",
+        hiddenThreadIds: liveThreadIds,
+        nowMs: now,
+      }),
+    [workQuestions.data, botMap, chatTitles, liveThreadIds, now],
+  );
   const projects = projectsQuery.data?.projects;
   const projectSummary = useMemo(
     () =>
@@ -471,6 +517,47 @@ export function WorkScreen({
     else setActionError("Could not stop the task.");
   };
 
+  const answerCard = async (card: WorkQuestionCard, choice: string) => {
+    const bot = botMap.get(card.botId)?.name ?? "The bot";
+    if (answerNeedsConfirm(choice)) {
+      const confirmed = await confirmDestructive(
+        `Send "${choice}"?\n${bot} will act on it.`,
+        "Send",
+      );
+      if (!confirmed) return;
+    }
+    const tapKey = `${card.key}:${choice}`;
+    const commandId =
+      questionCommandIds.current.get(tapKey) ?? native.client.ports.ids.randomUUID();
+    questionCommandIds.current.set(tapKey, commandId);
+    setQuestionPhases((phases) => ({ ...phases, [card.key]: { kind: "sending", choice } }));
+    const outcome = await answerQuestion({
+      environmentId,
+      input: {
+        threadId: ThreadId.make(card.threadId),
+        messageId: MessageId.make(card.messageId),
+        choice,
+        commandId,
+      },
+    });
+    if (outcome._tag !== "Success") {
+      setQuestionPhases((phases) => ({ ...phases, [card.key]: { kind: "failed" } }));
+      return;
+    }
+    if (outcome.value.status === "sent") {
+      questionCommandIds.current.delete(tapKey);
+      setQuestionPhases((phases) => ({ ...phases, [card.key]: { kind: "sent", choice } }));
+      return;
+    }
+    setQuestionPhases((phases) => ({ ...phases, [card.key]: { kind: "idle" } }));
+    if (outcome.value.status === "stale") {
+      questionCommandIds.current.delete(tapKey);
+      if (Platform.OS === "android") ToastAndroid.show("Already answered", ToastAndroid.SHORT);
+      return;
+    }
+    setQuestionPhases((phases) => ({ ...phases, [card.key]: { kind: "failed" } }));
+  };
+
   return (
     <View style={styles.screen}>
       {error !== null ? (
@@ -480,11 +567,21 @@ export function WorkScreen({
       ) : (
         <ScreenScroll contentStyle={styles.body}>
           {digest === null ? null : <SinceLooked digest={digest} onClear={clearDigest} />}
-          {view.needs.length === 0 ? null : (
+          {view.needs.length === 0 && questionCards.length === 0 ? null : (
             <View style={styles.needs} testID="work-needs">
               <Text style={styles.needsTitle} maxFontSizeMultiplier={1.3}>
                 Needs you
               </Text>
+              {questionCards.map((card) => (
+                <QuestionCard
+                  key={card.key}
+                  card={card}
+                  bot={botMap.get(card.botId)}
+                  phase={questionPhases[card.key] ?? { kind: "idle" }}
+                  onAnswer={(choice) => void answerCard(card, choice)}
+                  onOpenChat={() => onOpenChat(card.botId, card.threadId)}
+                />
+              ))}
               {view.needs.map((entry) => (
                 <NowRow
                   key={entry.id}
@@ -495,11 +592,13 @@ export function WorkScreen({
                   onSelect={setSelectedId}
                 />
               ))}
-              <Text style={styles.needsHint} maxFontSizeMultiplier={1.3}>
-                {view.needs.length === 1 && view.needs[0] !== undefined
-                  ? `${workNeedLabel(view.needs[0])}. Tap to open.`
-                  : "Tap one to open it."}
-              </Text>
+              {view.needs.length === 0 ? null : (
+                <Text style={styles.needsHint} maxFontSizeMultiplier={1.3}>
+                  {view.needs.length === 1 && view.needs[0] !== undefined
+                    ? `${workNeedLabel(view.needs[0])}. Tap to open.`
+                    : "Tap one to open it."}
+                </Text>
+              )}
             </View>
           )}
 
@@ -507,7 +606,9 @@ export function WorkScreen({
             summary={projectSummary}
             rowsByProject={running.rowsByProject}
             botMap={botMap}
+            chats={goalChats}
             onOpen={setProjectId}
+            onOpenChat={onOpenChat}
             onSelectRow={setSelectedId}
           />
 
@@ -731,6 +832,7 @@ export function WorkScreen({
         tasks={tasks}
         botMap={botMap}
         chatTitles={chatTitles}
+        chats={goalChats}
         nowMs={now}
         onClose={() => setProjectId(null)}
         onOpenTask={onOpenTask}

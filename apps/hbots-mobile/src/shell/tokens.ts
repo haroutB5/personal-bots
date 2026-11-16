@@ -26,4 +26,6 @@ export const tokens = {
   info: "#4a8cff",
   avatarHalo: "#6f6f6b",
   scrim: "rgba(0,0,0,0.55)",
+  goalTagBg: "#1f2a22",
+  goalTagText: "#bfe8c8",
 } as const;

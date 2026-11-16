@@ -216,6 +216,8 @@ export const WS_METHODS = {
   personalProjectsList: "personalProjects.list",
   personalProjectsHistory: "personalProjects.history",
   personalWorkSince: "personalWork.since",
+  personalWorkQuestions: "personalWork.questions",
+  personalWorkAnswer: "personalWork.answer",
   personalTasksGet: "personalTasks.get",
   personalTasksCreate: "personalTasks.create",
   personalTasksCancel: "personalTasks.cancel",

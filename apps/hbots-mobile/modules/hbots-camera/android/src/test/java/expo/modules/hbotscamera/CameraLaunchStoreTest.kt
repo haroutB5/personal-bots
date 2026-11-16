@@ -186,6 +186,35 @@ class CameraLaunchStoreTest {
     assertTrue(store.claim("env-1/thread-1") is CameraClaim.Photo)
   }
 
+  @Test
+  fun pruneKeepsTheRecordsFileWhenTheStorePathIsASymlink() {
+    val now = 1_800_000_000_000L
+    val real = Files.createTempDirectory("hbots-camera-linked").toFile()
+    val alias = File(real.parentFile, "${real.name}-alias")
+    try {
+      Files.createSymbolicLink(alias.toPath(), real.toPath())
+      val linkedDir = File(alias, "camera")
+      val linked = CameraLaunchStore(records, linkedDir)
+      val shot = linked.begin("env-1/thread-1", 1L).apply {
+        writeBytes(byteArrayOf(1, 2, 3))
+        setLastModified(now - 25 * HOUR)
+      }
+      val orphan = File(linkedDir, "orphan.jpg").apply {
+        writeBytes(byteArrayOf(4))
+        setLastModified(now - 25 * HOUR)
+      }
+
+      linked.prune(now)
+
+      assertTrue(shot.isFile)
+      assertFalse(orphan.exists())
+      assertTrue(linked.claim("env-1/thread-1") is CameraClaim.Photo)
+    } finally {
+      alias.delete()
+      real.deleteRecursively()
+    }
+  }
+
   private companion object {
     const val HOUR = 60 * 60 * 1000L
   }

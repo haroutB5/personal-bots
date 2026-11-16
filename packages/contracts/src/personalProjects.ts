@@ -30,6 +30,8 @@ export const PersonalProjectState = Schema.Union([
 export type PersonalProjectState = typeof PersonalProjectState.Type;
 
 export const PERSONAL_PROJECT_WHY_MAX = 140;
+/** Chats one goal tags: its own first, then the newest others. */
+export const PERSONAL_PROJECT_CHATS_MAX = 10;
 
 /**
  * Work a team lead keeps across many tasks. The lead writes the name, the
@@ -51,6 +53,14 @@ export const PersonalProject = Schema.Struct({
   /** One plain line from the lead on why this goal matters. Absent on old servers. */
   why: Schema.optional(
     Schema.NullOr(Schema.String.check(Schema.isMaxLength(PERSONAL_PROJECT_WHY_MAX))),
+  ),
+  /**
+   * The chats working on it, its own chat first and then the newest others,
+   * at most `PERSONAL_PROJECT_CHATS_MAX`. Absent on old servers, where the
+   * phone tags `threadId` only.
+   */
+  chats: Schema.optional(
+    Schema.Array(ThreadId).check(Schema.isMaxLength(PERSONAL_PROJECT_CHATS_MAX)),
   ),
 });
 export type PersonalProject = typeof PersonalProject.Type;
