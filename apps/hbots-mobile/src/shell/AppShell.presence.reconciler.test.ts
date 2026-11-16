@@ -239,7 +239,7 @@ describe.each([
 ])("the app on screen showing %s", (_label, screen, host) => {
   it("reports foreground, keeps reporting every 10 s, and acknowledges a new notification", () => {
     mount(screen);
-    expect(tree?.root.findAllByType(host)).toHaveLength(1);
+    expect(tree?.root.findAll((node) => (node.type as unknown) === host)).toHaveLength(1);
     expect(world.reports).toEqual([true]);
 
     act(() => void vi.advanceTimersByTime(10_000));

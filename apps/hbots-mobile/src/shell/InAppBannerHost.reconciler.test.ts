@@ -86,8 +86,12 @@ function render(withHost: boolean) {
   });
 }
 
+function bannerNodes() {
+  return tree?.root.findAll((node) => (node.type as unknown) === "InAppBanner") ?? [];
+}
+
 function shownIds(): string[] {
-  return (tree?.root.findAllByType("InAppBanner") ?? []).map((banner) => banner.props.id as string);
+  return bannerNodes().map((banner) => banner.props.id as string);
 }
 
 beforeEach(() => {
@@ -117,7 +121,7 @@ describe("the in-app banner", () => {
     arrive("n1");
     act(() => void vi.advanceTimersByTime(6_000));
 
-    expect(tree?.root.findByType("InAppBanner").props.leaving).toBe(true);
+    expect(bannerNodes()[0]?.props.leaving).toBe(true);
   });
 
   it("shows nothing for a notification taken while the Bots list was not mounted", () => {
