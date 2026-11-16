@@ -54,7 +54,6 @@ import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
 import { isChatArchived } from "@hbots/personal-client/bots/chatState";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
-import { chatGoalPills } from "@hbots/personal-client/work/projectCards";
 import { sharedPreferencesFromProfile } from "@hbots/personal-client/settings/profilePreferences";
 import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
@@ -65,7 +64,6 @@ import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
 import { takeChatOpenReport } from "../personal/chatOpenPerf";
 import { reportPerf } from "../crash/crashReporter";
-import { GoalSheetHost } from "../work/GoalSheetHost";
 import { chatLoadRetryDelayMs } from "./chatLoadRetry";
 import {
   botVoiceCallColour,
@@ -129,7 +127,6 @@ export function ChatScreen({
   onBack,
   onOpenChat,
   onOpenChats,
-  onOpenTask,
   onEditBot,
   onOpenRoutine,
   onOpenComputer,
@@ -142,7 +139,6 @@ export function ChatScreen({
   readonly onBack: () => void;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenChats: (botId: string) => void;
-  readonly onOpenTask: (taskId: string) => void;
   readonly onEditBot: (botId: string) => void;
   readonly onOpenRoutine: (routineId: string) => void;
   readonly onOpenComputer: () => void;
@@ -168,7 +164,6 @@ export function ChatScreen({
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [usageWindow, setUsageWindow] = useState(DEFAULT_TOKEN_USAGE_WINDOW);
   const [newChatOpen, setNewChatOpen] = useState(false);
-  const [goalId, setGoalId] = useState<string | null>(null);
   const [renameThreadId, setRenameThreadId] = useState<string | null>(null);
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   const [messageMenu, setMessageMenu] = useState<MessageMenuTarget | null>(null);
@@ -324,11 +319,6 @@ export function ChatScreen({
     if (arrived.length === 0) return;
     for (const message of arrived) composerControl.current?.forget(message.id);
   }, [arrivedIds, pending]);
-  const projects = native.automation.usePersonalProjects(environmentId).data?.projects;
-  const goalPills = useMemo(
-    () => chatGoalPills({ projects: projects ?? [], threadId, nowMs: now }),
-    [projects, threadId, now],
-  );
   const contextUsage = useMemo(() => chatContextUsage(view.projection), [view.projection]);
   const questionOpen = useMemo(
     () => view.projection !== null && pendingQuestionRequests(view.projection).length > 0,
@@ -858,29 +848,6 @@ export function ChatScreen({
         </Pressable>
       ) : null}
 
-      {!searchOpen && goalPills.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.goalPills}
-          style={styles.goalPillScroll}
-        >
-          {goalPills.map((pill) => (
-            <Pressable
-              key={pill.projectId}
-              onPress={() => setGoalId(pill.projectId)}
-              accessibilityRole="button"
-              accessibilityLabel={`Goal ${pill.name}`}
-              style={({ pressed }) => [styles.goalPill, pressed ? styles.goalPillPressed : null]}
-            >
-              <Text style={styles.goalPillText} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-                {pill.text}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : null}
-
       {!searchOpen && chips.length >= 2 ? (
         <ScrollView
           ref={chipScrollRef}
@@ -1222,18 +1189,6 @@ export function ChatScreen({
         request={fileRequest}
         onClose={() => setFileRequest(null)}
       />
-      {goalId === null ? null : (
-        <GoalSheetHost
-          native={native}
-          projectId={goalId}
-          onClose={() => setGoalId(null)}
-          onOpenTask={onOpenTask}
-          onOpenChat={(openBotId, openThreadId) => {
-            setGoalId(null);
-            onOpenChat(openBotId, openThreadId);
-          }}
-        />
-      )}
     </View>
   );
 }
@@ -1374,23 +1329,6 @@ const styles = StyleSheet.create({
   stateDot: { width: 7, height: 7, borderRadius: 999 },
   subtitle: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  goalPillScroll: { flexGrow: 0 },
-  goalPills: {
-    paddingHorizontal: 12,
-    paddingTop: 6,
-    paddingBottom: 2,
-    gap: 6,
-    alignItems: "center",
-  },
-  goalPill: {
-    minHeight: 26,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: tokens.goalTagBg,
-    justifyContent: "center",
-  },
-  goalPillPressed: { opacity: 0.7 },
-  goalPillText: { color: tokens.goalTagText, fontSize: 12, lineHeight: 16, fontWeight: "500" },
   chipScroll: { height: 48, flexGrow: 0 },
   chips: { paddingHorizontal: 12, gap: 6, alignItems: "center" },
   chip: {

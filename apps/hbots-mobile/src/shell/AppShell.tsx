@@ -382,7 +382,6 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                     navigation.replace("Chat", { botId, threadId, via: "chip" })
                   }
                   onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
-                  onOpenTask={(taskId) => navigation.push("Task", { taskId })}
                   onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
                   onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
                   onOpenComputer={() => navigation.navigate("Tabs", chatComputerTarget())}
