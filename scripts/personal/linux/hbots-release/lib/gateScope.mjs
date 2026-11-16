@@ -8,7 +8,13 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
-import { SERVER_GATE_DIRS, fsReader, gitReader, selectServerTests } from "./serverTestSelect.mjs";
+import {
+  SERVER_ALWAYS,
+  SERVER_GATE_DIRS,
+  fsReader,
+  gitReader,
+  selectServerTests,
+} from "./serverTestSelect.mjs";
 
 export const APP_VERSION = "scripts/personal/app-version.txt";
 export const PARITY_MATRIX = "scripts/personal/parity/parity.json";
@@ -253,41 +259,38 @@ export function classifyPath(file) {
 
 const moduleTask = (name) => `:${name}:testDebugUnitTest`;
 
+// Every module with an android folder, and the ones among them that have unit tests.
 function kotlinModules(reader) {
-  const dirs = new Set();
+  const tested = new Set();
+  const all = new Set();
   for (const file of reader.listFiles("apps/hbots-mobile/modules")) {
-    const match = /^apps\/hbots-mobile\/modules\/([^/]+)\/android\/src\/test\//.exec(file);
-    if (match) dirs.add(match[1]);
+    const module = /^apps\/hbots-mobile\/modules\/([^/]+)\/android\//.exec(file);
+    if (module) all.add(module[1]);
+    const test = /^apps\/hbots-mobile\/modules\/([^/]+)\/android\/src\/test\//.exec(file);
+    if (test) tested.add(test[1]);
   }
   const deps = new Map();
-  for (const name of dirs) {
+  for (const name of all) {
     const gradle = reader.read(`apps/hbots-mobile/modules/${name}/android/build.gradle`) ?? "";
     deps.set(
       name,
       [...gradle.matchAll(/implementation\s+project\(['"]:([^'"]+)['"]\)/g)].map((m) => m[1]),
     );
   }
-  return { names: [...dirs].sort(), deps };
+  return { names: [...tested].sort(), all, deps };
 }
 
 function selectKotlin({ reader, changedPaths }) {
-  const { names, deps } = kotlinModules(reader);
-  const all = names.map(moduleTask);
+  const { names, all, deps } = kotlinModules(reader);
+  const everyTask = names.map(moduleTask);
   const hit = new Set();
-  let every = false;
   for (const file of changedPaths) {
-    if (
-      file === "apps/hbots-mobile/app.config.ts" ||
-      file.startsWith("apps/hbots-mobile/plugins/")
-    ) {
-      every = true;
-      break;
-    }
+    if (file === "apps/hbots-mobile/app.config.ts" || file.startsWith("apps/hbots-mobile/plugins/"))
+      return { args: everyTask, count: everyTask.length, unit: "Gradle tasks" };
     const moduleFile =
       /^apps\/hbots-mobile\/modules\/([^/]+)\/(?:android\/|expo-module\.config\.json)/.exec(file);
-    if (moduleFile && names.includes(moduleFile[1])) hit.add(moduleFile[1]);
+    if (moduleFile) hit.add(moduleFile[1]);
   }
-  if (every) return { args: all, count: all.length, unit: "Gradle tasks" };
   const selected = new Set(hit);
   let grew = true;
   while (grew) {
@@ -301,7 +304,9 @@ function selectKotlin({ reader, changedPaths }) {
     }
   }
   const args = names.filter((name) => selected.has(name)).map(moduleTask);
-  return { args, count: args.length, unit: "Gradle tasks" };
+  // A changed module with no unit tests and no tested dependent has nothing to run.
+  const untested = [...hit].filter((name) => !names.includes(name) && all.has(name)).sort();
+  return { args, count: args.length, unit: "Gradle tasks", untested };
 }
 
 function selectE2e({ changedPaths }) {
@@ -375,7 +380,10 @@ function selectReleaseTools({ reader, changedPaths }) {
 
 function selectFor(id, { reader, changedPaths }) {
   if (id === "server-tests") {
-    const args = selectServerTests({ reader, changedPaths });
+    const found = selectServerTests({ reader, changedPaths });
+    // The always-run tests are the least a server-tests run is allowed to be, so a
+    // selection no test reaches names them instead of naming nothing.
+    const args = found.length ? found : [...SERVER_ALWAYS];
     return { args, count: args.length, unit: "test files" };
   }
   if (id === "hbots-mobile-kotlin") return selectKotlin({ reader, changedPaths });
@@ -465,6 +473,17 @@ export function planChecks(paths, options = {}) {
         ...(wholeArgs(id, reader) ? { args: wholeArgs(id, reader) } : {}),
       };
     const selection = selectFor(id, { reader, changedPaths });
+    // A selection that names nothing is never a green run: say why it is a skip.
+    if (selection.args.length === 0)
+      return {
+        id,
+        mode: "skip",
+        reason: `${id} inputs changed (${listed(hits[id])}) but ${
+          selection.untested?.length
+            ? `${selection.untested.join(", ")} has no unit tests and no tested dependent`
+            : "the selector found nothing to run"
+        }`,
+      };
     return {
       id,
       mode: "selected",
@@ -508,6 +527,8 @@ const fill = (command, plan) =>
  */
 export function commandsFor(plan, def) {
   if (!def || plan.mode === "skip") return [];
+  if (plan.mode === "selected" && !(plan.args?.length > 0))
+    throw new Error(`${plan.id}: a selected plan with no args would run nothing`);
   if (plan.mode === "whole" && def.concurrent)
     return def.concurrent.map((lane) => lane.map((command) => fill(command, plan)));
   const commands = def.commands ?? [];

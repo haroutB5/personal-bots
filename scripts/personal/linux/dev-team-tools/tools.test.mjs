@@ -355,7 +355,7 @@ test('a dry run prints each gate with the table reason and runs nothing',()=>{
   assert.match(r.stdout,/dry run: 0 of 9 gates would run/);
   r=dry(server);
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.match(r.stdout,/^server-tests: SELECTED \[0\] \(server-tests inputs changed: apps\/server\/src\/index\.ts; selected 0 test files\)$/m);
+  assert.match(r.stdout,/^server-tests: SELECTED \[5\] \(server-tests inputs changed: apps\/server\/src\/index\.ts; selected 5 test files\)$/m);
   assert.match(r.stdout,/^server-tsc: WHOLE \(server-tsc inputs changed: apps\/server\/src\/index\.ts\)$/m);
   assert.match(r.stdout,/^e2e: SELECTED \[12\] /m);
   assert.match(r.stdout,/^hbots-mobile-kotlin: SKIP /m);

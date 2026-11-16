@@ -514,3 +514,23 @@ NodeTest.test("a server-only change runs the resilience journeys too", () => {
     NodeAssert.ok(plan.args.includes(id), id);
   NodeAssert.equal(plan.args.length, 12);
 });
+
+NodeTest.test("a Kotlin module without unit tests is a stated skip, never an empty run", () => {
+  const file = "apps/hbots-mobile/modules/hbots-network/android/src/main/java/x/Foo.kt";
+  const plan = planOf(planChecks([file], { reader: fsReader(REPO) }), "hbots-mobile-kotlin");
+  NodeAssert.equal(plan.mode, "skip");
+  NodeAssert.match(plan.reason, /hbots-network has no unit tests/);
+  const defs = JSON.parse(NodeFS.readFileSync(GATES_JSON, "utf8"));
+  const def = defs.find((entry) => entry.id === "hbots-mobile-kotlin");
+  NodeAssert.throws(
+    () => commandsFor({ id: "hbots-mobile-kotlin", mode: "selected", args: [] }, def),
+    /selected plan with no args/,
+  );
+  const updater = planOf(
+    planChecks(["apps/hbots-mobile/modules/hbots-updater/android/build.gradle"], {
+      reader: fsReader(REPO),
+    }),
+    "hbots-mobile-kotlin",
+  );
+  NodeAssert.equal(updater.mode, "selected");
+});
