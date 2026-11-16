@@ -42,6 +42,10 @@ export const TOOLCHAIN = [
   "vitest.workspace.ts",
   "patches/",
   "scripts/lib/",
+  // The root vite config imports infra/task-cache and loads the oxlint plugin as a
+  // lint plugin; whether a gate lint reads it is unproven, so a change runs all.
+  "infra/task-cache/",
+  "oxlint-plugin-t3code/",
 ];
 
 // Paths a gate reads although their area is not one of its inputs.
@@ -66,7 +70,6 @@ export const NO_CHECK = [
   "native/",
   "assets/",
   "migrate/",
-  "oxlint-plugin-t3code/",
   "packaging/",
   "third-party-licenses/",
   ".vite-hooks/",

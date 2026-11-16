@@ -567,3 +567,9 @@ NodeTest.test(
       NodeAssert.equal(classifyPath(file).kind, "none", file);
   },
 );
+
+NodeTest.test("files the root vite config imports or loads are toolchain", () => {
+  for (const file of ["infra/task-cache/src/remoteCache.ts", "oxlint-plugin-t3code/index.ts"])
+    NodeAssert.equal(classifyPath(file).kind, "toolchain", file);
+  NodeAssert.equal(classifyPath("infra/relay/package.json").kind, "none");
+});
