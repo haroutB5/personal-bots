@@ -767,3 +767,39 @@ NodeTest.test("the Kotlin dependency regex reads every project() form", () => {
       NodeAssert.deepEqual(plan.args, [":app:testDebugUnitTest"], form);
     });
 });
+
+NodeTest.test("a shared file moved away selects the tests whose modules still name it", () => {
+  withFixture((f) => {
+    const pkg = NodePath.join(f.repo, "packages/shared");
+    NodeFS.mkdirSync(NodePath.join(pkg, "src"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(pkg, "package.json"),
+      JSON.stringify({ name: "@x/shared", exports: { "./Array": "./src/Array.ts" } }),
+    );
+    NodeFS.writeFileSync(NodePath.join(pkg, "src/Array.ts"), "export const arr = 1;\n");
+    const dir = NodePath.join(f.repo, "apps/server/src/personal/push");
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "UsesArray.ts"),
+      'import { arr } from "@x/shared/Array";\nexport const use = arr;\n',
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "UsesArray.test.ts"),
+      'import { use } from "./UsesArray.ts";\nuse;\n',
+    );
+    commit(f.repo, "shared array");
+    // the file moves to another package and its importer is not updated
+    NodeFS.mkdirSync(NodePath.join(f.repo, "packages/contracts/src"), { recursive: true });
+    NodeFS.renameSync(
+      NodePath.join(pkg, "src/Array.ts"),
+      NodePath.join(f.repo, "packages/contracts/src/Array.ts"),
+    );
+    const head = commit(f.repo, "move Array");
+    const plan = planOf(
+      planChecks(["packages/shared/src/Array.ts", "packages/contracts/src/Array.ts"], {
+        reader: gitReader(f.repo, head),
+      }),
+      "server-tests",
+    );
+    NodeAssert.ok(plan.args.includes("src/personal/push/UsesArray.test.ts"), plan.args.join(","));
+  });
+});

@@ -380,6 +380,14 @@ export function selectServerTests({ reader, changedPaths }) {
       needles.add(dir);
     // A spawned entry file is named relative to the test, as "../bin.ts".
     if (file.startsWith(`${SERVER_PKG_DIR}/`) && !/^index\./.test(base)) needles.add(`/${base}`);
+    // A file deleted or moved away at the head has no importers to trace, so any
+    // test or module that still names it, by file name or by package subpath
+    // ("@scope/shared/Array"), is selected. A broken static import also fails tsc.
+    if (!reader.exists(file) && !/^index\./.test(base)) {
+      const stem = base.replace(/\.[^.]+$/, "");
+      needles.add(`/${base}`);
+      for (const quote of ['"', "'", "`"]) needles.add(`/${stem}${quote}`);
+    }
   }
   if (needles.size) {
     for (const test of tests) {
