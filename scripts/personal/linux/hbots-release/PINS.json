@@ -3,7 +3,7 @@
   "files": {
     "lib/hash.mjs": "a7d5e91da28c5abb37c1dd15c0fc3b193e7533195e7f974c53acb1f63ee4d734",
     "lib/dbcheck.mjs": "466542fa4ee75e9d083b84287b29c33de90f7904b07ab623b51fe51e927856e4",
-    "lib/fixture.mjs": "94605e9db09d1387f70d30eda73d48baf35a953e8068d14250bb968edb2a6a84",
+    "lib/fixture.mjs": "bf543e0c9d733c80430d1960cb0667abf073feedeb8433ee35881478bb6fa30b",
     "lib/idle.mjs": "bde774a5d884d5f72e5fff5f6e1b1b9037822387f6891293ff18dd68e1b7998f",
     "lib/backup.mjs": "110d8d715446c3c8cf4acef7b34be1eda92ecb17daf8de0f059055840d09da04",
     "lib/seal.mjs": "5c4e3548dd412369fd02909bd8860e80dd88a80858cb35e8dd8c49209fad8273",
