@@ -1,3 +1,4 @@
+import type { ChoicesState } from "@hbots/personal-client/conversation/choices";
 import type { ConversationItem } from "@hbots/personal-client/conversation/conversationModel";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -171,6 +172,186 @@ describe("row memo", () => {
 
     expect(paint(screen, rowsOf(items), context({ dayLabel: () => "Today, 10:00" }))).toBe(0);
     expect(paint(screen, rowsOf(items), context({ dayLabel: () => "Yesterday, 10:00" }))).toBe(1);
+  });
+});
+
+describe("row memo: every input that moves a row's pixels repaints it", () => {
+  /** Paints `before`, then checks the same data rebuilt paints nothing and `after` paints `expected`. */
+  function repaints(
+    before: { rows: ReadonlyArray<Row>; ctx?: RowContext },
+    rebuilt: () => { rows: ReadonlyArray<Row>; ctx?: RowContext },
+    after: { rows: ReadonlyArray<Row>; ctx?: RowContext },
+    expected: number,
+  ): void {
+    const screen = new Map<string, RowProps>();
+    paint(screen, before.rows, before.ctx ?? context());
+    const again = rebuilt();
+    expect(paint(screen, again.rows, again.ctx ?? context())).toBe(0);
+    expect(paint(screen, after.rows, after.ctx ?? context())).toBe(expected);
+  }
+
+  const groupItem = (id: string, speaker: { botId: string; name: string }, text = "hi"): Item =>
+    ({
+      kind: "group-message",
+      id,
+      showSpeaker: true,
+      speaker,
+      message: { id, role: "assistant", text, streaming: false, createdAt: "2026-11-16T10:00:00Z" },
+    }) as unknown as Item;
+  const ada = { botId: "b1", name: "Ada" };
+
+  it("repaints a reply when only its streaming flag drops", () => {
+    const reply = (streaming: boolean) =>
+      rowsOf([message("a0", "assistant", "Pick one\n\n```choices\nYes\nNo", { streaming })]);
+
+    repaints({ rows: reply(true) }, () => ({ rows: reply(true) }), { rows: reply(false) }, 1);
+  });
+
+  it("repaints a group message when its speaker's avatar changes", () => {
+    const withColor = (avatarColor: string) =>
+      context({ groupSpeaker: () => ({ name: "Ada", avatarShape: "blob", avatarColor }) });
+    const rows = () => rowsOf([groupItem("g1", ada)]);
+
+    repaints(
+      { rows: rows(), ctx: withColor("red") },
+      () => ({ rows: rows(), ctx: withColor("red") }),
+      { rows: rows(), ctx: withColor("blue") },
+      1,
+    );
+  });
+
+  it("repaints a day divider when its date changes and its words stay the same", () => {
+    const divider = (at: string) =>
+      rowsOf([{ kind: "divider", id: "d1", at: new Date(at) } as unknown as Item]);
+    const ctx = () => context({ dayLabel: () => "Earlier" });
+
+    repaints(
+      { rows: divider("2026-11-15T10:00:00Z"), ctx: ctx() },
+      () => ({ rows: divider("2026-11-15T10:00:00Z"), ctx: ctx() }),
+      { rows: divider("2026-11-14T10:00:00Z"), ctx: ctx() },
+      1,
+    );
+  });
+
+  it("repaints the read line when the same message goes from queued to read", () => {
+    const status = (value: string) =>
+      context({
+        latestMessageStatus: {
+          messageId: "u1",
+          status: value,
+        } as unknown as RowContext["latestMessageStatus"],
+      });
+
+    repaints(
+      { rows: rowsOf(chat(3)), ctx: status("queued") },
+      () => ({ rows: rowsOf(chat(3)), ctx: status("queued") }),
+      { rows: rowsOf(chat(3)), ctx: status("read") },
+      1,
+    );
+  });
+
+  it("repaints a group message when its choices state changes", () => {
+    const states = (state: ChoicesState) => context({ choiceStates: new Map([["g1", state]]) });
+    const rows = () => rowsOf([groupItem("g1", ada, "Pick\n\n```choices\nYes\nNo\n```")]);
+
+    repaints(
+      { rows: rows(), ctx: states({ kind: "open", disabled: false }) },
+      () => ({ rows: rows(), ctx: states({ kind: "open", disabled: false }) }),
+      { rows: rows(), ctx: states({ kind: "used", picked: "Yes" }) },
+      1,
+    );
+  });
+
+  it("repaints a message when only its sent time changes", () => {
+    const at = (createdAt: string) => rowsOf([message("u0", "user", "hello", { createdAt })]);
+
+    repaints(
+      { rows: at("2026-11-16T10:00:00.000Z") },
+      () => ({ rows: at("2026-11-16T10:00:00.000Z") }),
+      { rows: at("2026-11-16T10:05:00.000Z") },
+      1,
+    );
+  });
+
+  it("repaints a user message when the reply quote it carries changes", () => {
+    // The projection passes `context` by reference, so a rebuilt feed keeps the same object.
+    const contexts = new Map<string, unknown>();
+    const quoteOf = (excerpt: string) => {
+      if (!contexts.has(excerpt)) {
+        contexts.set(excerpt, {
+          version: 1,
+          records: [
+            {
+              version: 1,
+              contextId: "personal-reply",
+              label: "Reply to Bot",
+              kind: "personal-reply",
+              payload: { messageId: "a9", name: "Bot", excerpt },
+            },
+          ],
+        });
+      }
+      return contexts.get(excerpt);
+    };
+    const quoted = (excerpt: string) =>
+      rowsOf([message("u0", "user", "look", { context: quoteOf(excerpt) })]);
+
+    repaints({ rows: quoted("old") }, () => ({ rows: quoted("old") }), { rows: quoted("new") }, 1);
+  });
+
+  it("repaints a message that gains an attachment and one that loses one", () => {
+    const files = (names: string[]) =>
+      rowsOf([
+        message("u0", "user", "files", {
+          attachments: names.map((name, index) => ({ type: "file", id: `f${index}`, name })),
+        }),
+      ]);
+
+    repaints(
+      { rows: files(["a"]) },
+      () => ({ rows: files(["a"]) }),
+      { rows: files(["a", "b"]) },
+      1,
+    );
+    repaints(
+      { rows: files(["a", "b"]) },
+      () => ({ rows: files(["a", "b"]) }),
+      { rows: files(["a"]) },
+      1,
+    );
+  });
+
+  it("repaints the live work row, a pending bubble and a queued row when their data changes", () => {
+    const work = (label: string) =>
+      ({
+        kind: "work",
+        key: "work",
+        work: { phase: "working", runId: "r1", current: { id: "s1", label } },
+      }) as unknown as Row;
+    const pending = (state: string) =>
+      ({
+        kind: "pending",
+        key: "pending:p1",
+        message: { id: "p1", text: "sending", attachments: [], state },
+      }) as unknown as Row;
+    const queued = (state: string) =>
+      ({
+        kind: "queued",
+        key: "queued:q1",
+        row: { entry: { id: "q1", text: "later", threadId: "t" }, state },
+      }) as unknown as Row;
+    const all = (label: string, pendingState: string, queuedState: string) => [
+      work(label),
+      pending(pendingState),
+      queued(queuedState),
+    ];
+
+    repaints(
+      { rows: all("step one", "sending", "waiting") },
+      () => ({ rows: all("step one", "sending", "waiting") }),
+      { rows: all("step two", "failed", "failed") },
+      3,
+    );
   });
 });
 
