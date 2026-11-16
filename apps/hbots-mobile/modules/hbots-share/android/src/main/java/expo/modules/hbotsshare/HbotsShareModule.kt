@@ -31,6 +31,23 @@ class HbotsShareModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("HbotsShare")
 
+    // App start: no composer draft outlives a process start, so every old copy is unreachable.
+    OnCreate {
+      app()?.let {
+        CameraDraftFile.prune(
+          CameraDraftFile.dir(it.cacheDir),
+          emptyList(),
+          System.currentTimeMillis(),
+        )
+      }
+    }
+
+    /** Its message is sent or its draft is gone: delete this camera draft copy. */
+    Function("discardDraft") { uri: String ->
+      val context = app()
+      if (context != null) CameraDraftFile.discard(CameraDraftFile.dir(context.cacheDir), uri)
+    }
+
     /** The payload JSON the share activity wrote for this id, or null. */
     Function("read") { id: String ->
       val context = app()
@@ -66,7 +83,7 @@ class HbotsShareModule : Module() {
       val context = app() ?: return@AsyncFunction null
       // Same folder hbots-camera writes its launch into; the draft's copies live in cache.
       val cameraDir = File(context.filesDir, "camera")
-      val draftDir = File(context.cacheDir, "camera-drafts")
+      val draftDir = CameraDraftFile.dir(context.cacheDir)
       val source = cachedFile(context.cacheDir, uri, cameraDir) ?: return@AsyncFunction null
       val fromCamera = source.path.startsWith(cameraDir.canonicalFile.path + File.separator)
       val draftFile = if (fromCamera) {

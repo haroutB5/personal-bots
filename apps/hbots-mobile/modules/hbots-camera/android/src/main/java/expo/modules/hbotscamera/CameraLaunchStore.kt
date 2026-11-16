@@ -75,7 +75,9 @@ class CameraLaunchStore(private val records: LaunchRecords, private val dir: Fil
     val keep = records.read()?.let { owned(it.path) }?.path
     val cutoff = now - maxAgeMs
     dir.listFiles()?.forEach { file ->
-      if (file.isFile && file.path != keep && file.lastModified() < cutoff) file.delete()
+      // The record is canonical, and on a device this folder is reached through /data/user/0.
+      val target = runCatching { file.canonicalFile }.getOrNull() ?: return@forEach
+      if (target.isFile && target.path != keep && target.lastModified() < cutoff) target.delete()
     }
   }
 
