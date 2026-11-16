@@ -12,6 +12,8 @@ install-dsh.mjs          the pinned DeepSeek Harness runtime installer
 throwaway.mjs            fresh-root throwaway server (start|stop|down|up|pair|list)
 e2e-smoke.mjs            the five phone journeys against a staged release
 gates-linux.json         the Linux fork gate definitions for gate-evidence.mjs
+gates-linux.scoped.json  the same gates with {args} templates for the planner and the new gate tool
+                         (gates-linux.json stays plain: the installed tool reads it, see hbots-release/README.md)
 lib/evidence.mjs         release guard: notes check + gate-evidence check
 lib/*.mjs                paths, process identity, releases, build, smoke, backup
 node/test/*.test.mjs      node:test suites (49 tests, no network, temp roots)

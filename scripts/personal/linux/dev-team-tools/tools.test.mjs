@@ -281,7 +281,7 @@ else console.log('Tests 3 passed (3)');`);
 });
 test('server-tests gate runs two whole shards and one selected lane',()=>{
  const root=path.resolve(here,'../../../..');
- const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.json'),'utf8'));
+ const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.scoped.json'),'utf8'));
  const gate=defs.find((d)=>d.id==='server-tests');
  assert.ok(gate,'server-tests gate exists');
  assert.equal(gate.concurrent?.length,2,'server-tests has two whole lanes');

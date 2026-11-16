@@ -13,7 +13,7 @@ const ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta
 const REPO = NodePath.resolve(ROOT, "../../../..");
 const SCRATCH = NodePath.join(REPO, ".tmp");
 NodeFS.mkdirSync(SCRATCH, { recursive: true });
-const GATES_JSON = NodePath.join(REPO, "scripts/personal/node/gates-linux.json");
+const GATES_JSON = NodePath.join(REPO, "scripts/personal/node/gates-linux.scoped.json");
 
 const git = (repo, ...args) => {
   const result = NodeChildProcess.spawnSync("git", ["-C", repo, ...args], {

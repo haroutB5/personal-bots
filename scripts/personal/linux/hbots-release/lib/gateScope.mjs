@@ -419,7 +419,7 @@ function selectReleaseTools({ reader, changedPaths }) {
 }
 
 // Test files that some gate command runs, read off the gate commands in
-// gates-linux.json. Everything else that is a test by name runs in no gate, so a
+// gates-linux.scoped.json. Everything else that is a test by name runs in no gate, so a
 // plan never looks as if it ran a changed test that nothing ran.
 const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const KOTLIN_TEST = /^apps\/hbots-mobile\/modules\/[^/]+\/android\/src\/test\/.+\.kt$/;
@@ -785,7 +785,7 @@ if (invokedDirectly()) {
         options["gates-json"] ??
         NodePath.resolve(
           NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
-          "../../../node/gates-linux.json",
+          "../../../node/gates-linux.scoped.json",
         );
       const defs = JSON.parse(NodeFS.readFileSync(defsFile, "utf8"));
       for (const plan of result.plans) {

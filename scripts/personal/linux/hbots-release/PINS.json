@@ -7,7 +7,7 @@
     "lib/idle.mjs": "bde774a5d884d5f72e5fff5f6e1b1b9037822387f6891293ff18dd68e1b7998f",
     "lib/backup.mjs": "110d8d715446c3c8cf4acef7b34be1eda92ecb17daf8de0f059055840d09da04",
     "lib/seal.mjs": "5c4e3548dd412369fd02909bd8860e80dd88a80858cb35e8dd8c49209fad8273",
-    "lib/gateScope.mjs": "3dc985113a7e01f262de4e5efe3753246dd8684473313a96c8c416d59d716403",
+    "lib/gateScope.mjs": "a5b20b77d908acf5af2f7e96180f6ab3ded2802397c697bbee1407eda352a61c",
     "lib/serverTestSelect.mjs": "5069344b5e0f02743b3e49d4a59b2f82655287a70693b62218eb060e1bc04e73",
     "lib/compact.mjs": "faf944c7d1a8e9c8a8e792c7118fdea416e5545698212344237d798c331177f5",
     "lib/compact-db.mjs": "c38a3b4a5ad44d382d16427d16b6265066bcf7e35fa05b3d758ebd77ed267fe1",
