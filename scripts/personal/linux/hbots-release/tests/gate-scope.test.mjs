@@ -843,3 +843,23 @@ NodeTest.test("N5: a change to bin.ts of the real tree selects 300 or more tests
   NodeAssert.ok(args.length >= 300, `bin.ts selected ${args.length}`);
   NodeAssert.ok(args.includes("src/provider/CodexManagedRuntime.test.ts"));
 });
+
+NodeTest.test("N8: a 60,000 character run in a test plans in under one second", () => {
+  withFixture((f) => {
+    const src = NodePath.join(f.repo, "apps/server/src/personal/push");
+    NodeFS.writeFileSync(
+      NodePath.join(src, "blob.test.ts"),
+      `import { push } from "./PersonalPushService.ts";\nconst blob = "${"a".repeat(60_000)}";\npush;\nblob;\n`,
+    );
+    const head = commit(f.repo, "a long run");
+    const reader = gitReader(f.repo, head);
+    const started = Date.now();
+    const plan = planOf(
+      planChecks(["apps/server/src/personal/push/PersonalPushService.ts"], { reader }),
+      "server-tests",
+    );
+    const took = Date.now() - started;
+    NodeAssert.ok(plan.args.includes("src/personal/push/blob.test.ts"));
+    NodeAssert.ok(took < 1000, `planning took ${took} ms`);
+  });
+});

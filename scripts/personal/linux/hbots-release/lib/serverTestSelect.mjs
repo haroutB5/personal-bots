@@ -191,7 +191,10 @@ function makeResolver(reader, packages) {
 const IMPORT_RE =
   /(?:import|export)\s+(type\s+)?(\{[^}]*\}|[^;'"]*?)\s*from\s*["']([^"']+)["']|import\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|vi\.mock\(\s*["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)/g;
 
-const NAMED_SOURCE_RE = /[A-Za-z0-9_$@.\-/]+\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)\b/g;
+// The run is bounded: an unbounded run scans every start of a long token (a base64
+// blob in a fixture) and the cost grows with the square of its length. No path in
+// the tree is near 255 characters.
+const NAMED_SOURCE_RE = /[A-Za-z0-9_$@.\-/]{1,255}\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)\b/g;
 
 export function selectServerTests({ reader, changedPaths }) {
   const tests = SERVER_GATE_DIRS.flatMap((dir) =>
