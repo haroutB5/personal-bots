@@ -70,6 +70,7 @@ import {
   TABLE_CELL_MIN_WIDTH,
   tableColumnWidths,
 } from "./messageListModel";
+import { createRowReverser } from "./messageRows";
 import { MarkInteractiveTouchProvider, useMarkInteractiveTouch } from "./messageTouch";
 import { AttachmentImage, PendingAttachmentImage } from "./AttachmentImage";
 import { PageFrame } from "./PageFrame";
@@ -1047,6 +1048,7 @@ export function MessageList({
   useStreamCommitPerf(renderStartedAt, items, rows.length);
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
   const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
+  const [reverseRows] = useState(createRowReverser<Row>);
   const lastReveal = useRef<string | null>(null);
   const scrollToCard = useCallback(
     (itemId: string) => {
@@ -1112,7 +1114,7 @@ export function MessageList({
     <View style={styles.listWrap}>
       <FlatList
         ref={listRef}
-        data={rows.toReversed()}
+        data={reverseRows(rows)}
         extraData={cardContext}
         inverted
         nestedScrollEnabled
