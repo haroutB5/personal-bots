@@ -276,6 +276,42 @@ describe("PersonalWorkReads.questions", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("a hidden-previews bot whose newest reply asks nothing gets no card", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      yield* seedBot({ botId: "bot-quiet", hidePreviews: 1 });
+      // A routine's report in a chat the owner never opened: no choices block.
+      yield* seedChat({ threadId: "report", botId: "bot-quiet", title: "Crypto alerts" });
+      yield* seedMessage({
+        messageId: "report-m1",
+        threadId: "report",
+        role: "assistant",
+        text: "Portfolio is up 2% today. No alert fired.",
+      });
+      // The same bot does ask in another chat: that card stays, without text.
+      yield* seedChat({ threadId: "asks", botId: "bot-quiet" });
+      yield* seedMessage({
+        messageId: "asks-m1",
+        threadId: "asks",
+        role: "assistant",
+        text: REPLY,
+      });
+
+      const result = yield* PersonalWorkReads.questions();
+
+      expect(result.questions).toEqual([
+        {
+          threadId: "asks",
+          botId: "bot-quiet",
+          messageId: "asks-m1",
+          askedAt: expect.anything(),
+          question: null,
+          options: null,
+        },
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("keeps the 10 newest questions", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);

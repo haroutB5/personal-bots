@@ -234,7 +234,11 @@ const QuestionRow = Schema.Struct({
   lastViewedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   /** When the owner marked the chat unread; null when not. */
   markedUnreadAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-  /** Null when the bot hides previews. */
+  /**
+   * The reply's own text, also for a bot that hides previews: the rule has to
+   * read it to know whether the reply asks anything. `questions` never sends it
+   * for a hidden bot. Null only when the row carries no text.
+   */
   text: Schema.NullOr(Schema.String),
   hidden: Schema.Number,
 });
@@ -307,7 +311,7 @@ export const questions = (): Effect.Effect<
         MAX(m.updated_at, m.created_at) AS "completeAt",
         t.last_viewed_at AS "lastViewedAt",
         t.marked_unread_at AS "markedUnreadAt",
-        CASE WHEN COALESCE(b.hide_previews, 0) = 1 THEN NULL ELSE m.text END AS "text",
+        m.text AS "text",
         COALESCE(b.hide_previews, 0) AS "hidden"
       FROM personal_bot_threads t
       JOIN personal_bots b ON b.bot_id = t.bot_id
@@ -345,15 +349,18 @@ export const questions = (): Effect.Effect<
       if (kept.length >= PERSONAL_WORK_QUESTIONS_MAX) break;
       // A question the owner has seen leaves the list before it can take a slot.
       if (!questionAwaitsOwner({ ...row, askedAt: row.completeAt })) continue;
+      // A reply with no choices block asks nothing, for a hidden bot as well:
+      // a routine's report is not a question.
       const options = row.text === null ? null : splitChoices(row.text).options;
-      if (options === null && row.hidden === 0) continue;
+      if (row.text === null || options === null) continue;
+      const hidden = row.hidden !== 0;
       kept.push({
         threadId: row.threadId,
         botId: row.botId,
         messageId: row.messageId,
         askedAt: row.askedAt,
-        question: row.text === null ? null : questionFromReply(row.text),
-        options: row.hidden === 0 ? options : null,
+        question: hidden ? null : questionFromReply(row.text),
+        options: hidden ? null : options,
       });
     }
     return { questions: kept };
