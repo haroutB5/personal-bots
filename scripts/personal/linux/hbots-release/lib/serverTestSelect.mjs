@@ -139,7 +139,11 @@ export function gitReader(repo, sha) {
 
 const extensionCandidates = (file) => {
   const base = file.replace(/\.(?:js|mjs|cjs)$/, "");
-  return [file, ...[".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs"].map((ext) => base + ext), ...[".ts", ".tsx", "/index.ts", "/index.tsx", "/index.js"].map((ext) => file + ext)];
+  return [
+    file,
+    ...[".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs"].map((ext) => base + ext),
+    ...[".ts", ".tsx", "/index.ts", "/index.tsx", "/index.js"].map((ext) => file + ext),
+  ];
 };
 
 function makeResolver(reader, packages) {
@@ -151,7 +155,10 @@ function makeResolver(reader, packages) {
   };
   const resolveSpec = (spec, from) => {
     const clean = spec.split("?")[0];
-    if (clean.startsWith(".")) return tryFile(NodePath.posix.normalize(NodePath.posix.join(NodePath.posix.dirname(from), clean)));
+    if (clean.startsWith("."))
+      return tryFile(
+        NodePath.posix.normalize(NodePath.posix.join(NodePath.posix.dirname(from), clean)),
+      );
     const match = /^(@[^/]+\/[^/]+|[^@/][^/]*)(\/.*)?$/.exec(clean);
     if (!match || !packages.has(match[1])) return null;
     const { dir, exports } = packages.get(match[1]);
@@ -160,12 +167,14 @@ function makeResolver(reader, packages) {
     if (!target) {
       for (const [name, value] of Object.entries(exports)) {
         if (name.endsWith("/*") && key.startsWith(name.slice(0, -1))) {
-          const mapped = typeof value === "string" ? value : value.import ?? value.default ?? value.types;
+          const mapped =
+            typeof value === "string" ? value : (value.import ?? value.default ?? value.types);
           target = mapped?.replace("*", key.slice(name.length - 1));
         }
       }
     }
-    if (target && typeof target === "object") target = target.import ?? target.default ?? target.types;
+    if (target && typeof target === "object")
+      target = target.import ?? target.default ?? target.types;
     return typeof target === "string" ? tryFile(NodePath.posix.join(dir, target)) : null;
   };
   return { tryFile, resolveSpec };
@@ -199,7 +208,8 @@ export function selectServerTests({ reader, changedPaths }) {
     if (!source) return false;
     return (
       /export\s/.test(source) &&
-      source.replace(/export\s+(type\s+)?(\*|\{[^}]*\})\s*from\s*["'][^"']+["'];?/g, "").trim() === ""
+      source.replace(/export\s+(type\s+)?(\*|\{[^}]*\})\s*from\s*["'][^"']+["'];?/g, "").trim() ===
+        ""
     );
   };
   const ownNames = (file) => {
@@ -211,7 +221,10 @@ export function selectServerTests({ reader, changedPaths }) {
       out.add(match[1]);
     for (const match of source.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}(?!\s*from)/g))
       for (const name of match[1].split(",")) {
-        const exported = name.trim().split(/\s+as\s+/).pop();
+        const exported = name
+          .trim()
+          .split(/\s+as\s+/)
+          .pop();
         if (exported) out.add(exported.replace(/^type\s+/, ""));
       }
     return out;
@@ -233,7 +246,10 @@ export function selectServerTests({ reader, changedPaths }) {
         else for (const name of ownNames(target)) map.set(name, target);
       } else {
         for (const spec of match[1].slice(1, -1).split(",")) {
-          const parts = spec.trim().replace(/^type\s+/, "").split(/\s+as\s+/);
+          const parts = spec
+            .trim()
+            .replace(/^type\s+/, "")
+            .split(/\s+as\s+/);
           if (parts[0]) map.set(parts.pop(), target);
         }
       }
@@ -256,7 +272,10 @@ export function selectServerTests({ reader, changedPaths }) {
         const map = barrelMap(target);
         let unresolved = false;
         for (const item of match[2].slice(1, -1).split(",")) {
-          const name = item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0];
+          const name = item
+            .trim()
+            .replace(/^type\s+/, "")
+            .split(/\s+as\s+/)[0];
           if (!name) continue;
           const from = map.get(name);
           if (from) out.add(from);
@@ -287,9 +306,47 @@ export function selectServerTests({ reader, changedPaths }) {
   const graphModules = new Set(seen);
 
   const changed = new Set(
-    changedPaths.filter((file) => file.startsWith(`${SERVER_PKG_DIR}/`) || file.startsWith("packages/")),
+    changedPaths.filter(
+      (file) => file.startsWith(`${SERVER_PKG_DIR}/`) || file.startsWith("packages/"),
+    ),
   );
   const selected = new Set();
+
+  // Literal references. A test or module can read a file by its path string, which
+  // no import shows: a fixture, a doc, a spawned entry file. Every changed file
+  // outside the graph gets needles, whatever its extension, and a test that holds
+  // one is selected. A graph module that holds one counts as changed too, so the
+  // tests that import it are selected by the walk below.
+  const parentOf = (file) => NodePath.posix.basename(NodePath.posix.dirname(file));
+  const needles = new Set();
+  for (const file of changedPaths.filter((entry) => !graphModules.has(entry))) {
+    const base = NodePath.posix.basename(file);
+    needles.add(`${parentOf(file)}/${base}`);
+    const dir = NodePath.posix.dirname(file);
+    // Outside the server and the packages, a path string may name the folder.
+    if (
+      !file.startsWith(`${SERVER_PKG_DIR}/`) &&
+      !file.startsWith("packages/") &&
+      dir.split("/").length >= 3
+    )
+      needles.add(dir);
+    // A spawned entry file is named relative to the test, as "../bin.ts".
+    if (file.startsWith(`${SERVER_PKG_DIR}/`) && !/^index\./.test(base)) needles.add(`/${base}`);
+  }
+  if (needles.size) {
+    for (const test of tests) {
+      const source = reader.read(test);
+      if (!source) continue;
+      for (const needle of needles) if (source.includes(needle)) selected.add(test);
+    }
+    for (const file of graphModules) {
+      if (isTest(file)) continue;
+      const source = reader.read(file);
+      if (!source) continue;
+      for (const needle of needles) if (source.includes(needle)) changed.add(file);
+    }
+  }
+
   const reached = new Set();
   let frontier = [...changed];
   while (frontier.length) {
@@ -305,24 +362,6 @@ export function selectServerTests({ reader, changedPaths }) {
     frontier = next;
   }
 
-  const parentOf = (file) => NodePath.posix.basename(NodePath.posix.dirname(file));
-  const needles = new Set();
-  const literalCandidates = changedPaths.filter((file) => !graphModules.has(file) && SOURCE.test(file));
-  for (const file of literalCandidates) needles.add(`${parentOf(file)}/${NodePath.posix.basename(file)}`);
-  if (needles.size) {
-    for (const test of tests) {
-      const source = reader.read(test);
-      if (!source) continue;
-      for (const needle of needles) if (source.includes(needle)) selected.add(test);
-    }
-    for (const file of graphModules) {
-      if (isTest(file)) continue;
-      const source = reader.read(file);
-      if (!source) continue;
-      for (const needle of needles) if (source.includes(needle)) changed.add(file);
-    }
-  }
-
   const fixtureParents = new Set();
   for (const file of changedPaths) {
     const match = /^(.*)\/(?:testFixtures|fixtures)\//.exec(file);
@@ -330,8 +369,7 @@ export function selectServerTests({ reader, changedPaths }) {
   }
   if (fixtureParents.size) {
     for (const test of tests)
-      for (const parent of fixtureParents)
-        if (test.startsWith(`${parent}/`)) selected.add(test);
+      for (const parent of fixtureParents) if (test.startsWith(`${parent}/`)) selected.add(test);
   }
   const relative = (file) => file.slice(SERVER_PKG_DIR.length + 1);
   return [...selected].map(relative).sort();

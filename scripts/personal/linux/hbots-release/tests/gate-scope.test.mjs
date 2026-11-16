@@ -129,21 +129,27 @@ NodeTest.test("every tracked path classifies", () => {
   for (const id of Object.keys(CHECKS)) NodeAssert.ok(gateIds.includes(id), id);
 });
 
-NodeTest.test("the 1.67.20 replay selects 21 server tests", () => {
-  const base = "d8a0c8f571267663ea5995d82240699ee6e557d9";
-  const head = "a72547da6f6c7ecf7e1ee6a07aa68ac5430370aa";
-  const paths = git(REPO, "diff", "--no-renames", "--name-only", base, head)
-    .split("\n")
-    .filter(Boolean);
-  // The plan for an old diff is replayed against the current tree, the way a
-  // dry run plans a new release from the checkout that holds it.
-  const scope = planChecks(paths, { reader: gitReader(REPO, git(REPO, "rev-parse", "HEAD")) });
-  const plan = planOf(scope, "server-tests");
-  NodeAssert.equal(plan.mode, "selected");
-  NodeAssert.equal(plan.args.length, 21);
-  NodeAssert.ok(plan.args.includes("src/personal/push/PersonalPushService.test.ts"));
-  NodeAssert.ok(!plan.args.includes("src/persistence/sqliteCheckpointWorker.test.ts"));
-});
+NodeTest.test(
+  "the 1.67.20 replay selects 23 server tests, 21 by imports and 2 by a literal mention",
+  () => {
+    const base = "d8a0c8f571267663ea5995d82240699ee6e557d9";
+    const head = "a72547da6f6c7ecf7e1ee6a07aa68ac5430370aa";
+    const paths = git(REPO, "diff", "--no-renames", "--name-only", base, head)
+      .split("\n")
+      .filter(Boolean);
+    // The plan for an old diff is replayed against the current tree, the way a
+    // dry run plans a new release from the checkout that holds it.
+    const scope = planChecks(paths, { reader: gitReader(REPO, git(REPO, "rev-parse", "HEAD")) });
+    const plan = planOf(scope, "server-tests");
+    NodeAssert.equal(plan.mode, "selected");
+    // 21 by the import graph; reviewPrompts.ts names scripts/personal/app-version.txt,
+    // so the two claudeCodeReview tests that import it ride along since D5.
+    NodeAssert.equal(plan.args.length, 23);
+    NodeAssert.ok(plan.args.includes("src/personal/claudeCodeReview/quietHours.test.ts"));
+    NodeAssert.ok(plan.args.includes("src/personal/push/PersonalPushService.test.ts"));
+    NodeAssert.ok(!plan.args.includes("src/persistence/sqliteCheckpointWorker.test.ts"));
+  },
+);
 
 NodeTest.test("a version-bump-only diff runs only hbots-mobile", () => {
   const scope = planChecks(["scripts/personal/app-version.txt", "apps/hbots-mobile/package.json"], {
@@ -463,4 +469,28 @@ NodeTest.test("vitest setup and config files run the server tests whole", () => 
     "server-tests",
   );
   NodeAssert.equal(plan.mode, "selected");
+});
+
+NodeTest.test("a file read by path selects its reader whatever its extension", () => {
+  const select = (file) =>
+    planOf(planChecks([file], { reader: fsReader(REPO) }), "server-tests").args;
+  NodeAssert.ok(
+    select("docs/user/t3-connect-troubleshooting.md").includes(
+      "src/cloud/ConnectReachability.test.ts",
+    ),
+  );
+  NodeAssert.ok(
+    select("apps/server/src/bin.ts").includes("src/provider/CodexManagedRuntime.test.ts"),
+  );
+  NodeAssert.ok(
+    select(
+      "apps/server/src/orchestration-v2/testkit/fixtures/delegated_task_status/codex_transcript.ndjson",
+    ).includes("src/mcp/OrchestratorMcpToolkit.integration.test.ts"),
+  );
+  // a module that names the changed file carries it on to the tests that import the module
+  const adblock = select("scripts/personal/adblock/build-list.mjs");
+  NodeAssert.ok(
+    adblock.some((file) => /adblock/i.test(file)),
+    adblock.join(","),
+  );
 });
