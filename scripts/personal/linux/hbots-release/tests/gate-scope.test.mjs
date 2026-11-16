@@ -937,3 +937,24 @@ NodeTest.test("N8: a 60,000 character run in a test plans in under one second", 
     NodeAssert.ok(took < 1000, `planning took ${took} ms`);
   });
 });
+
+NodeTest.test("N7: vi.doMock, vi.importActual and vi.importMock name a dependency", () => {
+  const forms = [
+    'vi.doMock("./lonely", () => ({}));',
+    'await vi.importActual("./lonely");',
+    'await vi.importActual<typeof import("./lonely")>("./lonely");',
+    'await vi.importMock("./lonely");',
+  ];
+  for (const form of forms)
+    withFixture((f) => {
+      const src = NodePath.join(f.repo, "apps/server/src/personal");
+      NodeFS.writeFileSync(NodePath.join(src, "lonely.ts"), "export const lonely = 1;\n");
+      NodeFS.writeFileSync(NodePath.join(src, "mocker.test.ts"), `${form}\n`);
+      const head = commit(f.repo, "a mocked file");
+      const args = planOf(
+        planChecks(["apps/server/src/personal/lonely.ts"], { reader: gitReader(f.repo, head) }),
+        "server-tests",
+      ).args;
+      NodeAssert.ok(args.includes("src/personal/mocker.test.ts"), `${form}: ${args.join(",")}`);
+    });
+});

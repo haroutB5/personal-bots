@@ -189,7 +189,7 @@ function makeResolver(reader, packages) {
 }
 
 const IMPORT_RE =
-  /(?:import|export)\s+(type\s+)?(\{[^}]*\}|[^;'"]*?)\s*from\s*["']([^"']+)["']|import\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|vi\.mock\(\s*["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)/g;
+  /(?:import|export)\s+(type\s+)?(\{[^}]*\}|[^;'"]*?)\s*from\s*["']([^"']+)["']|import\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|vi\.(?:mock|doMock|importActual|importMock)(?:<[^>]*>)?\(\s*["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)/g;
 
 // The run is bounded: an unbounded run scans every start of a long token (a base64
 // blob in a fixture) and the cost grows with the square of its length. No path in
