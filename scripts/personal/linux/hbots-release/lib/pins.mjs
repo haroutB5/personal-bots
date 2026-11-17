@@ -12,6 +12,7 @@ const LOCAL = [
   "lib/seal.mjs",
   "lib/gateScope.mjs",
   "lib/serverTestSelect.mjs",
+  "lib/testBudget.mjs",
   "lib/compact.mjs",
   "lib/compact-db.mjs",
 ];

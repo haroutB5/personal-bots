@@ -9,6 +9,16 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 import {
+  ALLOWANCE_FILE,
+  FORK_TEST_ROOTS,
+  KOTLIN_TEST,
+  TEST_NAME,
+  budgetLines,
+  isForkTest,
+  judgeChange,
+  newAllowances,
+} from "./testBudget.mjs";
+import {
   SERVER_ALWAYS,
   SERVER_GATE_DIRS,
   fsReader,
@@ -474,8 +484,6 @@ function selectReleaseTools({ reader, changedPaths }) {
 // Test files that some gate command runs, read off the gate commands in
 // gates-linux.scoped.json. Everything else that is a test by name runs in no gate, so a
 // plan never looks as if it ran a changed test that nothing ran.
-const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
-const KOTLIN_TEST = /^apps\/hbots-mobile\/modules\/[^/]+\/android\/src\/test\/.+\.kt$/;
 const GATE_TEST_RULES = [
   // server-tests
   (file) =>
@@ -759,6 +767,134 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
   return problems;
 }
 
+const gitOut = (repo, args) =>
+  NodeChildProcess.execFileSync("git", ["-C", repo, ...args], {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  });
+const gitHas = (repo, rev, path) =>
+  NodeChildProcess.spawnSync("git", ["-C", repo, "cat-file", "-e", `${rev}:${path}`]).status === 0;
+const gitFile = (repo, rev, path) =>
+  gitHas(repo, rev, path) ? gitOut(repo, ["show", `${rev}:${path}`]) : null;
+
+function forkLineCounts(repo, from, to) {
+  const counts = new Map();
+  const fields = gitOut(repo, [
+    "diff",
+    "--no-renames",
+    "--numstat",
+    "-z",
+    from,
+    to,
+    "--",
+    ...FORK_TEST_ROOTS,
+  ]).split("\0");
+  for (const field of fields) {
+    const [added, deleted, ...path] = field.split("\t");
+    if (path.length === 0) continue;
+    counts.set(path.join("\t"), { added: Number(added) || 0, deleted: Number(deleted) || 0 });
+  }
+  return counts;
+}
+
+/**
+ * The test-line budget of one change: a list of `{ base, head }` diffs summed
+ * together. Returns the judged change, the problems that make it fail whatever
+ * its size, and the lines to print.
+ */
+export function budgetOfChange(repo, { id, steps }) {
+  const net = new Map();
+  const code = { added: 0, deleted: 0 };
+  const problems = [];
+  const rows = [];
+  let limit;
+  for (const { base, head } of steps) {
+    for (const [path, { added, deleted }] of forkLineCounts(repo, base, head)) {
+      if (isForkTest(path)) net.set(path, (net.get(path) ?? 0) + added - deleted);
+      else {
+        code.added += added;
+        code.deleted += deleted;
+      }
+    }
+    const found = newAllowances(
+      gitFile(repo, base, ALLOWANCE_FILE),
+      gitFile(repo, head, ALLOWANCE_FILE),
+      { exists: (path) => gitHas(repo, head, path) },
+    );
+    limit ??= found.limit;
+    rows.push(...found.rows);
+    problems.push(...found.problems);
+  }
+  const result = judgeChange({
+    id,
+    deltas: [...net]
+      .filter(([, lines]) => lines !== 0)
+      .map(([path, lines]) => ({ path, net: lines })),
+    limit,
+    allowance: rows.sort((a, b) => b.lines - a.lines)[0],
+    code,
+  });
+  return {
+    result,
+    problems,
+    failed: problems.length > 0 || result.verdict === "over",
+    lines: [...problems.map((problem) => `FAIL test budget: ${problem}`), ...budgetLines(result)],
+  };
+}
+
+const mergeLabel = (repo, sha) =>
+  /^Merge (?:remote-tracking )?branch '([^']+)'/.exec(
+    gitOut(repo, ["log", "-1", "--format=%s", sha]),
+  )?.[1] ?? `merge ${sha.slice(0, 10)}`;
+
+/**
+ * The budget of every change a release carries. Each merge on the first-parent
+ * line is one change, measured from where its branch left trunk. A merge of trunk
+ * into a branch is skipped, and the commits made straight on the line are one more change.
+ */
+export function budgetOfRelease(repo, liveSha, releaseSha) {
+  const changes = [];
+  const direct = [];
+  const log = gitOut(repo, [
+    "rev-list",
+    "--first-parent",
+    "--parents",
+    `${liveSha}..${releaseSha}`,
+  ]);
+  for (const line of log.split("\n").filter(Boolean)) {
+    const [sha, first, ...others] = line.split(" ");
+    if (!first) continue;
+    if (others.length === 0) direct.push({ base: first, head: sha });
+    else if (others.length > 1)
+      changes.push({ id: mergeLabel(repo, sha), steps: [{ base: first, head: sha }] });
+    else if (
+      NodeChildProcess.spawnSync("git", [
+        "-C",
+        repo,
+        "merge-base",
+        "--is-ancestor",
+        others[0],
+        liveSha,
+      ]).status !== 0
+    )
+      changes.push({
+        id: mergeLabel(repo, sha),
+        steps: [{ base: gitOut(repo, ["merge-base", first, others[0]]).trim(), head: others[0] }],
+      });
+  }
+  if (direct.length) changes.push({ id: "commits made on the release line", steps: direct });
+  const reports = changes.map((change) => budgetOfChange(repo, change));
+  return {
+    reports,
+    lines: reports.flatMap((report) => report.lines),
+    problems: reports
+      .filter((report) => report.failed)
+      .flatMap((report) =>
+        report.lines.filter((line) => line.startsWith("FAIL")).map((line) => line.slice(5)),
+      ),
+  };
+}
+
 const invokedDirectly = () => {
   try {
     return NodePath.resolve(NodeProcess.argv[1] ?? "") === NodeURL.fileURLToPath(import.meta.url);
@@ -827,11 +963,24 @@ if (invokedDirectly()) {
       );
       NodeProcess.exit(2);
     }
+    const branch =
+      options.head === "HEAD" ? git("rev-parse", "--abbrev-ref", "HEAD") : options.head;
+    const budget = budgetOfChange(repo, {
+      id: branch === "HEAD" ? headSha.slice(0, 10) : branch,
+      steps: [{ base: mergeBase, head: headSha }],
+    });
     const result = { baseSha: mergeBase, requestedBase: baseSha, headSha, ...scope };
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(
+        JSON.stringify(
+          { ...result, budget: { ...budget.result, problems: budget.problems } },
+          null,
+          2,
+        ),
+      );
     } else if (options.commands) {
       printPlan(result, true);
+      for (const line of budget.lines) console.error(line);
       // The gate commands ship with this planner, so read them from this checkout:
       // the head's own copy may predate the {args} placeholders.
       const defsFile =
@@ -852,7 +1001,9 @@ if (invokedDirectly()) {
       }
     } else {
       printPlan(result);
+      for (const line of budget.lines) (budget.failed ? console.error : console.log)(line);
     }
+    if (budget.failed) NodeProcess.exit(2);
   } catch (error) {
     console.error(`FAIL: ${error.message}`);
     NodeProcess.exit(2);

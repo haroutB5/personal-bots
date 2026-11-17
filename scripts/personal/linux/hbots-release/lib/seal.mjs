@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { readJson, run, runAsync, sha256File, atomicWrite } from "./util.mjs";
-import { verifyPlans } from "./gateScope.mjs";
+import { budgetOfRelease, verifyPlans } from "./gateScope.mjs";
 import { gitReader } from "./serverTestSelect.mjs";
 
 const HASH_CLI = NodePath.join(
@@ -182,13 +182,21 @@ export function planEvidenceProblems(cfg, a, evidence) {
       `cannot verify gate plans: git diff ${liveSha.slice(0, 12)}..${releaseSha.slice(0, 12)} failed: ${diff.err.slice(0, 200)}`,
     ];
   }
-  return verifyPlans({
+  const plans = verifyPlans({
     evidence,
     liveSha,
     releaseSha,
     changedPaths: diff.out.split("\0").filter(Boolean),
     reader: gitReader(a["repo-root"], releaseSha),
   });
+  try {
+    const budget = budgetOfRelease(a["repo-root"], liveSha, releaseSha);
+    // An allowance a change used is printed, so the lead and the owner read it in the release log.
+    for (const line of budget.lines) if (line.includes(": allowed ")) console.error(line);
+    return [...plans, ...budget.problems];
+  } catch (error) {
+    return [...plans, `cannot compute the test budget: ${error.message.split("\n")[0]}`];
+  }
 }
 
 export function readEvidence(evidencePath, binSha, a) {
