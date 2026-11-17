@@ -849,19 +849,19 @@ export function budgetOfChange(repo, { id, steps }) {
     allowance: rows.sort((a, b) => b.lines - a.lines)[0],
     code,
   });
-  const failed = problems.length > 0 || result.verdict === "over";
-  return {
+  const lines = [
+    ...problems.map((problem) => `FAIL test budget: ${problem}`),
+    ...budgetLines(result),
+  ];
+  const report = {
     result,
     problems,
-    failed,
     enforce,
-    blocks: failed && enforce,
-    lines: [
-      ...problems.map((problem) => `FAIL test budget: ${problem}`),
-      ...budgetLines(result),
-      ...(failed && !enforce ? [REPORT_MODE_LINE] : []),
-    ],
+    failed: problems.length > 0 || result.verdict === "over",
+    lines,
   };
+  if (report.failed && !enforce) lines.push(REPORT_MODE_LINE);
+  return { ...report, blocks: report.failed && enforce };
 }
 
 /** Whether the allowance file at `rev` turns the guard on. A file that cannot be read is report mode. */
