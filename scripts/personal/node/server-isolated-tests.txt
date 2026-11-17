@@ -1,0 +1,20 @@
+# Server test files that run in their own isolated lane (see server-test-lane.mjs).
+# One path per line, relative to apps/server. A trailing # comment says why.
+src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts # fails reused: permission mode from an earlier file's settings state (expected auto, got bypassPermissions)
+src/orchestration-v2/Adapters/ClaudeAgentSdkQueryRunner.test.ts # 12 tests time out at 120 s each when reused (about 960 s)
+src/orchestration-v2/FoundationPersistence.test.ts # fails reused: reader and writer worker test
+src/orchestration-v2/ThreadFind.test.ts # fails reused: cache lifetime count 0, expected 2
+src/orchestration-v2/toolOutputImageBytes.test.ts # fails reused
+src/personal/browser/driver.test.ts # 7 shared bot tab tests fail reused
+src/preview/DesktopBrowserChannel.test.ts # 2 tests fail reused
+src/preview/PortScanner.test.ts # a mocked kill is never called when reused
+src/cloud/bootService.test.ts # fails reused: could not set up the background service
+src/orchestration-v2/Adapters/AcpAdapterV2.test.ts # fails reused: expected error to be warning
+src/personal/tasks/heavyJobLock.test.ts # fails reused: lock state seen as held
+src/preview/ServerBrowserContexts.test.ts # 5 tests fail reused: profile storage paths
+src/preview/ServerBrowser.test.ts # 88 tests fail reused: mock browser launch state
+src/provider/ClaudeCapabilitiesProbe.test.ts # fails reused: status error instead of ready
+src/provider/GrokProvider.test.ts # 5 tests fail reused: status error instead of ready
+src/provider/userInputAttachments.test.ts # 8 tests fail reused: child process settings leak
+src/workspace/WorkspaceFileSystem.test.ts # fails reused: network path read returns nothing
+src/provider/ProviderInstanceRegistry.test.ts # 16 tests fail reused: probe status unknown instead of ready

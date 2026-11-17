@@ -433,7 +433,7 @@ NodeTest.test(
       NodeAssert.equal(lines.status, 0, lines.stderr);
       NodeAssert.match(
         lines.stdout,
-        /vp test run src\/personal\/push\/PersonalPushService\.test\.ts/,
+        /server-test-lane\.mjs all src\/personal\/push\/PersonalPushService\.test\.ts/,
       );
       NodeAssert.doesNotMatch(lines.stdout, /e2e-smoke/);
     });
