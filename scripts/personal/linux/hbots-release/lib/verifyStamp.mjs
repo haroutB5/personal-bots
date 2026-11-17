@@ -1,8 +1,11 @@
-// The verification stamp. Each commit says how it was verified in a `Verified:` trailer,
-// or `Verified: none (<reason>)`. Pure: the callers read git and pass plain data in.
+// The verification stamp. Each commit says how it was verified in a `Verified:` line of its
+// message, or `Verified: none (<reason>)`. The line may sit anywhere in the body, because the
+// team ends every message with a `Co-Authored-By:` paragraph that git then reads as the only trailers. Pure: the callers read git and pass plain data in.
 // The mode is read from the change's base, like the test budget's `enforce`, so a
 // change cannot switch the gate off for itself. Observe reports and never blocks;
 // enforce blocks the release plan when a commit that needs a stamp has none.
+
+import { isDeepStrictEqual } from "node:util";
 
 export const STAMP_MODE_FILE = "scripts/personal/qa/verify-stamp.json";
 export const MODES = ["off", "observe", "enforce"];
@@ -23,9 +26,16 @@ export function readMode(source) {
   return { mode: data.mode };
 }
 
+/** The values of every body line that starts with `Verified:`, in order. */
+export const verifiedValues = (body) =>
+  body
+    .split("\n")
+    .map((line) => /^Verified:(.*)$/i.exec(line)?.[1]?.trim())
+    .filter((value) => value !== undefined);
+
 const NONE = /^none\s*\(\s*(\S[^]*?)\s*\)$/;
 
-/** One commit's stamp from the values of its `Verified` trailers: the first usable one wins. */
+/** One commit's stamp from the values of its `Verified:` lines: the first usable one wins. */
 export function readStamp(values) {
   const stamps = values
     .map((value) => value.trim())
@@ -41,21 +51,42 @@ export function readStamp(values) {
 
 /** The subject prefix of the release version and notes commits. */
 export const RELEASE_SUBJECT = /^(?:chore|docs)\(release\):/;
-const RELEASE_PATHS = [
-  /^apps\/hbots-mobile\/package\.json$/,
-  /^scripts\/personal\/app-version\.txt$/,
-  /^scripts\/personal\/linux\/hbots-release\/PINS\.json$/,
-  /^docs\/releases\/[^/]+\.md$/,
-];
+export const PACKAGE_FILE = "apps/hbots-mobile/package.json";
+const VERSION_FILE = "scripts/personal/app-version.txt";
+const NOTES_FILE = /^docs\/releases\/[^/]+\.md$/;
 
-/** A release version or notes commit: the release subject and nothing but release files, so a subject alone exempts no code. */
-export const isReleaseCommit = ({ subject, paths }) =>
-  RELEASE_SUBJECT.test(subject) &&
-  paths.length > 0 &&
-  paths.every((path) => RELEASE_PATHS.some((pattern) => pattern.test(path)));
+/** Whether two `package.json` texts differ in the `version` field and nothing else. */
+export function versionOnlyChange(before, after) {
+  const parse = (source) => {
+    try {
+      const data = JSON.parse(source);
+      return data && typeof data === "object" && !Array.isArray(data) ? data : null;
+    } catch {
+      return null;
+    }
+  };
+  const [was, now] = [parse(before), parse(after)];
+  if (!was || !now) return false;
+  const { version: _was, ...restWas } = was;
+  const { version: _now, ...restNow } = now;
+  return isDeepStrictEqual(restWas, restNow);
+}
 
 /**
- * A range of commits against the mode. A commit is `{ sha, parents, subject, paths, trailers }`.
+ * A release version or notes commit: the release subject and nothing but the version file,
+ * the release notes, and the version line of `package.json` (`packageVersionOnly`). Anything
+ * else it touches, `PINS.json` and the rest of `package.json` included, needs a stamp.
+ */
+export const isReleaseCommit = ({ subject, paths, packageVersionOnly = false }) =>
+  RELEASE_SUBJECT.test(subject) &&
+  paths.length > 0 &&
+  paths.every(
+    (path) =>
+      path === VERSION_FILE || NOTES_FILE.test(path) || (path === PACKAGE_FILE && packageVersionOnly),
+  );
+
+/**
+ * A range of commits against the mode. A commit is `{ sha, parents, subject, body, paths, packageVersionOnly }`.
  * Merge commits (more than one parent) and release commits need no stamp. `total` counts
  * the commits that do.
  */
@@ -64,7 +95,7 @@ export function judgeStamps({ mode, commits }) {
   const exemptShas = new Set(exempt.map((commit) => commit.sha));
   const judged = commits
     .filter((commit) => !exemptShas.has(commit.sha))
-    .map((commit) => ({ commit, stamp: readStamp(commit.trailers) }));
+    .map((commit) => ({ commit, stamp: readStamp(verifiedValues(commit.body)) }));
   const unstamped = judged.filter(({ stamp }) => stamp.kind === "missing").map(({ commit }) => commit);
   return {
     mode: mode.mode,
@@ -95,7 +126,7 @@ export function stampLines(result) {
     ...listed,
     ...tail,
     ...(result.blocks
-      ? [`  to pass: add "Verified: <how>" or "Verified: none (<reason>)" as the last paragraph of each commit message`]
+      ? [`  to pass: add a line "Verified: <how>" or "Verified: none (<reason>)" to each commit message`]
       : []),
   ];
 }

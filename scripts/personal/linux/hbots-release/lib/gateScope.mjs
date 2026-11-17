@@ -22,11 +22,13 @@ import {
 } from "./testBudget.mjs";
 import { GATES_FILE, gateChanges, gateDefsFromBase } from "./gateDefs.mjs";
 import {
+  PACKAGE_FILE,
   RELEASE_SUBJECT,
   STAMP_MODE_FILE,
   judgeStamps,
   readMode,
   stampLines,
+  versionOnlyChange,
 } from "./verifyStamp.mjs";
 import {
   SERVER_ALWAYS,
@@ -895,7 +897,7 @@ const RECORD = "\x1e";
 function commitsOf(repo, base, head) {
   const log = gitOut(repo, [
     "log",
-    `--format=%H${FIELD}%P${FIELD}%s${FIELD}%(trailers:key=Verified,valueonly,unfold,separator=%x1d)${RECORD}`,
+    `--format=%H${FIELD}%P${FIELD}%s${FIELD}%b${RECORD}`,
     `${base}..${head}`,
   ]);
   return log
@@ -903,15 +905,19 @@ function commitsOf(repo, base, head) {
     .map((record) => record.replace(/^\n/, ""))
     .filter(Boolean)
     .map((record) => {
-      const [sha, parents, subject, trailers] = record.split(FIELD);
+      const [sha, parents, subject, body] = record.split(FIELD);
+      const paths = RELEASE_SUBJECT.test(subject)
+        ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean)
+        : [];
       return {
         sha,
         parents: parents.split(" ").filter(Boolean).length,
         subject,
-        trailers: trailers.split(/[\n\x1d]/).filter(Boolean),
-        paths: RELEASE_SUBJECT.test(subject)
-          ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean)
-          : [],
+        body,
+        paths,
+        packageVersionOnly:
+          paths.includes(PACKAGE_FILE) &&
+          versionOnlyChange(gitFile(repo, `${sha}^`, PACKAGE_FILE), gitFile(repo, sha, PACKAGE_FILE)),
       };
     });
 }

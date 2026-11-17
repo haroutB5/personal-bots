@@ -1,0 +1,18 @@
+[
+  {
+    "sha": "b774885c7f8e0e19649bd20fad9aa48637e3b084",
+    "message": "feat(release): the planner prints the gate commands from the base\n\nThe builder command read gates-linux.scoped.json from the checkout that held the\nscript, so a branch could edit the command that judges it. It now reads the file\nwhere the branch left trunk, prints a line for each gate the change edited,\nadded or removed, and refuses to print commands when trunk has no gates file.\nAn explicit --gates-json still wins.\n\nVerified: node --test gate-defs, planner-from-base, gate-scope 50 of 50 pass, tools.test 22 of 22 pass, red log qa/verification-article/s5s4/logs/s5-1-red.log\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+  },
+  {
+    "sha": "4df8375c55334c721e75b537759d016360ede858",
+    "message": "feat(release): deleted test lines earn no budget\n\nA file that lost lines used to subtract from the change's net, so deleting a\ntest bought room for another. A file with a positive net is credited, a file\nbelow zero adds to the deleted count and credits nothing, and a change that\ndeletes test lines fails with the count and the files unless an allowance row\nnames at least that many lines. Report mode and the enforce default are\nunchanged. A rename counts as lines gained and lines deleted.\n\nVerified: node --test test-budget 40 of 40 pass (1 known todo), red log qa/verification-article/s5s4/logs/s5-2-red.log\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+  },
+  {
+    "sha": "b26abd034f8a6ea8339c5200ae9eced0c846fd51",
+    "message": "feat(release): verification stamp in observe mode\n\nEach commit says how it was verified in a Verified trailer, or Verified: none\n(reason). The planner command and the seal print how many commits in the\nrange have none and list their shas. The mode file\nscripts/personal/qa/verify-stamp.json is read from the change's base and\ndefaults to observe when missing; a malformed file also observes, with a\nwarning. Enforce exits 2 in the planner and refuses the seal. Merge commits\nand release version and notes commits (a chore or docs release subject that\ntouches only release files) need no stamp.\n\nVerified: node --test verify-stamp 33 of 33 pass, red logs qa/verification-article/s4/logs s4-red.log and s4-red-cli.log\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+  },
+  {
+    "sha": "ed836f02cf806d3e42764f63b2b0b800441b987d",
+    "message": "docs(release): the planner reads gate commands from the base, the budget and the stamp\n\nVerified: none (readme text only, the behaviour is tested in the commits above)\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+  }
+]
