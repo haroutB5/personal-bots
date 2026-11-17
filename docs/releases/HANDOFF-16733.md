@@ -30,3 +30,20 @@ Id 160 drops the six tables and their 15 indexes. Params use `--migration-before
 ## Rollback
 
 Binary rollback to `454372bd9d01` (1.67.32) plus its APK. Data rollback is a restore of the pre-release backup taken by the runner.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=61ec27e3f174c19da84663249fd98b99e27c155d release=61ec27e3f174 json-sha256=7869bdaa8756eb8ceb2ae23d865dfbefdb6815aca3c6b0cdff8e3230f0f1e4aa result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/src/persistence/Migrations.ts, apps/server/src/persistence/Migrations/063_DropUnusedV1Projections.test.ts, apps/server/src/persistence/upstreamMigrationIds.ts, apps/server/src/personal/memory/PersonalMemoryService.replace.test.ts, ...; selected 344 test files
+- server-tsc: PASS, exit 0
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: PASS, selected: e2e inputs changed: apps/server/src/persistence/Migrations.ts, apps/server/src/persistence/Migrations/063_DropUnusedV1Projections.test.ts, apps/server/src/persistence/upstreamMigrationIds.ts, apps/server/src/personal/memory/PersonalMemoryService.replace.test.ts, ...; selected 12 journeys
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: SKIPPED, skip: no changed path is an input of parity: apps/web, apps/hbots-mobile, packages/personal-client, scripts/personal/parity (not apps/hbots-mobile/package.json, scripts/personal/parity/parity.json)
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/hbots-release/PINS.json, scripts/personal/linux/hbots-release/hbots-release.mjs, scripts/personal/linux/hbots-release/lib/dbcheck.mjs, scripts/personal/linux/hbots-release/lib/fixture.mjs, ...; selected 18 test files
+
+<!-- gate-evidence:end -->
