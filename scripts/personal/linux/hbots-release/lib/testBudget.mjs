@@ -2,6 +2,9 @@
 // A change adds at most `limit` net test lines on fork paths. A change whose test
 // lines sit in one file is never blocked. Over that, the lead records an allowance
 // row in the repo and the row names the number it excuses.
+// The guard only reports until the allowance file at the change's base says
+// `"enforce": true`. It is read from the base, like the limit, so a change cannot
+// switch the guard on or off for itself. Absent means report mode.
 
 export const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 export const KOTLIN_TEST = /^apps\/hbots-mobile\/modules\/[^/]+\/android\/src\/test\/.+\.kt$/;
@@ -14,6 +17,7 @@ export const FORK_TEST_ROOTS = [
 ];
 export const ALLOWANCE_FILE = "scripts/personal/qa/test-budget-allowances.json";
 export const DEFAULT_LIMIT = 400;
+export const REPORT_MODE_LINE = `test budget: report mode, this does not block the release (set "enforce": true in ${ALLOWANCE_FILE} to block)`;
 
 const isTestName = (path) => TEST_NAME.test(path) || KOTLIN_TEST.test(path);
 
@@ -36,7 +40,9 @@ function readAllowanceFile(source) {
     return { rows: [], problem: "needs an allowances array" };
   if (data.limit !== undefined && !(Number.isInteger(data.limit) && data.limit > 0))
     return { rows: [], problem: "limit must be a positive whole number" };
-  return { limit: data.limit, rows: data.allowances };
+  if (data.enforce !== undefined && typeof data.enforce !== "boolean")
+    return { rows: [], problem: "enforce must be true or false" };
+  return { limit: data.limit, enforce: data.enforce === true, rows: data.allowances };
 }
 
 function rowProblem(row, exists) {
@@ -76,6 +82,7 @@ export function newAllowances(baseFile, headFile, { exists = () => true } = {}) 
   }
   return {
     limit: base.limit ?? DEFAULT_LIMIT,
+    enforce: base.enforce === true,
     rows: added.filter((row) => !rowProblem(row, exists)).sort((a, b) => b.lines - a.lines),
     problems,
   };

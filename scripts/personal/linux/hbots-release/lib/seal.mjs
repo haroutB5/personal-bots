@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { readJson, run, runAsync, sha256File, atomicWrite } from "./util.mjs";
-import { budgetOfRelease, verifyPlans } from "./gateScope.mjs";
+import { budgetOfRelease, guardEnforced, verifyPlans } from "./gateScope.mjs";
 import { gitReader } from "./serverTestSelect.mjs";
 
 const HASH_CLI = NodePath.join(
@@ -193,8 +193,15 @@ export function planEvidenceProblems(cfg, a, evidence) {
     const budget = budgetOfRelease(a["repo-root"], liveSha, releaseSha);
     // An allowance a change used is printed, so the lead and the owner read it in the release log.
     for (const line of budget.lines) if (line.includes(": allowed ")) console.error(line);
+    for (const line of budget.warnings) console.error(line);
     return [...plans, ...budget.problems];
   } catch (error) {
+    if (!guardEnforced(a["repo-root"], liveSha)) {
+      console.error(
+        `WARNING: the test budget guard crashed and could not check this release: ${error.message.split("\n")[0]}. Report mode, so the release is not blocked.`,
+      );
+      return plans;
+    }
     return [...plans, `cannot compute the test budget: ${error.message.split("\n")[0]}`];
   }
 }

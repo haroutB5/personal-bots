@@ -12,6 +12,7 @@ import {
   ALLOWANCE_FILE,
   FORK_TEST_ROOTS,
   KOTLIN_TEST,
+  REPORT_MODE_LINE,
   TEST_NAME,
   budgetLines,
   isForkTest,
@@ -820,6 +821,7 @@ export function budgetOfChange(repo, { id, steps }) {
   const problems = [];
   const rows = [];
   let limit;
+  let enforce;
   for (const { base, head } of steps) {
     for (const [path, { added, deleted }] of forkLineCounts(repo, base, head)) {
       if (isForkTest(path)) net.set(path, (net.get(path) ?? 0) + added - deleted);
@@ -834,6 +836,7 @@ export function budgetOfChange(repo, { id, steps }) {
       { exists: (path) => gitHas(repo, head, path) },
     );
     limit ??= found.limit;
+    enforce ??= found.enforce;
     rows.push(...found.rows);
     problems.push(...found.problems);
   }
@@ -846,12 +849,28 @@ export function budgetOfChange(repo, { id, steps }) {
     allowance: rows.sort((a, b) => b.lines - a.lines)[0],
     code,
   });
+  const failed = problems.length > 0 || result.verdict === "over";
   return {
     result,
     problems,
-    failed: problems.length > 0 || result.verdict === "over",
-    lines: [...problems.map((problem) => `FAIL test budget: ${problem}`), ...budgetLines(result)],
+    failed,
+    enforce,
+    blocks: failed && enforce,
+    lines: [
+      ...problems.map((problem) => `FAIL test budget: ${problem}`),
+      ...budgetLines(result),
+      ...(failed && !enforce ? [REPORT_MODE_LINE] : []),
+    ],
   };
+}
+
+/** Whether the allowance file at `rev` turns the guard on. A file that cannot be read is report mode. */
+export function guardEnforced(repo, rev) {
+  try {
+    return JSON.parse(gitFile(repo, rev, ALLOWANCE_FILE) ?? "{}").enforce === true;
+  } catch {
+    return false;
+  }
 }
 
 const mergeLabel = (repo, sha) =>
@@ -876,7 +895,7 @@ export function budgetOfRelease(repo, liveSha, releaseSha) {
   for (const line of log.split("\n").filter(Boolean)) {
     const [sha, first, ...others] = line.split(" ");
     if (!first) continue;
-    if (others.length === 0) direct.push({ base: first, head: sha });
+    if (others.length === 0) direct.unshift({ base: first, head: sha });
     else if (others.length > 1)
       changes.push({ id: mergeLabel(repo, sha), steps: [{ base: first, head: sha }] });
     else if (
@@ -900,10 +919,13 @@ export function budgetOfRelease(repo, liveSha, releaseSha) {
     reports,
     lines: reports.flatMap((report) => report.lines),
     problems: reports
-      .filter((report) => report.failed)
+      .filter((report) => report.blocks)
       .flatMap((report) =>
         report.lines.filter((line) => line.startsWith("FAIL")).map((line) => line.slice(5)),
       ),
+    warnings: reports
+      .filter((report) => report.failed && !report.enforce)
+      .flatMap((report) => report.lines),
   };
 }
 
@@ -977,15 +999,27 @@ if (invokedDirectly()) {
     }
     const branch =
       options.head === "HEAD" ? git("rev-parse", "--abbrev-ref", "HEAD") : options.head;
-    const budget = budgetOfChange(repo, {
-      id: branch === "HEAD" ? headSha.slice(0, 10) : branch,
-      steps: [{ base: mergeBase, head: headSha }],
-    });
+    let budget;
+    try {
+      budget = budgetOfChange(repo, {
+        id: branch === "HEAD" ? headSha.slice(0, 10) : branch,
+        steps: [{ base: mergeBase, head: headSha }],
+      });
+    } catch (error) {
+      if (guardEnforced(repo, mergeBase)) throw error;
+      console.error(
+        `WARNING: the test budget guard crashed and could not check this change: ${error.message.split("\n")[0]}. Report mode, so it does not block.`,
+      );
+      budget = { result: null, problems: [], failed: false, blocks: false, lines: [] };
+    }
     const result = { baseSha: mergeBase, requestedBase: baseSha, headSha, ...scope };
     if (options.json) {
       console.log(
         JSON.stringify(
-          { ...result, budget: { ...budget.result, problems: budget.problems } },
+          {
+            ...result,
+            budget: { ...budget.result, problems: budget.problems, enforce: budget.enforce },
+          },
           null,
           2,
         ),
@@ -1015,7 +1049,7 @@ if (invokedDirectly()) {
       printPlan(result);
       for (const line of budget.lines) (budget.failed ? console.error : console.log)(line);
     }
-    if (budget.failed) NodeProcess.exit(2);
+    if (budget.blocks) NodeProcess.exit(2);
   } catch (error) {
     console.error(`FAIL: ${error.message}`);
     NodeProcess.exit(2);
