@@ -17,3 +17,4 @@ src/provider/ClaudeCapabilitiesProbe.test.ts # fails reused: status error instea
 src/provider/GrokProvider.test.ts # 5 tests fail reused: status error instead of ready
 src/provider/userInputAttachments.test.ts # 8 tests fail reused: child process settings leak
 src/workspace/WorkspaceFileSystem.test.ts # fails reused: network path read returns nothing
+src/provider/ProviderInstanceRegistry.test.ts # 16 tests fail reused: probe status unknown instead of ready
