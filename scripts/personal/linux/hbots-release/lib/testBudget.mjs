@@ -1,7 +1,9 @@
 // Test-line budget for one change. Pure: the callers read git and pass plain data in.
 // A change adds at most `limit` net test lines on fork paths. A change whose test
 // lines sit in one file is never blocked. Over that, the lead records an allowance
-// row in the repo and the row names the number it excuses.
+// row in the repo and the row names the number it excuses. A file that loses lines
+// earns the change nothing, and the lines it loses need a row too: deleting a test
+// must not buy room for another.
 // The guard only reports until the allowance file at the change's base says
 // `"enforce": true`. It is read from the base, like the limit, so a change cannot
 // switch the guard on or off for itself. Absent means report mode.
@@ -90,32 +92,50 @@ export function newAllowances(baseFile, headFile, { exists = () => true } = {}) 
 
 /**
  * One change against its limit. `deltas` is `{ path, net }` per changed file; only
- * fork test files count. `net` is lines at head minus lines at base.
+ * fork test files count. `net` is lines at head minus lines at base. A file with a
+ * positive net is credited to the change; a file below zero adds to `deleted` and
+ * credits nothing, so deleted lines never offset added ones.
  * `code` is `{ added, deleted }` of the fork code in the same change, for the report.
  */
 export function judgeChange({ id, deltas, limit = DEFAULT_LIMIT, allowance, code }) {
   const tests = deltas.filter((delta) => isForkTest(delta.path));
-  const net = tests.reduce((sum, delta) => sum + delta.net, 0);
+  const gains = tests.filter((delta) => delta.net > 0);
+  const losses = tests.filter((delta) => delta.net < 0);
+  const net = gains.reduce((sum, delta) => sum + delta.net, 0);
+  const deleted = losses.reduce((sum, delta) => sum - delta.net, 0);
   let verdict = "over";
   if (net <= limit) verdict = "ok";
-  else if (tests.length === 1) verdict = "single-file";
+  else if (gains.length === 1) verdict = "single-file";
   else if (allowance && net <= allowance.lines) verdict = "allowed";
+  if (deleted > 0 && verdict !== "over") {
+    if (allowance && deleted <= allowance.lines) verdict = "allowed";
+    else verdict = "deletes";
+  }
   return {
     id,
     net,
-    files: tests.length,
+    files: gains.length,
+    deleted,
+    deletedFiles: losses.length,
     limit,
     verdict,
-    tests: tests.toSorted((a, b) => b.net - a.net || (a.path < b.path ? -1 : 1)),
+    tests: gains.toSorted((a, b) => b.net - a.net || (a.path < b.path ? -1 : 1)),
+    lost: losses.toSorted((a, b) => a.net - b.net || (a.path < b.path ? -1 : 1)),
     ...(verdict === "allowed" ? { allowance } : {}),
     ...(code ? { code } : {}),
   };
 }
 
+/** A verdict that fails the change, in enforce mode blocking the release. */
+export const isFailing = (result) => result.verdict === "over" || result.verdict === "deletes";
+
 const signed = (n) => (n < 0 ? `${n}` : `+${n}`);
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** The lines to print for one judged change. Only `over` starts with FAIL. */
+const deletes = (result) =>
+  `deletes ${plural(result.deleted, "test line")}`;
+
+/** The lines to print for one judged change. Only a failing verdict starts with FAIL. */
 export function budgetLines(result) {
   const head = `${result.id} ${signed(result.net)} net test lines in ${plural(result.files, "file")}`;
   if (result.verdict === "ok") return [`test budget: ${head} (limit ${result.limit}): ok`];
@@ -125,18 +145,27 @@ export function budgetLines(result) {
     ];
   if (result.verdict === "allowed") {
     const { allowance } = result;
+    const tail = result.deleted > 0 ? `, ${deletes(result)}` : "";
     return [
-      `test budget: ${head} (limit ${result.limit}): allowed ${result.net} of ${allowance.lines} by ${allowance.by ?? "(no name)"}: ${allowance.reason}`,
+      `test budget: ${head} (limit ${result.limit}): allowed ${result.net} of ${allowance.lines} by ${allowance.by ?? "(no name)"}: ${allowance.reason}${tail}`,
     ];
   }
+  const lost = result.lost.map((delta) => `  ${signed(delta.net)} ${delta.path}`);
+  if (result.verdict === "deletes")
+    return [
+      `FAIL test budget: ${result.id} ${deletes(result)} in ${plural(result.deletedFiles, "file")}, they earn no budget (${signed(result.net)} added in ${plural(result.files, "file")})`,
+      ...lost,
+      `  to pass: keep the tests, or ask the lead for a row in ${ALLOWANCE_FILE} that names ${result.deleted} lines`,
+    ];
   const over = result.net - result.limit;
   return [
     `FAIL test budget: ${head}, limit ${result.limit}, over by ${over}`,
     ...result.tests.map((delta) => `  ${signed(delta.net)} ${delta.path}`),
+    ...(result.deleted > 0 ? [`  ${deletes(result)}, they earn no budget`, ...lost] : []),
     ...(result.code
       ? [`  code in this change: +${result.code.added} -${result.code.deleted}`]
       : []),
-    `  to pass: delete or merge ${over} test lines the new tests make redundant, or ask the lead`,
+    `  to pass: write ${over} fewer test lines, or ask the lead`,
     `  for a row in ${ALLOWANCE_FILE}`,
   ];
 }

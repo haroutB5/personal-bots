@@ -15,6 +15,7 @@ import {
   REPORT_MODE_LINE,
   TEST_NAME,
   budgetLines,
+  isFailing,
   isForkTest,
   judgeChange,
   newAllowances,
@@ -858,7 +859,7 @@ export function budgetOfChange(repo, { id, steps }) {
     result,
     problems,
     enforce,
-    failed: problems.length > 0 || result.verdict === "over",
+    failed: problems.length > 0 || isFailing(result),
     lines,
   };
   if (report.failed && !enforce) lines.push(REPORT_MODE_LINE);
