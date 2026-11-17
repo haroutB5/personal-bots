@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { readJson, run, runAsync, sha256File, atomicWrite } from "./util.mjs";
-import { budgetOfRelease, guardEnforced, verifyPlans } from "./gateScope.mjs";
+import { budgetOfRelease, guardEnforced, stampOfRange, verifyPlans } from "./gateScope.mjs";
 import { gitReader } from "./serverTestSelect.mjs";
 
 const HASH_CLI = NodePath.join(
@@ -189,20 +189,34 @@ export function planEvidenceProblems(cfg, a, evidence) {
     changedPaths: diff.out.split("\0").filter(Boolean),
     reader: gitReader(a["repo-root"], releaseSha),
   });
+  const stamps = stampProblems(a["repo-root"], liveSha, releaseSha);
   try {
     const budget = budgetOfRelease(a["repo-root"], liveSha, releaseSha);
     // An allowance a change used is printed, so the lead and the owner read it in the release log.
     for (const line of budget.lines) if (line.includes(": allowed ")) console.error(line);
     for (const line of budget.warnings) console.error(line);
-    return [...plans, ...budget.problems];
+    return [...plans, ...budget.problems, ...stamps];
   } catch (error) {
     if (!guardEnforced(a["repo-root"], liveSha)) {
       console.error(
         `WARNING: the test budget guard crashed and could not check this release: ${error.message.split("\n")[0]}. Report mode, so the release is not blocked.`,
       );
-      return plans;
+      return [...plans, ...stamps];
     }
-    return [...plans, `cannot compute the test budget: ${error.message.split("\n")[0]}`];
+    return [...plans, `cannot compute the test budget: ${error.message.split("\n")[0]}`, ...stamps];
+  }
+}
+
+/** The verification stamps of the release's commits, printed to the log. Only enforce mode returns problems. */
+function stampProblems(repo, liveSha, releaseSha) {
+  try {
+    const stamp = stampOfRange(repo, liveSha, releaseSha);
+    for (const line of stamp.lines) console.error(line);
+    return stamp.blocks
+      ? [`verify stamp: ${stamp.unstamped.length} of ${stamp.total} commits unstamped in enforce mode: ${stamp.unstamped.map((commit) => commit.sha.slice(0, 10)).join(", ")}`]
+      : [];
+  } catch (error) {
+    return [`cannot read the verify stamps: ${error.message.split("\n")[0]}`];
   }
 }
 

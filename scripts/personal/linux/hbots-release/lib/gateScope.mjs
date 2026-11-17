@@ -22,6 +22,13 @@ import {
 } from "./testBudget.mjs";
 import { GATES_FILE, gateChanges, gateDefsFromBase } from "./gateDefs.mjs";
 import {
+  RELEASE_SUBJECT,
+  STAMP_MODE_FILE,
+  judgeStamps,
+  readMode,
+  stampLines,
+} from "./verifyStamp.mjs";
+import {
   SERVER_ALWAYS,
   SERVER_GATE_DIRS,
   fsReader,
@@ -882,6 +889,57 @@ export const gateDefsOfChange = (repo, base, head) =>
     headSource: gitFile(repo, head, GATES_FILE),
   });
 
+const FIELD = "\x1f";
+const RECORD = "\x1e";
+
+function commitsOf(repo, base, head) {
+  const log = gitOut(repo, [
+    "log",
+    `--format=%H${FIELD}%P${FIELD}%s${FIELD}%(trailers:key=Verified,valueonly,unfold,separator=%x1d)${RECORD}`,
+    `${base}..${head}`,
+  ]);
+  return log
+    .split(RECORD)
+    .map((record) => record.replace(/^\n/, ""))
+    .filter(Boolean)
+    .map((record) => {
+      const [sha, parents, subject, trailers] = record.split(FIELD);
+      return {
+        sha,
+        parents: parents.split(" ").filter(Boolean).length,
+        subject,
+        trailers: trailers.split(/[\n\x1d]/).filter(Boolean),
+        paths: RELEASE_SUBJECT.test(subject)
+          ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean)
+          : [],
+      };
+    });
+}
+
+/**
+ * The verification stamps of the commits in `base..head`, judged by the mode file at
+ * `base`. A crash while reading commits is a warning unless that mode is enforce.
+ */
+export function stampOfRange(repo, base, head) {
+  const mode = readMode(gitFile(repo, base, STAMP_MODE_FILE));
+  const judged = (commits) => {
+    const result = judgeStamps({ mode, commits });
+    return { ...result, lines: stampLines(result) };
+  };
+  if (mode.mode === "off") return judged([]);
+  try {
+    return judged(commitsOf(repo, base, head));
+  } catch (error) {
+    if (mode.mode === "enforce") throw error;
+    return {
+      ...judged([]),
+      lines: [
+        `WARNING: verify stamp could not read the commits: ${error.message.split("\n")[0]}. Observe mode, so it does not block.`,
+      ],
+    };
+  }
+}
+
 const mergeLabel = (repo, sha) =>
   /^Merge (?:remote-tracking )?branch '([^']+)'/.exec(
     gitOut(repo, ["log", "-1", "--format=%s", sha]),
@@ -1022,6 +1080,7 @@ if (invokedDirectly()) {
       budget = { result: null, problems: [], failed: false, blocks: false, lines: [] };
     }
     const result = { baseSha: mergeBase, requestedBase: baseSha, headSha, ...scope };
+    const stamp = stampOfRange(repo, mergeBase, headSha);
     const fromBase = options["gates-json"] === undefined;
     let gates = { defs: undefined, changes: [], problems: [] };
     if (fromBase) {
@@ -1042,6 +1101,7 @@ if (invokedDirectly()) {
             ...result,
             budget: { ...budget.result, problems: budget.problems, enforce: budget.enforce },
             gateChanges: gates.changes,
+            stamp: { ...stamp, unstamped: stamp.unstamped.map((commit) => commit.sha) },
           },
           null,
           2,
@@ -1051,6 +1111,7 @@ if (invokedDirectly()) {
       printPlan(result, true);
       for (const line of budget.lines) console.error(line);
       for (const line of gateLines) console.error(line);
+      for (const line of stamp.lines) console.error(line);
       const defs = fromBase
         ? gates.defs
         : JSON.parse(NodeFS.readFileSync(options["gates-json"], "utf8"));
@@ -1067,8 +1128,9 @@ if (invokedDirectly()) {
       printPlan(result);
       for (const line of budget.lines) (budget.failed ? console.error : console.log)(line);
       for (const line of gateLines) console.log(line);
+      for (const line of stamp.lines) (stamp.blocks ? console.error : console.log)(line);
     }
-    if (budget.blocks) NodeProcess.exit(2);
+    if (budget.blocks || stamp.blocks) NodeProcess.exit(2);
   } catch (error) {
     console.error(`FAIL: ${error.message}`);
     NodeProcess.exit(2);
