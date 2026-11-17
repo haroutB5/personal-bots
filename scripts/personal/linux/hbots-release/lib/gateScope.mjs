@@ -15,10 +15,21 @@ import {
   REPORT_MODE_LINE,
   TEST_NAME,
   budgetLines,
+  isFailing,
   isForkTest,
   judgeChange,
   newAllowances,
 } from "./testBudget.mjs";
+import { GATES_FILE, gateChanges, gateDefsFromBase } from "./gateDefs.mjs";
+import {
+  PACKAGE_FILE,
+  RELEASE_SUBJECT,
+  STAMP_MODE_FILE,
+  judgeStamps,
+  readMode,
+  stampLines,
+  versionOnlyChange,
+} from "./verifyStamp.mjs";
 import {
   SERVER_ALWAYS,
   SERVER_GATE_DIRS,
@@ -38,7 +49,7 @@ export const SERVER_RUNNER_PATHS = [
   "scripts/personal/node/server-test-lane.mjs",
   "scripts/personal/node/server-isolated-tests.txt",
   "scripts/personal/node/gates-linux.json",
-  "scripts/personal/node/gates-linux.scoped.json",
+  GATES_FILE,
 ];
 
 // Files that make every check run whole. A dependency or runtime change can move
@@ -857,7 +868,7 @@ export function budgetOfChange(repo, { id, steps }) {
     result,
     problems,
     enforce,
-    failed: problems.length > 0 || result.verdict === "over",
+    failed: problems.length > 0 || isFailing(result),
     lines,
   };
   if (report.failed && !enforce) lines.push(REPORT_MODE_LINE);
@@ -870,6 +881,68 @@ export function guardEnforced(repo, rev) {
     return JSON.parse(gitFile(repo, rev, ALLOWANCE_FILE) ?? "{}").enforce === true;
   } catch {
     return false;
+  }
+}
+
+/** The gates this change runs: the base's own, plus the gates the change edited, added or removed. */
+export const gateDefsOfChange = (repo, base, head) =>
+  gateDefsFromBase({
+    baseSource: gitFile(repo, base, GATES_FILE),
+    headSource: gitFile(repo, head, GATES_FILE),
+  });
+
+const FIELD = "\x1f";
+const RECORD = "\x1e";
+
+function commitsOf(repo, base, head) {
+  const log = gitOut(repo, [
+    "log",
+    `--format=%H${FIELD}%P${FIELD}%s${FIELD}%b${RECORD}`,
+    `${base}..${head}`,
+  ]);
+  return log
+    .split(RECORD)
+    .map((record) => record.replace(/^\n/, ""))
+    .filter(Boolean)
+    .map((record) => {
+      const [sha, parents, subject, body] = record.split(FIELD);
+      const paths = RELEASE_SUBJECT.test(subject)
+        ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean)
+        : [];
+      return {
+        sha,
+        parents: parents.split(" ").filter(Boolean).length,
+        subject,
+        body,
+        paths,
+        packageVersionOnly:
+          paths.includes(PACKAGE_FILE) &&
+          versionOnlyChange(gitFile(repo, `${sha}^`, PACKAGE_FILE), gitFile(repo, sha, PACKAGE_FILE)),
+      };
+    });
+}
+
+/**
+ * The verification stamps of the commits in `base..head`, judged by the mode file at
+ * `base`. A crash while reading commits is a warning unless that mode is enforce.
+ */
+export function stampOfRange(repo, base, head) {
+  const mode = readMode(gitFile(repo, base, STAMP_MODE_FILE));
+  const judged = (commits) => {
+    const result = judgeStamps({ mode, commits });
+    return { ...result, lines: stampLines(result) };
+  };
+  if (mode.mode === "off") return judged([]);
+  try {
+    return judged(commitsOf(repo, base, head));
+  } catch (error) {
+    if (mode.mode === "enforce") throw error;
+    return {
+      ...judged([]),
+      lines: [
+        `WARNING: verify stamp could not read the commits: ${error.message.split("\n")[0]}. Observe mode, so it does not block.`,
+      ],
+    };
   }
 }
 
@@ -1013,12 +1086,28 @@ if (invokedDirectly()) {
       budget = { result: null, problems: [], failed: false, blocks: false, lines: [] };
     }
     const result = { baseSha: mergeBase, requestedBase: baseSha, headSha, ...scope };
+    const stamp = stampOfRange(repo, mergeBase, headSha);
+    const fromBase = options["gates-json"] === undefined;
+    let gates = { defs: undefined, changes: [], problems: [] };
+    if (fromBase) {
+      try {
+        gates = gateDefsOfChange(repo, mergeBase, headSha);
+      } catch (error) {
+        if (options.commands) throw error;
+      }
+    }
+    const gateLines = [
+      ...gateChanges(gates.changes),
+      ...gates.problems.map((problem) => `WARNING: ${problem}; the base commands run`),
+    ];
     if (options.json) {
       console.log(
         JSON.stringify(
           {
             ...result,
             budget: { ...budget.result, problems: budget.problems, enforce: budget.enforce },
+            gateChanges: gates.changes,
+            stamp: { ...stamp, unstamped: stamp.unstamped.map((commit) => commit.sha) },
           },
           null,
           2,
@@ -1027,15 +1116,11 @@ if (invokedDirectly()) {
     } else if (options.commands) {
       printPlan(result, true);
       for (const line of budget.lines) console.error(line);
-      // The gate commands ship with this planner, so read them from this checkout:
-      // the head's own copy may predate the {args} placeholders.
-      const defsFile =
-        options["gates-json"] ??
-        NodePath.resolve(
-          NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
-          "../../../node/gates-linux.scoped.json",
-        );
-      const defs = JSON.parse(NodeFS.readFileSync(defsFile, "utf8"));
+      for (const line of gateLines) console.error(line);
+      for (const line of stamp.lines) console.error(line);
+      const defs = fromBase
+        ? gates.defs
+        : JSON.parse(NodeFS.readFileSync(options["gates-json"], "utf8"));
       for (const plan of result.plans) {
         if (plan.mode === "skip" || plan.id === "e2e") continue;
         const def = defs.find((entry) => entry.id === plan.id);
@@ -1048,8 +1133,10 @@ if (invokedDirectly()) {
     } else {
       printPlan(result);
       for (const line of budget.lines) (budget.failed ? console.error : console.log)(line);
+      for (const line of gateLines) console.log(line);
+      for (const line of stamp.lines) (stamp.blocks ? console.error : console.log)(line);
     }
-    if (budget.blocks) NodeProcess.exit(2);
+    if (budget.blocks || stamp.blocks) NodeProcess.exit(2);
   } catch (error) {
     console.error(`FAIL: ${error.message}`);
     NodeProcess.exit(2);

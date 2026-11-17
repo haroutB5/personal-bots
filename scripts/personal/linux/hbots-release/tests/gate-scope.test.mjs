@@ -55,6 +55,8 @@ function fixture() {
     NodePath.join(repo, "apps/server/src/personal/push/PersonalPushService.test.ts"),
     'import * as Push from "./PersonalPushService.ts";\nPush.push;\n',
   );
+  NodeFS.mkdirSync(NodePath.join(repo, "scripts/personal/node"), { recursive: true });
+  NodeFS.copyFileSync(GATES_JSON, NodePath.join(repo, "scripts/personal/node/gates-linux.scoped.json"));
   const base = commit(repo, "baseline");
   NodeFS.writeFileSync(
     NodePath.join(repo, "apps/server/src/personal/push/PersonalPushService.ts"),
@@ -413,7 +415,7 @@ const cli = (repo, ...args) =>
   });
 
 NodeTest.test(
-  "the builder command plans from the merge base and uses this checkout's gate commands",
+  "the builder command plans from the merge base and uses the gate commands at the merge base",
   () => {
     withFixture((f) => {
       // trunk moves on after the branch point: a change the branch never made.

@@ -13,6 +13,8 @@ const LOCAL = [
   "lib/gateScope.mjs",
   "lib/serverTestSelect.mjs",
   "lib/testBudget.mjs",
+  "lib/verifyStamp.mjs",
+  "lib/gateDefs.mjs",
   "lib/compact.mjs",
   "lib/compact-db.mjs",
 ];

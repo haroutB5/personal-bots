@@ -57,7 +57,12 @@ NodeTest.describe("the verdict", () => {
     ["passes a change at the limit", [d(A, 300), d(B, 100)], undefined, "ok"],
     ["fails a change one line over across two files", [d(A, 300), d(B, 101)], undefined, "over"],
     ["never blocks a lone test file at any size", [d(A, 900)], undefined, "single-file"],
-    ["subtracts deleted lines", [d(A, 450), d(B, -100)], undefined, "ok"],
+    ["does not credit deleted lines", [d(A, 450), d(B, -100)], undefined, "deletes"],
+    ["does not let deleted lines pull an over-limit change under", [d(A, 300), d(B, 150), d(C, -100)], undefined, "over"],
+    ["fails a change that only deletes test lines", [d(A, -60)], undefined, "deletes"],
+    ["fails a small change that deletes test lines elsewhere", [d(A, 30), d(B, -60)], undefined, "deletes"],
+    ["passes a deletion inside its allowance", [d(A, 30), d(B, -60)], { ...ROW, lines: 60 }, "allowed"],
+    ["fails a deletion past its allowance", [d(A, 30), d(B, -61)], { ...ROW, lines: 60 }, "deletes"],
     ["passes a change inside its allowance", [d(A, 290), d(B, 190)], ROW, "allowed"],
     ["fails a change past its allowance", [d(A, 290), d(B, 191)], ROW, "over"],
   ];
@@ -71,11 +76,31 @@ NodeTest.describe("the verdict", () => {
       `  +290 ${A}`,
       `  +158 ${B}`,
       "  code in this change: +158 -95",
-      "  to pass: delete or merge 48 test lines the new tests make redundant, or ask the lead",
+      "  to pass: write 48 fewer test lines, or ask the lead",
       `  for a row in ${ALLOWANCE_FILE}`,
     ]);
     const allowed = judge([d(A, 290), d(B, 158)], { allowance: ROW });
     NodeAssert.match(budgetLines(allowed)[0], /allowed 448 of 480 by Poteto: two tests replace/);
+  });
+
+  NodeTest.it("names the deleted lines and the row that would excuse them", () => {
+    const result = judge([d(A, 30), d(B, -60), d(C, -5)]);
+    NodeAssert.deepEqual(budgetLines(result), [
+      "FAIL test budget: feat/x deletes 65 test lines in 2 files, they earn no budget (+30 added in 1 file)",
+      `  -60 ${B}`,
+      `  -5 ${C}`,
+      `  to pass: keep the tests, or ask the lead for a row in ${ALLOWANCE_FILE} that names 65 lines`,
+    ]);
+    NodeAssert.equal(result.deleted, 65);
+    NodeAssert.equal(result.net, 30);
+  });
+
+  NodeTest.it("says an over-limit change also deletes lines, and an allowed one what it deleted", () => {
+    const over = budgetLines(judge([d(A, 290), d(B, 158), d(C, -90)]));
+    NodeAssert.match(over[0], /^FAIL test budget: feat\/x \+448 net test lines in 2 files, limit 400, over by 48/);
+    NodeAssert.ok(over.includes("  deletes 90 test lines, they earn no budget"));
+    const allowed = budgetLines(judge([d(A, 30), d(B, -60)], { allowance: { ...ROW, lines: 60 } }));
+    NodeAssert.match(allowed[0], /allowed 30 of 60 by Poteto: two tests replace.*deletes 60 test lines/);
   });
 });
 
@@ -228,7 +253,7 @@ NodeTest.describe("the planner command", () => {
     }),
   );
 
-  NodeTest.it("subtracts the lines a change deletes", () =>
+  NodeTest.it("does not let the lines a change deletes pay for the lines it adds", () =>
     withRepo(({ repo }) => {
       write(repo, B, body(300, "b"));
       const base = commit(repo, "a longer test lands on trunk");
@@ -237,10 +262,41 @@ NodeTest.describe("the planner command", () => {
         write(repo, B, body(100, "b"));
       });
       const result = cli(repo, base, "fix/swap");
-      NodeAssert.equal(result.code, 0, result.err);
-      NodeAssert.match(result.out, /\+250 net test lines in 2 files/);
+      NodeAssert.equal(result.code, 2);
+      NodeAssert.match(
+        result.err,
+        /fix\/swap deletes 200 test lines in 1 file, they earn no budget \(\+450 added in 1 file\)/,
+      );
+      NodeAssert.match(result.err, /-200 scripts\/personal\/node\/test\/b\.test\.mjs/);
     }),
   );
+
+  NodeTest.it("exits 2 for a deleted test file in enforce, and only reports it otherwise", () => {
+    const drop = (repo) => NodeFS.rmSync(NodePath.join(repo, B));
+    const enforced = plan(drop);
+    NodeAssert.equal(enforced.code, 2);
+    NodeAssert.match(enforced.err, /FAIL test budget: feat\/x deletes 10 test lines in 1 file, they earn no budget/);
+    const reported = plan(drop, OFF);
+    NodeAssert.equal(reported.code, 0, reported.err);
+    NodeAssert.match(reported.err, /deletes 10 test lines/);
+    NodeAssert.match(reported.err, /report mode, this does not block the release/);
+  });
+
+  NodeTest.it("lets a deleted test file through on a row it adds that names the lines", () => {
+    const row = { ...ROW, lines: 10 };
+    const drop = (repo) => {
+      NodeFS.rmSync(NodePath.join(repo, B));
+      write(repo, ALLOWANCE_FILE, file([row], undefined, true));
+    };
+    const allowed = plan(drop);
+    NodeAssert.equal(allowed.code, 0, allowed.err);
+    NodeAssert.match(allowed.out, /allowed 0 of 10 by Poteto.*deletes 10 test lines/);
+    const short = plan((repo) => {
+      NodeFS.rmSync(NodePath.join(repo, B));
+      write(repo, ALLOWANCE_FILE, file([{ ...row, lines: 9 }], undefined, true));
+    });
+    NodeAssert.equal(short.code, 2);
+  });
 
   NodeTest.it("only reports a change over the limit while the file does not say enforce", () => {
     const over = plan((repo) => big(repo), OFF);
@@ -270,7 +326,7 @@ NodeTest.describe("the planner command", () => {
     NodeAssert.match(small.err, /FAIL test budget: allowance file at head is not valid JSON/);
   });
 
-  NodeTest.it("counts a renamed test file by the lines it gained", () =>
+  NodeTest.it("counts a renamed test file as lines gained and lines deleted", () =>
     withRepo(({ repo }) => {
       write(repo, A, body(600, "a"));
       const base = commit(repo, "a long test lands on trunk");
@@ -281,7 +337,8 @@ NodeTest.describe("the planner command", () => {
       });
       const result = cli(repo, base, "feat/move");
       NodeAssert.equal(result.code, 2);
-      NodeAssert.match(result.err, /feat\/move \+650 net test lines in 3 files/);
+      NodeAssert.match(result.err, /feat\/move \+1250 net test lines in 2 files/);
+      NodeAssert.match(result.err, /deletes 600 test lines, they earn no budget/);
     }),
   );
 
@@ -438,6 +495,40 @@ NodeTest.describe("the release walk", () => {
         git(repo, "commit", "-q", "-m", "Merge branch 'feat/small'");
         NodeAssert.equal(budgetOfRelease(repo, trunk, head(repo)).problems.length, 1);
       }),
+  );
+
+  NodeTest.it(
+    "reports a rewrite inside one file as deleted lines",
+    {
+      todo: "known gap: the budget reads each file's net lines, so a rewrite that deletes 10 test lines and adds 10 in the same file reads as net 0 and says ok",
+    },
+    () => {
+      const result = (() => {
+        let found;
+        withRepo(({ repo, trunk }) => {
+          branch(repo, "feat/x", () => write(repo, A, body(10, "rewritten")));
+          found = cli(repo, trunk, "feat/x");
+        });
+        return found;
+      })();
+      NodeAssert.match(result.err + result.out, /deletes 10 test lines/);
+    },
+  );
+
+  NodeTest.it(
+    "does not let one allowance row excuse the added lines and the deleted lines together",
+    {
+      todo: "known gap: judgeChange tests net <= row.lines and deleted <= row.lines separately, so a row of 450 passes 450 added lines and 286 deleted lines at once",
+    },
+    () => NodeAssert.equal(judge([d(A, 450), d(B, -286)], { allowance: { ...ROW, lines: 450 } }).verdict, "deletes"),
+  );
+
+  NodeTest.it(
+    "counts a deletion in the release that made it and not again in the next release",
+    {
+      todo: "known gap, older than this branch, not fixed here: the 1.67.30 range lists the chatGoalTags.test.ts deletion that 1.67.28 made, because merge 55222391ad brought trunk 1.67.29 in and the step's merge base predates 1.67.28 (measured by the Verifier, qa/verification-article/s5s4/review/q3/history.md). A plain scratch repo with a trunk merged back into an older branch does not reproduce it, so the exact history shape is still unknown",
+    },
+    () => NodeAssert.fail("no scratch reproduction yet; build one from the 1.67.30 history before fixing"),
   );
 
   const seal = ({ repo, trunk, dir }, release) => {
