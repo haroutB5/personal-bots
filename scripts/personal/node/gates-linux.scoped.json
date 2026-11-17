@@ -5,13 +5,13 @@
     "title": "Server fork gate (personal, mcp, persistence, preview, workspace, assets, orchestration-v2, cloud, provider, process)",
     "cwd": "apps/server",
     "commands": [
-      "NODE_ENV=test vp test run {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
+      "NODE_ENV=test node ../../scripts/personal/node/server-test-lane.mjs all {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
     ],
     "concurrent": [
       [
-        "NODE_ENV=test vp test run --shard=1/2 {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
+        "NODE_ENV=test node ../../scripts/personal/node/server-test-lane.mjs all --shard=1/2 {args} src/persistence/Migrations.registry.test.ts src/provider/AgentContextBudget.test.ts src/personal/agentContextBudget.test.ts src/personal/personalContextBudget.test.ts src/personal/botInstructionCoverage.test.ts"
       ],
-      ["NODE_ENV=test vp test run --shard=2/2 {args}"]
+      ["NODE_ENV=test node ../../scripts/personal/node/server-test-lane.mjs all --shard=2/2 {args}"]
     ]
   },
   {

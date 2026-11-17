@@ -1,2 +1,10 @@
 # Server test files that run in their own isolated lane (see server-test-lane.mjs).
 # One path per line, relative to apps/server. A trailing # comment says why.
+src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts # fails reused: permission mode from an earlier file's settings state (expected auto, got bypassPermissions)
+src/orchestration-v2/Adapters/ClaudeAgentSdkQueryRunner.test.ts # 12 tests time out at 120 s each when reused (about 960 s)
+src/orchestration-v2/FoundationPersistence.test.ts # fails reused: reader and writer worker test
+src/orchestration-v2/ThreadFind.test.ts # fails reused: cache lifetime count 0, expected 2
+src/orchestration-v2/toolOutputImageBytes.test.ts # fails reused
+src/personal/browser/driver.test.ts # 7 shared bot tab tests fail reused
+src/preview/DesktopBrowserChannel.test.ts # 2 tests fail reused
+src/preview/PortScanner.test.ts # a mocked kill is never called when reused
