@@ -19,6 +19,7 @@ import {
   judgeChange,
   newAllowances,
 } from "./testBudget.mjs";
+import { GATES_FILE, gateChanges, gateDefsFromBase } from "./gateDefs.mjs";
 import {
   SERVER_ALWAYS,
   SERVER_GATE_DIRS,
@@ -38,7 +39,7 @@ export const SERVER_RUNNER_PATHS = [
   "scripts/personal/node/server-test-lane.mjs",
   "scripts/personal/node/server-isolated-tests.txt",
   "scripts/personal/node/gates-linux.json",
-  "scripts/personal/node/gates-linux.scoped.json",
+  GATES_FILE,
 ];
 
 // Files that make every check run whole. A dependency or runtime change can move
@@ -873,6 +874,13 @@ export function guardEnforced(repo, rev) {
   }
 }
 
+/** The gates this change runs: the base's own, plus the gates the change edited, added or removed. */
+export const gateDefsOfChange = (repo, base, head) =>
+  gateDefsFromBase({
+    baseSource: gitFile(repo, base, GATES_FILE),
+    headSource: gitFile(repo, head, GATES_FILE),
+  });
+
 const mergeLabel = (repo, sha) =>
   /^Merge (?:remote-tracking )?branch '([^']+)'/.exec(
     gitOut(repo, ["log", "-1", "--format=%s", sha]),
@@ -1013,12 +1021,26 @@ if (invokedDirectly()) {
       budget = { result: null, problems: [], failed: false, blocks: false, lines: [] };
     }
     const result = { baseSha: mergeBase, requestedBase: baseSha, headSha, ...scope };
+    const fromBase = options["gates-json"] === undefined;
+    let gates = { defs: undefined, changes: [], problems: [] };
+    if (fromBase) {
+      try {
+        gates = gateDefsOfChange(repo, mergeBase, headSha);
+      } catch (error) {
+        if (options.commands) throw error;
+      }
+    }
+    const gateLines = [
+      ...gateChanges(gates.changes),
+      ...gates.problems.map((problem) => `WARNING: ${problem}; the base commands run`),
+    ];
     if (options.json) {
       console.log(
         JSON.stringify(
           {
             ...result,
             budget: { ...budget.result, problems: budget.problems, enforce: budget.enforce },
+            gateChanges: gates.changes,
           },
           null,
           2,
@@ -1027,15 +1049,10 @@ if (invokedDirectly()) {
     } else if (options.commands) {
       printPlan(result, true);
       for (const line of budget.lines) console.error(line);
-      // The gate commands ship with this planner, so read them from this checkout:
-      // the head's own copy may predate the {args} placeholders.
-      const defsFile =
-        options["gates-json"] ??
-        NodePath.resolve(
-          NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
-          "../../../node/gates-linux.scoped.json",
-        );
-      const defs = JSON.parse(NodeFS.readFileSync(defsFile, "utf8"));
+      for (const line of gateLines) console.error(line);
+      const defs = fromBase
+        ? gates.defs
+        : JSON.parse(NodeFS.readFileSync(options["gates-json"], "utf8"));
       for (const plan of result.plans) {
         if (plan.mode === "skip" || plan.id === "e2e") continue;
         const def = defs.find((entry) => entry.id === plan.id);
@@ -1048,6 +1065,7 @@ if (invokedDirectly()) {
     } else {
       printPlan(result);
       for (const line of budget.lines) (budget.failed ? console.error : console.log)(line);
+      for (const line of gateLines) console.log(line);
     }
     if (budget.blocks) NodeProcess.exit(2);
   } catch (error) {

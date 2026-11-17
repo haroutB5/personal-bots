@@ -11,7 +11,8 @@ const node=(name,args,opts={})=>run(process.execPath,[path.join(here,name),...ar
 const installScope=(repo)=>{
  const lib=path.join(repo,'scripts/personal/linux/hbots-release/lib');
  fs.mkdirSync(lib,{recursive:true});
- for(const file of ['gateScope.mjs','serverTestSelect.mjs','testBudget.mjs'])fs.copyFileSync(path.join(here,'../hbots-release/lib',file),path.join(lib,file));
+ const source=path.join(here,'../hbots-release/lib');
+ for(const file of fs.readdirSync(source).filter(f=>f.endsWith('.mjs')))fs.copyFileSync(path.join(source,file),path.join(lib,file));
 };
 const lockBase=()=>path.join(fs.mkdtempSync(path.join(os.tmpdir(),'hbots-heavy-')),'gate');
 const jobEnv=(base,extra={})=>({...process.env,HEAVY_JOB_BASE:base,HEAVY_JOB_MEMORY_HIGH:'off',...extra});
