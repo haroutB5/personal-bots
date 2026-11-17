@@ -94,7 +94,6 @@ export const NO_CHECK = [
   "scripts/personal/perf/",
   "scripts/personal/qa/",
   "scripts/personal/contract/",
-  "scripts/personal/release-runner/",
   PARITY_MATRIX,
   ".repos/",
   ".agents/",
@@ -208,6 +207,8 @@ export const CHECKS = {
       "scripts/personal/sqlite-",
       "scripts/personal/copy-externals.mjs",
       "scripts/personal/idle-classification-",
+      "scripts/personal/dsh-runtime/",
+      "scripts/personal/release-runner/",
     ],
     select: "releaseTools@1",
   },
@@ -405,8 +406,59 @@ function expandTests(reader, entries) {
   return [...files].sort();
 }
 
+// A release-tool test reads files by name from wherever they sit, so the folder
+// groups above are not enough. A changed file also selects every test whose source
+// names its file name or the folder directly above it. Names every test mentions
+// say nothing and are left out.
+const NOT_A_READ_NAME = new Set([
+  "package.json",
+  "package-lock.json",
+  "README.md",
+  "index.mjs",
+  "index.cjs",
+  "index.js",
+]);
+const NOT_A_READ_DIR = new Set([
+  "scripts",
+  "personal",
+  "linux",
+  "node",
+  "lib",
+  "bin",
+  "test",
+  "tests",
+  "fixtures",
+  "golden",
+  "fake",
+  "hbots-release",
+  "dev-team-tools",
+]);
+
+function readNames(file) {
+  const parts = file.split("/");
+  const name = parts.at(-1);
+  const dir = parts.at(-2);
+  return [
+    ...(NOT_A_READ_NAME.has(name) ? [] : [name]),
+    ...(dir && !NOT_A_READ_DIR.has(dir) ? [dir] : []),
+  ];
+}
+
+function testsReading({ reader, changedPaths, tests }) {
+  const names = new Set(
+    changedPaths
+      .filter((file) => classifyPath(file).checks.includes("release-tools"))
+      .flatMap(readNames),
+  );
+  if (names.size === 0) return [];
+  const escaped = [...names].map((name) => name.replace(/[.+?^${}()|[\]\\]/g, "\\$&"));
+  const mention = new RegExp(`(?<![\\w.-])(?:${escaped.join("|")})(?![\\w-])`);
+  reader.prefetch?.(tests);
+  return tests.filter((test) => mention.test(reader.read(test) ?? ""));
+}
+
 function selectReleaseTools({ reader, changedPaths }) {
-  const all = expandTests(reader, [
+  const everyTest = expandTests(reader, [
     ...new Set(RELEASE_TOOL_GROUPS.flatMap((group) => group.tests)),
   ]);
   const tests = new Set();
@@ -414,8 +466,9 @@ function selectReleaseTools({ reader, changedPaths }) {
     for (const group of RELEASE_TOOL_GROUPS)
       if (file.startsWith(group.prefix))
         for (const test of expandTests(reader, group.tests)) tests.add(test);
+  for (const test of testsReading({ reader, changedPaths, tests: everyTest })) tests.add(test);
   const args = [...tests].sort();
-  return { args: args.length ? args : all, count: args.length, unit: "test files" };
+  return { args, count: args.length, unit: "test files" };
 }
 
 // Test files that some gate command runs, read off the gate commands in

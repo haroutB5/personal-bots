@@ -423,8 +423,7 @@
         "scripts/personal/linux/systemd/hbots-no-swap.conf"
       ],
       "mustRun": ["scripts/personal/node/test/units.test.mjs"],
-      "expect": "miss",
-      "missClass": "planner-mapping"
+      "expect": "hit"
     },
     {
       "id": "c042",
@@ -2658,8 +2657,7 @@
         "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs",
         "scripts/personal/linux/dev-team-tools/tools.test.mjs"
       ],
-      "expect": "miss",
-      "missClass": "planner-mapping",
+      "expect": "hit",
       "plan": {
         "release-tools": "selected"
       }
@@ -2669,8 +2667,7 @@
       "note": "the bootstrap-rule test from the 1.67.28 incident reads this file",
       "changedPaths": ["scripts/personal/node/gates-linux.json"],
       "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
-      "expect": "miss",
-      "missClass": "planner-mapping",
+      "expect": "hit",
       "plan": {
         "release-tools": "selected"
       }
@@ -2680,10 +2677,10 @@
       "note": "install-dsh.test.mjs reads ../../dsh-runtime",
       "changedPaths": ["scripts/personal/dsh-runtime/hbots-deny-plugin.mjs"],
       "mustRun": ["scripts/personal/node/test/install-dsh.test.mjs"],
-      "expect": "miss",
-      "missClass": "planner-mapping",
+      "expect": "hit",
       "plan": {
-        "server-tests": "selected"
+        "server-tests": "selected",
+        "release-tools": "selected"
       }
     },
     {
@@ -2691,17 +2688,17 @@
       "note": "sqlite-snapshot.test.cjs runs this helper; the folder is NO_CHECK",
       "changedPaths": ["scripts/personal/release-runner/hbots-release/release-db-check.cjs"],
       "mustRun": ["scripts/personal/sqlite-snapshot.test.cjs"],
-      "expect": "miss",
-      "missClass": "planner-mapping",
-      "plan": {}
+      "expect": "hit",
+      "plan": {
+        "release-tools": "selected"
+      }
     },
     {
       "id": "r4-install-units",
       "note": "real case d80b2235cb, replayed on the head tree",
       "changedPaths": ["scripts/personal/linux/install-units.sh"],
       "mustRun": ["scripts/personal/node/test/units.test.mjs"],
-      "expect": "miss",
-      "missClass": "planner-mapping",
+      "expect": "hit",
       "plan": {
         "release-tools": "selected"
       }
@@ -2711,8 +2708,7 @@
       "note": "units.test.mjs reads every unit template",
       "changedPaths": ["scripts/personal/linux/systemd/hbots.service.in"],
       "mustRun": ["scripts/personal/node/test/units.test.mjs"],
-      "expect": "miss",
-      "missClass": "planner-mapping",
+      "expect": "hit",
       "plan": {
         "release-tools": "selected"
       }
@@ -2798,8 +2794,7 @@
         "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs",
         "scripts/personal/linux/dev-team-tools/tools.test.mjs"
       ],
-      "expect": "miss",
-      "missClass": "planner-mapping",
+      "expect": "hit",
       "plan": {
         "release-tools": "selected"
       }
@@ -2873,8 +2868,7 @@
       "note": "read by scripts/personal/node/test/units.test.mjs",
       "changedPaths": ["scripts/personal/linux/install-units.sh"],
       "mustRun": ["scripts/personal/node/test/units.test.mjs"],
-      "expect": "miss",
-      "missClass": "planner-mapping",
+      "expect": "hit",
       "plan": {
         "release-tools": "selected"
       }
