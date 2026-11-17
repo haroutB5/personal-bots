@@ -31,6 +31,15 @@ export const PARITY_MATRIX = "scripts/personal/parity/parity.json";
 export const PKGS = "packages/";
 export const SERVER_PKGS_EXCEPT = ["packages/personal-client/", "packages/client-runtime/"];
 
+// The runner every server-tests command goes through, its file list, and the gate files
+// that hold the commands. A change to any of them changes how every server test runs.
+export const SERVER_RUNNER_PATHS = [
+  "scripts/personal/node/server-test-lane.mjs",
+  "scripts/personal/node/server-isolated-tests.txt",
+  "scripts/personal/node/gates-linux.json",
+  "scripts/personal/node/gates-linux.scoped.json",
+];
+
 // Files that make every check run whole. A dependency or runtime change can move
 // anything a gate reads.
 export const TOOLCHAIN = [
@@ -143,6 +152,7 @@ const E2E_RESILIENCE_INPUTS = [
 
 // One row per check. `inputs` and `except` are prefixes, exact paths, or
 // prefixes with one `*` segment. `select` names the selector that fills args.
+// `whole` lists inputs that run the check whole instead of selected.
 export const CHECKS = {
   "server-tests": {
     inputs: [
@@ -154,8 +164,10 @@ export const CHECKS = {
       "scripts/personal/updates/",
       "scripts/personal/sync/",
       "scripts/personal/testing/",
+      ...SERVER_RUNNER_PATHS,
     ],
     except: SERVER_PKGS_EXCEPT,
+    whole: SERVER_RUNNER_PATHS,
     select: "serverTests@1",
   },
   "server-tsc": {
@@ -543,7 +555,7 @@ function wholeArgs(id, reader) {
 const listed = (files) => files.slice(0, 4).join(", ") + (files.length > 4 ? ", ..." : "");
 const describeRow = (row) =>
   row.inputs
-    .filter((pattern) => !GATED_PATHS.includes(pattern))
+    .filter((pattern) => !GATED_PATHS.includes(pattern) && !row.whole?.includes(pattern))
     .map((pattern) => (pattern.endsWith("/") ? pattern.slice(0, -1) : pattern))
     .join(", ") + (row.except?.length ? ` (not ${row.except.join(", ")})` : "");
 
@@ -604,7 +616,7 @@ export function planChecks(paths, options = {}) {
       };
     if (!row.select)
       return { id, mode: "whole", reason: `${id} inputs changed: ${listed(hits[id])}` };
-    const infra = hits[id].filter(forcesWhole);
+    const infra = hits[id].filter((file) => forcesWhole(file) || row.whole?.includes(file));
     if (infra.length)
       return {
         id,

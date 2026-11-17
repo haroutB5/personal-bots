@@ -2659,6 +2659,7 @@
       ],
       "expect": "hit",
       "plan": {
+        "server-tests": "whole",
         "release-tools": "selected"
       }
     },
@@ -2669,6 +2670,7 @@
       "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
       "expect": "hit",
       "plan": {
+        "server-tests": "whole",
         "release-tools": "selected"
       }
     },
@@ -2796,6 +2798,7 @@
       ],
       "expect": "hit",
       "plan": {
+        "server-tests": "whole",
         "release-tools": "selected"
       }
     },
@@ -3018,6 +3021,62 @@
       "note": "plain doc",
       "changedPaths": ["apps/hbots-mobile/README.md"],
       "plan": {}
+    },
+    {
+      "id": "s1-server-test-lane",
+      "note": "the wrapper every server-tests command runs; a change to it changes how every server test runs",
+      "changedPaths": ["scripts/personal/node/server-test-lane.mjs"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "s2-server-isolated-list",
+      "note": "the list of files the wrapper runs with isolation",
+      "changedPaths": ["scripts/personal/node/server-isolated-tests.txt"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "s3-gates-scoped-server-command",
+      "note": "holds the server-tests commands the planner builds",
+      "changedPaths": ["scripts/personal/node/gates-linux.scoped.json"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "s4-gates-old-server-command",
+      "note": "holds the whole-run server-tests commands the installed tool runs",
+      "changedPaths": ["scripts/personal/node/gates-linux.json"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
     }
   ]
 }
