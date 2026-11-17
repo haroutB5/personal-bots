@@ -47,12 +47,11 @@ export const UPSTREAM_MIGRATION_IDS: Readonly<Record<string, number>> = {
   "087_ProjectionProjectsCustomTitle": 155,
   "088_TurnItemTypeStatusIndex": 156,
   "089_ShellThreadReadIndexes": 157,
+  "063_DropUnusedV1Projections": 160,
 };
 
 /**
- * Upstream migrations that stay out of the registry on purpose. 063 drops the
- * V1 projection tables, so it ships one release after the V2 importer has run
- * on live data. The file stays in the tree; the sync resolver adds it with
- * --hold 063 until then.
+ * Upstream migrations that stay out of the registry on purpose. The file stays
+ * in the tree; the sync resolver adds an entry with --hold <number>.
  */
-export const HELD_UPSTREAM_MIGRATIONS: ReadonlyArray<string> = ["063_DropUnusedV1Projections"];
+export const HELD_UPSTREAM_MIGRATIONS: ReadonlyArray<string> = [];

@@ -131,7 +131,7 @@ type EngineCall =
  * Commands are recorded as engine calls; the projected session and messages
  * are set by each test before it feeds the matching personal event. Reads go
  * to the same maps, exactly as PersonalEngineV2Live would read the v2
- * projection. Context-window rows still come from the activities table.
+ * projection. Context-window sizes are set per chat with `reportContextTokens`.
  */
 interface Harness {
   readonly interruptReasons: Map<string, string>;
@@ -149,6 +149,8 @@ interface Harness {
   readonly statuses: Map<string, PersonalThreadStatus>;
   /** Native background work alive per chat, as PersonalEngine.liveTaskIds reports it. */
   readonly background: Map<string, Set<string>>;
+  /** The provider's last context-size report per chat. */
+  readonly contextTokens: Map<string, number>;
   /**
    * Sends the orchestrator queued as separate runs, which start once the active
    * run ends: a start or queue send to a busy chat, and a steer when
@@ -174,6 +176,7 @@ const makeHarness = (): Harness => ({
   projects: new Map(),
   statuses: new Map(),
   background: new Map(),
+  contextTokens: new Map(),
   queued: [],
   steered: [],
   steerQueues: false,
@@ -235,7 +238,6 @@ const atMillis = (iso: string): number => Date.parse(iso);
 /** The PersonalEngine the personal services see in these tests. */
 const makeEngine = (harness: Harness) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const rowsFor = (threadId: ThreadId) => harness.messages.get(threadId) ?? [];
 
@@ -501,15 +503,7 @@ const makeEngine = (harness: Harness) =>
           return latest;
         }),
       latestContextTokens: (threadId) =>
-        sql<{ readonly used: number | null }>`
-          SELECT json_extract(payload_json, '$.usedTokens') AS "used"
-          FROM projection_thread_activities
-          WHERE thread_id = ${threadId} AND kind = 'context-window.updated'
-          ORDER BY created_at DESC LIMIT 1
-        `.pipe(
-          Effect.map((rows) => (typeof rows[0]?.used === "number" ? rows[0].used : null)),
-          Effect.orElseSucceed(() => null),
-        ),
+        Effect.succeed(harness.contextTokens.get(threadId) ?? null),
       compactedSince: () => Effect.succeed(false),
       threadUsedWeb: () => Effect.succeed(false),
       toolStepsSince: () => Effect.succeed([]),
@@ -4568,17 +4562,10 @@ const withEnv = <A, E, R>(
       }),
   );
 
-/** The provider's last context-size report for a thread, as the ingestion records it. */
-const reportContextTokens = (threadId: ThreadId, usedTokens: number) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const at = DateTime.formatIso(yield* DateTime.now);
-    yield* sql`
-      INSERT INTO projection_thread_activities
-        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
-      VALUES (${`ctx-${threadId}-${usedTokens}`}, ${threadId}, NULL, 'info', 'context-window.updated',
-        'Context window updated', ${JSON.stringify({ usedTokens })}, ${at})
-    `;
+/** The provider's last context-size report for a thread. */
+const reportContextTokens = (harness: Harness, threadId: ThreadId, usedTokens: number) =>
+  Effect.sync(() => {
+    harness.contextTokens.set(threadId, usedTokens);
   });
 
 /** The task marker a turn message carries. */
@@ -4858,7 +4845,7 @@ describe("work record (1.60.41)", () => {
             nextStep: "Do the second half",
           },
         });
-        yield* reportContextTokens(thread, 90_000);
+        yield* reportContextTokens(harness, thread, 90_000);
         yield* service.steer({
           taskId: root.taskId,
           fromName: "CTO",
@@ -4892,7 +4879,7 @@ describe("work record (1.60.41)", () => {
           Effect.gen(function* () {
             const { root, thread } = yield* finishedRoot(harness, key, "Half done.");
             yield* service.updateWorkRecord({ taskId: root.taskId, patch: { nextStep: "go on" } });
-            yield* reportContextTokens(thread, 150_000);
+            yield* reportContextTokens(harness, thread, 150_000);
             if (reason !== null) harness.interruptReasons.set(thread, reason);
             yield* service.steer({ taskId: root.taskId, fromName: "CTO", message: "Go on." });
             yield* service.drain;
@@ -4921,7 +4908,7 @@ describe("work record (1.60.41)", () => {
           if (record) {
             yield* service.updateWorkRecord({ taskId: root.taskId, patch: { nextStep: "go on" } });
           }
-          if (tokens !== null) yield* reportContextTokens(thread, tokens);
+          if (tokens !== null) yield* reportContextTokens(harness, thread, tokens);
           yield* service.steer({ taskId: root.taskId, fromName: "CTO", message: "Go on." });
           yield* service.drain;
           return startsOn(harness, thread).at(-1)!;
@@ -5878,7 +5865,7 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
         yield* runTurn(harness, rootThread, "Reported.");
         yield* service.drain;
         // A long chat: a task in its own chat would start a fresh session here.
-        yield* reportContextTokens(CHAT, 120_000);
+        yield* reportContextTokens(harness, CHAT, 120_000);
         const startsBefore = startsOn(harness, CHAT).length;
 
         const steered = yield* service.steer({

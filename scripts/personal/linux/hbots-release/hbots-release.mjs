@@ -711,14 +711,14 @@ async function main() {
       if (bc.ok) {
         result.backupVerified = true;
         result.backupMaxMigration = bc.r.mig;
-        result.backupActivityRows = bc.r.rows;
+        result.backupChatRows = bc.r.rows;
         result.backupMemoryRows = bc.r.mem;
         timings["backup.verify-background"] = bc.r.seconds;
         const pruned = pruneBackups(cfg, Number(a["backup-keep"]));
         result.backupKeep = Number(a["backup-keep"]);
         result.backupsPruned = pruned;
         note(
-          `Verified fresh backup ${backupDir} (migration ${bc.r.mig}, integrity ok, activity rows ${bc.r.rows}, memory rows ${bc.r.mem}); pruned ${pruned.length}${pruned.length ? `: ${pruned.join(", ")}` : ""}.`,
+          `Verified fresh backup ${backupDir} (migration ${bc.r.mig}, integrity ok, chat rows ${bc.r.rows}, memory rows ${bc.r.mem}); pruned ${pruned.length}${pruned.length ? `: ${pruned.join(", ")}` : ""}.`,
         );
       } else {
         result.backupVerified = false;

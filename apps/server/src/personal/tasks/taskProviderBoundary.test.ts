@@ -25,7 +25,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -157,7 +156,6 @@ const atMillis = (iso: string): number => Date.parse(iso);
 /** The PersonalEngine the personal services see in these tests. */
 const makeEngine = (harness: Harness) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const rowsFor = (threadId: ThreadId) => harness.messages.get(threadId) ?? [];
 
@@ -374,16 +372,7 @@ const makeEngine = (harness: Harness) =>
         ),
       latestRunInterruptReason: () => Effect.succeed(null),
       continuationTurn: () => Effect.succeed(null),
-      latestContextTokens: (threadId) =>
-        sql<{ readonly used: number | null }>`
-          SELECT json_extract(payload_json, '$.usedTokens') AS "used"
-          FROM projection_thread_activities
-          WHERE thread_id = ${threadId} AND kind = 'context-window.updated'
-          ORDER BY created_at DESC LIMIT 1
-        `.pipe(
-          Effect.map((rows) => (typeof rows[0]?.used === "number" ? rows[0].used : null)),
-          Effect.orElseSucceed(() => null),
-        ),
+      latestContextTokens: () => Effect.succeed(null),
       compactedSince: () => Effect.succeed(false),
       threadUsedWeb: () => Effect.succeed(false),
       toolStepsSince: () => Effect.succeed([]),

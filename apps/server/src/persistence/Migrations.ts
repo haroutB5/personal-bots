@@ -153,6 +153,7 @@ import MigrationUpstream0059 from "./Migrations/059_McpAppModelContext.ts";
 import MigrationUpstream0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import MigrationUpstream0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import MigrationUpstream0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
+import MigrationUpstream0063 from "./Migrations/063_DropUnusedV1Projections.ts";
 import MigrationUpstream0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
 import MigrationUpstream0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import MigrationUpstream0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
@@ -387,6 +388,8 @@ const migrationEntries = [
   [157, "ShellThreadReadIndexes", MigrationUpstream0089],
   [158, "PersonalProjects", Migration0158],
   [159, "PersonalProjectsWhyHistory", Migration0159],
+  // Upstream 063_DropUnusedV1Projections, renumbered (see upstreamMigrationIds.ts).
+  [160, "DropUnusedV1Projections", MigrationUpstream0063],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

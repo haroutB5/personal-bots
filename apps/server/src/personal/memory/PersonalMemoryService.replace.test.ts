@@ -396,11 +396,6 @@ it.effect(
       // The provider compacted the chat: the list may be gone from its context.
       const later = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 1 }));
       yield* sql`
-      INSERT INTO projection_thread_activities
-        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
-      VALUES ('compact-1', ${THREAD_A}, NULL, 'info', 'context-compaction', 'Context compacted', '{}', ${later})
-    `;
-      yield* sql`
         INSERT INTO orchestration_v2_projection_turn_items
           (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
             parent_item_id, ordinal, type, status, updated_at, payload_json)
@@ -548,11 +543,6 @@ it.effect("a note is sent once per session and again once the provider compacted
     expect((yield* build).block ?? "").not.toContain("Harout likes green tea");
 
     const later = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 1 }));
-    yield* sql`
-      INSERT INTO projection_thread_activities
-        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
-      VALUES ('compact-notes-1', ${THREAD_A}, NULL, 'info', 'context-compaction', 'Context compacted', '{}', ${later})
-    `;
     yield* sql`
         INSERT INTO orchestration_v2_projection_turn_items
           (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,

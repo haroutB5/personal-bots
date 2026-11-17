@@ -5,7 +5,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
 import { makeEnv, sleep } from "./env.mjs";
 
 const TERMINAL = [
@@ -19,14 +19,11 @@ const sha256 = (file) =>
   NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(file)).digest("hex");
 
 function makeChurnDb(file) {
-  const db = new DatabaseSync(file);
+  const db = new NodeSqlite.DatabaseSync(file);
   try {
     db.exec("PRAGMA journal_mode=WAL");
     db.exec(
       "CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, created_at TEXT, name TEXT)",
-    );
-    db.exec(
-      "CREATE TABLE projection_thread_activities (activity_id TEXT PRIMARY KEY, body TEXT)",
     );
     db.exec("CREATE TABLE personal_memory (id TEXT PRIMARY KEY, body TEXT)");
     db.exec(
@@ -44,9 +41,9 @@ function makeChurnDb(file) {
     for (let i = 0; i < 6000; i++) insert.run(Buffer.alloc(4096, i & 255));
     db.exec("COMMIT");
     db.exec("DELETE FROM churn WHERE id % 4 != 0");
-    db.prepare("INSERT INTO effect_sql_migrations VALUES (113, '2026-01-01T00:00:00Z', 'fixture_113')").run();
-    for (let i = 0; i < 25; i++)
-      db.prepare("INSERT INTO projection_thread_activities VALUES (?, 'x')").run(`a${i}`);
+    db.prepare(
+      "INSERT INTO effect_sql_migrations VALUES (113, '2026-01-01T00:00:00Z', 'fixture_113')",
+    ).run();
     for (let i = 0; i < 7; i++)
       db.prepare("INSERT INTO personal_memory VALUES (?, 'fixture')").run(`m${i}`);
     db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES ('t1', ?)").run(
@@ -125,11 +122,13 @@ NodeTest.test(
       NodeAssert.equal(sha256(fileOf(env, "state.sqlite")), statev1Hash, "state.sqlite untouched");
       NodeAssert.ok(j.timings["backup.stopped-window"] >= j.compact.seconds);
 
-      const db = new DatabaseSync(statev2, { readOnly: true });
+      const db = new NodeSqlite.DatabaseSync(statev2, { readOnly: true });
       try {
         const one = (sql) => Object.values(db.prepare(sql).get())[0];
         NodeAssert.equal(Number(one("PRAGMA auto_vacuum")), 2);
-        NodeAssert.ok(Number(one("PRAGMA freelist_count")) < Number(one("PRAGMA page_count")) * 0.01);
+        NodeAssert.ok(
+          Number(one("PRAGMA freelist_count")) < Number(one("PRAGMA page_count")) * 0.01,
+        );
         const verdicts = db
           .prepare("PRAGMA integrity_check")
           .all()
@@ -151,30 +150,36 @@ NodeTest.test(
   },
 );
 
-NodeTest.test("--compact-db skips with a reason when free disk is below the database plus 2 GB", async () => {
-  const env = await compactEnv();
-  try {
-    env.overrides.HBOTS_RELEASE_TEST_COMPACT_FREE_BYTES = "1024";
-    const statev2 = fileOf(env, "statev2.sqlite");
-    const beforeHash = sha256(statev2);
-    const launched = env.launch(null, ["--compact-db"]);
-    NodeAssert.equal(launched.status, 0, launched.stdout + launched.stderr);
-    const j = await waitResult(env);
-    NodeAssert.equal(j.status, "live_verified", j.error);
-    NodeAssert.equal(j.compact.skipped, true);
-    NodeAssert.match(j.compact.reason, /not enough free disk for VACUUM/);
-    NodeAssert.equal(j.compact.exit, undefined);
-    NodeAssert.equal(j.compact.freeBytes, 1024);
-    NodeAssert.ok(j.compact.neededBytes > j.compact.beforeBytes);
-    NodeAssert.equal(sha256(statev2), beforeHash, "the database was not rewritten");
-    NodeAssert.match(
-      NodeFS.readFileSync(NodePath.join(env.home, "logs", `restart-${env.targetVersion}.log`), "utf8"),
-      /compact skipped: .*not enough free disk/,
-    );
-  } finally {
-    env.stop();
-  }
-});
+NodeTest.test(
+  "--compact-db skips with a reason when free disk is below the database plus 2 GB",
+  async () => {
+    const env = await compactEnv();
+    try {
+      env.overrides.HBOTS_RELEASE_TEST_COMPACT_FREE_BYTES = "1024";
+      const statev2 = fileOf(env, "statev2.sqlite");
+      const beforeHash = sha256(statev2);
+      const launched = env.launch(null, ["--compact-db"]);
+      NodeAssert.equal(launched.status, 0, launched.stdout + launched.stderr);
+      const j = await waitResult(env);
+      NodeAssert.equal(j.status, "live_verified", j.error);
+      NodeAssert.equal(j.compact.skipped, true);
+      NodeAssert.match(j.compact.reason, /not enough free disk for VACUUM/);
+      NodeAssert.equal(j.compact.exit, undefined);
+      NodeAssert.equal(j.compact.freeBytes, 1024);
+      NodeAssert.ok(j.compact.neededBytes > j.compact.beforeBytes);
+      NodeAssert.equal(sha256(statev2), beforeHash, "the database was not rewritten");
+      NodeAssert.match(
+        NodeFS.readFileSync(
+          NodePath.join(env.home, "logs", `restart-${env.targetVersion}.log`),
+          "utf8",
+        ),
+        /compact skipped: .*not enough free disk/,
+      );
+    } finally {
+      env.stop();
+    }
+  },
+);
 
 NodeTest.test(
   "--compact-db restores the verified backup byte for byte when VACUUM fails, and the release continues",
@@ -251,33 +256,31 @@ NodeTest.test("--dry-run with --compact-db plans the step and the forced backup"
 
 NodeTest.test("the runner-side compact helper never opens a database itself", () => {
   const src = NodeFS.readFileSync(
-    NodePath.join(
-      NodePath.dirname(new URL(import.meta.url).pathname),
-      "..",
-      "lib",
-      "compact.mjs",
-    ),
+    NodePath.join(NodePath.dirname(new URL(import.meta.url).pathname), "..", "lib", "compact.mjs"),
     "utf8",
   );
   NodeAssert.doesNotMatch(src, /node:sqlite|DatabaseSync|better-sqlite3/);
 });
 
-NodeTest.test("--compact-db forces the pre-restart backup when the migration level is unchanged", async () => {
-  const env = await compactEnv({ migrateTo: 113 });
-  try {
-    const statev2 = fileOf(env, "statev2.sqlite");
-    const beforeBytes = NodeFS.statSync(statev2).size;
-    const launched = env.launch(null, ["--compact-db"]);
-    NodeAssert.equal(launched.status, 0, launched.stdout + launched.stderr);
-    const j = await waitResult(env);
-    NodeAssert.equal(j.status, "live_verified", j.error);
-    NodeAssert.equal(j.backupSkipped, false);
-    NodeAssert.equal(j.backupExit, 0);
-    NodeAssert.match(j.backupDecision, /--compact-db/);
-    NodeAssert.equal(j.compact.exit, 0);
-    NodeAssert.ok(j.compact.beforeBytes >= beforeBytes);
-    NodeAssert.ok(j.compact.afterBytes < j.compact.beforeBytes);
-  } finally {
-    env.stop();
-  }
-});
+NodeTest.test(
+  "--compact-db forces the pre-restart backup when the migration level is unchanged",
+  async () => {
+    const env = await compactEnv({ migrateTo: 113 });
+    try {
+      const statev2 = fileOf(env, "statev2.sqlite");
+      const beforeBytes = NodeFS.statSync(statev2).size;
+      const launched = env.launch(null, ["--compact-db"]);
+      NodeAssert.equal(launched.status, 0, launched.stdout + launched.stderr);
+      const j = await waitResult(env);
+      NodeAssert.equal(j.status, "live_verified", j.error);
+      NodeAssert.equal(j.backupSkipped, false);
+      NodeAssert.equal(j.backupExit, 0);
+      NodeAssert.match(j.backupDecision, /--compact-db/);
+      NodeAssert.equal(j.compact.exit, 0);
+      NodeAssert.ok(j.compact.beforeBytes >= beforeBytes);
+      NodeAssert.ok(j.compact.afterBytes < j.compact.beforeBytes);
+    } finally {
+      env.stop();
+    }
+  },
+);
