@@ -1,6 +1,8 @@
 // The planner command over scratch repos: the gate commands it prints come from where the branch left trunk.
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { branch, planner, withRepo, write } from "./scratchRepo.mjs";
 
 const GATES_FILE = "scripts/personal/node/gates-linux.scoped.json";
@@ -66,5 +68,29 @@ NodeTest.describe("the planner command over a real branch", () => {
     NodeAssert.equal(result.code, 2);
     NodeAssert.match(result.err, /no gates file at base/);
     NodeAssert.doesNotMatch(result.out, /head-command/);
+  });
+
+  NodeTest.it("tells a branch from before the gates file to merge trunk", () => {
+    let result;
+    withRepo(
+      (repo) => write(repo, "apps/web/src/a.ts", "export const a = 1;\n"),
+      ({ repo, trunk }) => {
+        branch(repo, "feat/x", () => touch(repo));
+        result = planner(repo, trunk, "feat/x", "--commands");
+      },
+    );
+    NodeAssert.equal(result.code, 2);
+    NodeAssert.equal(result.out, "");
+    NodeAssert.match(result.err, /no gates file at base: scripts\/personal\/node\/gates-linux\.scoped\.json\. This branch left trunk before that file existed\. Merge trunk into the branch, then plan again\./);
+  });
+
+  NodeTest.it("names the deletion when the branch deletes the whole gates file, and still prints the base commands", () => {
+    const result = run((repo) => {
+      touch(repo);
+      NodeFS.rmSync(NodePath.join(repo, GATES_FILE));
+    });
+    NodeAssert.equal(result.code, 0, result.err);
+    NodeAssert.match(result.out, /cd apps\/web && vp test run base-command/);
+    NodeAssert.match(result.err, /gates file deleted in this change: scripts\/personal\/node\/gates-linux\.scoped\.json; the base commands run/);
   });
 });

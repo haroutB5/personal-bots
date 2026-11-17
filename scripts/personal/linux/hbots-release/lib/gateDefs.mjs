@@ -25,15 +25,18 @@ const canonical = (value) =>
 
 /**
  * `defs` are the base's gates, the only ones a plan runs. `changes` lists every gate
- * whose definition differs at head, sorted by id. `problems` is an unreadable head
+ * whose definition differs at head, sorted by id, or the one deleted file. `problems` is an unreadable head
  * file: the base still runs, so it warns and never blocks. A missing or unreadable
  * base file throws, because there is nothing to run.
  */
 export function gateDefsFromBase({ baseSource, headSource }) {
-  if (baseSource == null) throw new Error(`no gates file at base: ${GATES_FILE}`);
+  if (baseSource == null)
+    throw new Error(
+      `no gates file at base: ${GATES_FILE}. This branch left trunk before that file existed. Merge trunk into the branch, then plan again.`,
+    );
   const base = parse(baseSource, "base");
   if (base.problem) throw new Error(base.problem);
-  if (headSource == null) return { defs: base.defs, changes: [], problems: [] };
+  if (headSource == null) return { defs: base.defs, changes: [{ id: GATES_FILE, kind: "file-deleted" }], problems: [] };
   const head = parse(headSource, "head");
   if (head.problem) return { defs: base.defs, changes: [], problems: [head.problem] };
   const atBase = new Map(base.defs.map((def) => [def.id, canonical(def)]));
@@ -48,6 +51,7 @@ export function gateDefsFromBase({ baseSource, headSource }) {
 
 const WORDING = {
   edited: (id) => `gate command changed in this change: ${id}; the base command runs`,
+  "file-deleted": (id) => `gates file deleted in this change: ${id}; the base commands run`,
   removed: (id) => `gate removed in this change: ${id}; the base command runs`,
   added: (id) => `gate added in this change: ${id}; it has no base command and does not run here`,
 };
