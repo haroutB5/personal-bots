@@ -1,0 +1,2 @@
+# Server test files that run in their own isolated lane (see server-test-lane.mjs).
+# One path per line, relative to apps/server. A trailing # comment says why.
