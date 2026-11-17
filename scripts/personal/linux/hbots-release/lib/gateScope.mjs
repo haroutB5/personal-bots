@@ -9,6 +9,17 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 import {
+  ALLOWANCE_FILE,
+  FORK_TEST_ROOTS,
+  KOTLIN_TEST,
+  REPORT_MODE_LINE,
+  TEST_NAME,
+  budgetLines,
+  isForkTest,
+  judgeChange,
+  newAllowances,
+} from "./testBudget.mjs";
+import {
   SERVER_ALWAYS,
   SERVER_GATE_DIRS,
   fsReader,
@@ -20,6 +31,15 @@ export const APP_VERSION = "scripts/personal/app-version.txt";
 export const PARITY_MATRIX = "scripts/personal/parity/parity.json";
 export const PKGS = "packages/";
 export const SERVER_PKGS_EXCEPT = ["packages/personal-client/", "packages/client-runtime/"];
+
+// The runner every server-tests command goes through, its file list, and the gate files
+// that hold the commands. A change to any of them changes how every server test runs.
+export const SERVER_RUNNER_PATHS = [
+  "scripts/personal/node/server-test-lane.mjs",
+  "scripts/personal/node/server-isolated-tests.txt",
+  "scripts/personal/node/gates-linux.json",
+  "scripts/personal/node/gates-linux.scoped.json",
+];
 
 // Files that make every check run whole. A dependency or runtime change can move
 // anything a gate reads.
@@ -94,7 +114,6 @@ export const NO_CHECK = [
   "scripts/personal/perf/",
   "scripts/personal/qa/",
   "scripts/personal/contract/",
-  "scripts/personal/release-runner/",
   PARITY_MATRIX,
   ".repos/",
   ".agents/",
@@ -134,6 +153,7 @@ const E2E_RESILIENCE_INPUTS = [
 
 // One row per check. `inputs` and `except` are prefixes, exact paths, or
 // prefixes with one `*` segment. `select` names the selector that fills args.
+// `whole` lists inputs that run the check whole instead of selected.
 export const CHECKS = {
   "server-tests": {
     inputs: [
@@ -145,8 +165,10 @@ export const CHECKS = {
       "scripts/personal/updates/",
       "scripts/personal/sync/",
       "scripts/personal/testing/",
+      ...SERVER_RUNNER_PATHS,
     ],
     except: SERVER_PKGS_EXCEPT,
+    whole: SERVER_RUNNER_PATHS,
     select: "serverTests@1",
   },
   "server-tsc": {
@@ -208,6 +230,8 @@ export const CHECKS = {
       "scripts/personal/sqlite-",
       "scripts/personal/copy-externals.mjs",
       "scripts/personal/idle-classification-",
+      "scripts/personal/dsh-runtime/",
+      "scripts/personal/release-runner/",
     ],
     select: "releaseTools@1",
   },
@@ -405,8 +429,59 @@ function expandTests(reader, entries) {
   return [...files].sort();
 }
 
+// A release-tool test reads files by name from wherever they sit, so the folder
+// groups above are not enough. A changed file also selects every test whose source
+// names its file name or the folder directly above it. Names every test mentions
+// say nothing and are left out.
+const NOT_A_READ_NAME = new Set([
+  "package.json",
+  "package-lock.json",
+  "README.md",
+  "index.mjs",
+  "index.cjs",
+  "index.js",
+]);
+const NOT_A_READ_DIR = new Set([
+  "scripts",
+  "personal",
+  "linux",
+  "node",
+  "lib",
+  "bin",
+  "test",
+  "tests",
+  "fixtures",
+  "golden",
+  "fake",
+  "hbots-release",
+  "dev-team-tools",
+]);
+
+function readNames(file) {
+  const parts = file.split("/");
+  const name = parts.at(-1);
+  const dir = parts.at(-2);
+  return [
+    ...(NOT_A_READ_NAME.has(name) ? [] : [name]),
+    ...(dir && !NOT_A_READ_DIR.has(dir) ? [dir] : []),
+  ];
+}
+
+function testsReading({ reader, changedPaths, tests }) {
+  const names = new Set(
+    changedPaths
+      .filter((file) => classifyPath(file).checks.includes("release-tools"))
+      .flatMap(readNames),
+  );
+  if (names.size === 0) return [];
+  const escaped = [...names].map((name) => name.replace(/[.+?^${}()|[\]\\]/g, "\\$&"));
+  const mention = new RegExp(`(?<![\\w.-])(?:${escaped.join("|")})(?![\\w-])`);
+  reader.prefetch?.(tests);
+  return tests.filter((test) => mention.test(reader.read(test) ?? ""));
+}
+
 function selectReleaseTools({ reader, changedPaths }) {
-  const all = expandTests(reader, [
+  const everyTest = expandTests(reader, [
     ...new Set(RELEASE_TOOL_GROUPS.flatMap((group) => group.tests)),
   ]);
   const tests = new Set();
@@ -414,15 +489,14 @@ function selectReleaseTools({ reader, changedPaths }) {
     for (const group of RELEASE_TOOL_GROUPS)
       if (file.startsWith(group.prefix))
         for (const test of expandTests(reader, group.tests)) tests.add(test);
+  for (const test of testsReading({ reader, changedPaths, tests: everyTest })) tests.add(test);
   const args = [...tests].sort();
-  return { args: args.length ? args : all, count: args.length, unit: "test files" };
+  return { args, count: args.length, unit: "test files" };
 }
 
 // Test files that some gate command runs, read off the gate commands in
 // gates-linux.scoped.json. Everything else that is a test by name runs in no gate, so a
 // plan never looks as if it ran a changed test that nothing ran.
-const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
-const KOTLIN_TEST = /^apps\/hbots-mobile\/modules\/[^/]+\/android\/src\/test\/.+\.kt$/;
 const GATE_TEST_RULES = [
   // server-tests
   (file) =>
@@ -482,7 +556,7 @@ function wholeArgs(id, reader) {
 const listed = (files) => files.slice(0, 4).join(", ") + (files.length > 4 ? ", ..." : "");
 const describeRow = (row) =>
   row.inputs
-    .filter((pattern) => !GATED_PATHS.includes(pattern))
+    .filter((pattern) => !GATED_PATHS.includes(pattern) && !row.whole?.includes(pattern))
     .map((pattern) => (pattern.endsWith("/") ? pattern.slice(0, -1) : pattern))
     .join(", ") + (row.except?.length ? ` (not ${row.except.join(", ")})` : "");
 
@@ -543,7 +617,7 @@ export function planChecks(paths, options = {}) {
       };
     if (!row.select)
       return { id, mode: "whole", reason: `${id} inputs changed: ${listed(hits[id])}` };
-    const infra = hits[id].filter(forcesWhole);
+    const infra = hits[id].filter((file) => forcesWhole(file) || row.whole?.includes(file));
     if (infra.length)
       return {
         id,
@@ -706,6 +780,155 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
   return problems;
 }
 
+const gitOut = (repo, args) =>
+  NodeChildProcess.execFileSync("git", ["-C", repo, ...args], {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  });
+const gitHas = (repo, rev, path) =>
+  NodeChildProcess.spawnSync("git", ["-C", repo, "cat-file", "-e", `${rev}:${path}`]).status === 0;
+const gitFile = (repo, rev, path) =>
+  gitHas(repo, rev, path) ? gitOut(repo, ["show", `${rev}:${path}`]) : null;
+
+function forkLineCounts(repo, from, to) {
+  const counts = new Map();
+  const fields = gitOut(repo, [
+    "diff",
+    "--no-renames",
+    "--numstat",
+    "-z",
+    from,
+    to,
+    "--",
+    ...FORK_TEST_ROOTS,
+  ]).split("\0");
+  for (const field of fields) {
+    const [added, deleted, ...path] = field.split("\t");
+    if (path.length === 0) continue;
+    counts.set(path.join("\t"), { added: Number(added) || 0, deleted: Number(deleted) || 0 });
+  }
+  return counts;
+}
+
+/**
+ * The test-line budget of one change: a list of `{ base, head }` diffs summed
+ * together. Returns the judged change, the problems that make it fail whatever
+ * its size, and the lines to print.
+ */
+export function budgetOfChange(repo, { id, steps }) {
+  const net = new Map();
+  const code = { added: 0, deleted: 0 };
+  const problems = [];
+  const rows = [];
+  let limit;
+  let enforce;
+  for (const { base, head } of steps) {
+    for (const [path, { added, deleted }] of forkLineCounts(repo, base, head)) {
+      if (isForkTest(path)) net.set(path, (net.get(path) ?? 0) + added - deleted);
+      else {
+        code.added += added;
+        code.deleted += deleted;
+      }
+    }
+    const found = newAllowances(
+      gitFile(repo, base, ALLOWANCE_FILE),
+      gitFile(repo, head, ALLOWANCE_FILE),
+      { exists: (path) => gitHas(repo, head, path) },
+    );
+    limit ??= found.limit;
+    enforce ??= found.enforce;
+    rows.push(...found.rows);
+    problems.push(...found.problems);
+  }
+  const result = judgeChange({
+    id,
+    deltas: [...net]
+      .filter(([, lines]) => lines !== 0)
+      .map(([path, lines]) => ({ path, net: lines })),
+    limit,
+    allowance: rows.sort((a, b) => b.lines - a.lines)[0],
+    code,
+  });
+  const lines = [
+    ...problems.map((problem) => `FAIL test budget: ${problem}`),
+    ...budgetLines(result),
+  ];
+  const report = {
+    result,
+    problems,
+    enforce,
+    failed: problems.length > 0 || result.verdict === "over",
+    lines,
+  };
+  if (report.failed && !enforce) lines.push(REPORT_MODE_LINE);
+  return { ...report, blocks: report.failed && enforce };
+}
+
+/** Whether the allowance file at `rev` turns the guard on. A file that cannot be read is report mode. */
+export function guardEnforced(repo, rev) {
+  try {
+    return JSON.parse(gitFile(repo, rev, ALLOWANCE_FILE) ?? "{}").enforce === true;
+  } catch {
+    return false;
+  }
+}
+
+const mergeLabel = (repo, sha) =>
+  /^Merge (?:remote-tracking )?branch '([^']+)'/.exec(
+    gitOut(repo, ["log", "-1", "--format=%s", sha]),
+  )?.[1] ?? `merge ${sha.slice(0, 10)}`;
+
+/**
+ * The budget of every change a release carries. Each merge on the first-parent
+ * line is one change, measured from where its branch left trunk. A merge of trunk
+ * into a branch is skipped, and the commits made straight on the line are one more change.
+ */
+export function budgetOfRelease(repo, liveSha, releaseSha) {
+  const changes = [];
+  const direct = [];
+  const log = gitOut(repo, [
+    "rev-list",
+    "--first-parent",
+    "--parents",
+    `${liveSha}..${releaseSha}`,
+  ]);
+  for (const line of log.split("\n").filter(Boolean)) {
+    const [sha, first, ...others] = line.split(" ");
+    if (!first) continue;
+    if (others.length === 0) direct.unshift({ base: first, head: sha });
+    else if (others.length > 1)
+      changes.push({ id: mergeLabel(repo, sha), steps: [{ base: first, head: sha }] });
+    else if (
+      NodeChildProcess.spawnSync("git", [
+        "-C",
+        repo,
+        "merge-base",
+        "--is-ancestor",
+        others[0],
+        liveSha,
+      ]).status !== 0
+    )
+      changes.push({
+        id: mergeLabel(repo, sha),
+        steps: [{ base: gitOut(repo, ["merge-base", first, others[0]]).trim(), head: others[0] }],
+      });
+  }
+  if (direct.length) changes.push({ id: "commits made on the release line", steps: direct });
+  const reports = changes.map((change) => budgetOfChange(repo, change));
+  return {
+    reports,
+    lines: reports.flatMap((report) => report.lines),
+    problems: reports
+      .filter((report) => report.blocks)
+      .flatMap((report) =>
+        report.lines.filter((line) => line.startsWith("FAIL")).map((line) => line.slice(5)),
+      ),
+    warnings: reports
+      .filter((report) => report.failed && !report.enforce)
+      .flatMap((report) => report.lines),
+  };
+}
+
 const invokedDirectly = () => {
   try {
     return NodePath.resolve(NodeProcess.argv[1] ?? "") === NodeURL.fileURLToPath(import.meta.url);
@@ -774,11 +997,36 @@ if (invokedDirectly()) {
       );
       NodeProcess.exit(2);
     }
+    const branch =
+      options.head === "HEAD" ? git("rev-parse", "--abbrev-ref", "HEAD") : options.head;
+    let budget;
+    try {
+      budget = budgetOfChange(repo, {
+        id: branch === "HEAD" ? headSha.slice(0, 10) : branch,
+        steps: [{ base: mergeBase, head: headSha }],
+      });
+    } catch (error) {
+      if (guardEnforced(repo, mergeBase)) throw error;
+      console.error(
+        `WARNING: the test budget guard crashed and could not check this change: ${error.message.split("\n")[0]}. Report mode, so it does not block.`,
+      );
+      budget = { result: null, problems: [], failed: false, blocks: false, lines: [] };
+    }
     const result = { baseSha: mergeBase, requestedBase: baseSha, headSha, ...scope };
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            ...result,
+            budget: { ...budget.result, problems: budget.problems, enforce: budget.enforce },
+          },
+          null,
+          2,
+        ),
+      );
     } else if (options.commands) {
       printPlan(result, true);
+      for (const line of budget.lines) console.error(line);
       // The gate commands ship with this planner, so read them from this checkout:
       // the head's own copy may predate the {args} placeholders.
       const defsFile =
@@ -799,7 +1047,9 @@ if (invokedDirectly()) {
       }
     } else {
       printPlan(result);
+      for (const line of budget.lines) (budget.failed ? console.error : console.log)(line);
     }
+    if (budget.blocks) NodeProcess.exit(2);
   } catch (error) {
     console.error(`FAIL: ${error.message}`);
     NodeProcess.exit(2);

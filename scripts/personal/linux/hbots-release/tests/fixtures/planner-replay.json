@@ -1,0 +1,3082 @@
+{
+  "about": "Replay of the release planner (lib/gateScope.mjs) against 224 fork fix commits and 34 probes. Each entry names the paths a change touched and the tests that must run for it. `expect` is what the planner answers today: hit when the plan runs every mustRun test, miss when it does not. A miss is a known gap; it carries its class. The test goes red when any answer changes, so a fixed gap must be flipped to hit and a new gap must be seen. Probes with no mustRun pin the plan shape (check id to mode). No git history is needed.",
+  "source": "Verifier 2 backtest, qa/hbots-ci-ideas/backtest/cases.json, planner commit e311aa7c7d6b, trimmed. Cases whose must-run test is gone from the tree are counted in `dropped`.",
+  "dropped": [],
+  "cases": [
+    {
+      "id": "c001",
+      "commit": "4aed04d27b1e",
+      "changedPaths": ["apps/server/src/personal/work/PersonalWorkReads.ts"],
+      "mustRun": ["apps/server/src/personal/work/PersonalWorkQuestions.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c002",
+      "commit": "c09ae667124d",
+      "changedPaths": ["apps/hbots-mobile/src/chat/MessageList.tsx"],
+      "mustRun": ["apps/hbots-mobile/src/chat/messageList.reconciler.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c003",
+      "commit": "eb53f549587d",
+      "changedPaths": ["apps/hbots-mobile/src/chat/MessageList.tsx"],
+      "mustRun": ["apps/hbots-mobile/src/chat/messageList.reconciler.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c004",
+      "commit": "51789229414c",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/README.md",
+        "scripts/personal/linux/hbots-release/PINS.json",
+        "scripts/personal/linux/hbots-release/README.md",
+        "scripts/personal/linux/hbots-release/lib/gateScope.mjs",
+        "scripts/personal/node/README.md",
+        "scripts/personal/node/gates-linux.json",
+        "scripts/personal/node/gates-linux.scoped.json"
+      ],
+      "mustRun": [
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs",
+        "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c005",
+      "commit": "4fecf85abd44",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-share/android/src/main/java/expo/modules/hbotsshare/HbotsPhotoStripView.kt",
+        "apps/hbots-mobile/modules/hbots-share/android/src/main/java/expo/modules/hbotsshare/HbotsShareModule.kt",
+        "apps/hbots-mobile/modules/hbots-share/android/src/main/java/expo/modules/hbotsshare/PhotoSelection.kt",
+        "apps/hbots-mobile/src/chat/AttachSheet.tsx",
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/PhotoStrip.tsx",
+        "apps/hbots-mobile/src/chat/attachSheetModel.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-share/android/src/test/java/expo/modules/hbotsshare/PhotoSelectionTest.kt",
+        "apps/hbots-mobile/src/chat/attachSheetModel.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c006",
+      "commit": "0451ad41bcdf",
+      "changedPaths": [
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/server/src/personal/work/PersonalWorkReads.ts",
+        "packages/personal-client/src/automation/automationClient.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts",
+        "packages/personal-client/src/automation/automationClient.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c007",
+      "commit": "c94008b1ebcf",
+      "changedPaths": [
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/shell/AppShell.tsx",
+        "packages/personal-client/src/work/projectCards.ts"
+      ],
+      "mustRun": ["packages/personal-client/src/work/chatGoalTags.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c008",
+      "commit": "e3f0ff27b3de",
+      "changedPaths": ["apps/hbots-mobile/src/compat.ts"],
+      "mustRun": ["apps/hbots-mobile/src/compat.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c009",
+      "commit": "58f3d06fcc22",
+      "changedPaths": ["apps/hbots-mobile/src/App.tsx", "apps/hbots-mobile/src/reconnectCheck.ts"],
+      "mustRun": ["apps/hbots-mobile/src/reconnectCheck.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c010",
+      "commit": "b5d4f48e8e20",
+      "changedPaths": [
+        "apps/hbots-mobile/src/personal/chatPress.ts",
+        "apps/hbots-mobile/src/screens/ChatsListScreen.tsx",
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/personal/chatPress.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c011",
+      "commit": "edcbcf67638d",
+      "changedPaths": [
+        "scripts/personal/linux/hbots-release/PINS.json",
+        "scripts/personal/linux/hbots-release/lib/gateScope.mjs"
+      ],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c012",
+      "commit": "09e8e6bb5825",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c013",
+      "commit": "faa5fde1b6c2",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c014",
+      "commit": "33538645a582",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c015",
+      "commit": "a69cd9b6d3d8",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c016",
+      "commit": "ee4872f7f423",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c017",
+      "commit": "cab22594fea8",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c018",
+      "commit": "2f14309a223f",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c019",
+      "commit": "9b838e4d5c6a",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c020",
+      "commit": "e4010b17501e",
+      "changedPaths": [
+        "scripts/personal/linux/hbots-release/lib/gateScope.mjs",
+        "scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"
+      ],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c021",
+      "commit": "ce6038a9235b",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c022",
+      "commit": "0aa5ea05432e",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c023",
+      "commit": "19fbc463e4ff",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c024",
+      "commit": "4a83cd29ee2f",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": [
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs",
+        "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c025",
+      "commit": "e3220d3faacf",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": [
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs",
+        "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c026",
+      "commit": "50749237b9b1",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/serverTestSelect.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c027",
+      "commit": "6762f6b029fc",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c028",
+      "commit": "a80f0023a549",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c029",
+      "commit": "5bd176f1bf85",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/gate-common.mjs",
+        "scripts/personal/linux/hbots-release/lib/gateScope.mjs"
+      ],
+      "mustRun": [
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs",
+        "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c030",
+      "commit": "e299c8b7473c",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c031",
+      "commit": "0a1e1fa7a78c",
+      "changedPaths": [
+        "scripts/personal/linux/hbots-release/README.md",
+        "scripts/personal/linux/hbots-release/lib/gateScope.mjs"
+      ],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c032",
+      "commit": "1177d8f50906",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/gate-common.mjs",
+        "scripts/personal/linux/dev-team-tools/gate-evidence.mjs",
+        "scripts/personal/linux/hbots-release/lib/gateScope.mjs"
+      ],
+      "mustRun": [
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs",
+        "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c033",
+      "commit": "26553bd5d15c",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/gateScope.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c034",
+      "commit": "adedd56918e0",
+      "changedPaths": [
+        "apps/server/src/personal/work/PersonalWorkReads.ts",
+        "packages/contracts/src/personalWork.ts",
+        "packages/personal-client/src/automation/automationClient.ts"
+      ],
+      "mustRun": ["apps/server/src/personal/work/PersonalWorkReads.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c035",
+      "commit": "701957be60be",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-share/android/src/main/java/expo/modules/hbotsshare/HbotsPhotoStripView.kt",
+        "apps/hbots-mobile/modules/hbots-share/android/src/main/java/expo/modules/hbotsshare/HbotsShareModule.kt",
+        "apps/hbots-mobile/src/chat/AttachSheet.tsx",
+        "apps/hbots-mobile/src/chat/AttachmentImage.tsx",
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/PhotoStrip.tsx",
+        "apps/hbots-mobile/src/chat/attachSheetModel.ts",
+        "apps/hbots-mobile/src/chat/localImages.ts",
+        "apps/hbots-mobile/src/chat/messageListModel.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/chat/attachSheetModel.test.ts",
+        "apps/hbots-mobile/src/chat/messageListModel.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c036",
+      "commit": "177757bff518",
+      "changedPaths": ["packages/personal-client/package.json"],
+      "mustRun": ["apps/server/src/personal/work/PersonalWorkReads.test.ts"],
+      "expect": "miss",
+      "missClass": "bundled-test-edit"
+    },
+    {
+      "id": "c037",
+      "commit": "a81a2d5b7ad2",
+      "changedPaths": [
+        "apps/server/src/mcp/toolkits/bots/tools.ts",
+        "apps/server/src/personal/testing/personalWsMocks.ts"
+      ],
+      "mustRun": ["apps/server/src/mcp/toolkits/bots/projectHandlers.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c038",
+      "commit": "2a05678678e7",
+      "changedPaths": [
+        "apps/hbots-mobile/src/bots/BotThreadsScreen.tsx",
+        "apps/hbots-mobile/src/chat/chatModel.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/screens/ChatsListScreen.tsx",
+        "apps/hbots-mobile/src/sheets/ChatActionsSheet.tsx",
+        "apps/server/src/personal/PersonalBotService.ts",
+        "apps/server/src/personal/PersonalTaskChatArchiveService.ts",
+        "apps/server/src/personal/engine/PersonalEngine.ts",
+        "apps/server/src/personal/engine/PersonalEngineV2Live.ts",
+        "apps/server/src/personal/taskChatAutoArchivePolicy.ts",
+        "apps/web/src/features/personal/botThreadRows.ts",
+        "apps/web/src/features/personal/chatChipRows.ts",
+        "apps/web/src/features/personal/chatSettingsModel.ts",
+        "packages/personal-client/src/bots/botSummaries.ts",
+        "packages/personal-client/src/bots/chatSettingsModel.ts",
+        "packages/personal-client/src/bots/chatState.ts",
+        "packages/personal-client/src/bots/unreadChats.ts",
+        "packages/personal-client/src/feed/botThreadRows.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/tasks/PersonalTaskService.test.ts",
+        "apps/server/src/personal/tasks/taskProviderBoundary.test.ts",
+        "apps/web/src/features/personal/chatChipRows.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c039",
+      "commit": "7851cb7672ff",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+        "apps/server/src/orchestration-v2/Adapters/claudeLimitResetText.ts",
+        "apps/server/src/personal/engine/PersonalEngine.ts",
+        "apps/server/src/personal/engine/PersonalEngineV2Live.ts",
+        "apps/server/src/personal/engine/PersonalThreadShellV2.ts",
+        "apps/server/src/personal/tasks/taskDispatch.ts",
+        "apps/server/src/personal/tasks/taskLimitPolicy.ts",
+        "apps/server/src/personal/tasks/taskSettling.ts",
+        "apps/server/src/personal/tasks/taskShared.ts",
+        "packages/contracts/src/personalV1Wire.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/tasks/PersonalTaskService.test.ts",
+        "apps/server/src/personal/tasks/taskProviderBoundary.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c040",
+      "commit": "95173b410d20",
+      "changedPaths": [
+        "apps/server/src/observability/StallWatchdog.ts",
+        "apps/server/src/observability/stallPressure.ts",
+        "apps/server/src/observability/stallWatchdogWorker.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/observability/stallReport.test.ts",
+        "apps/server/src/observability/stallWatchdogWorker.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c041",
+      "commit": "d80b2235cb9f",
+      "changedPaths": [
+        "scripts/personal/linux/install-units.sh",
+        "scripts/personal/linux/systemd/hbots-no-swap.conf"
+      ],
+      "mustRun": ["scripts/personal/node/test/units.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c042",
+      "commit": "23c5ad9aa25c",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/ServerUpdateBanner.tsx",
+        "apps/hbots-mobile/src/shell/serverUpdateBannerModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/shell/serverUpdateBannerModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c043",
+      "commit": "eab58e48f31d",
+      "changedPaths": ["apps/server/src/preview/ServerBrowserPage.ts"],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/FoundationPersistence.test.ts",
+        "apps/server/src/personal/browser/ServerBrowserHost.test.ts",
+        "apps/server/src/provider/claudeUsageLimits.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "bundled-test-edit"
+    },
+    {
+      "id": "c044",
+      "commit": "0aefbc37c9b7",
+      "changedPaths": [
+        "apps/server/src/personal/agentContextBudget.json",
+        "apps/server/src/provider/agentContextBudget.json"
+      ],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts",
+        "apps/server/src/orchestration-v2/ProjectionStore.test.ts",
+        "apps/server/src/process/agentScope.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "bundled-test-edit"
+    },
+    {
+      "id": "c045",
+      "commit": "25f47c614bab",
+      "changedPaths": ["apps/server/src/personal/engine/PersonalEngineV2Live.ts"],
+      "mustRun": ["apps/server/src/personal/engine/PersonalEngineV2.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c046",
+      "commit": "bca9055690d2",
+      "changedPaths": [
+        "packages/provider-core/src/server/managedProvider.ts",
+        "packages/provider-core/src/server/usageLimits.ts"
+      ],
+      "mustRun": ["packages/provider-core/src/server/usageLimits.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c047",
+      "commit": "0670f399c68d",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts",
+        "apps/server/src/persistence/upstreamMigrationIds.ts",
+        "apps/server/src/personal/agentContextBudget.json",
+        "apps/server/src/provider/agentContextBudget.json",
+        "apps/server/src/usage/cliproxyApi.ts",
+        "packages/provider-core/src/server/maintenanceResolver.ts",
+        "scripts/personal/parity/parity.json",
+        "scripts/personal/sync/known-test-failures.txt"
+      ],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAgentSdkQueryRunner.test.ts",
+        "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts",
+        "apps/server/src/orchestration-v2/ProjectionStore.test.ts",
+        "apps/server/src/persistence/Migrations/081_ProjectionMessageSearchText.test.ts",
+        "apps/server/src/persistence/Migrations/085_TurnItemCounts.test.ts",
+        "apps/server/src/persistence/Migrations/087_ProjectionProjectsCustomTitle.test.ts",
+        "apps/server/src/persistence/Sqlite.test.ts",
+        "apps/server/src/personal/engine/personalNoticeV2.integration.test.ts",
+        "apps/server/src/personal/toolCallRefusalLogging.test.ts",
+        "apps/server/src/provider/codexLaunchArgs.test.ts",
+        "apps/server/src/provider/providerMaintenanceRunner.test.ts",
+        "apps/web/src/features/personal/PersonalSettingsScreen.test.tsx",
+        "packages/provider-core/src/server/maintenanceResolver.test.ts",
+        "packages/provider-core/src/server/managedProvider.test.ts",
+        "packages/shared/src/nodeSqliteClient.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c048",
+      "commit": "6632c8811003",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/chatModel.ts",
+        "apps/hbots-mobile/src/chat/useStartChat.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/sheets/NewChatSheet.tsx",
+        "apps/web/src/features/personal/ConversationScreen.tsx",
+        "apps/web/src/features/personal/chatChipRows.ts",
+        "apps/web/src/features/personal/startBotChat.ts",
+        "packages/personal-client/src/bots/chatChipRows.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/chat/chatModel.test.ts",
+        "apps/web/src/features/personal/chatChipRows.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c049",
+      "commit": "352fc86894b4",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+        "apps/server/src/persistence/AuthSessions.ts",
+        "apps/server/src/provider/personalBotContextLimits.ts",
+        "packages/contracts/src/auth.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/provider/personalBotContextLimits.test.ts",
+        "packages/contracts/src/auth.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c050",
+      "commit": "27e07a921159",
+      "changedPaths": [
+        "apps/hbots-mobile/src/work/WorkScreen.tsx",
+        "apps/web/src/features/personal/WorkScreen.tsx",
+        "packages/personal-client/src/work/workTimeline.ts"
+      ],
+      "mustRun": ["packages/personal-client/src/work/workTimeline.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c051",
+      "commit": "84ccd1c3ae2e",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-window/android/build.gradle",
+        "apps/hbots-mobile/modules/hbots-window/android/src/main/java/expo/modules/hbotswindow/HbotsWindowModule.kt",
+        "apps/hbots-mobile/modules/hbots-window/expo-module.config.json",
+        "apps/hbots-mobile/modules/hbots-window/package.json",
+        "apps/hbots-mobile/src/motion/useSheetMotion.ts",
+        "apps/hbots-mobile/src/motion/useWindowTouch.ts",
+        "apps/hbots-mobile/src/motion/windowTouchGate.ts",
+        "apps/hbots-mobile/src/sheets/SheetShell.tsx",
+        "apps/hbots-mobile/src/shell/NewItemsSheet.tsx",
+        "apps/hbots-mobile/src/shell/PersonalUsageStrip.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/motion/windowTouchGate.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c052",
+      "commit": "79c4537376cb",
+      "changedPaths": ["apps/server/src/provider/Drivers/ClaudeDriver.ts"],
+      "mustRun": ["apps/server/src/provider/ProviderInstanceRegistry.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c053",
+      "commit": "7d3d093bd225",
+      "changedPaths": ["apps/server/src/provider/claudeUsageLimits.ts"],
+      "mustRun": ["apps/server/src/provider/claudeUsageLimits.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c054",
+      "commit": "3eecddfd408f",
+      "changedPaths": ["apps/server/src/provider/Drivers/ClaudeDriver.ts"],
+      "mustRun": ["apps/server/src/provider/ProviderInstanceRegistry.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c055",
+      "commit": "9b5223fbaf04",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/PersonalUsageStrip.tsx",
+        "apps/hbots-mobile/src/shell/usageRedeem.ts",
+        "apps/web/src/components/usage/UsageLimits.tsx",
+        "apps/web/src/features/personal/PersonalResetCredits.tsx",
+        "packages/personal-client/src/usage/usagePresentation.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/shell/PersonalUsageStrip.redeem.test.ts",
+        "apps/web/src/components/usage/UsageLimits.resetCredit.test.tsx",
+        "apps/web/src/features/personal/PersonalResetCredits.test.tsx",
+        "packages/personal-client/src/usage/usagePresentation.resetCredit.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c056",
+      "commit": "6e5b4232e1d4",
+      "changedPaths": ["packages/provider-core/src/server/usageLimits.ts"],
+      "mustRun": ["packages/provider-core/src/server/usageLimits.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c057",
+      "commit": "00bb4e291993",
+      "changedPaths": ["apps/server/src/provider/claudeUsageLimits.ts"],
+      "mustRun": ["apps/server/src/provider/claudeUsageLimits.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c058",
+      "commit": "a64fc5d45434",
+      "changedPaths": [
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/shell/PersonalUsageStrip.tsx",
+        "apps/server/src/auth/RpcAuthorization.ts",
+        "packages/contracts/src/clientRpcPermissions.ts"
+      ],
+      "mustRun": [
+        "apps/web/src/components/usage/UsageLimits.resetCredit.test.tsx",
+        "packages/client-runtime/src/state/commandPermissions.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c059",
+      "commit": "9b7e5a70095d",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/PersonalUsageStrip.tsx",
+        "apps/web/src/components/usage/UsageLimits.tsx",
+        "packages/personal-client/src/usage/usagePresentation.ts"
+      ],
+      "mustRun": [
+        "apps/web/src/components/usage/UsageLimits.resetCredit.test.tsx",
+        "apps/web/src/features/personal/PersonalResetCredits.test.tsx",
+        "packages/personal-client/src/usage/usagePresentation.resetCredit.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c060",
+      "commit": "3a21d005b4de",
+      "changedPaths": [
+        "apps/server/src/provider/Drivers/ClaudeDriver.ts",
+        "apps/server/src/provider/claudeResetCredits.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/provider/ProviderInstanceRegistry.test.ts",
+        "apps/server/src/provider/claudeResetCredits.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c061",
+      "commit": "033fce344c05",
+      "changedPaths": ["apps/hbots-mobile/src/settings/settingsScreenModel.ts"],
+      "mustRun": ["apps/hbots-mobile/src/settings/settingsScreenModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c062",
+      "commit": "1ff8e5773ea1",
+      "changedPaths": ["packages/personal-client/src/composer/outboxFlush.ts"],
+      "mustRun": ["packages/personal-client/src/composer/outboxFlush.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c063",
+      "commit": "39f8bbb11af6",
+      "changedPaths": [
+        "apps/hbots-mobile/src/settings/NameSheet.tsx",
+        "apps/hbots-mobile/src/settings/SettingsScreen.tsx",
+        "apps/hbots-mobile/src/settings/SettingsUi.tsx",
+        "apps/hbots-mobile/src/settings/settingsScreenModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/settings/settingsScreenModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c064",
+      "commit": "0851fc6da5e5",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/outgoingFiles.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/outgoingFiles.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c065",
+      "commit": "acc29c09d470",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/composerSendModel.ts",
+        "apps/hbots-mobile/src/personal/nativeCache.ts",
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/platform/nativePorts.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/chat/composerSendModel.test.ts",
+        "apps/hbots-mobile/src/platform/localDataWipe.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c066",
+      "commit": "6e038f1d686e",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/composerSendModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/composerSendModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c067",
+      "commit": "17df58b52a1b",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/composerSendModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/composerSendModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c068",
+      "commit": "c7c8062a9652",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/composerSendModel.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/composerSendModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c069",
+      "commit": "f41d48f45732",
+      "changedPaths": [
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/sheets/ChatMenuSheet.tsx",
+        "apps/hbots-mobile/src/sheets/chatMenuRows.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/sheets/chatMenuRows.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c070",
+      "commit": "40b8ef8f17ba",
+      "changedPaths": ["packages/personal-client/src/settings/providerRows.ts"],
+      "mustRun": ["packages/personal-client/src/settings/providerRows.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c071",
+      "commit": "8e91a2788711",
+      "changedPaths": [
+        "apps/hbots-mobile/src/settings/SettingsScreen.tsx",
+        "apps/hbots-mobile/src/settings/settingsScreenModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/settings/settingsScreenModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c072",
+      "commit": "e81853488dff",
+      "changedPaths": [
+        "apps/hbots-mobile/src/components/SwipeToDeleteRow.tsx",
+        "apps/hbots-mobile/src/components/swipeDeleteModel.ts",
+        "apps/hbots-mobile/src/files/FilesScreen.tsx",
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/components/swipeDeleteModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c073",
+      "commit": "d22752c6ef92",
+      "changedPaths": [
+        "apps/hbots-mobile/src/components/SwipeToDeleteRow.tsx",
+        "apps/hbots-mobile/src/components/swipeDeleteModel.ts",
+        "apps/hbots-mobile/src/components/swipeDeleteRows.ts",
+        "apps/hbots-mobile/src/files/FilesScreen.tsx",
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/components/swipeDeleteModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c074",
+      "commit": "51328f4ba0f5",
+      "changedPaths": ["apps/server/src/personal/performance/hostSensors.ts"],
+      "mustRun": ["apps/server/src/personal/performance/hostSensors.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c075",
+      "commit": "3fbdfc7890cf",
+      "changedPaths": [
+        "apps/server/src/personal/performance/hostSensors.ts",
+        "apps/server/src/personal/performance/systemSummaryRoute.ts"
+      ],
+      "mustRun": ["apps/server/src/personal/performance/hostSensors.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c076",
+      "commit": "34831ffa7bb6",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx",
+        "apps/hbots-mobile/src/shell/pinnedOrderModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/shell/pinnedOrderModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c077",
+      "commit": "ab005bc3fc71",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx",
+        "apps/hbots-mobile/src/shell/pinnedOrderModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/shell/pinnedOrderModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c078",
+      "commit": "79ce01989be8",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/composerSendModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/composerSendModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c079",
+      "commit": "5d7bd938176f",
+      "changedPaths": [
+        "apps/server/src/personal/PersonalLayerLive.ts",
+        "apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts",
+        "apps/server/src/ws.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/providerUpdates/PersonalLayerLive.providerUpdates.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c080",
+      "commit": "52295e2de5fb",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/chipScroll.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/chipScroll.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c081",
+      "commit": "401b163f365c",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/useStartChat.ts",
+        "apps/hbots-mobile/src/screens/BotNewChatScreen.tsx",
+        "apps/hbots-mobile/src/screens/newChatStart.ts",
+        "packages/client-runtime/src/errors/transport.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/screens/newChatStart.test.ts",
+        "apps/hbots-mobile/src/share/sendShare.test.ts",
+        "apps/mobile/src/state/thread-outbox.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c082",
+      "commit": "0f3b628b3662",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/useStartChat.ts",
+        "apps/hbots-mobile/src/screens/BotNewChatScreen.tsx",
+        "apps/hbots-mobile/src/screens/newChatStart.ts",
+        "apps/hbots-mobile/src/share/sendShare.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/screens/newChatStart.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c083",
+      "commit": "b2fb3fa295c2",
+      "changedPaths": [
+        "apps/server/src/auth/SessionStore.ts",
+        "apps/server/src/personal/push/PersonalPushService.ts",
+        "apps/server/src/personal/push/pushRecipients.ts",
+        "apps/server/src/personal/push/socketSession.ts",
+        "apps/server/src/personal/ws/handlers.ts",
+        "apps/server/src/ws.ts",
+        "apps/web/src/features/personal/PushRegistrationSync.tsx"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/push/pushSessionFollow.test.ts",
+        "apps/server/src/ws.test.ts",
+        "apps/web/src/features/personal/PushRegistrationSync.test.tsx"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c084",
+      "commit": "50a07692776b",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/ActionDelivery.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/ActionRunner.kt",
+        "apps/hbots-mobile/modules/hbots-share/android/src/main/java/expo/modules/hbotsshare/HbotsComposerHostView.kt",
+        "apps/hbots-mobile/src/launcher/LauncherBridge.tsx",
+        "apps/hbots-mobile/src/screens/BotNewChatScreen.tsx",
+        "apps/hbots-mobile/src/screens/newChatStart.ts",
+        "apps/hbots-mobile/src/working/workingFeed.ts",
+        "apps/hbots-mobile/src/working/workingThreads.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/ActionRunnerTest.kt",
+        "apps/hbots-mobile/src/working/stopListModel.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c085",
+      "commit": "6dd36b7c922b",
+      "changedPaths": [
+        "apps/server/src/mcp/toolkits/previewControls/handlers.ts",
+        "apps/server/src/personal/browser/ServerBrowserHost.ts",
+        "apps/server/src/personal/browser/browserOperations.ts",
+        "apps/server/src/personal/browser/browserShared.ts",
+        "apps/server/src/personal/browser/driver.ts",
+        "apps/server/src/personal/browser/pageOperations.ts",
+        "packages/contracts/src/personalBrowser.ts",
+        "packages/contracts/src/previewAutomation.ts"
+      ],
+      "mustRun": ["apps/server/src/mcp/PreviewAutomationBroker.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c086",
+      "commit": "dcb7ca21ec9b",
+      "changedPaths": ["packages/personal-client/src/voice/voiceCallController.ts"],
+      "mustRun": ["packages/personal-client/src/voice/voiceCallController.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c087",
+      "commit": "429ef83877f8",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/AppShell.tsx",
+        "apps/hbots-mobile/src/voice/CallBar.tsx",
+        "apps/hbots-mobile/src/voice/TopReserveInsets.tsx",
+        "apps/hbots-mobile/src/voice/VoiceCallLayer.tsx",
+        "apps/hbots-mobile/src/voice/VoiceCallProvider.tsx",
+        "apps/hbots-mobile/src/voice/VoiceCallScreen.tsx",
+        "apps/hbots-mobile/src/voice/callNotificationAsk.ts",
+        "apps/hbots-mobile/src/voice/callSession.ts",
+        "apps/hbots-mobile/src/voice/callViewModel.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/voice/callLock.test.ts",
+        "apps/hbots-mobile/src/voice/callSession.test.ts",
+        "apps/hbots-mobile/src/voice/callViewModel.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c088",
+      "commit": "ced58ebe7ae9",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-voice/android/src/main/java/expo/modules/hbotsvoice/CallNotificationSpec.kt",
+        "apps/hbots-mobile/modules/hbots-voice/android/src/main/java/expo/modules/hbotsvoice/VoiceCallService.kt",
+        "apps/hbots-mobile/modules/hbots-voice/android/src/main/java/expo/modules/hbotsvoice/VoiceRuntime.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-voice/android/src/test/java/expo/modules/hbotsvoice/PoliciesTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c089",
+      "commit": "094000a1c274",
+      "changedPaths": ["packages/personal-client/src/voice/voiceCallController.ts"],
+      "mustRun": ["packages/personal-client/src/voice/voiceCallController.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c090",
+      "commit": "dbb5e686526f",
+      "changedPaths": [
+        "apps/server/src/mcp/PreviewAutomationBroker.ts",
+        "packages/contracts/src/previewAutomation.ts"
+      ],
+      "mustRun": ["apps/server/src/mcp/PreviewAutomationBroker.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c091",
+      "commit": "e5ba2140cba8",
+      "changedPaths": [
+        "apps/hbots-mobile/src/computer/ComputerLiveView.tsx",
+        "apps/hbots-mobile/src/computer/computerScreenModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/computer/liveViewKeyboard.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c092",
+      "commit": "19acbe086b58",
+      "changedPaths": [
+        "apps/hbots-mobile/src/notifications/clearChatNotifications.ts",
+        "apps/hbots-mobile/src/shell/AppShell.tsx"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/notifications/clearChatNotifications.test.ts",
+        "apps/hbots-mobile/src/notifications/policySync.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c093",
+      "commit": "d6edf385d449",
+      "changedPaths": [
+        "apps/hbots-mobile/src/settings/NotificationsScreen.tsx",
+        "apps/hbots-mobile/src/settings/notificationsScreenModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/settings/notificationsScreenModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c094",
+      "commit": "e01f7fb1742c",
+      "changedPaths": [
+        "apps/hbots-mobile/src/notifications/PushBridge.tsx",
+        "apps/hbots-mobile/src/security/lockSetting.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/security/lockSetting.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c095",
+      "commit": "56acf081dbfc",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/NotificationActionReceiver.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/ReplyLimit.kt",
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/linkDraft.ts",
+        "apps/hbots-mobile/src/nav/routes.ts",
+        "apps/hbots-mobile/src/shell/AppShell.tsx"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/ReplyLimitTest.kt",
+        "apps/hbots-mobile/src/chat/linkDraft.test.ts",
+        "apps/hbots-mobile/src/nav/routes.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c096",
+      "commit": "0526ee381f05",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/HbotsWidgetProvider.kt",
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/WidgetModel.kt",
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/WidgetStore.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/test/java/expo/modules/hbotslauncher/WidgetModelTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c097",
+      "commit": "b8b5d86af5c8",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/main/AndroidManifest.xml",
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/LauncherShortcuts.kt",
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/ShortcutTrampolineActivity.kt",
+        "apps/hbots-mobile/plugins/withCtoShortcut.cjs"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-launcher/android/src/test/java/expo/modules/hbotslauncher/TrampolineTargetTest.kt",
+        "apps/hbots-mobile/src/tile/ctoShortcutPlugin.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c098",
+      "commit": "b726a2a417e3",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/NotificationActionReceiver.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/NotificationPlanner.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/NotificationSender.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/PushIngest.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/NotificationPlannerTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c099",
+      "commit": "6e3b23a87b73",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/ActionOutcome.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/ActionRunner.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/ApiGateway.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/NotificationActionReceiver.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/PolicyStore.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/ActionPresentationTest.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/ActionRunnerTest.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/PendingStoreTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c100",
+      "commit": "be480befcdbb",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/ActionRunner.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/PushPayload.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/ContentFetcherTest.kt",
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/PushPayloadParserTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c101",
+      "commit": "fc3aa149884a",
+      "changedPaths": ["apps/server/src/preview/ServerBrowser.ts", "apps/server/src/server.ts"],
+      "mustRun": ["apps/server/src/personal/browser/PersonalBrowser.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c102",
+      "commit": "1596d56225e1",
+      "changedPaths": ["apps/hbots-mobile/src/display/useHighRefresh.ts"],
+      "mustRun": ["apps/hbots-mobile/src/display/refreshLease.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c103",
+      "commit": "9d759e82d2e1",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/main/java/expo/modules/hbotsnotify/NotifyPolicy.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-notify/android/src/test/java/expo/modules/hbotsnotify/PolicyCodecTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c104",
+      "commit": "8d2a5f07f593",
+      "changedPaths": [
+        "apps/server/src/personal/tasks/PersonalTaskRepository.ts",
+        "apps/server/src/personal/tasks/taskLifecycle.ts"
+      ],
+      "mustRun": ["apps/server/src/personal/tasks/PersonalTaskService.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c105",
+      "commit": "f55d1ffcb293",
+      "changedPaths": ["packages/personal-client/src/conversation/liveWork.ts"],
+      "mustRun": ["packages/personal-client/src/conversation/liveWork.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c106",
+      "commit": "9c7844485528",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts",
+        "apps/server/src/orchestration-v2/threadHistoryPaging.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/ProjectionStore.test.ts",
+        "apps/server/src/orchestration-v2/threadHistoryPaging.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c107",
+      "commit": "b86e2c045115",
+      "changedPaths": [
+        "apps/server/src/mcp/toolkits/bots/handlers.ts",
+        "apps/server/src/mcp/toolkits/bots/tools.ts",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts",
+        "apps/server/src/personal/engine/PersonalEngine.ts",
+        "apps/server/src/personal/engine/PersonalEngineV2Live.ts",
+        "apps/server/src/personal/tasks/PersonalTaskService.ts",
+        "apps/server/src/personal/tasks/taskSteering.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/engine/PersonalEngineV2.test.ts",
+        "apps/server/src/personal/tasks/PersonalTaskService.test.ts",
+        "apps/server/src/personal/tasks/taskProviderBoundary.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c108",
+      "commit": "426ff899d04b",
+      "changedPaths": [
+        "apps/hbots-mobile/src/App.tsx",
+        "apps/hbots-mobile/src/personal/nativeCache.ts",
+        "apps/hbots-mobile/src/platform/nativePorts.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/platform/localDataWipe.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c109",
+      "commit": "5f33ed6fc88b",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts",
+        "apps/server/src/orchestration-v2/threadHistoryPaging.ts",
+        "packages/contracts/src/orchestrationV2.ts",
+        "packages/personal-client/src/conversation/liveWork.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/ProjectionStore.test.ts",
+        "apps/server/src/orchestration-v2/threadHistoryPaging.test.ts",
+        "packages/personal-client/src/conversation/liveWork.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c110",
+      "commit": "d2a0030dd51f",
+      "changedPaths": [
+        "apps/server/src/personal/engine/PersonalEngine.ts",
+        "apps/server/src/personal/engine/PersonalEngineV2Live.ts",
+        "apps/server/src/personal/personalThreadTitles.ts",
+        "apps/server/src/personal/tasks/taskLifecycle.ts",
+        "apps/server/src/personal/tasks/taskSteering.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/engine/PersonalEngineV2.test.ts",
+        "apps/server/src/personal/tasks/PersonalTaskService.test.ts",
+        "apps/server/src/personal/tasks/taskProviderBoundary.test.ts",
+        "apps/server/src/personal/tasks/taskSteerQueue.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c111",
+      "commit": "248c300e8089",
+      "changedPaths": [
+        "apps/server/src/mcp/toolkits/personal/handlers.ts",
+        "apps/server/src/mcp/toolkits/personal/tools.ts"
+      ],
+      "mustRun": ["apps/server/src/mcp/toolkits/personal/routineHandlers.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c112",
+      "commit": "73e9a13e30e5",
+      "changedPaths": [
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/boundedPreview.ts",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/sheets/boundedPreview.test.ts",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c113",
+      "commit": "c9e555616eb1",
+      "changedPaths": [
+        "apps/hbots-mobile/src/groups/GroupConversationScreen.tsx",
+        "packages/personal-client/src/conversation/liveWork.ts"
+      ],
+      "mustRun": ["packages/personal-client/src/conversation/liveWork.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c114",
+      "commit": "e9c3fb9fa6c3",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts",
+        "packages/provider-opencode/src/server/v2/OpenCode2Server.ts",
+        "packages/provider-opencode/src/server/v2/adapter.ts"
+      ],
+      "mustRun": ["apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c115",
+      "commit": "9b022fd3ff41",
+      "changedPaths": ["apps/server/src/workspace/HostFilePaths.ts"],
+      "mustRun": ["apps/server/src/workspace/HostFilePaths.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c116",
+      "commit": "4c280dbd9b35",
+      "changedPaths": [
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/sheets/filePreviewModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c117",
+      "commit": "0236eda57c8c",
+      "changedPaths": [
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/sheets/filePreviewModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c118",
+      "commit": "7fd26ef70898",
+      "changedPaths": [
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/boundedPreview.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/sheets/boundedPreview.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c119",
+      "commit": "26e484f46a50",
+      "changedPaths": ["apps/server/src/workspace/HostFilePaths.ts"],
+      "mustRun": [
+        "apps/server/src/assets/AssetAccess.test.ts",
+        "apps/server/src/workspace/HostFilePaths.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c120",
+      "commit": "7e6fb60e9fbc",
+      "changedPaths": ["packages/shared/src/messageFileLinks.ts"],
+      "mustRun": [
+        "apps/hbots-mobile/src/chat/markdown.test.ts",
+        "packages/shared/src/messageFileLinks.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c121",
+      "commit": "22b6e480058a",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/markdown.ts",
+        "packages/shared/src/messageFileLinks.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/chat/markdown.test.ts",
+        "packages/shared/src/messageFileLinks.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c122",
+      "commit": "a8595e562387",
+      "changedPaths": [
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/sheets/filePreviewModel.test.ts",
+        "apps/server/src/assets/AssetAccess.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "bundled-test-edit"
+    },
+    {
+      "id": "c123",
+      "commit": "b3240e309934",
+      "changedPaths": ["packages/personal-client/src/conversation/liveWork.ts"],
+      "mustRun": [
+        "packages/personal-client/src/conversation/liveWork.realShapes.test.ts",
+        "packages/personal-client/src/conversation/liveWork.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c124",
+      "commit": "f417cc534228",
+      "changedPaths": [
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/sheets/filePreviewModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c125",
+      "commit": "a6d7a4df546f",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/fileOpenRequest.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.ts",
+        "packages/client-runtime/src/state/assets.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/sheets/filePreviewModel.test.ts",
+        "packages/client-runtime/src/state/assets.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c126",
+      "commit": "5134a58fa3f5",
+      "changedPaths": ["apps/server/src/personal/tasks/taskBackgroundPolicy.ts"],
+      "mustRun": ["apps/server/src/personal/tasks/taskPolicies.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c127",
+      "commit": "bb4ff921f7e6",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/ChoiceButtons.tsx",
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/messageListModel.ts",
+        "apps/hbots-mobile/src/chat/messageTouch.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/messageListModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c128",
+      "commit": "9389db683352",
+      "changedPaths": ["apps/hbots-mobile/src/chat/markdown.ts"],
+      "mustRun": ["apps/hbots-mobile/src/chat/markdown.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c129",
+      "commit": "342a10b4fe8f",
+      "changedPaths": ["apps/server/src/personal/tasks/taskBackgroundPolicy.ts"],
+      "mustRun": ["apps/server/src/personal/tasks/taskPolicies.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c130",
+      "commit": "e6877c2cc746",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/messageListModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/messageListModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c131",
+      "commit": "2b84d25399fa",
+      "changedPaths": ["apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.ts"],
+      "mustRun": [
+        "apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.test.ts",
+        "apps/web/src/features/personal/chatNotices.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "bundled-test-edit"
+    },
+    {
+      "id": "c132",
+      "commit": "d614c11947ab",
+      "changedPaths": ["scripts/personal/linux/hbots-release/lib/idle.mjs"],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/idle.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c133",
+      "commit": "facc804e30f8",
+      "changedPaths": [
+        "apps/server/src/personal/tasks/taskBackgroundPolicy.ts",
+        "apps/server/src/personal/tasks/taskSettling.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/tasks/PersonalTaskService.test.ts",
+        "apps/server/src/personal/tasks/taskPolicies.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c134",
+      "commit": "daacca4edd57",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/gate-common.mjs",
+        "scripts/personal/linux/dev-team-tools/gate-evidence.mjs"
+      ],
+      "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c135",
+      "commit": "3a9c79ed3085",
+      "changedPaths": [
+        "scripts/personal/linux/hbots-release/README.md",
+        "scripts/personal/linux/hbots-release/lib/gateScope.mjs"
+      ],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c136",
+      "commit": "861aa98333c0",
+      "changedPaths": [
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/sessionScopes.ts",
+        "packages/client-runtime/src/state/commandPermissions.ts",
+        "packages/client-runtime/src/state/runtime.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/sessionScopes.test.ts",
+        "packages/client-runtime/src/state/commandPermissions.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c137",
+      "commit": "70f896737fe9",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/messageListModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/messageListModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c138",
+      "commit": "274b372da240",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/PersonalUsageStrip.tsx",
+        "apps/hbots-mobile/src/shell/usageRefresh.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/shell/usageRefresh.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c139",
+      "commit": "fd5e01e053e8",
+      "changedPaths": [
+        "apps/server/src/process/agentScope.ts",
+        "scripts/personal/node/gates-linux.json"
+      ],
+      "mustRun": ["apps/server/src/process/agentScope.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c140",
+      "commit": "db81445e4817",
+      "changedPaths": [
+        "scripts/personal/e2e/lib.mjs",
+        "scripts/personal/linux/dev-team-tools/gate-evidence.mjs",
+        "scripts/personal/node/gates-linux.json"
+      ],
+      "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c141",
+      "commit": "0c52772ca22e",
+      "changedPaths": ["apps/server/src/process/agentScope.ts"],
+      "mustRun": ["apps/server/src/process/agentScope.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c142",
+      "commit": "0cfcae47a624",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/gate-evidence.mjs",
+        "scripts/personal/linux/hbots-release/PINS.json",
+        "scripts/personal/linux/hbots-release/hbots-release.mjs",
+        "scripts/personal/linux/hbots-release/lib/idle.mjs"
+      ],
+      "mustRun": [
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs",
+        "scripts/personal/linux/hbots-release/tests/idle.test.mjs"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c143",
+      "commit": "02baf945775d",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+        "scripts/personal/linux/hbots-release/lib/verify.mjs"
+      ],
+      "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c144",
+      "commit": "b24e01472562",
+      "changedPaths": ["apps/server/src/cloud/ConnectReachability.ts"],
+      "mustRun": ["apps/server/src/cloud/ConnectReachability.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c145",
+      "commit": "d38706c74215",
+      "changedPaths": ["apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts"],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.warningFilter.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c146",
+      "commit": "b1286bb795ea",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/README.md",
+        "scripts/personal/linux/dev-team-tools/heavy-job.sh"
+      ],
+      "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c147",
+      "commit": "1b7745bb7d7d",
+      "changedPaths": ["apps/server/src/personal/engine/PersonalEngineV2Live.ts"],
+      "mustRun": ["apps/server/src/personal/engine/PersonalEngineV2.reads.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c148",
+      "commit": "936e1666b4ef",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/chatEnvironment.ts",
+        "apps/hbots-mobile/src/chat/useChatCards.ts",
+        "apps/hbots-mobile/src/groups/GroupConversationScreen.tsx",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "packages/personal-client/src/conversation/questionCards.ts"
+      ],
+      "mustRun": ["packages/personal-client/src/conversation/questionCards.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c149",
+      "commit": "39fc7b821b17",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/AppShell.tsx",
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx",
+        "apps/hbots-mobile/src/shell/botsHomeState.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/shell/botsHomeState.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c150",
+      "commit": "f8cc15ff8e42",
+      "changedPaths": [
+        "scripts/personal/linux/hbots-release/README.md",
+        "scripts/personal/linux/hbots-release/tests/env.mjs",
+        "scripts/personal/linux/hbots-release/tests/prepare.mjs",
+        "vite.config.ts"
+      ],
+      "mustRun": ["scripts/personal/linux/hbots-release/tests/release.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c151",
+      "commit": "fc02ca1bf665",
+      "changedPaths": [
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/sheets/filePreviewModel.ts",
+        "packages/client-runtime/src/state/assets.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/sheets/filePreviewModel.test.ts",
+        "packages/client-runtime/src/state/assets.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c152",
+      "commit": "faf6d6ca494d",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/chatEnvironment.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/chatEnvironment.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c153",
+      "commit": "788b36a2a5dd",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/gate-evidence.mjs",
+        "scripts/personal/linux/hbots-release/install.sh"
+      ],
+      "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c154",
+      "commit": "4aad8d78aa44",
+      "changedPaths": [
+        "scripts/personal/linux/dev-team-tools/restore-test.mjs",
+        "scripts/personal/linux/hbots-release/PINS.json",
+        "scripts/personal/linux/hbots-release/hbots-release.mjs",
+        "scripts/personal/linux/hbots-release/lib/backup.mjs",
+        "scripts/personal/linux/hbots-release/lib/dbcheck.mjs",
+        "scripts/personal/node/lib/backup.mjs"
+      ],
+      "mustRun": ["scripts/personal/node/test/backup.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c155",
+      "commit": "78c14dfcb60e",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+        "apps/server/src/server.ts"
+      ],
+      "mustRun": ["apps/server/src/orchestration-v2/ProviderSessionManager.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c156",
+      "commit": "96e55fda7cf8",
+      "changedPaths": [
+        "apps/web/src/components/ChatMarkdown.tsx",
+        "apps/web/src/lib/attachmentUploadQueue.ts",
+        "apps/web/src/state/session.ts",
+        "apps/web/test/environmentHttpTest.ts",
+        "packages/personal-client/src/conversation/questionCards.ts",
+        "packages/personal-client/src/conversation/types.ts"
+      ],
+      "mustRun": [
+        "apps/web/src/features/personal/conversationModel.test.ts",
+        "apps/web/src/features/personal/messageReadStatus.test.ts",
+        "apps/web/src/lib/attachmentUploadQueue.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c157",
+      "commit": "0b219ca6a19e",
+      "changedPaths": [
+        "apps/server/src/ws.ts",
+        "apps/web/src/features/personal/providers/ProviderPage.tsx",
+        "apps/web/src/features/personal/providers/SignInRedirect.tsx",
+        "apps/web/src/features/personal/providers/useProviderInstanceSettings.ts",
+        "packages/client-runtime/src/state/server.ts",
+        "packages/contracts/src/rpc.ts",
+        "packages/contracts/src/server.ts"
+      ],
+      "mustRun": ["apps/server/src/ws.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c158",
+      "commit": "6041bb108277",
+      "changedPaths": [
+        "apps/web/src/components/settings/ProviderApiKeyRow.tsx",
+        "apps/web/src/components/settings/providerApiKeys.ts",
+        "apps/web/src/connection/browserWakeups.ts",
+        "apps/web/src/features/personal/highlighterWarmup.ts",
+        "apps/web/src/features/personal/tokenUsagePresentation.ts",
+        "apps/web/src/state/server.ts",
+        "apps/web/test/browserSetup.ts",
+        "apps/web/test/rendererAct.ts"
+      ],
+      "mustRun": [
+        "apps/web/src/components/settings/providerApiKeys.test.ts",
+        "apps/web/src/components/usage/UsageLimits.resetCredit.test.tsx",
+        "apps/web/src/connection/browserWakeups.test.ts",
+        "apps/web/src/features/personal/highlighterWarmup.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c159",
+      "commit": "d3908cc8b399",
+      "changedPaths": [
+        "apps/web/src/components/ChatView.logic.ts",
+        "apps/web/src/features/personal/ConversationScreen.tsx",
+        "apps/web/src/features/personal/GroupConversationScreen.tsx",
+        "packages/personal-client/src/conversation/conversationModel.ts"
+      ],
+      "mustRun": [
+        "apps/web/src/features/personal/ConversationScreen.archived.test.tsx",
+        "packages/personal-client/src/conversation/conversationModel.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c160",
+      "commit": "b78c184e363f",
+      "changedPaths": [
+        "apps/web/src/components/ui/sheet.tsx",
+        "apps/web/src/features/personal/ChatFilePreview.tsx",
+        "packages/client-runtime/src/state/assets.ts"
+      ],
+      "mustRun": [
+        "apps/web/src/features/personal/ChatFilePreview.test.tsx",
+        "packages/client-runtime/src/state/assets.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c161",
+      "commit": "01172ff28c78",
+      "changedPaths": ["packages/personal-client/package.json", "pnpm-lock.yaml"],
+      "mustRun": ["apps/web/src/features/personal/personalAtomRegistry.test.tsx"],
+      "expect": "hit"
+    },
+    {
+      "id": "c162",
+      "commit": "e55d3f4d84fb",
+      "changedPaths": ["packages/personal-client/src/conversation/chatThread.ts"],
+      "mustRun": ["apps/web/src/features/personal/useBotShells.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c163",
+      "commit": "e101f8d94e6a",
+      "changedPaths": [
+        "apps/web/src/features/personal/QuestionCard.tsx",
+        "apps/web/src/pendingUserInput.ts"
+      ],
+      "mustRun": ["apps/web/src/features/personal/MessageList.test.tsx"],
+      "expect": "hit"
+    },
+    {
+      "id": "c164",
+      "commit": "0d2a894a9675",
+      "changedPaths": [
+        "apps/web/src/components/settings/providerStatus.ts",
+        "apps/web/src/components/usage/UsageLimits.tsx",
+        "scripts/personal/sync/v2-port-ledger/ledger.tsv"
+      ],
+      "mustRun": [
+        "apps/web/src/components/usage/UsageLimits.resetCredit.test.tsx",
+        "apps/web/src/features/personal/PersonalResetCredits.test.tsx",
+        "apps/web/src/features/personal/PersonalUsageStrip.test.tsx"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c165",
+      "commit": "a2ccf128f2d3",
+      "changedPaths": [
+        "apps/hbots-mobile/src/personal/nativeCache.ts",
+        "apps/hbots-mobile/src/personal/threadSnapshotJson.ts",
+        "apps/hbots-mobile/src/personal/threadSnapshotLoader.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/personal/nativeCache.test.ts",
+        "apps/hbots-mobile/src/personal/threadSnapshotLoader.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c166",
+      "commit": "ba266b93c8d4",
+      "changedPaths": ["apps/server/src/orchestration-v2/ProjectionMaintenance.ts"],
+      "mustRun": ["apps/server/src/persistence/DatabaseStorage.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c167",
+      "commit": "49a2f08deed4",
+      "changedPaths": [
+        "apps/server/src/persistence/Sqlite.ts",
+        "packages/shared/package.json",
+        "packages/shared/src/nodeSqliteClient.ts",
+        "packages/shared/src/nodeSqliteWorker.ts"
+      ],
+      "mustRun": ["packages/shared/src/nodeSqliteWorker.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c168",
+      "commit": "b358f3594c61",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/ProjectionMaintenance.ts",
+        "apps/server/src/persistence/DatabaseStorage.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/ProjectionMaintenance.test.ts",
+        "apps/server/src/persistence/DatabaseStorage.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c169",
+      "commit": "f47464cf152c",
+      "changedPaths": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+        "scripts/personal/testing/fake-claude/cli.js"
+      ],
+      "mustRun": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAgentSdkQueryRunner.test.ts",
+        "scripts/personal/testing/fake-claude/cli.test.mjs"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c170",
+      "commit": "66b65b676aec",
+      "changedPaths": ["apps/server/src/personal/PersonalBotRepository.ts"],
+      "mustRun": [
+        "apps/server/src/personal/PersonalBotRepository.readOnly.test.ts",
+        "apps/server/src/personal/PersonalBotRepository.unread.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c171",
+      "commit": "f18693d25818",
+      "changedPaths": [
+        "apps/web/src/components/chat/providerIconUtils.ts",
+        "scripts/personal/node/gates-linux.json"
+      ],
+      "mustRun": ["apps/web/src/components/chat/providerIconUtils.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c172",
+      "commit": "143a7f3ed955",
+      "changedPaths": ["packages/personal-client/src/settings/providerUpdate.ts"],
+      "mustRun": ["packages/personal-client/src/settings/providerRows.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c173",
+      "commit": "69062307a6a2",
+      "changedPaths": ["apps/server/src/storageCleanup.ts"],
+      "mustRun": ["apps/server/scripts/qa/login-origin-redirect.test.ts"],
+      "expect": "miss",
+      "missClass": "bundled-test-edit"
+    },
+    {
+      "id": "c174",
+      "commit": "5ed016bf4cbf",
+      "changedPaths": ["apps/server/src/persistence/Migrations.ts"],
+      "mustRun": ["apps/server/scripts/migrate-dev-db.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c175",
+      "commit": "5dad9059c3ab",
+      "changedPaths": [
+        "apps/server/src/assets/AssetAccess.ts",
+        "apps/server/src/personal/engine/PersonalEngineV2Live.ts",
+        "apps/server/src/personal/tasks/PersonalTaskService.ts",
+        "apps/server/src/personal/tasks/taskSettling.ts",
+        "apps/server/src/personal/tasks/taskWaiting.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/assets/AssetAccess.test.ts",
+        "apps/server/src/personal/secrets/PersonalSecretService.test.ts",
+        "apps/server/src/personal/tasks/taskProviderChain.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c176",
+      "commit": "83566c753ce7",
+      "changedPaths": ["apps/server/src/orchestration-v2/CommandOutputHub.ts"],
+      "mustRun": ["apps/server/src/orchestration-v2/CommandOutputHub.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c177",
+      "commit": "1f8da294427b",
+      "changedPaths": ["apps/server/src/personal/auth/personalRpcScopes.ts"],
+      "mustRun": [
+        "apps/server/src/auth/RpcAuthorization.test.ts",
+        "apps/server/src/personal/auth/personalRpcScopes.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c178",
+      "commit": "1e5d0f3d297e",
+      "changedPaths": ["scripts/personal/node/lib/build.mjs"],
+      "mustRun": ["scripts/personal/node/test/build.test.mjs"],
+      "expect": "hit"
+    },
+    {
+      "id": "c179",
+      "commit": "0cec2b02d850",
+      "changedPaths": [
+        "packages/provider-core/src/server/managedProvider.ts",
+        "packages/provider-core/src/server/usageLimits.ts",
+        "packages/shared/src/nodeSqliteWorker.ts"
+      ],
+      "mustRun": [
+        "apps/server/src/personal/personalModelFallbackPolicy.test.ts",
+        "packages/provider-core/src/server/managedProvider.test.ts",
+        "packages/provider-core/src/server/usageLimits.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c180",
+      "commit": "3a48b7c26f06",
+      "changedPaths": [
+        "apps/hbots-mobile/src/onboarding/model.ts",
+        "apps/hbots-mobile/src/settings/DevicesScreen.tsx",
+        "packages/personal-client/src/settings/devices.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/onboarding/model.test.ts",
+        "packages/personal-client/src/settings/devices.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c181",
+      "commit": "c0905e275b76",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/useNow.ts",
+        "apps/hbots-mobile/src/groups/GroupConversationScreen.tsx",
+        "apps/hbots-mobile/src/groups/groupScreenModel.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/groups/groupScreenModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c182",
+      "commit": "692eeb24fd7f",
+      "changedPaths": ["apps/hbots-mobile/src/pairing.ts", "apps/hbots-mobile/src/renew.ts"],
+      "mustRun": ["apps/hbots-mobile/src/pairing.test.ts", "apps/hbots-mobile/src/renew.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c183",
+      "commit": "4b1f9b1f1b49",
+      "changedPaths": [
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/sessionScopes.ts",
+        "apps/hbots-mobile/src/settings/ThisPhoneScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/sessionScopes.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c184",
+      "commit": "67f940380ffd",
+      "changedPaths": [
+        "apps/server/src/auth/EnvironmentAuth.ts",
+        "apps/server/src/auth/PairingGrantStore.ts"
+      ],
+      "mustRun": ["apps/server/src/auth/EnvironmentAuth.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c185",
+      "commit": "b4521c7cdc4e",
+      "changedPaths": [
+        "apps/hbots-mobile/src/failure.ts",
+        "apps/hbots-mobile/src/onboarding/model.ts",
+        "apps/hbots-mobile/src/pairing.ts",
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/session.ts",
+        "apps/server/src/auth/RpcAuthorization.ts",
+        "apps/web/src/features/personal/PersonalSettingsScreen.tsx",
+        "packages/contracts/src/auth.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/onboarding/model.test.ts",
+        "apps/hbots-mobile/src/pairing.test.ts",
+        "apps/server/src/auth/RpcAuthorization.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c186",
+      "commit": "55152cf60b97",
+      "changedPaths": [
+        "apps/hbots-mobile/src/platform/keyboardInset.ts",
+        "apps/hbots-mobile/src/platform/useKeyboardInset.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/platform/keyboardInset.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c187",
+      "commit": "9e64e4f1f296",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateChannels.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateNotifier.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/test/java/expo/modules/hbotsupdater/UpdateChannelsTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c188",
+      "commit": "c5a6e16b74c7",
+      "changedPaths": [
+        "apps/hbots-mobile/src/settings/ApiKeysScreen.tsx",
+        "apps/hbots-mobile/src/settings/apiKeyForm.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/settings/apiKeyForm.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c189",
+      "commit": "0f44f81a90c7",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/cards/SecretRequestCard.tsx",
+        "apps/hbots-mobile/src/chat/cards/types.ts",
+        "apps/hbots-mobile/src/chat/chatKeyboardLayout.ts",
+        "apps/hbots-mobile/src/chat/useChatCards.ts",
+        "apps/hbots-mobile/src/platform/useKeyboardInset.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/chatKeyboardLayout.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c190",
+      "commit": "472d2f6bd315",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateChannels.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateNotifier.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/test/java/expo/modules/hbotsupdater/UpdateChannelsTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c191",
+      "commit": "c947497246a2",
+      "changedPaths": [
+        "apps/hbots-mobile/src/computer/ComputerScreen.tsx",
+        "apps/hbots-mobile/src/computer/computerScreenModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/computer/computerScreenModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c192",
+      "commit": "e1e46aa5e731",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/chatComputer.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/shell/AppShell.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/chatComputer.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c193",
+      "commit": "667e28f8d9cb",
+      "changedPaths": [
+        "apps/hbots-mobile/src/settings/ProviderScreen.tsx",
+        "apps/hbots-mobile/src/settings/providerScreenModel.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/settings/providerScreenModel.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c194",
+      "commit": "329421b03183",
+      "changedPaths": [
+        "apps/hbots-mobile/src/settings/ApiKeysScreen.tsx",
+        "apps/hbots-mobile/src/settings/SettingsUi.tsx",
+        "apps/hbots-mobile/src/settings/apiKeyForm.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/settings/apiKeyForm.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c195",
+      "commit": "b01ffad9ac0d",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/platform/keyboardInset.ts",
+        "apps/hbots-mobile/src/platform/useKeyboardInset.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/sheets/SheetShell.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/platform/keyboardInset.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c196",
+      "commit": "4d267f3398c9",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/cards/LoginRequestCard.tsx",
+        "apps/hbots-mobile/src/chat/cards/SecretRequestCard.tsx",
+        "apps/hbots-mobile/src/chat/cards/passwordField.ts",
+        "apps/hbots-mobile/src/chat/cards/types.ts",
+        "apps/hbots-mobile/src/chat/messageListModel.ts",
+        "apps/hbots-mobile/src/chat/secretOutcomeModel.ts",
+        "apps/hbots-mobile/src/chat/secretOutcomeStore.ts",
+        "apps/hbots-mobile/src/chat/useChatCards.ts",
+        "packages/personal-client/src/conversation/conversationModel.ts",
+        "packages/personal-client/src/conversation/secretRequestCards.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/chat/cards/passwordField.test.ts",
+        "apps/hbots-mobile/src/chat/messageListModel.test.ts",
+        "apps/hbots-mobile/src/chat/secretOutcomeModel.test.ts",
+        "apps/web/src/features/personal/secretRequestCards.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c197",
+      "commit": "6e458c2eb42b",
+      "changedPaths": [
+        "apps/hbots-mobile/.gitignore",
+        "apps/hbots-mobile/modules/hbots-liveview/android/build.gradle",
+        "apps/hbots-mobile/modules/hbots-liveview/android/src/main/java/expo/modules/hbotsliveview/HbotsLiveView.kt",
+        "apps/hbots-mobile/modules/hbots-liveview/android/src/main/java/expo/modules/hbotsliveview/HbotsLiveViewModule.kt",
+        "apps/hbots-mobile/modules/hbots-liveview/android/src/main/java/expo/modules/hbotsliveview/LiveFrameHeader.kt",
+        "apps/hbots-mobile/modules/hbots-liveview/android/src/main/java/expo/modules/hbotsliveview/LiveMessages.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-liveview/android/src/test/java/expo/modules/hbotsliveview/LiveFrameHeaderTest.kt",
+        "apps/hbots-mobile/modules/hbots-liveview/android/src/test/java/expo/modules/hbotsliveview/LiveMessagesTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c198",
+      "commit": "949425808461",
+      "changedPaths": ["packages/personal-client/src/composer/outboxFlush.ts"],
+      "mustRun": ["packages/personal-client/src/composer/outboxFlush.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c199",
+      "commit": "7cf91d61c551",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/AppShell.tsx",
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx",
+        "apps/hbots-mobile/src/shell/botsHomeState.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/shell/botsHomeState.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c200",
+      "commit": "12dad76d50ed",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-network/android/src/main/java/expo/modules/hbotsnetwork/HbotsNetworkModule.kt",
+        "apps/hbots-mobile/src/chat/outboxNative.ts",
+        "apps/hbots-mobile/src/personal/networkReset.ts",
+        "apps/server/src/auth/RpcAuthorization.ts",
+        "apps/server/src/http.ts",
+        "apps/server/src/orchestration/Layers/OrchestrationEngine.ts",
+        "apps/server/src/orchestration/Services/OrchestrationEngine.ts",
+        "apps/server/src/ws.ts",
+        "packages/client-runtime/src/operations/commands.ts",
+        "packages/client-runtime/src/state/threadCommands.ts",
+        "packages/contracts/src/assets.ts",
+        "packages/contracts/src/orchestration.ts",
+        "packages/contracts/src/rpc.ts",
+        "packages/personal-client/src/composer/outboxFlush.ts",
+        "patches/expo-file-system@57.0.6.patch",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml"
+      ],
+      "mustRun": [
+        "apps/server/src/project/AgentSessionImporter.test.ts",
+        "apps/server/src/relay/AgentAwarenessRelay.test.ts"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c201",
+      "commit": "ed3d10088eb9",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-network/android/src/main/java/expo/modules/hbotsnetwork/HbotsNetworkModule.kt",
+        "apps/hbots-mobile/src/chat/outboxNative.ts",
+        "apps/hbots-mobile/src/personal/networkReset.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/personal/networkReset.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c202",
+      "commit": "289be0de3d06",
+      "changedPaths": ["apps/hbots-mobile/src/chat/outboxNative.ts"],
+      "mustRun": ["apps/hbots-mobile/src/chat/outboxNative.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c203",
+      "commit": "2fa467b00b43",
+      "changedPaths": ["apps/hbots-mobile/plugins/withSharedHttpClient.cjs"],
+      "mustRun": ["apps/hbots-mobile/src/sharedHttpClientPlugin.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c204",
+      "commit": "e12dd97770d8",
+      "changedPaths": [
+        "apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts",
+        "apps/web/src/features/personal/providerRows.ts"
+      ],
+      "mustRun": ["apps/web/src/features/personal/providerRows.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c205",
+      "commit": "1fd95df6bfc1",
+      "changedPaths": [
+        "apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts",
+        "apps/server/src/personal/providerUpdates/miseProviderMaintenance.ts",
+        "apps/server/src/provider/providerMaintenance.ts",
+        "apps/server/src/provider/providerMaintenanceRunner.ts",
+        "apps/web/src/features/personal/providerRows.ts"
+      ],
+      "mustRun": ["apps/server/src/personal/providerUpdates/miseProviderMaintenance.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c206",
+      "commit": "ff0a79546644",
+      "changedPaths": ["apps/hbots-mobile/src/personal/networkReset.ts"],
+      "mustRun": ["apps/hbots-mobile/src/personal/networkReset.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c207",
+      "commit": "aa2a288d1d68",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-network/android/src/main/java/expo/modules/hbotsnetwork/HbotsNetworkModule.kt",
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/attachmentName.ts",
+        "apps/hbots-mobile/src/personal/networkReset.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/chat/attachmentName.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c208",
+      "commit": "a0ba2d059bb5",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/outboxNative.ts",
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "packages/personal-client/src/composer/outboxFlush.ts"
+      ],
+      "mustRun": [
+        "apps/web/src/features/personal/outboxFlush.test.ts",
+        "packages/personal-client/src/composer/outboxFlush.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c209",
+      "commit": "7c45fe6069ce",
+      "changedPaths": [
+        "apps/server/src/personal/providerUpdates/PersonalProviderUpdates.ts",
+        "apps/server/src/personal/providerUpdates/miseProviderMaintenance.ts",
+        "apps/server/src/provider/providerMaintenance.ts",
+        "apps/server/src/provider/providerMaintenanceRunner.ts",
+        "apps/server/src/server.ts",
+        "apps/server/src/ws.ts",
+        "apps/web/src/features/personal/providerRows.ts"
+      ],
+      "mustRun": ["apps/server/src/personal/providerUpdates/PersonalProviderAutoUpdate.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c210",
+      "commit": "f944b62d3d42",
+      "changedPaths": [
+        "apps/hbots-mobile/app.config.ts",
+        "apps/hbots-mobile/plugins/withSharedHttpClient.cjs"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/sharedHttpClientPlugin.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c211",
+      "commit": "30eeb819cbb5",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-network/expo-module.config.json",
+        "apps/hbots-mobile/modules/hbots-network/index.ts",
+        "apps/hbots-mobile/modules/hbots-network/package.json",
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/personal/networkReset.ts",
+        "apps/hbots-mobile/src/personal/reconnectPolicy.ts"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/personal/reconnectPolicy.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c212",
+      "commit": "b1b6a274de9e",
+      "changedPaths": [
+        "apps/hbots-mobile/src/http.ts",
+        "apps/hbots-mobile/src/pairing.ts",
+        "apps/hbots-mobile/src/personal/connectDeadline.ts",
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/personal/nativeSession.ts",
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx"
+      ],
+      "mustRun": ["apps/hbots-mobile/src/personal/connectDeadline.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c213",
+      "commit": "e916e6299b84",
+      "changedPaths": [
+        "apps/hbots-mobile/app.config.ts",
+        "apps/hbots-mobile/src/chat/AttachmentImage.tsx",
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/chat/markdown.ts",
+        "apps/hbots-mobile/src/connection.ts",
+        "apps/hbots-mobile/src/parity.ts",
+        "apps/hbots-mobile/src/permissions.ts",
+        "apps/hbots-mobile/src/personal/connectDeadline.ts",
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/screens/ChatsListScreen.tsx",
+        "apps/hbots-mobile/src/sheets/FilePreviewSheet.tsx",
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx",
+        "apps/hbots-mobile/src/shell/botsHomeState.ts",
+        "packages/personal-client/package.json",
+        "packages/personal-client/src/feed/chatCwd.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/scripts/app-config.test.ts",
+        "apps/hbots-mobile/src/chat/markdown.test.ts",
+        "packages/personal-client/src/feed/chatCwd.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c214",
+      "commit": "8b2e5e0aa524",
+      "changedPaths": [
+        "apps/server/src/auth/EnvironmentAuth.ts",
+        "apps/web/src/components/settings/ConnectionsSettings.tsx",
+        "apps/web/src/features/personal/PersonalSettingsScreen.tsx"
+      ],
+      "mustRun": [
+        "apps/server/src/auth/http.test.ts",
+        "apps/web/src/features/personal/PersonalSettingsScreen.test.tsx"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c215",
+      "commit": "a3791ce6a9bb",
+      "changedPaths": [
+        "apps/server/src/auth/EnvironmentAuth.ts",
+        "apps/web/src/components/settings/ConnectionsSettings.tsx",
+        "apps/web/src/features/personal/PersonalSettingsScreen.tsx"
+      ],
+      "mustRun": [
+        "apps/server/src/auth/http.test.ts",
+        "apps/web/src/features/personal/PersonalSettingsScreen.test.tsx"
+      ],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
+    },
+    {
+      "id": "c216",
+      "commit": "1cda66ea858b",
+      "changedPaths": [
+        "apps/hbots-mobile/src/chat/Composer.tsx",
+        "apps/hbots-mobile/src/chat/MessageList.tsx",
+        "apps/hbots-mobile/src/pairing.ts",
+        "apps/hbots-mobile/src/personal/nativePersonalClient.ts",
+        "apps/hbots-mobile/src/screens/ChatScreen.tsx",
+        "apps/hbots-mobile/src/sheets/ChatMenuSheet.tsx",
+        "apps/hbots-mobile/src/sheets/NewChatSheet.tsx",
+        "apps/hbots-mobile/src/sheets/RenameChatSheet.tsx",
+        "apps/hbots-mobile/src/sheets/SheetShell.tsx",
+        "scripts/personal/parity/parity.json"
+      ],
+      "mustRun": ["packages/personal-client/src/feed/chatFeed.test.ts"],
+      "expect": "miss",
+      "missClass": "bundled-test-edit"
+    },
+    {
+      "id": "c217",
+      "commit": "11999f59b323",
+      "changedPaths": [
+        "apps/web/src/features/personal/outbox.ts",
+        "apps/web/src/features/personal/outboxBlobs.ts",
+        "apps/web/src/features/personal/platform/webOutbox.ts",
+        "apps/web/src/features/personal/platform/webPorts.ts",
+        "packages/personal-client/src/composer/outbox.ts"
+      ],
+      "mustRun": ["packages/personal-client/src/composer/outbox.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c218",
+      "commit": "e41ee7bc92f8",
+      "changedPaths": [
+        "apps/hbots-mobile/src/shell/BotsScreen.tsx",
+        "packages/personal-client/src/computer/systemStats.ts",
+        "packages/personal-client/src/usage/usagePresentation.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/src/shell/botsHomeModel.test.ts",
+        "apps/hbots-mobile/src/shell/botsHomeState.test.ts",
+        "packages/personal-client/src/bots/rpcContract.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c219",
+      "commit": "f440ddd7c443",
+      "changedPaths": ["apps/hbots-mobile/src/connection.ts"],
+      "mustRun": ["apps/hbots-mobile/src/connection.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c220",
+      "commit": "682ff9d183eb",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateBackoff.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateEngine.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateModel.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateRecordCodec.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateReducer.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateScheduler.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateSession.kt",
+        "apps/hbots-mobile/src/App.tsx",
+        "apps/hbots-mobile/src/sessionLifetime.ts",
+        "apps/hbots-mobile/src/updater.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/test/java/expo/modules/hbotsupdater/UpdateRecordCodecTest.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/test/java/expo/modules/hbotsupdater/UpdateReducerTest.kt",
+        "apps/hbots-mobile/src/updateView.test.ts"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c221",
+      "commit": "ec019107a012",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/SessionSource.kt"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/test/java/expo/modules/hbotsupdater/SessionCheckTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c222",
+      "commit": "064d37457554",
+      "changedPaths": [
+        "apps/hbots-mobile/README.md",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/HbotsUpdaterModule.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/SessionCheck.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/SessionSource.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateEngine.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateModel.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateRecordCodec.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateReducer.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/main/java/expo/modules/hbotsupdater/UpdateSession.kt",
+        "apps/hbots-mobile/scripts/androidRelease.ts",
+        "apps/hbots-mobile/scripts/publish-android-update.mjs",
+        "apps/hbots-mobile/src/App.tsx",
+        "apps/hbots-mobile/src/updater.ts"
+      ],
+      "mustRun": [
+        "apps/hbots-mobile/modules/hbots-updater/android/src/test/java/expo/modules/hbotsupdater/SessionGenerationTest.kt",
+        "apps/hbots-mobile/modules/hbots-updater/android/src/test/java/expo/modules/hbotsupdater/UpdateReducerTest.kt"
+      ],
+      "expect": "hit"
+    },
+    {
+      "id": "c223",
+      "commit": "9e92d6fcf70a",
+      "changedPaths": ["apps/hbots-mobile/src/App.tsx", "apps/hbots-mobile/src/sessionLifetime.ts"],
+      "mustRun": ["apps/hbots-mobile/src/sessionLifetime.test.ts"],
+      "expect": "hit"
+    },
+    {
+      "id": "c224",
+      "commit": "27bd654717c7",
+      "changedPaths": [
+        "apps/hbots-mobile/README.md",
+        "apps/hbots-mobile/app.config.ts",
+        "apps/hbots-mobile/scripts/verify-apk.mjs"
+      ],
+      "mustRun": ["apps/hbots-mobile/scripts/app-config.test.ts"],
+      "expect": "hit"
+    }
+  ],
+  "probes": [
+    {
+      "id": "r1-gates-scoped-json",
+      "note": "both tests read this file by path",
+      "changedPaths": ["scripts/personal/node/gates-linux.scoped.json"],
+      "mustRun": [
+        "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs",
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "r1b-gates-old-json",
+      "note": "the bootstrap-rule test from the 1.67.28 incident reads this file",
+      "changedPaths": ["scripts/personal/node/gates-linux.json"],
+      "mustRun": ["scripts/personal/linux/dev-team-tools/tools.test.mjs"],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "r2-dsh-runtime",
+      "note": "install-dsh.test.mjs reads ../../dsh-runtime",
+      "changedPaths": ["scripts/personal/dsh-runtime/hbots-deny-plugin.mjs"],
+      "mustRun": ["scripts/personal/node/test/install-dsh.test.mjs"],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "selected",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "r3-release-db-check",
+      "note": "sqlite-snapshot.test.cjs runs this helper; the folder is NO_CHECK",
+      "changedPaths": ["scripts/personal/release-runner/hbots-release/release-db-check.cjs"],
+      "mustRun": ["scripts/personal/sqlite-snapshot.test.cjs"],
+      "expect": "hit",
+      "plan": {
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "r4-install-units",
+      "note": "real case d80b2235cb, replayed on the head tree",
+      "changedPaths": ["scripts/personal/linux/install-units.sh"],
+      "mustRun": ["scripts/personal/node/test/units.test.mjs"],
+      "expect": "hit",
+      "plan": {
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "r4b-systemd-unit",
+      "note": "units.test.mjs reads every unit template",
+      "changedPaths": ["scripts/personal/linux/systemd/hbots.service.in"],
+      "mustRun": ["scripts/personal/node/test/units.test.mjs"],
+      "expect": "hit",
+      "plan": {
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "r5-changed-test-no-gate",
+      "note": "only a test in a folder no gate runs; the plan prints notRun and exits 0",
+      "changedPaths": ["apps/server/src/auth/http.test.ts"],
+      "mustRun": ["apps/server/src/auth/http.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "r6-sync-script",
+      "note": "fork sync tool with its own test",
+      "changedPaths": ["scripts/personal/sync/golden-check.mjs"],
+      "mustRun": ["scripts/personal/sync/golden-check.test.mjs"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "server-tests": "selected"
+      }
+    },
+    {
+      "id": "p1-client-runtime",
+      "note": "shared by web and phone; its own 163 tests",
+      "changedPaths": ["packages/client-runtime/src/state/assets.ts"],
+      "mustRun": ["packages/client-runtime/src/state/assets.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "web-tests": "whole",
+        "web-tsc": "whole",
+        "personal-client": "whole",
+        "hbots-mobile": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p1b-shared",
+      "note": "packages/shared; its own test file is packages/shared/src/messageFileLinks.test.ts",
+      "changedPaths": ["packages/shared/src/messageFileLinks.ts"],
+      "mustRun": ["packages/shared/src/messageFileLinks.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "web-tests": "whole",
+        "web-tsc": "whole",
+        "personal-client": "whole",
+        "hbots-mobile": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p2-contracts",
+      "note": "contracts schema; own test packages/contracts/src/auth.test.ts",
+      "changedPaths": ["packages/contracts/src/auth.ts"],
+      "mustRun": ["packages/contracts/src/auth.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "web-tests": "whole",
+        "web-tsc": "whole",
+        "personal-client": "whole",
+        "hbots-mobile": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p3-gates-file",
+      "note": "the gate command file itself",
+      "changedPaths": ["scripts/personal/node/gates-linux.scoped.json"],
+      "mustRun": [
+        "scripts/personal/linux/hbots-release/tests/gate-scope.test.mjs",
+        "scripts/personal/linux/dev-team-tools/tools.test.mjs"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "p3b-mobile-package-json",
+      "note": "native dependency bump",
+      "changedPaths": ["apps/hbots-mobile/package.json"],
+      "plan": {
+        "hbots-mobile": "whole"
+      }
+    },
+    {
+      "id": "p3c-mobile-vite-config",
+      "note": "phone test config",
+      "changedPaths": ["apps/hbots-mobile/vite.config.ts"],
+      "plan": {
+        "hbots-mobile": "whole",
+        "parity": "whole"
+      }
+    },
+    {
+      "id": "p3d-server-tsconfig-tests",
+      "note": "server typecheck config",
+      "changedPaths": ["apps/server/tsconfig.typecheck-tests-personal.json"],
+      "plan": {
+        "server-tests": "whole",
+        "server-tsc": "whole",
+        "e2e": "whole"
+      }
+    },
+    {
+      "id": "p3e-web-test-setup",
+      "note": "web test helper outside src",
+      "changedPaths": ["apps/web/test/rendererAct.ts"],
+      "plan": {
+        "web-tests": "whole",
+        "web-tsc": "whole",
+        "e2e": "selected",
+        "parity": "whole"
+      }
+    },
+    {
+      "id": "p4-rename-test-out-of-gate",
+      "note": "a gate test moved to a folder no gate runs (second path does not exist at head)",
+      "changedPaths": [
+        "apps/server/src/personal/agentContextBudget.test.ts",
+        "apps/server/src/auth/agentContextBudget.test.ts"
+      ],
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p4b-rename-source",
+      "note": "source rename, old path still at head",
+      "changedPaths": [
+        "apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.ts",
+        "apps/server/src/personal/releaseNotices/Renamed.ts"
+      ],
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p6-install-units",
+      "note": "read by scripts/personal/node/test/units.test.mjs",
+      "changedPaths": ["scripts/personal/linux/install-units.sh"],
+      "mustRun": ["scripts/personal/node/test/units.test.mjs"],
+      "expect": "hit",
+      "plan": {
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "p6b-release-runner",
+      "note": "release-runner folder is NO_CHECK",
+      "changedPaths": ["scripts/personal/release-runner/README.md"],
+      "plan": {}
+    },
+    {
+      "id": "p6c-hbots-mjs",
+      "note": "release entry script",
+      "changedPaths": ["scripts/personal/node/hbots.mjs"],
+      "plan": {
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "p6d-parity-script",
+      "note": "parity generator",
+      "changedPaths": ["scripts/personal/parity/parity-matrix.mjs"],
+      "plan": {
+        "parity": "whole"
+      }
+    },
+    {
+      "id": "p6e-testing-fake",
+      "note": "fake provider used by e2e and server tests; own test cli.test.mjs",
+      "changedPaths": ["scripts/personal/testing/fake-claude/cli.js"],
+      "mustRun": ["scripts/personal/testing/fake-claude/cli.test.mjs"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "server-tests": "selected",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p6f-sync",
+      "note": "sync folder has 5 test files",
+      "changedPaths": ["scripts/personal/sync/known-test-failures.txt"],
+      "mustRun": ["scripts/personal/sync/golden-check.test.mjs"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "server-tests": "selected"
+      }
+    },
+    {
+      "id": "p6g-e2e",
+      "note": "e2e journey code (path may not exist)",
+      "changedPaths": ["scripts/personal/e2e/journeys.mjs"],
+      "plan": {
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p7-kotlin-untested-module",
+      "note": "Kotlin source in a module with no unit tests",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-network/android/src/main/java/expo/modules/hbotsnetwork/HbotsNetworkModule.kt"
+      ],
+      "plan": {
+        "parity": "whole"
+      }
+    },
+    {
+      "id": "p7b-kotlin-tested-module",
+      "note": "Kotlin source in a module with unit tests",
+      "changedPaths": [
+        "apps/hbots-mobile/modules/hbots-camera/android/src/main/java/expo/modules/hbotscamera/CameraLaunchStore.kt"
+      ],
+      "plan": {
+        "hbots-mobile-kotlin": "selected",
+        "parity": "whole"
+      }
+    },
+    {
+      "id": "p8-migration-only",
+      "note": "newest upstream-style migration file only",
+      "changedPaths": ["apps/server/src/persistence/Migrations/159_PersonalProjectsWhyHistory.ts"],
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p9-server-notice-text",
+      "note": "web chatNotices.test.ts parses the text this file writes",
+      "changedPaths": ["apps/server/src/personal/releaseNotices/PersonalReleaseNoticeService.ts"],
+      "mustRun": ["apps/web/src/features/personal/chatNotices.test.ts"],
+      "expect": "miss",
+      "missClass": "text-copy-in-a-skipped-check",
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p10-new-top-level",
+      "note": "unknown path",
+      "changedPaths": ["newdir/thing.ts"],
+      "plan": {
+        "stopped": ["newdir/thing.ts"]
+      }
+    },
+    {
+      "id": "p10b-new-personal-script",
+      "note": "unknown fork script",
+      "changedPaths": ["scripts/personal/new-tool.mjs"],
+      "plan": {
+        "stopped": ["scripts/personal/new-tool.mjs"]
+      }
+    },
+    {
+      "id": "p10c-web-component",
+      "note": "fork-edited upstream web component; guard is UsageLimits.resetCredit.test.tsx",
+      "changedPaths": ["apps/web/src/components/usage/UsageLimits.tsx"],
+      "mustRun": ["apps/web/src/components/usage/UsageLimits.resetCredit.test.tsx"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "web-tests": "whole",
+        "web-tsc": "whole",
+        "e2e": "selected",
+        "parity": "whole"
+      }
+    },
+    {
+      "id": "p10d-server-auth",
+      "note": "server auth; guards are src/auth/*.test.ts and src/server.test.ts",
+      "changedPaths": ["apps/server/src/auth/EnvironmentAuth.ts"],
+      "mustRun": ["apps/server/src/auth/EnvironmentAuth.test.ts"],
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
+      "plan": {
+        "server-tests": "selected",
+        "server-tsc": "whole",
+        "e2e": "selected"
+      }
+    },
+    {
+      "id": "p10e-doc-in-mobile",
+      "note": "plain doc",
+      "changedPaths": ["apps/hbots-mobile/README.md"],
+      "plan": {}
+    },
+    {
+      "id": "s1-server-test-lane",
+      "note": "the wrapper every server-tests command runs; a change to it changes how every server test runs",
+      "changedPaths": ["scripts/personal/node/server-test-lane.mjs"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "s2-server-isolated-list",
+      "note": "the list of files the wrapper runs with isolation",
+      "changedPaths": ["scripts/personal/node/server-isolated-tests.txt"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "s3-gates-scoped-server-command",
+      "note": "holds the server-tests commands the planner builds",
+      "changedPaths": ["scripts/personal/node/gates-linux.scoped.json"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    },
+    {
+      "id": "s4-gates-old-server-command",
+      "note": "holds the whole-run server-tests commands the installed tool runs",
+      "changedPaths": ["scripts/personal/node/gates-linux.json"],
+      "mustRun": [
+        "apps/server/src/preview/PortScanner.test.ts",
+        "apps/server/src/personal/work/PersonalWorkQuestions.test.ts"
+      ],
+      "expect": "hit",
+      "plan": {
+        "server-tests": "whole",
+        "release-tools": "selected"
+      }
+    }
+  ]
+}
