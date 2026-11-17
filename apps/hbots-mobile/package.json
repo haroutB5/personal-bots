@@ -1,6 +1,6 @@
 {
   "name": "@hbots/mobile",
-  "version": "1.67.33",
+  "version": "1.67.34",
   "private": true,
   "license": "MIT",
   "main": "index.ts",
