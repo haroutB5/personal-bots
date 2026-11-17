@@ -29,3 +29,20 @@ None. Params use `--migration-before 160 --migration-after 160`, so the runner s
 ## Rollback
 
 Binary rollback to `45856b3bef74` (1.67.35). No data change, so no data restore.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=9d4f2707175962600434757b5521a8a7c0b0fc7b release=9d4f27071759 json-sha256=0d83c61f00bbd355860c350603df82a3b2517db2645adc2d496be985273a70dc result=PASS -->
+
+- server-tests: SKIPPED, skip: no changed path is an input of server-tests: apps/server, packages, scripts/personal/adblock, scripts/personal/dsh-runtime, scripts/personal/updates, scripts/personal/sync, scripts/personal/testing (not packages/personal-client/, packages/client-runtime/)
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: SKIPPED, skip: no changed path is an input of e2e: apps/server, apps/web, packages, scripts/personal/e2e, scripts/personal/node/e2e-smoke.mjs, scripts/personal/testing
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: SKIPPED, skip: no changed path is an input of parity: apps/web, apps/hbots-mobile, packages/personal-client, scripts/personal/parity (not apps/hbots-mobile/package.json, scripts/personal/parity/parity.json)
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/dev-team-tools/tools.test.mjs, scripts/personal/linux/hbots-release/lib/gateDefs.mjs, scripts/personal/linux/hbots-release/lib/gateScope.mjs, scripts/personal/linux/hbots-release/lib/pins.mjs, ...; selected 14 test files
+
+<!-- gate-evidence:end -->
