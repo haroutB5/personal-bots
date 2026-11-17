@@ -497,6 +497,40 @@ NodeTest.describe("the release walk", () => {
       }),
   );
 
+  NodeTest.it(
+    "reports a rewrite inside one file as deleted lines",
+    {
+      todo: "known gap: the budget reads each file's net lines, so a rewrite that deletes 10 test lines and adds 10 in the same file reads as net 0 and says ok",
+    },
+    () => {
+      const result = (() => {
+        let found;
+        withRepo(({ repo, trunk }) => {
+          branch(repo, "feat/x", () => write(repo, A, body(10, "rewritten")));
+          found = cli(repo, trunk, "feat/x");
+        });
+        return found;
+      })();
+      NodeAssert.match(result.err + result.out, /deletes 10 test lines/);
+    },
+  );
+
+  NodeTest.it(
+    "does not let one allowance row excuse the added lines and the deleted lines together",
+    {
+      todo: "known gap: judgeChange tests net <= row.lines and deleted <= row.lines separately, so a row of 450 passes 450 added lines and 286 deleted lines at once",
+    },
+    () => NodeAssert.equal(judge([d(A, 450), d(B, -286)], { allowance: { ...ROW, lines: 450 } }).verdict, "deletes"),
+  );
+
+  NodeTest.it(
+    "counts a deletion in the release that made it and not again in the next release",
+    {
+      todo: "known gap, older than this branch, not fixed here: the 1.67.30 range lists the chatGoalTags.test.ts deletion that 1.67.28 made, because merge 55222391ad brought trunk 1.67.29 in and the step's merge base predates 1.67.28 (measured by the Verifier, qa/verification-article/s5s4/review/q3/history.md). A plain scratch repo with a trunk merged back into an older branch does not reproduce it, so the exact history shape is still unknown",
+    },
+    () => NodeAssert.fail("no scratch reproduction yet; build one from the 1.67.30 history before fixing"),
+  );
+
   const seal = ({ repo, trunk, dir }, release) => {
     NodeFS.writeFileSync(NodePath.join(dir, "current.txt"), `${trunk}\n`);
     NodeTest.mock.method(console, "error", () => {});
