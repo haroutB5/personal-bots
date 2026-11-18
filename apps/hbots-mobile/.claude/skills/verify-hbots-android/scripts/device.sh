@@ -2,6 +2,8 @@
 # device.sh up | down | adb <args>: the emulator this skill drives.
 #   up    gaming PC rig first when HBOTS_VERIFY_DEVICE is auto (default) and rig.sh free says yes, else a laptop emulator
 #         on our own adb server and ports. The laptop emulator runs only inside a heavy-job slot (verify.sh holds one).
+#         The rig session is owned by VERIFY_OWNER_PID (verify.sh's own pid, alive until its cleanup ends). Without it
+#         there is no owner and the 25 minute lease plus device.sh down end the session.
 #   down  stops exactly what up started, by recorded pid or rig.sh down. Never by name.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
@@ -9,6 +11,17 @@ touch "$STATE"
 get() { grep -E "^$1=" "$STATE" 2>/dev/null | tail -1 | cut -d= -f2-; }
 put() { { grep -vE "^$1=" "$STATE" 2>/dev/null; echo "$1=$2"; } > "$STATE.new"; mv "$STATE.new" "$STATE"; }
 ADBP=$(get ADB_PREFIX)
+# The PC's sshd answers "Exceeded MaxStartups" to a share of new connections (5 of 14 measured, 18 Nov), and rig.sh reports that as "PC unreachable" (exit 2).
+# That one answer is retried, up to 5 attempts 4 s apart. Any other answer stands.
+rig_try() {
+  local out rc n
+  for n in 1 2 3 4 5; do
+    out=$(bash "$RIG" "$@" 2>&1); rc=$?
+    if [[ $rc -eq 2 || "$out" == *"PC unreachable"* ]]; then [[ $n -lt 5 ]] && { sleep 4; continue; }; fi
+    break
+  done
+  printf '%s\n' "$out"; return $rc
+}
 cmd=${1:-}; shift || true
 case "$cmd" in
 adb) exec $ADBP "$@" ;;
@@ -16,10 +29,11 @@ up)
   [[ -z "$(get DEVICE_MODE)" ]] || { echo "device: an earlier run is not cleaned up (state.env). Run scripts/cleanup.sh first."; exit 2; }
   mode=laptop; reason="HBOTS_VERIFY_DEVICE=laptop"
   if [[ "${HBOTS_VERIFY_DEVICE:-auto}" != laptop ]]; then
-    reason=$(bash "$RIG" free 2>&1); rc=$?
+    owner=(); [[ -n "${VERIFY_OWNER_PID:-}" ]] && owner=(--owner "$VERIFY_OWNER_PID")
+    reason=$(rig_try free); rc=$?
     if [[ $rc -eq 0 ]]; then
-      if RIG_WHO="Verifier: verify-hbots-android" bash "$RIG" up FindX9Pro-Rig --max-minutes 25 --owner $$ >"$S/logs/rig-up.log" 2>&1; then mode=rig; reason="rig free"
-      else reason="rig up failed (logs/rig-up.log)"; fi
+      if RIG_WHO="${RIG_WHO:-Verifier: verify-hbots-android}" rig_try up FindX9Pro-Rig --max-minutes 25 "${owner[@]}" >"$LOGS/rig-up.log" 2>&1; then mode=rig; reason="rig free"
+      else reason="rig up failed (rig-up.log)"; fi
     else reason="rig refused (exit $rc): $reason"; fi
   fi
   echo "device: mode=$mode ($reason)"
@@ -34,14 +48,14 @@ up)
     [[ $kb -ge 3145728 ]] || { echo "device: only $((kb / 1024)) MB free, an emulator needs about 3 GB. Stop something or wait."; exit 2; }
     export ANDROID_ADB_SERVER_PORT=$VERIFY_ADB_PORT
     setsid nohup emulator -avd "$VERIFY_AVD" -port "$VERIFY_EMU_PORT" -read-only -no-snapshot -no-window -no-audio -no-boot-anim \
-      -gpu swiftshader_indirect -memory 2048 -accel on > "$S/logs/emulator.log" 2>&1 < /dev/null &
+      -gpu swiftshader_indirect -memory 2048 -accel on > "$LOGS/emulator.log" 2>&1 < /dev/null &
     put DEVICE_MODE laptop; put EMU_PID "$!"; put ADB_PREFIX "adb -P $VERIFY_ADB_PORT -s emulator-$VERIFY_EMU_PORT"
   fi
   ADBP=$(get ADB_PREFIX)
   t0=$SECONDS
   $ADBP wait-for-device
   until [[ "$($ADBP shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; do
-    [[ $((SECONDS - t0)) -lt 240 ]] || { echo "device: no boot in 240 s (see logs/emulator.log)"; exit 2; }
+    [[ $((SECONDS - t0)) -lt 240 ]] || { echo "device: no boot in 240 s (see emulator.log)"; exit 2; }
     sleep 2
   done
   $ADBP shell wm size 1080x2355 >/dev/null; $ADBP shell wm density 480 >/dev/null

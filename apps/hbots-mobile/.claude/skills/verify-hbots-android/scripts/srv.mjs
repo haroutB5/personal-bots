@@ -30,6 +30,11 @@ if (!RELEASE || !NodeFS.existsSync(BIN)) {
   console.error(`no server binary at ${BIN}`);
   process.exit(2);
 }
+const LIVE_DEV = "/home/harout/.personal-bots/dev";
+if (NodePath.resolve(ROOT) === LIVE_DEV || NodePath.resolve(ROOT).startsWith(`${LIVE_DEV}/`)) {
+  console.error("srv.mjs: refusing a data dir inside ~/.personal-bots/dev, the live hbots");
+  process.exit(2);
+}
 const REC = `${ROOT}/srv.json`;
 
 const env = () => ({

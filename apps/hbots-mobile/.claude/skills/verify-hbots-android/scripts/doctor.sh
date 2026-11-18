@@ -9,6 +9,11 @@ armed=$(systemctl --user list-units 'hbots-release-run*' --no-legend --plain 2>/
 [[ "$armed" -eq 0 ]] && ok "no release armed" || no "a real hbots release is armed, wait for its landing notice"
 [[ "$VERIFY_SERVER_PORT" != 38472 ]] && ok "server port $VERIFY_SERVER_PORT is not the live 38472" || no "server port is the live one"
 ss -ltn | grep -q ":$VERIFY_SERVER_PORT " && no "port $VERIFY_SERVER_PORT already has a listener" || ok "port $VERIFY_SERVER_PORT free"
+for t in "checkout $ROOT" "skill scratch $S" "evidence ${HBOTS_VERIFY_EVIDENCE:-$S/evidence}" "temp ${TMPDIR:-/tmp}" "run state $STATE"; do
+  under_live_dev "${t#* }" && no "${t%% *} folder ${t#* } is inside ~/.personal-bots/dev, the live hbots" || ok "${t%% *} folder is not inside ~/.personal-bots/dev"
+done
+other=$(systemctl --user list-units 'pstack-hbots-verify-tunnel-*' --no-legend --plain 2>/dev/null | awk '{print $1}' | paste -sd' ')
+[[ -z "$other" ]] || echo "doctor: info another run's tunnel is active and stays untouched: $other"
 bin=/home/harout/.personal-bots/releases/$VERIFY_RELEASE/dist/bin.mjs
 [[ -f "$bin" ]] && ok "server binary $VERIFY_RELEASE (read only)" || no "no server binary at $bin"
 ver=$(cat "$ROOT/scripts/personal/app-version.txt" 2>/dev/null)
@@ -22,10 +27,18 @@ if [[ "${1:-}" == --pre ]]; then
   if [[ -f "$apk" ]]; then
     abis=$(unzip -Z1 "$apk" | sed -n 's|^lib/\([^/]*\)/.*|\1|p' | sort -u | paste -sd,)
     [[ "$abis" == *x86_64* ]] && ok "apk has x86_64 libs ($abis)" || no "apk is not x86_64 ($abis): build one with scripts/build-apk.sh"
-    "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$apk" 2>/dev/null | grep -q "SHA-256 digest: $(tr -d '[:space:]' < "$ROOT/apps/hbots-mobile/release-cert.sha256")" \
-      && no "apk is signed with the RELEASE key, use a throwaway build" || ok "apk is not signed with the release key"
+    apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+    certs=$("$apksigner" verify --print-certs "$apk" 2>/dev/null)
+    release_sha=$(tr -d '[:space:]' < "$ROOT/apps/hbots-mobile/release-cert.sha256")
+    if ! grep -q "SHA-256 digest: " <<< "$certs"; then no "apksigner printed no signer for the apk, cannot tell whose key it is"
+    elif [[ -z "$release_sha" ]]; then no "release-cert.sha256 is empty, cannot check the signer"
+    elif grep -q "SHA-256 digest: $release_sha" <<< "$certs"; then no "apk is signed with the RELEASE key, use a throwaway build"
+    else ok "apk is signed by a throwaway key, not the release key"; fi
   fi
-  [[ ! -s "$STATE" ]] && ok "no earlier run left behind" || { grep -q '^DEVICE_MODE=.' "$STATE" && no "an earlier run is not cleaned up: bash scripts/cleanup.sh" || ok "no earlier run left behind"; }
+  for p in "$VERIFY_ADB_PORT" "$VERIFY_EMU_PORT" $((VERIFY_EMU_PORT + 1)); do
+    ss -ltn | grep -q ":$p " && no "port $p already has a listener, a run or an emulator is still up" || ok "port $p free"
+  done
+  [[ -z "$(grep -s '^DEVICE_MODE=.' "$S/state.env")" ]] && ok "no standalone device left behind" || no "a standalone device.sh run is not cleaned up: VERIFY_STATE=$S/state.env bash scripts/cleanup.sh"
 else
   ADBP=$(grep -E '^ADB_PREFIX=' "$STATE" | tail -1 | cut -d= -f2-)
   [[ "$($ADBP get-state 2>/dev/null)" == device ]] && ok "device is ours ($ADBP)" || no "device not reachable"
