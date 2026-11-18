@@ -3,20 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
-import {options,git,hash,gatePass,validate,gateScopeOf,gateScopeModule,treeState,treeChange,resolveCommit} from './gate-common.mjs';
+import {options,git,hash,gatePass,validate,gateScopeOf,gateScopeModule,gateDefsOf,treeState,treeChange,resolveCommit} from './gate-common.mjs';
 let v;
 try {v=options()} catch(e){console.error(e.message);process.exit(2)}
 const here=path.dirname(fileURLToPath(import.meta.url));
 // The phone harness must be supplied until its PowerShell server control is ported.
 // No evidence can pass by silently omitting this gate.
-const loadGates=()=>{
+const loadGates=(baseSha,headSha)=>{
   if(!v['gates-json'])throw new Error('--gates-json FILE required: supply Linux gate commands including phone e2e; the legacy default harness requires PowerShell');
-  const defs=JSON.parse(fs.readFileSync(v['gates-json'],'utf8'));
+  const {defs,notes}=gateDefsOf(v,baseSha,headSha);
   const validCommands=(commands)=>Array.isArray(commands)&&commands.length>0&&commands.every(c=>typeof c==='string'&&c.trim());
   if(!Array.isArray(defs)||defs.some(d=>!/^[-a-z0-9]+$/.test(d.id)||!(validCommands(d.commands)||(Array.isArray(d.concurrent)&&d.concurrent.length>0&&d.concurrent.every(validCommands)))||new Set(defs.map(d=>d.id)).size!==defs.length))throw new Error('Invalid gate definitions');
   const wanted=v.gates?v.gates.split(','):defs.map(d=>d.id);
   if(wanted.some(id=>!defs.some(d=>d.id===id)))throw new Error('Unknown gate selection');
-  return {defs,wanted};
+  return {defs,wanted,gateChanges:notes};
 };
 // One entry per selected gate: skip with the planned reason, or run the planned
 // mode and args.
@@ -25,7 +25,7 @@ const planOf=(defs,wanted,scope)=>defs.filter(d=>wanted.includes(d.id)).map(d=>{
   if(!plan)throw new Error(`gate ${d.id} has no row in the gate scope registry`);
   return {def:d,plan};
 });
-const printPlan=(scope,plan)=>{
+const printPlan=(scope,plan,gateChanges)=>{
   console.log(`gate scope: ${scope.summary}`);
   for(const p of plan){
     const args=p.plan.mode==='selected'?` [${p.plan.args.length}]`:'';
@@ -33,6 +33,7 @@ const printPlan=(scope,plan)=>{
   }
   // A changed test that no gate command runs: say so, so a plan never looks as if it ran it.
   for(const file of scope.notRun??[])console.log(`not run by any gate: ${file}`);
+  for(const line of gateChanges)console.log(line);
 };
 // --dry-run prints what the gate would run for the release against the live one,
 // without the heavy-job lock, a staged release or running anything. --head plans
@@ -43,10 +44,10 @@ if(v['dry-run']){
     if(!releaseSha)throw new Error(`release ${v.release} is not a commit in ${v.repo}`);
     const head=resolveCommit(v.repo,v.head??v.release);
     if(!head)throw new Error(`head ${v.head} is not a commit in ${v.repo}`);
-    const {defs,wanted}=loadGates();
     const scope=gateScopeOf(v,head,releaseSha);
+    const {defs,wanted,gateChanges}=loadGates(scope.baseSha,head);
     const plan=planOf(defs,wanted,scope);
-    printPlan(scope,plan);
+    printPlan(scope,plan,gateChanges);
     console.log(`dry run: ${plan.filter(p=>p.plan.mode!=='skip').length} of ${wanted.length} gates would run (base ${scope.baseSha?.slice(0,12)??'none'}, release ${releaseSha.slice(0,12)}, files ${head.slice(0,12)})`);
     process.exit(0);
   } catch(e){console.error(`FAIL: ${e.message}`);process.exit(2)}
@@ -90,9 +91,9 @@ try {
   const binHash=hash(path.join(v.dir,'dist/bin.mjs'));
   const scope=gateScopeOf(v,sha);
   const scopeModule=gateScopeModule(v.repo);
-  const {defs,wanted}=loadGates();
+  const {defs,wanted,gateChanges}=loadGates(scope.baseSha,sha);
   const plan=planOf(defs,wanted,scope);
-  printPlan(scope,plan);
+  printPlan(scope,plan,gateChanges);
   let kept=[];
   if(v.merge){const old=JSON.parse(fs.readFileSync(v.file,'utf8'));if(old.sha!==sha||old.treeClean!==true||old.binSha256!==binHash)throw new Error('Cannot merge evidence from different/dirty tree or artifact');kept=old.gates.filter(g=>!wanted.includes(g.id))}
   const logDir=path.join(v.dir,'gate-evidence-logs');fs.mkdirSync(logDir,{recursive:true});
@@ -173,7 +174,7 @@ try {
     };
   }).filter(Boolean));
   const endDirty=dirty();
-  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{summary:scope.summary,baseSha:scope.baseSha,changedPaths:scope.changedPaths,notRun:scope.notRun??[]},gates};
+  const e={schema:1,version:v.version,release:v.release,sha,branch:git(v.repo,'branch','--show-current'),headAtStart:sha,headAtEnd:git(v.repo,'rev-parse','HEAD'),treeClean:!startDirty&&!endDirty,dirtyPaths:[...new Set((startDirty+'\n'+endDirty).split('\n').filter(Boolean))],stagedRelease:{...staged,dirty:staged.dirty==='true'},binSha256:binHash,startedAt,finishedAt:new Date().toISOString(),ok:true,gateScope:{summary:scope.summary,baseSha:scope.baseSha,changedPaths:scope.changedPaths,notRun:scope.notRun??[],gateChanges},gates};
   e.ok=validate(e,{...v,commit:undefined}).length===0;
   fs.writeFileSync(v.file,JSON.stringify(e,null,2)+'\n');
   if(!v['skip-notes']){
@@ -183,7 +184,7 @@ try {
       const detail=g.mode==='skip'||g.mode==='selected'?`, ${g.mode}: ${g.reason}`:(g.exit!==undefined?`, exit ${g.exit}`:'');
       return `- ${g.id}: ${status}${detail}`;
     };
-    const unrun=(scope.notRun??[]).map(file=>`- not run by any gate: ${file}`);
+    const unrun=[...(scope.notRun??[]).map(file=>`- not run by any gate: ${file}`),...gateChanges.map(line=>`- ${line}`)];
     const section=`<!-- gate-evidence:begin sha=${sha} release=${v.release} json-sha256=${hash(v.file)} result=${e.ok?'PASS':'FAIL'} -->\n${[...gates.map(line),...unrun].join('\n')}\n<!-- gate-evidence:end -->`;
     const old=fs.existsSync(notesFile)?fs.readFileSync(notesFile,'utf8'):`# HANDOFF ${v.version}\n`;
     fs.writeFileSync(notesFile,old.includes('<!-- gate-evidence:begin')?old.replace(/<!-- gate-evidence:begin[^]*?<!-- gate-evidence:end -->/,section):old.trimEnd()+'\n\n## Gate evidence\n\n'+section+'\n');

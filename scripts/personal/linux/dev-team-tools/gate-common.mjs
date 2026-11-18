@@ -59,6 +59,53 @@ function readerFor(scope,repo,sha) {
   if(typeof scope.fsReader==='function') return scope.fsReader(repo);
   throw new Error('gate scope module has no repo reader');
 }
+// The gate commands come from the live release, not from the tree under test: a change
+// cannot edit the command that judges it. A gates file inside the repo is read with
+// `git show <base>:<path>`; a gate the change edited, added or removed is named, never
+// obeyed. A file outside the repo is the operator's own and is read as given.
+const repoRelative=(repo,file)=>{
+  const inside=(a,b)=>{const rel=path.relative(a,b);return rel!==''&&!rel.startsWith('..')&&!path.isAbsolute(rel)?rel.split(path.sep).join('/'):null};
+  let real=null;
+  try { real=inside(fs.realpathSync(repo),fs.realpathSync(file)) } catch { /* a missing file has no real path */ }
+  return inside(repo,file)??real;
+};
+const showFile=(repo,rev,rel)=>{
+  const r=spawnSync('git',['-C',repo,'show',`${rev}:${rel}`],{encoding:'utf8',maxBuffer:64*1024*1024});
+  return r.status===0?r.stdout:null;
+};
+const canonical=(value)=>JSON.stringify(value,(_key,inner)=>inner&&typeof inner==='object'&&!Array.isArray(inner)?Object.fromEntries(Object.entries(inner).sort(([a],[b])=>a<b?-1:1)):inner);
+const parseGates=(source,where)=>{
+  let data;
+  try { data=JSON.parse(source) } catch(e) { return {problem:`gates file at ${where} is not valid JSON: ${e.message}`} }
+  if(!Array.isArray(data)||data.some(d=>typeof d?.id!=='string')) return {problem:`gates file at ${where} needs an array of gates with an id`};
+  return {defs:data};
+};
+const CHANGE_WORDING={
+  edited:(id)=>`gate command changed in this change: ${id}; the base command runs`,
+  removed:(id)=>`gate removed in this change: ${id}; the base command runs`,
+  added:(id)=>`gate added in this change: ${id}; it has no base command and does not run here`,
+};
+export function gateDefsOf(v,baseSha,headSha) {
+  const file=path.resolve(v['gates-json']);
+  const rel=repoRelative(v.repo,file);
+  if(rel===null) return {defs:JSON.parse(fs.readFileSync(file,'utf8')),notes:[]};
+  const baseSource=showFile(v.repo,baseSha,rel);
+  if(baseSource===null) throw new Error(`no gates file at base ${baseSha.slice(0,12)}: ${rel}. This release left the live one before that file existed. Merge trunk into the branch, then gate again.`);
+  const base=parseGates(baseSource,'base');
+  if(base.problem) throw new Error(base.problem);
+  const headSource=showFile(v.repo,headSha,rel);
+  if(headSource===null) return {defs:base.defs,notes:[`gates file deleted in this change: ${rel}; the base commands run`]};
+  const head=parseGates(headSource,'head');
+  if(head.problem) return {defs:base.defs,notes:[`WARNING: ${head.problem}; the base commands run`]};
+  const atBase=new Map(base.defs.map(d=>[d.id,canonical(d)]));
+  const atHead=new Map(head.defs.map(d=>[d.id,canonical(d)]));
+  const changes=[
+    ...[...atHead].filter(([id,def])=>atBase.has(id)&&atBase.get(id)!==def).map(([id])=>({id,kind:'edited'})),
+    ...[...atHead.keys()].filter(id=>!atBase.has(id)).map(id=>({id,kind:'added'})),
+    ...[...atBase.keys()].filter(id=>!atHead.has(id)).map(id=>({id,kind:'removed'})),
+  ].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+  return {defs:base.defs,notes:changes.map(({id,kind})=>CHANGE_WORDING[kind](id))};
+}
 // Plan every check from the live release to `headSha`. An unmapped path is a
 // hard stop: the message names the file and where its row belongs.
 export function gateScopeOf(v,headSha,pathsSha=headSha) {
