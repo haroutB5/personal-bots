@@ -29,3 +29,20 @@ None. Params use `--migration-before 160 --migration-after 160`, so the runner s
 ## Rollback
 
 Binary rollback to `9d4f27071759` (1.67.36). No data change, so no data restore.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=9b4be0babfcb631cd0e07f3a7c3262a7fd09ebc9 release=9b4be0babfcb json-sha256=ac074641510728d50af82b58b0ae649f9fe796a0e2e4604ba6a99097053bcaa6 result=PASS -->
+
+- server-tests: SKIPPED, skip: no changed path is an input of server-tests: apps/server, packages, scripts/personal/adblock, scripts/personal/dsh-runtime, scripts/personal/updates, scripts/personal/sync, scripts/personal/testing (not packages/personal-client/, packages/client-runtime/)
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: SKIPPED, skip: no changed path is an input of e2e: apps/server, apps/web, packages, scripts/personal/e2e, scripts/personal/node/e2e-smoke.mjs, scripts/personal/testing
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, selected: hbots-mobile-kotlin inputs changed: apps/hbots-mobile/modules/hbots-secure/android/src/main/java/expo/modules/hbotssecure/CacheCrypto.kt, apps/hbots-mobile/modules/hbots-secure/android/src/test/java/expo/modules/hbotssecure/CacheCryptoTest.kt; selected 1 Gradle tasks
+- parity: PASS, exit 0
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/dev-team-tools/gate-common.mjs, scripts/personal/linux/dev-team-tools/gate-evidence.mjs, scripts/personal/linux/dev-team-tools/tools.test.mjs, scripts/personal/linux/hbots-release/lib/gateScope.mjs, ...; selected 15 test files
+
+<!-- gate-evidence:end -->
