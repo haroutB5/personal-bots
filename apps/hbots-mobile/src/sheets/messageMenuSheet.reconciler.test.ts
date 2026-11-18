@@ -18,6 +18,7 @@ vi.mock("react-native", async () => {
 vi.mock("../chat/textSelectNative", () => ({
   textHitAt: () => Promise.resolve(null),
   selectWordAt: () => Promise.resolve(null),
+  watchSelection: () => Promise.resolve(true),
   clearSelection: native.clearSelection,
 }));
 vi.mock("expo-clipboard", () => ({ setStringAsync: () => Promise.resolve(true) }));

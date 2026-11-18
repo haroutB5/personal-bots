@@ -5,6 +5,8 @@ import android.os.Looper
 import android.os.SystemClock
 import android.text.Selection
 import android.text.Spannable
+import android.text.SpanWatcher
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -23,6 +25,8 @@ import expo.modules.kotlin.functions.Queues
  */
 class HbotsTextSelectModule : Module() {
   private val main = Handler(Looper.getMainLooper())
+  private val collapsedAt = java.util.WeakHashMap<TextView, Long>()
+  private val watchers = java.util.WeakHashMap<TextView, SelectionWatcher>()
 
   override fun definition() = ModuleDefinition {
     Name("HbotsTextSelect")
@@ -44,6 +48,13 @@ class HbotsTextSelectModule : Module() {
       mapOf("text" to view.text.toString(), "offset" to offset)
     }.runOnQueue(Queues.MAIN)
 
+    /** Starts noting when the reader's selection collapses, so Back can tell a toolbar that just closed. */
+    AsyncFunction("watchSelection") { textTag: Int ->
+      val view = appContext.findView<TextView>(textTag) ?: return@AsyncFunction false
+      watch(view)
+      true
+    }.runOnQueue(Queues.MAIN)
+
     /** Clears the reader's selection. True when there was one. */
     AsyncFunction("clearSelection") { textTag: Int ->
       val view = appContext.findView<TextView>(textTag) ?: return@AsyncFunction false
@@ -62,6 +73,7 @@ class HbotsTextSelectModule : Module() {
       val line = layout.getLineForOffset(offset)
       val lineTop = (layout.getLineTop(line) + view.totalPaddingTop) / density
       val point = pointForOffset(view, offset)
+      watch(view)
       view.requestFocus()
       sendLongPress(view, point.first, point.second) {
         promise.resolve(
@@ -71,15 +83,49 @@ class HbotsTextSelectModule : Module() {
     }.runOnQueue(Queues.MAIN)
   }
 
-  /** Drops the reader's selection, handles and toolbar. Returns whether there was a selection. */
+  /**
+   * Drops the reader's selection, handles and toolbar. True when there was a selection, or one
+   * collapsed an instant ago: Back closes the toolbar on key down, before the sheet sees it.
+   */
   private fun clearSelection(view: TextView): Boolean {
-    val had = hasSelection(view)
-    if (!had) return false
+    if (!hasSelection(view)) {
+      val collapsed = collapsedAt.remove(view) ?: return false
+      return SystemClock.uptimeMillis() - collapsed < COLLAPSE_WINDOW_MS
+    }
     (view.text as? Spannable)?.let { Selection.removeSelection(it) }
     view.clearFocus()
     view.setTextIsSelectable(false)
     view.setTextIsSelectable(true)
+    collapsedAt.remove(view)
     return true
+  }
+
+  private fun watch(view: TextView) {
+    val text = view.text as? Spannable ?: return
+    if (watchers[view]?.text === text) return
+    val watcher = SelectionWatcher(view, text)
+    watchers[view] = watcher
+    text.setSpan(watcher, 0, text.length, Spannable.SPAN_INCLUSIVE_INCLUSIVE)
+  }
+
+  /** Notes the moment a selection collapses to nothing. */
+  private inner class SelectionWatcher(private val view: TextView, val text: Spannable) : SpanWatcher {
+    private var active = false
+
+    override fun onSpanAdded(text: Spannable, what: Any, start: Int, end: Int) = check(what)
+
+    override fun onSpanRemoved(text: Spannable, what: Any, start: Int, end: Int) = check(what)
+
+    override fun onSpanChanged(
+      text: Spannable, what: Any, ostart: Int, oend: Int, nstart: Int, nend: Int,
+    ) = check(what)
+
+    private fun check(what: Any) {
+      if (what !== Selection.SELECTION_START && what !== Selection.SELECTION_END) return
+      val now = hasSelection(view)
+      if (active && !now) collapsedAt[view] = SystemClock.uptimeMillis()
+      active = now
+    }
   }
 
   private fun hasSelection(view: TextView): Boolean {
@@ -123,6 +169,7 @@ class HbotsTextSelectModule : Module() {
 
   private fun touch(view: View, downTime: Long, action: Int, x: Float, y: Float) {
     val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0)
+    event.source = InputDevice.SOURCE_TOUCHSCREEN
     view.dispatchTouchEvent(event)
     event.recycle()
   }
@@ -138,6 +185,7 @@ class HbotsTextSelectModule : Module() {
 
   private companion object {
     const val SETTLE_MS = 250L
+    const val COLLAPSE_WINDOW_MS = 1500L
     const val LONG_PRESS_MARGIN_MS = 80L
   }
 }

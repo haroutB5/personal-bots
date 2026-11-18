@@ -15,13 +15,16 @@ import {
   type ReaderStyle,
   type TextHit,
 } from "../chat/readerDoc";
-import { clearSelection, selectWordAt } from "../chat/textSelectNative";
+import { clearSelection, selectWordAt, watchSelection } from "../chat/textSelectNative";
 import { tokens } from "../shell/tokens";
 
 export interface ReaderHandle {
   /** Clears the selection and its handles. True when something was selected. */
   readonly clearSelection: () => Promise<boolean>;
 }
+
+/** The sheet slide-in, plus a margin, before the native selection starts. */
+const SHEET_SETTLE_MS = 500;
 
 export const STREAMING_NOTE = "Still writing. This is the text so far.";
 
@@ -55,16 +58,23 @@ export function MessageReader({
     [],
   );
   const selectTapped = () => {
+    const watchTag =
+      textNode.current === null ? null : findNodeHandle(textNode.current as unknown as View);
+    if (watchTag !== null) void watchSelection(watchTag);
     if (hit === null || selectedFor.current === hit) return;
     selectedFor.current = hit;
     const offset = anchorOffset(readerDoc(text), hit);
-    const tag =
-      textNode.current === null ? null : findNodeHandle(textNode.current as unknown as View);
-    if (offset === null || tag === null) return;
-    void selectWordAt(tag, offset).then((result) => {
-      if (result !== null)
-        scroller.current?.scrollTo({ y: Math.max(0, result.lineTop - 96), animated: false });
-    });
+    if (offset === null) return;
+    // Handles and the toolbar are dropped when the text moves, so wait for the sheet to stop sliding.
+    setTimeout(() => {
+      const tag =
+        textNode.current === null ? null : findNodeHandle(textNode.current as unknown as View);
+      if (tag === null) return;
+      void selectWordAt(tag, offset).then((result) => {
+        if (result !== null)
+          scroller.current?.scrollTo({ y: Math.max(0, result.lineTop - 96), animated: false });
+      });
+    }, SHEET_SETTLE_MS);
   };
   const { height } = useWindowDimensions();
   const keyedRuns = useMemo(() => keyRuns(readerDoc(text).runs), [text]);

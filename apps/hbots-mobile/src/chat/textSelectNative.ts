@@ -9,6 +9,7 @@ interface TextSelectNative {
     textTag: number,
     offset: number,
   ): Promise<{ readonly lineTop: number; readonly mode: string } | null>;
+  watchSelection(textTag: number): Promise<boolean>;
   clearSelection(textTag: number): Promise<boolean>;
 }
 
@@ -49,6 +50,16 @@ export async function clearSelection(textTag: number): Promise<boolean> {
   if (native === null) return false;
   try {
     return await native.clearSelection(textTag);
+  } catch {
+    return false;
+  }
+}
+
+/** Starts noting when the reader's selection collapses, so Back can tell a toolbar that just closed. */
+export async function watchSelection(textTag: number): Promise<boolean> {
+  if (native === null) return false;
+  try {
+    return await native.watchSelection(textTag);
   } catch {
     return false;
   }
