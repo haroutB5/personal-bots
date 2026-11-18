@@ -29,7 +29,7 @@ class Run:
         self.a = a
         self.ev = a.evidence
         os.makedirs(f"{self.ev}/shots", exist_ok=True)
-        self.d = Device(a.adb)
+        self.d = Device(a.adb, self.note)
         self.t0 = time.time()
         self.results = []
         self.srvlog = f"{a.srv}/server.log"
@@ -235,11 +235,17 @@ class Run:
             return "no link field"
         d.tap(field)
         time.sleep(0.4)
-        d.type(link)
-        s = d.dump()
-        got = next((x.text for x in s.nodes if x.cls.endswith("EditText")), "")
+        got = ""
+        for size, pause in ((40, 0.0), (16, 0.2), (8, 0.4)):
+            d.sh("input keycombination KEYCODE_CTRL_LEFT KEYCODE_A")
+            d.key(67)
+            d.type(link, size, pause)
+            s = d.dump()
+            got = next((x.text for x in s.nodes if x.cls.endswith("EditText")), "")
+            if got == link:
+                break
         if got != link:
-            return f"link field mismatch len={len(got)} want={len(link)}"
+            return f"link field mismatch len={len(got)} want={len(link)} after 3 typing tries"
         d.key(111)
         time.sleep(0.4)
         s, cont = d.wait(lambda s: next((x for x in s.find(desc="Continue") if x.clickable), None), 5)

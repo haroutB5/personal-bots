@@ -11,13 +11,14 @@ touch "$STATE"
 get() { grep -E "^$1=" "$STATE" 2>/dev/null | tail -1 | cut -d= -f2-; }
 put() { { grep -vE "^$1=" "$STATE" 2>/dev/null; echo "$1=$2"; } > "$STATE.new"; mv "$STATE.new" "$STATE"; }
 ADBP=$(get ADB_PREFIX)
-# The PC's sshd answers "Exceeded MaxStartups" to a share of new connections (5 of 14 measured, 18 Nov), and rig.sh reports that as "PC unreachable" (exit 2).
-# That one answer is retried, up to 5 attempts 4 s apart. Any other answer stands.
+# The PC's sshd answers "Exceeded MaxStartups" to a share of new connections (5 of 14 measured, 18 Nov). rig.sh shows that as "PC unreachable"
+# (exit 2) when its check is refused, or as "rig session ended early" with an empty log when the session link is refused (inferred). Only those two
+# answers are retried, up to 5 attempts 4 s apart. Any other answer (busy, yielded to a game, not free) stands.
 rig_try() {
   local out rc n
   for n in 1 2 3 4 5; do
     out=$(bash "$RIG" "$@" 2>&1); rc=$?
-    if [[ $rc -eq 2 || "$out" == *"PC unreachable"* ]]; then [[ $n -lt 5 ]] && { sleep 4; continue; }; fi
+    if [[ $rc -ne 0 && ( "$out" == *"PC unreachable"* || "$out" == *"rig session ended early"* ) && $n -lt 5 ]]; then sleep 4; continue; fi
     break
   done
   printf '%s\n' "$out"; return $rc
@@ -63,6 +64,19 @@ up)
   for k in window_animation_scale transition_animation_scale animator_duration_scale; do $ADBP shell settings put global $k 0; done
   $ADBP shell settings put system font_scale 1.0
   $ADBP shell input keyevent KEYCODE_WAKEUP; $ADBP shell wm dismiss-keyguard >/dev/null 2>&1
+  # The rig emulator came up with airplane mode on and, after the size change, a "System UI isn't responding" box (18 Nov). Network on, box dismissed.
+  if [[ "$($ADBP shell settings get global airplane_mode_on | tr -d '\r')" != 0 ]]; then
+    $ADBP shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || { $ADBP shell settings put global airplane_mode_on 0; $ADBP shell am broadcast -a android.intent.action.AIRPLANE_MODE >/dev/null 2>&1; }
+    echo "device: airplane mode was on, turned off"
+  fi
+  for _ in $(seq 1 20); do
+    xml=$($ADBP exec-out "uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; cat /sdcard/ui.xml" 2>/dev/null)
+    grep -q "isn't responding" <<< "$xml" || break
+    echo "device: dismissing an ANR box"
+    b=$(grep -o 'text="Wait"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' <<< "$xml" | grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' | head -1)
+    if [[ -n "$b" ]]; then IFS=',][' read -r _ l t _ r bt _ <<< "$b"; $ADBP shell input tap $(( (l + r) / 2 )) $(( (t + bt) / 2 )); fi
+    sleep 3
+  done
   echo "device: booted in $((SECONDS - t0)) s, $($ADBP shell getprop ro.build.version.sdk | tr -d '\r') sdk, $($ADBP shell wm size | tr -d '\r' | tail -1), $($ADBP shell wm density | tr -d '\r' | tail -1)"
   ;;
 down)

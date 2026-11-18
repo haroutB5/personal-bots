@@ -62,6 +62,7 @@ class Device:
         self.adb = shlex.split(adb)
         self.log = log or (lambda *a: None)
         self.width, self.height = 1080, 2355
+        self.anr_taps = 0
 
     def run(self, *args, timeout=40, text=True, check=False):
         r = subprocess.run(self.adb + list(args), capture_output=True, timeout=timeout)
@@ -79,7 +80,16 @@ class Device:
             root = ET.fromstring(raw[raw.index("<?xml"):] if "<?xml" in raw else raw)
         except ET.ParseError:
             return Screen([], self.width, self.height)
-        return Screen([Node(e) for e in root.iter("node")], self.width, self.height)
+        screen = Screen([Node(e) for e in root.iter("node")], self.width, self.height)
+        box = screen.first(text="System UI isn't responding")
+        wait = screen.first(text="Wait") if box else None
+        if wait and self.anr_taps < 20:
+            self.anr_taps += 1
+            self.log(f"System UI isn't responding box dismissed ({self.anr_taps})")
+            self.tap(wait)
+            time.sleep(2.0)
+            return self.dump()
+        return screen
 
     def wait(self, pred, timeout=15.0, every=0.35):
         end = time.time() + timeout
@@ -105,9 +115,11 @@ class Device:
     def key(self, code):
         self.sh(f"input keyevent {code}")
 
-    def type(self, text):
-        for i in range(0, len(text), 40):
-            self.sh("input text " + shlex.quote(text[i:i + 40].replace(" ", "%s")))
+    def type(self, text, size=40, pause=0.0):
+        for i in range(0, len(text), size):
+            self.sh("input text " + shlex.quote(text[i:i + size].replace(" ", "%s")))
+            if pause:
+                time.sleep(pause)
 
     def shot(self, path):
         data = self.run("exec-out", "screencap", "-p", text=False)
