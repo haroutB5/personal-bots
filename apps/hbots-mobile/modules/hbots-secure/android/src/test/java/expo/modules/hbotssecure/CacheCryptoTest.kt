@@ -194,6 +194,45 @@ class CacheCryptoTest {
     assertFalse(File(path("blob")).exists())
   }
 
+  @Test fun anOutOfMemoryErrorWhileOpeningAnAttachmentKeepsTheSealedFile() {
+    val keys = MemoryKeys()
+    FileCrypto(keys).encryptFile("photo".byteInputStream(), path("blob"))
+    val exploding = FileCrypto(object : CacheKeys {
+      override fun key(): SecretKey = throw OutOfMemoryError("simulated")
+
+      override fun delete() {}
+    })
+
+    assertFalse(exploding.decryptFile(path("blob"), path("plain")))
+    assertTrue(File(path("blob")).exists())
+    assertFalse(File(path("plain")).exists())
+    assertTrue(FileCrypto(keys).decryptFile(path("blob"), path("plain")))
+    assertEquals("photo", File(path("plain")).readText())
+  }
+
+  @Test fun aKeystoreErrorWhileOpeningAnAttachmentKeepsTheSealedFile() {
+    val keys = MemoryKeys()
+    FileCrypto(keys).encryptFile("photo".byteInputStream(), path("blob"))
+    val failing = FileCrypto(object : CacheKeys {
+      override fun key(): SecretKey = throw java.security.ProviderException("keystore busy")
+
+      override fun delete() {}
+    })
+
+    assertFalse(failing.decryptFile(path("blob"), path("plain")))
+    assertTrue(File(path("blob")).exists())
+    assertFalse(File(path("plain")).exists())
+    assertTrue(FileCrypto(keys).decryptFile(path("blob"), path("plain")))
+  }
+
+  @Test fun anAttachmentWithoutAValidHeaderIsDeleted() {
+    File(path("blob")).writeBytes(ByteArray(40) { 7 })
+
+    assertFalse(FileCrypto(MemoryKeys()).decryptFile(path("blob"), path("plain")))
+    assertFalse(File(path("blob")).exists())
+    assertFalse(File(path("plain")).exists())
+  }
+
   @Test fun aTruncatedFileIsRefused() {
     val crypto = FileCrypto(MemoryKeys())
     crypto.writeText(path("t"), "a longer text so the tag is cut")
